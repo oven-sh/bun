@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use std::collections::TryReserveError;
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -102,6 +103,12 @@ impl Buffered {
 
     fn extend(&self, chunk: &[u8]) {
         self.bytes.with_mut(|b| b.extend_from_slice(chunk));
+    }
+
+    fn try_extend(&self, chunk: &[u8]) -> Result<(), TryReserveError> {
+        self.bytes.with_mut(|b| b.try_reserve(chunk.len()))?;
+        self.extend(chunk);
+        Ok(())
     }
 
     /// Drop every buffered byte and release the allocation.
@@ -640,14 +647,16 @@ impl ByteStream {
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
 
-                self.buffered.extend(stream.slice());
+                if self.buffered.try_extend(stream.slice()).is_err() {
+                    return self.reject_out_of_memory(action);
+                }
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 action.fulfill(self.parent_const().global_this(), &mut blob);
-                return;
-            } else {
-                self.buffered.extend(stream.slice());
-                drop(stream);
+            } else if self.buffered.try_extend(stream.slice()).is_err()
+                && let Some(action) = self.buffer_action.replace(None)
+            {
+                self.reject_out_of_memory(action);
             }
 
             return;
@@ -717,6 +726,13 @@ impl ByteStream {
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+    }
+
+    fn reject_out_of_memory(&self, mut action: BufferAction) {
+        self.cancel_from_sink(None);
+        let global = self.parent_const().global_this();
+        let error = StrongOptional::create(global.create_out_of_memory_error(), global);
+        action.reject(global, &streams::StreamError::JSValue(error));
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.

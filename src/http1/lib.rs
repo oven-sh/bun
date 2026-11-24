@@ -1,6 +1,7 @@
-//! HTTP/1.1 response framing without I/O. Parts derive from picohttpparser (LICENSE.md).
+//! HTTP/1.1 framing without I/O. Parts derive from picohttpparser, llhttp and uWebSockets (LICENSE.md).
+#![feature(core_io_borrowed_buf)]
 #![forbid(unsafe_code)]
-// Responses come from anywhere and a panic aborts the process.
+// Messages come from anywhere and a panic aborts the process.
 #![deny(
     clippy::indexing_slicing,
     clippy::unwrap_used,
@@ -13,6 +14,8 @@
 mod byte_sets;
 mod chunked;
 mod error;
+pub mod message;
+pub mod request;
 mod response;
 
 pub use chunked::ChunkedDecoder;

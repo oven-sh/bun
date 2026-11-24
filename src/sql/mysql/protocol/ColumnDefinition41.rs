@@ -90,7 +90,7 @@ fn extended_metadata_is_json(mut bytes: &[u8]) -> Result<bool, AnyMySQLError> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Changed {
+pub(crate) enum Changed {
     Nothing,
     /// Table, type, length or flags. MariaDB derives the last three from each execution's values.
     Description,
@@ -109,7 +109,7 @@ impl ColumnDefinition41 {
         self.name = None;
     }
 
-    pub fn decode(
+    pub(crate) fn decode(
         &mut self,
         reader: &mut PacketReader<'_>,
         extended_type_info: bool,

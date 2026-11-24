@@ -27,6 +27,8 @@ pub enum Error {
     HTTP2GoAway,
     #[error("HTTP2CompressionError")]
     HTTP2CompressionError,
+    #[error("UnableToEncode")]
+    UnableToEncode,
     #[error("Timeout")]
     Timeout,
     #[error("AbortedBeforeConnecting")]
@@ -106,13 +108,11 @@ pub enum Error {
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
-    Hpack(#[from] crate::lshpack::HpackError),
-    #[error(transparent)]
     Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
-    #[error(transparent)]
-    Zlib(bun_zlib::ZlibError),
+    #[error("ZlibError")]
+    Zlib,
     #[error(transparent)]
     Brotli(bun_brotli::Error),
     #[error(transparent)]
@@ -273,6 +273,7 @@ impl Error {
             Self::HTTP2StreamReset => "HTTP2StreamReset",
             Self::HTTP2GoAway => "HTTP2GoAway",
             Self::HTTP2CompressionError => "HTTP2CompressionError",
+            Self::UnableToEncode => "UnableToEncode",
             Self::Timeout => "Timeout",
             Self::AbortedBeforeConnecting => "AbortedBeforeConnecting",
             Self::InvalidURL => "InvalidURL",
@@ -312,10 +313,9 @@ impl Error {
             Self::TLSHandshakeFailed => "TLSHandshakeFailed",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
-            Self::Zlib(e) => <&'static str>::from(e),
+            Self::Zlib => "ZlibError",
             Self::Brotli(e) => e.name(),
             Self::Zstd(e) => <&'static str>::from(e),
         }
@@ -328,11 +328,11 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<bun_zlib::ZlibError> for Error {
-    fn from(e: bun_zlib::ZlibError) -> Self {
+impl From<bun_zlib::Error> for Error {
+    fn from(e: bun_zlib::Error) -> Self {
         match e {
-            bun_zlib::ZlibError::ShortRead => Error::ShortRead,
-            _ => Error::Zlib(e),
+            bun_zlib::Error::Alloc(e) => Error::Alloc(e),
+            _ => Error::Zlib,
         }
     }
 }

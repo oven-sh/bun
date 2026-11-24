@@ -1,7 +1,5 @@
 #[cfg(not(windows))]
 use core::cell::Cell;
-#[cfg(unix)]
-use core::ffi::c_int;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 #[cfg(not(windows))]
@@ -27,7 +25,7 @@ use bun_sys::syslog;
 /// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
 /// only read when `rc` is the all-ones failure value). Do NOT feed it a value
 /// that already is an errno — use [`kevent_change_error`] for those.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -196,8 +194,7 @@ pub enum PollTag {
     FileReader,
     FileResponseStream,
     TerminalReader,
-    CronRegister,
-    CronRemove,
+    Cron,
     FilterRunHandle,
     MultiRunPipeReader,
     TestParallelWorker,
@@ -532,7 +529,7 @@ impl FilePoll {
                 u64: Pollable::init(self).ptr() as u64,
             };
 
-            let op: c_int = if self.is_registered() || self.has_flag(Flags::NeedsRearm) {
+            let op = if self.is_registered() || self.has_flag(Flags::NeedsRearm) {
                 EPOLL::CTL_MOD
             } else {
                 EPOLL::CTL_ADD
@@ -542,7 +539,7 @@ impl FilePoll {
             // `Pollable`. `reset` removes the entry, or leaves one that `EPOLLONESHOT` disarmed
             // when it fired, which is not reported again. `Store::put` then holds the slot back,
             // marked `IgnoreUpdates`, until a tick returns, when no event fetched for it is left.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &event) };
             self.set_flag(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -552,8 +549,6 @@ impl FilePoll {
         #[cfg(target_os = "macos")]
         {
             use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64_s};
-            // SAFETY: all-zero is a valid kevent64_s
-            let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
             let one_shot_flag: u16 = if !self.has_flag(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
@@ -562,7 +557,7 @@ impl FilePoll {
                 EV::ONESHOT
             };
 
-            changelist[0] = match flag {
+            let change = match flag {
                 Flags::Readable => kevent64_s {
                     ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::READ,
@@ -620,19 +615,15 @@ impl FilePoll {
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
             let rc = 'rc: loop {
-                // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
+                // SAFETY: as for `epoll_ctl` above. No change asks for a message, so `ext` is no address.
                 let rc = unsafe {
                     bun_sys::darwin::kevent64(
                         watcher_fd,
-                        changelist.as_ptr(),
-                        1,
-                        // The same array may be used for the changelist and eventlist.
-                        changelist.as_mut_ptr(),
-                        // we set 0 here so that if we get an error on
-                        // registration, it becomes errno
-                        0,
+                        &[change],
+                        // No room for events, so that an error on registration becomes errno.
+                        &mut [],
                         KEVENT_FLAG_ERROR_EVENTS,
-                        &raw const TIMEOUT,
+                        Some(&TIMEOUT),
                     )
                 };
                 if sys::get_errno(rc) == sys::E::EINTR {
@@ -643,17 +634,6 @@ impl FilePoll {
 
             self.set_flag(Flags::WasEverRegistered);
 
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data. xnu ORs
-            // EV_ERROR into the existing action bits, so test the bit.
-            if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return kevent_change_error(changelist[0].data);
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
             let errno = sys::get_errno(rc);
             if errno != sys::E::SUCCESS {
                 self.deactivate(loop_);
@@ -662,9 +642,7 @@ impl FilePoll {
         }
         #[cfg(target_os = "freebsd")]
         {
-            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
-            // SAFETY: all-zero is a valid Kevent
-            let mut changelist: [Kevent; 1] = bun_core::ffi::zeroed();
+            use bun_sys::freebsd::{EV, EVFILT, NOTE};
             let one_shot_flag: u16 = if !self.has_flag(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
@@ -675,7 +653,7 @@ impl FilePoll {
 
             let ident = usize::try_from(fd.native()).expect("int cast");
             let udata = Pollable::init(self).ptr();
-            changelist[0] = match flag {
+            let change = match flag {
                 Flags::Readable => {
                     make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata)
                 }
@@ -698,30 +676,15 @@ impl FilePoll {
                 _ => unreachable!(),
             };
 
-            let rc = 'rc: loop {
-                // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-                let rc = unsafe {
-                    kevent(
-                        watcher_fd,
-                        changelist.as_ptr(),
-                        1,
-                        // Same array for changelist and eventlist; nevents=0 so
-                        // registration errors come back via errno.
-                        changelist.as_mut_ptr(),
-                        0,
-                        ptr::null(),
-                    )
-                };
-                if sys::get_errno(rc) == sys::E::EINTR {
-                    continue;
-                }
-                break 'rc rc;
-            };
+            // No room for events, so that an error on registration becomes errno.
+            // SAFETY: as for `epoll_ctl` above.
+            let registered =
+                unsafe { sys::kevent(Fd::from_native(watcher_fd), &[change], &mut [], None) };
 
             self.set_flag(Flags::WasEverRegistered);
-            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
+            if let Err(err) = registered {
                 self.deactivate(loop_);
-                return err;
+                return sys::Result::Err(sys::Error::from_code(err.get_errno(), sys::Tag::kevent));
             }
         }
 
@@ -839,10 +802,8 @@ impl FilePoll {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            // SAFETY: CTL_DEL registers nothing.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None) };
+            let ctl = bun_sys::linux::epoll_ctl_del(watcher_fd, fd.native());
 
             match sys::get_errno(ctl) {
                 sys::E::SUCCESS => {}
@@ -905,7 +866,7 @@ impl FilePoll {
                 _ => unreachable!(),
             };
 
-            let mut nchanges: c_int = 1;
+            let mut nchanges = 1;
             if both_directions {
                 // kqueue keys on (fd, filter); delete EVFILT_WRITE as a second change.
                 changelist[1] = kevent64_s {
@@ -926,24 +887,20 @@ impl FilePoll {
             // The kevent() system call returns the number of events placed in
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
-            // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
+            let mut errors: [kevent64_s; 2] = bun_core::ffi::zeroed();
+            // SAFETY: EV_DELETE registers nothing.
             let rc = unsafe {
                 kevent64(
                     watcher_fd,
-                    changelist.as_ptr(),
-                    nchanges,
-                    // The same array may be used for the changelist and eventlist.
-                    changelist.as_mut_ptr(),
-                    nchanges,
+                    &changelist[..nchanges],
+                    &mut errors[..nchanges],
                     KEVENT_FLAG_ERROR_EVENTS,
-                    &raw const TIMEOUT,
+                    Some(&TIMEOUT),
                 )
             };
 
             let errno = sys::get_errno(rc);
-            // Global failure (e.g. EBADF on the kqueue fd): the eventlist
-            // was not written, so per-entry checks below would read our
-            // own input. Report errno and stop.
+            // Global failure (e.g. EBADF on the kqueue fd): the eventlist was not written.
             if rc < 0 {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
             }
@@ -955,21 +912,19 @@ impl FilePoll {
             // such error events; they are packed from index 0 regardless of
             // which change failed. xnu ORs EV_ERROR into the existing action
             // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
-            for i in 0..usize::try_from(rc.min(2)).expect("int cast") {
-                if (changelist[i].flags & EV::ERROR) == 0 || changelist[i].data == 0 {
+            for error in &errors[..usize::try_from(rc.min(2)).expect("int cast")] {
+                if (error.flags & EV::ERROR) == 0 || error.data == 0 {
                     continue;
                 }
-                if sys::SystemErrno::init(changelist[i].data)
-                    .is_some_and(deregistration_already_gone)
-                {
+                if sys::SystemErrno::init(error.data).is_some_and(deregistration_already_gone) {
                     continue;
                 }
-                return kevent_change_error(changelist[i].data);
+                return kevent_change_error(error.data);
             }
         }
         #[cfg(target_os = "freebsd")]
         {
-            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
+            use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE};
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 2] = bun_core::ffi::zeroed();
             let ident = usize::try_from(fd.native()).expect("int cast");
@@ -987,7 +942,7 @@ impl FilePoll {
                 _ => unreachable!(),
             };
 
-            let mut nchanges: c_int = 1;
+            let mut nchanges = 1;
             if both_directions {
                 changelist[1] = make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata);
                 nchanges = 2;
@@ -996,21 +951,13 @@ impl FilePoll {
             // nevents=0: per-entry errors surface as rc=-1/errno for the
             // first failing change. For EV_DELETE (typically ENOENT) a silent
             // miss on the second entry is harmless.
-            // SAFETY: FFI syscall; pointers reference stack-local changelist valid for the call.
-            let rc = unsafe {
-                kevent(
-                    watcher_fd,
-                    changelist.as_ptr(),
-                    nchanges,
-                    changelist.as_mut_ptr(),
-                    0,
-                    ptr::null(),
-                )
-            };
-            match sys::get_errno(rc) {
-                sys::E::SUCCESS => {}
-                e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
+            let kq = Fd::from_native(watcher_fd);
+            // SAFETY: EV_DELETE registers nothing.
+            let removed = unsafe { sys::kevent(kq, &changelist[..nchanges], &mut [], None) };
+            match removed.map_err(|err| err.get_errno()) {
+                Ok(_) => {}
+                Err(e) if deregistration_already_gone(e) => {}
+                Err(e) => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
             }
         }
 
@@ -1172,9 +1119,6 @@ impl fmt::Display for FlagsFormatter {
 // Store
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
-// heap-breakdown builds, so the 128-slot hive is unconditional here (same
-// choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
 #[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]

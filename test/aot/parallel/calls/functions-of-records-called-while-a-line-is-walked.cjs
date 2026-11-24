@@ -1,0 +1,21 @@
+// A wash line hands each piece to a function that runs on the line, and that function calls what a record of a table holds under a name: which functions the records hold there is told apart, and anything else lets the turn begin again as written.
+'use strict';
+const soaps = { mild: { wash: v => v, foam: 0 }, strong: { wash: v => v / 2 - 1, foam: 1 }, rinse: { wash(v, last) { return last === undefined ? v : v > last ? v : -last; }, foam: 2 }, odd: { wash: function (v) { return v % 3 ? v * 1.5 : this.foam; }, foam: 7 } };
+class Line {
+  constructor(count, f) { this.pegs = Array.from({ length: count }, (_, at) => f(at)); this.walked = 0; }
+  walk(f) { let at = 0; while (at < this.pegs.length) { f.call(this, this.pegs[at], at); this.walked += 1; at += 1; } }
+  wash(name) { const soap = soaps[name]; this.walk(function (piece, at) { this.pegs[at] = soap.wash(piece); }); return this; }
+  washBehind(name, other) { const soap = soaps[name]; this.walk(function (piece, at) { this.pegs[at] = soap.wash(piece, other.pegs[at + 1]); }); return this; }
+  foam(name) { let all = 0; const soap = soaps[name] || soaps.mild; this.walk(function (piece) { const v = soap.wash(piece, 2); all += v === v ? v : 0; }); return Math.round(all * 1e3) / 1e3; }
+  text() { const out = []; this.walk(function (piece) { out.push(Object.is(piece, -0) ? '-0' : typeof piece === 'number' ? Math.round(piece * 100) / 100 : String(piece)); }); return out.join(' ') + ' (' + this.walked + ')'; }
+}
+const counts = () => new Line(11, at => (at * 5) % 13 - at), parts = () => new Line(9, at => at / 4 - 1.25), told = run => { try { const v = run(); return v instanceof Line ? v.text() : String(v); } catch (error) { return error.constructor.name; } };
+for (let k = 0; k < 120; k++) for (const name of Object.keys(soaps)) { const line = k & 1 ? counts() : parts(); line.wash(name); line.washBehind(name, parts()); line.foam(name); }
+for (const name of Object.keys(soaps)) console.log(name, told(() => counts().wash(name)), told(() => parts().wash(name)), told(() => parts().washBehind(name, counts())), counts().foam(name), parts().foam(name));
+const gaps = counts(); delete gaps.pegs[4]; gaps.pegs[6] = 'w'; gaps.pegs[7] = { valueOf: () => 2.5 }; console.log(told(() => gaps.wash('strong')), told(() => gaps.washBehind('rinse', parts())), gaps.foam('odd'));
+const floats = counts(); floats.pegs = new Float32Array([0.1, 1, 2, 3]); const bytes = counts(); bytes.pegs = new Uint8Array([250, 251, 252, 253]); console.log(told(() => floats.wash('odd')), told(() => bytes.wash('strong')), Object.prototype.toString.call(bytes.pegs));
+console.log(told(() => counts().wash('none')), told(() => counts().wash('toString')), counts().foam('none'), told(() => { const line = counts(); line.pegs = null; return line.wash('mild'); }), told(() => { const line = counts(); line.pegs = Object.freeze([1, 2, 3, 4]); return line.wash('strong'); }));
+soaps.mild.wash = v => v + 0.5; console.log(told(() => counts().wash('mild'))); soaps.mild.wash = null; console.log(told(() => counts().wash('mild'))); soaps.mild = { wash: class Q {} }; console.log(told(() => counts().wash('mild'))); soaps.mild = new Proxy({}, { get: (o, k) => v => k + v }); console.log(told(() => counts().wash('mild')));
+let calls = 0; soaps.late = { wash(v) { if (++calls === 5) soaps.late.wash = w => w * 100; return v + 1; } }; console.log(told(() => counts().wash('late')), calls); soaps.hard = { wash(v) { if (v > 4) throw new RangeError('hard'); return -v; } }; const half = counts(); console.log(told(() => half.wash('hard')), half.text());
+class Back extends Line { walk(f) { for (let at = this.pegs.length; at-- > 0;) f.call(this, this.pegs[at], at); } } console.log(told(() => new Back(5, at => at - 1.5).wash('strong')), told(() => new Back(5, at => at).washBehind('rinse', counts())), new Back(4, () => 3).foam('odd'));
+const grown = counts(); soaps.grow = { wash(v) { if (v === 0) grown.pegs.push(1, 2); if (v === 8) grown.pegs.length = 3; return v; } }; console.log(told(() => grown.wash('grow')), grown.pegs.length); console.log(told(() => Line.prototype.wash.call({ pegs: [], walk(f) { f.call(this, 4, 1); return 'own'; } }, 'strong')), told(() => Line.prototype.foam.call({ walk: 3 }, 'strong')));

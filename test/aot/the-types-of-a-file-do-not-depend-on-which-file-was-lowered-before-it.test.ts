@@ -45,19 +45,11 @@ export const through = (value, step) => step(value);
 }
 export declare const good: <A>(value: A) => Outcome<A, never>;
 export declare const bad: <E>(error: E) => Outcome<never, E>;
-export declare const handle: <
-  E,
-  Cases extends {
-    [K in Extract<E, { tag: string }>["tag"]]+?: (error: Extract<E, { tag: K }>) => Outcome<any, any>;
-  } & (unknown extends E ? {} : { [K in Exclude<keyof Cases, Extract<E, { tag: string }>["tag"]>]: never }),
->(
+export type TagOf<Trouble> = Trouble extends { readonly tag: infer Tag extends string } ? Tag : never;
+export type With<Trouble, Name> = (trouble: Extract<Trouble, { readonly tag: Name }>) => Outcome<any, any>;
+export declare const handle: <E, Cases extends { [Name in TagOf<E> | keyof Cases]?: Name extends TagOf<E> ? With<E, Name> : never }>(
   cases: Cases,
-) => <A>(
-  self: Outcome<A, E>,
-) => Outcome<
-  A | { [K in keyof Cases]: Cases[K] extends (...args: Array<any>) => Outcome<infer B, any> ? B : never }[keyof Cases],
-  Exclude<E, { tag: keyof Cases }>
->;
+) => <A>(self: Outcome<A, E>) => Outcome<A, Exclude<E, { readonly tag: keyof Cases }>>;
 export declare const through: <A, B>(value: A, step: (value: A) => B) => B;
 `,
   "other/early.ts": `import { bad, good, handle, through, type Outcome } from "outcomes";

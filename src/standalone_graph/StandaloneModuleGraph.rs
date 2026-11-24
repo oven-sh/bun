@@ -10,23 +10,21 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
+use bun_core::strings;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 pub use bun_options_types::standalone_path::is_bun_standalone_file_path;
-#[cfg(not(windows))]
-use bun_paths::SEP_STR;
-use bun_paths::fs as bun_fs;
-use bun_paths::{self as path, PathBuffer, strings};
+use bun_paths::{self as path, fs as bun_fs};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_resolver::compiled_program::{
-    CompiledEntryPoint, CompiledProgram, ImageFile, join_public_file_path,
+    CompiledEntryPoint, CompiledProgram, ImageFile, compare_source_paths, join_public_path,
 };
 use bun_sourcemap as SourceMap;
 use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
-use bun_sys::{self as Syscall, E, Fd, Stat};
+use bun_sys::{self as Syscall, E, Fd, Stat, UnlinkOnDrop};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
 use crate::executable_file::{
@@ -184,7 +182,7 @@ impl StandaloneModuleGraph {
 
     pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
         #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
         self.files
@@ -239,34 +237,30 @@ impl StandaloneModuleGraph {
             self.fill_stat_for_file_system_alone(file.name, &mut stat);
             return Some(stat);
         }
-        let mut buffer = bun_paths::path_buffer_pool::get();
+        let mut buffer = path::Path::new();
         let key = self.directory_key(name, &mut buffer)?;
         let mut stat = dir_stat();
         self.fill_stat_for_file_system_alone(key, &mut stat);
         Some(stat)
     }
 
-    pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut path::Path) -> &'a [u8] {
         #[cfg(windows)]
         let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
         let _ = buf;
-        let mut name = name;
-        while name.last() == Some(&b'/') {
-            name = &name[..name.len() - 1];
-        }
-        name
+        strings::trim_right(name, b"/")
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         self.directory_key(name, &mut buf).is_some()
     }
 
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         if let Some(key) = self.directory_key(name, &mut buf) {
             if let Some((shared, _)) = self.find_folders_named_alike(name, key) {
                 return Ok(keep_key_of_directory_with_code_alone(&shared));
@@ -286,7 +280,7 @@ impl StandaloneModuleGraph {
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         let found = self.directory_key(name, &mut buf)?;
         let mut listed = self.list_folder(found, recursive);
         let others = self.find_folders_named_alike(name, found);
@@ -307,7 +301,7 @@ impl StandaloneModuleGraph {
             }
         }
         if !is_bun_standalone_file_path(name) {
-            let name = strings::without_trailing_slash(name);
+            let name = path::without_trailing_sep(name);
             listed.retain(|(below, is_folder)| {
                 self.holds_at_source_path(&[name, b"/", below].concat(), *is_folder)
             });
@@ -317,7 +311,7 @@ impl StandaloneModuleGraph {
 
     /// Whoever walks a folder holds its path for as long as the process lives.
     pub fn keep_folder_path(path: &[u8]) -> &'static [u8] {
-        keep_key_of_directory_with_code_alone(strings::without_trailing_slash(path))
+        keep_key_of_directory_with_code_alone(path::without_trailing_sep(path))
     }
 
     pub(crate) fn list_folder(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
@@ -339,12 +333,29 @@ impl StandaloneModuleGraph {
                 let _ = seen.put(rel, is_dir);
             }
         };
-        // An entry point that was compiled ahead of time is listed below, under the name of its source.
-        let is_compiled_entry_point = |index: usize| {
-            let program = self.compiled_program.as_ref();
-            program.is_some_and(|program| {
-                u32::try_from(index)
-                    .is_ok_and(|index| program.entry_point_by_file_index(index).is_some())
+        // An entry point that was compiled ahead of time is listed below, under the name of its source, and so is an embedded copy of that source, which has a later record with the same module.
+        let is_listed_below = |index: usize, key: &[u8]| {
+            let found = self.compiled_program.as_ref().and_then(|program| {
+                let index = u32::try_from(index).ok()?;
+                Some((program, program.entry_point_by_file_index(index)?))
+            });
+            found.is_some_and(|(program, entry_point)| {
+                // An asset, or a file that is imported as one, may have the name of an entry point's empty file.
+                // The file of an entry point differs from its module in the extension alone, wherever it stands among the files.
+                let has_name_of_module = || {
+                    let stem = |name: &'_ [u8]| name.len() - path::extension(name).len();
+                    let module = entry_point.module_path;
+                    compare_source_paths(&key[..stem(key)], &module[..stem(module)]).is_eq()
+                };
+                let has_earlier_record = || {
+                    program.entry_points.iter().any(|other| {
+                        other.file_index < entry_point.file_index
+                            && other.module_id == entry_point.module_id
+                    })
+                };
+                let is_copy = || !has_name_of_module() && has_earlier_record();
+                self.find_file_record(key).is_none()
+                    && (self.files.values()[index].loader.is_javascript_like() || is_copy())
             })
         };
         for (index, key) in self.files.keys().iter().enumerate() {
@@ -352,7 +363,7 @@ impl StandaloneModuleGraph {
                 compiled_program::is_removed_by_program(key)
                     && compiled_program::find_written_file(key).is_none()
             };
-            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
+            if !is_listed_below(index, key) && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }
@@ -382,7 +393,7 @@ impl StandaloneModuleGraph {
             for entry_point in program.entry_points_in_directory(name) {
                 source_path.clear();
                 source_path.extend_from_slice(entry_point.source_path);
-                path::resolve_path::platform_to_posix_in_place::<u8>(&mut source_path);
+                path::to_portable_in_place::<u8>(&mut source_path);
                 push(&source_path, false);
             }
             program.for_each_module_below(name, &mut |path| {
@@ -406,7 +417,7 @@ impl StandaloneModuleGraph {
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = path::Path::new();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
         if self.compiled_program.is_none() || self.files.contains_key(name) {
@@ -433,11 +444,10 @@ fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
 }
 
 #[cfg(windows)]
-pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
-    let input = strings::paths::without_nt_prefix::<u8>(name);
-    let length = path::resolve_path::platform_to_posix_buf::<u8>(input, buf).len();
-    let length = normalize_windows_key(&mut buf[..length]);
-    &buf[..length]
+pub(crate) fn normalize_file_key<'a>(name: &[u8], key: &'a mut path::Path) -> &'a [u8] {
+    *key = path::Path::from(path::without_nt_prefix(name)).into_portable();
+    let length = normalize_windows_key(key.as_mut_slice());
+    &key[..length]
 }
 
 /// Keys have an uppercase drive letter and no trailing separator. Returns the new length.
@@ -1712,7 +1722,7 @@ fn encode_text_module(
 
 /// The embedded bunfs key for an output file, relative to the prefix.
 fn module_dest_path(output_file: &OutputFile) -> &[u8] {
-    bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
+    bun_paths::without_leading_dot_slash(&output_file.dest_path)
 }
 
 /// The bunfs key under which modules beside a file above the root directory are mounted.
@@ -1723,7 +1733,7 @@ fn key_above_root(
 ) -> Option<Vec<u8>> {
     let dest_path = module_dest_path(output_file);
     let program = program.filter(|_| dest_path.starts_with(b"../"))?;
-    join_public_file_path(
+    join_public_path(
         prefix,
         program.levels_above_root as usize,
         prefix,
@@ -1997,12 +2007,7 @@ pub(crate) fn to_bytes(
                 let mut dump_rel: Vec<u8> = Vec::new();
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    dump_code_dir,
-                    &mut path_buf[..],
-                    &[&dump_rel],
-                );
+                let dest_z = path::Path::join(&[dump_code_dir, &dump_rel]);
 
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
@@ -2372,54 +2377,27 @@ impl CompileResult {
 /// the open file plus the absolute path it was created at, which the caller
 /// renames into place (an fd cannot be mapped back to a path on every
 /// filesystem).
-pub(crate) struct Injected<'a> {
+pub(crate) struct Injected {
     pub file: ExecutableFile,
-    pub temp_path: &'a ZStr,
+    pub temp_path: UnlinkOnDrop<path::Path>,
 }
 
-/// The temp copy while `inject` writes it: deleted unless `file` is taken out.
+/// The temp copy while `inject` writes it.
 struct UnfinishedCopy<'a> {
-    file: Option<ExecutableFile>,
-    name: &'a ZStr,
+    file: ExecutableFile,
+    name: UnlinkOnDrop<&'a ZStr>,
 }
 
-impl<'a> UnfinishedCopy<'a> {
-    fn new(file: ExecutableFile, name: &'a ZStr) -> Self {
-        Self {
-            file: Some(file),
-            name,
-        }
-    }
-}
-
-impl Drop for UnfinishedCopy<'_> {
-    fn drop(&mut self) {
-        let Some(file) = self.file.take() else { return };
-        // Make the file writable so we can delete it
-        #[cfg(unix)]
-        let _ = Syscall::fchmod(file.fd(), 0o700);
-        drop(file);
-        let _ = Syscall::unlink(self.name);
-    }
-}
-
-impl<'a> Injected<'a> {
+impl Injected {
     /// `copy` was opened relative to `cwd` (or by an absolute name); pin the name in
-    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
-    fn new(
-        mut copy: UnfinishedCopy<'_>,
-        cwd: &[u8],
-        temp_path_buf: &'a mut PathBuffer,
-    ) -> Injected<'a> {
-        let temp_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-            cwd,
-            &mut temp_path_buf[..],
-            &[copy.name.as_bytes()],
-        );
-        Injected {
-            file: copy.file.take().expect("taken once"),
-            temp_path,
-        }
+    /// `temp_path` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(copy: UnfinishedCopy<'_>, cwd: &[u8]) -> Option<Injected> {
+        let temp_path = path::Path::resolve(&[cwd, &copy.name]).check_len().ok()?;
+        copy.name.keep();
+        Some(Injected {
+            file: copy.file,
+            temp_path: UnlinkOnDrop::new(Fd::cwd(), temp_path),
+        })
     }
 }
 
@@ -2428,15 +2406,14 @@ type ExecutableFile = bun_sys::close_on_fork::File;
 #[cfg(windows)]
 type ExecutableFile = bun_sys::File;
 
-pub(crate) fn inject<'a>(
+pub(crate) fn inject(
     payload: &mut PayloadParts<'_>,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
     output_directory: &[u8],
-    temp_path_buf: &'a mut PathBuffer,
     additions: &mut InjectionAdditions<'_>,
-) -> Option<Injected<'a>> {
+) -> Option<Injected> {
     additions.name_executable(payload);
     additions.log_part("behind the engine: name of the executable");
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -2454,7 +2431,7 @@ pub(crate) fn inject<'a>(
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
-    let mut zname_owned: Option<Box<[u8]>> = None;
+    let mut zname_owned: Option<path::Path> = None;
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
@@ -2469,7 +2446,7 @@ pub(crate) fn inject<'a>(
         Err(e) => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
-                bstr::BStr::new(e.name())
+                <&str>::from(e)
             );
             return None;
         }
@@ -2478,13 +2455,7 @@ pub(crate) fn inject<'a>(
     #[cfg(not(windows))]
     {
         if additions.has_code {
-            let beside = bun_core::strings::concat(&[
-                output_directory,
-                SEP_STR.as_bytes(),
-                zname.as_bytes(),
-                &[0],
-            ]);
-            zname = ZStr::from_slice_with_nul(zname_owned.insert(beside));
+            zname = zname_owned.insert(path::Path::from_parts(&[output_directory, zname]));
         }
     }
     #[cfg(windows)]
@@ -2495,24 +2466,17 @@ pub(crate) fn inject<'a>(
         {
             // copy self and then open it for writing
 
-            let mut in_buf = bun_paths::w_path_buffer_pool::get();
-            strings::copy_u8_into_u16(&mut in_buf, self_exe.as_bytes());
-            in_buf[self_exe.len()] = 0;
-            let mut out_buf = bun_paths::w_path_buffer_pool::get();
-            strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
-            out_buf[zname.len()] = 0;
-
-            use bun_core::WStr;
             use bun_sys::windows::{self as w, Win32ErrorExt as _};
-            let out = WStr::from_buf(&out_buf[..], zname.len());
-            if let Err(err) = w::CopyFileW(WStr::from_buf(&in_buf[..], self_exe.len()), out, false)
-            {
+            let out: &bun_core::WStr = &path::OSPath::from(zname);
+            let exe = path::OSPath::from(self_exe);
+            if let Err(err) = w::CopyFileW(&exe, out, false) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     err.to_system_errno()
                 );
                 return None;
             }
+            let name = UnlinkOnDrop::new(Fd::cwd(), zname);
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
@@ -2533,7 +2497,7 @@ pub(crate) fn inject<'a>(
                 }
             };
 
-            break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
+            break 'brk (file.fd(), UnfinishedCopy { file, name });
         }
 
         #[cfg(target_os = "macos")]
@@ -2541,9 +2505,10 @@ pub(crate) fn inject<'a>(
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
             if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
+                let name = UnlinkOnDrop::new(Fd::cwd(), zname);
                 let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
-                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), zname, flags, 0) {
-                    break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
+                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), &name, flags, 0) {
+                    break 'brk (file.fd(), UnfinishedCopy { file, name });
                 }
             }
         }
@@ -2580,16 +2545,11 @@ pub(crate) fn inject<'a>(
                                 // reached via `bun_bundler`'s public re-export so this
                                 // crate doesn't take a direct `bun_resolver` edge.
                                 {
-                                    let zname_z = bun_core::strings::concat(&[
+                                    let in_tmpdir = path::Path::from_parts(&[
                                         bun_bundler::bun_fs::RealFS::tmpdir_path(),
-                                        SEP_STR.as_bytes(),
-                                        bun_paths::basename(zname.as_bytes()),
-                                        &[0],
+                                        path::basename(zname),
                                     ]);
-                                    // Note: the concat buffer is parked in
-                                    // `zname_owned` (declared at fn entry) so it outlives the
-                                    // loop and drops at fn exit.
-                                    zname = ZStr::from_slice_with_nul(zname_owned.insert(zname_z));
+                                    zname = zname_owned.insert(in_tmpdir);
                                     continue;
                                 }
                             }
@@ -2612,7 +2572,9 @@ pub(crate) fn inject<'a>(
             unreachable!()
         };
         #[cfg(not(windows))]
-        let (fd, copy) = (file.fd(), UnfinishedCopy::new(file, zname));
+        let name = UnlinkOnDrop::new(Fd::cwd(), zname);
+        #[cfg(not(windows))]
+        let (fd, copy) = (file.fd(), UnfinishedCopy { file, name });
         #[cfg(not(windows))]
         let template = 'brk2: {
             for retry in 0..3 {
@@ -2721,7 +2683,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Some(Injected::new(copy, cwd, temp_path_buf));
+            return Injected::new(copy, cwd);
         }
         CompileTargetOs::Windows => {
             let bytes = payload.joined();
@@ -2778,7 +2740,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Some(Injected::new(copy, cwd, temp_path_buf));
+            return Injected::new(copy, cwd);
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -2875,7 +2837,7 @@ pub(crate) fn inject<'a>(
             {
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
-            return Some(Injected::new(copy, cwd, temp_path_buf));
+            return Injected::new(copy, cwd);
         }
         _ => {
             if additions.needs_executable_format() {
@@ -2956,7 +2918,7 @@ pub(crate) fn inject<'a>(
                 bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
-            return Some(Injected::new(copy, cwd, temp_path_buf));
+            return Injected::new(copy, cwd);
         }
     }
 }
@@ -3044,20 +3006,17 @@ pub(crate) fn download_to_path(
             }
 
             {
+                use bun_zlib::{Inflater, inflate};
                 refresher.start(b"Decompressing", 0);
-                let gunzip_result = (|| -> crate::Result<()> {
-                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
-                        compressed_archive_bytes.list.as_slice(),
-                        &mut tarball_bytes,
-                    )
-                    .map_err(|_| crate::Error::InvalidResponse)?;
-                    gunzip
-                        .read_all(true)
-                        .map_err(|_| crate::Error::InvalidResponse)?;
-                    Ok(())
-                })();
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut compressed_archive_bytes.list.as_slice(),
+                    &mut tarball_bytes,
+                    usize::MAX,
+                );
                 refresher.end();
-                gunzip_result?;
+                if status != Ok(inflate::Status::StreamEnd) {
+                    return Err(crate::Error::InvalidResponse);
+                }
             }
             refresher.refresh();
 
@@ -3065,13 +3024,12 @@ pub(crate) fn download_to_path(
                 refresher.start(b"Extracting", 0);
 
                 let mut tmpname_buf = [0u8; 1024];
-                let tempdir_name: &ZStr =
-                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+                let tempdir_name = bun_sys::DeleteTreeOnDrop::new(
+                    Fd::cwd(),
+                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?,
+                );
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
-                scopeguard::defer! {
-                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
-                }
                 let extract_res = bun_archive::Archiver::extract_to_dir(
                     tarball_bytes.as_slice(),
                     tmpdir.fd(),
@@ -3100,7 +3058,7 @@ pub(crate) fn download_to_path(
                     if mv.is_err() {
                         if !did_retry {
                             did_retry = true;
-                            let dirname = path::dirname_simple(dest_z.as_bytes());
+                            let dirname = path::dirname_or_root(dest_z.as_bytes());
                             if !dirname.is_empty() {
                                 let _ = bun_sys::Dir::cwd().make_path(dirname);
                                 continue;
@@ -3114,7 +3072,6 @@ pub(crate) fn download_to_path(
                     }
                     break;
                 }
-                drop(tmpdir);
                 refresher.end();
             }
             refresher.refresh();
@@ -3143,27 +3100,25 @@ pub fn target_executable(
             }
         }
     } else {
-        let mut exe_path_buf = bun_paths::path_buffer_pool::get();
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z =
-            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
-                Ok(dest) => dest,
-                Err(_) => {
-                    return Err(CompileError::fmt(format_args!(
-                        "Cache directory path for '{}' is too long: {}",
-                        target,
-                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
-                    )));
-                }
-            };
+        let dest_z = match target.exe_path(version_zstr, env, &mut needs_download) {
+            Ok(dest) => dest,
+            Err(_) => {
+                return Err(CompileError::fmt(format_args!(
+                    "Cache directory path for '{}' is too long: {}",
+                    target,
+                    bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                )));
+            }
+        };
 
         if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
+            if let Err(e) = download_to_path(target, env, &dest_z) {
                 return Err(match e {
                     crate::Error::TargetNotFound => CompileError::fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
@@ -3299,7 +3254,6 @@ pub fn to_executable(
         Err(e) => return Ok(CompileResult::Err(e)),
     };
 
-    let mut temp_path_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let output_directory: &[u8] = b".";
     #[cfg(not(windows))]
@@ -3328,7 +3282,6 @@ pub fn to_executable(
         windows_options,
         target,
         output_directory,
-        &mut temp_path_buf,
         &mut injection,
     ) else {
         // inject() has already printed the specific error.
@@ -3364,43 +3317,23 @@ pub fn to_executable(
                 )));
             }
         };
-        let dest_path = if bun_paths::is_absolute(outfile) {
-            outfile
-        } else {
-            path::resolve_path::join_abs_string::<path::platform::Auto>(cwd_path, &[outfile])
-        };
+        let dest_path: &[u8] = &path::Path::resolve(&[cwd_path, outfile]);
 
-        // Convert paths to Windows UTF-16
-        let mut temp_buf_w = bun_paths::os_path_buffer_pool::get();
-        let mut dest_buf_w = bun_paths::os_path_buffer_pool::get();
-        let temp_w_len = strings::paths::to_w_path_normalized(&mut temp_buf_w, temp_path).len();
-        let dest_w_len = strings::paths::to_w_path_normalized(&mut dest_buf_w, dest_path).len();
-
-        // `to_w_path_normalized` already NUL-terminates (`buf[len] = 0`); the
-        // explicit re-slice below is just to derive the wide-string pointers.
-        let temp_buf_u16: &mut [u16] = &mut temp_buf_w;
-        let dest_buf_u16: &mut [u16] = &mut dest_buf_w;
-        temp_buf_u16[temp_w_len] = 0;
-        dest_buf_u16[dest_w_len] = 0;
+        let temp_w = bun_sys::win32_path(temp_path, bun_sys::Tag::rename)?;
+        let dest_w = bun_sys::win32_path(dest_path, bun_sys::Tag::rename)?;
 
         // Close the file handle before moving (Windows requires this)
         drop(injected.file);
 
-        use bun_sys::windows;
-        // Move the file using MoveFileExW
-        // SAFETY: NUL-terminated wide strings constructed above.
-        if unsafe {
-            windows::kernel32::MoveFileExW(
-                temp_buf_u16.as_ptr(),
-                dest_buf_u16.as_ptr(),
-                windows::MOVEFILE_COPY_ALLOWED
-                    | windows::MOVEFILE_REPLACE_EXISTING
-                    | windows::MOVEFILE_WRITE_THROUGH,
-            )
-        } == windows::FALSE
-        {
-            let err = windows::last_system_errno();
-            let _ = Syscall::unlink(injected.temp_path);
+        use bun_sys::windows::{self, Win32ErrorExt as _};
+        if let Err(err) = windows::MoveFileExW(
+            &temp_w,
+            &dest_w,
+            windows::MOVEFILE_COPY_ALLOWED
+                | windows::MOVEFILE_REPLACE_EXISTING
+                | windows::MOVEFILE_WRITE_THROUGH,
+        ) {
+            let err = err.to_system_errno();
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
@@ -3413,6 +3346,7 @@ pub fn to_executable(
                 err
             )));
         }
+        injected.temp_path.keep();
 
         // Set Windows icon and/or metadata using unified function
         if windows_options.icon.is_some()
@@ -3424,7 +3358,7 @@ pub fn to_executable(
         {
             // The file has been moved to dest_path
             if let Err(e) = windows::rescle::set_windows_metadata(
-                bun_core::WStr::from_buf(dest_buf_u16, dest_w_len),
+                &dest_w,
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),
@@ -3443,17 +3377,12 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let temp_posix = injected.temp_path;
-        // `resolve_path::z` returns "" for a name that's too long, which would make the rename fail with ENOENT.
-        let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
+        let temp_posix: &ZStr = &injected.temp_path;
+        let outfile_posix = path::Path::from(bun_paths::basename(outfile));
 
         if let Err(e) =
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
-            drop(injected.file);
-
-            let _ = Syscall::unlink(temp_posix);
-
             if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
@@ -3468,6 +3397,7 @@ pub fn to_executable(
                 )));
             }
         }
+        injected.temp_path.keep();
 
         Ok(CompileResult::Success)
     }
@@ -3918,21 +3848,12 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let offset = string_payload.len();
 
-        let bound = bun_zstd::compress_bound(utf8.len());
-        // `ZSTD_compressBound` returns an *error code* (a value near
-        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
-        // feeding that to `Vec::reserve` below would abort with a capacity
-        // overflow instead of failing the build.
-        if bun_zstd::is_error(bound) {
-            return Err(crate::Error::SourceMapTooLarge);
-        }
-        string_payload.reserve(bound);
-        if let bun_zstd::Result::Err(err_msg) =
-            bun_zstd::compress_append(string_payload, utf8, Some(1))
-        {
+        // Not just what this one needs, as more follow.
+        string_payload
+            .reserve(bun_zstd::compress_bound(utf8.len()).ok_or(crate::Error::SourceMapTooLarge)?);
+        if let Err(err) = bun_zstd::compress_append(string_payload, utf8, 1) {
             Output::panic(format_args!(
-                "Unexpected error compressing sourcemap: {}",
-                bstr::BStr::new(err_msg.as_bytes())
+                "Unexpected error compressing sourcemap: {err}"
             ));
         }
 

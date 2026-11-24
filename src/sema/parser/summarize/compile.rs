@@ -77,6 +77,8 @@ pub fn parse_for_compile_in<'s>(
         ignores_pure_comments: options.ignores_pure_comments,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
+        drops_comments: false,
+        may_use_helpers: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();

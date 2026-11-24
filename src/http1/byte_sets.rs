@@ -24,3 +24,44 @@ pub(crate) static QUOTED_TEXT: ByteSet = ByteSet::new(&[
     b']'..=b'~',
     0x80..=0xff,
 ]);
+
+/// RFC 5234 `VCHAR`.
+pub(crate) static VISIBLE: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=b'~')));
+
+/// RFC 3986 §3.2 `authority`, but for `@`.
+pub(crate) static AUTHORITY: ByteSet = ByteSet::new(&[
+    b'!'..=b'!',
+    b'$'..=b'.',
+    b'0'..=b';',
+    b'='..=b'=',
+    b'A'..=b'[',
+    b']'..=b']',
+    b'_'..=b'_',
+    b'a'..=b'z',
+    b'~'..=b'~',
+]);
+
+/// [`CONTENT`], but for the comma.
+pub(crate) static LIST_ELEMENT: ByteSet =
+    ByteSet::new(&[b'\t'..=b'\t', b' '..=b'+', b'-'..=b'~', 0x80..=0xff]);
+
+/// All but CR and LF.
+pub(crate) static LINE: ByteSet = ByteSet::new(&[0..=9, 11..=12, 14..=0xff]);
+
+/// All but CR, LF and NUL: <https://fetch.spec.whatwg.org/#header-value>
+pub(crate) static RELAXED_CONTENT: ByteSet = ByteSet::new(&[1..=9, 11..=12, 14..=0xff]);
+
+/// [`CONTENT`] and DEL.
+pub(crate) static CONTENT_OR_DELETE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
+
+pub(crate) static ABOVE_SPACE: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
+
+pub(crate) static NOT_COMMA: ByteSet = ByteSet::new(&[0..=b'+', b'-'..=0xff]);
+
+pub(crate) static NOT_QUESTION_MARK: ByteSet = ByteSet::new(&[0..=b'>', b'@'..=0xff]);
+
+pub(crate) static NOT_SLASH: ByteSet = ByteSet::new(&[0..=b'.', b'0'..=0xff]);
+
+pub(crate) static METHOD: ByteSet = ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z', b'a'..=b'z']);
+
+pub(crate) static UPPERCASE_METHOD: ByteSet = ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z']);

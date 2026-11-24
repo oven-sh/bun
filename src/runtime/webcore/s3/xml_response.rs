@@ -117,6 +117,13 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     Node::of(&root).map(read)
 }
 
+/// `<InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>`
+pub(crate) fn parse_upload_id(body: &[u8]) -> Option<Box<[u8]>> {
+    parse(body, |root| {
+        (root.name == b"InitiateMultipartUploadResult").then(|| root.child_text(b"UploadId"))?
+    })?
+}
+
 /// The `<Code>` and `<Message>` (each if present and non-empty) of an S3
 /// `<Error>` document; `None` if the body is not one.
 pub(crate) struct ErrorBody {

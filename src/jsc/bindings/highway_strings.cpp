@@ -380,6 +380,33 @@ size_t LineStartsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint32_
     return static_cast<size_t>(end - out);
 }
 
+static HWY_INLINE uint64_t ByteBitsOfBlock(const uint8_t* HWY_RESTRICT block, uint8_t byte)
+{
+    const hn::CappedTag<uint8_t, 64> d;
+    const size_t N = hn::Lanes(d);
+    const auto vec_byte = hn::Set(d, byte);
+    uint64_t bits = 0;
+    for (size_t i = 0; i < 64; i += N) {
+        bits |= hn::BitsFromMask(d, hn::Eq(hn::LoadU(d, block + i), vec_byte)) << i;
+    }
+    return bits;
+}
+
+// One bit for every byte of `text`, the lowest bit of `out[0]` first: whether it is `byte`.
+// `out` gets ceil(text_len / 64) words. The bits past the end of the text are clear.
+void ByteBitsImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t byte, uint64_t* HWY_RESTRICT out)
+{
+    const size_t whole_blocks = text_len / 64;
+    for (size_t i = 0; i < whole_blocks; ++i) {
+        out[i] = ByteBitsOfBlock(text + 64 * i, byte);
+    }
+    if (const size_t rest = text_len % 64) {
+        uint8_t last_block[64] = {};
+        std::memcpy(last_block, text + 64 * whole_blocks, rest);
+        out[whole_blocks] = ByteBitsOfBlock(last_block, byte) & ((uint64_t { 1 } << rest) - 1);
+    }
+}
+
 // Packs groups of four words: the sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes.
 // Writes a control byte for each group. `data` has 16 bytes of room for each. Returns the number of bytes used there.
 size_t PackWordsImpl(const uint32_t* HWY_RESTRICT words, size_t groups, uint8_t* HWY_RESTRICT controls, uint8_t* HWY_RESTRICT data)
@@ -2763,6 +2790,7 @@ HWY_EXPORT(IndexOfUntidySlashImpl);
 HWY_EXPORT(IndexOfUntidySlashOrNonAsciiImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
+HWY_EXPORT(ByteBitsImpl);
 HWY_EXPORT(LineStartsImpl);
 HWY_EXPORT(LowerAscii16Impl);
 HWY_EXPORT(LowerAsciiImpl);
@@ -2982,6 +3010,11 @@ size_t highway_index_of_interesting_character_in_multiline_comment(const uint8_t
 void highway_scanner_run_stops(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t* HWY_RESTRICT out, size_t plane_len)
 {
     BUN_HWY_DISPATCH(ScannerRunStopsImpl)(text, text_len, out, plane_len);
+}
+
+void highway_byte_bits(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t byte, uint64_t* HWY_RESTRICT out)
+{
+    BUN_HWY_DISPATCH(ByteBitsImpl)(text, text_len, byte, out);
 }
 
 void highway_odd_blocks(const uint8_t* HWY_RESTRICT text, size_t text_len, uint64_t* HWY_RESTRICT out)

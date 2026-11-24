@@ -66,7 +66,7 @@ unsafe extern "C" {
 
 /// Turns the coefficients of a macroblock's 24 blocks into what is added to their prediction. Four blocks are side by
 /// side, in four rows of 16. If none of them has its bit in `non_zero` set, they are left alone. Otherwise those that
-/// do not have it have only zeros.
+/// do not have it have only zeros. All sums wrap at 16 bits, as in libwebp's `Transform_SSE2()`.
 #[inline(always)]
 pub fn inverse_dct(coefficients: &mut [[i16; 64]; 6], non_zero: u32) {
     highway_webp_inverse_dct(coefficients, non_zero);

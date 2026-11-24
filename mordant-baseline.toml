@@ -40,7 +40,6 @@
 "field_valid_only_when:src/format/css/postcss.rs" = 1
 
 [bun_http]
-"bound_checked_only_in_debug:src/http/websocket.rs" = 1
 "freed_while_borrowed:src/http/AsyncHTTP.rs" = 1
 "generic_body_not_generic:src/http/HTTPContext.rs" = 1
 "generic_body_not_generic:src/http/lib.rs" = 2
@@ -109,10 +108,6 @@
 "parallel_vecs:src/parsers/xml.rs" = 1
 "unused_pub:src/parsers/yaml.rs" = 2
 
-[bun_paths]
-"generic_body_not_generic:src/paths/resolve_path.rs" = 1
-"safe_fn_returns_shared_mut:src/paths/resolve_path.rs" = 2
-
 [bun_ptr]
 "bound_checked_only_in_debug:src/ptr/weak_ptr.rs" = 1
 "unused_pub:src/ptr/ref_count.rs" = 2
@@ -134,7 +129,6 @@
 "always_unwrapped_option:src/runtime/bake/production/per_thread.rs" = 1
 "always_unwrapped_option:src/runtime/cli/init_command.rs" = 1
 "always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
-"always_unwrapped_option:src/runtime/webcore/streams.rs" = 1
 "bool_beside_option:src/runtime/shell/subproc.rs" = 1
 "bool_cluster:src/runtime/test_runner/pretty_format.rs" = 1
 "bound_checked_only_in_debug:src/runtime/bake/dev_server/serialized_failure.rs" = 1
@@ -152,7 +146,6 @@
 "freed_while_borrowed:src/runtime/node/node_fs.rs" = 1
 "freed_while_borrowed:src/runtime/webcore/fetch/FetchTasklet.rs" = 3
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
-"generic_body_not_generic:src/runtime/api/cron.rs" = 1
 "generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
 "generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
@@ -186,8 +179,6 @@
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/copy_file.rs" = 1
-"unsafe_send_covers_more_than_pointers:src/runtime/webcore/blob/read_file.rs" = 1
 
 [bun_sema]
 "parallel_vecs:src/sema/check/mod.rs" = 1
@@ -206,7 +197,6 @@
 "unsafe_send_covers_more_than_pointers:src/spawn/process.rs" = 1
 
 [bun_sql_jsc]
-"generic_body_not_generic:src/sql_jsc/mysql/MySQLConnection.rs" = 1
 "generic_body_not_generic:src/sql_jsc/postgres/PostgresSQLConnection.rs" = 1
 
 [bun_sys]
@@ -220,5 +210,5 @@
 [bun_uws_sys]
 "unused_pub:src/uws_sys/Loop.rs" = 2
 
-[bun_zstd]
-"unused_pub:src/zstd/lib.rs" = 2
+[bun_websocket]
+"bound_checked_only_in_debug:src/websocket/frame.rs" = 1

@@ -38,7 +38,9 @@ void populateESMExports(
     JSC::JSValue result,
     WTF::Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues,
-    bool ignoreESModuleAnnotation);
+    bool ignoreESModuleAnnotation,
+    // See SyntheticSourceProvider::createWithLazyExports.
+    bool mayBeLazy = false);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:

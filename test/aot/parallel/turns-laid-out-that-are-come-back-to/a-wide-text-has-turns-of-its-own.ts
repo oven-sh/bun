@@ -3,7 +3,7 @@
 // Here: a loop that leaves its turns at a line's end and comes back, one that never leaves, one over two texts of either width, one downward; texts of both widths, wide texts that hold
 // narrow units alone, every length round the eight turns of a row, and units that only a wide text can hold.
 const key: "go" = JSON.parse('"go"');
-const starts = { go(text: string): string { const found: number[] = []; let pos = 0, start = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); pos++; switch (ch) { case 13: if (text.charCodeAt(pos) === 10) pos++; case 10: found.push(start); start = pos; break; default: if (ch > 127 && (ch === 0x2028 || ch === 0x2029)) { found.push(start); start = pos; } } } found.push(start); return found.length + ":" + found.slice(-3).join(","); } };
+const widths = { go(text: string): string { const found: number[] = []; let at = 0, from = 0, odd = 0; while (at < text.length) { const unit = text.charCodeAt(at); at++; switch (unit) { case 9: if (at < text.length) at++; odd += at; break; case 10: found.push(at - from); from = at; break; default: if (unit > 900 && (unit === 0x416 || unit === 0xd83d)) { found.push(-unit); } } } return found.length + ":" + found.slice(-3).join(",") + ":" + (at - from) + ":" + odd; } };
 const hash = { go(text: string): number { let t = 7; for (let i = 0; i < text.length; i++) t = (t * 31 + text.charCodeAt(i)) | 0; return t; } };
 const pair = { go(a: string, b: string): number { let t = 0; const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) t = (t + a.charCodeAt(i) * 3 + b.charCodeAt(i)) | 0; return t; } };
 const down = { go(text: string): number { let t = 0, odd = 7; for (let i = text.length - 1; i >= 0; i--) { const v = text.charCodeAt(i); if (v === 10) { odd = (odd * 31 + i) | 0; continue; } t = (t + v) | 0; } return (t ^ odd) | 0; } };
@@ -18,7 +18,7 @@ for (const text of narrow) texts.push(fresh(text), wideOf(text), fresh(text.repl
 let all = 0;
 for (let index = 0; index < texts.length; index++) {
     const text = texts[index], other = texts[(index * 7 + 3) % texts.length];
-    const line = [text.length, starts[key](text), hash[key](text), pair[key](text, other), pair[key](other, text), down[key](text)].join(" ");
+    const line = [text.length, widths[key](text), hash[key](text), pair[key](text, other), pair[key](other, text), down[key](text)].join(" ");
     all = (all * 33 + hash[key](line)) | 0;
     if (index % 9 === 0) console.log(line);
 }

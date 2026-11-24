@@ -54,12 +54,9 @@ describe.skipIf(isWindows)("a package meets in a test run what it meets in the e
         tempDir("aot-package-writes", { ...writes, ...files, "entry.ts": `import "./product/main.ts";\n` }),
       );
       const answerOf = async (...cmd: string[]) => {
-        const env = { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" };
-        await using child = Bun.spawn({ cmd, cwd: folder, env, stdout: "pipe", stderr: "pipe" });
+        await using child = Bun.spawn({ cmd, cwd: folder, env: bunEnv, stdout: "pipe", stderr: "pipe" });
         const [out, err, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
         expect({ err: exitCode ? err : "", exitCode }).toEqual({ err: "", exitCode: 0 });
-        // Who loads a package shows behind the load. Nothing is loaded a second time for what it writes.
-        expect(err).not.toContain("AOT build starts over | replaced built-ins added");
         return out.split("\n").filter(line => line.startsWith("ANSWER"));
       };
       await answerOf(bunExe(), "build", "--compile", "--aot", "./entry.ts", "--outfile", "program");

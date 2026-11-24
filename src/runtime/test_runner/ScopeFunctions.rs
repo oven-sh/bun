@@ -1,6 +1,6 @@
 use core::fmt;
 use std::rc::Rc;
-use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
+use crate::test_runner::expect::show_unquoted;
 
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
@@ -245,8 +245,7 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
-            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
+            return Err(global.throw(format_args!("Expected array, got {}", show_unquoted(global, array))));
         }
 
         if !self.each.is_empty() {
@@ -372,8 +371,7 @@ pub(crate) fn call_as_function<'a>(
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
-            return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
+            return Err(global.throw(format_args!("Expected array, got {}", show_unquoted(global, this.each))));
         }
         // Vitest only spreads the rows if every row is an array.
         let mut spread_rows = this.rows == Rows::Each;
@@ -422,7 +420,7 @@ pub(crate) fn call_as_function<'a>(
 
                 let callback_args = if spread_rows { args_list.as_slice() } else { core::slice::from_ref(&item) };
                 let bound = if let Some(cb) = args.callback {
-                    let bound = JSValueTestExt::bind(cb.without_async_context(), global, item, &BunString::static_("cb"), 0.0, callback_args)?;
+                    let bound = cb.without_async_context().bind(global, item, &BunString::static_("cb"), 0.0, callback_args)?;
                     Some(bound.with_async_context_if_needed(global))
                 } else {
                     None
@@ -1078,7 +1076,7 @@ fn create_unbound(global: &JSGlobalObject, scope_functions: ScopeFunctions) -> J
 
 fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
     let call_fn = bun_jsc::JSFunction::create(global, name, Bun__ScopeFunctions__callAsFunction, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
+    let bound = call_fn.bind(global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     js::bound_set_cached(value, global, bound);
     Ok(bound)

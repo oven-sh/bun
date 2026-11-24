@@ -1,8 +1,5 @@
 use core::mem::size_of;
 
-#[cfg(debug_assertions)]
-use bun_core::strings;
-
 use super::bun_lockb::StreamType;
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
@@ -209,7 +206,7 @@ pub(crate) fn save(
         // We store pointers in Version.Value, so we can't just write it directly
         let remaining = buffers.dependencies.as_slice();
 
-        #[cfg(debug_assertions)]
+        #[cfg(all(windows, debug_assertions))]
         {
             for dep in remaining {
                 let path = match &dep.version.value {
@@ -223,7 +220,7 @@ pub(crate) fn save(
                     _ => continue,
                 };
                 let path = lockfile.str(path);
-                if strings::contains_char(path, b'\\') {
+                if bun_core::strings::contains_char(path, b'\\') {
                     panic!("windows separator in a path: {}", bstr::BStr::new(path));
                 }
             }

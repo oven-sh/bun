@@ -10,9 +10,10 @@ use core::mem::ManuallyDrop;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_collections::HashMap;
 use bun_core::io::WriterStorage;
+use bun_core::output::Destination;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
@@ -303,6 +304,92 @@ fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
     jsc::JsError::Thrown
 }
 
+/// What publishes to `console.log` of `node:diagnostics_channel`, while that has subscribers.
+fn log_hook(global: &JSGlobalObject) -> Option<JSValue> {
+    let hook = crate::cpp::Bun__consoleLogDiagnosticsHook(global);
+    (!hook.is_empty()).then_some(hook)
+}
+
+/// In Node `method` calls `console.log()`. The hook makes its arguments from `values`.
+/// True if a subscriber changed them: they are printed then, in place of what `method` prints.
+fn publish_log(
+    global: &JSGlobalObject,
+    hook: JSValue,
+    method: &'static str,
+    stream: Destination,
+    values: JSValue,
+) -> JsResult<bool> {
+    /// As for `console.log()`, in ConsoleObject.cpp.
+    const MAX_PRINTED: u64 = 255;
+
+    let method = BunString::static_(method).to_js(global)?;
+    let changed = hook.call_for_running_script(global, JSValue::UNDEFINED, &[values, method])?;
+    if changed.is_undefined() {
+        return Ok(false);
+    }
+    crate::MarkedArgumentBuffer::new(|rooted| {
+        let mut printed = Vec::new();
+        for index in 0..changed.get_length(global)?.min(MAX_PRINTED) {
+            let value = changed.get_index(global, index as u32)?;
+            rooted.append(value);
+            printed.push(value);
+        }
+        if printed.is_empty() {
+            printed.push(JSValue::js_empty_string(global));
+        }
+        print_message(
+            MessageType::Log,
+            MessageLevel::Log,
+            stream,
+            global,
+            &printed,
+        )
+    })?;
+    Ok(true)
+}
+
+/// True if nothing is left to print.
+#[cold]
+fn publish_labelled(
+    global: &JSGlobalObject,
+    hook: JSValue,
+    method: &'static str,
+    stream: Destination,
+    label: &BunString,
+    value: f64,
+    rest: &[JSValue],
+) -> bool {
+    let publish = || {
+        let head = [label.to_js(global)?, JSValue::js_number(value)];
+        let values = JSValue::create_empty_array(global, head.len() + rest.len())?;
+        for (index, &value) in head.iter().chain(rest).enumerate() {
+            values.put_index(global, index as u32, value)?;
+        }
+        publish_log(global, hook, method, stream, values)
+    };
+    publish().unwrap_or_else(|err| {
+        leave_pending(global, err);
+        true
+    })
+}
+
+#[cold]
+fn publish_table(global: &JSGlobalObject, hook: JSValue, text: &[u8]) -> JsResult<bool> {
+    let text = text.strip_suffix(b"\n").unwrap_or(text);
+    let text = crate::bun_string_jsc::create_utf8_for_js(global, text)?;
+    let values = JSValue::create_array_from_slice(global, &[text])?;
+    publish_log(global, hook, "table", Destination::Stdout, values)
+}
+
+/// The exception is already set on the VM (`JsError::Thrown`); for OOM
+/// make sure something is pending. Mirrors `host_fn::void_from_js_error`.
+fn leave_pending(global: &JSGlobalObject, err: jsc::JsError) {
+    if matches!(err, jsc::JsError::OutOfMemory) {
+        global.throw_out_of_memory_value();
+    }
+    debug_assert!(global.has_exception());
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 pub fn message_with_type_and_level(
     message_type: MessageType,
@@ -310,13 +397,12 @@ pub fn message_with_type_and_level(
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) {
-    if let Err(err) = message_with_type_and_level_(message_type, level, global, vals) {
-        // The exception is already set on the VM (`JsError::Thrown`); for OOM
-        // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
-        if matches!(err, jsc::JsError::OutOfMemory) {
-            global.throw_out_of_memory_value();
-        }
-        debug_assert!(global.has_exception());
+    let stream = match level {
+        MessageLevel::Warning | MessageLevel::Error => Destination::Stderr,
+        _ => Destination::Stdout,
+    };
+    if let Err(err) = print_message(message_type, level, stream, global, vals) {
+        leave_pending(global, err);
     }
 }
 
@@ -360,9 +446,10 @@ fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -
     Ok(())
 }
 
-fn message_with_type_and_level_(
+fn print_message(
     message_type: MessageType,
     level: MessageLevel,
+    stream: Destination,
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) -> JsResult<()> {
@@ -390,9 +477,9 @@ fn message_with_type_and_level_(
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
-    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let is_stderr = stream == Destination::Stderr;
+    let use_stderr = is_stderr || message_type == MessageType::Assert;
+    let stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
         Output::reset_terminal();
@@ -411,7 +498,7 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let enable_colors = if is_stderr {
         Output::enable_ansi_colors_stderr()
     } else {
         Output::enable_ansi_colors_stdout()
@@ -419,7 +506,7 @@ fn message_with_type_and_level_(
 
     let default_indent = console.default_indent.get();
 
-    let mut raw_writer = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let mut raw_writer = if is_stderr {
         console.error_writer()
     } else {
         console.writer()
@@ -470,10 +557,23 @@ fn message_with_type_and_level_(
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
             table_printer.value_formatter.indent += u32::from(default_indent);
 
-            if enable_colors {
-                let _ = table_printer.print_table::<true>(writer);
+            let hook = log_hook(global);
+            let mut text: Vec<u8> = Vec::new();
+            let target: &mut dyn bun_io::Write = if hook.is_some() { &mut text } else { writer };
+            let printed = if enable_colors {
+                table_printer.print_table::<true>(target)
             } else {
-                let _ = table_printer.print_table::<false>(writer);
+                table_printer.print_table::<false>(target)
+            };
+            if let (Some(hook), Ok(())) = (hook, printed) {
+                // A subscriber can wait for a thread that prints.
+                drop(stream_lock);
+                if !publish_table(global, hook, &text)? {
+                    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+                    let _ = writer.write_all(&text);
+                    let _ = writer.flush();
+                }
+                return Ok(());
             }
             let _ = writer.flush();
             return Ok(());
@@ -3214,12 +3314,7 @@ pub mod formatter {
                     self.print_getter_setter::<ENABLE_ANSI_COLORS, true>(writer_, value)
                 }
                 Tag::Array => self.print_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
-                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(
-                    writer_,
-                    value,
-                    js_type,
-                    &mut remove_before_recurse,
-                ),
+                Tag::Private => self.print_private::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::NativeCode => self.print_native_code(writer_, value),
                 Tag::Promise => self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Boolean => self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -4393,7 +4488,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
-            remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
             // LAYERING: this needs to downcast over
             // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
@@ -4430,25 +4524,12 @@ pub mod formatter {
                     jsc::JSType::Cell,
                 );
             } else if js_type != jsc::JSType::DOMWrapper {
-                if *remove_before_recurse {
-                    *remove_before_recurse = false;
-                    self.visited_remove(value);
-                }
-
                 if value.is_callable() {
-                    *remove_before_recurse = true;
                     return self.print_as::<C>(Tag::Function, writer_, value, js_type);
                 }
 
-                *remove_before_recurse = true;
                 return self.print_as::<C>(Tag::Object, writer_, value, js_type);
             }
-            if *remove_before_recurse {
-                *remove_before_recurse = false;
-                self.visited_remove(value);
-            }
-
-            *remove_before_recurse = true;
             self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
         }
 
@@ -5620,8 +5701,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     label: &BunString,
 ) {
     let this = vm_console(global_this);
-    let label = label.to_utf8();
-    let slice: &[u8] = &label;
+    let utf8 = label.to_utf8();
+    let slice: &[u8] = &utf8;
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let current = this.counts.with_mut(|counts| {
@@ -5634,6 +5715,20 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
         *counter.value_ptr = current;
         current
     });
+
+    if let Some(hook) = log_hook(global_this)
+        && publish_labelled(
+            global_this,
+            hook,
+            "count",
+            Destination::Stdout,
+            label,
+            f64::from(current),
+            &[],
+        )
+    {
+        return;
+    }
 
     let writer = this.writer();
     if Output::enable_ansi_colors_stdout() {
@@ -5693,13 +5788,13 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(label: &BunString) {
 
 #[unsafe(no_mangle)]
 #[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(label: &BunString) {
+pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(global: &JSGlobalObject, label: &BunString) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
 
-    let label = label.to_utf8();
-    let slice: &[u8] = &label;
+    let utf8 = label.to_utf8();
+    let slice: &[u8] = &utf8;
     let id = bun_wyhash::hash(slice);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
@@ -5708,9 +5803,22 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(label: &BunString) {
     };
     let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
+    let elapsed =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+    if let Some(hook) = log_hook(global)
+        && publish_labelled(
+            global,
+            hook,
+            "time",
+            Destination::Stderr,
+            label,
+            elapsed,
+            &[],
+        )
+    {
+        return;
+    }
+    Output::print_elapsed(elapsed);
     match slice.len() {
         0 => Output::print_errorln(format_args!("")),
         _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
@@ -5731,16 +5839,31 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     }
 
-    let label = label.to_utf8();
-    let slice: &[u8] = &label;
+    // SAFETY: caller passes a valid (args, args_len) pair.
+    let args = unsafe { bun_core::ffi::slice(args, args_len) };
+    let utf8 = label.to_utf8();
+    let slice: &[u8] = &utf8;
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
+    let elapsed =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+    if let Some(hook) = log_hook(global)
+        && publish_labelled(
+            global,
+            hook,
+            "time",
+            Destination::Stderr,
+            label,
+            elapsed,
+            args,
+        )
+    {
+        return;
+    }
+    Output::print_elapsed(elapsed);
     match slice.len() {
         0 => {}
         _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
@@ -5756,8 +5879,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.can_throw_stack_overflow = true;
     let mut writer = vm_console(global).error_writer();
-    // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    for &arg in args {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
@@ -5795,10 +5917,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
     text: JSValue,
 ) {
     if let Err(err) = print_one_text(MessageLevel::from_raw(level), global, text) {
-        if matches!(err, jsc::JsError::OutOfMemory) {
-            global.throw_out_of_memory_value();
-        }
-        debug_assert!(global.has_exception());
+        leave_pending(global, err);
     }
 }
 

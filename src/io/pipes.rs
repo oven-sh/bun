@@ -4,18 +4,18 @@ use core::cell::Cell;
 #[cfg(not(windows))]
 use bun_ptr::{CellExt as _, OptionCellExt as _};
 #[cfg(not(windows))]
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd, MaybeOwnedFile};
 
 #[cfg(not(windows))]
 use crate::posix_event_loop::OneShotFlag;
 #[cfg(not(windows))]
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, OwnedFilePoll, Owner};
 
-/// An fd, and its poll once it is waited on. Dropping it releases the poll. The fd stays open.
+/// An fd, and its poll once it is waited on.
 #[cfg(not(windows))]
 pub(crate) struct PipeHandle {
     /// `INVALID` when closed.
-    fd: Cell<Fd>,
+    file: Cell<MaybeOwnedFile>,
     /// Forced: the kernel keeps a fired poll for as long as the file is open.
     poll: Cell<Option<OwnedFilePoll<true>>>,
     owner: Cell<Owner>,
@@ -25,7 +25,7 @@ pub(crate) struct PipeHandle {
 impl PipeHandle {
     pub(crate) const fn closed() -> Self {
         Self {
-            fd: Cell::new(Fd::INVALID),
+            file: Cell::new(MaybeOwnedFile::INVALID),
             poll: Cell::new(None),
             owner: Cell::new(Owner::NULL),
         }
@@ -50,7 +50,11 @@ impl PipeHandle {
     }
 
     pub(crate) fn get_fd(&self) -> Fd {
-        self.fd.get()
+        self.file.with_taken(|file| file.fd())
+    }
+
+    pub(crate) fn owns_file(&self) -> bool {
+        self.file.with_taken(|file| file.is_owned())
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -70,22 +74,26 @@ impl PipeHandle {
         self.with_poll(|poll| poll.set_flag(flag));
     }
 
-    /// Releases the poll. The fd that `fd` replaces stays open.
-    pub(crate) fn set_fd(&self, fd: Fd) {
-        self.poll.set(None);
-        self.fd.set(fd);
+    pub(crate) fn set_file(&self, file: MaybeOwnedFile) {
+        self.close();
+        self.file.set(file);
     }
 
-    pub(crate) fn set_poll(&self, ev: EventLoopHandle, fd: Fd) {
+    /// Releases the poll.
+    pub(crate) fn take_file(&self) -> MaybeOwnedFile {
+        self.poll.set(None);
+        self.file.take()
+    }
+
+    pub(crate) fn add_poll(&self, ev: EventLoopHandle) {
         // SAFETY: `set_owner`'s contract. Nothing is dispatched to `Owner::NULL`.
-        let poll = unsafe { OwnedFilePoll::new(ev, fd, self.owner.get()) };
+        let poll = unsafe { OwnedFilePoll::new(ev, self.get_fd(), self.owner.get()) };
         self.poll.set(Some(poll));
-        self.fd.set(fd);
     }
 
     /// Leaves `other` closed. Both keep their owner.
     pub(crate) fn take_from(&self, other: &PipeHandle) {
-        self.fd.set(other.fd.replace(Fd::INVALID));
+        self.set_file(other.file.take());
         self.poll.set(other.poll.take());
         // SAFETY: `set_owner`'s contract.
         self.with_poll(|poll| unsafe { poll.set_owner(self.owner.get()) });
@@ -98,8 +106,7 @@ impl PipeHandle {
     }
 
     /// `false` if it was closed already.
-    pub(crate) fn close_impl(&self, close_fd: bool) -> bool {
-        let fd = self.get_fd();
+    pub(crate) fn close(&self) -> bool {
         #[cfg(not(target_os = "macos"))]
         let close_async = true;
         // kqueue misses the EOF of a non-blocking FIFO whose write end closes on another thread just before the read end is re-armed.
@@ -107,21 +114,26 @@ impl PipeHandle {
         let close_async = self.with_poll(|poll| {
             poll.has_flag(FilePollFlag::PollWritable) && poll.has_flag(FilePollFlag::Nonblocking)
         }) != Some(true);
-        self.set_fd(Fd::INVALID);
-
-        if fd == Fd::INVALID {
-            return false;
-        }
-        if close_async && close_fd {
-            crate::closer::Closer::close(fd, ());
-        } else if close_fd {
-            let _ = fd.close_allowing_bad_file_descriptor(None);
+        match self.take_file() {
+            MaybeOwnedFile::Owned(file) if close_async => crate::closer::Closer::close(file, ()),
+            MaybeOwnedFile::Owned(file) => drop(file),
+            MaybeOwnedFile::Borrowed(fd) => return fd != Fd::INVALID,
         }
         true
     }
 
-    pub(crate) fn close(&self) -> bool {
-        self.close_impl(true)
+    /// A borrowed fd keeps its poll, to be used again.
+    pub(crate) fn close_if_owned(&self) {
+        if self.owns_file() {
+            self.close();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for PipeHandle {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

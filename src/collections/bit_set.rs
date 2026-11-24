@@ -127,13 +127,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         Self { mask: 0 }
     }
 
-    /// Creates a bit set with all elements present.
-    pub const fn init_full() -> Self {
-        Self {
-            mask: Self::FULL_MASK,
-        }
-    }
-
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
     pub fn is_set(self, index: usize) -> bool {
@@ -193,16 +186,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
             return;
         }
         self.mask &= !Self::mask_bit(index);
-    }
-
-    /// Finds the index of the first set bit.
-    /// If no bits are set, returns null.
-    pub fn find_first_set(self) -> Option<usize> {
-        let mask = self.mask;
-        if mask == 0 {
-            return None;
-        }
-        Some(mask.trailing_zeros() as usize)
     }
 
     /// Iterates through the items in the set, according to the options.

@@ -65,7 +65,7 @@ const KNOWN_SPANS: ([(u32, u32); KNOWN_TEXTS.len()], usize) = {
     (spans, bytes)
 };
 
-// A search in `Names::known_long` only ends at a free entry, so the table must never fill up.
+// A search in `Known::long` only ends at a free entry, so the table must never fill up.
 const _: () = {
     let (mut at, mut long) = (0, 0);
     while at < KNOWN_TEXTS.len() {
@@ -79,14 +79,18 @@ const _: () = {
 
 /// One thread's tables.
 pub(crate) struct Names {
-    short: Box<[Short; 1 << SHORT_BITS]>,
-    long: Box<[Long; 1 << LONG_BITS]>,
+    /// As long as the text calls for, so a thread that parses little touches little memory.
+    short: Vec<Short>,
+    long: Vec<Long>,
     /// The file's own atoms for all other texts, and for texts that found no free slot in the tables above.
     other: Table,
-    /// Masks for slot indices in `short` and `long`. A small file only uses the start of each table, so it touches
-    /// little memory.
+    /// The lengths of `short` and `long`, which are powers of two, less one.
     short_mask: usize,
     long_mask: usize,
+    /// The greatest length that `short` has had.
+    most_slots: usize,
+    /// How much text has been parsed with the shared interner `of`.
+    shared_len: usize,
     /// `Intern::number` of the interner the atoms belong to.
     of: u64,
     is_own: bool,
@@ -98,14 +102,18 @@ pub(crate) struct Names {
     mentioned: [u64; MENTIONED_WORDS],
     /// Which of `KNOWN_TEXTS` occur in the file, if it has its own atoms.
     known_in_file: [u64; KNOWN_TEXTS.len().div_ceil(64)],
+    known: &'static Known,
+    late: Late,
+}
+
+struct Known {
     /// The keywords and the short `KNOWN_TEXTS`. Each entry has the padded bytes, the atom if its number is fixed, and
     /// the token kind. An entry whose bytes are all zero is free.
-    known: Box<[([u64; 2], u32, T); 1 << KNOWN_BITS]>,
+    short: Box<[([u64; 2], u32, T); 1 << KNOWN_BITS]>,
     /// The ones of 16 to 32 bytes.
-    known_long: Box<[Long; 1 << KNOWN_LONG_BITS]>,
+    long: Box<[Long; 1 << KNOWN_LONG_BITS]>,
     /// The rest.
-    known_others: Vec<(&'static [u8], u32)>,
-    late: Late,
+    others: Vec<(&'static [u8], u32)>,
 }
 
 // These are all zero bytes, so filling a table with them is fast.
@@ -127,8 +135,8 @@ fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
     }
 }
 
-impl Default for Names {
-    fn default() -> Self {
+impl Known {
+    fn new() -> Known {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_long = boxed(NO_LONG);
         let mut known_others = Vec::new();
@@ -165,21 +173,32 @@ impl Default for Names {
                 known[at] = (words, atom, keyword(text));
             }
         }
+        Known {
+            short: known,
+            long: known_long,
+            others: known_others,
+        }
+    }
+}
+
+impl Default for Names {
+    fn default() -> Self {
+        static KNOWN: OnceLock<Known> = OnceLock::new();
         Names {
-            short: boxed(NO_SHORT),
-            long: boxed(NO_LONG),
+            short: Vec::with_capacity(1 << SHORT_BITS),
+            long: Vec::with_capacity(1 << LONG_BITS),
             other: Table::default(),
-            short_mask: (1 << SHORT_BITS) - 1,
-            long_mask: (1 << LONG_BITS) - 1,
+            short_mask: 0,
+            long_mask: 0,
+            most_slots: 0,
+            shared_len: 0,
             of: 0,
             is_own: false,
             spans: KNOWN_SPANS.0.to_vec(),
             cooked: KNOWN_TEXTS.concat(),
             mentioned: [0; MENTIONED_WORDS],
             known_in_file: Default::default(),
-            known,
-            known_long,
-            known_others,
+            known: KNOWN.get_or_init(Known::new),
             late: Late::default(),
         }
     }
@@ -297,29 +316,40 @@ impl<'a> Text<'a> {
 }
 
 impl Names {
-    /// Call before parsing a file whose atoms come from `atoms`.
-    pub(crate) fn use_interner(&mut self, atoms: &dyn Intern) {
+    /// Call before parsing a file of `len` bytes whose atoms come from `atoms`.
+    pub(crate) fn use_interner(&mut self, atoms: &dyn Intern, len: usize) {
         if self.of != atoms.number() {
-            self.short.fill(NO_SHORT);
-            self.long.fill(NO_LONG);
+            self.short.clear();
+            self.long.clear();
             self.of = atoms.number();
             self.is_own = false;
-            self.short_mask = self.short.len() - 1;
-            self.long_mask = self.long.len() - 1;
+            self.shared_len = 0;
         }
+        self.shared_len = self.shared_len.saturating_add(len);
+        // An entry that a wider mask no longer finds is looked up in the interner again.
+        self.grow_to(self.shared_len / 32);
+    }
+
+    /// Adds free entries until `short` has about `slots`.
+    fn grow_to(&mut self, slots: usize) {
+        let slots = slots.clamp(1 << 8, 1 << SHORT_BITS).next_power_of_two();
+        if slots > self.most_slots {
+            let new = self.most_slots - self.short.len()..slots - self.short.len();
+            bun_alloc::prefault(&mut self.short.spare_capacity_mut()[new]);
+            self.most_slots = slots;
+        }
+        self.short.resize(slots, NO_SHORT);
+        self.long.resize(slots >> (SHORT_BITS - LONG_BITS), NO_LONG);
+        self.short_mask = self.short.len() - 1;
+        self.long_mask = self.long.len() - 1;
     }
 
     /// Call before parsing a file of `len` bytes that has its own atoms.
     pub(crate) fn begin_own(&mut self, len: usize) {
+        self.short.clear();
+        self.long.clear();
         // One slot in `short` for every 8 bytes of text.
-        let bits = (len / 8)
-            .next_power_of_two()
-            .trailing_zeros()
-            .clamp(8, SHORT_BITS);
-        self.short_mask = (1 << bits) - 1;
-        self.long_mask = self.short_mask >> (SHORT_BITS - LONG_BITS);
-        self.short[..=self.short_mask].fill(NO_SHORT);
-        self.long[..=self.long_mask].fill(NO_LONG);
+        self.grow_to(len / 8);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
         self.spans.clear();
@@ -415,7 +445,7 @@ impl Names {
     }
 
     fn known_other(&self, text: &[u8]) -> Option<u32> {
-        let found = self.known_others.iter().find(|it| it.0 == text);
+        let found = self.known.others.iter().find(|it| it.0 == text);
         found.map(|it| it.1).filter(|&atom| atom != u32::MAX)
     }
 
@@ -425,14 +455,14 @@ impl Names {
     fn known_long(&self, words: [u64; 4], home_slot: usize, len: usize) -> Option<u32> {
         let mut at = home_slot >> (LONG_BITS - KNOWN_LONG_BITS);
         loop {
-            let entry = &self.known_long[at];
+            let entry = &self.known.long[at];
             if entry.len == 0 {
                 return None;
             }
             if entry.is(words, len) {
                 return (entry.atom != u32::MAX).then_some(entry.atom);
             }
-            at = (at + 1) % self.known_long.len();
+            at = (at + 1) % self.known.long.len();
         }
     }
 
@@ -441,12 +471,12 @@ impl Names {
     fn known_short(&self, words: [u64; 2]) -> (Option<u32>, T) {
         let mut at = known_slot(words);
         loop {
-            match self.known[at] {
+            match self.known.short[at] {
                 ([0, 0], ..) => return (None, T::Identifier),
                 (known, atom, kind) if known == words => {
                     return ((atom != u32::MAX).then_some(atom), kind);
                 }
-                _ => at = (at + 1) % self.known.len(),
+                _ => at = (at + 1) % self.known.short.len(),
             }
         }
     }

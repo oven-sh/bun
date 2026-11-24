@@ -23,8 +23,8 @@ bun_output::declare_scope!(IPC, visible);
 
 // ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
-// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
-// fields (`Strong`). RacyCell — single-thread access is the contract.
+// One for each JS thread: a `Strong` belongs to the VM that made it.
+#[thread_local]
 pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
@@ -36,10 +36,8 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread.
-    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
-    // `'static` storage so the returned `&mut` is valid for any caller-chosen
-    // `'a`. Aliasing: each of the three callers borrows for a single
+    // SAFETY: `RacyCell::get` returns `*mut Option<_>` into this thread's
+    // storage, which outlives every caller on this thread. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
@@ -55,7 +53,19 @@ pub(crate) fn on_internal_message_child<'a>(
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(worker.to_js(), global);
     singleton.cb = StrongOptional::create(callback.to_js(), global);
-    singleton.flush(global)
+    for message in core::mem::take(&mut singleton.messages) {
+        if !is_child_listening() {
+            break; // the channel closed
+        }
+        if let Some(message) = message.get() {
+            handle_internal_message_child(global, message, JSValue::NULL)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn is_child_listening() -> bool {
+    child_singleton().is_ready()
 }
 
 pub(crate) fn handle_internal_message_child(
@@ -65,12 +75,27 @@ pub(crate) fn handle_internal_message_child(
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, handle, global)
+    // The listener can close the channel, which drops the singleton.
+    let singleton = child_singleton();
+    let Some((cb, worker)) = singleton.cb.get().zip(singleton.worker.get()) else {
+        // Queued messages drop their handle; the cluster listener is
+        // installed before any handle-bearing reply can arrive.
+        singleton.enqueue(message, global);
+        return Ok(());
+    };
+    global.bun_vm().event_loop().run_callback(
+        bun_event_loop::ContextId::NONE,
+        cb,
+        global,
+        worker,
+        &[message, handle],
+    );
+    Ok(())
 }
 
 pub(crate) fn send_helper_primary<'a>(
     cx: &mut JsScope<'a>,
-    process_handle: Option<&Subprocess>,
+    process_handle: Option<&bun_ptr::RefPtr<Subprocess>>,
     message: JsLocal<'a, JSObject>,
     handle: Option<JsLocal<'a, JSObject>>,
     callback: Option<JsLocal<'a, Callable>>,
@@ -184,7 +209,7 @@ pub(crate) fn send_helper_primary<'a>(
 
 pub(crate) fn on_internal_message_primary<'a>(
     cx: &mut JsScope<'a>,
-    handle: Option<&Subprocess>,
+    handle: Option<&bun_ptr::RefPtr<Subprocess>>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
 ) {
@@ -384,8 +409,8 @@ pub(crate) fn cluster_raw_bind<'a>(
     }
     #[cfg(not(windows))]
     {
-        use bun_sys::Fd;
-        use bun_sys::net::{Address, getsockname, setsockopt_int};
+        use bun_sys::net::{Address, bind, getsockname, setsockopt_int, socket};
+        use bun_sys::{CloseOnDrop, Fd};
         use core::ffi::c_int;
         use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -402,12 +427,9 @@ pub(crate) fn cluster_raw_bind<'a>(
             flags: i32,
             address: &[u8],
         ) -> Result<Fd, i32> {
-            // SAFETY: socket(2) takes no pointers.
-            let fd = unsafe { libc::socket(family, socktype, 0) };
-            if fd < 0 {
-                return Err(-bun_core::ffi::errno());
-            }
-            let fd = Fd::from_native(fd);
+            let negated_errno = |err: bun_sys::Error| -i32::from(err.errno);
+            let socket = CloseOnDrop::new(socket(family, socktype).map_err(negated_errno)?);
+            let fd = socket.fd();
             let _ = bun_sys::set_close_on_exec(fd);
             let _ = bun_sys::set_nonblocking(fd);
 
@@ -423,14 +445,8 @@ pub(crate) fn cluster_raw_bind<'a>(
                 let _ = setsockopt_int(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, flags & 0x1);
             }
 
-            let len = address.len() as libc::socklen_t;
-            // SAFETY: bind(2) reads at most `len` bytes of `address`.
-            if unsafe { libc::bind(fd.native(), address.as_ptr().cast(), len) } != 0 {
-                let e = -bun_core::ffi::errno();
-                let _ = bun_sys::FdExt::close_allowing_standard_io(fd, None);
-                return Err(e);
-            }
-            Ok(fd)
+            bind(fd, address).map_err(negated_errno)?;
+            Ok(socket.into_raw())
         }
 
         if atype == -1 {
@@ -548,34 +564,12 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         } else {
             libc::SOCK_STREAM
         };
-        let mut ty: libc::c_int = 0;
-        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-        // SAFETY: plain getsockopt on a caller-supplied fd; out-params are live locals, and `len`
-        // is the size of `ty`.
-        let rc = unsafe {
-            libc::getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_TYPE,
-                (&raw mut ty).cast(),
-                &raw mut len,
-            )
-        };
+        let fd = bun_sys::Fd::from_native(fd);
         // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
-        if rc != 0 || ty != wanted {
+        if bun_sys::net::socket_type(fd) != Some(wanted)
+            || (!want_dgram && bun_sys::net::is_connected(fd))
+        {
             return -bun_sys::UV_E::INVAL;
-        }
-        if ty == libc::SOCK_STREAM {
-            // SAFETY: getpeername only writes within `peer_len`, the size of `peer`.
-            let connected = unsafe {
-                let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed();
-                let mut peer_len =
-                    core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-                libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
-            };
-            if connected {
-                return -bun_sys::UV_E::INVAL;
-            }
         }
         0
     }

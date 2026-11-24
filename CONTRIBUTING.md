@@ -294,7 +294,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag. Once its release is published, run `bun run pin-webkit` to pin the sha256 of the prebuilt tarballs in `scripts/build/deps/webkit.sha256`; the build refuses a tarball that does not match.
 
 ## Troubleshooting
 

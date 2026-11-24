@@ -202,6 +202,16 @@ describe("the container", () => {
     expect(await decodes(withModes(255))).toBe(false);
   });
 
+  // 4 by 1 pixels, the top of the first block.
+  test.each([
+    ["32767, next to a block with two", "00004400000000fefffffbff8bd68000", "ffffffff"],
+    ["31400, -1136", "0000fe00000000feffffb215f80000", "ffffffff"],
+    ["-31400, 852, -852", "0000fe00000000feffffb2974b4000", "000000ff"],
+  ])("the sums in a block with up to three coefficients have more than 16 bits: %s", async (_, partitions, pixel) => {
+    const file = riff(chunk("VP8 ", Buffer.from("f000009d012a04000100" + partitions, "hex")));
+    expect(await new Bun.Image(file).png().bytes().then(decode)).toHaveProperty("pixels", Array(4).fill(pixel));
+  });
+
   test("the modes of a macroblock can take less than 3.5 bits", async () => {
     const frame = await vp8(1024, 1024);
     expect(frame.toString("latin1", 0, 4)).toBe("VP8 ");

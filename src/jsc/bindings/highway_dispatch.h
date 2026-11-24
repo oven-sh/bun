@@ -46,5 +46,8 @@ struct HighwayDispatch<Choose, Result (*)(Arguments...) noexcept(isNoexcept)> {
 // out-of-line hwy::GetChosenTarget() call plus a table index every time.
 // Resolving is a function of its own: LTO inlines the wrappers around this into
 // thousands of callers, which get the load and the call and nothing else.
-#define BUN_HWY_DISPATCH(FUNC) \
-    (*::bun::HighwayDispatch<decltype([] { return HWY_DYNAMIC_POINTER(FUNC); })>::fn.load(std::memory_order_relaxed))
+#define BUN_HWY_DISPATCH(FUNC) BUN_HWY_DISPATCH_TO(HWY_DYNAMIC_POINTER(FUNC))
+
+// The same for a choice that takes more than the target into account.
+#define BUN_HWY_DISPATCH_TO(POINTER) \
+    (*::bun::HighwayDispatch<decltype([] { return POINTER; })>::fn.load(std::memory_order_relaxed))

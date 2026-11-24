@@ -91,19 +91,9 @@ pub fn copy_file_with_state(
     let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
-        unsafe extern "C" {
-            // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
-            // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
-            // (FFI-safe via the null-pointer niche → ABI-identical to a
-            // nullable `copyfile_state_t`); we never allocate a state.
-            safe fn fcopyfile(
-                from: libc::c_int,
-                to: libc::c_int,
-                state: Option<core::ptr::NonNull<core::ffi::c_void>>,
-                flags: u32,
-            ) -> libc::c_int;
-        }
-        let rc = fcopyfile(in_.native(), out.native(), None, libc::COPYFILE_DATA);
+        let state = core::ptr::null_mut();
+        // SAFETY: a null `copyfile_state_t` is documented as "use defaults".
+        let rc = unsafe { libc::fcopyfile(in_.native(), out.native(), state, libc::COPYFILE_DATA) };
 
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(()),

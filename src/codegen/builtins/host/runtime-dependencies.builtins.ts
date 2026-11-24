@@ -416,6 +416,13 @@ const startedWorkers: readonly b.CallingEntrySpec[] = [
 
 const messagePortSources = ["MessageChannel", "MessagePort", "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding"];
 
+const directStreamReaders: readonly b.CallingEntrySpec[] = [
+  "ReadableStream",
+  "Request.prototype.clone",
+  "Response.prototype.clone",
+  { path: "Request", when: b.whenCallRunsOtherCode },
+];
+
 // An instance of a class counts as a use of the class and of those above it, whoever hands it out.
 const eventTargetSources = [
   "AbortController",
@@ -719,7 +726,7 @@ const nativeCalls = [
       {
         file: inBindings("webcore/streams/JSDirectStreamController.cpp"),
         caller: "JSDirectStreamController::armEndOfTickFlush",
-        onBehalfOf: ["ReadableStream"],
+        onBehalfOf: directStreamReaders,
         calls: queuedByNativeCode(flushesDirectStreamCell, b.undefined, b.nativeMemory),
       },
       { file: "src/runtime/ipc.rs", caller: "abort_unsent", onBehalfOf: channelUsers },

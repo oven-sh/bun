@@ -1,0 +1,21 @@
+// A body of a bundle makes symbols once; constructors of it store fields under them, methods of other bodies read and store there, and nobody else finds the names. Bodies that run twice make others.
+'use strict';
+var later = (body, held) => () => (held || body((held = { exports: {} }).exports, held), held.exports);
+var require_signs = later((exports, module) => { module.exports = { shut: Symbol('shut'), turns: Symbol('turns'), shared: Symbol.for('lock') }; });
+var bodies = 0, body = (exports, module) => {
+  bodies++;
+  const open = Symbol('open'), kept = Symbol(), { shut, turns } = require_signs();
+  class Lock { constructor(code) { this.code = code; this[open] = false; this[turns] = 0; this[kept] = null; } try(code) { this[turns]++; if (code === this.code) this[open] = !this[open]; return this[open]; } keep(thing) { if (this[open]) this[kept] = thing; return this; } get held() { return this[open] ? this[kept] : undefined; } [shut]() { const was = this[open]; this[open] = false; return was; } static [Symbol.hasInstance](o) { return o !== null && typeof o === 'object' && open in o; } }
+  function Chain(n) { this.locks = []; this[turns] = -1; for (let i = 0; i < n; i++) this.locks.push(new Lock(i)); }
+  Chain.prototype[shut] = function () { let shutNow = 0; for (const lock of this.locks) if (lock[shut]()) shutNow++; this[turns]++; return shutNow; };
+  exports.Lock = Lock; exports.Chain = Chain; exports.isOpen = lock => lock[open]; exports.force = (lock, v) => { lock[open] = v; };
+};
+var require_lock = later(body), require_other = later(body);
+var require_hall = later((exports) => { const { Lock, Chain, isOpen } = require_lock(), { shut, turns } = require_signs(); exports.walk = (locks, codes) => { let sum = 0; for (let i = 0; i < locks.length; i++) { for (const code of codes) locks[i].try(code); locks[i].keep(i * 2); if (isOpen(locks[i])) sum += locks[i].held; sum += locks[i][turns]; } return sum; }; exports.close = locks => { let n = 0; for (const lock of locks) n += lock[shut]() ? 1 : 0; return n; }; exports.make = n => Array.from({ length: n }, (_, i) => new Lock(i)); exports.chain = n => new Chain(n); });
+var told = run => { try { return String(run()); } catch (error) { return error.constructor.name; } }, hall = require_hall();
+for (var k = 0; k < 120; k++) { var locks = hall.make(k % 5 + 1); hall.walk(locks, [k % 4, 2]); hall.close(locks); hall.chain(2)[require_signs().shut](); }
+var mine = hall.make(4); console.log(hall.walk(mine, [1, 3, 1, 3, 2]), hall.walk(mine, [0]), mine.map(l => l.held).join(), hall.close(mine), mine.map(l => l.held).join(), JSON.stringify(mine), Reflect.ownKeys(mine[0]).map(String).join());
+var { Lock, Chain, isOpen, force } = require_lock(), signs = require_signs(); console.log(bodies, isOpen(mine[1]), mine[1][signs.turns], mine[1] instanceof Lock, {} instanceof Lock, require_other().isOpen(mine[1]), require_other().Lock === Lock, bodies, new (require_other().Lock)(1) instanceof Lock);
+var copy = { ...mine[2] }, below = Object.create(mine[3]), clone = Object.assign(Object.create(Lock.prototype), mine[0]); console.log(copy[signs.turns], copy instanceof Lock, isOpen(below), below.try(3), isOpen(mine[3]), below.held, clone.try(0), clone[signs.turns], Object.getOwnPropertySymbols(below).length);
+force(mine[0], 'ajar'); console.log(isOpen(mine[0]), mine[0].try(5), told(() => hall.walk([mine[0]], [0])), isOpen(mine[0])); force(mine[1], undefined); delete mine[2][signs.turns]; console.log(told(() => hall.walk(mine, [9])), mine[2][signs.turns], told(() => hall.close([{}])), told(() => hall.close([{ [signs.shut]: () => 1 }])), told(() => hall.walk([null], [1])), told(() => isOpen(undefined)), told(() => isOpen(5)));
+Object.freeze(mine[3]); console.log(told(() => mine[3].try(3)), isOpen(mine[3])); Lock.prototype[signs.shut] = function () { return this.code > 1; }; console.log(hall.close(hall.make(4)), hall.chain(3)[signs.shut]()); Object.defineProperty(Lock.prototype, signs.turns, { get: () => 40, set(v) { this.set = v; } }); var late = new Lock(8); console.log(late[signs.turns], late.set, told(() => late.try(8)), late.set, Object.keys(late).join()); console.log(signs.shared === Symbol.for('lock'), signs.shut.description, String(Symbol.keyFor(signs.shut)), Object.getOwnPropertySymbols(Chain.prototype).length);

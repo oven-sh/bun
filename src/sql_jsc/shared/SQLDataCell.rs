@@ -202,9 +202,7 @@ impl SQLDataCell {
         SQLDataCell::new(Value::Raw(Raw::new(bytes)))
     }
 
-    /// Shared wrapper around `construct_object_from_data_cell` used by the
-    /// per-row `to_js` paths (postgres `Putter`, mysql `Row`): extracts the
-    /// cached-structure column names and forwards the cells.
+    /// `construct_object_from_data_cell` with the column names of `cached_structure`.
     pub(crate) fn to_js_object(
         global_object: &JSGlobalObject,
         array: JSValue,

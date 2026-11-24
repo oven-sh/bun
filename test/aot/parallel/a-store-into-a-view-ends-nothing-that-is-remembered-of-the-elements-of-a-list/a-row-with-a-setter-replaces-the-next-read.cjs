@@ -4,8 +4,8 @@ const data = JSON.parse("[" + Array.from({ length: 6 }, (_, i) => "[" + Array.fr
 function turn(grid, side, at, sine, cosine) {
   for (let k = 0; k < side; k++) {
     const held = grid[k][at + 1];
-    grid[k][at + 1] = sine * grid[k][at] + cosine * held;
-    grid[k][at] = cosine * grid[k][at] - sine * held;
+    grid[k][at + 1] = grid[k][at] * sine + held / 2;
+    grid[k][at] = (held - grid[k][at]) * cosine;
   }
 }
 const make = round => { const grid = data.map(row => Float64Array.from(row)); if (round > 1) grid[4] = Object.defineProperty({ 0: 1, 2: 3, 3: 4, 4: 5, length: 5 }, "1", { set(value) { grid[4] = new Float64Array(6).fill(value); }, get() { return 2; } }); return grid; };

@@ -122,10 +122,177 @@ describe("zlib", () => {
     }
   });
 
+  describe('library: "libdeflate"', () => {
+    const library = "libdeflate";
+
+    function random(state) {
+      return below => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 8) % below;
+    }
+    function noise(length, values = 256) {
+      const next = random(length);
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i++) bytes[i] = next(values);
+      return Buffer.from(bytes.buffer);
+    }
+    const words = Array.from({ length: 900 }, (_, i) => ((i + 1) * (7919 + i)).toString(36) + " ,.\n"[(i % 7) & 3]);
+    /** Short words are frequent. */
+    function text(length) {
+      const next = random(length);
+      let text = "";
+      while (text.length < length) text += words[next(1 + next(words.length))];
+      return Buffer.from(text.slice(0, length));
+    }
+    /** Up to `longestUnit` new bytes, again and again, and then the next. */
+    function repeats(length, longestUnit, longestRun) {
+      const next = random(length);
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length;) {
+        const unit = 1 + next(longestUnit);
+        for (const end = i + unit; i < end; i++) bytes[i] = next(256);
+        for (const end = i + next(longestRun); i < end; i++) bytes[i] = bytes[i - unit];
+      }
+      return Buffer.from(bytes.buffer);
+    }
+
+    const inputs = {
+      "every length up to 70": Array.from({ length: 71 }, (_, length) => text(70).subarray(0, length)),
+      "short text": [text(300), text(511), text(512), text(4999), text(10_000)],
+      "text": [text(150_000)],
+      "noise": [noise(300), noise(70_000)],
+      "few literals": [noise(20_000, 2), noise(20_000, 9), noise(20_000, 40), noise(20_000, 70)],
+      "zeros": [Buffer.alloc(259), Buffer.alloc(400_000)],
+      "runs": [repeats(90_000, 1, 40), repeats(90_000, 1, 900)],
+      "repeats": [repeats(90_000, 9, 80), repeats(90_000, 140, 3000)],
+      "as far back as it gets": [32_766, 32_767, 32_768, 32_769].map(period => Buffer.alloc(110_000, noise(period))),
+      "one kind after the other": [
+        Buffer.concat([
+          text(40_000),
+          noise(15_000),
+          repeats(30_000, 1, 300),
+          text(20_000),
+          Buffer.alloc(70_000, "0123456789a"),
+          noise(9_000, 5),
+          text(40_000),
+          repeats(40_000, 70, 700),
+        ]),
+      ],
+    };
+
+    // Length and CRC-32 of what libdeflate 1.26 makes of them at the levels from 0 to 12.
+    const outputs = {
+      "every length up to 70":
+        "2840 fbed1731, 2783 bfbc85d6, 2771 994affc5, 2759 72ab9c3a, 2747 7e3a2c93, 2735 ece7741b, 2723 89528bf1, 2711 e9583147, 2699 58bfee6e, 2687 f4d2b609, 2675 db3d7399, 2663 2d4af09f, 2651 81d48b08",
+      "short text":
+        "16347 61afba6e, 8348 efc624f2, 8323 c11a04af, 8327 7d974324, 8327 7d974324, 8332 ea3538b9, 8332 ea3538b9, 8332 ea3538b9, 8330 947f263, 8330 947f263, 8256 df1a08d8, 8250 bc06e83a, 8250 c674a7c1",
+      "text":
+        "150015 1bf9da53, 56423 d3acd2a4, 58152 4fa51948, 58629 55b72437, 58681 f43c36fe, 58719 f1743f42, 58759 240b57c, 58748 d24c1a92, 58890 266ad694, 58890 266ad694, 53537 b44b5026, 53510 fb025766, 53510 fb025766",
+      "noise":
+        "70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b, 70315 51f6763b",
+      "few literals":
+        "80020 4283f9ef, 41732 2334d2fa, 40989 3e411d4f, 40617 837292b2, 40451 b862455e, 40437 1dfa72db, 37546 ae88b1bc, 37525 a1a3c7ef, 37525 88276a10, 37525 88276a10, 37497 d8315164, 37478 a951a11b, 37465 f7e37463",
+      "zeros":
+        "400299 e534ed11, 483 4854ebc5, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742, 421 2a48b742",
+      "runs":
+        "180020 96ade632, 13817 69b9becf, 13281 6208a9ae, 13402 43e83a99, 13423 9b7f9f13, 10438 88d33ee2, 11054 f727375a, 11403 6060be7, 11467 dfa412cd, 11467 2a3bb84f, 9640 2f185b9a, 9628 7807567, 9646 2ae1a590",
+      "repeats":
+        "180020 43dcb3cb, 18469 c0636993, 18313 fc44cfbe, 18311 8b10654f, 18305 b9feb4e0, 18217 519798fe, 18221 360226f5, 18229 defd7ddb, 18229 defd7ddb, 18229 defd7ddb, 18176 64affd45, 18176 64affd45, 18176 64affd45",
+      "as far back as it gets":
+        "440040 2c93c3cf, 287894 2ec9174f, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6, 287344 153774c6",
+      "one kind after the other":
+        "264025 af96f3cd, 69011 a752f662, 65858 9a887ff9, 65799 2399ad39, 65798 1ece87c4, 65679 cdb64dd5, 65727 a81187e6, 65569 8914fb56, 65559 ad0ba262, 65559 ad0ba262, 62332 15fd70e7, 62317 53789c0a, 62318 c97b697b",
+    };
+
+    it.each(Object.keys(inputs))("compresses %s to the same bytes as ever", name => {
+      const sums = [];
+      for (let level = 0; level <= 12; level++) {
+        const streams = inputs[name].map(input => deflateSync(input, { library, level }));
+        for (const library of ["zlib", "libdeflate"]) {
+          expect(inputs[name].findIndex((input, i) => !input.equals(inflateSync(streams[i], { library })))).toBe(-1);
+        }
+        const all = Buffer.concat(streams);
+        sums.push(`${all.length} ${zlib.crc32(all).toString(16)}`);
+      }
+      expect(sums.join(", ")).toBe(outputs[name]);
+    });
+
+    it("says in the gzip header how hard it tried", () => {
+      const headers = Array.from({ length: 13 }, (_, level) =>
+        gzipSync("", { library, level }).subarray(0, 10).toHex(),
+      );
+      expect(headers).toEqual([..."4400000022222"].map(effort => `1f8b0800000000000${effort}ff`));
+    });
+
+    it.each([
+      { level: 1 },
+      { level: 9 },
+      { level: 0, memLevel: 1 },
+      { memLevel: 1 },
+      { strategy: zlib.constants.Z_FIXED },
+      { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+      { strategy: zlib.constants.Z_RLE },
+    ])("decompresses what zlib makes with %j", options => {
+      const all = Object.values(inputs).flat();
+      expect(all.findIndex(input => !input.equals(inflateSync(deflateSync(input, options), { library })))).toBe(-1);
+      expect(all.findIndex(input => !input.equals(gunzipSync(gzipSync(input, options), { library })))).toBe(-1);
+    });
+
+    it("copies a match of any length from any offset that it overlaps", () => {
+      const parts = [];
+      for (let offset = 1; offset <= 260; offset += offset < 70 ? 1 : 19) {
+        const unit = noise(offset + 1000).subarray(1000);
+        for (let length = 3; length <= 258; length += length < 70 ? 1 : 9)
+          parts.push(Buffer.alloc(offset + length, unit.reverse()));
+      }
+      const input = Buffer.concat(parts);
+      for (const strategy of [zlib.constants.Z_DEFAULT_STRATEGY, zlib.constants.Z_FIXED]) {
+        expect(input.equals(gunzipSync(gzipSync(input, { strategy }), { library }))).toBe(true);
+      }
+    });
+
+    it("skips the optional fields of a gzip header", () => {
+      const member = zlib.gzipSync("hello");
+      for (let flags = 0; flags < 32; flags++) {
+        const header = Buffer.concat([
+          Buffer.from([0x1f, 0x8b, 8, flags, 1, 2, 3, 4, 0, 3]),
+          Buffer.from(flags & 4 ? "\x03\0a\0c" : "", "latin1"),
+          Buffer.from(flags & 8 ? "name\0" : "", "latin1"),
+          Buffer.from(flags & 16 ? "comment\0" : "", "latin1"),
+        ]);
+        const crc = zlib.crc32(header);
+        const file = Buffer.concat([header, Buffer.from(flags & 2 ? [crc, crc >> 8] : []), member.subarray(10)]);
+        expect(Buffer.from(gunzipSync(file, { library })).toString()).toBe("hello");
+        for (let length = 0; length < file.length; length++) {
+          expect(() => gunzipSync(file.subarray(0, length), { library })).toThrow("bad data");
+        }
+      }
+    });
+
+    it.each([
+      ["stored", { level: 0 }],
+      ["static", { strategy: zlib.constants.Z_FIXED }],
+      ["dynamic", {}],
+    ])("agrees with zlib on a %s block that is cut off or has a bit flipped", (_, options) => {
+      const outcome = (decompress, file) => {
+        try {
+          return Buffer.from(decompress(file)).toString("hex");
+        } catch {
+          return "refused";
+        }
+      };
+      const file = Buffer.from(gzipSync(text(200), options));
+      const damaged = Array.from(file, (_, length) => file.subarray(0, length));
+      for (let bit = 0; bit < file.length * 8; bit += bit < 600 ? 1 : 11) {
+        damaged.push(Buffer.from(file));
+        damaged.at(-1)[bit >> 3] ^= 1 << (bit & 7);
+      }
+      expect(damaged.map(file => outcome(file => gunzipSync(file, { library }), file))).toEqual(
+        damaged.map(file => outcome(gunzipSync, file)),
+      );
+    });
+  });
+
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
-    // libdeflate_alloc_compressor_ex returns NULL for level outside [0, 12]; that NULL must
-    // surface as an invalid-argument error, not "Out of memory".
     for (const fn of [gzipSync, deflateSync]) {
       it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
         for (const level of [-2, -1, 13, 100]) {
@@ -708,11 +875,8 @@ for (const [compress, decompressor] of [
     },
   ];
   for (const i in variants) {
-    let should_skip = false;
-    if (decompressor === zlib.createZstdDecompress && i == 1) should_skip = true; // fails in node too
-    if (decompressor === zlib.createZstdDecompress && i == 2) should_skip = true; // fails in node too
     // prettier-ignore
-    it.skipIf(should_skip)(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
+    it(`premature end handles bytesWritten properly: ${compress.name} + ${decompressor.name}: variant ${i}`, async () => {
       const variant = variants[i];
       const { promise, resolve, reject } = Promise.withResolvers();
       let output = "";
@@ -866,6 +1030,194 @@ describe("zlib.zstd", () => {
     const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
     const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
     expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
+  });
+
+  it.each([
+    ["empty writes", decoder => decoder.write(Buffer.alloc(0))],
+    ["flushes", decoder => decoder.flush()],
+  ])("gives up after 16 %s in a row inside a frame", async (_, idle) => {
+    const frame = zlib.zstdCompressSync("hello");
+    async function decompress(times) {
+      const decoder = zlib.createZstdDecompress();
+      const chunks = [];
+      decoder.on("data", chunk => chunks.push(chunk));
+      decoder.write(frame.subarray(0, -1));
+      for (let i = 0; i < times; i++) idle(decoder);
+      decoder.end(frame.subarray(-1));
+      await stream.promises.finished(decoder);
+      return Buffer.concat(chunks).toString();
+    }
+    expect(await decompress(15)).toBe("hello");
+    await expect(decompress(16)).rejects.toMatchObject({
+      code: "ZSTD_error_noForwardProgress_inputEmpty",
+      errno: zlib.constants.ZSTD_error_noForwardProgress_inputEmpty,
+      message: "Operation made no progress over multiple calls, due to input being empty",
+    });
+  });
+
+  it("gives up after 16 calls in a row without room", () => {
+    const decoder = zlib.createZstdDecompress();
+    decoder._chunkSize = 0;
+    decoder._outBuffer = Buffer.alloc(0);
+    expect(() => decoder._processChunk(zlib.zstdCompressSync("hello"), zlib.constants.ZSTD_e_end)).toThrow(
+      expect.objectContaining({
+        code: "ZSTD_error_noForwardProgress_destFull",
+        errno: zlib.constants.ZSTD_error_noForwardProgress_destFull,
+        message: "Operation made no progress over multiple calls, due to output buffer being full",
+      }),
+    );
+  });
+
+  // The cases of Node's test-zlib-reject-garbage-after-end.js that do not take that option.
+  describe("what follows a frame", () => {
+    const [a, b] = [zlib.zstdCompressSync("a"), zlib.zstdCompressSync("b")];
+    const skippable = Buffer.from("502a4d18040000006d657461", "hex");
+    const unexpectedEnd = { message: "unexpected end of file", code: "Z_BUF_ERROR", errno: zlib.constants.Z_BUF_ERROR };
+
+    async function decompressWrites(writes, options) {
+      const decoder = zlib.createZstdDecompress(options);
+      const chunks = [];
+      decoder.on("data", chunk => chunks.push(chunk));
+      for (const chunk of writes) decoder.write(chunk);
+      decoder.end();
+      await stream.promises.finished(decoder);
+      return Buffer.concat(chunks).toString();
+    }
+
+    function splits(input) {
+      return Array.from({ length: input.length + 1 }, (_, at) => [input.subarray(0, at), input.subarray(at)]);
+    }
+
+    it.each([
+      ["another frame", [a, b], "ab"],
+      ["a skippable frame", [a, skippable, b], "ab"],
+      ["junk", [a, Buffer.from("trailing junk")], "a"],
+      ["junk and a frame", [a, Buffer.from("junk"), b], "a"],
+      ["junk that starts like a frame", [a, b.subarray(0, 3), Buffer.from("junk")], "a"],
+      ["1 byte of a frame", [a, b.subarray(0, 1)], "a"],
+      ["3 bytes of a frame", [a, b.subarray(0, 3)], "a"],
+      ["3 bytes of a skippable frame", [a, skippable.subarray(0, 3)], "a"],
+    ])("%s, however it is split", async (_, parts, expected) => {
+      const input = Buffer.concat(parts);
+      expect(zlib.zstdDecompressSync(input).toString()).toBe(expected);
+      for (const writes of splits(input)) expect(await decompressWrites(writes)).toBe(expected);
+    });
+
+    it.each([
+      ["nothing at all", []],
+      ["3 bytes of the first frame", [a.subarray(0, 3)]],
+      ["4 bytes of the second frame", [a, b.subarray(0, 4)]],
+      ["all but 1 byte of the second frame", [a, b.subarray(0, -1)]],
+      ["all but 1 byte of a skippable frame", [a, skippable.subarray(0, -1)]],
+    ])("%s is an unexpected end", async (_, parts) => {
+      const input = Buffer.concat(parts);
+      expect(() => zlib.zstdDecompressSync(input)).toThrow(expect.objectContaining(unexpectedEnd));
+      for (const writes of splits(input)) await expect(decompressWrites(writes)).rejects.toMatchObject(unexpectedEnd);
+    });
+
+    it("junk in place of the first frame is an error", () => {
+      expect(() => zlib.zstdDecompressSync(Buffer.from("junk"))).toThrow(
+        expect.objectContaining({ code: "ZSTD_error_prefix_unknown" }),
+      );
+    });
+
+    it("an error in a later frame is reported", async () => {
+      const damaged = zlib.zstdCompressSync("b", { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } });
+      damaged[damaged.length - 1] ^= 1;
+      await expect(decompressWrites([a, damaged])).rejects.toMatchObject({ code: "ZSTD_error_checksum_wrong" });
+    });
+
+    it.each([
+      ["nothing", Buffer.alloc(0), ""],
+      ["junk", Buffer.from("junk"), ""],
+      ["a frame", b, "b"],
+    ])("%s after a frame that fills the output chunk", async (_, next, expected) => {
+      const options = { chunkSize: 64 };
+      const content = Buffer.alloc(options.chunkSize, "a").toString();
+      const input = Buffer.concat([zlib.zstdCompressSync(content), next]);
+      expect(zlib.zstdDecompressSync(input, options).toString()).toBe(content + expected);
+      expect(await decompressWrites([input], options)).toBe(content + expected);
+    });
+
+    it("reset() ends ignoring junk", () => {
+      const decoder = zlib.createZstdDecompress();
+      const out = Buffer.alloc(64);
+      const write = input => {
+        decoder._handle.writeSync(zlib.constants.ZSTD_e_continue, input, 0, input.length, out, 0, out.length);
+        return out.toString("latin1", 0, out.length - decoder._writeState[0]);
+      };
+      expect([write(a), write(Buffer.from("junk")), write(b)]).toEqual(["a", "", ""]);
+      decoder.reset();
+      expect(write(b)).toBe("b");
+      decoder.close();
+    });
+
+    it("zlib/iter ignores junk and reports an unexpected end", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--experimental-stream-iter",
+          "--no-warnings",
+          "-e",
+          `const { from, fromSync, pull, pullSync, text, textSync } = require("stream/iter");
+           const { decompressZstd, decompressZstdSync } = require("zlib/iter");
+           const [a, b] = ["a", "b"].map(it => require("zlib").zstdCompressSync(it));
+           for (const chunks of [[a, Buffer.from("junk"), b], [a, b.subarray(0, -1)]]) {
+             console.log(await text(pull(from(chunks), decompressZstd())).catch(e => e.code));
+             try { console.log(textSync(pullSync(fromSync(chunks), decompressZstdSync()))); }
+             catch (e) { console.log(e.code); }
+           }`,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("a\na\nZ_BUF_ERROR\nZ_BUF_ERROR\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("a frame that fills the output chunk is not followed by an empty one", async () => {
+    const input = randomFillSync(Buffer.alloc(100));
+    const frame = zlib.zstdCompressSync(input);
+    const options = { chunkSize: frame.length };
+    expect(zlib.zstdCompressSync(input, options)).toEqual(frame);
+    expect(await util.promisify(zlib.zstdCompress)(input, options)).toEqual(frame);
+  });
+
+  it("an explicit pledgedSrcSize of 0 is honored by zstdCompress", async () => {
+    await expect(util.promisify(zlib.zstdCompress)("a", { pledgedSrcSize: 0 })).rejects.toMatchObject({
+      code: "ZSTD_error_srcSize_wrong",
+    });
+  });
+
+  it.each([
+    ["1", "ERR_INVALID_ARG_TYPE", "pledgedSrcSize must be a number"],
+    [1.5, "ERR_OUT_OF_RANGE", "pledgedSrcSize must be a safe integer"],
+    [-Infinity, "ERR_OUT_OF_RANGE", "pledgedSrcSize must be a safe integer"],
+    [-1, "ERR_OUT_OF_RANGE", "pledgedSrcSize must be non-negative"],
+  ])("pledgedSrcSize %p throws %s", (pledgedSrcSize, code, message) => {
+    expect(() => zlib.createZstdCompress({ pledgedSrcSize })).toThrow(expect.objectContaining({ code, message }));
+  });
+
+  it("a dictionary can be a SharedArrayBuffer", () => {
+    const bytes = Buffer.from(inputString);
+    const dictionary = new SharedArrayBuffer(bytes.length);
+    new Uint8Array(dictionary).set(bytes);
+    const compressed = zlib.zstdCompressSync(inputString, { dictionary });
+    expect(compressed).toEqual(zlib.zstdCompressSync(inputString, { dictionary: bytes }));
+    expect(zlib.zstdDecompressSync(compressed, { dictionary }).toString()).toBe(inputString);
+  });
+
+  it("a dictionary that cannot be loaded throws", () => {
+    const options = { dictionary: Buffer.from("37a430ec01000000", "hex") };
+    const expected = expect.objectContaining({
+      code: "ERR_ZLIB_INITIALIZATION_FAILED",
+      message: "Failed to load zstd dictionary",
+    });
+    expect(() => zlib.createZstdDecompress(options)).toThrow(expected);
+    expect(() => zlib.zstdDecompressSync(compressedBuffer, options)).toThrow(expected);
+    expect(() => zlib.zstdDecompress(compressedBuffer, options, () => {})).toThrow(expected);
   });
 
   it("can compress streaming", async () => {

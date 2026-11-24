@@ -13,6 +13,7 @@
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
+use core::net::SocketAddr;
 use core::ptr::NonNull;
 
 use bun_core::{Fd, ZBox, ZStr};
@@ -711,6 +712,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    pub fn local_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).local_endpoint(),
+            _ => None,
+        }
+    }
+
+    pub fn remote_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).remote_endpoint(),
+            _ => None,
+        }
+    }
+
     pub fn mark_needs_more_for_sendfile(&self) {
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {
@@ -966,6 +981,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

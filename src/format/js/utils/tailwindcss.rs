@@ -93,6 +93,14 @@ impl TailwindContext {
         }
     }
 
+    /// For a template with classes that isn't in a template or a concatenation.
+    pub(crate) fn for_lone_template(tailwind: &Tailwind) -> Self {
+        TailwindContext {
+            follows_plugin: tailwind.follows_plugin,
+            ..TailwindContext::new(tailwind)
+        }
+    }
+
     /// For the template `e`.
     pub(crate) fn in_template<'a>(self, e: Expr<'a>, f: &Formatter<'a>) -> Self {
         if self.follows_plugin {
@@ -190,10 +198,14 @@ pub(crate) fn loses_line_breaks<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// True if the value of the JSX attribute `name` holds classes.
-fn is_class_attribute(name: &[u8], tailwind: &Tailwind) -> bool {
+pub(crate) fn is_class_attribute(name: &[u8], tailwind: &Tailwind) -> bool {
     matches!(name, b"class" | b"className")
         || (!bun_core::strings::contains_char(name, b':')
             && has(&tailwind.attributes, name, tailwind))
+}
+
+pub(crate) fn is_name_of_class_function(name: &[u8], tailwind: &Tailwind) -> bool {
+    !tailwind.functions.is_empty() && has(&tailwind.functions, name, tailwind)
 }
 
 /// oxfmt's own rules don't support patterns.

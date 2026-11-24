@@ -1,26 +1,27 @@
-//! Coordinator and worker entry points: `run_as_coordinator` (sets up the
-//! `Coordinator`, sorts/partitions files, drives the loop, merges fragments)
-//! and `run_as_worker` (the `--test-worker` side that reads framed commands
-//! from stdin, runs each file under isolation, and streams results to fd 3).
+//! Entry points of `bun test --parallel`: `run_as_coordinator`, and `run_as_worker` for the processes that it starts.
 
 use core::cell::Cell;
-use core::ffi::CStr;
+use core::fmt::Display;
+use core::ops::Range;
 use std::io::Write as _;
 
-use bun_core::{CStrRef, Global, Output};
+use bstr::BStr;
+use bun_core::{CStrList, CStrRef, Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_options_types::LoaderExt as _;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
+use bun_test_schedule::{Schedule, Steal, TestFile};
 
 use super::aggregate;
 use super::channel::Channel;
 use super::coordinator::{Coordinator, abort_handler};
-use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::Worker;
+use super::worker::{SpawnContext, Worker};
 use crate::Command;
+use crate::cli::test::timings::Timings;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use crate::test_runner::snapshot::Snapshots;
@@ -91,107 +92,54 @@ pub(crate) fn run_as_coordinator(
         }
         envps.push(env.map.to_envp());
     }
-    let argv = build_worker_argv(ctx)?;
+    let mut argv = build_worker_argv(ctx)?;
 
-    // Sort lexicographically so adjacent indices share parent directories.
-    // Each worker owns a contiguous chunk; co-located files share imports, so
-    // this keeps each worker's isolation SourceProvider cache hot. --randomize
-    // explicitly opts out of locality (the caller already shuffled).
-    let mut sorted: Vec<Interned> = files.to_vec();
-    if !ctx.test_options.randomize {
-        index_sort::sort_slice_by(&mut sorted, |a, b| {
-            bun_core::order(a.as_bytes(), b.as_bytes())
-        });
-    }
     let runs_compiled_code = crate::cli::run_compiled::runs_compiled_code();
     let mut timings = reporter.timings.take();
     if runs_compiled_code && let Some(timings) = timings.as_mut() {
         timings.record_workers(ctx.test_options.parallel);
     }
-    // With --timings the contiguous chunks are cut by total duration instead
-    // of file count, and each chunk is dispatched slowest-first (cache hits
-    // depend on which worker runs a file, not the order within the worker).
-    let mut costs: Option<Vec<u64>> = None;
-    let ranges: Vec<FileRange> = match timings.as_ref() {
-        Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
-            let ranges = if crate::cli::run_compiled::runs_compiled_code() {
-                let mut ranges = vec![FileRange { lo: 0, hi: 0 }; k as usize];
-                ranges[0] = FileRange { lo: 0, hi: n };
-                ranges
-            } else {
-                t.partition(&sorted, k)
-            };
-            for r in &ranges {
-                t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
-            }
-            costs = Some(t.costs(&sorted));
-            ranges
-        }
-        _ => (0..k)
-            .map(|idx| FileRange {
-                lo: idx * n / k,
-                hi: (idx + 1) * n / k,
-            })
-            .collect(),
-    };
+    let schedule = make_schedule(files, k, timings.as_deref(), ctx.test_options.randomize);
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    for i in 0..k {
-        let idx: u32 = i;
+    for idx in 0..k {
         workers.push(Worker {
             event_loop: bun_jsc::EventLoopHandle::init(vm.event_loop_ptr()),
             idx,
-            range: ranges[idx as usize],
             out: bun_io::BufferedReader::init(),
             err: bun_io::BufferedReader::init(),
             process: None,
             ipc: Channel::default(),
-            inflight: None,
-            dispatched_at: 0,
             captured: Vec::new(),
             alive: false,
-            exit_status: None,
             peak_rss_mb: 0,
-            reached_ready: false,
             startup_failures: 0,
-            waits_for_heavy_file_to_end: false,
             first_loads: Vec::new(),
         });
     }
 
-    let room_for_heavy_files = timings.as_ref().map_or(0, |t| t.largest_growth(&sorted));
-    let room_beside_heavy_files = timings.as_ref().map_or(0, |t| {
-        t.growth_of_average_files(&sorted, k.saturating_sub(1))
-    });
-    let heavy_files_to_hand_out = timings.as_ref().map_or(0, |t| {
-        sorted
-            .iter()
-            .filter(|file| t.is_heavy(file.as_bytes()))
-            .count() as u32
-    });
     // Open until this process ends.
     #[cfg(windows)]
     let windows_job =
         bun_sys::windows::create_kill_on_close_job().map(core::mem::ManuallyDrop::new);
     let mut coord = Coordinator {
-        vm,
         reporter,
         timings,
-        files: sorted,
-        costs,
-        cwd: FileSystem::get().top_level_dir(),
-        argv,
-        envps,
+        schedule,
+        spawn: SpawnContext {
+            vm,
+            cwd: FileSystem::get().top_level_dir(),
+            argv: CStrList::from_unterminated(&mut argv.0),
+            envps: &envps,
+            compiled_program: crate::cli::run_compiled::graph_descriptor(),
+            #[cfg(windows)]
+            windows_job: windows_job.as_deref(),
+        },
         workers: &mut workers,
-        parallel_limit: k,
-        keeps_heavy_files_apart: runs_compiled_code,
         children_of_workers: (cfg!(target_os = "linux")
             && ctx.test_options.update_timings
             && runs_compiled_code)
             .then(Default::default),
-        room_for_heavy_files,
-        room_beside_heavy_files,
-        heavy_files_to_hand_out,
         max_worker_peak_rss_mb: 0,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
@@ -202,8 +150,6 @@ pub(crate) fn run_as_coordinator(
         } else {
             DEFAULT_SCALE_UP_AFTER_MS
         },
-        bail: ctx.test_options.bail,
-        dots: ctx.test_options.reporters.dots,
         test_records: if ctx.test_options.reporters.junit {
             (0..n).map(|_| Default::default()).collect()
         } else {
@@ -212,14 +158,9 @@ pub(crate) fn run_as_coordinator(
         coverage_files: Default::default(),
         last_header_idx: None,
         frame: Frame::default(),
-        files_done: 0,
         spawned_count: 0,
-        live_workers: 0,
         aborted: None,
         stop_reason: None,
-        last_printed_dot: false,
-        #[cfg(windows)]
-        windows_job: windows_job.as_deref(),
     };
 
     let abort_guard = abort_handler::install();
@@ -251,6 +192,87 @@ pub(crate) fn run_as_coordinator(
     Ok(true)
 }
 
+#[optimize(size)]
+fn make_schedule(
+    files: &[Interned],
+    k: u32,
+    timings: Option<&Timings>,
+    randomize: bool,
+) -> Schedule {
+    let mut sorted: Vec<Interned> = files.to_vec();
+    // Files of one directory share imports, so each worker gets neighbours. With --randomize the caller has shuffled them.
+    if !randomize {
+        index_sort::sort_slice_by(&mut sorted, |a, b| {
+            bun_core::order(a.as_bytes(), b.as_bytes())
+        });
+    }
+    let (n, slots) = (files.len(), k as usize);
+    let runs_compiled_code = crate::cli::run_compiled::runs_compiled_code();
+    let timed = timings.filter(|t| !t.is_empty() && !randomize);
+    let queues: Vec<Range<usize>> = match timed {
+        Some(_) if runs_compiled_code => {
+            let mut queues = vec![0..0; slots];
+            queues[0] = 0..n;
+            queues
+        }
+        Some(t) => t.partition(&sorted, k),
+        None => (0..slots)
+            .map(|i| i * n / slots..(i + 1) * n / slots)
+            .collect(),
+    };
+    // What a worker has cached depends on which files it runs, not on their order.
+    if let Some(t) = timed {
+        for queue in &queues {
+            t.sort_slowest_first(&mut sorted[queue.clone()]);
+        }
+    }
+    let measured = timings.filter(|_| runs_compiled_code);
+    let files = sorted
+        .iter()
+        .map(|file| file.as_bytes())
+        .map(|path| TestFile {
+            path,
+            growth: measured
+                .and_then(|t| t.growth_of(path))
+                .map_or(0, u64::from),
+        });
+    let steal = timed.map_or(Steal::BackHalf, |t| Steal::Slowest {
+        costs: t.costs(&sorted),
+    });
+    Schedule::new(files.collect(), queues, steal)
+}
+
+/// The strings live in the CLI arena.
+#[derive(Default)]
+struct Argv(Vec<Option<CStrRef<'static>>>);
+
+impl Argv {
+    fn push(&mut self, arg: &[u8]) {
+        self.0.push(Some(crate::cli::cli_dupe_z(arg)));
+    }
+
+    fn flag(&mut self, name: &str, is_set: bool) {
+        if is_set {
+            self.push(name.as_bytes());
+        }
+    }
+
+    /// `name=value`
+    fn option(&mut self, name: &str, value: Option<impl Display>) {
+        if let Some(value) = value {
+            self.push(format!("{name}={value}").as_bytes());
+        }
+    }
+
+    /// `name value`, for each of `values`
+    fn pairs<'v>(&mut self, name: &str, values: impl IntoIterator<Item = &'v [u8]>) {
+        for value in values {
+            self.push(name.as_bytes());
+            self.push(value);
+        }
+    }
+}
+
 /// Build the argv used for every worker (re)spawn. Forwards every `bun test`
 /// flag that affects how tests *execute inside* a worker, plus `--dots` and
 /// `--only-failures` since the worker formats result lines and the coordinator
@@ -260,281 +282,125 @@ pub(crate) fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[Option<CStrRef<'static>>]>> {
-    // Null-sentinel slice of C-string pointers. String storage routes through
-    // the process-lifetime CLI arena (bulk-freed on exit).
-    let mut argv: Vec<Option<CStrRef<'static>>> = Vec::new();
-    let opts = &ctx.test_options;
+fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Argv> {
+    use bun_core::CodeGenerationFromStrings as CodeGeneration;
+    let (opts, args, runtime) = (&ctx.test_options, &ctx.args, &ctx.runtime_options);
+    let unless_zero = |count: u32| (count > 0).then_some(count);
+    fn unless_empty(value: &[u8]) -> Option<&[u8]> {
+        (!value.is_empty()).then_some(value)
+    }
 
-    let dupe_z = |s: &[u8]| Some(crate::cli::cli_dupe_z(s));
-    let lit = |s: &'static CStr| Some(CStrRef::from(s));
-    let print_z = |args: core::fmt::Arguments<'_>| -> crate::Result<_> {
-        let mut buf = Vec::<u8>::new();
-        buf.write_fmt(args)
-            .map_err(|_| crate::Error::FormatFailed)?;
-        Ok(dupe_z(&buf))
-    };
-
+    let mut argv = Argv::default();
     let exe = bun_core::self_exe_path().map_err(|_| crate::Error::SelfExePathFailed)?;
-    argv.push(Some(exe.into()));
-    argv.push(lit(c"test"));
-    argv.push(lit(c"--test-worker"));
+    argv.push(exe.as_bytes());
+    argv.push(b"test");
+    argv.push(b"--test-worker");
     // Not everything in the file has a flag below.
-    if let Some(config_file) = &opts.config_file {
-        argv.push(print_z(format_args!(
-            "--config={}",
-            bstr::BStr::new(config_file)
-        ))?);
-    }
-    argv.push(if opts.isolate_modules {
-        lit(c"--isolate=modules")
-    } else if opts.isolate {
-        lit(c"--isolate")
-    } else {
-        lit(c"--no-isolate")
+    argv.option("--config", opts.config_file.as_deref().map(BStr::new));
+    argv.push(match (opts.isolate_modules, opts.isolate) {
+        (true, _) => b"--isolate=modules",
+        (false, true) => b"--isolate",
+        (false, false) => b"--no-isolate",
     });
-
-    argv.push(print_z(format_args!(
-        "--timeout={}",
-        opts.default_timeout_ms
-    ))?);
-    if opts.run_todo {
-        argv.push(lit(c"--todo"));
-    }
-    if opts.only {
-        argv.push(lit(c"--only"));
-    }
-    if opts.reporters.dots {
-        argv.push(lit(c"--dots"));
-    }
-    if opts.reporters.only_failures {
-        argv.push(lit(c"--only-failures"));
-    }
-    if opts.reporters.junit {
-        argv.push(lit(c"--reporter=junit"));
-    }
-    if opts.update_snapshots {
-        argv.push(lit(c"--update-snapshots"));
-    }
-    if opts.concurrent {
-        argv.push(lit(c"--concurrent"));
-    }
-    if opts.randomize {
-        argv.push(lit(c"--randomize"));
-    }
-    if let Some(seed) = opts.seed {
-        argv.push(print_z(format_args!("--seed={}", seed))?);
-    }
-    // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (see test_command.rs handle_test_completed), which the coordinator would
-    // misread as a crash. Cross-worker bail is handled at file granularity by
-    // the coordinator instead.
-    if opts.repeat_count > 0 {
-        argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
-    }
-    if opts.retry > 0 {
-        argv.push(print_z(format_args!("--retry={}", opts.retry))?);
-    }
-    argv.push(print_z(format_args!(
-        "--max-concurrency={}",
-        opts.max_concurrency
-    ))?);
-    if let Some(pattern) = &opts.test_filter_pattern {
-        argv.push(lit(c"-t"));
-        argv.push(dupe_z(pattern));
-    }
+    argv.option("--timeout", Some(opts.default_timeout_ms));
+    argv.flag("--todo", opts.run_todo);
+    argv.flag("--only", opts.only);
+    argv.flag("--dots", opts.reporters.dots);
+    argv.flag("--only-failures", opts.reporters.only_failures);
+    argv.flag("--reporter=junit", opts.reporters.junit);
+    argv.flag("--update-snapshots", opts.update_snapshots);
+    argv.flag("--concurrent", opts.concurrent);
+    argv.flag("--randomize", opts.randomize);
+    argv.option("--seed", opts.seed);
+    // No `--bail`: the coordinator counts the failures.
+    argv.option("--rerun-each", unless_zero(opts.repeat_count));
+    argv.option("--retry", unless_zero(opts.retry));
+    argv.option("--max-concurrency", Some(opts.max_concurrency));
+    argv.pairs("-t", opts.test_filter_pattern.as_deref());
     // No `--cpu-prof-name` or `--heap-prof-name`: every worker writes a profile, and the default names have the pid in them.
-    let cpu_prof = &ctx.runtime_options.cpu_prof;
-    if cpu_prof.enabled {
-        if cpu_prof.json_format {
-            argv.push(lit(c"--cpu-prof"));
-        }
-        if cpu_prof.md_format {
-            argv.push(lit(c"--cpu-prof-md"));
-        }
-        if !cpu_prof.dir.is_empty() {
-            argv.push(lit(c"--cpu-prof-dir"));
-            argv.push(dupe_z(cpu_prof.dir));
-        }
-        argv.push(print_z(format_args!(
-            "--cpu-prof-interval={}",
-            cpu_prof.interval
-        ))?);
+    if runtime.cpu_prof.enabled {
+        argv.flag("--cpu-prof", runtime.cpu_prof.json_format);
+        argv.flag("--cpu-prof-md", runtime.cpu_prof.md_format);
+        argv.pairs("--cpu-prof-dir", unless_empty(runtime.cpu_prof.dir));
+        argv.option("--cpu-prof-interval", Some(runtime.cpu_prof.interval));
     }
-    let heap_prof = &ctx.runtime_options.heap_prof;
-    if heap_prof.enabled {
-        argv.push(lit(if heap_prof.text_format {
-            c"--heap-prof-md"
-        } else {
-            c"--heap-prof"
-        }));
-        if !heap_prof.dir.is_empty() {
-            argv.push(lit(c"--heap-prof-dir"));
-            argv.push(dupe_z(heap_prof.dir));
-        }
+    if runtime.heap_prof.enabled {
+        argv.flag("--heap-prof-md", runtime.heap_prof.text_format);
+        argv.flag("--heap-prof", !runtime.heap_prof.text_format);
+        argv.pairs("--heap-prof-dir", unless_empty(runtime.heap_prof.dir));
     }
-    for preload in ctx.preloads.iter() {
-        argv.push(lit(c"--preload"));
-        argv.push(dupe_z(preload));
-    }
-    if let Some(define) = &ctx.args.define {
+    argv.pairs("--preload", ctx.preloads.iter().map(|it| &**it));
+    if let Some(define) = &args.define {
         debug_assert_eq!(define.keys.len(), define.values.len());
-        for (key, value) in define.keys.iter().zip(define.values.iter()) {
-            argv.push(lit(c"--define"));
-            argv.push(print_z(format_args!(
-                "{}={}",
-                bstr::BStr::new(key),
-                bstr::BStr::new(value)
-            ))?);
+        for (key, value) in define.keys.iter().zip(&define.values) {
+            let define = format!("{}={}", BStr::new(key), BStr::new(value));
+            argv.pairs("--define", [define.as_bytes()]);
         }
     }
-    if let Some(loaders) = &ctx.args.loaders {
+    if let Some(loaders) = &args.loaders {
         debug_assert_eq!(loaders.extensions.len(), loaders.loaders.len());
-        for (ext, loader) in loaders.extensions.iter().zip(loaders.loaders.iter()) {
-            argv.push(lit(c"--loader"));
-            argv.push(print_z(format_args!(
-                "{}:{}",
-                bstr::BStr::new(ext),
-                api_loader_tag_name(*loader)
-            ))?);
+        for (ext, &loader) in loaders.extensions.iter().zip(&loaders.loaders) {
+            let name = <&str>::from(bun_ast::Loader::from_api(loader));
+            let loader = format!("{}:{name}", BStr::new(ext));
+            argv.pairs("--loader", [loader.as_bytes()]);
         }
     }
-    if let Some(tsconfig) = &ctx.args.tsconfig_override {
-        argv.push(lit(c"--tsconfig-override"));
-        argv.push(dupe_z(tsconfig));
-    }
-    // Was `inline for` over a heterogeneous-ish tuple; all elements are
-    // (&'static CStr, &[Box<[u8]>]) so a const array + plain for suffices.
+    argv.pairs("--tsconfig-override", args.tsconfig_override.as_deref());
     // No `--env-file`: a worker loads no env file (see `TestCommand::exec`).
-    let multi_value_flags: [(&'static CStr, &[Box<[u8]>]); 5] = [
-        (c"--conditions", &ctx.args.conditions),
-        (c"--drop", &ctx.args.drop),
-        (c"--main-fields", &ctx.args.main_fields),
-        (c"--extension-order", &ctx.args.extension_order),
-        (c"--feature", &ctx.args.feature_flags),
-    ];
-    for (flag, values) in multi_value_flags {
-        for value in values {
-            argv.push(lit(flag));
-            argv.push(dupe_z(value));
-        }
+    for (name, values) in [
+        ("--conditions", &args.conditions),
+        ("--drop", &args.drop),
+        ("--main-fields", &args.main_fields),
+        ("--extension-order", &args.extension_order),
+        ("--feature", &args.feature_flags),
+    ] {
+        argv.pairs(name, values.iter().map(|it| &**it));
     }
-    if ctx.args.preserve_symlinks.unwrap_or(false) {
-        argv.push(lit(c"--preserve-symlinks"));
-    }
-    if crate::cli::run_compiled::is_checked() {
-        argv.push(lit(c"--aot-checked=-"));
-    }
+    argv.flag("--preserve-symlinks", args.preserve_symlinks == Some(true));
+    argv.flag("--aot-checked=-", crate::cli::run_compiled::is_checked());
     if let Some(flag) = crate::cli::run_compiled::graph_flag_of_test_worker() {
-        argv.push(dupe_z(&flag));
+        argv.push(&flag);
     }
-    if ctx.runtime_options.smol {
-        argv.push(lit(c"--smol"));
-    }
-    if ctx.runtime_options.experimental_http2_fetch {
-        argv.push(lit(c"--experimental-http2-fetch"));
-    }
-    if ctx.runtime_options.experimental_http3_fetch {
-        argv.push(lit(c"--experimental-http3-fetch"));
-    }
-    if ctx.args.allow_addons == Some(false) {
-        argv.push(lit(c"--no-addons"));
-    }
-    if ctx.args.allow_ffi_cc == Some(false) {
-        argv.push(lit(c"--no-ffi-cc"));
-    }
+    argv.flag("--smol", runtime.smol);
+    argv.flag(
+        "--experimental-http2-fetch",
+        runtime.experimental_http2_fetch,
+    );
+    argv.flag(
+        "--experimental-http3-fetch",
+        runtime.experimental_http3_fetch,
+    );
+    argv.flag("--no-addons", args.allow_addons == Some(false));
+    argv.flag("--no-ffi-cc", args.allow_ffi_cc == Some(false));
     match bun_core::code_generation_from_strings_by_flags() {
-        bun_core::CodeGenerationFromStrings::Allowed => {}
-        bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
-            argv.push(lit(c"--disallow-code-generation-from-strings"));
-        }
-        bun_core::CodeGenerationFromStrings::Strict => {
-            argv.push(lit(c"--disallow-code-generation-from-strings=strict"));
-        }
+        CodeGeneration::Allowed => {}
+        CodeGeneration::DisallowedLikeNode => argv.push(b"--disallow-code-generation-from-strings"),
+        CodeGeneration::Strict => argv.push(b"--disallow-code-generation-from-strings=strict"),
     }
     if let Some(flag) = bun_core::Global::ca_store_flag() {
-        argv.push(Some(flag.into()));
+        argv.push(flag.as_bytes());
     }
-    if matches!(ctx.debug.macros, MacroOptions::Disable) {
-        argv.push(lit(c"--no-macros"));
-    }
-    if let Some(jsx) = &ctx.args.jsx {
-        if !jsx.factory.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-factory={}",
-                bstr::BStr::new(&jsx.factory)
-            ))?);
+    argv.flag(
+        "--no-macros",
+        matches!(ctx.debug.macros, MacroOptions::Disable),
+    );
+    if let Some(jsx) = &args.jsx {
+        for (name, value) in [
+            ("--jsx-factory", &jsx.factory),
+            ("--jsx-fragment", &jsx.fragment),
+            ("--jsx-import-source", &jsx.import_source),
+        ] {
+            argv.option(name, unless_empty(value).map(BStr::new));
         }
-        if !jsx.fragment.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-fragment={}",
-                bstr::BStr::new(&jsx.fragment)
-            ))?);
-        }
-        if !jsx.import_source.is_empty() {
-            argv.push(print_z(format_args!(
-                "--jsx-import-source={}",
-                bstr::BStr::new(&jsx.import_source)
-            ))?);
-        }
-        argv.push(print_z(format_args!(
-            "--jsx-runtime={}",
-            jsx_runtime_tag_name(jsx.runtime)
-        ))?);
-        if jsx.side_effects {
-            argv.push(lit(c"--jsx-side-effects"));
-        }
+        argv.option("--jsx-runtime", Some(jsx_runtime_tag_name(jsx.runtime)));
+        argv.flag("--jsx-side-effects", jsx.side_effects);
     }
-    if opts.coverage.enabled {
-        argv.push(lit(c"--coverage"));
-    }
-    if let Some(environment) = opts.environment {
-        argv.push(print_z(format_args!(
-            "--environment={}",
-            environment.name()
-        ))?);
-    }
-    if let Some(globals) = opts.globals {
-        argv.push(print_z(format_args!("--globals={}", globals.name()))?);
-    }
+    argv.flag("--coverage", opts.coverage.enabled);
+    argv.option("--environment", opts.environment.map(|it| it.name()));
+    argv.option("--globals", opts.globals.map(|it| it.name()));
     // Each worker reads `include` and `exclude` from bunfig.toml itself.
-    if opts.react_compiler.is_some() {
-        argv.push(lit(c"--react-compiler"));
-    }
-
-    argv.push(None);
-    Ok(argv.into_boxed_slice())
-}
-
-/// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`
-/// has no `From<Loader> for &str` impl upstream.
-fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
-    use bun_options_types::schema::api::Loader as L;
-    match l {
-        L::jsx => "jsx",
-        L::js => "js",
-        L::ts => "ts",
-        L::tsx => "tsx",
-        L::css => "css",
-        L::file => "file",
-        L::json => "json",
-        L::jsonc => "jsonc",
-        L::toml => "toml",
-        L::wasm => "wasm",
-        L::napi => "napi",
-        L::base64 => "base64",
-        L::dataurl => "dataurl",
-        L::text => "text",
-        L::bunsh => "bunsh",
-        L::sqlite => "sqlite",
-        L::sqlite_embedded => "sqlite_embedded",
-        L::html => "html",
-        L::yaml => "yaml",
-        L::json5 => "json5",
-        L::md => "md",
-        L::xml => "xml",
-        L::_none => "_none",
-    }
+    argv.flag("--react-compiler", opts.react_compiler.is_some());
+    Ok(argv)
 }
 
 /// Local shim for `@tagName(jsx.runtime)`.
@@ -574,86 +440,89 @@ impl CoordinatorLink {
     }
 }
 
-struct WorkerCommands {
-    link: &'static CoordinatorLink,
-    /// Coordinator dispatches one `.run` and waits for `.file_done` before
-    /// the next, so a single slot is sufficient. Owned path storage.
-    pending_idx: Option<u32>,
-    pending_path: Vec<u8>,
-    /// `first_loads` of the process that ran in this one's place before it.
-    pending_first_loads: Vec<u8>,
-    /// A compiled run with `--update-timings`.
-    pending_is_growth_written: bool,
-    running: Option<RunningFile>,
+/// What the coordinator has sent and this worker has yet to act on.
+#[derive(Default)]
+struct Commands {
+    /// The payload of `Run`, or empty. The next one comes after `FileDone`.
+    run: Vec<u8>,
     shutdown: bool,
 }
 
+impl Commands {
+    /// Returns whether the wait is over: a file to run, a shutdown or a closed channel.
+    fn read(&mut self, channel: &Channel) -> bool {
+        if let Some(mut incoming) = channel.take_incoming() {
+            while let Some((kind, rd)) = incoming.next_frame() {
+                match kind {
+                    frame::Kind::Run => rd.p.clone_into(&mut self.run),
+                    frame::Kind::Shutdown => self.shutdown = true,
+                    _ => {}
+                }
+            }
+            channel.restore_incoming(incoming);
+        }
+        !self.run.is_empty() || self.shutdown || channel.done.get()
+    }
+
+    fn wait_for_run(
+        &mut self,
+        channel: &Channel,
+        vm: &VirtualMachine,
+    ) -> Option<frame::Reader<'_>> {
+        self.run.clear();
+        // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
+        let _waits_for_command = bun_io::JsKeepAlive::active();
+        tick_until(vm, || self.read(channel));
+        (!self.run.is_empty()).then_some(frame::Reader { p: &self.run })
+    }
+}
+
+fn tick_until(vm: &VirtualMachine, mut is_over: impl FnMut() -> bool) {
+    while !is_over() {
+        vm.event_loop().tick();
+        if is_over() {
+            break;
+        }
+        vm.event_loop().auto_tick();
+    }
+}
+
 struct RunningFile {
-    idx: u32,
     before: crate::test_runner::jest::Summary,
     before_unhandled: u32,
     started_ns: u64,
     resident_at_start: Option<ResidentAtStart>,
 }
 
-impl WorkerCommands {
-    /// Returns whether the wait is over: a file to run, a shutdown or a closed channel.
-    fn read_commands(&mut self) -> bool {
-        if let Some(mut incoming) = self.link.channel.take_incoming() {
-            while let Some((kind, mut rd)) = incoming.next_frame() {
-                match kind {
-                    frame::Kind::Run => {
-                        self.pending_idx = Some(rd.u32());
-                        self.pending_path.clear();
-                        self.pending_path.extend_from_slice(rd.str());
-                        self.pending_first_loads.clear();
-                        self.pending_first_loads.extend_from_slice(rd.str());
-                        self.pending_is_growth_written = rd.u32() != 0;
-                    }
-                    frame::Kind::Shutdown => self.shutdown = true,
-                    _ => {}
-                }
-            }
-            self.link.channel.restore_incoming(incoming);
-        }
-        self.pending_idx.is_some() || self.shutdown || self.link.channel.done.get()
-    }
-
-    /// Says what the file that runs has counted.
-    fn emit_file_done(&mut self, reporter: &CommandLineReporter, vm: &VirtualMachine) {
-        let Some(file) = self.running.take() else {
-            return;
-        };
-        let mut growth = file.resident_at_start.map(growth_since).unwrap_or_default();
-        if file.resident_at_start.is_none() && crate::cli::run_compiled::logs_accounts() {
+impl RunningFile {
+    /// Says what the file has counted.
+    fn emit_done(
+        mut self,
+        link: &CoordinatorLink,
+        reporter: &CommandLineReporter,
+        vm: &VirtualMachine,
+    ) {
+        let mut growth = self.resident_at_start.map(growth_since).unwrap_or_default();
+        if self.resident_at_start.is_none() && crate::cli::run_compiled::logs_accounts() {
             growth.peak = crate::cli::run_compiled::peak_of_this_process_mb();
         }
         let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .ns()
-            .saturating_sub(file.started_ns);
-        let (before, after) = (file.before, reporter.summary());
+            .saturating_sub(self.started_ns);
+        let mut after = reporter.summary();
         // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
         Output::flush();
         for refusal in crate::cli::run_compiled::refused_changes() {
-            self.link
-                .emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
+            link.emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
         }
         let first_loads = first_loads(vm);
-        self.link.emit(frame::Kind::FileDone, |wf| {
-            for v in [
-                file.idx,
-                after.pass - before.pass,
-                after.fail - before.fail,
-                after.skip - before.skip,
-                after.todo - before.todo,
-                after.expectations - before.expectations,
-                after.skipped_because_label - before.skipped_because_label,
-                after.files - before.files,
-                after.shuffled - before.shuffled,
-                reporter.jest.unhandled_errors_between_tests.get() - file.before_unhandled,
-            ] {
-                wf.u32(v);
+        link.emit(frame::Kind::FileDone, |wf| {
+            wf.u32(link.file_idx.get());
+            let before = frame::counters(&mut self.before);
+            for (after, before) in frame::counters(&mut after).into_iter().zip(before) {
+                wf.u32(*after - *before);
             }
+            wf.u32(reporter.jest.unhandled_errors_between_tests.get() - self.before_unhandled);
             wf.u64(elapsed_ns);
             wf.u32(growth.of_worker);
             wf.u32(growth.largest_child);
@@ -663,100 +532,77 @@ impl WorkerCommands {
     }
 }
 
-// Hoisted from a local struct inside run_as_worker — Rust does not
-// support method-bearing local structs that need to be named in a generic call.
-struct WorkerLoop {
+/// Returns how many files it ran.
+fn run_files(
     reporter: &'static CommandLineReporter,
-    cmds: WorkerCommands,
-    files_run: u32,
-}
-
-impl WorkerLoop {
-    fn begin(&mut self, vm: &VirtualMachine) {
-        let end = bun_sys::File::from_fd(Fd::from_uv(3));
-        if !self.cmds.link.channel.adopt(vm, end) {
-            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
-            Global::exit(1);
-        }
-
-        // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
-        // anything else exits 1 (the bounded-respawn branch). Real init
-        // failures aren't reproducible from a test. Debug/ASAN builds only,
-        // so a stray env var can't disable --parallel in a release build.
-        if cfg!(any(debug_assertions, bun_asan)) {
-            // SAFETY: env loader is initialized before the test runner runs.
-            let env = unsafe { &*vm.transpiler.get().env };
-            if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
-                bun_core::pretty_errorln!(
-                    "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
-                );
-                Output::flush();
-                if bun_core::strings::eql(mode, b"abort") {
-                    std::process::abort();
-                }
-                Global::exit(1);
-            }
-        }
-
-        self.cmds.link.emit(frame::Kind::Ready, |_| {});
-
-        loop {
-            // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let waits_for_command = bun_io::JsKeepAlive::active();
-            while !self.cmds.read_commands() {
-                vm.event_loop().tick();
-                if self.cmds.read_commands() {
-                    break;
-                }
-                vm.event_loop().auto_tick();
-            }
-            drop(waits_for_command);
-            let Some(idx) = self.cmds.pending_idx.take() else {
-                break;
-            };
-            if self.files_run == 0 {
-                note_first_loads_of_earlier_process(vm, &self.cmds.pending_first_loads);
-            }
-            self.files_run += 1;
-
-            self.cmds.link.file_idx.set(idx);
-            (self.cmds.link).emit(frame::Kind::FileStart, |wf| wf.u32(idx));
-
-            self.cmds.running = Some(RunningFile {
-                idx,
-                before: self.reporter.summary(),
-                before_unhandled: self.reporter.jest.unhandled_errors_between_tests.get(),
-                started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
-                resident_at_start: start_measuring_growth(vm, self.cmds.pending_is_growth_written),
-            });
-
-            // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
-            if let Err(err) = TestCommand::run(
-                self.reporter,
-                vm,
-                self.cmds.pending_path.as_slice(),
-                FirstLast {
-                    first: true,
-                    last: true,
-                },
-            ) {
-                test_command::handle_top_level_test_error_before_javascript_start(&err);
-            }
-            if vm.test_isolation_enabled.get() {
-                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                vm.swap_global_for_test_isolation();
-                self.reporter
-                    .jest
-                    .bun_test_root
-                    .reset_preload_for_test_isolation();
-                crate::test_runner::Expect::reset_for_test_isolation(vm.global());
-            } else {
-                Global::mimalloc_cleanup(false);
-            }
-            self.reporter.jest.default_timeout_override.set(u32::MAX);
-            self.cmds.emit_file_done(self.reporter, vm);
-        }
+    vm: &VirtualMachine,
+    link: &CoordinatorLink,
+) -> u32 {
+    let end = bun_sys::File::from_fd(Fd::from_uv(3));
+    if !link.channel.adopt(vm, end) {
+        bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
+        Global::exit(1);
     }
+
+    // Test hook: a real failure to start cannot be staged. Not in release builds, where a stray variable would disable --parallel.
+    if cfg!(any(debug_assertions, bun_asan))
+        && let Some(mode) = vm.env_loader().get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
+    {
+        bun_core::pretty_errorln!(
+            "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
+        );
+        Output::flush();
+        if mode == b"abort" {
+            std::process::abort();
+        }
+        Global::exit(1);
+    }
+
+    link.emit(frame::Kind::Ready, |_| {});
+
+    let mut commands = Commands::default();
+    let mut files_run = 0;
+    while let Some(mut run) = commands.wait_for_run(&link.channel, vm) {
+        let (idx, path, first_loads) = (run.u32(), run.str(), run.str());
+        let is_growth_written = run.u32() != 0;
+        if files_run == 0 {
+            note_first_loads_of_earlier_process(vm, first_loads);
+        }
+        files_run += 1;
+
+        link.file_idx.set(idx);
+        link.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
+
+        let running = RunningFile {
+            before: reporter.summary(),
+            before_unhandled: reporter.jest.unhandled_errors_between_tests.get(),
+            started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
+            resident_at_start: start_measuring_growth(vm, is_growth_written),
+        };
+
+        // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
+        let first_last = FirstLast {
+            first: true,
+            last: true,
+        };
+        if let Err(err) = TestCommand::run(reporter, vm, path, first_last) {
+            test_command::handle_top_level_test_error_before_javascript_start(&err);
+        }
+        if vm.test_isolation_enabled.get() {
+            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+            vm.swap_global_for_test_isolation();
+            reporter
+                .jest
+                .bun_test_root
+                .reset_preload_for_test_isolation();
+            crate::test_runner::Expect::reset_for_test_isolation(vm.global());
+        } else {
+            Global::mimalloc_cleanup(false);
+        }
+        reporter.jest.default_timeout_override.set(u32::MAX);
+        running.emit_done(link, reporter, vm);
+    }
+    files_run
 }
 
 /// For each file of `compiled_program::for_each_first_load`: u32, 1 where the load was synchronous, and str path.
@@ -887,24 +733,8 @@ pub(crate) fn run_as_worker(
     vm.event_loop().ensure_waker();
 
     let link = reporter.worker.get_or_init(CoordinatorLink::default);
-    let mut wloop = WorkerLoop {
-        reporter,
-        cmds: WorkerCommands {
-            link,
-            pending_idx: None,
-            pending_path: Vec::new(),
-            pending_first_loads: Vec::new(),
-            pending_is_growth_written: false,
-            running: None,
-            shutdown: false,
-        },
-        files_run: 0,
-    };
-    vm.run_with_api_lock(|| wloop.begin(vm));
-    crate::cli::run_compiled::log_account_of_process(format_args!(
-        "worker | files {}",
-        wloop.files_run
-    ));
+    let files_run = vm.run_with_api_lock(|| run_files(reporter, vm, link));
+    crate::cli::run_compiled::log_account_of_process(format_args!("worker | files {files_run}"));
 
     // Test hook, like BUN_TEST_WORKER_EXIT_BEFORE_READY. A test can't otherwise reproduce a crash during exit.
     if cfg!(any(debug_assertions, bun_asan))
@@ -919,15 +749,7 @@ pub(crate) fn run_as_worker(
     worker_flush_aggregates(reporter, vm, &ctx.test_options.coverage, link);
     // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
     let channel = &link.channel;
-    vm.run_with_api_lock(|| {
-        while channel.has_pending_writes() && !channel.done.get() {
-            vm.event_loop().tick();
-            if !channel.has_pending_writes() || channel.done.get() {
-                break;
-            }
-            vm.event_loop().auto_tick();
-        }
-    });
+    vm.run_with_api_lock(|| tick_until(vm, || !channel.has_pending_writes() || channel.done.get()));
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code.set(0);
@@ -940,10 +762,7 @@ pub(crate) fn run_as_worker(
     vm.run_with_api_lock(|| {
         vm.on_exit();
         vm.global_exit()
-    });
-    {
-        Global::exit(0);
-    }
+    })
 }
 
 #[optimize(size)]

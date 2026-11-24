@@ -10,28 +10,30 @@ const squares = (value) => {
   return squares.found[value];
 };
 squares.found = {};
-const Space = {};
+const Kitchen = {};
 (function () {
-  function Maths() {
-    Maths.Maths.apply(this, arguments);
+  function Weights() {}
+  function Scales(plates) {
+    Scales.hung.call(this, plates);
   }
-  function Limits() {}
-  Space.Maths = Maths;
-  Space.Limits = Limits;
+  Kitchen.Weights = Weights;
+  Kitchen.Scales = Scales;
 })();
 (function () {
-  const Maths = Space.Maths, Limits = Space.Limits;
-  Maths.Maths = function () {};
-  Maths.clamp = function (value, low, high) {
-    return value < low ? low : value > high ? high : value;
+  const Scales = Kitchen.Scales, Weights = Kitchen.Weights;
+  Weights.step = 0.5;
+  Weights.least = 0.125;
+  Scales.hung = function () {};
+  Scales.rounded = function (grams, step) {
+    const rest = grams % step;
+    return rest + rest < step ? grams - rest : grams - rest + step;
   };
-  Maths.sum = function (list) {
+  Scales.sum = function (bowls) {
     let sum = 0;
-    for (let k = 0; k < list.length; k++) sum += Maths.clamp(list[k], Limits.low, Limits.high);
+    let k = bowls.length;
+    while (k-- > 0) sum += Scales.rounded(bowls[k] * 1.3, Weights.step) + Weights.least;
     return sum;
   };
-  Limits.low = 0.25;
-  Limits.high = 2;
 })();
 function made(count) {
   function holder() {
@@ -51,9 +53,9 @@ for (let k = 0; k < 3; k++) {
 let total = 0;
 for (let k = 0; k < 20; k++) total += counted(k) + squares(k % 4);
 console.log(total, counted.calls, Object.keys(squares.found).join());
-console.log(Space.Maths.sum([0, 1, 2, 3]), holders.map((holder) => holder()).join());
-Space.Limits.high = 1.5;
-console.log(Space.Maths.sum([0, 1, 2, 3]), Space.Limits.none, typeof Space.Maths.Maths);
+console.log(Kitchen.Scales.sum([0, 1, 2, 3]), holders.map((holder) => holder()).join());
+Kitchen.Weights.step = 0.75;
+console.log(Kitchen.Scales.sum([0, 1, 2, 3]), Kitchen.Weights.none, typeof Kitchen.Scales.hung);
 counted.calls = "n";
 console.log(counted(1), counted(2));
-console.log(new Space.Limits() instanceof Space.Limits, Object.keys(Space.Limits).join(), Object.keys(counted).join());
+console.log(new Kitchen.Weights() instanceof Kitchen.Weights, Object.keys(Kitchen.Weights).join(), Object.keys(counted).join(), Object.keys(new Kitchen.Scales(2)).length);

@@ -4,7 +4,7 @@
  * chunk hashing.
  *
  * Highway compiles every function for multiple targets (SSE2/AVX2/NEON/etc.)
- * and picks at runtime. Unlike zlib-ng it needs NO per-file `-m` flags or
+ * and picks at runtime. It needs NO per-file `-m` flags or
  * generated config — `hwy/foreach_target.h` re-includes each TU body once
  * per ISA wrapped in `#pragma clang attribute push(target("..."))`, so a
  * single baseline compile per .cc emits all variants.
@@ -17,7 +17,7 @@ const HIGHWAY_COMMIT = "2607d3b5b0113992fe84d3848859eae13b3b52c1";
 // The scalable SVE/SVE2 targets and SVE_256, which Highway starts building at clang >= 22, stay
 // off: bun's movemask-style kernels (highway_json/xml/sourcemap.cpp) use BitsFromMask, which only
 // fixed-width targets have. SVE2_128 (Neoverse V2/N2) is fixed-width and stays on, as before.
-// highway_png.cpp, highway_jpeg.cpp and highway_webp_*.cpp put a longer list in the place of this one.
+// highway_{png,jpeg,checksums,brotli,zlib,zstd}.cpp and highway_webp_*.cpp put a longer list in the place of this one.
 const disabledTargets = "HWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128";
 
 export const highway: Dependency = {

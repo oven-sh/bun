@@ -76,6 +76,10 @@ async function leakedBytes(count: number, finish: keyof typeof finishes, outcome
       seen.add("collected");
     }
   `;
+  return runWithLeakCheck(script);
+}
+
+async function runWithLeakCheck(script: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: {
@@ -115,13 +119,27 @@ describe.skipIf(!isASAN)("S3 writer() frees its NetworkSink", () => {
       `done ${requests ?? 2} ${seen}\n`,
       `done ${requests ?? 22} ${seen}\n`,
     ]);
-    // A sink that is never freed adds 20 * sizeof(NetworkSink), about 3000 bytes.
+    // A sink that is never freed adds 20 * sizeof(NetworkSink), about 10000 bytes.
     expect(large.leaked - small.leaked).toBeLessThan(400);
   });
 });
 
-// On success only `Drop for MultiPartUpload` unrefs the event loop, so the sink has to drop its
-// ref on the upload when the upload completes, not when the writer is collected.
+test.skipIf(!isASAN)("a terminated worker frees the uploads of its streams", async () => {
+  const script = (count: number) => `
+    const worker = new Worker(URL.createObjectURL(new Blob([\`
+      const s3 = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: "http://127.0.0.1:1" });
+      for (let i = 0; i < ${count}; i++) s3.write("key", new ReadableStream({ pull: () => new Promise(() => {}) }));
+      postMessage("started");
+    \`])));
+    worker.onmessage = () => worker.terminate();
+    worker.addEventListener("close", () => console.log("closed"));
+  `;
+  const [small, large] = await Promise.all([runWithLeakCheck(script(2)), runWithLeakCheck(script(22))]);
+  expect([small.stdout, large.stdout]).toEqual(["closed\n", "closed\n"]);
+  expect(large.leaked - small.leaked).toBeLessThan(400);
+});
+
+// The upload unrefs the event loop when it completes, not when the writer is collected.
 // Serial on purpose: when this test times out, bun test kills the child that never exits.
 test("S3 writer() lets the process exit once end() resolves, even if the writer is retained", async () => {
   const script = `${mockS3("succeeds")}

@@ -1,35 +1,57 @@
-// What a getter returns is called under the getter's name, on objects of classes that escape: the call goes by what the program's own code laid under the name, and by whatever else lies there.
-// Under: --aot-check=FlowFixpoint: a call that knew a getter's closure alone gave it up where the class had escaped in between, and the flow was not closed.
+// A call of a property that a getter answers calls what the getter returns. The classes below leave the file, so others may lay something else under the name.
+// Under: --aot-check=FlowFixpoint: the call knew what the getter returned and gave it up where the class had left in between, and the flow was not closed.
 "use strict";
-const J = JSON.parse('{"k":"add","m":"mul","name":"fn","no":"none","z":-0,"one":1}');
-const F = { add(a, b) { return a + b; }, mul(a, b) { return a * b; } };
-class C { get fn() { return F[J.k]; } }
-console.log(new C().fn(1, 2), Object.is(new C().fn(J.z, J.z), -0), new C().fn("a", 1));
+const read = JSON.parse('{"first":"twice","second":"half","key":"act","absent":"nothing","negative":0,"text":"8"}');
+const actions = {
+  twice(value) { return value * 2; },
+  half(value) { return value / 2; },
+};
+const negativeZero = -read.negative;
 
-class S { static get fn() { return F[J.m]; } get gn() { return F[J.k]; } }
-console.log(S.fn(3, 4), new S().gn(5, 6), Object.is(S.fn(J.z, J.one), -0));
-
-class E { get fn() { return F[J.k]; } }
-class Below extends E { get other() { return super.fn; } }
-const e = new E(), below = new Below();
-console.log(e.fn(1, 2), below.fn(1, 2), below.other(3, 4));
-Object.defineProperty(E.prototype, J.name, { get() { return F[J.m]; }, configurable: true });
-console.log(e.fn(5, 7), below.fn(5, 7), below.other(5, 7));
-Object.defineProperty(E.prototype, J.name, { value: 5, configurable: true });
-for (const call of [() => e.fn(1, 2), () => below.other(1, 2)]) {
-  try { call(); console.log("called"); } catch (error) { console.log(error instanceof TypeError); }
+class Machine {
+  get act() { return actions[read.first]; }
 }
-Object.defineProperty(E.prototype, J.name, { value: F.add });
-console.log(e.fn(8, 9), below.fn(8, 9));
+console.log(new Machine().act(21), Object.is(new Machine().act(negativeZero), -0), new Machine().act(read.text));
 
-class N { get fn() { return F[J.no]; } }
-try { new N().fn(1, 2); console.log("called"); } catch (error) { console.log(error instanceof TypeError); }
-
-class T { constructor(n) { this.n = n; } get fn() { return this.n & 1 ? F[J.k] : F[J.m]; } }
-const things = [];
-for (let i = 0; i < 20; i++) things.push(new T(i));
-let sum = 1;
-for (let turn = 0; turn < 200; turn++) {
-  for (let i = 0; i < things.length; i++) sum = things[i].fn(sum, i) % 1000003;
+class Tool {
+  static get act() { return actions[read.second]; }
+  get run() { return actions[read.first]; }
 }
-console.log(sum, JSON.stringify(things.slice(0, 2)));
+console.log(Tool.act(9), new Tool().run(9), Object.is(Tool.act(negativeZero), -0));
+
+class Base {
+  get act() { return actions[read.first]; }
+}
+class Derived extends Base {
+  get throughBase() { return super.act; }
+}
+const base = new Base(), derived = new Derived();
+const calls = [() => base.act(10), () => derived.act(10), () => derived.throughBase(10)];
+const tell = () => console.log(calls.map(call => { try { return call(); } catch (error) { return error.constructor.name; } }).join(" "));
+tell();
+Object.defineProperty(Base.prototype, read.key, { get: () => actions[read.second], configurable: true });
+tell();
+Object.defineProperty(Base.prototype, read.key, { value: read.text, configurable: true });
+tell();
+Object.defineProperty(Base.prototype, read.key, { value: actions.half });
+tell();
+
+class Without {
+  get act() { return actions[read.absent]; }
+}
+try {
+  console.log(new Without().act(1));
+} catch (error) {
+  console.log(error.constructor.name);
+}
+
+class Row {
+  constructor(index) { this.index = index; }
+  get act() { return this.index % 3 ? actions[read.first] : actions[read.second]; }
+}
+const rows = Array.from({ length: 12 }, (_, index) => new Row(index));
+let total = 1;
+for (let turn = 0; turn < 300; turn++) {
+  for (const row of rows) total = (row.act(total) + row.index) % 65521;
+}
+console.log(total, JSON.stringify(rows.slice(3, 5)));

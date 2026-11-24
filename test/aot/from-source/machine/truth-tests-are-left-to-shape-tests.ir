@@ -2,15 +2,14 @@
 # RUN(EVENT): compile TruthTestsDeferredToShapeTests mechanisms=all
 # EVENT: statistic TruthTestsDeferredToShapeTests 1
 # -- source: truths.ts
-# class Node1 { kind: number; flags: number; parent: Node1 | undefined; constructor(kind: number, flags: number, parent: Node1 | undefined) { this.kind = kind; this.flags = flags; this.parent = parent; } }
-# class Named extends Node1 { text: string; constructor(kind: number, flags: number, parent: Node1 | undefined) { super(kind, flags, parent); this.text = "b"; } }
-# declare function walkUp(node: Node1): Node1;
+# class Branch { leaves: number; age: number; from: Branch | undefined; constructor(age: number) { this.age = age; this.leaves = age * 6; this.from = undefined; } }
+# class Twig extends Branch { bud: string; constructor(age: number) { super(age); this.bud = "green"; } }
+# declare function grown(branch: Branch): Branch;
 # declare function sink(...values: unknown[]): void;
-# function combined(node: Node1): number {
-#     node = walkUp(node);
-#     let flags = 0;
-#     if (node && node.kind === 262) { flags |= node.flags; node = node.parent!; }
-#     return flags;
+# function shade(branch: Branch): number {
+#     const under = grown(branch);
+#     if (under && under.age > 40) return under.leaves * 2;
+#     return 3;
 # }
-# sink(combined, Node1, Named, new Named(1, 2, new Node1(1, 2, undefined)));
+# sink(shade, Branch, Twig, new Twig(1), new Branch(2));
 # -- end of source

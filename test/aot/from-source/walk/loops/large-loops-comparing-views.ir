@@ -1,12 +1,30 @@
 # A loop of more than a hundred operations compares elements of a view with one another: it has a version for the view all the same.
 # LIBRARY: own
 # -- source: main.js
-# class State { constructor() { this.window = new Uint8Array(256); this.prev = new Uint16Array(64); for (let i = 0; i < 256; i++) this.window[i] = i % 5; for (let i = 0; i < 64; i++) this.prev[i] = i > 4 ? i - 5 : 0; } }
-# function match(state, scan, chain) { const window = state.window, prev = state.prev; let best = 2, at = -1, head = scan - 5; do { let m = head; if (window[m + best] !== window[scan + best] || window[m + best - 1] !== window[scan + best - 1] || window[m] !== window[scan] || window[++m] !== window[scan + 1]) continue; let s = scan + 2; m++; do { } while (window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && s < scan + 60); const len = s - scan; if (len > best) { best = len; at = head; if (len > 70) break; } } while ((head = prev[head & 63]) > 0 && --chain !== 0); return best * 100 + at; }
-# globalThis.publish(() => match(new State, 100, 20));
+# class Shelf { constructor(seed) { this.books = new Uint8Array(256); this.marks = new Uint16Array(64); for (let at = 0; at < 256; at++) this.books[at] = at * seed % 11; for (let at = 0; at < 64; at++) this.marks[at] = at * 3 & 63; } }
+# function differs(shelf, other) {
+#   const books = shelf.books, theirs = other.books, marks = shelf.marks;
+#   let low = 0, high = 248, apart = 0, turns = 1;
+#   do {
+#     if (books[low] !== theirs[low]) apart += 1;
+#     if (books[low + 1] < theirs[low + 1]) apart += 2;
+#     if (books[low + 2] > theirs[low + 2]) apart += 4;
+#     if (books[low + 3] === theirs[low + 4] && books[low + 4] !== theirs[low + 3]) apart ^= 9;
+#     if (books[low + 5] <= theirs[low + 5] && books[low + 6] >= theirs[low + 6]) apart += 5;
+#     if (books[high] === theirs[high + 1]) apart -= 1;
+#     if (books[high + 1] !== theirs[high]) apart += 3;
+#     if (books[high + 2] > books[high + 3] && theirs[high + 2] < theirs[high + 3]) apart ^= 6;
+#     if (books[high + 4] === books[high + 5] || theirs[high + 6] !== books[high + 7]) apart += 7;
+#     low += 1 + (turns & 1);
+#     high = high - 1;
+#     turns = marks[turns & 63];
+#   } while (turns > 0 && low < high);
+#   return apart * 1000 + low;
+# }
+# globalThis.publish(() => differs(new Shelf(3), new Shelf(4)));
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: : int[1, 65535] @Int32) isInLoop=true isLoopHead=true
 # RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
-# SHELL: 6695
+# SHELL: 1162166

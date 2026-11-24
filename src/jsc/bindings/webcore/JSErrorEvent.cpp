@@ -23,8 +23,6 @@
 
 #include "ZigGlobalObject.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -35,17 +33,10 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMWrapperCache.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
+#include "JSDOMOperation.h"
+#include "JSDOMPrototype.h"
+#include "JSEventInit.h"
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -54,153 +45,36 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
-    ErrorEvent::Init result;
-    JSValue bubblesValue;
-    if (isNullOrUndefined)
-        bubblesValue = jsUndefined();
-    else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!bubblesValue.isUndefined()) {
-        result.bubbles = convert<IDLBoolean>(lexicalGlobalObject, bubblesValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.bubbles = false;
-    JSValue cancelableValue;
-    if (isNullOrUndefined)
-        cancelableValue = jsUndefined();
-    else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!cancelableValue.isUndefined()) {
-        result.cancelable = convert<IDLBoolean>(lexicalGlobalObject, cancelableValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.cancelable = false;
-    JSValue composedValue;
-    if (isNullOrUndefined)
-        composedValue = jsUndefined();
-    else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!composedValue.isUndefined()) {
-        result.composed = convert<IDLBoolean>(lexicalGlobalObject, composedValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.composed = false;
-    JSValue colnoValue;
-    if (isNullOrUndefined)
-        colnoValue = jsUndefined();
-    else {
-        colnoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "colno"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!colnoValue.isUndefined()) {
-        result.colno = convert<IDLUnsignedLong>(lexicalGlobalObject, colnoValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.colno = 0;
-    JSValue errorValue;
-    if (isNullOrUndefined)
-        errorValue = jsUndefined();
-    else {
-        errorValue = object->get(&lexicalGlobalObject, vm.propertyNames->error);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!errorValue.isUndefined()) {
-        result.error = convert<IDLAny>(lexicalGlobalObject, errorValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.error = jsNull();
-    JSValue filenameValue;
-    if (isNullOrUndefined)
-        filenameValue = jsUndefined();
-    else {
-        filenameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "filename"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!filenameValue.isUndefined()) {
-        result.filename = convert<IDLUSVString>(lexicalGlobalObject, filenameValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.filename = emptyString();
-    JSValue linenoValue;
-    if (isNullOrUndefined)
-        linenoValue = jsUndefined();
-    else {
-        linenoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "lineno"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!linenoValue.isUndefined()) {
-        result.lineno = convert<IDLUnsignedLong>(lexicalGlobalObject, linenoValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.lineno = 0;
-    JSValue messageValue;
-    if (isNullOrUndefined)
-        messageValue = jsUndefined();
-    else {
-        messageValue = object->get(&lexicalGlobalObject, vm.propertyNames->message);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!messageValue.isUndefined()) {
-        result.message = convert<IDLDOMString>(lexicalGlobalObject, messageValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.message = emptyString();
+    ErrorEvent::Init result { convertDictionary<EventInit>(lexicalGlobalObject, value) };
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result.error = jsNull();
+    result.filename = emptyString();
+    result.message = emptyString();
+    auto* object = value.getObject();
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLUnsignedLong>(lexicalGlobalObject, *object, Identifier::fromString(vm, "colno"_s), result.colno);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLAny>(lexicalGlobalObject, *object, vm.propertyNames->error, result.error);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUSVString>(lexicalGlobalObject, *object, Identifier::fromString(vm, "filename"_s), result.filename);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLUnsignedLong>(lexicalGlobalObject, *object, Identifier::fromString(vm, "lineno"_s), result.lineno);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLDOMString>(lexicalGlobalObject, *object, vm.propertyNames->message, result.message);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsErrorEventConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsErrorEvent_message);
 static JSC_DECLARE_CUSTOM_GETTER(jsErrorEvent_filename);
 static JSC_DECLARE_CUSTOM_GETTER(jsErrorEvent_lineno);
 static JSC_DECLARE_CUSTOM_GETTER(jsErrorEvent_colno);
 static JSC_DECLARE_CUSTOM_GETTER(jsErrorEvent_error);
 
-class JSErrorEventPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSErrorEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSErrorEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSErrorEventPrototype))) JSErrorEventPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSErrorEventPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSErrorEventPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSErrorEventPrototype, JSErrorEventPrototype::Base);
-
+using JSErrorEventPrototype = JSDOMPrototype<JSErrorEvent>;
 using JSErrorEventDOMConstructor = JSDOMConstructor<JSErrorEvent>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSErrorEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -233,11 +107,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSErrorEventDOMConstructorConstruct, JSErrorEventDOMC
 
 template<> const ClassInfo JSErrorEventDOMConstructor::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEventDOMConstructor) };
 
-template<> JSValue JSErrorEventDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEvent::getConstructor(vm, &globalObject);
-}
-
 template<> void JSErrorEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "ErrorEvent"_s, JSErrorEvent::prototype(vm, globalObject));
@@ -246,7 +115,7 @@ template<> void JSErrorEventDOMConstructor::initializeProperties(VM& vm, JSDOMGl
 /* Hash table for prototype */
 
 static const HashTableValue JSErrorEventPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsErrorEventConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSErrorEventPrototype::constructorGetter, 0 } },
     { "message"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsErrorEvent_message, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsErrorEvent_filename, 0 } },
     { "lineno"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsErrorEvent_lineno, 0 } },
@@ -254,9 +123,9 @@ static const HashTableValue JSErrorEventPrototypeTableValues[] = {
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsErrorEvent_error, 0 } },
 };
 
-const ClassInfo JSErrorEventPrototype::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEventPrototype) };
+template<> const ClassInfo JSErrorEventPrototype::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEventPrototype) };
 
-void JSErrorEventPrototype::finishCreation(VM& vm)
+template<> void JSErrorEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSErrorEvent::info(), JSErrorEventPrototypeTableValues, *this);
@@ -265,42 +134,14 @@ void JSErrorEventPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSErrorEvent::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEvent) };
 
-JSErrorEvent::JSErrorEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<ErrorEvent>&& impl)
-    : JSEvent(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSErrorEvent::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, ErrorEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSErrorEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSErrorEventPrototype::create(vm, &globalObject, JSErrorEventPrototype::createStructure(vm, &globalObject, JSEvent::prototype(vm, globalObject)));
-}
-
-JSObject* JSErrorEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSErrorEvent>(vm, globalObject);
+    return JSErrorEventPrototype::create(vm, globalObject, JSEvent::prototype(vm, globalObject));
 }
 
 JSValue JSErrorEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSErrorEventDOMConstructor, DOMConstructorID::ErrorEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsErrorEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSErrorEventPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSErrorEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsErrorEvent_messageGetter(JSGlobalObject& lexicalGlobalObject, JSErrorEvent& thisObject)
@@ -368,49 +209,4 @@ JSC_DEFINE_CUSTOM_GETTER(jsErrorEvent_error, (JSGlobalObject * lexicalGlobalObje
     return IDLAttribute<JSErrorEvent>::get<jsErrorEvent_errorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
-JSC::GCClient::IsoSubspace* JSErrorEvent::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForErrorEvent, m_subspaceForErrorEvent));
-}
-
-template<typename Visitor>
-void JSErrorEvent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSErrorEvent>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSErrorEvent);
-
-template<typename Visitor>
-void JSErrorEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSErrorEvent>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSErrorEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSErrorEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSErrorEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSErrorEvent>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<ErrorEvent>&& impl)
-{
-    return createWrapper<ErrorEvent>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ErrorEvent& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
 }

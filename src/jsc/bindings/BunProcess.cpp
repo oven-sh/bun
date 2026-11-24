@@ -14,6 +14,7 @@
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
 #include <node_version.h>
+#include <node/zlib.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/AOTBuiltinModules.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -298,23 +299,20 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // https://github.com/oven-sh/bun/issues/7921
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         { "openssl", "1.1.0" },
-        // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
+        // Not linked: src/http1/message parses in its place.
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "uwebsockets", BUN_VERSION_UWS },
         { "webkit", BUN_VERSION_WEBKIT },
         { "zig", BUN_VERSION_ZIG },
-        // Use commit hash for zlib to match test expectations
-        { "zlib", BUN_VERSION_ZLIB_HASH },
+        // Not linked: src/zlib stands in for the one that Node.js has.
+        { "zlib", ZLIB_VERSION },
         { "tinycc", BUN_VERSION_TINYCC },
         { "lolhtml", BUN_VERSION_LOLHTML },
         { "ares", BUN_VERSION_C_ARES },
-        // Use commit hash for libdeflate to match test expectations
-        { "libdeflate", BUN_VERSION_LIBDEFLATE_HASH },
         { "usockets", BUN_VERSION_USOCKETS },
-        { "lshpack", BUN_VERSION_LSHPACK },
-        // Use commit hash for zstd (semantic version extraction not working yet)
-        { "zstd", BUN_VERSION_ZSTD_HASH },
+        // Not linked: src/zstd writes what this version writes.
+        { "zstd", "1.5.7" },
         { "v8", REPORTED_NODEJS_V8_VERSION },
 #if !OS(WINDOWS)
         { "uv", "1.48.0" },
@@ -2168,6 +2166,60 @@ static bool appendUTF8(Vector<UTF8CString>& storage, const WTF::String& string)
     storage.append(WTF::move(*utf8));
     return true;
 }
+
+static JSArray* toArrayOfStrings(JSGlobalObject* globalObject, const Vector<UTF8CString>& storage)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* array = constructEmptyArray(globalObject, nullptr, storage.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (size_t i = 0; i < storage.size(); i++) {
+        array->putDirectIndex(globalObject, i, jsString(vm, WTF::String::fromUTF8(storage[i].span())));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return array;
+}
+
+static void readArrayOfStrings(JSGlobalObject* globalObject, JSArray* array, ASCIILiteral name, Vector<UTF8CString>& storage)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    storage.clear();
+    for (unsigned i = 0; i < array->length(); i++) {
+        JSValue item = array->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, );
+        WTF::String string = item.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        if (string.contains(static_cast<char16_t>(0))) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString(name, '[', i, ']'), item, "must be a string without null bytes"_s);
+            return;
+        }
+        if (!appendUTF8(storage, string)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+    }
+}
+
+// A subscriber can change both lists. Node does not check them again, so it cuts an item at a null byte.
+static void publishExecve(JSGlobalObject* globalObject, JSObject* hook, JSValue execPath, Vector<UTF8CString>& argvStorage, Vector<UTF8CString>& envStorage)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSArray* args = toArrayOfStrings(globalObject, argvStorage);
+    RETURN_IF_EXCEPTION(scope, );
+    JSArray* env = toArrayOfStrings(globalObject, envStorage);
+    RETURN_IF_EXCEPTION(scope, );
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(execPath);
+    arguments.append(args);
+    arguments.append(env);
+    JSC::call(globalObject, hook, JSC::getCallData(hook), jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, );
+
+    readArrayOfStrings(globalObject, args, "args"_s, argvStorage);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, readArrayOfStrings(globalObject, env, "env"_s, envStorage));
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((minsize)), (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2305,6 +2357,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
         return {};
     }
     UTF8CString execPathUtf8 = WTF::move(*execPathConversion);
+
+    if (JSObject* hook = globalObject->diagnosticsHook(DiagnosticsHook::ProcessExecve)) {
+        publishExecve(globalObject, hook, execPathValue, argvStorage, envStorage);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // Build the null-terminated argv/envp pointer arrays only after the
     // backing storage is fully populated so there is no risk of pointers

@@ -101,7 +101,7 @@ void WebpInverseDct(int16_t* HWY_RESTRICT coefficients, uint32_t non_zero)
         auto v0 = hn::LoadU(d, at), v1 = hn::LoadU(d, at + 16), v2 = hn::LoadU(d, at + 32), v3 = hn::LoadU(d, at + 48);
         InverseDctPass(d, v0, v1, v2, v3);
         Transpose4x4(d, v0, v1, v2, v3);
-        v0 = hn::SaturatedAdd(v0, hn::Set(d, 4));
+        v0 = hn::Add(v0, hn::Set(d, 4));
         InverseDctPass(d, v0, v1, v2, v3);
         Transpose4x4(d, v0, v1, v2, v3);
         hn::StoreU(hn::ShiftRight<3>(v0), d, at);

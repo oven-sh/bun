@@ -18,6 +18,11 @@ console.log(await fetched("deflate", "eJzLSM3JyVfIQJAAOi4GfQ=="));
 console.log(await fetched("br", "GxAA+I2Ubt5EVYaWbCBvAU8cYBw="));
 //// fetch-decodes-zstd
 console.log(await fetched("zstd", "KLUv/SARZQAAMGhlbGxvIAEAMUoR"));
+//// util-diff-of-inputs-with-nothing-in-common
+//@ alone
+import { diff } from "node:util";
+const lines = name => Array.from({ length: 300 }, (_, index) => name + index);
+console.log(diff(lines("a"), lines("b")).length);
 //// a-direct-stream-is-read-as-text
 const stream = new ReadableStream({ type: "direct", pull(controller) { controller.write("one "); controller.write("two"); controller.end(); } });
 console.log(await new Response(stream).text());

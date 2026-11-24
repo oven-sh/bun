@@ -288,15 +288,11 @@ impl CondExpr {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if interp.as_condexpr(this).io.stderr.needs_io().is_some() {
-            // Only the fd arm transitions state.
-            interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
+        let me = interp.as_condexpr_mut(this);
+        if let OutKind::Fd(fd) = &me.io.stderr {
+            me.state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
-            // `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).

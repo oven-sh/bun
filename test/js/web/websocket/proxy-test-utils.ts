@@ -395,10 +395,13 @@ export async function startRawWssServer(
  * renegotiation) it sends "after renegotiation", then replies to the client's next
  * frame (its Close frame) with Close 1000. With "behind a message" it sends
  * "renegotiating" right before it asks for the renegotiation, and echoes one more
- * short frame after "after renegotiation". It runs in real node because a
- * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
+ * short frame after "after renegotiation". With "and ends" it sends its close_notify
+ * right behind the request. It runs in real node because a BoringSSL server cannot
+ * renegotiate, so skip the test when `nodeExe()` is null.
  */
-export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101" | "behind a message") {
+export async function startRenegotiatingWssServer(
+  when: "before the 101" | "after the 101" | "behind a message" | "and ends",
+) {
   const server = Bun.spawn({
     cmd: [
       nodeExe()!,
@@ -448,6 +451,9 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
                   // HelloRequest. A BoringSSL client takes no application data during the new handshake.
                   send("renegotiating", () => renegotiate(greetThenEcho));
                 });
+                answer();
+              } else if (process.env.WHEN === "and ends") {
+                socket.once("data", () => (renegotiate(greet), socket.end()));
                 answer();
               } else {
                 socket.once("data", () => renegotiate(greet));

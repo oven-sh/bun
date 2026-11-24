@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::defer_requires::function_called_in_place;
 use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
@@ -201,6 +202,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `ref_` first, then derive the visit-time flags into the user bits.
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
+
+        if p.options.features.defers_requires
+            && (p.while_loading.functions_around == 0
+                || result.is_inside_with_scope
+                || is_delete_target)
+        {
+            p.while_loading.note_read(result.r#ref);
+        }
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
@@ -1987,6 +1996,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) && p.then_catch_chain.has_catch,
         };
 
+        if p.options.features.lists_loads {
+            p.while_loading.called = function_called_in_place(&e_).map(|it| it.0);
+        }
+
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
         p.visit_expr_in_out(
             &mut e_.target,
@@ -2685,6 +2698,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             ..Default::default()
         };
+        let entered = p.while_loading.enter_function(expr.loc);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
@@ -2762,6 +2776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        p.while_loading.functions_around -= entered;
 
         // Restore before any further `p.*` call so the stack-local pointer
         // never escapes this frame.

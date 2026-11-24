@@ -254,6 +254,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
+    /// Only with `Features::lists_loads`
+    pub(crate) while_loading: crate::lower::defer_requires::WhileLoading,
+    pub(crate) has_deferred_requires: bool,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
@@ -1714,6 +1717,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 self.import_records_for_current_part
                     .push(import_record_index);
+                if self.options.features.lists_loads && self.while_loading.functions_around == 0 {
+                    self.while_loading.requires.push(import_record_index);
+                }
 
                 self.new_expr(
                     E::RequireString {
@@ -9043,6 +9049,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if self.options.features.lists_loads && !self.options.features.remove_cjs_module_wrapper {
+            let is_wrapped = wrap_mode == WrapMode::BunCommonjs;
+            let depth = match is_wrapped && self.options.features.defers_requires {
+                true => self.defer_requires(parts),
+                false => 0,
+            };
+            let comment = self.comment_on_loads(depth + u32::from(is_wrapped));
+            parts.push(js_ast::Part {
+                stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[comment])),
+                ..Default::default()
+            });
+        }
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -9356,6 +9375,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            has_deferred_requires: self.has_deferred_requires,
 
             symbols,
             parts: parts_list,
@@ -9646,6 +9666,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
+            while_loading: Default::default(),
+            has_deferred_requires: false,
             fn_only_data_visit: FnOnlyDataVisit::default(),
             allocated_names: BumpVec::new_in(arena),
             latest_arrow_arg_loc: bun_ast::Loc::EMPTY,

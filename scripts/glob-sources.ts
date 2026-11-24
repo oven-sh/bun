@@ -136,14 +136,13 @@ const patterns = {
   aotNativeTests: {
     paths: ["test/aot/native/*.cpp"],
   },
-  /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
+  /** all `*.c` compiled into bun (usockets, uv polyfills) */
   c: {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },
 } satisfies Record<string, SourcePattern>;

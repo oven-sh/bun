@@ -2,10 +2,10 @@ use core::cell::RefCell;
 use core::fmt;
 
 use bun_core::fmt::s;
+use bun_core::strings;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-use bun_paths::strings;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{Path, PathBuffer};
 use bun_semver::Version;
 use bun_sys as sys;
 
@@ -160,7 +160,6 @@ pub fn build_url_with_printer<R, E>(
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,
-    json_path_buf: PathBuffer,
 }
 
 thread_local! {
@@ -169,7 +168,6 @@ thread_local! {
     static TL_BUFS: RefCell<Box<TlBufs>> = RefCell::new(Box::new(TlBufs {
         final_path_buf: PathBuffer::ZEROED,
         folder_name_buf: PathBuffer::ZEROED,
-        json_path_buf: PathBuffer::ZEROED,
     }));
 }
 
@@ -309,7 +307,7 @@ impl ExtractTarball {
 
             // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
-            // Small tarballs still try libdeflate first for speed; the gzip
+            // Small tarballs still try `bun_deflate` first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
             let mut decompressed_in_memory = false;
             if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
@@ -324,25 +322,15 @@ impl ExtractTarball {
                     } else {
                         let _ = zlib_pool.ensure_unused_capacity(isize as usize);
                     }
-                    if zlib_pool.list.capacity() > 16 {
-                        use bun_libdeflate_sys::libdeflate;
-                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
-                            zlib_pool.list.clear();
-                            let result = decompressor.decompress_to_vec(
-                                tgz_bytes,
-                                &mut zlib_pool.list,
-                                libdeflate::Encoding::Gzip,
-                            );
-                            // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`, which also counts the layers.
-                            if result.status == libdeflate::Status::Success
-                                && result.read == tgz_bytes.len()
-                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
-                            {
-                                decompressed_in_memory = true;
-                            }
-                        }
-                    }
+                    zlib_pool.list.clear();
+                    let output = bun_deflate::Output::Vec {
+                        limit: zlib_pool.list.capacity(),
+                        vec: &mut zlib_pool.list,
+                    };
+                    // `gunzip` reads one member. More members, or more layers, are left to `extract_to_dir`.
+                    decompressed_in_memory = bun_deflate::gunzip(tgz_bytes, output)
+                        .is_ok_and(|result| result.read == tgz_bytes.len())
+                        && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list);
                 }
             }
 
@@ -552,10 +540,7 @@ impl ExtractTarball {
                     };
                     // Records which bytes a copy in node_modules came from. See
                     // `PackageInstall::verify`.
-                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[tmpname.as_bytes(), b".bun-tag"],
-                    );
+                    let tag_path = &Path::from_parts(&[tmpname, b".bun-tag"]);
                     if sys::File::openat(
                         tmpdir,
                         tag_path,
@@ -605,14 +590,7 @@ impl ExtractTarball {
             };
             let mut json_buf: Option<Vec<u8>> = None;
             if needs_json {
-                match sys::File::read_from(
-                    tmpdir,
-                    path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[tmpname.as_bytes(), b"package.json"],
-                    )
-                    .as_bytes(),
-                ) {
+                match sys::File::read_from(tmpdir, &Path::from_parts(&[tmpname, b"package.json"])) {
                     Ok(buf) => json_buf = Some(buf),
                     // allow git dependencies without package.json
                     Err(err)
@@ -712,11 +690,7 @@ impl ExtractTarball {
                 });
             }
             let json_path: &[u8] = if needs_json {
-                path::resolve_path::join_z_buf::<path::platform::Auto>(
-                    &mut bufs.json_path_buf.0,
-                    &[final_path.as_bytes(), b"package.json"],
-                )
-                .as_bytes()
+                &Path::from_parts(&[final_path, b"package.json"])
             } else {
                 b""
             };

@@ -7,20 +7,20 @@ use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
 
-use super::new_writer::{NewWriter, WriterContext};
-use super::packet_reader::PacketReader;
+use super::any_mysql_error::Error as AnyMySQLError;
+use super::packet_writer::PacketWriter;
 
 bun_core::declare_scope!(Auth, hidden);
 
-pub const NONCE_LENGTH: usize = 20;
-pub type Nonce = [u8; NONCE_LENGTH];
+pub(crate) const NONCE_LENGTH: usize = 20;
+pub(crate) type Nonce = [u8; NONCE_LENGTH];
 
 /// The server terminates the nonce with a NUL that is not part of it.
-pub fn nonce(plugin_data: &[u8]) -> crate::Result<Nonce> {
+pub(crate) fn nonce(plugin_data: &[u8]) -> Result<Nonce, AnyMySQLError> {
     plugin_data
         .first_chunk()
         .copied()
-        .ok_or(crate::Error::MissingAuthData)
+        .ok_or(AnyMySQLError::MissingAuthData)
 }
 
 pub(crate) mod mysql_native_password {
@@ -56,7 +56,7 @@ pub(crate) mod mysql_native_password {
     }
 }
 
-pub mod caching_sha2_password {
+pub(crate) mod caching_sha2_password {
     use super::*;
 
     pub(crate) fn scramble(password: &[u8], nonce: &Nonce) -> [u8; 32] {
@@ -89,64 +89,25 @@ pub mod caching_sha2_password {
         result
     }
 
-    // Any wire byte is possible (success = 0x03, continue_auth = 0x04),
-    // so represent as a transparent u8 newtype rather than a closed Rust enum.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct FastAuthStatus(pub(crate) u8);
+    pub(crate) const FAST_AUTH_SUCCESS: u8 = 0x03;
+    pub(crate) const PERFORM_FULL_AUTHENTICATION: u8 = 0x04;
 
-    impl FastAuthStatus {
-        pub const SUCCESS: Self = Self(0x03);
-        pub const CONTINUE_AUTH: Self = Self(0x04);
-
-        #[inline]
-        pub(crate) const fn from_raw(n: u8) -> Self {
-            Self(n)
-        }
-    }
-
-    impl Default for FastAuthStatus {
-        fn default() -> Self {
-            Self::SUCCESS
-        }
-    }
-
-    #[derive(Default)]
-    pub struct Response {
-        pub status: FastAuthStatus,
-    }
-
-    impl Response {
-        pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
-            let status: u8 = reader.int::<u8>()?;
-            bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
-            self.status = FastAuthStatus::from_raw(status);
-            Ok(())
-        }
-    }
-
-    pub struct EncryptedPassword<'a> {
-        pub password: &'a [u8],
-        pub public_key: &'a [u8],
-        pub nonce: Nonce,
-        pub sequence_id: u8,
+    pub(crate) struct EncryptedPassword<'a> {
+        pub(crate) password: &'a [u8],
+        pub(crate) public_key: &'a [u8],
+        pub(crate) nonce: Nonce,
+        pub(crate) sequence_id: u8,
     }
 
     impl EncryptedPassword<'_> {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        pub(crate) fn write_internal<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
+        pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<(), AnyMySQLError> {
             let (password, public_key) = (self.password, self.public_key);
 
-            // `&this.public_key[0]` below would index past a zero-length
-            // slice if the server answered the public-key request with an
-            // empty payload.
             if public_key.is_empty() {
-                return Err(crate::Error::InvalidPublicKey);
+                return Err(AnyMySQLError::InvalidPublicKey);
             }
             // 1024 is overkill but lets cover all cases
             let needed_len = password.len() + 1;
@@ -161,7 +122,7 @@ pub mod caching_sha2_password {
             boringssl::c::ERR_clear_error();
             // Decode public key
             let bio =
-                boringssl::c::MemBio::new(public_key).ok_or(crate::Error::InvalidPublicKey)?;
+                boringssl::c::MemBio::new(public_key).ok_or(AnyMySQLError::InvalidPublicKey)?;
 
             // SAFETY: `bio` is live; null callback/userdata are permitted.
             let rsa = unsafe {
@@ -192,7 +153,7 @@ pub mod caching_sha2_password {
                         );
                     }
                 }
-                return Err(crate::Error::InvalidPublicKey);
+                return Err(AnyMySQLError::InvalidPublicKey);
             }
             let rsa = OwnedRsa(rsa);
             // encrypt password
@@ -214,34 +175,14 @@ pub mod caching_sha2_password {
                 )
             };
             if encrypted_password_len == -1 {
-                return Err(crate::Error::FailedToEncryptPassword);
+                return Err(AnyMySQLError::FailedToEncryptPassword);
             }
             let encrypted_password_slice =
                 &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
 
-            let mut packet = writer.start(self.sequence_id)?;
-            writer.write(encrypted_password_slice)?;
-            packet.end()?;
-            Ok(())
-        }
-
-        // See src/sql/mysql/protocol/NewWriter.rs
-        pub fn write<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
-            self.write_internal(writer)
-        }
-    }
-
-    #[derive(Default)]
-    pub struct PublicKeyResponse<'a> {
-        pub data: &'a [u8],
-    }
-
-    impl<'a> PublicKeyResponse<'a> {
-        pub fn decode(&mut self, reader: PacketReader<'a>) -> crate::Result<()> {
-            self.data = reader.read(reader.peek().len())?;
+            let mut packet = PacketWriter::start(out, self.sequence_id);
+            packet.write(encrypted_password_slice);
+            packet.end();
             Ok(())
         }
     }

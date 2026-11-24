@@ -76,20 +76,22 @@ type QueryRecordWithAttributeFn = unsafe extern "C" fn(
 ) -> DNSServiceErrorType;
 
 /// libinfo's getaddrinfo call: only QueryRecord sends `kDNSServiceAttrAllowFailover` to the daemon (`DNSServiceGetAddrInfoEx` drops it).
-fn query_record_allowing_failover()
--> Option<(QueryRecordWithAttributeFn, *const DNSServiceAttribute)> {
-    let f = bun_sys::dlsym_with_handle!(
-        QueryRecordWithAttributeFn,
-        "DNSServiceQueryRecordWithAttribute",
-        Some(libc::RTLD_DEFAULT)
-    )?;
-    let attr = bun_sys::dlsym_with_handle!(
-        *const DNSServiceAttribute,
-        "kDNSServiceAttrAllowFailover",
-        Some(libc::RTLD_DEFAULT)
-    )?;
-    Some((f, attr))
+fn query_record_allowing_failover() -> Option<QueryRecordAllowingFailover> {
+    static FOUND: std::sync::OnceLock<Option<QueryRecordAllowingFailover>> =
+        std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        let system = bun_sys::DynLib::GLOBAL;
+        // SAFETY: the types that <dns_sd_private.h> gives these symbols of libSystem.
+        unsafe {
+            Some((
+                system.lookup_as(bun_core::zstr!("DNSServiceQueryRecordWithAttribute"))?,
+                system.lookup_as(bun_core::zstr!("kDNSServiceAttrAllowFailover"))?,
+            ))
+        }
+    })
 }
+
+type QueryRecordAllowingFailover = (QueryRecordWithAttributeFn, &'static DNSServiceAttribute);
 
 #[repr(C)]
 pub(crate) struct DNSServiceAttribute {
@@ -141,7 +143,7 @@ fn protocol_for_pending(_q: &QueryState) -> DNSServiceProtocol {
     PROTOCOL_IPV4 | PROTOCOL_IPV6
 }
 
-/// Real time: this timer lives in the real heap (`allow_fake_timers() == false`), so it must never read the mocked clock.
+/// Real time: this timer lives in the real heap, so it must never read the mocked clock.
 fn now_ms() -> i64 {
     bun::timespec::now(bun::TimespecMockMode::ForceRealTime).ms()
 }
@@ -632,8 +634,6 @@ impl SharedConnection {
         let Some(mut this) = Self::current() else {
             return;
         };
-        // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-        this.early_out_timer.state.set(EventLoopTimerState::FIRED);
         this.early_out_armed_for.set(0);
         let now = now_ms();
         let ready = this.take_ready(|q| {

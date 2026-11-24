@@ -39,10 +39,6 @@ use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::platform;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_paths::resolve_path::join_z_buf_spill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::Fd;
 use bun_sys::{self as sys, E, Tag};
@@ -377,7 +373,7 @@ pub(crate) fn watch(
     let mut handlers = ArrayHashMap::default();
     handle_oom(handlers.put(ctx, ChangeEvent::default()));
     let id = manager.watchers.insert(PathWatcher {
-        path: ZBox::from_bytes(resolved.as_bytes()),
+        path: resolved.to_zbox(),
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
@@ -411,10 +407,10 @@ pub(crate) fn watch(
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
 struct WalkScratch {
-    /// NUL-terminated absolute path of the directory being read, or of the entry passed to `cb`.
-    abs: Vec<u8>,
+    /// Absolute path of the directory being read, or of the entry passed to `cb`.
+    abs: path::Path,
     /// Same path, relative to the watch root.
-    rel: Vec<u8>,
+    rel: path::Path,
     /// Unvisited entries as `[is_file][name][0]` records, innermost directory last.
     pending: Vec<u8>,
     /// Directories with records in `pending`, outermost first.
@@ -423,7 +419,7 @@ struct WalkScratch {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 struct WalkLevel {
-    /// Length of the directory's path in `abs` (without the NUL) and in `rel`.
+    /// Length of the directory's path in `abs` and in `rel`.
     abs_len: usize,
     rel_len: usize,
     /// Offset of the directory's first record in `pending`.
@@ -436,26 +432,17 @@ struct WalkLevel {
 impl WalkScratch {
     /// Truncates `abs` and `rel` to the directory's path, then appends `name`. Returns `abs`.
     fn set_entry<'a>(
-        abs: &'a mut Vec<u8>,
-        rel: &mut Vec<u8>,
+        abs: &'a mut path::Path,
+        rel: &mut path::Path,
         abs_len: usize,
         rel_len: usize,
         name: &[u8],
     ) -> &'a ZStr {
         rel.truncate(rel_len);
-        if rel_len != 0 {
-            rel.push(path::SEP);
-        }
-        rel.extend_from_slice(name);
+        rel.push(name);
         abs.truncate(abs_len);
-        // Only the root directory ends with a separator.
-        if abs.last() != Some(&path::SEP) {
-            abs.push(path::SEP);
-        }
-        abs.extend_from_slice(name);
-        let len = abs.len();
-        abs.push(0);
-        ZStr::nul_terminate(abs, len)
+        abs.push(name);
+        abs
     }
 
     fn open_dir(abs: &ZStr) -> sys::Result<sys::Dir> {
@@ -470,7 +457,7 @@ impl WalkScratch {
         dir: &sys::Dir,
         cb: &mut impl FnMut(&ZStr, &[u8], bool),
     ) {
-        let abs_len = self.abs.len() - 1;
+        let abs_len = self.abs.len();
         let rel_len = self.rel.len();
         let start = self.pending.len();
         let mut it = sys::dir_iterator::iterate(dir.fd());
@@ -519,8 +506,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
     let mut scratch = WalkScratch {
-        abs: abs_dir.as_bytes_with_nul().to_vec(),
-        rel: rel_dir.to_vec(),
+        abs: path::Path::from(abs_dir),
+        rel: path::Path::from(rel_dir),
         ..Default::default()
     };
     if let Ok(dir) = WalkScratch::open_dir(abs_dir) {
@@ -745,8 +732,7 @@ impl Linux {
         let manager = DEFAULT_MANAGER.wait();
         // Large enough for a burst of events; inotify guarantees whole events per read.
         let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut rel_spill: Vec<u8> = Vec::new();
+        let mut rel_path = path::Path::new();
 
         loop {
             let rc = sys::linux::read(fd.native(), &mut *buf);
@@ -881,12 +867,9 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_z_buf_spill::<platform::Posix>(
-                            path_buf.as_mut_slice(),
-                            &mut rel_spill,
-                            &[owner_subpath, name],
-                        )
-                        .as_bytes()
+                        rel_path.set(owner_subpath);
+                        rel_path.push(name);
+                        &rel_path
                     };
 
                     watcher.emit(
@@ -907,13 +890,8 @@ impl Linux {
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()
                     {
-                        let mut abs_buf = path::path_buffer_pool::get();
-                        let mut abs_spill: Vec<u8> = Vec::new();
-                        let child_abs = join_z_buf_spill::<platform::Posix>(
-                            abs_buf.as_mut_slice(),
-                            &mut abs_spill,
-                            &[watcher_path, owner_subpath, name],
-                        );
+                        let child_abs: &ZStr =
+                            &path::Path::join(&[watcher_path, owner_subpath, name]);
                         // Borrowck: `rel` may borrow `wd_map`, which `add_one` mutates.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
@@ -1074,7 +1052,7 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
-        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE};
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
         let file = match sys::File::open(
@@ -1108,24 +1086,12 @@ impl Kqueue {
             | NOTE::LINK
             | NOTE::REVOKE;
         kev.udata = generation as _;
-        let mut changes = [kev];
-        // SAFETY: thin wrapper over libc::kevent.
-        let krc = unsafe {
-            kevent(
-                self.file.fd().native(),
-                changes.as_ptr(),
-                1,
-                changes.as_mut_ptr(),
-                0,
-                core::ptr::null(),
-            )
-        };
-        if krc < 0 {
+        // SAFETY: only `thread_main` waits on this kqueue, and it reads `udata` as a number.
+        if let Err(err) = unsafe { sys::kevent(self.file.fd(), &[kev], &mut [], None) } {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            let errno = sys::get_errno(krc);
             return Err(sys::Error {
-                errno: errno as u16,
+                errno: err.errno,
                 syscall: Tag::watch,
                 ..Default::default()
             }
@@ -1153,33 +1119,22 @@ impl Kqueue {
     }
 
     fn thread_main(kq: Fd) {
-        use bun_sys::freebsd::{Kevent, NOTE, kevent};
+        use bun_sys::freebsd::{Kevent, NOTE};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let manager = DEFAULT_MANAGER.wait();
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         loop {
-            // SAFETY: thin wrapper over libc::kevent.
-            let count = unsafe {
-                kevent(
-                    kq.native(),
-                    events.as_ptr(),
-                    0,
-                    events.as_mut_ptr(),
-                    events.len() as _,
-                    core::ptr::null(),
-                )
-            };
-            if count <= 0 {
+            let Ok(count @ 1..) = sys::kevent_wait(kq, &mut events, None) else {
                 continue;
-            }
+            };
 
             let locked = manager.lock();
             let watchers = &locked.watchers;
             let entries = &locked.platform.entries;
             let mut touched: ArrayHashMap<WatcherId, ()> = ArrayHashMap::default();
 
-            for kev in &events[..count as usize] {
+            for kev in &events[..count] {
                 // Validate via the map — the entry may have been freed by a racing
                 // removeWatch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong

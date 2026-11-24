@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
@@ -221,12 +222,9 @@ pub trait ConsoleFormatter {
         cell: JSType,
     ) -> JsResult<()>;
 
-    /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
-    /// calling this pair manually when the indented region contains `?` early
-    /// returns.
+    /// For [`IndentScope`].
     fn indent_inc(&mut self);
-    /// Saturating decrement of the nesting level.
+    /// For [`IndentScope`]. Saturates.
     fn indent_dec(&mut self);
     /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
     /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
@@ -345,7 +343,7 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
-pub use self::js_ref::{JsCellRefExt, JsRef};
+pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -521,13 +519,31 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
-/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
-/// first VM, which freezes JSC's options.
-pub fn expect_vm_per_thread() {
+/// The process evaluates a configuration for `bun lint` or `bun fmt`. After [`initialize`], and before the first VM.
+pub fn expect_configuration() {
     // SAFETY: nothing changes the environment during the call, which is made before the first VM.
     unsafe {
         let env = bun_sys::environ();
-        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+        JSC__useOptionsForConfiguration(env.as_ptr().cast(), env.len());
+    }
+}
+
+/// In place of [`expect_vm_per_thread`]
+pub fn expect_few_lint_vms() {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForFewLintVMs(env.as_ptr().cast(), env.len());
+    }
+}
+
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread(are_short_lived: bool) {
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len(), are_short_lived);
     }
 }
 
@@ -650,34 +666,6 @@ impl From<JsError> for crate::CrateError {
     }
 }
 
-/// Adapter for `(fmt, args)`-style throw helpers.
-///
-/// Call sites pass either `()`
-/// (no interpolation — message *is* the literal) or a pre-expanded
-/// `format_args!(..)` (interpolation already applied — message *is* the
-/// `Arguments` value). This trait dispatches both shapes onto the canonical
-/// [`JSGlobalObject::throw`] without requiring every caller to wrap a literal
-/// in `format_args!("")`.
-pub trait ThrowFmtArgs: Sized {
-    /// `globalThis.throw(fmt, args)` — throw a generic `Error`.
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError;
-}
-impl ThrowFmtArgs for () {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        // No interpolation; the literal IS the message. Route
-        // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
-        // so `create_error_instance` hits its static-string fast path.
-        global.throw(format_args!("{fmt}"))
-    }
-}
-impl ThrowFmtArgs for core::fmt::Arguments<'_> {
-    #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
-        global.throw(self)
-    }
-}
-
 /// Debug-only binding-presence marker.
 /// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_io` /
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
@@ -698,7 +686,7 @@ pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
-    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ScriptExecutionContext, ScriptTimer,
     StopReason,
 };
 
@@ -896,6 +884,7 @@ pub enum BuiltinName {
     signal,
     cmd,
     errors,
+    maxHeaderPairs,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -933,7 +922,7 @@ impl Drop for EnsureStillAlive {
 }
 
 /// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped. No root on the heap.
-pub struct WrapperGuard<'a, T> {
+pub struct WrapperGuard<'a, T, const MAPPED: bool = false> {
     native: core::ptr::NonNull<T>,
     wrapper: EnsureStillAlive,
     /// Borrows the value that was cast.
@@ -941,7 +930,7 @@ pub struct WrapperGuard<'a, T> {
 }
 impl<'a, T> WrapperGuard<'a, T> {
     /// # Safety
-    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it, valid and only shared until `wrapper` is collected.
+    /// `native` is null, or points to the struct that `wrapper` holds or to a part of it that is not `HasJsRef`, valid and only shared until `wrapper` is collected.
     #[doc(hidden)]
     pub unsafe fn new(wrapper: &'a JSValue, native: *mut T) -> Option<Self> {
         // SAFETY: forwarded.
@@ -957,9 +946,10 @@ impl<'a, T> WrapperGuard<'a, T> {
             _value: core::marker::PhantomData,
         }
     }
-
+}
+impl<'a, T, const MAPPED: bool> WrapperGuard<'a, T, MAPPED> {
     /// As [`core::cell::Ref::map`].
-    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U>
+    pub fn map<U>(this: Self, f: impl FnOnce(&T) -> &U) -> WrapperGuard<'a, U, true>
     where
         T: 'a,
     {
@@ -978,13 +968,8 @@ impl<'a, T> WrapperGuard<'a, T> {
     pub fn as_ptr(&self) -> *mut T {
         self.native.as_ptr()
     }
-
-    /// Shadows [`bun_ptr::AsCtxPtr::as_ctx_ptr`], which is the address of `self`.
-    pub fn as_ctx_ptr(&self) -> *mut T {
-        self.as_ptr()
-    }
 }
-impl<T> core::ops::Deref for WrapperGuard<'_, T> {
+impl<T, const MAPPED: bool> core::ops::Deref for WrapperGuard<'_, T, MAPPED> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: the contract of `new`. `map` keeps a borrow of such a struct.
@@ -1030,15 +1015,6 @@ impl JSGlobalObject {
     // `vm_ptr()` lives in `JSGlobalObject.rs` (canonical impl block); the
     // duplicate that grew here during the port has been removed to avoid
     // E0034 multiple-applicable-items at every call site.
-
-    /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
-    /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`
-    /// callers reach [`JSGlobalObject::throw`] with the right `Arguments`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn throw2(&self, fmt: &'static str, args: impl ThrowFmtArgs) -> JsError {
-        args.dispatch_throw(self, fmt)
-    }
 
     /// `globalThis.ERR(.INVALID_ARG_TYPE, fmt, args).toJS()` — Node-compat error
     /// builder. Returns the error JSValue; caller decides whether to throw or wrap.
@@ -1515,7 +1491,13 @@ unsafe extern "C" {
         locks_builtins: bool,
         is_compiler: bool,
     );
-    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForConfiguration(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForFewLintVMs(env: *const *const c_char, count: usize);
+    fn JSC__useOptionsForVMPerThread(
+        env: *const *const c_char,
+        count: usize,
+        are_short_lived: bool,
+    );
 }
 
 #[path = "generated_bindgen.rs"]

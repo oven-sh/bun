@@ -15,49 +15,30 @@ use core::ptr;
 ///
 /// Usage notes:
 /// - The element T is expected to have a field "heap" of type IntrusiveField.
-///   See the tests for a full example of how to set this.
 /// - You can easily make this a min or max heap by inverting the result of
-///   "less" below.
+///   [`HeapNode::less`].
 ///
 /// [1]: https://en.wikipedia.org/wiki/Pairing_heap
 /// [2]: https://www.boost.org/doc/libs/1_64_0/doc/html/intrusive/intrusive_vs_nontrusive.html
-//
-// The comparator is a trait on `Context` (`HeapContext<T>::less`) rather than
-// a fn-pointer parameter (fn pointers can't be const generics on stable).
-// This preserves monomorphization (no indirect call) at the cost of requiring
-// the caller to impl the trait instead of passing a free fn.
-pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
+pub struct Intrusive<T: HeapNode> {
     root: Cell<*mut T>,
-    context: Context,
 }
 
-/// Trait providing the ordering relation for `Intrusive`.
-/// Implement this on your `Context` type (or a ZST if no context is needed).
-pub trait HeapContext<T> {
-    /// # Safety
-    /// `a` and `b` must be non-null, aligned, and point to live nodes currently
-    /// owned by the intrusive heap. Only called from `Intrusive` internals.
-    unsafe fn less(&self, a: *mut T, b: *mut T) -> bool;
-}
-
-/// Trait giving generic access to the embedded `IntrusiveField` on `T`.
+/// An element of an [`Intrusive`] heap.
 pub trait HeapNode: Sized {
     fn heap(&self) -> &IntrusiveField<Self>;
+    fn less(&self, other: &Self) -> bool;
 }
 
-impl<T: HeapNode, Context: HeapContext<T>> Default for Intrusive<T, Context>
-where
-    Context: Default,
-{
+impl<T: HeapNode> Default for Intrusive<T> {
     fn default() -> Self {
         Self {
             root: Cell::new(ptr::null_mut()),
-            context: Context::default(),
         }
     }
 }
 
-impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
+impl<T: HeapNode> Intrusive<T> {
     /// Insert a new element v into the heap. An element v can only
     /// be a member of a single heap at any given time. When compiled
     /// with runtime-safety, assertions will help verify this property.
@@ -77,65 +58,37 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         self.root.get()
     }
 
-    /// Count the number of elements in the heap. This is an O(N) operation.
-    pub unsafe fn count(&self) -> usize {
-        let mut result: usize = 0;
-        // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
-        self.for_each(|_| result += 1);
-        result
+    /// SAFETY: the linked nodes are valid, and none is linked or unlinked while the iterator is in use.
+    pub unsafe fn iter(&self) -> impl Iterator<Item = *mut T> {
+        let root = self.root.get();
+        // SAFETY: fn contract.
+        core::iter::successors((!root.is_null()).then_some(root), |&node| unsafe {
+            Self::visited_after(node)
+        })
     }
 
-    /// Look at the next maximum value but do not remove it. This is an O(N) operation.
-    pub unsafe fn find_max(&self) -> *mut T {
-        let mut max_so_far = self.root.get();
-        // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
-        self.for_each(|node| {
-            if self.context.less(max_so_far, node) {
-                max_so_far = node;
-            }
-        });
-        max_so_far
-    }
-
-    /// Visits every node depth-first without recursion. A heap can degenerate
-    /// into a single chain, so recursing could overflow the stack.
-    ///
-    /// # Safety
-    /// All nodes reachable from `self.root` must be valid.
-    unsafe fn for_each(&self, mut f: impl FnMut(*mut T)) {
-        let mut node = self.root.get();
-        if node.is_null() {
-            return;
+    /// Depth first, without recursion: a heap can degenerate into a single chain. One copy serves every walk.
+    #[inline(never)]
+    unsafe fn visited_after(mut node: *mut T) -> Option<*mut T> {
+        let child = (*node).heap().child.get();
+        if !child.is_null() {
+            return Some(child);
         }
-        'walk: loop {
-            f(node);
-
-            // SAFETY: `node` is non-null and valid (invariant).
-            let child = (*node).heap().child.get();
-            if !child.is_null() {
-                node = child;
-                continue;
+        loop {
+            let next = (*node).heap().next.get();
+            if !next.is_null() {
+                return Some(next);
             }
-
-            loop {
-                let next = (*node).heap().next.get();
-                if !next.is_null() {
-                    node = next;
-                    continue 'walk;
-                }
-
-                // `prev` is the left sibling, or the parent for the leftmost child.
-                // Climb to the parent and try its `next`.
-                let mut prev = (*node).heap().prev.get();
-                while !prev.is_null() && (*prev).heap().child.get() != node {
-                    node = prev;
-                    prev = (*node).heap().prev.get();
-                }
-                if prev.is_null() {
-                    return;
-                }
+            // `prev` is the left sibling, or the parent for the leftmost child.
+            let mut prev = (*node).heap().prev.get();
+            while !prev.is_null() && (*prev).heap().child.get() != node {
                 node = prev;
+                prev = (*node).heap().prev.get();
             }
+            if prev.is_null() {
+                return None;
+            }
+            node = prev;
         }
     }
 
@@ -216,7 +169,7 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         // SAFETY: `a` and `b` are distinct valid nodes (caller invariant).
         debug_assert!((*a).heap().next.get().is_null());
 
-        if self.context.less(a, b) {
+        if (*a).less(&*b) {
             // B points back to A
             (*b).heap().prev.set(a);
 
@@ -303,14 +256,6 @@ pub struct IntrusiveField<T> {
 }
 
 impl<T> IntrusiveField<T> {
-    pub fn child(&self) -> *mut T {
-        self.child.get()
-    }
-
-    pub fn next(&self) -> *mut T {
-        self.next.get()
-    }
-
     fn clear(&self) {
         self.child.set(ptr::null_mut());
         self.prev.set(ptr::null_mut());

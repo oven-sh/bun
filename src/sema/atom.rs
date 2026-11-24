@@ -720,8 +720,8 @@ impl Intern for Interner<'_> {
 /// One interner per thread, for work where atoms never cross threads. Only the thread that interns
 /// a text writes or reads it.
 pub struct InternerPerThread<'s> {
-    all: Box<[Interner<'s>]>,
-    /// The first interner's `Interner::number`.
+    all: Box<[(&'s Session, std::sync::OnceLock<Interner<'s>>)]>,
+    /// No interner has this `Interner::number`.
     number: u64,
     /// How many threads have been assigned an interner.
     threads: std::sync::atomic::AtomicUsize,
@@ -734,13 +734,12 @@ thread_local! {
 }
 
 impl<'s> InternerPerThread<'s> {
-    /// Creates one interner per session. `sessions` must not be empty. If there are more threads
-    /// than sessions, threads share interners.
+    /// One interner per session, created when a thread first asks for it. `sessions` must not be
+    /// empty. If there are more threads than sessions, threads share interners.
     pub fn new_in(sessions: &'s [Session]) -> Self {
-        let all: Box<[Interner<'s>]> = sessions.iter().map(Interner::new_in).collect();
         InternerPerThread {
-            number: all.first().map_or(0, Interner::number),
-            all,
+            all: sessions.iter().map(|it| (it, Default::default())).collect(),
+            number: next_interner_number(),
             threads: Default::default(),
         }
     }
@@ -749,7 +748,7 @@ impl<'s> InternerPerThread<'s> {
     #[inline]
     pub fn own(&self) -> &Interner<'s> {
         let (owner_number, at) = OWN.get();
-        match self.all.get(at) {
+        match self.all.get(at).and_then(|it| it.1.get()) {
             Some(own) if owner_number == self.number => own,
             _ => self.assign(),
         }
@@ -763,7 +762,8 @@ impl<'s> InternerPerThread<'s> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let at = thread_index % self.all.len();
         OWN.set((self.number, at));
-        &self.all[at]
+        let (session, interner) = &self.all[at];
+        interner.get_or_init(|| Interner::new_in(session))
     }
 }
 
@@ -863,7 +863,11 @@ impl<'s> Interner<'s> {
             if recent.interner_number != self.number {
                 recent.interner_number = self.number;
                 match recent.entries.is_empty() {
-                    true => recent.entries = vec![Recent::EMPTY_ENTRY; 1 << Recent::BITS],
+                    true => {
+                        recent.entries.reserve_exact(1 << Recent::BITS);
+                        bun_alloc::prefault(recent.entries.spare_capacity_mut());
+                        (recent.entries).resize(1 << Recent::BITS, Recent::EMPTY_ENTRY);
+                    }
                     false => recent.entries.fill(Recent::EMPTY_ENTRY),
                 }
             }

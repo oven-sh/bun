@@ -189,11 +189,9 @@ fn run_stage2<'s>(
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
     }
-    let tape = parser.take_tape();
-    drop(parser);
     Ok(ParseOutput {
         root,
-        tape,
+        tape: parser.into_tape(),
         indentation: if opts.guess_indentation {
             guess_indentation(&source.contents)
         } else {

@@ -263,8 +263,6 @@ pub struct IO_STATUS_BLOCK {
     pub Information: usize,
 }
 
-// Path-length constants.
-pub const MAX_PATH: usize = 260;
 pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.
@@ -849,6 +847,8 @@ pub mod kernel32 {
         ) -> usize;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
+        /// A bad handle fails the call.
+        pub safe fn TerminateProcess(hProcess: HANDLE, uExitCode: u32) -> BOOL;
         /// No preconditions; returns the cached console/std handle (or
         /// `INVALID_HANDLE_VALUE`/null on failure).
         pub safe fn GetStdHandle(nStdHandle: DWORD) -> HANDLE;
@@ -885,7 +885,7 @@ pub mod kernel32 {
         pub fn LoadLibraryExW(lpLibFileName: LPCWSTR, hFile: HANDLE, dwFlags: DWORD) -> HMODULE;
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
-        pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        pub safe fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
         /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
         pub fn LockFileEx(
             hFile: HANDLE,
@@ -941,9 +941,6 @@ pub mod kernel32 {
         ) -> BOOL;
         /// `SetConsoleCursorPosition` (`wincon.h`).
         pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
-        /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
-        /// the calling thread.
-        pub safe fn ExitThread(dwExitCode: DWORD) -> !;
         /// `CreateNamedPipeW` (`winbase.h`).
         pub fn CreateNamedPipeW(
             lpName: LPCWSTR,
@@ -980,6 +977,7 @@ pub mod kernel32 {
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
+pub const WAIT_TIMEOUT: DWORD = 258;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
@@ -1023,6 +1021,7 @@ impl NTSTATUS {
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
     /// `RtlWaitOnAddress` when the wait timed out.
     pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
+    pub const PENDING: NTSTATUS = NTSTATUS(0x0000_0103);
     /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
     pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
@@ -1221,6 +1220,7 @@ impl Win32Error {
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+    pub const IO_PENDING: Win32Error = Win32Error(997);
     pub const NOACCESS: Win32Error = Win32Error(998);
     pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
     pub const END_OF_MEDIA: Win32Error = Win32Error(1100);
@@ -1411,14 +1411,10 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
-// `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
-// callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
-// takes `LPCSTR` (narrow), not wide.
+// `GetProcAddress` takes `LPCSTR` (narrow), not wide.
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
-
-    pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
 }
 
 // Declared as `extern "system"` so the callconv is correct on all targets
@@ -1818,7 +1814,7 @@ unsafe extern "system" {
         dwFlags: DWORD,
     ) -> BOOLEAN;
 
-    pub fn GetCurrentThread() -> HANDLE;
+    pub safe fn GetCurrentThread() -> HANDLE;
 
     pub fn GetCommandLineW() -> LPWSTR;
 
@@ -1827,7 +1823,7 @@ unsafe extern "system" {
         lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
     ) -> BOOL;
 
-    pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
+    pub safe fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
     pub fn GetProcessTimes(
         in_hProcess: HANDLE,

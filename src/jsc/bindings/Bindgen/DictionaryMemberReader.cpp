@@ -38,4 +38,12 @@ JSValue DictionaryMemberReader::get(unsigned index)
     return getIfPropertyExistsPrototypePollutionMitigation(m_vm, m_globalObject, m_object, m_memberNames[index]);
 }
 
+JSValue DictionaryMemberReader::getAsWebIDL(unsigned index)
+{
+    auto scope = DECLARE_THROW_SCOPE(m_vm);
+    JSValue value = m_object->get(m_globalObject, m_memberNames[index]);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
+
 }

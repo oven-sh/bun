@@ -503,17 +503,9 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     }
                 }
 
-                let mut load_path_buf = bun_paths::path_buffer_pool::get();
-                // `+ 4` for ".map" plus a trailing NUL for the
-                // `&ZStr` open path; reserve `+ 5`.
-                if source_filename.len() + 5 > load_path_buf.len() {
-                    break 'try_external;
-                }
-                load_path_buf[..source_filename.len()].copy_from_slice(source_filename);
-                load_path_buf[source_filename.len()..source_filename.len() + 4]
-                    .copy_from_slice(b".map");
-                let load_path =
-                    bun_core::ZStr::nul_terminate(&mut load_path_buf, source_filename.len() + 4);
+                let mut load_path = bun_paths::Path::from(source_filename);
+                load_path.extend_from_slice(b".map");
+                let load_path: &bun_core::ZStr = &load_path;
 
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
                 // freed on scope exit by `Vec`'s Drop.

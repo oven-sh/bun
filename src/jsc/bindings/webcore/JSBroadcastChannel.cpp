@@ -21,11 +21,7 @@
 #include "config.h"
 #include "JSBroadcastChannel.h"
 
-#include "ActiveDOMObject.h"
-
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -37,19 +33,11 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
 #include "streams/WebStreamsInspectCustom.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 #include "ErrorCode.h"
 #include <JavaScriptCore/PropertyNameArray.h>
 
@@ -65,45 +53,13 @@ static JSC_DECLARE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsBroadcastChannelConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsBroadcastChannel_name);
 static JSC_DECLARE_CUSTOM_GETTER(jsBroadcastChannel_onmessage);
 static JSC_DECLARE_CUSTOM_SETTER(setJSBroadcastChannel_onmessage);
 static JSC_DECLARE_CUSTOM_GETTER(jsBroadcastChannel_onmessageerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSBroadcastChannel_onmessageerror);
 
-class JSBroadcastChannelPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSBroadcastChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSBroadcastChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBroadcastChannelPrototype))) JSBroadcastChannelPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBroadcastChannelPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSBroadcastChannelPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBroadcastChannelPrototype, JSBroadcastChannelPrototype::Base);
-
+using JSBroadcastChannelPrototype = JSDOMPrototype<JSBroadcastChannel>;
 using JSBroadcastChannelDOMConstructor = JSDOMConstructor<JSBroadcastChannel>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -136,11 +92,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSBroadcastChannelDOMConstructorConstruct, JSBroadcas
 
 template<> const ClassInfo JSBroadcastChannelDOMConstructor::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannelDOMConstructor) };
 
-template<> JSValue JSBroadcastChannelDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
 template<> void JSBroadcastChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "BroadcastChannel"_s, JSBroadcastChannel::prototype(vm, globalObject));
@@ -149,7 +100,7 @@ template<> void JSBroadcastChannelDOMConstructor::initializeProperties(VM& vm, J
 /* Hash table for prototype */
 
 static const HashTableValue JSBroadcastChannelPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsBroadcastChannelConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSBroadcastChannelPrototype::constructorGetter, 0 } },
     { "name"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsBroadcastChannel_name, 0 } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsBroadcastChannel_onmessage, setJSBroadcastChannel_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsBroadcastChannel_onmessageerror, setJSBroadcastChannel_onmessageerror } },
@@ -159,7 +110,7 @@ static const HashTableValue JSBroadcastChannelPrototypeTableValues[] = {
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBroadcastChannelPrototypeFunction_unref, 0 } },
 };
 
-const ClassInfo JSBroadcastChannelPrototype::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannelPrototype) };
+template<> const ClassInfo JSBroadcastChannelPrototype::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannelPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -231,7 +182,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
     return JSValue::encode(result);
 }
 
-void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+template<> void JSBroadcastChannelPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSBroadcastChannel::info(), JSBroadcastChannelPrototypeTableValues, *this);
@@ -241,38 +192,14 @@ void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
 
 const ClassInfo JSBroadcastChannel::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannel) };
 
-JSBroadcastChannel::JSBroadcastChannel(Structure* structure, JSDOMGlobalObject& globalObject, Ref<BroadcastChannel>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
-static_assert(std::is_base_of<ActiveDOMObject, BroadcastChannel>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
-
 JSObject* JSBroadcastChannel::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSBroadcastChannelPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSBroadcastChannelPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSBroadcastChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSBroadcastChannel>(vm, globalObject);
+    return JSBroadcastChannelPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSBroadcastChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSBroadcastChannelDOMConstructor, DOMConstructorID::BroadcastChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsBroadcastChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSBroadcastChannelPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSBroadcastChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsBroadcastChannel_nameGetter(JSGlobalObject& lexicalGlobalObject, JSBroadcastChannel& thisObject)
@@ -412,88 +339,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObj
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
-JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSBroadcastChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBroadcastChannel, m_subspaceForBroadcastChannel));
-}
-
-void JSBroadcastChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSBroadcastChannel>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsBroadcastChannel = uncheckedDowncast<JSBroadcastChannel>(handle.slot()->asCell());
-    auto& wrapped = jsBroadcastChannel->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSBroadcastChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsBroadcastChannel = static_cast<JSBroadcastChannel*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsBroadcastChannel->wrapped(), jsBroadcastChannel);
-    return FinalizeResult::KeepImpl;
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7BroadcastChannel@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore16BroadcastChannelE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<BroadcastChannel>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<BroadcastChannel>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7BroadcastChannel@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore16BroadcastChannelE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // BroadcastChannel has subclasses. If BroadcastChannel has subclasses that get passed
-        // to toJS() we currently require BroadcastChannel you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<BroadcastChannel>(globalObject, WTF::move(impl));
-}
-
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
+template<> NEVER_INLINE JSC::JSValue toJS<BroadcastChannel>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
 {
     BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, BroadcastChannel&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-BroadcastChannel* JSBroadcastChannel::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSBroadcastChannel>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

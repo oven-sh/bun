@@ -398,46 +398,16 @@ impl Write for StderrWriter {
     fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
         #[cfg(windows)]
         {
-            // On Windows this is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
-            // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
-            // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
-            // per-fd lock, which can self-deadlock when the VEH crash handler
-            // fires on a thread that faulted *inside* CRT stdio. WriteFile is
-            // lock-free at the kernel32 layer.
-            // `WriteFile` is declared locally because `bun_windows_sys::
-            // kernel32` does not (yet) export it (cf. src/sys/lib.rs).
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn WriteFile(
-                    hFile: bun_sys::windows::HANDLE,
-                    lpBuffer: *const u8,
-                    nNumberOfBytesToWrite: u32,
-                    lpNumberOfBytesWritten: *mut u32,
-                    lpOverlapped: *mut core::ffi::c_void,
-                ) -> i32;
-            }
-            let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
-            let mut written: u32 = 0;
-            // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
-            // in which case WriteFile fails harmlessly); `bytes` is valid for
-            // reads of `len`; `written` is a valid out-pointer; lpOverlapped
-            // is null for synchronous I/O.
-            unsafe {
-                WriteFile(
-                    h,
-                    bytes.as_ptr(),
-                    bytes.len() as u32,
-                    &mut written,
-                    core::ptr::null_mut(),
-                );
+            use bun_sys::windows::{INVALID_HANDLE_VALUE, STD_ERROR_HANDLE, kernel32};
+            // Not the C runtime, whose lock of the descriptor this thread may hold.
+            let handle = kernel32::GetStdHandle(STD_ERROR_HANDLE);
+            if handle != INVALID_HANDLE_VALUE && !bytes.is_empty() {
+                let _ = bun_sys::write(bun_sys::Fd::from_system(handle), bytes);
             }
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: fd 2 is always open; libc::write is async-signal-safe.
-            unsafe {
-                libc::write(2, bytes.as_ptr().cast(), bytes.len() as _);
-            }
+            let _ = bun_sys::write(bun_sys::Fd::stderr(), bytes);
         }
         Ok(())
     }
@@ -995,41 +965,16 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                {
-                                    let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
-                                    // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
-                                    let result = unsafe {
-                                        bun_sys::windows::GetThreadDescription(
-                                            bun_sys::windows::GetCurrentThread(),
-                                            &mut name,
-                                        )
-                                    };
-                                    // SAFETY: `name` is the PWSTR out-param written by GetThreadDescription; deref is guarded by the S_OK check via `&&` short-circuit
-                                    if bun_sys::windows::HRESULT_CODE(result)
-                                        == bun_sys::windows::S_OK
-                                        && unsafe { *name } != 0
-                                    {
-                                        // SAFETY: `name` is a valid NUL-terminated wide string
-                                        // (PWSTR out-param from GetThreadDescription).
-                                        let span = unsafe { bun_core::ffi::wstr_units(name) };
-                                        if write!(writer, "({})", bun_fmt::utf16(span)).is_err() {
-                                            abort();
-                                        }
-                                        // NOTE: `GetThreadDescription` heap-allocates `name` and the
-                                        // caller is meant to `LocalFree` it. This runs on a
-                                        // `noreturn` crash path immediately before `ExitProcess(3)`,
-                                        // so the leak is intentional.
-                                    } else {
-                                        if write!(
-                                            writer,
-                                            "(thread {})",
-                                            bun_sys::windows::kernel32::GetCurrentThreadId()
-                                        )
-                                        .is_err()
-                                        {
-                                            abort();
-                                        }
-                                    }
+                                let written = match bun_sys::windows::name_of_current_thread() {
+                                    [] => write!(
+                                        writer,
+                                        "(thread {})",
+                                        bun_sys::windows::kernel32::GetCurrentThreadId()
+                                    ),
+                                    name => write!(writer, "({})", bun_fmt::utf16(name)),
+                                };
+                                if written.is_err() {
+                                    abort();
                                 }
                             }
                             #[cfg(any(
@@ -1946,14 +1891,9 @@ mod draft {
                 return;
             }
             REPORTS_ABORTS.store(true, Ordering::Relaxed);
-            // SAFETY: the handlers have the signatures that `signal` and the engine call and are never unloaded.
-            unsafe {
-                libc::signal(
-                    libc::SIGABRT,
-                    handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
-                );
-                WTFSetAbortReporter(Some(report_abort_windows));
-            }
+            bun_sys::windows::set_abort_handler(Some(handle_abort_windows));
+            // SAFETY: the reporter has the signature that the engine calls and is never unloaded.
+            unsafe { WTFSetAbortReporter(Some(report_abort_windows)) };
         }
     }
 
@@ -2186,7 +2126,7 @@ mod draft {
             unsafe {
                 bun_sys::windows::kernel32::SetUnhandledExceptionFilter(None);
                 if REPORTS_ABORTS.swap(false, Ordering::Relaxed) {
-                    libc::signal(libc::SIGABRT, libc::SIG_DFL);
+                    bun_sys::windows::set_abort_handler(None);
                     WTFSetAbortReporter(None);
                 }
             }
@@ -2345,13 +2285,7 @@ mod draft {
     extern "C" fn handle_abort_windows(_signal: core::ffi::c_int) {
         // The C runtime has put the default action back, with which the `abort()` of a second thread would end the
         // process in the middle of this report.
-        // SAFETY: the handler has the signature that `signal` calls and is never unloaded.
-        unsafe {
-            libc::signal(
-                libc::SIGABRT,
-                handle_abort_windows as extern "C" fn(core::ffi::c_int) as usize,
-            );
-        }
+        bun_sys::windows::set_abort_handler(Some(handle_abort_windows));
         report_abort_windows()
     }
 
@@ -2751,10 +2685,7 @@ mod draft {
                     address: addr.wrapping_sub(base_address) as i32,
 
                     object: if name != image_path.as_slice() {
-                        // GetModuleFileNameW output never has a trailing separator
-                        // or bare drive prefix, so `basename_windows`'s
-                        // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
+                        let basename = bun_paths::basename(name);
                         Some(Box::<[u8]>::from(
                             &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
                         ))
@@ -2910,29 +2841,25 @@ mod draft {
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
         match opts.reason {
             CrashReason::Panic(message) => {
+                use bun_zlib::deflate;
                 writer.write_byte(b'0')?;
 
-                let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
-                    Ok(len) => &compressed_bytes[0..len],
-                    // Insufficient memory.
-                    Err(bun_zlib::ReturnCode::MemError) => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                    }
-                    // The buffer dest was not large enough to hold the compressed data.
-                    Err(bun_zlib::ReturnCode::BufError) => {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                    }
-                    // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
-                    // This is technically possible but impossible because we pass 9.
-                    Err(_) => return Err(crate::Error::Unexpected),
+                let mut compressed = Vec::new();
+                let options = deflate::Options {
+                    level: deflate::Level::BEST,
+                    ..Default::default()
                 };
+                deflate::compress(message, &mut compressed, deflate::Container::Zlib, options)
+                    .map_err(|error| match error {
+                        bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+                        _ => crate::Error::Unexpected,
+                    })?;
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(compressed) > b64_bytes.len() {
+                if bun_base64::encode_len(&compressed) > b64_bytes.len() {
                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                 }
-                let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
+                let b64_len = bun_base64::encode(&mut b64_bytes, &compressed);
 
                 writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
             }
@@ -3051,27 +2978,6 @@ mod draft {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
-            let mut startup_info = windows::STARTUPINFOW {
-                cb: core::mem::size_of::<windows::STARTUPINFOW>() as u32,
-                lpReserved: core::ptr::null_mut(),
-                lpDesktop: core::ptr::null_mut(),
-                lpTitle: core::ptr::null_mut(),
-                dwX: 0,
-                dwY: 0,
-                dwXSize: 0,
-                dwYSize: 0,
-                dwXCountChars: 0,
-                dwYCountChars: 0,
-                dwFillAttribute: 0,
-                dwFlags: 0,
-                wShowWindow: 0,
-                cbReserved2: 0,
-                lpReserved2: core::ptr::null_mut(),
-                hStdInput: core::ptr::null_mut(),
-                hStdOutput: core::ptr::null_mut(),
-                hStdError: core::ptr::null_mut(),
-            };
             let mut sysdir = [0u16; 300];
             let Ok(sysdir_len) = windows::GetSystemDirectoryW(&mut sysdir) else {
                 return;
@@ -3118,32 +3024,7 @@ mod draft {
             if cmd_line.append(0).is_err() {
                 return;
             }
-            // SAFETY: we just wrote a NUL terminator at len-1
-            let end = cmd_line.len() - 1;
-            let cmd_line_slice = &mut cmd_line.slice()[0..end];
-            // Rust has no [:0] sentinel slices — pass the raw pointer instead.
-            // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
-            let spawn_result = unsafe {
-                windows::kernel32::CreateProcessW(
-                    core::ptr::null(),
-                    cmd_line_slice.as_mut_ptr(),
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                    1, // true
-                    0,
-                    core::ptr::null_mut(),
-                    core::ptr::null(),
-                    &mut startup_info,
-                    &mut process,
-                )
-            };
-
-            // we don't care what happens with the process
-            // NOTE: on success `CreateProcessW` returns two open kernel handles in
-            // `process.hProcess` / `process.hThread` that the caller is meant to
-            // `CloseHandle`. `report()` runs immediately before
-            // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
-            let _ = spawn_result;
+            let _ = windows::start_process(cmd_line.slice());
         }
         #[cfg(any(
             target_os = "macos",
@@ -3152,20 +3033,22 @@ mod draft {
             target_os = "freebsd"
         ))]
         {
-            let mut buf = bun_core::PathBuffer::ZEROED;
-            let mut buf2 = bun_core::PathBuffer::ZEROED;
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
-            let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
+            let mut cwd_buf = bun_core::PathBuffer::ZEROED;
+            if bun_core::getcwd(&mut cwd_buf).is_err() {
                 return;
-            };
-            // Reshaped for borrowck — capture cwd bytes by value (it
-            // borrows buf2, not buf, so no actual overlap; copy len for clarity).
-            let cwd_bytes = cwd.as_bytes();
-            let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
+            }
+            // No heap: this can run in a signal handler.
+            let mut curl = bun_paths::StackPath::<{ bun_paths::MAX_PATH_BYTES }>::new();
+            if !bun_core::strings::tokenize(path_env, b":").any(|dir| {
+                curl.set(dir).is_ok()
+                    && curl.push(b"curl").is_ok()
+                    && bun_sys::is_executable_file_path(&curl)
+            }) {
                 return;
-            };
+            }
             let mut cmd_line = BoundedArray::<u8, 4096>::default();
             if cmd_line.append_slice(url).is_err() {
                 return;
@@ -3188,12 +3071,8 @@ mod draft {
             match result {
                 // child
                 0 => {
-                    for i in 0..2 {
-                        // SAFETY: closing stdin/stdout in child
-                        unsafe {
-                            libc::close(i);
-                        }
-                    }
+                    let _ = bun_sys::close(bun_sys::Fd::stdin());
+                    let _ = bun_sys::close(bun_sys::Fd::stdout());
                     // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                     // process environment block
                     unsafe {
@@ -3419,11 +3298,9 @@ mod draft {
         argv.push({
             #[cfg(windows)]
             {
-                // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
-                let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
-                let mut s = image_path[0..image_path.len() - 3].to_vec();
-                s.extend_from_slice(b"pdb");
-                s
+                let mut pdb = bun_paths::Path::from(bun_sys::windows::exe_path_w());
+                pdb.set_extension(b".pdb");
+                pdb.to_vec()
             }
             #[cfg(not(windows))]
             {
@@ -3641,13 +3518,11 @@ mod draft {
         compile_unit_name: &[u8],
         tty_config: TtyConfig,
     ) -> crate::Result<()> {
-        // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
-        // ingest. The constant is tiny and this path is debug-only — build it once
-        // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
-        let _ = base_path_buf.append_slice(Environment::BASE_PATH);
-        let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
-        let base_path: &[u8] = base_path_buf.const_slice();
+        // No heap: this can run in a signal handler.
+        let mut base_path = bun_paths::StackPath::<1024>::new();
+        let _ = base_path.set(Environment::BASE_PATH);
+        let _ = base_path.push_trailing_sep();
+        let base_path: &[u8] = &base_path;
         {
             if let Some(sl) = source_location {
                 if sl.file_name.starts_with(base_path) {

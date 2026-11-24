@@ -47,12 +47,14 @@
 use crate::JsCell;
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
+use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -158,7 +160,7 @@ struct ThreadStart {
 /// Raw, so that `start` outlives a `spawn` that fails, which drops its closure.
 struct OwnedByThread {
     start: *mut ThreadStart,
-    table_pages: *mut c_void,
+    table_pages: ReservedPages,
 }
 // SAFETY: whoever holds it last takes the box. Of what is in the box,
 // `WebWorker` is shared across threads by design (atomics,
@@ -168,6 +170,40 @@ struct OwnedByThread {
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
 unsafe impl Send for OwnedByThread {}
+
+/// The address space for the tables of a thread that has not started. Null if it needs none.
+struct ReservedPages(*mut c_void);
+
+impl ReservedPages {
+    fn try_new(threads_are_ending: bool) -> Option<Self> {
+        let mut pages = core::ptr::null_mut();
+        // SAFETY: `pages` is a live local the callee writes once.
+        unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut pages, threads_are_ending) }
+            .then(|| Self(pages))
+    }
+
+    fn adopt(self) -> PagesOfThread {
+        Bun__AOT__adoptPagesForNewThread(ManuallyDrop::new(self).0);
+        PagesOfThread(PhantomData)
+    }
+}
+
+impl Drop for ReservedPages {
+    fn drop(&mut self) {
+        Bun__AOT__releasePagesForNewThread(self.0);
+    }
+}
+
+/// What the current thread has not used of the pages that it adopted.
+#[must_use]
+struct PagesOfThread(PhantomData<*const ()>);
+
+impl Drop for PagesOfThread {
+    fn drop(&mut self) {
+        Bun__AOT__releaseUnusedPagesOfThread();
+        Bun__AOT__didStartThread();
+    }
+}
 
 enum StartOutcome {
     Started,
@@ -237,7 +273,6 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -596,11 +631,10 @@ impl WebWorker {
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
     /// A worker that `can_wait` for the room of workers that are ending does not take the last of the room.
     fn try_start(&self, can_wait: bool) -> StartOutcome {
-        let mut table_pages: *mut c_void = core::ptr::null_mut();
-        // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
+        let Some(table_pages) = ReservedPages::try_new(can_wait) else {
             return StartOutcome::NoRoom;
-        }
+        };
+        let needs_room = !table_pages.0.is_null();
         let start = bun_core::heap::into_raw(self.thread_start.take().expect("not started"));
         let owned = OwnedByThread { start, table_pages };
         let spawn = std::thread::Builder::new()
@@ -609,10 +643,8 @@ impl WebWorker {
                 let owned = owned;
                 // SAFETY: the box given up above; the parent takes it back only if no thread runs.
                 let start = *unsafe { bun_core::heap::take(owned.start) };
-                Bun__AOT__adoptPagesForNewThread(owned.table_pages);
+                let _pages = owned.table_pages.adopt();
                 start.worker.thread_main(start.init);
-                Bun__AOT__releaseUnusedPagesOfThread();
-                Bun__AOT__didStartThread();
                 // The thread's ref (and the parent ticket) drop here.
             });
         if let Ok(handle) = spawn {
@@ -622,11 +654,11 @@ impl WebWorker {
         // SAFETY: the box given up above, which no thread took.
         self.thread_start
             .set(Some(unsafe { bun_core::heap::take(start) }));
-        if table_pages.is_null() {
-            return StartOutcome::Failed;
+        if needs_room {
+            StartOutcome::NoRoom
+        } else {
+            StartOutcome::Failed
         }
-        Bun__AOT__releasePagesForNewThread(table_pages);
-        StartOutcome::NoRoom
     }
 
     /// Whether the thread was asked to terminate, or is shutting down on its own: the
@@ -723,7 +755,6 @@ impl WebWorker {
     /// # Safety
     /// `self` waits for room, and `parent` is its parent.
     pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer.state.set(TimerState::FIRED);
         if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
@@ -1239,14 +1270,6 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        log!(
-            "[{}] shutdown: thread state freed",
-            self.execution_context_id
-        );
         exit_code
     }
 
@@ -1492,6 +1515,26 @@ fn resolve_entry_point_specifier<'s>(
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
         return Ok(crate::compiled_program::module_key(entry));
+    }
+
+    // The disk does not answer to `a\b` for what the executable holds as `a/b`. A compiled program does as `bun run`.
+    if let Some(graph) = parent.standalone_module_graph
+        && let std::borrow::Cow::Owned(converted) = bun_paths::from_portable(str)
+    {
+        let file = graph.resolve(graph.base_public_path_with_default_suffix(), &converted);
+        if graph.compiled_program().is_none()
+            && let Some(file) = file
+        {
+            return Ok(file);
+        }
+        if file.is_some()
+            || resolver.resolve_embedded_entry_point(&converted).is_some()
+            || (resolver.resolve_embedded_entry_point_from_working_directory(&converted)).is_some()
+        {
+            return Err(Unresolved::Because(
+                "A backslash does not separate names on this platform",
+            ));
+        }
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`

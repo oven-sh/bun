@@ -2,6 +2,7 @@
 #define UWS_H2RESPONSEDATA_H
 
 #include "AsyncSocketData.h"
+#include "Hpack.h"
 
 #include <wtf/Vector.h>
 #include <cstdint>
@@ -39,9 +40,6 @@ struct Http2ResponseData {
     OnDataCallback inStream = nullptr;
     OnTimeoutCallback onTimeout = nullptr;
 
-    struct HeaderRef {
-        uint32_t nameOff, nameLen, valueOff, valueLen;
-    };
     /* Outgoing headers buffered until the first body write/end so they go
      * out as one HEADERS frame. Names are lowercased on append (RFC 9113
      * §8.2.1). */

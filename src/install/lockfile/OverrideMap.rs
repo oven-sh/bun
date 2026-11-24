@@ -12,7 +12,6 @@ use bun_install::dependency::{
 };
 use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path;
 use bun_semver::String as SemverString;
 use bun_semver::Version as SemverVersion;
 use bun_semver::string::Builder as SemverBuilder;
@@ -1412,21 +1411,11 @@ fn workspace_ref_literal(
         return Ok(None);
     }
     let root_dir: &[u8] = package_json_dir(source);
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut found: Option<Vec<u8>> = None;
     for relative_dir in workspace_names.keys() {
-        let Some(abs_package_json_path) =
-            resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                root_dir,
-                &mut path_buf.0,
-                &[&relative_dir[..], b"package.json"],
-            )
-        else {
-            continue;
-        };
         let GetResult::Entry(entry) = pm.workspace_package_json_cache.get_with_path(
             log,
-            abs_package_json_path,
+            &bun_paths::Path::resolve(&[root_dir, relative_dir, b"package.json"]),
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,

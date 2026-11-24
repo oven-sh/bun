@@ -6,15 +6,15 @@
 # CHECK-NOT: parameter 0 expected=L2 declared
 # CHECK: function f6 cycle
 # -- source: descriptors.js
-# function Reply() { this.sent = false; this.code = 200; }
-# const byName = { get() { return this.code; } };
-# Object.defineProperty(Reply.prototype, "status", byName);
-# Object.defineProperties(Reply.prototype, {
-#   done: { get() { return this.sent; }, set(value) { this.sent = value; } },
-#   ["computed" + 1]: { get() { return this.code + 1; } },
+# function Lamp() { this.wicks = 2; this.oil = 90; }
+# const byName = { get() { return this.oil / this.wicks; } };
+# Object.defineProperty(Lamp.prototype, "hours", byName);
+# Object.defineProperties(Lamp.prototype, {
+#   trimmed: { get() { return this.wicks < 2; }, set(wicks) { this.oil -= 6; this.wicks = wicks; } },
+#   ["computed" + 1]: { get() { return this.oil % 7; } },
 # });
-# globalThis.kept = Reply;
-# const reply = new Reply();
-# reply.done = true;
-# console.log(reply.status, reply.done, reply.computed1);
+# globalThis.kept = Lamp;
+# const lamp = new Lamp();
+# lamp.trimmed = 1;
+# console.log(lamp.hours, lamp.trimmed, lamp.computed1);
 # -- end of source

@@ -17,7 +17,7 @@ mod settings;
 mod sort;
 mod trivago;
 
-pub(crate) use oxfmt::ImportRun;
+pub(crate) use oxfmt::{ImportRun, PrintedImport, UnchangedImports};
 pub use settings::Settings;
 
 use bun_lint::ast::File;
@@ -44,6 +44,16 @@ impl SortImports {
     /// different order.
     pub fn is_applied_by_format(&self) -> bool {
         matches!(self.how, How::Oxfmt(_) | How::Native(_))
+    }
+
+    /// True if [`ImportRun`] is all there is to it.
+    pub(crate) fn only_moves_imports(&self) -> bool {
+        matches!(self.how, How::Oxfmt(_))
+    }
+
+    /// True if nothing after the last import and the comments that follow it matters.
+    pub(crate) fn only_looks_at_imports(&self) -> bool {
+        !matches!(self.how, How::Organize(_))
     }
 
     /// Checks that `after`, the parsed output of [`sorted_text`], still imports what `before` does. Always true for the

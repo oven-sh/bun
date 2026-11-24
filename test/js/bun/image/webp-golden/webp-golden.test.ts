@@ -4,7 +4,7 @@
 //   random/    valid streams of modes, coefficients, transforms, prefix codes and copies chosen at random
 //   handmade/  at the limits of the format and beyond
 //   changed/   the above with bytes changed at random
-//   extreme/   what no encoder writes, for the same result on every CPU
+//   extreme/   what no encoder writes, for the result of libwebp on x64 on every CPU
 // and the pictures to encode:
 //   layers/, noise/, sequence/  made by the function of that name in picture.ts
 //   stored/, large/             made for a decision of an encoder that nothing else gets to
@@ -19,7 +19,7 @@ const cases = await loadCases();
 
 describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBe(354);
+    expect(cases.decode.length).toBe(361);
     expect(await decodeDifferences(cases.decode)).toBe("");
   });
 

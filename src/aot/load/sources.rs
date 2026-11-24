@@ -23,7 +23,7 @@ use crate::builtins::{Resolved, ResolvedBuiltins, RuntimeFunction, RuntimeModule
 use crate::diagnostics::{FileDiagnostic, LoadMessages};
 use crate::load::contents::FileContents;
 use crate::load::contents::load_names::NamedModule;
-use crate::load::module_paths::{compute_display_path, with_separators_of_host};
+use crate::load::module_paths::compute_display_path;
 #[cfg(test)]
 use crate::load::project::ProjectId;
 use crate::lower;
@@ -326,7 +326,7 @@ impl Sources {
         let path_on_disk = self.diagnostic_path(file);
         match self.root_of_executable() {
             None if is_absolute(path_on_disk) => {
-                with_separators_of_host(path_on_disk, cfg!(windows)).into()
+                bun_paths::to_native(path_on_disk).into_owned().into()
             }
             // Windows: on another drive.
             Some(_) if is_absolute(display_path) => public_path.into(),
@@ -358,7 +358,7 @@ impl Sources {
         if is_name_of_text(&entry.diagnostic_path) {
             return None;
         }
-        let path = with_separators_of_host(&entry.diagnostic_path, cfg!(windows));
+        let path = bun_paths::to_native(&entry.diagnostic_path).into_owned();
         (*path != *entry.public_path).then_some(path)
     }
 

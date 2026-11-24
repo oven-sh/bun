@@ -1,20 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 
 test.concurrent("expect dns.lookup to keep the process alive", async () => {
   expect(await bunRun(join(import.meta.dir, "dns-fixture.js"))).toSpawn();
 });
 
-// When the last outstanding query on a Resolver completes via the retransmit
-// timer (c-ares timeout, not socket I/O), `check_timeouts` must not leave the
-// timer re-armed: `request_completed` runs inside the c-ares callback, before
-// c-ares has detached the query, so `any_requests_pending()` can still read
-// true there. Without the post-`ares_process_fd` re-check the timer stays
-// ACTIVE with its `+1` ref on the native Resolver. Observable as a ~1 s tail
-// between the last callback and process exit; under `bun test` on the asan
-// lane the exit GC runs before that timer fires and LSan flags the Resolver
-// allocation as a direct leak.
+// When the last query times out, `check_timeouts` must not arm the timer again: it holds a ref on the
+// native Resolver. That shows as a ~1 s tail before the process exits, and as a leak under LSan.
 describe("dns.Resolver does not keep the event loop alive after the last query times out", () => {
   async function run(stmt: string) {
     const src = `
@@ -53,8 +46,7 @@ describe("dns.Resolver does not keep the event loop alive after the last query t
   ] as const) {
     test.concurrent(name, async () => {
       const { delay, code } = await run(stmt);
-      // ETIMEOUT proves completion routed through `check_timeouts`
-      // (the path changed here), not `on_dns_poll`.
+      // ETIMEOUT proves completion routed through `check_timeouts`, not `on_dns_poll`.
       expect(code).toBe(expected);
       // Before the fix: delay ≈ 1000 ms (one retransmit-timer interval).
       expect(delay).toBeLessThan(500);
@@ -166,4 +158,148 @@ test.concurrent("a query that c-ares answers without asking a server takes a tur
     });
   `;
   expect(await bunRun(["-e", script])).toSpawn("beforeExit 1\n127.0.0.1\nbeforeExit 2\nENOSERVER\nbeforeExit 3");
+});
+
+describe("script does not run inside c-ares", () => {
+  const script = (body: string) => `
+    const dns = require("node:dns");
+    // Answers A with 10.0.0.1 and drops AAAA.
+    const AAAA = 28;
+    let droppedAAAA = false;
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, query, port, address) {
+          const end = query.indexOf(0, 12) + 5;
+          if (query[end - 3] === AAAA) return void (droppedAAAA = true);
+          const header = [query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0];
+          const answer = [0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 0, 0, 1];
+          socket.send(Buffer.from([...header, ...query.subarray(12, end), ...answer]), port, address);
+        },
+      },
+    });
+    const servers = ["127.0.0.1:" + server.port];
+    ${body}
+  `;
+
+  // AAAA is dropped, so the lookup succeeds when the resolver's timer gives up on it.
+  describe("a lookup that the timeout check answers", () => {
+    const lookup = (continuation: string) =>
+      script(`
+        dns.setServers(servers);
+        // After three fast answers c-ares waits 250 ms for this server, not 2 s.
+        for (const name of ["a.test", "b.test", "c.test"]) await dns.promises.resolve4(name);
+        const first = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
+        const joined = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
+        await first;
+        if (droppedAAAA) console.log("dropped AAAA");
+        ${continuation}
+      `);
+
+    test.concurrent("can wait for another query in a nested turn of the loop", async () => {
+      // Bun.build() turns the loop until setup() settles.
+      const continuation = `
+        const setup = () => dns.promises.resolve4("nested.test").then(([address]) => console.log(address));
+        await Bun.build({ entrypoints: ["/e.js"], files: { "/e.js": "" }, plugins: [{ name: "spin", setup }] });
+        server.close();
+      `;
+      expect(await bunRun(["-e", lookup(continuation)])).toSpawn("dropped AAAA\n10.0.0.1");
+    });
+
+    test.concurrent("can tear down the VM", async () => {
+      const result = await bunRun(["-e", lookup(`console.log("exit"); process.exit(0);`)], {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      });
+      expect(result).toSpawn("dropped AAAA\nexit");
+    });
+
+    test.concurrent("settles the lookups that joined it before a continuation runs", async () => {
+      expect(await bunRun(["-e", lookup(`console.log(Bun.peek.status(joined)); server.close();`)])).toSpawn(
+        "dropped AAAA\nfulfilled",
+      );
+    });
+  });
+
+  describe("a resolver's graph is disposed", () => {
+    const withGraph = (body: string) =>
+      script(`
+        const graph = new Bun.ModuleGraph();
+        const resolver = graph.run(() => new dns.promises.Resolver());
+        resolver.setServers(servers);
+        ${body}
+        server.close();
+      `);
+
+    test.concurrent.each([
+      { source: "a socket event", before: "" },
+      { source: "the cache of c-ares", before: `await resolver.resolve4("a.test");` },
+    ])("by a `then` getter of an answer from $source", async ({ before }) => {
+      const body = `
+        ${before}
+        Object.defineProperty(Array.prototype, "then", {
+          get() {
+            if (!this[0]?.address) return;
+            console.log("dispose");
+            graph.dispose();
+          },
+        });
+        console.log((await resolver.resolve4("a.test"))[0]);
+      `;
+      expect(await bunRun(["-e", withGraph(body)])).toSpawn("dispose\n10.0.0.1");
+    });
+
+    test.concurrent("by the coercion of setServers()'s argument", async () => {
+      const body = `
+        resolver._handle.setServers([[{ valueOf: () => (graph.dispose(), 4) }, "127.0.0.2", 53]]);
+        console.log(resolver.getServers()[0]);
+      `;
+      expect(await bunRun(["-e", withGraph(body)])).toSpawn("127.0.0.2");
+    });
+
+    test.concurrent("by a microtask of a beforeExit listener that queries", async () => {
+      const body = `
+        await resolver.resolve4("a.test");
+        process.once("beforeExit", () => {
+          queueMicrotask(() => graph.dispose());
+          resolver.resolve4("a.test").then(([address]) => console.log(address));
+        });
+      `;
+      expect(await bunRun(["-e", withGraph(body)])).toSpawn("10.0.0.1");
+    });
+  });
+});
+
+test.concurrent.each(["beforeExit", "exit"])(
+  "a query that c-ares answers inside the call runs no microtask of the %s listener that made it",
+  async event => {
+    const script = `
+      process.once("${event}", () => {
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        queueMicrotask(() => ran.push("microtask"));
+        Bun.dns.lookup("127.0.0.1", { backend: "c-ares" });
+        console.log(JSON.stringify(ran));
+      });
+    `;
+    expect(await bunRun(["-e", script])).toSpawn("[]");
+  },
+);
+
+test.concurrent("a query that c-ares answers inside the call runs no microtask of a test body", async () => {
+  using dir = tempDir("dns-test-body", {
+    "body.test.js": `
+      test("queries after an await", async () => {
+        await 1;
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        queueMicrotask(() => ran.push("microtask"));
+        Bun.dns.lookup("127.0.0.1", { backend: "c-ares" });
+        console.log(JSON.stringify(ran));
+      });
+    `,
+  });
+  const { stdout, exitCode } = await bunRun(["test", join(String(dir), "body.test.js")]);
+  expect(stdout.split("\n").at(-1)).toBe("[]");
+  expect(exitCode).toBe(0);
 });

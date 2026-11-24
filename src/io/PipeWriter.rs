@@ -5,7 +5,6 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::ByteVecExt;
 use bun_core::OOM;
 #[cfg(windows)]
 use bun_ptr::OptionCellExt as _;
@@ -14,7 +13,7 @@ use bun_ptr::{CellExt as _, VecCellExt as _};
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, MaybeOwnedFile};
 
 use crate::{EventLoopHandle, IoEvent, Owner};
 #[cfg(unix)]
@@ -76,8 +75,6 @@ pub trait BufferedWriteHandler: WriteHandler {
 #[cfg(unix)]
 struct PosixPipeWriter {
     handle: PipeHandle,
-    /// `false` for a file descriptor that is left open.
-    owns_fd: bool,
     /// Set once `pwritev2(RWF_NOWAIT)` said this fd's file type does not support it, so we stop asking.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     rwf_unsupported: Cell<bool>,
@@ -89,7 +86,6 @@ impl Default for PosixPipeWriter {
     fn default() -> Self {
         Self {
             handle: PipeHandle::closed(),
-            owns_fd: true,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             rwf_unsupported: Cell::new(false),
             closed_without_reporting: Cell::new(false),
@@ -210,17 +206,15 @@ impl PosixPipeWriter {
         self.handle.register(FilePollFlag::Writable)
     }
 
-    fn start_polling(&self, ev: EventLoopHandle, fd: Fd) -> sys::Result<()> {
-        let had_poll = self.handle.has_poll();
-        if !had_poll {
-            self.handle.set_poll(ev, fd);
+    fn start_polling(&self, ev: EventLoopHandle, file: MaybeOwnedFile) -> sys::Result<()> {
+        // A poll from an earlier start() still holds that start's fd.
+        if !file.is_owned() && self.handle.has_poll() {
+            return self.register_poll();
         }
-        self.register_poll().inspect_err(|_| {
-            // A poll from an earlier start() still holds that start's fd.
-            if !had_poll {
-                self.handle.set_fd(Fd::INVALID);
-            }
-        })
+        self.handle.set_file(file);
+        self.handle.add_poll(ev);
+        self.register_poll()
+            .inspect_err(|_| drop(self.handle.take_file()))
     }
 
     fn update_ref(&self, value: bool) {
@@ -232,24 +226,13 @@ impl PosixPipeWriter {
         if !self.handle.is_closed() {
             debug_assert!(!self.closed_without_reporting.get());
             self.closed_without_reporting.set(true);
-            if self.owns_fd {
-                self.handle.close();
-            }
+            self.handle.close_if_owned();
         }
     }
 
     /// `true` if there is a close to report.
     fn close(&self) -> bool {
-        self.closed_without_reporting.take() || self.handle.close_impl(self.owns_fd)
-    }
-}
-
-#[cfg(unix)]
-impl Drop for PosixPipeWriter {
-    fn drop(&mut self) {
-        if self.owns_fd {
-            self.handle.close();
-        }
+        self.closed_without_reporting.take() || self.handle.close()
     }
 }
 
@@ -285,26 +268,13 @@ fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 
 /// Shared borrows only: a handler can reach the writer again.
 #[cfg(unix)]
+#[derive(Default)]
 pub struct PosixBufferedWriter {
     base: PosixPipeWriter,
 }
 
 #[cfg(unix)]
 impl PosixBufferedWriter {
-    /// Closing it closes the fd.
-    pub fn owning_fd() -> Self {
-        Self {
-            base: PosixPipeWriter::default(),
-        }
-    }
-
-    /// Closing it leaves the fd open.
-    pub fn borrowing_fd() -> Self {
-        let mut this = Self::owning_fd();
-        this.base.owns_fd = false;
-        this
-    }
-
     /// # Safety
     /// See `PosixStreamingWriter::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
@@ -373,20 +343,20 @@ impl PosixBufferedWriter {
         self.base.update_ref(value);
     }
 
-    /// On `Err` the writer holds nothing; `fd` is still the caller's to close. Takes the handler to match `WindowsBufferedWriter::start`.
+    /// Takes the handler to match `WindowsBufferedWriter::start`.
     pub fn start(
         &self,
         _: &impl BufferedWriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: MaybeOwnedFile,
         pollable: bool,
     ) -> sys::Result<()> {
         if !pollable {
             debug_assert!(!self.has_poll());
-            self.base.handle.set_fd(fd);
+            self.base.handle.set_file(file);
             return sys::Result::Ok(());
         }
-        self.base.start_polling(ev, fd)?;
+        self.base.start_polling(ev, file)?;
         self.update_ref(true);
         sys::Result::Ok(())
     }
@@ -690,20 +660,19 @@ impl PosixStreamingWriter {
         }
     }
 
-    /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(
         &self,
         handler: &impl WriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: sys::File,
         is_pollable: bool,
     ) -> sys::Result<()> {
         if !is_pollable {
             self.close(handler);
-            self.base.handle.set_fd(fd);
+            self.base.handle.set_file(file.into());
             return sys::Result::Ok(());
         }
-        if self.base.handle.has_poll() && fd != self.base.handle.get_fd() {
+        if self.base.handle.has_poll() {
             // The poll stays on the fd of the earlier start().
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -714,12 +683,9 @@ impl PosixStreamingWriter {
                 ));
             }
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            {
-                sys::FdExt::close(fd);
-                return sys::Result::Ok(());
-            }
+            return sys::Result::Ok(());
         }
-        self.base.start_polling(ev, fd)
+        self.base.start_polling(ev, file.into())
     }
 }
 
@@ -934,7 +900,6 @@ impl WindowsPipeWriter {
                     file.buffer.set(self.current_payload.take().list);
                     self.has_inflight_write.set(false);
                 }
-                file.close_on_drop.set(self.owns_fd.get());
                 if cancel_inflight_write {
                     file.stop();
                 }
@@ -996,6 +961,7 @@ impl Drop for WindowsPipeWriter {
 
 /// Shared borrows only: a handler can reach the writer again.
 #[cfg(windows)]
+#[derive(Default)]
 pub struct WindowsBufferedWriter {
     base: WindowsPipeWriter,
     pending_payload_size: Cell<usize>,
@@ -1003,21 +969,6 @@ pub struct WindowsBufferedWriter {
 
 #[cfg(windows)]
 impl WindowsBufferedWriter {
-    /// See `PosixBufferedWriter::owning_fd`.
-    pub fn owning_fd() -> Self {
-        Self {
-            base: WindowsPipeWriter::default(),
-            pending_payload_size: Cell::new(0),
-        }
-    }
-
-    /// See `PosixBufferedWriter::borrowing_fd`. A pipe or a tty owns its fd either way.
-    pub fn borrowing_fd() -> Self {
-        let this = Self::owning_fd();
-        this.base.owns_fd.set(false);
-        this
-    }
-
     /// # Safety
     /// See `PosixStreamingWriter::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
@@ -1055,23 +1006,22 @@ impl WindowsBufferedWriter {
         &self,
         handler: &impl BufferedWriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: MaybeOwnedFile,
     ) {
         self.base
-            .set_source(Source::File(Source::open_file(ev.loop_(), fd)));
+            .set_source(Source::File(Source::open_file(ev.loop_(), file)));
         self.start_with_current_pipe(handler);
     }
 
-    /// A pipe or a tty owns `fd` on `Ok`.
     pub fn start(
         &self,
         handler: &impl BufferedWriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: MaybeOwnedFile,
         _pollable: bool,
     ) -> sys::Result<()> {
         self.base.close_current_source(handler)?;
-        self.base.set_source(Source::open(ev.loop_(), fd)?);
+        self.base.set_source(Source::open(ev.loop_(), file)?);
         self.start_with_current_pipe(handler);
         sys::Result::Ok(())
     }
@@ -1208,10 +1158,6 @@ impl StreamBuffer {
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
-        self.list.capacity()
-    }
-
     pub fn size(&self) -> usize {
         self.list.len() - self.cursor
     }
@@ -1255,24 +1201,6 @@ impl StreamBuffer {
 
     pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
         self.list.extend_from_slice(bun_core::bytes_of(&data));
-    }
-
-    pub fn write_latin1(&mut self, buffer: &[u8]) -> Result<(), OOM> {
-        if bun_core::strings::is_all_ascii(buffer) {
-            return self.write(buffer);
-        }
-
-        self.compact();
-        let len = self.list.len();
-        let list = mem::take(&mut self.list);
-        self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
-        Ok(())
-    }
-
-    pub fn write_utf16(&mut self, buffer: &[u16]) -> Result<(), OOM> {
-        self.compact();
-        ByteVecExt::write_utf16(&mut self.list, buffer)?;
-        Ok(())
     }
 
     pub fn slice(&self) -> &[u8] {
@@ -1418,10 +1346,6 @@ impl WindowsStreamingWriter {
         self.base.owns_fd.get()
     }
 
-    pub fn set_owns_fd(&self, value: bool) {
-        self.base.owns_fd.set(value);
-    }
-
     pub fn is_done(&self) -> bool {
         self.base.is_done.get()
     }
@@ -1498,28 +1422,31 @@ impl WindowsStreamingWriter {
         &self,
         handler: &impl WriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: MaybeOwnedFile,
     ) -> sys::Result<()> {
         // A `SyncFile` writes each chunk synchronously and can't drain a queue.
         if self.queued_len() > 0 {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
         self.base.close_current_source(handler)?;
+        self.base.owns_fd.set(file.is_owned());
         self.base
-            .set_source(Source::SyncFile(Source::open_file(ev.loop_(), fd)));
+            .set_source(Source::SyncFile(Source::open_file(ev.loop_(), file)));
         sys::Result::Ok(())
     }
 
-    /// A pipe or a tty owns `fd` on `Ok`.
     pub fn start(
         &self,
         handler: &impl WriteHandler,
         ev: EventLoopHandle,
-        fd: Fd,
+        file: impl Into<MaybeOwnedFile>,
         _pollable: bool,
     ) -> sys::Result<()> {
+        let file = file.into();
+        let owns_fd = file.is_owned();
         self.base.close_current_source(handler)?;
-        self.base.set_source(Source::open(ev.loop_(), fd)?);
+        self.base.set_source(Source::open(ev.loop_(), file)?);
+        self.base.owns_fd.set(owns_fd);
         self.start_with_current_pipe(handler);
         sys::Result::Ok(())
     }

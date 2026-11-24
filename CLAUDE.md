@@ -141,6 +141,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/install/` - Package manager (`lockfile/`, `npm.rs` registry client, `lifecycle_script_runner.rs`)
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
+- `src/dns/` - `getaddrinfo` types, and the resolver behind `dns.resolve*()`: `client/` is a crate of its own without I/O, `os.rs` is what it runs on
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
 - `src/icu/` - the part of ICU's C API that JavaScriptCore, WTF and Bun call, and a part of `ubidi.h` (not on macOS); the headers and the data come with WebKit
 - `src/zstd/` - zstd (`decoder/` and `encoder/` are crates of their own)
@@ -149,7 +150,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), cares (async DNS), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation
 

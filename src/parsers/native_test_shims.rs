@@ -1,5 +1,5 @@
 //! Native symbols normally provided by Bun's C++ side, shimmed for this crate's
-//! benches and the tests of `bun_cron`. Never compiled into the real build.
+//! benches and the tests of other crates. Never compiled into the real build.
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__StackCheck__getMaxStack() -> *mut core::ffi::c_void {

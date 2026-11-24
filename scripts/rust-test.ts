@@ -41,6 +41,7 @@ const crates = [
   "bun_cron",
   "bun_deflate",
   "bun_dispatch",
+  "bun_dns_client",
   "bun_dotenv",
   "bun_errno",
   "bun_exe_format",

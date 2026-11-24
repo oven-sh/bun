@@ -71,6 +71,7 @@ const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
   bun_core: ["c_str_list", "scoped::tests", "util::tests"],
   bun_io: ["fd_wait", "max_buf"],
+  bun_jsc: ["garbage_collection_controller::tests"],
 };
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

@@ -123,7 +123,8 @@ Bun goes by when a process started, not by which code started it. A process belo
 
 - If a hook times out, Bun kills the processes that started while that hook ran.
 - If an `afterEach` or `afterAll` hook times out, Bun also kills the processes that started in the matching `beforeEach` or `beforeAll`.
-- For tests that run concurrently, Bun kills these processes once every test in the group has finished.
+- If a test in a group of concurrent tests times out, Bun kills every process the group started, once all its tests have finished.
+- With `--bail`, Bun kills every process still running before it exits, since the `afterAll` hooks don't run.
 - In `node:test`, `beforeEach` and `afterEach` hooks run as part of the test, so Bun kills their processes with the test's.
 
 ## Test Modifiers

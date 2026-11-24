@@ -1,6 +1,4 @@
-// node-test.test.ts runs this with `--timeout 1000`: the timeout of the first
-// test kills the process that test spawned, and keeps the one from before().
-// `--timeout` also applies to before(), which needs time to spawn on a slow machine.
+// Run with `--timeout 1000`, which also gives before() time to spawn on a slow machine.
 const assert = require("node:assert");
 const { test, before, after } = require("node:test");
 const { bunEnv, bunExe } = require("harness");

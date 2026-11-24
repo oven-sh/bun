@@ -2244,6 +2244,8 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
+        // The afterAll hooks won't run, so nothing else stops what they would have.
+        let _ = vm.auto_killer.kill();
         vm.exit_handler.exit_code.set(1);
         vm.exit_handler
             .skip_exit_listeners

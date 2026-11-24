@@ -494,9 +494,7 @@ impl Execution {
 
     /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(buntest: &BunTest, global_this: &JSGlobalObject) {
-        // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill the processes that entry is responsible for (#46373)
-        // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
+        // Only a group with one sequence: in a concurrent group the processes can't be told apart, so `step_group` kills them at its end.
         if let Some(current_group) = buntest.execution.active_group() {
             let sequences = current_group.sequences(&buntest.execution);
             if sequences.len() == 1 {

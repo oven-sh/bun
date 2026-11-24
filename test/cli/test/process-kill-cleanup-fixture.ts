@@ -55,6 +55,7 @@ test("short timeout", () => {}, 300);
 
 test("a test without a timeout keeps its processes", async () => {
   const own = idle();
+  // Waits past the stale deadline of "short timeout": the check is that nothing kills `own` by then.
   await Bun.sleep(500);
   expect([own.exitCode, own.signalCode]).toEqual([null, null]);
   own.kill();

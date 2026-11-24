@@ -100,3 +100,31 @@ test("timeouts kill what the timed-out test or hook is responsible for", async (
   expect(combined).toContain("(pass) a test without a timeout keeps its processes");
   expect(exitCode).toBe(1);
 });
+
+test("--bail kills the processes the skipped afterAll hooks would have stopped", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--bail", path.join(import.meta.dir, "process-kill-bail-fixture.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = out + err;
+  const pid = Number(combined.match(/beforeAll pid (\d+)/)?.[1]);
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    expect(pid).toBeGreaterThan(0);
+    expect(combined).toContain("Bailed out after 1 failure");
+    while (alive()) await Bun.sleep(10);
+    expect(exitCode).toBe(1);
+  } finally {
+    if (alive()) process.kill(pid);
+  }
+});

@@ -4,6 +4,7 @@
 //   REGISTER_VIA_CONSTRUCTOR     calls napi_module_register from a static initializer, inside DllMain,
 //                                as NAPI_MODULE() did in node_api.h before v18.17.0
 //   IMPORT_MISSING_FROM_HOST     also imports a node.exe export that bun.exe doesn't have
+#define NAPI_VERSION 9
 #include <node_api.h>
 #include <stdio.h>
 
@@ -26,12 +27,26 @@ static napi_value hello(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static napi_value module_filename(napi_env env, napi_callback_info info) {
+  (void)info;
+  const char *filename;
+  napi_value result;
+  if (node_api_get_module_file_name(env, &filename) != napi_ok ||
+      napi_create_string_utf8(env, filename, NAPI_AUTO_LENGTH, &result) != napi_ok)
+    return NULL;
+  return result;
+}
+
 static napi_value init(napi_env env, napi_value exports) {
   napi_value fn;
   if (napi_create_function(env, "hello", NAPI_AUTO_LENGTH, hello, NULL, &fn) !=
       napi_ok)
     return NULL;
   if (napi_set_named_property(env, exports, "hello", fn) != napi_ok)
+    return NULL;
+  if (napi_create_function(env, "moduleFileName", NAPI_AUTO_LENGTH,
+                           module_filename, NULL, &fn) != napi_ok ||
+      napi_set_named_property(env, exports, "moduleFileName", fn) != napi_ok)
     return NULL;
   return exports;
 }

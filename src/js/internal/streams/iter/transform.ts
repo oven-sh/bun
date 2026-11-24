@@ -11,7 +11,12 @@
 const { Buffer } = require("node:buffer");
 const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
-const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
+const {
+  checkRangesOrGetDefault,
+  clampZlibChunkSize,
+  validateFiniteNumber,
+  validateObject,
+} = require("internal/validators");
 
 const NativeZlib: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZlib> = $bindgen(
   "node_zlib_binding.bind.ts",
@@ -108,7 +113,7 @@ function validateChunkSize(options) {
   } else if (chunkSize < Z_MIN_CHUNK) {
     throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
   }
-  return chunkSize;
+  return clampZlibChunkSize(chunkSize);
 }
 
 function validateDictionary(dictionary) {
@@ -309,9 +314,9 @@ function makeZlibTransform(createHandleFn: CreateHandle, processFlag: number, fi
       // compression completes. Collects output, loops if the engine
       // has more output to produce (availOut === 0), then resolves the
       // promise when all output for this input chunk is collected.
-      function onWriteComplete() {
+      function onWriteComplete(uncounted = 0) {
         const availOut = writeState[0];
-        const availInAfter = writeState[1];
+        const availInAfter = writeState[1] + uncounted;
         const have = writeAvailOutBefore - availOut;
         const bufferExhausted = availOut === 0 || outOffset + have >= chunkSize;
 
@@ -530,12 +535,12 @@ function makeZlibTransformSync(createHandleFn: CreateHandle, processFlag: number
         let availIn = input.byteLength;
         let availOutBefore = chunkSize - outOffset;
 
-        handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+        let uncounted = handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
         if (error) throw error;
 
         while (true) {
           const availOut = writeState[0];
-          const availInAfter = writeState[1];
+          const availInAfter = writeState[1] + (uncounted ?? 0);
           const have = availOutBefore - availOut;
           const bufferExhausted = availOut === 0 || outOffset + have >= chunkSize;
 
@@ -566,7 +571,7 @@ function makeZlibTransformSync(createHandleFn: CreateHandle, processFlag: number
             availIn = availInAfter;
             availOutBefore = chunkSize - outOffset;
 
-            handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+            uncounted = handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
             if (error) throw error;
             continue;
           }

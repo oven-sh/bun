@@ -22,7 +22,9 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
+use bun_valkey::client::{
+    Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
+};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
@@ -31,6 +33,10 @@ bun_output::define_scoped_log!(debug, RedisJS, visible);
 type Socket = uws::AnySocket;
 
 pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
+
+fn is_handler(value: JSValue) -> bool {
+    value.without_async_context().is_callable()
+}
 
 impl<'a> Object<'a> {
     /// `None` until the first `subscribe()`.
@@ -41,6 +47,12 @@ impl<'a> Object<'a> {
 
     fn subscription_count(self) -> u32 {
         self.subscription_callback_map().map_or(0, JSMap::size)
+    }
+
+    fn has_handler(self) -> bool {
+        let this = self.to_js();
+        js::onconnect_get_cached(this).is_some_and(is_handler)
+            || js::onclose_get_cached(this).is_some_and(is_handler)
     }
 
     fn take_connection_promise(self, global: &JSGlobalObject) -> Option<&'a mut JSPromise> {
@@ -641,8 +653,8 @@ impl JSValkeyClient {
     fn claim_for(&self, handler: JSValue, object: Object<'_>) {
         if handler.is_callable() {
             self.client.with_mut(Client::claim);
-            self.update_poll_ref(object);
         }
+        self.update_poll_ref(object);
     }
 
     fn reset_connection_timeout(self: &RefPtr<Self>) {
@@ -661,7 +673,7 @@ impl JSValkeyClient {
             ("Connection", RedisError::ConnectionTimeout)
         };
         let message = format!("{what} timeout reached after {ms}ms");
-        self.fail(valkey_error_to_js(
+        self.fail_for_now(valkey_error_to_js(
             &self.global_object,
             message.as_bytes(),
             error,
@@ -876,7 +888,7 @@ impl JSValkeyClient {
     ) -> JsResult<()> {
         let global = &self.global_object;
         let _exit = match event {
-            Event::Ignored | Event::Broken { .. } => None,
+            Event::Ignored | Event::Broken { .. } | Event::Busy(_) => None,
             _ => Some(self.vm.enter_event_loop_scope()),
         };
         match event {
@@ -884,6 +896,10 @@ impl JSValkeyClient {
             Event::Broken { message, error } => {
                 debug!("failed: {}: {:?}", bstr::BStr::new(&message), error);
                 self.fail(valkey_error_to_js(global, &message, error))
+            }
+            Event::Busy(message) => {
+                let error = RedisError::ConnectionClosed;
+                self.fail_for_now(valkey_error_to_js(global, &message, error))
             }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
@@ -955,8 +971,7 @@ impl JSValkeyClient {
             }
         };
         js::hello_set_cached(this_value, global_object, hello);
-        if let Some(on_connect) = js::onconnect_get_cached(this_value)
-            .filter(|handler| handler.without_async_context().is_callable())
+        if let Some(on_connect) = js::onconnect_get_cached(this_value).filter(|&it| is_handler(it))
         {
             global_object.queue_microtask(on_connect, &[this_value, hello]);
         }
@@ -995,6 +1010,14 @@ impl JSValkeyClient {
         // The one code whose close event has run when the call returns.
         let closed = self.close_socket(uws::CloseCode::Failure);
         rejected.and(closed)
+    }
+
+    fn fail_for_now(&self, error: JSValue) -> JsResult<()> {
+        if !self.client.with_mut(Client::abandon_handshake) {
+            return self.fail(error);
+        }
+        self.dial.fail(Strong::create(error, &self.global_object));
+        self.close_socket(uws::CloseCode::Failure)
     }
 
     fn on_lost(
@@ -1055,9 +1078,7 @@ impl JSValkeyClient {
         if let Some(promise) = object.take_connection_promise(global_object) {
             promise.reject(global_object, Ok(error))?;
         }
-        if let Some(on_close) = js::onclose_get_cached(this_value)
-            .filter(|handler| handler.without_async_context().is_callable())
-        {
+        if let Some(on_close) = js::onclose_get_cached(this_value).filter(|&it| is_handler(it)) {
             on_close.call(global_object, this_value, &[error])?;
         }
         Ok(())
@@ -1077,10 +1098,14 @@ impl JSValkeyClient {
     /// Keep the event loop alive, or don't keep it alive.
     fn update_poll_ref(&self, object: Object<'_>) {
         let client = self.client.get();
-        let is_idle = client.is_connected()
-            && !client.has_pending_commands()
-            && object.subscription_count() == 0;
-        if client.is_active() && !is_idle && !client.is_preconnect() {
+        let has_work = || client.has_commands() || object.subscription_count() > 0;
+        let is_awaited = match client.awaited() {
+            Awaited::No => false,
+            Awaited::ByWorkOrBytes => has_work() || client.buffered_amount() > 0,
+            Awaited::ByWorkOrHandlers => has_work() || object.has_handler(),
+            Awaited::Yes => true,
+        };
+        if is_awaited {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());
@@ -1237,6 +1262,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);
             return Self::fail_handshake_with_altname_error(this, hostname);
+        } else if ssl_error.error_no == uws::us_bun_verify_error_t::PEER_DISCONNECTED {
+            // How a full server looks over TLS.
+            let error = crate::socket::uws_jsc::verify_error_to_js(&ssl_error, &this.global_object);
+            let _exit = this.vm.enter_event_loop_scope();
+            return this.fail_for_now(error);
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the

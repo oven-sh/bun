@@ -542,9 +542,8 @@ pub(crate) fn run_tasks(
                             metadata.status_code(),
                         );
                     }
-                    let is_unanswered = is_required && retry;
-                    if crate::error::check_memory().is_err() {
-                        fail_update_requests(manager, task.task_id, name, None, is_unanswered);
+                    if retry && crate::error::check_memory().is_err() {
+                        fail_update_requests(manager, task.task_id, name, None, is_required);
                         caller.exit_if_out_of_memory(manager);
                     }
 
@@ -560,6 +559,7 @@ pub(crate) fn run_tasks(
                         log_mark,
                         failure,
                     )? {
+                        let is_unanswered = is_required && retry;
                         fail_update_requests(manager, task.task_id, name, None, is_unanswered);
                     }
 

@@ -1847,6 +1847,12 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       ...(await after(from["a registry that refuses full manifests"](), ["install"])),
       args: ["outdated"],
     }),
+    "a registry that does not have it": async () => {
+      const app = project();
+      app.served.again = 404;
+      await fetch(app.url + "bar");
+      return app;
+    },
     "a registry, for `bun info`": () => ({ ...project(), args: ["info", "bar"] }),
     "a registry, installed": async () => ({
       ...(await after(project(), ["install"])),
@@ -2057,6 +2063,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     ["a registry that stops", "ENOBUFS recv * 2", "recv"],
     ["a registry that refuses full manifests", "ENOBUFS recv * 4", "recv"],
     ["a registry that refuses full manifests, for `bun outdated`", "ENOMEM open *.npm", "open"],
+    ["a registry that does not have it", "ENOMEM open *.npm", "open", ["warn: GET http://localhost:PORT/bar - 404"]],
     ["a registry, for `bun info`", "ENOMEM open ROOT/.npmrc", "open"],
     ["a registry, installed", "ENOMEM open bar/package.json", "open"],
     ["a registry, installed, isolated", "ENOMEM stat node_modules/.bun 1", "fstatat"],

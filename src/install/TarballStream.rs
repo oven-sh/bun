@@ -752,12 +752,6 @@ impl TarballStream {
             return Err(err);
         }
 
-        if let Some(http_err) = self.incoming.get_mut().http_err
-            && http_err.is_out_of_memory()
-        {
-            return Err(http_err);
-        }
-
         if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
             if !self.hasher.verify() {
                 if let Some(http_err) = self.incoming.get_mut().http_err {
@@ -776,6 +770,10 @@ impl TarballStream {
                 );
                 return Err(crate::Error::IntegrityCheckFailed);
             }
+        } else if let Some(http_err) = self.incoming.get_mut().http_err
+            && http_err.is_out_of_memory()
+        {
+            return Err(http_err);
         }
 
         if (self.decoder.as_ref()).is_some_and(tar::Decoder::skipped_header) {

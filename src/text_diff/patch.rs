@@ -84,7 +84,7 @@ fn push_lines<'a, T: Unit>(
     }
 }
 
-/// `edits` are by [`Split::Lines`].
+/// `edits` are by [`Split::Lines`]. The lines that are kept are those of `b`.
 pub fn hunks<'a, T: Unit>(
     a: &'a [T],
     b: &'a [T],
@@ -96,7 +96,7 @@ pub fn hunks<'a, T: Unit>(
     groups.map(move |group| {
         let first = &group[0];
         let before = context.min(first.tokens.a_lo);
-        let mut at = (0..before).fold(first.units.a_lo, |at, _| line_start(a, at - 1));
+        let mut at = (0..before).fold(first.units.b_lo, |at, _| line_start(b, at - 1));
         let (start_a, start_b) = (first.tokens.a_lo - before, first.tokens.b_lo - before);
         let last = &group[group.len() - 1];
         let inserted: usize = group.iter().map(|edit| edit.tokens.inserted()).sum();
@@ -106,15 +106,15 @@ pub fn hunks<'a, T: Unit>(
         let mut line = start_a;
         for &Edit { units, tokens } in group {
             let (deleted, inserted) = (&a[units.a_lo..units.a_hi], &b[units.b_lo..units.b_hi]);
-            push_lines(&mut lines, b' ', &a[at..units.a_lo], tokens.a_lo - line);
+            push_lines(&mut lines, b' ', &b[at..units.b_lo], tokens.a_lo - line);
             push_lines(&mut lines, b'-', deleted, tokens.deleted());
             push_lines(&mut lines, b'+', inserted, tokens.inserted());
-            (at, line) = (units.a_hi, tokens.a_hi);
+            (at, line) = (units.b_hi, tokens.a_hi);
         }
         let mut after = 0;
-        while after < context && at < a.len() {
-            let end = Split::Lines.end(a, at);
-            push_line(&mut lines, b' ', &a[at..end]);
+        while after < context && at < b.len() {
+            let end = Split::Lines.end(b, at);
+            push_line(&mut lines, b' ', &b[at..end]);
             (at, after) = (end, after + 1);
         }
         PatchHunk {
@@ -293,7 +293,7 @@ fn split_while<T: Unit>(text: &[T], matches: impl Fn(u32) -> bool) -> (&[T], &[T
     )
 }
 
-fn trim<T: Unit>(text: &[T]) -> &[T] {
+pub(crate) fn trim<T: Unit>(text: &[T]) -> &[T] {
     let (_, text) = split_while(text, is_js_whitespace);
     let trailing = text.iter().rev();
     &text[..text.len()
@@ -422,6 +422,13 @@ fn git_header_names<T: Unit>(names: &[T]) -> Option<(Name, Name)> {
 }
 
 impl FilePatch {
+    fn is_empty(&self) -> bool {
+        !self.is_git
+            && self.index.is_none()
+            && self.old_file_name.is_none()
+            && self.hunks.is_empty()
+    }
+
     fn read_git_extended_header<T: Unit>(&mut self, line: &[T]) {
         let name = |prefix: &[u8], side: u8| {
             let (name, _) = split_while(strip(line, prefix)?, |unit| !is_js_line_terminator(unit));
@@ -575,35 +582,42 @@ impl<'a, T: Unit> Parser<'a, T> {
         !self.next_header.is_git
     }
 
+    /// The lines before this one, from the nearest.
+    fn before(&self) -> impl Iterator<Item = &'a [T]> {
+        let (text, mut start) = (self.text, self.line.as_ref().map_or(0, |line| line.start));
+        core::iter::from_fn(move || {
+            let end = start.checked_sub(1)?;
+            start = line_start(text, end);
+            Some(without_cr(&text[start..end]))
+        })
+    }
+
+    fn is_after_rule_of_index(&self) -> bool {
+        let mut before = self.before();
+        before.next().is_some_and(is_rule) && before.next().and_then(index_name).is_some()
+    }
+
     /// After `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
     fn is_in_header(&self, next: &[T]) -> bool {
-        let before = |start: usize| {
-            let end = start.checked_sub(1)?;
-            let start = line_start(self.text, end);
-            Some((start, without_cr(&self.text[start..end])))
-        };
-        let Some((start, last)) = self.line.as_ref().and_then(|line| before(line.start)) else {
-            return false;
-        };
+        let last = self.before().next().unwrap_or_default();
         index_name(last).is_some()
-            || is_rule(last) && before(start).is_some_and(|(_, it)| index_name(it).is_some())
+            || self.is_after_rule_of_index()
             || after_marker(last, b"***").is_some() && strip(next, &[b'*'; 15]).is_some()
     }
 
     fn file(&mut self) -> Result<FilePatch, ParseError> {
         let mut file = FilePatch::default();
-        let (mut has_diff_header, mut is_after_rule) = (false, false);
+        let mut has_diff_header = false;
         while let Some(line) = self.peek()
             && !self.is_at_file_header()
             && !is_hunk_header(line)
         {
             // `svn diff --git` writes `Index:`, the rule and `diff --git`.
-            let is_svn_git = is_after_rule && !file.is_git && strip(line, GIT_HEADER).is_some();
+            let is_svn_git = strip(line, GIT_HEADER).is_some() && self.is_after_rule_of_index();
             if is_diff_header(line) && core::mem::replace(&mut has_diff_header, true) && !is_svn_git
             {
                 return Ok(file);
             }
-            is_after_rule = is_rule(line);
             if file.is_git {
                 file.read_git_extended_header(line);
             } else if let Some(names) = strip(line, GIT_HEADER) {
@@ -714,7 +728,11 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
     };
     let mut files = Vec::new();
     while parser.line.is_some() {
-        files.push(parser.file()?);
+        let file = parser.file()?;
+        // A rule in the footer of an email starts no file.
+        if files.is_empty() || !file.is_empty() {
+            files.push(file);
+        }
     }
     Ok(files)
 }

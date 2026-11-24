@@ -56,6 +56,21 @@ Pass `maxEditLength` to skip inputs that have little in common. The function ret
 Bun.diff.chars("abc", "xyz", { maxEditLength: 5 }); // undefined
 ```
 
+### Ignore differences
+
+| Option             | Functions                                         | Effect                                        |
+| ------------------ | ------------------------------------------------- | --------------------------------------------- |
+| `ignoreCase`       | `lines`, `words`, `chars`, `hunks`, `createPatch` | Tokens match if they are equal in lower case  |
+| `ignoreWhitespace` | `lines`, `hunks`, `createPatch`                   | Lines match if they are equal after `trim()`  |
+| `stripTrailingCr`  | `lines`, `hunks`, `createPatch`                   | Replaces `\r\n` with `\n` in both texts first |
+
+Unchanged tokens come from the new text, so a patch made with these options may not apply to the old text.
+
+```ts
+Bun.diff.lines("a\n", "  A\n", { ignoreCase: true, ignoreWhitespace: true });
+// [{ value: "  A\n", added: false, removed: false, count: 1 }]
+```
+
 ### Large inputs
 
 Bun looks for the shortest diff and limits the work it spends on the search. The limit is a number of steps, so the same inputs give the same result on every machine.
@@ -63,7 +78,7 @@ Bun looks for the shortest diff and limits the work it spends on the search. The
 Tokens that appear in only one input don't count toward the limit. Inputs stay within it when one of these is true:
 
 - Each input has up to about 70,000 tokens.
-- The diff has up to about 8,000 additions plus 8,000 removals.
+- The diff has up to about 8,000 additions plus 8,000 removals. Text that repeats itself reaches the limit sooner.
 - Few tokens repeat, as with a long list of unique lines in a different order.
 
 Past the limit, Bun returns a diff that is correct but can be longer than the shortest one, and `maxEditLength` applies to that diff.
@@ -140,6 +155,6 @@ Differences:
 - `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts. It writes a tab after a file name with a space, as Git does.
 - `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It throws for a binary patch from `git diff`.
 - `parsePatch` throws for a malformed `@@` line, accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
-- `parsePatch` skips `--- text` and `+++ text` lines in the message before `diff --git`, unless they form a pair or follow an `Index:` line.
+- `parsePatch` skips `--- text` and `+++ text` lines in the message before `diff --git`, unless they form a pair or follow an `Index:` line. It returns no entry for a line of `=` that no header or hunk follows.
 - `parsePatch` and `applyPatch` accept a patch whose line endings were converted to `\r\n`. The lines of a hunk keep the `\r`. File names do not.
-- The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor` and the `ignore*` options are not supported.
+- The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor`, `newlineIsToken` and `ignoreNewlineAtEof` are not supported.

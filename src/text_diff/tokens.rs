@@ -13,12 +13,48 @@ use bun_core::strings::{CodeUnits, PathByte, byte_bits, count_char, is_js_whites
 
 use crate::bit_rows::{Matches, diff_short};
 use crate::lines::{Followed, Lines, follow};
+use crate::patch::trim;
 use crate::{EMPTY, Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
 
 /// A code unit of a JS string: Latin-1 or UTF-16.
-pub trait Unit: PathByte + Into<u32> {}
-impl Unit for u8 {}
-impl Unit for u16 {}
+pub trait Unit: PathByte + Into<u32> {
+    /// `text.toLowerCase()`
+    fn push_lowercase(text: &[Self], out: &mut Vec<Self>);
+}
+impl Unit for u8 {
+    fn push_lowercase(text: &[u8], out: &mut Vec<u8>) {
+        let is_upper =
+            |unit: u8| unit.is_ascii_uppercase() | matches!(unit, 0xC0..=0xD6 | 0xD8..=0xDE);
+        out.extend(text.iter().map(|&it| it | u8::from(is_upper(it)) << 5));
+    }
+}
+impl Unit for u16 {
+    fn push_lowercase(text: &[u16], out: &mut Vec<u16>) {
+        let start = out.len();
+        let mut has_sigma = false;
+        for point in char::decode_utf16(text.iter().copied()) {
+            match point {
+                Ok(point) if point.is_ascii() => out.push(point.to_ascii_lowercase() as u16),
+                Ok(point) => {
+                    has_sigma |= point == 'Σ';
+                    for lower in point.to_lowercase() {
+                        out.extend_from_slice(lower.encode_utf16(&mut [0; 2]));
+                    }
+                }
+                Err(alone) => out.push(alone.unpaired_surrogate()),
+            }
+        }
+        // At the end of a word it is `ς`, which only `str` knows. U+FFFD is as long as the surrogate that it replaces.
+        if has_sigma {
+            let lower = String::from_utf16_lossy(text).to_lowercase();
+            for (unit, lower) in out[start..].iter_mut().zip(lower.encode_utf16()) {
+                if lower == 'ς' as u16 {
+                    *unit = lower;
+                }
+            }
+        }
+    }
+}
 
 #[inline]
 pub(crate) fn is<T: Unit>(unit: Option<&T>, ascii: u8) -> bool {
@@ -168,6 +204,7 @@ impl Split {
     }
 
     /// The length of the tokens that both texts, which start at a token, end with.
+    #[inline(always)]
     fn common_tail<T: Unit>(self, a: &[T], b: &[T]) -> usize {
         let blocks = a.as_rchunks::<512>().1.iter().rev();
         let blocks = blocks.zip(b.as_rchunks().1.iter().rev());
@@ -283,6 +320,7 @@ struct Ids<'a> {
 }
 
 impl<'a> Ids<'a> {
+    #[inline(always)]
     fn new(split: Split, tokens: usize, units: usize) -> Self {
         let (points, hashed) = match split {
             // Short lines are repeats.
@@ -396,13 +434,7 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
         ids
     });
 
-    // An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
-    // and not past one that the shortest script keeps when the texts are cut off after it. So a part of the tail is
-    // tried first, if that is within `ROW_WORK` and so is sure to give the shortest.
-    let (mut at, mut part) = (end_a, tokens + 1024);
-    if (ids_a.len() + part) * (ids_b.len() + part).div_ceil(64) > ROW_WORK {
-        part = usize::MAX;
-    }
+    let (mut at, mut part) = (end_a, part_of_tail(&ids_a, &ids_b, tokens));
     let hunks = loop {
         while at < a.len() && part > 0 {
             let end = split.end(a, at);
@@ -431,7 +463,164 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     Some(edits(hunks, head, before(), offsets.as_ref()))
 }
 
+/// An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
+/// and not past one that the shortest script keeps when the texts are cut off after it. So this many tokens of the
+/// tail are tried first, if that is within `ROW_WORK` and so is sure to give the shortest.
+fn part_of_tail(ids_a: &[u32], ids_b: &[u32], tokens: usize) -> usize {
+    let part = tokens + 1024;
+    if (ids_a.len() + part) * (ids_b.len() + part).div_ceil(64) > ROW_WORK {
+        return usize::MAX;
+    }
+    part
+}
+
+/// What tokens can differ in and still match.
+#[derive(Clone, Copy)]
+pub struct Ignore {
+    pub case: bool,
+    /// At both ends.
+    pub whitespace: bool,
+}
+
+impl Ignore {
+    fn trim<T: Unit>(self, token: &[T]) -> &[T] {
+        if self.whitespace { trim(token) } else { token }
+    }
+}
+
+/// As [`diff_text`]. What is between two edits can be longer on one side.
+#[inline]
+pub fn diff_text_ignoring<T: Unit>(
+    split: Split,
+    a: &[T],
+    b: &[T],
+    ignore: Ignore,
+    max_edits: usize,
+) -> Option<Vec<Edit>> {
+    if !ignore.case && !ignore.whitespace {
+        return diff_text(split, a, b, max_edits);
+    }
+    diff_keys(split, a, b, ignore, max_edits)
+}
+
+#[cold]
+fn diff_keys<T: Unit>(
+    split: Split,
+    a: &[T],
+    b: &[T],
+    ignore: Ignore,
+    max_edits: usize,
+) -> Option<Vec<Edit>> {
+    // In Latin-1 every token stays where it is.
+    if !ignore.whitespace && size_of::<T>() == 1 {
+        let [a, b] = [a, b].map(|text| lowercase(text, &[0, text.len() as u32]).0);
+        return diff_text(split, &a, &b, max_edits);
+    }
+    let head = split.common_head(a, b);
+    let tail = split.common_tail(&a[head..], &b[head..]);
+    let (end_a, end_b) = (a.len() - tail, b.len() - tail);
+    let mut offsets = [(a, end_a), (b, end_b)].map(|(text, end)| match split {
+        Split::Lines => Lines::new(text, head..end).offsets(),
+        Split::Words => Split::word_offsets(text, head, end),
+        Split::Chars => Split::char_offsets(text, head, end),
+    });
+    let mut keys = [(a, &offsets[0]), (b, &offsets[1])];
+    let lower = ignore
+        .case
+        .then(|| keys.map(|(text, offsets)| lowercase(text, offsets)));
+    if let Some(lower) = &lower {
+        keys = lower.each_ref().map(|(text, offsets)| (&text[..], offsets));
+    }
+    let [keys_a, keys_b] = keys.map(|(text, offsets)| {
+        let key = |&[from, to]: &[u32; 2]| ignore.trim(&text[from as usize..to as usize]);
+        offsets.array_windows().map(key)
+    });
+    // Of what is spelled differently, these many match at the start and at the end.
+    let is_same = |(a, b): &(&[T], &[T])| a == b;
+    let pairs = keys_a.clone().zip(keys_b.clone());
+    let same_head = pairs.take_while(is_same).count();
+    let (keys_a, keys_b) = (keys_a.skip(same_head), keys_b.skip(same_head));
+    let pairs = keys_a.clone().rev().zip(keys_b.clone().rev());
+    let same_tail = pairs.take_while(is_same).count();
+    let mut same_keys = keys_a.clone().skip(keys_a.len() - same_tail);
+
+    let tokens = keys_a.len() + keys_b.len() - 2 * same_tail + 2;
+    let mut interner = Ids::new(split, tokens, end_a + end_b - 2 * head);
+    let [mut ids_a, mut ids_b] = [keys_a, keys_b].map(|keys| {
+        let count = keys.len() - same_tail;
+        (keys.take(count).map(|key| interner.intern(key))).collect::<Vec<_>>()
+    });
+    let (mut at, mut part) = (end_a, part_of_tail(&ids_a, &ids_b, tokens));
+    let (mut ends, mut lower) = (Vec::new(), Vec::new());
+    let hunks = loop {
+        while part > 0 {
+            let key = match same_keys.next() {
+                Some(key) => key,
+                None if at == a.len() => break,
+                None => {
+                    let token = &a[at..split.end(a, at)];
+                    at += token.len();
+                    ends.push(at);
+                    lower.clear();
+                    if ignore.case {
+                        T::push_lowercase(token, &mut lower);
+                    }
+                    ignore.trim(if ignore.case { &lower } else { token })
+                }
+            };
+            let Some(id) = interner.find(key) else {
+                break;
+            };
+            ids_a.push(id);
+            ids_b.push(id);
+            part -= 1;
+        }
+        let hunks = diff_ids(&ids_a, &ids_b, interner.hashed.lines.len(), max_edits)?;
+        if part > 0 || hunks.last().is_none_or(|last| last.a_hi < ids_a.len()) {
+            break hunks;
+        }
+        part = usize::MAX;
+    };
+    for (offsets, own_end) in offsets.iter_mut().zip([end_a, end_b]) {
+        offsets.drain(..same_head);
+        offsets.extend(ends.iter().map(|end| (end - end_a + own_end) as u32));
+    }
+    let before = split.count(&a[..head]) + same_head;
+    Some(edits(hunks, head, before, Some(&offsets)))
+}
+
+/// Each token between `offsets` on its own, and where they are then. At most twice as long, so that fits too.
+fn lowercase<T: Unit>(text: &[T], offsets: &[u32]) -> (Vec<T>, Vec<u32>) {
+    let (mut lower, mut ends) = (
+        Vec::with_capacity((offsets[offsets.len() - 1] - offsets[0]) as usize),
+        Vec::with_capacity(offsets.len()),
+    );
+    ends.push(0);
+    for &[from, to] in offsets.array_windows() {
+        T::push_lowercase(&text[from as usize..to as usize], &mut lower);
+        ends.push(lower.len() as u32);
+    }
+    (lower, ends)
+}
+
+/// `text.replaceAll("\r\n", "\n")`. `None` if there is no `\r`.
+pub fn strip_trailing_cr<T: Unit>(text: &[T]) -> Option<Vec<T>> {
+    T::index_of_unit(text, T::from_u8(b'\r'))?;
+    let (mut out, mut from) = (Vec::with_capacity(text.len()), 0);
+    for_each_line_end(text, |end| {
+        if let [.., cr, _] = &text[from..end]
+            && is(Some(cr), b'\r')
+        {
+            out.extend_from_slice(&text[from..end - 2]);
+            from = end - 1;
+        }
+    });
+    out.extend_from_slice(&text[from..]);
+    Some(out)
+}
+
 /// `hunks` and `offsets` count from the token at the unit `head`, which has `before` tokens before it.
+#[inline(always)]
 fn edits(
     hunks: Vec<Hunk>,
     head: usize,
@@ -461,6 +650,9 @@ fn edits(
 
 /// As [`diff_text`], of tokens that are numbers below `distinct`, at most `i32::MAX` on each side.
 pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Option<Vec<Hunk>> {
+    if a.len().abs_diff(b.len()) > max_edits {
+        return None;
+    }
     let hunks = match b.len().div_ceil(64) {
         _ if a.len() + distinct > SHORT => diff_long(a, b, distinct, max_edits),
         0..=1 => diff_short::<1>(a, b, distinct),
@@ -522,8 +714,13 @@ fn mark(
             SEARCH_WORK + SEARCH_WORK_PER_TOKEN * tokens - first
         };
         let reach = edits_within(a.len().abs_diff(b.len()), first + more).min(max_edits);
-        if more > 0 && is_further_than(a, b, reach) {
-            is_too_far = reach == max_edits;
+        if more > 0
+            && let Some(read) = read_until_further_than(a, b, reach)
+        {
+            // Not tried if, at this rate, `a` is too short to show it.
+            is_too_far = reach == max_edits
+                || max_edits.saturating_mul(read) < reach * a.len()
+                    && read_until_further_than(a, b, max_edits).is_some();
             return 0;
         }
         more
@@ -606,13 +803,14 @@ impl Grams {
     }
 }
 
-/// True only if every script has more than `edits` edits, which are at least the difference of the lengths.
+/// How many tokens of `a` show that every script has more than `edits` edits, which are at least the difference of the
+/// lengths.
 ///
 /// Consecutive tokens of `a` that `b` does not have within `edits` of the same place have an edit among them
 /// (Ukkonen, "Approximate string-matching with q-grams and maximal matches", 1992).
-fn is_further_than(a: &[u32], b: &[u32], edits: usize) -> bool {
+fn read_until_further_than(a: &[u32], b: &[u32], edits: usize) -> Option<usize> {
     if a.len() / GRAMS[0] <= edits {
-        return false;
+        return None;
     }
     let max_deleted = (edits + a.len() - b.len()) / 2;
     let max_inserted = edits - max_deleted;
@@ -641,11 +839,11 @@ fn is_further_than(a: &[u32], b: &[u32], edits: usize) -> bool {
         if end == 0 || end + max_deleted < in_a.end {
             (found, since_found) = (found + 1, 0);
             if found > edits {
-                return true;
+                return Some(in_a.end);
             }
         }
     }
-    false
+    None
 }
 
 enum Search {

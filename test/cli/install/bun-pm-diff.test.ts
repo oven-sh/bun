@@ -2316,6 +2316,65 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     }
   });
 
+  test("top-level names that direct eval can read are not renamed", async () => {
+    const files: Record<string, string> = {};
+    for (const [name, use] of [
+      ["top.js", 'console.log(eval("x"));'],
+      ["nested.cjs", 'exports.f = () => eval("x");'],
+      ["module.mjs", 'export default eval("x");'],
+    ]) {
+      files[`a/${name}`] = `var x = read(), y = other();\n${use}\n`;
+      files[`b/${name}`] = `var y = read(), x = other();\n${use}\n`;
+    }
+    for (const args of [[], ["--unminify"]]) {
+      const { text, exitCode } = await pretty(files, [...args, "--stat"]);
+      expect(text.match(/^ \S+ +│.*$/gm)!.map(line => line.split(/ +/).join(" "))).toEqual([
+        expect.stringMatching(/^ module\.mjs │ \d/),
+        expect.stringMatching(/^ nested\.cjs │ \d/),
+        expect.stringMatching(/^ top\.js │ \d/),
+      ]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("-w shows whitespace that changes what runs", async () => {
+    const { text, exitCode } = await pretty(
+      {
+        "a/after-backslash.sh": "echo \\\nrun\n",
+        "b/after-backslash.sh": "echo \\ \nrun\n",
+        "a/blank-after-backslash.sh": "echo \\\nrun\n",
+        "b/blank-after-backslash.sh": "echo \\\n\nrun\n",
+        "a/cr-first.sh": "x\nrun\n",
+        "b/cr-first.sh": "x\n\rrun\n",
+        "a/form-feed.sh": "x run\n",
+        "b/form-feed.sh": "x\frun\n",
+        "a/bin": "#!/bin/sh\n",
+        "b/bin": "\n#!/bin/sh\n",
+        "a/cr.js": "// note run()\n",
+        "b/cr.js": "// note\rrun()\n",
+        "a/cr.sh": "# note\rrun\n",
+        "b/cr.sh": "# note\nrun\n",
+        "a/crlf.txt": "one \r\ntwo\r\n",
+        "b/crlf.txt": "\none\n\n two",
+        "a/lf.js": "// note run()\n",
+        "b/lf.js": "// note\nrun()\n",
+      },
+      ["-w", "--stat"],
+    );
+    expect(text.match(/^ \S+ +│.*$/gm)!.map(line => line.split(/ +/).join(" "))).toEqual([
+      " after-backslash.sh │ 2 +-",
+      " bin │ 1 +",
+      " blank-after-backslash.sh │ 1 +",
+      " cr-first.sh │ 2 +-",
+      " cr.js │ 2 +-",
+      " cr.sh │ 3 ++-",
+      " crlf.txt │ whitespace only",
+      " form-feed.sh │ 2 +-",
+      " lf.js │ 3 ++-",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a package.json name that is not an npm name is never printed or looked up", async () => {
     // A hostile tarball naming itself with an OSC sequence must not reach the terminal via the header or status.
     const evil = "\u001b]52;c;aGk=\u0007pkg";
@@ -2705,11 +2764,12 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Only a file of 64 MB reaches the limit. A debug build takes several seconds to scan it.
   test("style sheets under the size limit are normalized whatever they add up to", async () => {
     const { text, exitCode } = await pretty(
       {
         // As large as a file may be, and cheap: the parser gives up at the `;`.
-        "a/a.css": "@import;" + Buffer.alloc(64 * 1024 * 1024 - 8, " ").toString(),
+        "b/a.css": "@import;" + Buffer.alloc(64 * 1024 * 1024 - 8, " ").toString(),
         "a/z.css": ".a{color:red}",
         "b/z.css": ".a { color: red }",
       },
@@ -2717,7 +2777,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     );
     expect(text).toMatch(/\n z\.css +│ formatting only\n/);
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(

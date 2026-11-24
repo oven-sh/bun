@@ -657,6 +657,29 @@ describe("util", () => {
       expect(megabytes).toBeLessThan(isASAN || isDebug ? 200 : 100);
     });
 
+    it.concurrent("takes little memory for inputs that have nothing in common", async () => {
+      // The diagonals that a shortest path can use would take 400 MB.
+      const fixture = `
+        import util from "node:util";
+        const lines = name => Array.from({ length: 10_000 }, (_, i) => name + i);
+        const result = util.diff(lines("a"), lines("b"));
+        process.stdout.write(JSON.stringify([result.length, result[0], result[9_999], result[10_000], result.at(-1)]));
+      `;
+      const [maxRSS, emptyMaxRSS] = await Promise.all([
+        runFixtureMaxRSS(fixture, [20_000, [1, "a0"], [1, "a9999"], [-1, "b0"], [-1, "b9999"]]),
+        emptyProcessMaxRSS(),
+      ]);
+      expect((maxRSS - emptyMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 200 : 100);
+    });
+
+    it("breaks ties in the same way after many differences", () => {
+      const fill = (length, text) => Buffer.alloc(length, text).toString();
+      const operations = util.diff(fill(200, "x") + "😀aab", fill(200, "y") + "😀bbbaaab").slice(400);
+      expect(operations.map(([kind, value]) => kind + value)).toEqual(
+        ["0\ud83d", "0\ude00", "-1b", "-1b", "-1b", "0a", "0a", "-1a", "0b"], //
+      );
+    });
+
     it("returns an empty array for the same value", () => {
       const lines = ["a"];
       expect(util.diff("abc", "abc")).toEqual([]);

@@ -2186,34 +2186,20 @@ pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> 
         ZStr::from_buf(&tmpname_buf, written - 1)
     };
 
-    let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
-    let file = File::openat(Fd::cwd(), tmpname, flags, mode).unwrap_or_else(|e| {
-        Output::err(
-            e,
-            "failed to create temporary file to save lockfile",
-            format_args!(""),
-        );
-        Global::crash();
-    });
-
-    if let Err(e) = file.write_all(bytes) {
-        drop(file);
-        let _ = sys::unlink(tmpname);
-        Output::err(e, "failed to write lockfile", format_args!(""));
-        Global::crash();
-    }
-
-    if let Err(e) = file.close_and_move_to(tmpname, filename) {
-        bun_core::handle_error_return_trace(&e);
-
-        // note: file is already closed here.
-        let _ = sys::unlink(tmpname);
-
-        Output::err(
-            &e,
-            "Failed to replace old lockfile with new lockfile on disk",
-            format_args!(""),
-        );
+    let replace = || {
+        let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
+        let tmp = sys::Tmpfile::open(Fd::cwd(), tmpname, flags, mode)
+            .map_err(|e| (e, "failed to create temporary file to save lockfile"))?;
+        (tmp.file.write_all(bytes)).map_err(|e| (e, "failed to write lockfile"))?;
+        tmp.finish(filename).map_err(|(e, _)| {
+            (
+                e,
+                "Failed to replace old lockfile with new lockfile on disk",
+            )
+        })
+    };
+    if let Err((e, what)) = replace() {
+        Output::err(e, what, ());
         Global::crash();
     }
     true

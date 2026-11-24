@@ -388,25 +388,22 @@ impl ShellMvBatchedTask {
         let mode = st.st_mode as bun_core::Mode;
         // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
         let _ = bun_sys::unlinkat(dst_dir, dst);
-        let out = File::openat(
+        let out = bun_sys::Tmpfile::open(
             dst_dir,
-            dst.as_bytes(),
+            dst,
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
             mode & 0o7777,
         )?;
-        let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
-        if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
-            drop(out);
-            let _ = bun_sys::unlinkat(dst_dir, dst);
-            return Err(e);
-        }
+        let _ = bun_sys::preallocate_file(out.file.fd().native(), 0, st.st_size as _);
+        bun_sys::copy_file(in_.fd(), out.file.fd())?;
         #[cfg(unix)]
         {
             // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
+            let _ = bun_sys::fchown(out.file.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out.file.fd(), mode & 0o7777);
         }
-        drop((in_, out));
+        out.keep();
+        drop(in_);
         bun_sys::unlinkat(src_dir, src)
     }
 

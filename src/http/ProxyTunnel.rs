@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
@@ -70,8 +70,13 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
     }
 
     fn close(&mut self, err: Error) {
+        let end = if self.wrapper.flags.received_ssl_shutdown() {
+            TransportEnd::Clean
+        } else {
+            TransportEnd::Failed
+        };
         self.wrapper.deinit();
-        self.next_step = self.client.on_proxy_tunnel_close(err, self.socket);
+        self.next_step = self.client.on_proxy_tunnel_close(err, end, self.socket);
     }
 }
 
@@ -351,7 +356,7 @@ impl HTTPClient<'_> {
         match tunnel.write(socket.into(), lent_wrapper, buf) {
             Ok(written) => Continue(written),
             Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(Error::ConnectionClosed, socket)
+                .on_proxy_tunnel_close(Error::ConnectionClosed, TransportEnd::Failed, socket)
                 .map_continue(|()| None),
         }
     }
@@ -359,14 +364,17 @@ impl HTTPClient<'_> {
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
         mut err: Error,
+        end: TransportEnd,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.finalize_body_on_eof() {
+            match self.finalize_body_on_close(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
+                // `err` says why.
+                Err(Error::ConnectionClosed) => {}
                 Err(e) => err = e,
             }
         }

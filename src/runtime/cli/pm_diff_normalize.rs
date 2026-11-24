@@ -646,15 +646,21 @@ struct Locals {
     members: Vec<u32>,
     /// 0 if the module's scope is the only one.
     nesting: u32,
-    exported: Vec<u32>,
+    /// Exports, which are the module's interface, and what direct eval reads by name. The parser only sees to that in
+    /// nested scopes.
+    pinned: Vec<u32>,
 }
 
 impl Locals {
     fn take_from(ast: &mut bun_ast::Ast<'_>) -> Locals {
         let (scopes, members, nesting) = flatten(&ast.module_scope);
         let exports = ast.named_exports.values().iter();
+        let mut pinned: Vec<u32> = exports.map(|export| export.ref_.inner_index()).collect();
+        if ast.module_scope.contains_direct_eval {
+            pinned.extend((ast.module_scope.members.values()).map(|it| it.ref_.inner_index()));
+        }
         Locals {
-            exported: exports.map(|export| export.ref_.inner_index()).collect(),
+            pinned,
             profiles: super::pm_diff_profile::profiles(ast, ast.symbols.len()),
             symbols: take_symbols(ast),
             scopes,
@@ -686,10 +692,10 @@ fn count_bucket(n: u32) -> u64 {
 
 impl<'s> Namer<'s> {
     fn new(names: &'s Arena, mut sides: [Locals; 2], all_names: bool) -> Namer<'s> {
-        // An export's name is part of the module's interface. The printer reads this flag too, so only renamed sides get it.
+        // The printer reads this flag too, so only renamed sides get it.
         for side in &mut sides {
-            for &exported in &side.exported {
-                let symbol = Self::root(&side.symbols, exported as usize);
+            for &pinned in &side.pinned {
+                let symbol = Self::root(&side.symbols, pinned as usize);
                 side.symbols[symbol].set_must_not_be_renamed(true);
             }
         }

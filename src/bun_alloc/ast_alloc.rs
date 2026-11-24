@@ -286,8 +286,7 @@ impl ScopedAstAlloc {
     }
 }
 impl ScopedAstAlloc {
-    /// Install a state that puts every allocation in `heap`, none in its own chunk. What is
-    /// allocated under it lives as long as `heap`, not as long as the guard.
+    /// Install a state that puts every allocation in `heap`: it lives as long as `heap` does.
     #[inline]
     pub fn all_in(heap: *mut mimalloc::Heap) -> Self {
         let mut state = acquire_state();

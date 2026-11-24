@@ -65,8 +65,7 @@ fn call_macro(
         );
         return Err(crate::Error::MacroFailed);
     }
-    // The AST of a caller that parses with an allocator of its own is not in the thread's block
-    // stores. The modules this call transpiles then reset those stores, as they do outside a macro.
+    // A caller with an allocator of its own has no AST in the block stores, so the modules a macro loads can reset them.
     let _store_guard = bun_ast::stmt::data::Store::memory_allocator()
         .is_null()
         .then(DisableStoreReset::new);

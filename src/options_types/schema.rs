@@ -138,12 +138,9 @@ pub mod api {
     }
 
     impl TransformOptions {
-        /// Whether a macro VM made from `self` is the one a caller with `other` would get. It has
-        /// no `..`, so a new field does not compile until it is compared or ignored here.
-        ///
-        /// What a caller sets outside this struct does not reach a macro VM and is not compared:
-        /// `features` of `Bun.build`, and the defines and conditions of a dev server's graphs.
+        /// Whether a macro VM made from `self` is the one a caller with `other` would get.
         pub fn eq_for_macro_vm(&self, other: &Self) -> bool {
+            // No `..`: a new field does not compile until it is compared or ignored here.
             let Self {
                 jsx,
                 tsconfig_override,

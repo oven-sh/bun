@@ -279,11 +279,7 @@ pub struct VirtualMachine {
     /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
     /// on the 0↔1 transition so the guard is reentrant.
     pub(crate) macro_guard_depth: Cell<u32>,
-    /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call
-    /// made, on a thread that had none. [`Self::serve_macro_caller`] rebuilds it for another caller.
-    /// The VM keeps the first caller's env, what scripts left on `globalThis`, and their sockets and
-    /// child processes. Callers with equal options share its modules, so an edit of a macro file is
-    /// not seen.
+    /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call made.
     macro_owner: JsCell<Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>>,
     /// Counts those rebuilds. A `MacroLoadStates` from before one names macros the VM no longer has.
     macro_epoch: Cell<u32>,
@@ -1968,9 +1964,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Before a macro loads for `caller`. If the VM was made for a caller with other options, this
-    /// drops every module and loaded macro, and rebuilds the transpiler's options from
-    /// `transform_options()`, as `init` does. Then it returns true: call `configure_defines`.
+    /// Rebuilds a macro VM whose owner has other options than `caller`. True: call `configure_defines`.
     pub fn serve_macro_caller(
         &self,
         caller: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,

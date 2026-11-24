@@ -11,6 +11,7 @@ const edits = (changes: Changes) => changes.reduce((n, c) => n + (c.added || c.r
 const numbered = (count: number, line: (i: number) => unknown) =>
   Array.from({ length: count }, (_, i) => `${line(i)}\n`).join("");
 const repeat = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+const rule = repeat("=", 67);
 // With 8 more bytes. wyhash multiplies those by the 8 before them xor this constant.
 const colliding = "x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7";
 
@@ -473,6 +474,91 @@ describe("maxEditLength", () => {
     const within = limits.map(limit => (limit < expected ? undefined : expected));
     expect([found(a, b), found(b, a)]).toEqual([within, within]);
   });
+
+  test("is exact beyond what the search reaches", () => {
+    const next = random(9);
+    const a = Array.from({ length: 20_000 }, () => next(200));
+    const b = a.flatMap(it => [[], [it, next(200)]][next(1000) % 8] ?? [it]);
+    const count = edits(diff.arrays(a, b));
+    expect(edits(diff.arrays(a, b, { maxEditLength: count })!)).toBe(count);
+    expect(diff.arrays(a, b, { maxEditLength: count - 1 })).toBeUndefined();
+    expect(diff.arrays(a, b, { maxEditLength: count >> 1 })).toBeUndefined();
+  });
+});
+
+describe("options that ignore a difference", () => {
+  const [ignoreCase, ignoreWhitespace, stripTrailingCr] = [true, true, true];
+  // prettier-ignore
+  test.each([
+    ["lines", { ignoreCase }, "a\nB\nc\n", "A\nb\nd\n", [["=", "A\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
+    ["lines", { ignoreCase }, "ÀÞ\n×\n@\n[\n", "àþ\n÷\n`\n{\n", [["=", "àþ\n", 1], ["-", "×\n@\n[\n", 3], ["+", "÷\n`\n{\n", 3]]],
+    ["lines", { ignoreCase }, "İ\nx\n", "i\u0307\ny\n", [["=", "i\u0307\n", 1], ["-", "x\n", 1], ["+", "y\n", 1]]],
+    ["lines", { ignoreCase }, "ΑΣ\nΣΑ\n\ud800ΑΣ\n", "ας\nσα\n\ud800ας\n", [["=", "ας\nσα\n\ud800ας\n", 3]]],
+    ["lines", { ignoreCase }, "ΑΣ", "ασ", [["-", "ΑΣ", 1], ["+", "ασ", 1]]],
+    ["lines", { ignoreCase }, "\ud800Σ", "\ud801σ", [["-", "\ud800Σ", 1], ["+", "\ud801σ", 1]]],
+    ["lines", { ignoreCase }, "a \n", "A\n", [["-", "a \n", 1], ["+", "A\n", 1]]],
+    ["words", { ignoreCase }, "The Fox", "the dog", [["=", "the ", 2], ["-", "Fox", 1], ["+", "dog", 1]]],
+    // The Kelvin sign is not part of a word, and `k` is.
+    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ", 2], ["-", "\u212aa", 2], ["+", "ka", 1]]],
+    ["chars", { ignoreCase }, "aBc", "AbD", [["=", "Ab", 2], ["-", "c", 1], ["+", "D", 1]]],
+    ["chars", { ignoreCase }, "ΑΣ𐐀İ", "ασ𐐨i", [["=", "ασ𐐨", 3], ["-", "İ", 1], ["+", "i", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n b\nc\n", "\ta \r\nb\nd\n", [["=", "\ta \r\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a b\n", "a  b\n", [["-", "a b\n", 1], ["+", "a  b\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n\n", "a\n \n", [["=", "a\n \n", 2]]],
+    ["lines", { ignoreWhitespace }, "a\n", "a\n ", [["=", "a\n", 1], ["+", " ", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n", "a", [["=", "a", 1]]],
+    ["lines", { ignoreWhitespace }, "\ufeffa\u3000\n\x85b\n", "\xa0a\nb\n", [["=", "\xa0a\n", 1], ["-", "\x85b\n", 1], ["+", "b\n", 1]]],
+    ["lines", { ignoreWhitespace }, "a\n", "A\n", [["-", "a\n", 1], ["+", "A\n", 1]]],
+    ["lines", { ignoreWhitespace, ignoreCase }, " a\nİ \n", "A\ni\u0307\n", [["=", "A\ni\u0307\n", 2]]],
+    ["lines", { ignoreWhitespace, ignoreCase }, "x\nA\nA\nb\n", " a\nA\nA\nb\n", [["-", "x\n", 1], ["=", " a\nA\n", 2], ["+", "A\n", 1], ["=", "b\n", 1]]],
+    ["chars", { ignoreCase }, "xAA世", "aAA世", [["-", "x", 1], ["=", "aA", 2], ["+", "A", 1], ["=", "世", 1]]],
+    ["lines", { stripTrailingCr }, "a\r\nb\r\n", "a\nc\r\n", [["=", "a\n", 1], ["-", "b\n", 1], ["+", "c\n", 1]]],
+    ["lines", { stripTrailingCr }, "世\r\r\n\r\nb\r", "世\r\n\nb", [["-", "世\r\n", 1], ["+", "世\n", 1], ["=", "\n", 1], ["-", "b\r", 1], ["+", "b", 1]]],
+    ["lines", { ignoreCase: false, ignoreWhitespace: false, stripTrailingCr: false }, "a\r\n", "a\n", [["-", "a\r\n", 1], ["+", "a\n", 1]]],
+    ["lines", { ignoreWhitespace, maxEditLength: 1 }, " a\nb\n", "a\nc\n", undefined],
+    ["lines", { ignoreWhitespace, maxEditLength: 2 }, " a\nb\n", "a\nc\n", [["=", "a\n", 1], ["-", "b\n", 1], ["+", "c\n", 1]]],
+  ] as const)("%s %j: %j, %j", (name, options, a, b, expected) => {
+    expect(short(diff[name](a, b, options))).toEqual(expected as any);
+  });
+
+  // prettier-ignore
+  test.each([
+    [{ ignoreWhitespace }, "a\nb\nc\nd\n", "  a\nx\n  c\nd", "@@ -1,4 +1,4 @@\n   a\n-b\n+x\n   c\n d\n\\ No newline at end of file\n"],
+    [{ ignoreWhitespace, context: 1 }, "a\nb\nc\nd\ne\nf\ng\n", " a\nx\n c\n d\n e\ny\n g\n", "@@ -1,3 +1,3 @@\n  a\n-b\n+x\n  c\n@@ -5,3 +5,3 @@\n  e\n-f\n+y\n  g\n"],
+    [{ ignoreCase }, "a\nb\n", "A\nc\n", "@@ -1,2 +1,2 @@\n A\n-b\n+c\n"],
+    [{ stripTrailingCr }, "a\r\nb\r\n", "a\nc\n", "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"],
+    [{ ignoreWhitespace, ignoreCase }, "a\n", " A", ""],
+  ])("a patch keeps the new lines, %j: %j, %j", (options, a, b, expected) => {
+    expect(diff.createPatch(a, b, options)).toBe(expected);
+    expect(diff.hunks(a, b, options)).toEqual(diff.parsePatch(expected)[0].hunks);
+  });
+
+  test.skipIf(isDebug).each([
+    ["end", "", (middle: string, common: string) => middle + common],
+    ["end, indented", " ", (middle: string, common: string) => middle + common],
+    ["start, indented", " ", (middle: string, common: string) => common + middle],
+  ])("a long common %s does not count for the limit of the search", (_, indent, join) => {
+    const next = random(7);
+    const text = (length: number) => numbered(length, () => next(10_000) % 26);
+    const [a, b, common] = [text(20_000), text(20_000), repeat(text(1000), 200)];
+    const maxEditLength = edits(diff.lines(join(a, common), join(b, common)));
+    const indented = join(b, common).replace(/^(?!$)/gm, indent);
+    expect(edits(diff.lines(join(a, common), indented, { ignoreWhitespace: true, maxEditLength }))).toBe(maxEditLength);
+  });
+
+  test.each(["", "世"])("long texts have the edits of the same texts in one spelling: %j", wide => {
+    const next = random(11);
+    const alphabet = Array.from({ length: 40 }, (_, i) => `line${wide}${i}\n`);
+    const shape = (changes: Changes) => changes.map(({ added, removed, count }) => [added, removed, count]);
+    for (let round = 0; round < 10; round++) {
+      const [a, b] = similarPair(next, alphabet, 2000);
+      const respell = (line: string) => [line, ` ${line}`, line.toUpperCase(), line.replace("\n", "\t\r\n")][next(4)];
+      const [x, y] = [a, b].map(lines => lines.map(respell).join(""));
+      const changes = diff.lines(x, y, { ignoreWhitespace, ignoreCase });
+      expect(shape(changes)).toEqual(shape(diff.lines(a.join(""), b.join(""))));
+      expect(changes.map(it => (it.removed ? "" : it.value)).join("")).toBe(y);
+    }
+  });
 });
 
 describe("large inputs, on which diff is quadratic", () => {
@@ -712,7 +798,7 @@ describe("parsePatch", () => {
     ["only a hunk", body, [{ hunks: [hunk] }]],
     ["no newline at the end", body.trimEnd(), [{ hunks: [hunk] }]],
     ["diff -u", `--- a\t2024-01-01 \tz\n+++ b\n${body}`, [{ oldFileName: "a", oldHeader: "2024-01-01", newFileName: "b", newHeader: "", hunks: [hunk] }]],
-    ["Index:", `Index: a b \n${"=".repeat(67)}\n${body}`, [{ index: "a b", hunks: [hunk] }]],
+    ["Index:", `Index: a b \n${rule}\n${body}`, [{ index: "a b", hunks: [hunk] }]],
     ["Mercurial", `diff -r 9117c6 -r 273ce1 .hgignore\n${body}`, [{ index: ".hgignore", hunks: [hunk] }]],
     ["other diff commands are not headers", `Index: f\ndiff -u -p -r1.1 f\n${body}`, [{ index: "f", hunks: [hunk] }]],
     ["files without an index line", `--- a\n+++ a\n${body}--- 世\n+++ 世\n${body}`, [
@@ -749,12 +835,16 @@ describe("parsePatch", () => {
       { isGit: true, isBinary: true, oldFileName: "a/\t", newFileName: "b/s", hunks: [] },
       { isGit: true, hunks: [] },
     ]],
-    ["an svn section without hunks, then a git section", `Index: e\n${"=".repeat(67)}\nCannot display\ndiff --git a/f b/f\n${body}`, [
+    ["an svn section without hunks, then a git section", `Index: e\n${rule}\nCannot display\ndiff --git a/f b/f\n${body}`, [
       { index: "e", hunks: [] },
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] },
     ]],
-    ["two svn sections without hunks", `Index: e\n${"=".repeat(67)}\nIndex: f\n`, [{ index: "e", hunks: [] }, { index: "f", hunks: [] }]],
-    ["a rule between git sections", `diff --git a/e b/e\n${"=".repeat(67)}\ndiff --git a/f b/f\n`, [
+    ["an svn section that ends with a rule, then a git section", `Index: e\n${rule}\nCannot display\n${rule}\ndiff --git a/f b/f\n${body}`, [{ index: "e", hunks: [] }, { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["a rule between hunks", `${body}${rule}\n${body}`, [{ hunks: [hunk] }, { hunks: [hunk] }]],
+    // diff returns an entry without anything in it.
+    ["a rule in the footer", `diff --git a/f b/f\n${body}\n${rule}\nfooter\n`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["two svn sections without hunks", `Index: e\n${rule}\nIndex: f\n`, [{ index: "e", hunks: [] }, { index: "f", hunks: [] }]],
+    ["a rule between git sections", `diff --git a/e b/e\n${rule}\ndiff --git a/f b/f\n`, [
       { isGit: true, oldFileName: "a/e", newFileName: "b/e", hunks: [] },
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
     ]],
@@ -767,8 +857,8 @@ describe("parsePatch", () => {
     ["diff -c", "*** o\n--- n\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n", 'Missing "+++ ..." file header for n'],
     ["diff -c, then a git section", "*** o\n--- n\n***************\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for n'],
     ["Index: and ---, then a git section", "Index: f\n--- f\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
-    ["a rule and ---, then a git section", `Index: f\r\n${"=".repeat(67)}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
-    ["a rule and ---, then a hunk", `${"=".repeat(67)}\n--- f\n${body}`, 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a git section", `Index: f\r\n${rule}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a hunk", `${rule}\n--- f\n${body}`, 'Missing "+++ ..." file header for f'],
     ["only ---, then a combined hunk", "--- f\n@@@ -1 -1 +1 @@@\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
     ["--- and +++ without hunks, then a git section", "diff --cc f\n--- a/f\n+++ b/f\ndiff --git a/g b/g\n", [
       { oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [] },
@@ -797,13 +887,13 @@ describe("parsePatch", () => {
       { isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [hunk] },
       { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
     ]],
-    ["--- after a rule in a commit message", `Subject: x\n\n${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
-    ["--- after a rule in the second commit", `diff --git a/f b/f\n${body}-- \n\n${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, Array(2).fill({ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] })],
-    ["--- after a rule on the first line", `${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- after a rule in a commit message", `Subject: x\n\n${rule}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- after a rule in the second commit", `diff --git a/f b/f\n${body}-- \n\n${rule}\n--- x\ndiff --git a/f b/f\n${body}`, Array(2).fill({ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] })],
+    ["--- after a rule on the first line", `${rule}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["--- before stars in a commit message", `Subject: x\n\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.
-    ["svn diff --git", `Index: e\n${"=".repeat(67)}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
+    ["svn diff --git", `Index: e\n${rule}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${rule}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
       { index: "e", isGit: true, isCreate: true, newMode: "100644", oldFileName: "a/e", newFileName: "b/e", hunks: [] },
       { index: "f", isGit: true, oldFileName: "a/f", oldHeader: "(revision 1)", newFileName: "b/f", newHeader: "(working copy)", hunks: [hunk] },
     ]],
@@ -824,7 +914,7 @@ describe("parsePatch", () => {
   // prettier-ignore
   test.each([
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [withCR] }]],
-    ["--- between a rule and stars in a commit message", `${"=".repeat(67)}\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [withCR] }]],
+    ["--- between a rule and stars in a commit message", `${rule}\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [withCR] }]],
     ["markers alone in the text around the hunks", `+++\nIndex:\ndiff -r abc\n${body}\n---\n+++\n`, [{ hunks: [withCR] }]],
     ["names from diff --git", 'diff --git a/f b/f\ndiff --git "a/\\t" b/世\n', [
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },
@@ -928,7 +1018,7 @@ describe("applyPatch", () => {
   });
 
   test("svn diff --git", () => {
-    const headers = `Index: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
+    const headers = `Index: f\n${rule}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n`;
     expect(diff.applyPatch("a\n", `${headers}@@ -1 +1 @@\n-a\n+b\n`)).toBe("b\n");
   });
 
@@ -1058,6 +1148,9 @@ test.each([
   ["lines", [1, "a"]],
   ["lines", ["a"]],
   ["lines", ["a", "b", 1]],
+  ["lines", ["a", "b", { ignoreWhitespace: 1 }]],
+  ["hunks", ["a", "b", { stripTrailingCr: "true" }]],
+  ["chars", ["a", "b", { ignoreCase: null }]],
   ["words", [null, "a"]],
   ["chars", ["a", ["a"]]],
   ["arrays", ["a", []]],

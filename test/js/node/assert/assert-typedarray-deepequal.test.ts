@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
-import { emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
+import { isASAN, isDebug, runFixtureMaxRSS } from "harness";
 
 function makeBlock(f: Function, ...args: any[]) {
   return function () {
@@ -154,15 +154,20 @@ function deepStrictEqualMessage(actual: unknown, expected: unknown): string {
 
 test.concurrent("assert.deepStrictEqual takes little memory to diff a large array against an empty one", async () => {
   // Keeping every diagonal of every level would take 63 MB.
-  const fixture = `
+  const fixture = (expected: string) => `
+    const actual = Array.from({ length: 2_800 }, (_, i) => i);
     try {
-      require("node:assert").deepStrictEqual(Array.from({ length: 2_800 }, (_, i) => i), []);
+      require("node:assert").deepStrictEqual(actual, ${expected});
     } catch (error) {
       process.stdout.write(JSON.stringify(error.message.split("\\n").length));
     }
   `;
-  const [maxRSS, emptyMaxRSS] = await Promise.all([runFixtureMaxRSS(fixture, 2_807), emptyProcessMaxRSS()]);
-  expect((maxRSS - emptyMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 55 : 35);
+  // The baseline runs the same code, so the difference is the memory of the diff.
+  const [maxRSS, baselineMaxRSS] = await Promise.all([
+    runFixtureMaxRSS(fixture("[]"), 2_807),
+    runFixtureMaxRSS(fixture("actual.with(0, -1)"), 12),
+  ]);
+  expect((maxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 55 : 35);
 });
 
 test("assert.deepStrictEqual prints a diff up to its limit and a preview past it", () => {

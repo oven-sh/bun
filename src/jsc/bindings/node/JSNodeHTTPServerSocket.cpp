@@ -711,7 +711,7 @@ bool JSNodeHTTPServerSocket::leaveHttp(bool restOfReadTaken)
 
 // The WebSocket's close handler runs right behind this, and ws.ts has to hear it before the socket's 'close'.
 template<bool SSL>
-static void onAdoptedWebSocketClosed(void* handle, us_socket_t* socket, int, bool)
+static void onAdoptedWebSocketClosed(void* handle, us_socket_t* socket)
 {
     Bun__NodeHTTPSocket__forgetWebSocket(handle, SSL, reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained() && !us_socket_ssl_spill_dropped(socket));
     auto* globalObject = Bun__NodeHTTPSocket__globalObject(handle, SSL);
@@ -726,17 +726,10 @@ static void onAdoptedWebSocketClosed(void* handle, us_socket_t* socket, int, boo
     });
 }
 
-template<bool SSL>
-static us_socket_t* adoptIntoWebSocket(us_socket_t* socket, void* webSocketContext, void* userData, std::string_view handshake, const uWS::PerMessageDeflateParams* deflateParams, void* handle)
-{
-    return reinterpret_cast<uWS::WebSocketContext<SSL, true, void*>*>(webSocketContext)->adoptSocket(socket, sizeof(uWS::HttpResponseData<SSL, true>), std::move(userData), handshake, deflateParams != nullptr, deflateParams ? uWS::compressOptionsFor(*deflateParams) : uWS::CompressOptions::DISABLED, handle, onAdoptedWebSocketClosed<SSL>);
-}
-
 // `socket` left HTTP for `handle` (leaveHttp() above), so its block still has the size of a node:http connection's.
-extern "C" us_socket_t* Bun__NodeHTTPSocket__adoptIntoWebSocket(bool ssl, us_socket_t* socket, void* webSocketContext, void* userData, const char* handshake, size_t handshakeLength, const uWS::PerMessageDeflateParams* deflateParams, void* handle)
+extern "C" void Bun__NodeHTTPSocket__prepareForWebSocket(bool ssl, us_socket_t* socket, void* handle)
 {
-    std::string_view head(handshake, handshakeLength);
-    return ssl ? adoptIntoWebSocket<true>(socket, webSocketContext, userData, head, deflateParams, handle) : adoptIntoWebSocket<false>(socket, webSocketContext, userData, head, deflateParams, handle);
+    new (us_socket_ext(socket)) uWS::UpgradedSocketData { {}, handle, ssl ? onAdoptedWebSocketClosed<true> : onAdoptedWebSocketClosed<false> };
 }
 
 static JSNodeHTTPServerSocket* openServerSocket(us_socket_t* socket, bool ssl)

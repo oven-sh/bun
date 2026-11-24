@@ -2,8 +2,8 @@
 
 use bun_jsc::bindgen::{Callable, JsBytes, JsHeap, JsLocal, JsScope};
 use bun_jsc::{JSValue, JsResult};
-use bun_uws_sys::Opcode;
-use bun_uws_sys::response::PerMessageDeflateParams;
+use bun_uws_sys::{Opcode, WebSocketBehavior};
+use bun_websocket::deflate::Params;
 
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
 use crate::generated_bindgen::socket_body::SocketHandle;
@@ -123,14 +123,17 @@ pub(crate) fn upgrade_socket_to_web_socket<'a>(
         websocket: websocket.to_js(),
         handlers: handlers.to_js(),
         handshake,
-        max_payload_length: max_payload,
-        auto_pong: flags & AUTO_PONG != 0,
-        skip_utf8_validation: flags & SKIP_UTF8_VALIDATION != 0,
-        deflate_params: deflate.map(|deflate| PerMessageDeflateParams {
-            server_max_window_bits: deflate.server_max_window_bits as i32,
-            client_max_window_bits: deflate.client_max_window_bits as i32,
-            server_no_context_takeover: deflate.server_no_context_takeover,
-            client_no_context_takeover: deflate.client_no_context_takeover,
+        behavior: WebSocketBehavior::for_ws_package(
+            max_payload,
+            flags & AUTO_PONG != 0,
+            flags & SKIP_UTF8_VALIDATION != 0,
+            deflate.is_some(),
+        ),
+        deflate_params: deflate.map(|deflate| Params {
+            server_max_window_bits: deflate.server_max_window_bits as u8,
+            client_max_window_bits: deflate.client_max_window_bits as u8,
+            server_no_context_takeover: deflate.server_no_context_takeover.into(),
+            client_no_context_takeover: deflate.client_no_context_takeover.into(),
         }),
     };
     macro_rules! adopt {
@@ -167,5 +170,11 @@ pub(crate) fn send_web_socket_frame<'a>(
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    handle.send_frame(cx.global(), data, Opcode(opcode), fin, compress)
+    handle.send_frame(
+        cx.global(),
+        data,
+        Opcode::from_raw(opcode as u8),
+        fin,
+        compress,
+    )
 }

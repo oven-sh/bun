@@ -318,7 +318,7 @@ impl DevServer {
         if self.write_memory_visualizer_message(&mut payload).is_err() {
             return; // drop packet
         }
-        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
+        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::Binary);
     }
 
     pub(crate) fn write_memory_visualizer_message(

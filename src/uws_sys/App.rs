@@ -1,16 +1,17 @@
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use std::rc::Rc;
 
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
-use crate::web_socket::c::{uws_app_ws_package_context, uws_ws};
+use crate::web_socket::{WebSocketHandler, WebSocketUpgradeServer, WebSockets, on_upgrade};
 use crate::{
-    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, SslCtx,
-    WebSocketBehavior, WebSocketUpgradeContext, thunk, us_socket_t, uws_res,
+    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Request, SslCtx, WebSocketBehavior,
+    thunk, us_socket_t, uws_res,
 };
 use bun_ptr::{AnyRefCounted, RefPtr};
 
@@ -21,10 +22,8 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 // The architecture is:
 // 1. App.h - C++ uWebSockets library with TemplatedApp<SSL> class
 //    - Defines the main TemplatedApp<bool SSL> template class
-//    - Provides HTTP/WebSocket server functionality with SSL/non-SSL variants
-//    - Contains WebSocketBehavior struct for configuring WebSocket handlers
+//    - Provides HTTP server functionality with SSL/non-SSL variants
 //    - Implements routing methods (get, post, put, delete, etc.)
-//    - Manages WebSocket contexts, topic trees for pub/sub, and compression
 //    - Handles server name (SNI) support for SSL contexts
 //    - Provides listen() methods for binding to ports/unix sockets
 //
@@ -84,18 +83,28 @@ macro_rules! uws_app_route_methods {
     )*};
 }
 
-pub struct OwnedApp<const SSL: bool>(NonNull<App<SSL>>);
+pub struct OwnedApp<const SSL: bool> {
+    app: NonNull<App<SSL>>,
+    _web_sockets: Rc<WebSockets>,
+}
 
 impl<const SSL: bool> OwnedApp<SSL> {
     /// `ctx` is what every accepted socket starts from, verify mode included. `Some` exactly when `SSL`.
     pub fn new(ctx: Option<&OwnedSslCtx>) -> Self {
         debug_assert_eq!(SSL, ctx.is_some());
-        let app = c::uws_create_app(ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr())));
-        Self(NonNull::new(app.cast()).expect("`new` does not return null"))
+        let web_sockets = Rc::<WebSockets>::default();
+        let app = c::uws_create_app(
+            ctx.map(|ctx| SslCtx::opaque_ref(ctx.as_ptr())),
+            Rc::as_ptr(&web_sockets).cast(),
+        );
+        Self {
+            app: NonNull::new(app.cast()).expect("`new` does not return null"),
+            _web_sockets: web_sockets,
+        }
     }
 
     pub fn as_ptr(&self) -> *mut App<SSL> {
-        self.0.as_ptr()
+        self.app.as_ptr()
     }
 }
 
@@ -126,6 +135,11 @@ impl<const SSL: bool> App<SSL> {
     /// [`close`](Self::close) for a thread that ends: see `thread_ends` in libusockets.h.
     pub fn close_as_thread_ends(&mut self) {
         c::uws_app_close(Self::SSL_FLAG, self.as_raw(), 1)
+    }
+
+    pub fn web_sockets(&mut self) -> &WebSockets {
+        // SAFETY: `OwnedApp` owns both.
+        unsafe { &*c::uws_app_web_sockets(Self::SSL_FLAG, self.as_raw()).cast() }
     }
 
     /// Close every HTTP connection that is idle (no request being received, no
@@ -165,28 +179,6 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn clear_routes(&mut self) {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
-    }
-
-    pub(crate) fn publish_with_options(
-        &mut self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: Opcode,
-        compress: bool,
-    ) -> SendStatus {
-        // SAFETY: self is a valid *mut uws_app_t; slices are valid for the call.
-        unsafe {
-            c::uws_publish(
-                SSL as i32,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                topic.as_ptr(),
-                topic.len(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-                compress,
-            )
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -362,40 +354,6 @@ impl<const SSL: bool> App<SSL> {
             .ok_or(failure)
     }
 
-    pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
-        // SAFETY: self is a valid app; topic valid for the call.
-        unsafe {
-            c::uws_num_subscribers(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                topic.as_ptr(),
-                topic.len(),
-            )
-        }
-    }
-
-    pub fn publish(
-        &mut self,
-        topic: &[u8],
-        message: &[u8],
-        opcode: Opcode,
-        compress: bool,
-    ) -> SendStatus {
-        // SAFETY: self is a valid app; slices valid for the call.
-        unsafe {
-            c::uws_publish(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                topic.as_ptr(),
-                topic.len(),
-                message.as_ptr(),
-                message.len(),
-                opcode,
-                compress,
-            )
-        }
-    }
-
     /// With `own_client_auth`, a connection that names `hostname_pattern` adds `ctx`'s verify mode to the app's.
     pub fn add_server_name(
         &mut self,
@@ -426,45 +384,29 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
-    /// Calls with the same `context_key` share one uWS WebSocketContext. It keeps the first
-    /// call's callbacks and the last call's settings. The key is only compared, never dereferenced.
+    /// Calls with the same `context_key` share one context. It keeps the first call's `T` and
+    /// the last call's settings. The key is only compared, never dereferenced.
     #[inline(never)]
-    pub fn ws(
+    pub fn ws<Server: WebSocketUpgradeServer<SSL>, T: WebSocketHandler>(
         &mut self,
         pattern: &[u8],
         ctx: *mut c_void,
         id: usize,
-        behavior_: WebSocketBehavior,
+        behavior: WebSocketBehavior,
         context_key: *const c_void,
     ) {
-        let behavior = behavior_;
-        // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
+        let context = self.web_sockets().context::<T>(context_key, behavior);
+        // SAFETY: self is a valid app; pattern valid for the call.
         unsafe {
-            uws_ws(
+            c::uws_app_ws(
                 Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                ctx,
+                self.as_raw(),
                 pattern.as_ptr(),
                 pattern.len(),
+                on_upgrade::<Server, SSL>,
+                ctx,
+                context.as_const_ptr().cast(),
                 id,
-                &raw const behavior,
-                context_key,
-            )
-        }
-    }
-
-    /// Returns the app's context for `ws` package sockets with these options, creating it on
-    /// first use. It lives as long as the app. Every call must pass the same callbacks.
-    pub fn ws_package_context(
-        &mut self,
-        behavior: &WebSocketBehavior,
-    ) -> *mut WebSocketUpgradeContext {
-        // SAFETY: self is a valid app; behavior is only read during the call.
-        unsafe {
-            uws_app_ws_package_context(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                behavior,
             )
         }
     }
@@ -544,6 +486,7 @@ pub mod c {
 
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s, thread_ends: i32);
+        pub(crate) safe fn uws_app_web_sockets(ssl: i32, app: &mut uws_app_s) -> *const c_void;
         pub(crate) safe fn uws_app_close_idle(
             ssl: i32,
             app: &mut uws_app_s,
@@ -558,8 +501,11 @@ pub mod c {
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
-        // safe: C++ up-refs `ssl_ctx` before it stores the pointer. Never null.
-        pub(crate) safe fn uws_create_app(ssl_ctx: Option<&SslCtx>) -> *mut uws_app_t;
+        // safe: C++ up-refs `ssl_ctx` before it stores the pointer, and only hands `web_sockets` back. Never null.
+        pub(crate) safe fn uws_create_app(
+            ssl_ctx: Option<&SslCtx>,
+            web_sockets: *const c_void,
+        ) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,
@@ -672,22 +618,16 @@ pub mod c {
             error: *mut c_int,
             dns_error: *mut c_int,
         ) -> *mut UwsListenSocket;
-        pub(crate) fn uws_num_subscribers(
+        pub(crate) fn uws_app_ws(
             ssl: i32,
-            app: *mut uws_app_t,
-            topic: *const u8,
-            topic_length: usize,
-        ) -> c_uint;
-        pub(crate) fn uws_publish(
-            ssl: i32,
-            app: *mut uws_app_t,
-            topic: *const u8,
-            topic_length: usize,
-            message: *const u8,
-            message_length: usize,
-            opcode: Opcode,
-            compress: bool,
-        ) -> SendStatus;
+            app: &mut uws_app_s,
+            pattern: *const u8,
+            pattern_len: usize,
+            handler: extern "C" fn(*mut c_void, *mut uws_res, &mut Request, *const c_void, usize),
+            user_data: *mut c_void,
+            context: *const c_void,
+            id: usize,
+        );
         pub(crate) fn uws_add_server_name(
             app: &mut uws_app_t,
             hostname_pattern: *const c_char,

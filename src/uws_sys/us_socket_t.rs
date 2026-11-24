@@ -110,6 +110,11 @@ impl us_socket_t {
     }
 
     pub fn close(&mut self, code: CloseCode) {
+        self.close_with_reason(code, ptr::null_mut());
+    }
+
+    /// `on_close` gets `reason`.
+    pub(crate) fn close_with_reason(&mut self, code: CloseCode, reason: *mut c_void) {
         bun_core::scoped_log!(
             uws,
             "us_socket_close({:p}, {})",
@@ -118,7 +123,7 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
-            let _ = c::us_socket_close(self, code, ptr::null_mut());
+            let _ = c::us_socket_close(self, code, reason);
         }
     }
 
@@ -404,6 +409,20 @@ impl us_socket_t {
         rc
     }
 
+    /// Plain TCP only.
+    pub(crate) fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
+        // SAFETY: both slices valid for their respective lengths
+        unsafe {
+            c::us_socket_write2(
+                self,
+                first.as_ptr(),
+                i32::try_from(first.len()).expect("int cast"),
+                second.as_ptr(),
+                i32::try_from(second.len()).expect("int cast"),
+            )
+        }
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn write_fd(&mut self, data: &[u8], file_descriptor: Fd) -> i32 {
         let rc = unsafe {
@@ -578,6 +597,13 @@ mod c {
         pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
 
         pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        pub(super) fn us_socket_write2(
+            s: *mut us_socket_t,
+            header: *const u8,
+            header_length: i32,
+            payload: *const u8,
+            payload_length: i32,
+        ) -> i32;
         #[cfg(not(windows))]
         pub(super) fn us_socket_ipc_write_fd(
             s: *mut us_socket_t,

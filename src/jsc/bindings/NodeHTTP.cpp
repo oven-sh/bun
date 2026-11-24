@@ -331,7 +331,7 @@ static void writeResponseHeader(Response* res, const WTF::StringView& name, cons
     res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
-// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself (RFC 6455 4.2.2).
+// Headers that user code can't set on a 101 response. Response::upgrade (WebSocket.rs) writes the handshake headers (RFC 6455 4.2.2).
 static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
 {
     switch (name) {

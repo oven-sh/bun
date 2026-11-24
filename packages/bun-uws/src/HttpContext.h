@@ -24,7 +24,6 @@
 #include "HttpContextData.h"
 #include "HttpResponseData.h"
 #include "AsyncSocket.h"
-#include "WebSocketData.h"
 #include "SocketKinds.h"
 
 #include <string>
@@ -395,12 +394,10 @@ private:
                 }
                 if (matched) {
                     /* Not HTTP/2 after all: give the HTTP/1 parser the bytes we held back. */
-                    replay.reserve(LIBUS_RECV_BUFFER_PADDING * 2 + matched + (size_t) length);
-                    replay.assign(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    replay.reserve(matched + (size_t) length);
                     replay.append(preface, matched);
                     replay.append(data, (size_t) length);
-                    replay.append(LIBUS_RECV_BUFFER_PADDING, '\0');
-                    data = replay.data() + LIBUS_RECV_BUFFER_PADDING;
+                    data = replay.data();
                     length += matched;
                 }
             }
@@ -1056,16 +1053,10 @@ private:
             return s;
         }
         reinterpret_cast<HttpResponse<SSL> *>(s)->resumeReads(HttpResponseData<SSL>::READ_PAUSE_PARKED);
-        /* us_socket_resume() closes a socket that the kernel doesn't take back. */
-        if (us_socket_is_closed(s)) {
-            return s;
-        }
         /* This frame owns the buffer during the parse, because a dispatch can close or upgrade the socket and destruct httpResponseData. */
         WTF::Vector<char> replayed = std::exchange(httpResponseData->parkedRequestBytes, {});
         size_t start = std::exchange(httpResponseData->parkedRequestBytesStart, 0);
         size_t length = replayed.size() - start;
-        /* For the frame parser of a WebSocket that gets the tail, which writes behind its input. */
-        replayed.grow(replayed.size() + LIBUS_RECV_BUFFER_PADDING);
         httpResponseData->replayedRequestBytes = &replayed;
         const bool peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN) != 0;
         us_socket_t *returned = onData<false>(s, replayed.mutableSpan().data() + start, (int) length);
@@ -1298,7 +1289,7 @@ public:
      * vtable is the mode: enableNodeHttpCompat() swaps in the IsNodeHttp=true handler
      * set, so the choice of template instantiation is the single source of truth
      * and there is no separate flag to keep in sync with it. The few paths that
-     * are not templated on IsNodeHttp (socketExtSize, HttpResponse::upgrade - the
+     * are not templated on IsNodeHttp (socketExtSize, HttpResponse::leaveHttp - the
      * type the C API casts to from a runtime `int ssl`) read it back from here. */
     bool isNodeHttp() const {
         return group.vtable == &httpVTable<true>;

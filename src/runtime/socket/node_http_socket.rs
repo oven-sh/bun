@@ -7,11 +7,11 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
 use bun_uws::{self as uws, us_socket_t};
-use bun_uws_sys::response::PerMessageDeflateParams;
+use bun_websocket::deflate::Params;
 
 use super::{Handlers, NewSocket, SocketFlags};
 use crate::dispatch::fold;
-use crate::server::{AnyServer, PendingRequest, ServerWebSocket};
+use crate::server::{AnyServer, ServerWebSocket};
 
 type Transport<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
@@ -125,10 +125,8 @@ pub(crate) struct WebSocketUpgrade<'a> {
     pub(crate) websocket: JSValue,
     pub(crate) handlers: JSValue,
     pub(crate) handshake: &'a [u8],
-    pub(crate) max_payload_length: u32,
-    pub(crate) auto_pong: bool,
-    pub(crate) skip_utf8_validation: bool,
-    pub(crate) deflate_params: Option<PerMessageDeflateParams>,
+    pub(crate) behavior: uws::WebSocketBehavior,
+    pub(crate) deflate_params: Option<Params>,
 }
 
 unsafe extern "C" {
@@ -136,16 +134,11 @@ unsafe extern "C" {
     safe fn Bun__NodeHTTPServerSocket__responseBytesWritten(s: *mut us_socket_t, ssl: bool) -> u64;
     safe fn Bun__NodeHTTPServerSocket__writeQueueSize(s: *mut us_socket_t, ssl: bool) -> u64;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
-    fn Bun__NodeHTTPSocket__adoptIntoWebSocket(
+    fn Bun__NodeHTTPSocket__prepareForWebSocket(
         ssl: bool,
         s: *mut us_socket_t,
-        web_socket_context: *mut c_void,
-        user_data: *mut c_void,
-        handshake: *const u8,
-        handshake_length: usize,
-        deflate_params: *const PerMessageDeflateParams,
         handle: *mut c_void,
-    ) -> *mut us_socket_t;
+    );
 }
 
 impl<const SSL: bool> NewSocket<SSL> {
@@ -183,7 +176,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(s) = self.socket_for_web_socket(server_handlers) else {
             return Ok(None);
         };
-        // SAFETY: `s` is open and its ext holds only this socket's pointer.
+        // SAFETY: its ext holds only this socket's pointer.
         let adopted =
             unsafe { adopt_into_web_socket(SSL, s, self.as_ctx_ptr().cast(), server, upgrade) };
         let Some(ws) = adopted else {
@@ -202,7 +195,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 }
 
-/// SAFETY: `s` is open and its ext holds only `handle`, which the WebSocket keeps as its socket data. `None` with nothing written.
+/// SAFETY: `s` is from `socket_for_web_socket`. Its ext holds only `handle`, which the WebSocket keeps as its socket data. `None` with nothing written.
 unsafe fn adopt_into_web_socket<'a>(
     ssl: bool,
     s: *mut us_socket_t,
@@ -211,39 +204,14 @@ unsafe fn adopt_into_web_socket<'a>(
     upgrade: &WebSocketUpgrade<'_>,
 ) -> Option<&'a ServerWebSocket> {
     let handler = server.ws_package_handler()?;
-    let context = server.ws_package_context(
-        upgrade.max_payload_length,
-        upgrade.auto_pong,
-        upgrade.skip_utf8_validation,
-        upgrade.deflate_params.is_some(),
-    )?;
+    let context = server.ws_package_context(upgrade.behavior)?;
     let ws = ServerWebSocket::init_for_ws_package(handler.get(), upgrade.websocket);
-    // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
-    let ws_ref = unsafe { &*ws };
-    // The server doesn't count the connection until the WebSocket opens, so this keeps a stopped server from draining.
-    let pending = PendingRequest::new(server);
-    // SAFETY: the caller's contract.
-    let adopted = unsafe {
-        Bun__NodeHTTPSocket__adoptIntoWebSocket(
-            ssl,
-            s,
-            context.as_ptr().cast(),
-            ws.cast(),
-            upgrade.handshake.as_ptr(),
-            upgrade.handshake.len(),
-            upgrade
-                .deflate_params
-                .as_ref()
-                .map_or(core::ptr::null(), core::ptr::from_ref),
-            handle,
-        )
-    };
-    drop(pending);
-    if adopted.is_null() {
-        ws_ref.discard_unopened();
-        return None;
+    // SAFETY: the caller's contract. `init` stored `ws` inline in its JS wrapper, which `ws` keeps alive.
+    unsafe {
+        Bun__NodeHTTPSocket__prepareForWebSocket(ssl, s, handle);
+        context.adopt(s, ssl, ws.cast(), upgrade.deflate_params, upgrade.handshake);
+        Some(&*ws)
     }
-    Some(ws_ref)
 }
 
 /// Runs `$body` with `$this: &NewSocket<SSL>` for a handle that `Bun__NodeHTTPSocket__create` returned.

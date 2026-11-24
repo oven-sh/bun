@@ -778,18 +778,14 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
 
     /// The points that `middle` gives at this depth in a box of more than twice as many edits.
     fn fronts(&mut self, bx: Rect, depth: usize) -> (Point, Point) {
-        // In words. `middle` takes about depth * depth steps of several words each, so a failed try adds little.
-        let budget = depth * depth + REACH_EXTRA;
-        // At the pace of the last cut.
-        let pace = self.pace.unwrap_or_else(|| {
+        let mut pace = || {
             let depth = depth.min(MIN_PROBE);
-            match self.middle(bx, depth) {
+            self.pace.unwrap_or_else(|| match self.middle(bx, depth) {
                 Split::Greedy(f, r) => pace(bx, depth, (f, r)),
                 Split::Exact(..) => 0,
-            }
-        });
-        let strips = 2 * (depth * pace / STRIP + 1);
-        if strips * (depth + EXTRA_ROWS) * bits::WORDS <= budget
+            })
+        };
+        if let Some(budget) = reach_budget(bx.1 - bx.0, depth, &mut pace)
             && let Some(fronts) = self.reach(bx, depth, budget)
         {
             return fronts;
@@ -1251,6 +1247,19 @@ const REACH_EXTRA: usize = 4096;
 
 /// `middle` ends by this depth in every box of at most twice as many elements.
 const SMALL_BOX_DEPTH: usize = 24;
+
+/// The words that `reach` may spend in a box of so many columns, unless `middle` looks cheaper. That takes about
+/// depth * depth steps of several words each, so a failed try adds little.
+fn reach_budget(columns: usize, depth: usize, pace: &mut dyn FnMut() -> usize) -> Option<usize> {
+    let budget = depth * depth + REACH_EXTRA;
+    // All of so few columns take less than `middle`, so to stop half way would cost more.
+    let whole = (columns / STRIP + 1) * (2 * depth + EXTRA_ROWS) * bits::WORDS;
+    if whole <= 2 * depth * depth {
+        return Some(budget.max(3 * whole));
+    }
+    let strips = 2 * (depth * pace() / STRIP + 1);
+    (strips * (depth + EXTRA_ROWS) * bits::WORDS <= budget).then_some(budget)
+}
 
 /// The depth at which `middle` has taken as long as `bits` takes for `2 * depth` edits (`words`).
 #[inline]

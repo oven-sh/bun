@@ -45,16 +45,11 @@ namespace uWS {
         NEEDS_UNCORK
     };
 
-    template <bool, bool, typename> struct WebSocketContext;
-
 template <bool SSL>
 struct AsyncSocket {
     /* This guy is promiscuous */
     template <bool> friend struct HttpContext;
-    template <bool, bool, typename> friend struct WebSocketContext;
     template <bool> friend struct TemplatedApp;
-    template <bool, typename> friend struct WebSocketContextData;
-    template <typename, typename> friend struct TopicTree;
     template <bool> friend struct HttpResponse;
 
 
@@ -219,14 +214,6 @@ public:
             return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
         }
         return true;
-    }
-
-    /* Returns the remote IP address or empty string on failure */
-    std::string_view getRemoteAddress() {
-        static thread_local char buf[16];
-        int ipLength = 16;
-        us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
-        return std::string_view(buf, (unsigned int) ipLength);
     }
 
     /**

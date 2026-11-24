@@ -13,6 +13,7 @@ const {
 // The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } =
   require("internal/sql/shared") as typeof import("./shared").default;
+const { describeAddress } = require("internal/sql/options");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
 const monotonicNowMs: () => number = $bindgen("Timer.bind.ts", "monotonicNowMs");
@@ -104,10 +105,10 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
   async #startConnection() {
     const adapter = this.adapter;
     this.connection = await createPooledConnectionHandle(
-      adapter.createNativeConnection,
+      adapter,
       adapter.connectionInfo,
       adapter.ownerCallback(this.#handleConnected.bind(this)),
-      adapter.ownerCallback(this.#handleClose.bind(this)),
+      adapter.ownerCallback(this.#handleNativeClose.bind(this)),
       adapter.ownerCallback(this.#handleRetire.bind(this)),
       this,
     );
@@ -145,6 +146,10 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
     this.connection = connection;
     this.state = PooledConnectionState.open;
     this.adapter.connectionOpened(this);
+  }
+
+  #handleNativeClose(err: Error | null) {
+    this.#handleClose(this.state === PooledConnectionState.connecting ? this.adapter.withAddress(err) : err);
   }
 
   #handleClose(err: Error | null) {
@@ -383,8 +388,8 @@ function tryOtherPassword(login: Login, err: Error | null, connection: Pick<Nati
  * Resolves the password (which may be a function and/or a promise) and calls
  * the driver's native createConnection with the normalized pool options.
  */
-async function createPooledConnectionHandle<ConnectionHandle>(
-  nativeCreateConnection: NativeCreateConnection<ConnectionHandle>,
+async function createPooledConnectionHandle<ConnectionHandle extends NativeConnection>(
+  adapter: BaseSQLAdapter<ConnectionHandle, any>,
   options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
@@ -432,29 +437,33 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   const prepared = saslprep(password);
   login.otherPassword ??= options.adapter === "postgres" && prepared !== password;
 
-  return nativeCreateConnection(
-    hostname,
-    Number(port),
-    username || "",
-    password,
-    database || "",
-    sslMode,
-    (tls || null) as Bun.TLSOptions | null,
-    query || "",
-    path || "",
-    onConnected,
-    onClose,
-    idleTimeout,
-    connectionTimeout,
-    maxLifetime,
-    !prepare,
-    !!allowPublicKeyRetrieval,
-    onRetire,
-    foundRows,
-    channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
-    transform?.column.from,
-    login.saslprep ? prepared : password,
-  );
+  try {
+    return adapter.createNativeConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password,
+      database || "",
+      sslMode,
+      (tls || null) as Bun.TLSOptions | null,
+      query || "",
+      path || "",
+      onConnected,
+      onClose,
+      idleTimeout,
+      connectionTimeout,
+      maxLifetime,
+      !prepare,
+      !!allowPublicKeyRetrieval,
+      onRetire,
+      foundRows,
+      channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
+      transform?.column.from,
+      login.saslprep ? prepared : password,
+    );
+  } catch (err) {
+    throw adapter.withAddress(err);
+  }
 }
 
 /// A result of several: CALL <proc>() and a text of several statements.
@@ -537,6 +546,14 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     const graphFrame = this.ownerGraphFrame;
     if (graphFrame === undefined) return callback;
     return AsyncContextFrame.run.bind(undefined, graphFrame, callback, undefined);
+  }
+
+  /// For an error that native code has just made: its `stack` follows the message until it is first read.
+  public withAddress<T>(err: T): T {
+    if (err instanceof this.ErrorClass && (err as any).code === this.codePrefix + "CONNECTION_REFUSED") {
+      err.message = `Failed to connect to ${describeAddress(this.connectionInfo)}`;
+    }
+    return err;
   }
 
   public runUserCallback(callback: ((err: Error | null) => void) | undefined, err: Error | null) {

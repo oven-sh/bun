@@ -415,12 +415,11 @@ impl PatchTask {
 
         // 2. Create temp dir to do all the modifications
         let mut tmpname_buf = [0u8; 1024];
-        let tempdir_name =
-            match FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random()) {
-                Ok(name) => name,
-                // max len is 1+16+1+8+3, well below 1024
-                Err(_no_space_left) => unreachable!(),
-            };
+        let tempdir_name = match FileSystem::tmpname(b"tmp", &mut tmpname_buf) {
+            Ok(name) => name,
+            // max len is 1+16+1+8+3, well below 1024
+            Err(_no_space_left) => unreachable!(),
+        };
 
         let system_tmpdir = self.tempdir;
         let staging = StagedEntry::new(system_tmpdir, tempdir_name);

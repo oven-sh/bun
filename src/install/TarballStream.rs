@@ -516,7 +516,7 @@ impl Extraction {
                 return Err(crate::Error::InstallFailed);
             };
         let mut buf = bun_paths::path_buffer_pool::get();
-        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
+        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..])?;
         let tmpdir = &tarball.temp_dir.handle;
         self.staging = Some(UnfinishedEntry::new(tmpdir.fd(), tmpname.as_bytes()));
 

@@ -290,7 +290,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
 
 fn tmpname(prefix: &[u8]) -> ZBox {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let name = FileSystem::tmpname(prefix, &mut buf[..], bun_core::fast_random());
+    let name = FileSystem::tmpname(prefix, &mut buf[..]);
     name.expect("unreachable").to_zbox()
 }
 

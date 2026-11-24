@@ -413,8 +413,7 @@ fn write_temp_file(
     errors: [&'static str; 2],
 ) -> Result<OwnedFile, Failure> {
     let mut buf = bun_paths::path_buffer_pool::get();
-    let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
-        .map_err(|_| "Out of memory")?;
+    let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0).map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
     let path = Path::resolve(&[bun_core::top_level_dir(), dir, name.as_bytes()]);
     write_file(&path, (sys::O::EXCL, 0o600), contents, errors)

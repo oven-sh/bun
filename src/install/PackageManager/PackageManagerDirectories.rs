@@ -220,8 +220,7 @@ fn get_temporary_directory_run(
         };
 
     let mut tmpbuf = bun_paths::path_buffer_pool::get();
-    let tmpname =
-        FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
+    let tmpname = FileSystem::tmpname(b"hm", &mut tmpbuf).expect("unreachable");
 
     let mut timer = if manager.options.log_level != LogLevel::Silent
         && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING

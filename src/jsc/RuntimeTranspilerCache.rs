@@ -284,7 +284,6 @@ impl Entry {
         let tmpfilename = FileSystem::tmpname(
             paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
-            input_hash,
         )?;
 
         let output_bytes = output_code.byte_slice();

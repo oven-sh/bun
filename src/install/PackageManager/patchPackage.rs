@@ -160,8 +160,7 @@ pub(crate) fn write_pending_patch(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf)?;
     let tmpdir = &get_temporary_directory(manager).handle;
     let flags = sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC;
     let moved = sys::Tmpfile::open(tmpdir, tempfile_name, flags, 0o664)

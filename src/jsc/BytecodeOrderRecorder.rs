@@ -383,7 +383,7 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
 
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname: &bun_core::ZStr =
-        bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
+        bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..])
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
     let tmpfile = bun_sys::Tmpfile::create_with_mode(dir.fd(), tmpname, 0o600)?;
     tmpfile.file.write_all(text)?;

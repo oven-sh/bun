@@ -1485,7 +1485,7 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
-            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
+            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf)?;
             let out_path = Self::manifest_file_name(file_id, registry.url_hash);
             Self::write_file(this, registry, tmp_path, temp_dir, &out_path)
         }

@@ -2432,16 +2432,7 @@ pub(crate) fn inject(
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<path::Path> = None;
-    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
-        b"bun-build",
-        &mut buf[..],
-        // tmpname OR's this seed with nano_timestamp(). milli_timestamp() is a
-        // bit-subset of nanos and so adds zero entropy; fast_random() is seeded
-        // from the OS CSPRNG per process, which keeps concurrent
-        // `bun build --compile` invocations from colliding on the same temp
-        // name in a shared cwd (the per-process counter is always 0 here).
-        bun_core::fast_random(),
-    ) {
+    let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(b"bun-build", &mut buf[..]) {
         Ok(n) => n,
         Err(e) => {
             bun_core::pretty_errorln!(
@@ -3026,7 +3017,7 @@ pub(crate) fn download_to_path(
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name = bun_sys::DeleteTreeOnDrop::new(
                     Fd::cwd(),
-                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?,
+                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf)?,
                 );
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;

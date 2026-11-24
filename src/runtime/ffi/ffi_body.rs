@@ -2390,8 +2390,7 @@ impl CompilerRT {
         #[cfg(unix)]
         {
             let mut name_buf = bun_paths::path_buffer_pool::get();
-            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                .ok()?;
+            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0).ok()?;
             Some(ZBox::from_bytes(name.as_bytes()))
         }
         #[cfg(windows)]

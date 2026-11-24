@@ -592,12 +592,8 @@ pub(crate) fn print_failure_and_exit(ctx: &ContextData, failure: &CompileFailure
 
 pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
     let mut name_buffer = [0u8; 64];
-    let name = bun_paths::fs::FileSystem::tmpname(
-        b"bun-program",
-        &mut name_buffer,
-        bun_core::fast_random(),
-    )
-    .expect("64 bytes hold a temporary name");
+    let name = bun_paths::fs::FileSystem::tmpname(b"bun-program", &mut name_buffer)
+        .expect("64 bytes hold a temporary name");
     bun_paths::Path::from_parts(&[directory, name]).to_zbox()
 }
 

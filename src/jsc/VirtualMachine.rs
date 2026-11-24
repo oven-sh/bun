@@ -282,7 +282,7 @@ pub struct VirtualMachine {
     /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call
     /// made, on a thread that had none. [`Self::serve_macro_caller`] rebuilds it for another caller.
     macro_owner: JsCell<Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>>,
-    /// Counts those rebuilds. `MacroEntryPoint::generate_id` takes it, so an id from before one is not found.
+    /// Counts those rebuilds. A `MacroLoadStates` from before one names macros the VM no longer has.
     macro_epoch: Cell<u32>,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
@@ -1974,7 +1974,6 @@ impl VirtualMachine {
 
         // The modules go first: if the options then fail, the VM is still the owner's, only empty.
         self.macro_epoch.update(|epoch| epoch.wrapping_add(1));
-        self.macro_entry_points.with_mut(|points| points.clear());
         self.module_loader
             .macro_load_states
             .set_epoch(self.macro_epoch.get());

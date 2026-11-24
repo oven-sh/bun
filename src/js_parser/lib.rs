@@ -76,7 +76,7 @@ pub mod Macro {
     #[derive(Default)]
     pub struct MacroLoadStates {
         states: RefCell<ArrayHashMap<i32, MacroLoadState>>,
-        /// The `VirtualMachine::macro_epoch` the ids were made with.
+        /// The `VirtualMachine::macro_epoch` of the VM when it loaded these.
         epoch: Cell<u32>,
     }
     impl MacroLoadStates {
@@ -88,10 +88,6 @@ pub mod Macro {
             self.states.borrow_mut().insert(id, state);
         }
 
-        pub fn remove(&self, id: i32) {
-            self.states.borrow_mut().swap_remove(&id);
-        }
-
         pub fn clear(&self) {
             self.states.borrow_mut().clear();
         }
@@ -100,7 +96,7 @@ pub mod Macro {
             self.epoch.get()
         }
 
-        /// Empties the table: an id made with another epoch names nothing.
+        /// Empties the table: a VM at another epoch has loaded none of these.
         pub fn set_epoch(&self, epoch: u32) {
             self.clear();
             self.epoch.set(epoch);

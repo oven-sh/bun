@@ -2243,6 +2243,39 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  // A command that is not batched is on the socket when the call returns.
+  test.concurrent.each([
+    { flag: "1", options: "undefined", sent: true },
+    { flag: "1", options: "{}", sent: true },
+    { flag: "1", options: "{ enableAutoPipelining: true }", sent: false },
+    { flag: undefined, options: "undefined", sent: false },
+  ])("DISABLE_REDIS_AUTO_PIPELINING=$flag with options $options", async ({ flag, options, sent }) => {
+    const PING = mock(() => null);
+    const fake = helloServer({ PING });
+    const port = await fake.listen();
+    try {
+      const closed = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const client = new Bun.RedisClient("redis://127.0.0.1:${port}", ${options});
+           await client.connect();
+           client.ping().catch(() => {});
+           client.close();`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      await closed;
+      expect(PING).toHaveBeenCalledTimes(sent ? 1 : 0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does
   // not come from the socket code under test. It pauses connection 1 after

@@ -444,7 +444,7 @@ The Redis client supports various URL formats:
 new RedisClient("redis://localhost:6379");
 new RedisClient("redis://localhost:6379");
 
-// With authentication
+// With authentication (percent-encode special characters with encodeURIComponent)
 new RedisClient("redis://username:password@localhost:6379");
 
 // With database number

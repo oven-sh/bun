@@ -70,7 +70,7 @@ impl Crowd {
         continues_series: impl FnOnce() -> bool,
     ) -> Duration {
         let wait = (rtt.smoothed / PACKETS_PER_ROUND_TRIP).min(MAX_WAIT);
-        if self.phase == Phase::Rested || wait < GRANULARITY {
+        if self.phase == Phase::Rested || wait < GRANULARITY / 2 {
             return Duration::ZERO;
         }
         if self.phase == Phase::Watching && !(now < self.loss_forgotten_at && continues_series()) {

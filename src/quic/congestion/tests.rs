@@ -546,8 +546,8 @@ fn small_writes_in_a_series_wait_after_a_loss() {
 }
 
 #[test]
-fn small_writes_do_not_wait_for_less_than_the_granularity() {
-    for (smoothed, expected) in [(15_999, 0), (16_000, 1000)] {
+fn small_writes_do_not_wait_on_short_paths() {
+    for (smoothed, expected) in [(7999, 0), (8000, 500)] {
         let mut rtt = steady(micros(smoothed));
         rtt.latest = millis(30);
         let wait = watching_crowd().wait(START, &rtt, || false);

@@ -1,6 +1,7 @@
 //! Names go before `:parameters` and those before `*`, in each segment. Derives from uWebSockets (LICENSE.md).
 #![forbid(unsafe_code)]
 
+use bun_collections::smallvec::SmallVec;
 use bun_core::bounded_array::BoundedArray;
 use bun_core::strings::ByteSet;
 
@@ -9,7 +10,8 @@ use crate::Method::{Method, Set as Methods};
 /// The rest of a pattern or a path is ignored.
 const MAX_SEGMENTS: usize = 100;
 
-pub type Parameters<'a> = BoundedArray<&'a [u8], MAX_SEGMENTS>;
+/// Small, because the GC scans it with its unused slots while the handler runs.
+pub type Parameters<'a> = SmallVec<[&'a [u8]; 8]>;
 
 pub static NOT_SLASH: ByteSet = ByteSet::new(&[0..=b'.', b'0'..=0xff]);
 
@@ -170,7 +172,7 @@ impl Node {
             if let Some(node) = &self.parameter
                 && !segment.is_empty()
             {
-                search.parameters.append_assume_capacity(segment);
+                search.parameters.push(segment);
                 if let found @ Some(_) = node.find(rest, depth + 1, search) {
                     return found;
                 }
@@ -207,6 +209,8 @@ impl<H: Copy> Router<H> {
     }
 
     /// The best handler after the first `skip`.
+    // Inlined, `Search` stays on the stack for the GC to scan too.
+    #[inline(never)]
     pub fn find<'a>(
         &self,
         method: Method,

@@ -200,6 +200,24 @@ fn every_name_is_found() {
 }
 
 #[test]
+fn many_parameters_keep_their_values() {
+    let router = router(&[
+        "/1/:/:/:/:/:/:/:/:/:",
+        "/:/:/:/:/:/:/:/:/:/x",
+        "/:/:/:/:/:/:/:/:/*",
+        "/:/*",
+    ]);
+    assert_eq!(
+        get(&router, "/1/2/3/4/5/6/7/8/9/0"),
+        [
+            "/1/:/:/:/:/:/:/:/:/: 2 3 4 5 6 7 8 9 0",
+            "/:/:/:/:/:/:/:/:/* 1 2 3 4 5 6 7 8",
+            "/:/* 1",
+        ]
+    );
+}
+
+#[test]
 fn what_follows_100_segments_is_ignored() {
     let count = |pattern: String, path: String| {
         let mut parameters = Parameters::new();

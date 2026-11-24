@@ -308,12 +308,7 @@ mod lifecycle {
         } else if it.client.redial().is_some() {
             Backoff
         } else if it.client.is_connected() {
-            it.read(":1\r\n");
-            if it.log[0].starts_with("broken") {
-                Select
-            } else {
-                Ready
-            }
+            Ready
         } else if !it.client.is_active() {
             Closed
         } else if it.client.is_ending() && it.client.rejection().is_some() {
@@ -329,7 +324,15 @@ mod lifecycle {
             }
         } else {
             it.start();
-            if it.log.is_empty() { Hello } else { Dialing }
+            if !it.log.is_empty() {
+                return Dialing;
+            }
+            it.read("+OK\r\n");
+            if it.client.is_connected() {
+                Select
+            } else {
+                Hello
+            }
         }
     }
 
@@ -495,7 +498,7 @@ mod lifecycle {
                 (Idle, 10000),
                 (Dialing, 10000),
                 (Hello, 10000),
-                (Select, 7),
+                (Select, 10000),
                 (Ready, 7),
                 (EndingPolicy, 10000),
                 (EndingRequested, 10000),
@@ -530,16 +533,20 @@ mod lifecycle {
     }
 
     #[test]
-    fn retries_start_over_when_hello_is_accepted() {
+    fn retries_start_over_when_the_handshake_is_complete() {
         let mut it = Driver::new(database(1));
-        for replies in ["", "", HELLO] {
+        for (replies, expected) in [
+            ("", "retry in 50 []"),
+            ("+OK\r\n", "retry in 100 []"),
+            ("+OK\r\n+OK\r\n", "retry in 50 []"),
+        ] {
             it.dial();
             it.start();
             it.read(replies);
             it.log.clear();
             it.lost();
+            assert_eq!(it.take(), [expected], "{replies:?}");
         }
-        assert_eq!(it.take(), ["retry in 50 []"]);
     }
 
     #[test]
@@ -671,29 +678,41 @@ mod lifecycle {
         it.start();
         it.send("GET k");
         it.read(HELLO);
-        it.send("WATCH k");
+        it.send("GET k");
         it.read("+OK\r\n");
+        it.send("WATCH k");
         assert_eq!(
             it.take(),
             [
                 "write HELLO 3 SELECT 1",
                 "refuse #1: Connection is closed and offline queue is disabled",
-                "connected map of 1",
                 "ignored",
+                "refuse #2: Connection is closed and offline queue is disabled",
+                "connected map of 1",
                 "write WATCH k",
             ]
         );
     }
 
     #[test]
-    fn a_batch_does_not_wait_for_select() {
+    fn a_batch_waits_for_select() {
         let mut it = Driver::new(database(1));
         it.dial();
         it.start();
         it.read(HELLO);
         it.send("GET k");
+        it.batch_is_due = true;
         it.checkpoint();
-        assert_eq!(it.log.last().unwrap(), "write GET k");
+        it.read("+OK\r\n");
+        assert_eq!(
+            it.take(),
+            [
+                "write HELLO 3 SELECT 1",
+                "ignored",
+                "connected map of 1",
+                "write GET k"
+            ]
+        );
     }
 }
 
@@ -727,7 +746,7 @@ mod handshake {
             (0, "+OK\r\n", "connected OK"),
             (0, HELLO, "connected map of 1"),
             (0, "|0\r\n+OK\r\n", "connected OK"),
-            (1, "+OK\r\n|0\r\n+OK\r\n", "ignored"),
+            (1, "+OK\r\n|0\r\n+OK\r\n", "connected OK"),
             (0, "%1\r\n$5\r\nproto\r\n:2\r\n", "connected map of 1"),
             (
                 0,
@@ -765,7 +784,7 @@ mod handshake {
                 ":1\r\n",
                 "broken AuthenticationFailed Authentication failed with unexpected response",
             ),
-            (1, "%0\r\n+OK\r\n", "ignored"),
+            (1, "%0\r\n+OK\r\n", "connected map of 0"),
             (1, "+OK\r\n-NO\r\n", "broken InvalidCommand NO"),
             (
                 1,

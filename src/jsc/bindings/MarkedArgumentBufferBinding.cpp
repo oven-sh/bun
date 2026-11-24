@@ -36,3 +36,10 @@ extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArray(void* ptr, J
     }
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args)));
 }
+
+extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArrayOfRange(void* ptr, JSC::JSGlobalObject* globalObject, size_t start, size_t end)
+{
+    auto& args = *static_cast<JSC::MarkedArgumentBuffer*>(ptr);
+    RELEASE_ASSERT(start <= end && end <= args.size());
+    return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args.begin() + start, end - start));
+}

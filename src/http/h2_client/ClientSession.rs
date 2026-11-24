@@ -18,7 +18,7 @@ use crate::h2_frame_parser as wire;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::request_trace::Endpoints;
 use crate::signals;
 use crate::ssl_config;
@@ -1153,7 +1153,7 @@ impl ClientSession {
         }
 
         if stream.remote_closed() {
-            if let Err(err) = client.finalize_body_on_eof() {
+            if let Err(err) = client.finalize_body_on_eof(TransportEnd::Clean) {
                 return client.fail(err);
             }
             return Self::finish_stream(stream, client);

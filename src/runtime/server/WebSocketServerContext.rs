@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap;
 use bun_uws as uws;
@@ -8,12 +6,10 @@ pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
 
     pub(crate) max_payload_length: u32, // default 16MB
-    pub(crate) max_lifetime: u16,
-    pub(crate) idle_timeout: u16, // default 2 minutes
+    pub(crate) idle_timeout: u16,       // default 2 minutes
     pub(crate) compression: i32,
     pub(crate) backpressure_limit: u32, // default 16MB
     pub(crate) send_pings_automatically: bool,
-    pub(crate) reset_idle_timeout_on_send: bool,
     pub(crate) close_on_backpressure_limit: bool,
 }
 
@@ -26,7 +22,7 @@ pub(crate) struct Handler {
     pub(crate) on_ping: JSValue,
     pub(crate) on_pong: JSValue,
 
-    pub(crate) app: Option<*mut c_void>,
+    pub(crate) app: Option<bun_ptr::BackRef<bun_uws_sys::web_socket::WebSockets>>,
     /// Type-erased backref to the owning `NewServer`, set alongside `app`
     /// in `set_routes` (so it is in place before any socket can upgrade and
     /// refreshed whenever a reload installs a new context).
@@ -52,9 +48,7 @@ bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
     pub struct HandlerFlags: u8 {
-        const SSL             = 1 << 0;
-        const PUBLISH_TO_SELF = 1 << 1;
-        // remaining 6 bits: padding
+        const PUBLISH_TO_SELF = 1 << 0;
     }
 }
 
@@ -167,8 +161,6 @@ impl WebSocketServerContext {
             compression: self.compression,
             max_backpressure: self.backpressure_limit,
             send_pings_automatically: self.send_pings_automatically,
-            max_lifetime: self.max_lifetime,
-            reset_idle_timeout_on_send: self.reset_idle_timeout_on_send,
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
         }
@@ -242,12 +234,10 @@ pub(crate) fn on_create(
     let mut server = WebSocketServerContext {
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
-        max_lifetime: 0,
-        idle_timeout: 120, // 2 minutes
+        idle_timeout: 120,                    // 2 minutes
         compression: 0,
         backpressure_limit: 1024 * 1024 * 16, // 16MB
         send_pings_automatically: true,
-        reset_idle_timeout_on_send: true,
         close_on_backpressure_limit: false,
     };
 
@@ -323,8 +313,7 @@ pub(crate) fn on_create(
             }
             let mut idle_timeout = idle_timeout as u16;
             if idle_timeout > 0 {
-                // uws does not allow idleTimeout to be between (0, 8),
-                // since its timer is not that accurate, therefore round up.
+                // The timer of a socket is not accurate enough for less.
                 idle_timeout = idle_timeout.max(8);
             }
 

@@ -248,17 +248,30 @@ pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_co
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__AOT__computeFileStamp(path: *const u8, length: usize) -> u64 {
+pub unsafe extern "C" fn Bun__AOT__isFileOfStamp(
+    path: *const u8,
+    length: usize,
+    stamp: u64,
+) -> bool {
+    use bun_aot::module_keys::{
+        has_identity_of_stamp, has_text_of_stamp, identity_of_file, path_without_form,
+    };
     // SAFETY: the caller hands `length` readable bytes at `path`. No zero byte is asked for behind them.
     let path = unsafe { core::slice::from_raw_parts(path, length) };
-    let stat = |file: &[u8]| bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok();
     // What an import attribute makes of a file is written when the file is. The build stamps it so: src/aot/compile/link_stage.rs.
-    let stat_file_of_form = || stat(bun_aot::module_keys::path_without_form(path)?);
-    let Some(stat) = stat(path).or_else(stat_file_of_form) else {
-        return 0;
+    let is_file_of_stamp = |path: &[u8]| {
+        let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
+        let stat = bun_sys::PosixStat::init(&stat);
+        let times = [stat.mtim, stat.ctim].map(|time| (time.sec, time.nsec));
+        let identity = identity_of_file([stat.dev, stat.ino, stat.size], times);
+        let text = || bun_sys::File::read_from(bun_sys::Fd::cwd(), path);
+        Some(
+            has_identity_of_stamp(stamp, identity)
+                || text().is_ok_and(|text| has_text_of_stamp(stamp, times[0], &text)),
+        )
     };
-    let stat = bun_sys::PosixStat::init(&stat);
-    bun_aot::module_keys::stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size)
+    let file_of_form = || is_file_of_stamp(path_without_form(path)?);
+    is_file_of_stamp(path).or_else(file_of_form).unwrap_or(false)
 }
 
 /// BunCompiledModules.cpp. `require` looks in `require.cache` for a Node.js module that is named without `node:`, under the name as it is written.

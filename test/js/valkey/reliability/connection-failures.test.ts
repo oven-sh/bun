@@ -2836,6 +2836,92 @@ describe.concurrent("Valkey: Handshake", () => {
     expect(fake.seen).toEqual([["HELLO 3", "SELECT 1"]]);
   });
 
+  test.each<[string, (client: RedisClient) => unknown, string[]]>([
+    ["a drop", drop, ["HELLO 3", "SELECT 5", "PING"]],
+    ["close() and connect()", c => (c.close(), c.connect()), ["HELLO 3", "SELECT 5", "PING"]],
+    ["select(0) and a drop", async c => (await c.select(0), drop(c)), ["HELLO 3", "PING"]],
+    ["RESET and a drop", async c => (await c.send("RESET", []), drop(c)), ["HELLO 3", "SELECT 2", "PING"]],
+    ["duplicate()", async c => (await c.duplicate()).close(), ["HELLO 3", "SELECT 2"]],
+  ])("with database 2 in the URL, the connection after select(5), %s", async (_, steps, second) => {
+    using fake = await commandServer(([name]) => (name === "RESET" ? "+RESET" : undefined));
+    const client = new RedisClient(`redis://${fake.host}/2`);
+    try {
+      await client.select(5);
+      await steps(client);
+      await client.ping();
+      expect(fake.seen[1]).toEqual(second);
+    } finally {
+      client.close();
+    }
+  });
+
+  test.each([
+    { end: "EXEC", result: "+OK", select: "SELECT 5" },
+    { end: "EXEC", result: "-ERR range", select: "SELECT 3" },
+    { end: "DISCARD", result: "nothing", select: "SELECT 3" },
+  ])("select(3), then select(5) inside MULTI with $result at $end: $select", async ({ end, result, select }) => {
+    using fake = await commandServer(([name, db], connection) =>
+      name === "EXEC" ? `*1\r\n${result}` : connection === 1 && db === "5" ? "+QUEUED" : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/2`);
+    try {
+      await client.select(3);
+      await client.send("MULTI", []);
+      await client.select(5);
+      await client.send(end, []);
+      await drop(client);
+      await client.ping();
+      expect(fake.seen[1]).toEqual(["HELLO 3", select, "PING"]);
+    } finally {
+      client.close();
+    }
+  });
+
+  test.each([
+    { reply: "-NOPERM no", ping: "OK", second: ["HELLO 3", "SELECT 5", "SELECT 2", "PING"] },
+    { reply: "-ERR range", ping: "ERR_REDIS_INVALID_COMMAND: ERR range", second: ["HELLO 3", "SELECT 5"] },
+  ])("a reconnect that gets $reply to the SELECT it repeats ends in $ping", async ({ reply, ping, second }) => {
+    using fake = await commandServer(([name, db], connection) =>
+      connection === 2 && name === "SELECT" && db === "5" ? reply : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/2`);
+    try {
+      await client.select(5);
+      await drop(client);
+      expect({ ping: await outcome(client.ping()), second: fake.seen[1] }).toEqual({ ping, second });
+      client.close();
+      await client.connect();
+      expect(fake.seen[2]).toEqual(["HELLO 3", "SELECT 2"]);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("onconnect can still authenticate and select after a reconnect", async () => {
+    const authenticated = new Set<number>();
+    using fake = await commandServer(([name], connection) => {
+      if (name === "AUTH") authenticated.add(connection);
+      return name === "HELLO" || authenticated.has(connection) ? undefined : "-NOAUTH Authentication required.";
+    });
+    const client = new RedisClient(`redis://${fake.host}`);
+    let selected = Promise.withResolvers();
+    client.onconnect = () => {
+      client.send("AUTH", ["password"]);
+      selected.resolve(client.send("SELECT", ["5"]));
+    };
+    client.onclose = error => selected.reject(error);
+    try {
+      await client.connect();
+      await selected.promise;
+      selected = Promise.withResolvers();
+      await drop(client);
+      await selected.promise;
+      expect(fake.seen[1]).toEqual(["HELLO 3", "SELECT 5", "AUTH password", "SELECT 5"]);
+    } finally {
+      client.close();
+    }
+  });
+
   test.each([
     { refused: "HELLO", reply: "-ERR max number of clients reached", ping: "OK", connections: 3 },
     { refused: "SELECT", reply: "-BUSY Redis is busy running a script", ping: "OK", connections: 3 },
@@ -2860,14 +2946,18 @@ describe.concurrent("Valkey: Handshake", () => {
       name === "SELECT" && connection > 1 ? "-BUSY script" : undefined,
     );
     const client = new RedisClient(`redis://${fake.host}/1`, { maxRetries: 2 });
-    await drop(client);
-    const error = await client.ping().catch(e => e);
-    const cause = `${error.cause?.code}: ${error.cause?.message}`;
-    expect({ message: error.message, cause, connections: fake.seen.length }).toEqual({
-      message: "Max reconnection attempts reached",
-      cause: "ERR_REDIS_CONNECTION_CLOSED: BUSY script",
-      connections: 3,
-    });
+    try {
+      await drop(client);
+      const error = await client.ping().catch(e => e);
+      const cause = `${error.cause?.code}: ${error.cause?.message}`;
+      expect({ message: error.message, cause, connections: fake.seen.length }).toEqual({
+        message: "Max reconnection attempts reached",
+        cause: "ERR_REDIS_CONNECTION_CLOSED: BUSY script",
+        connections: 3,
+      });
+    } finally {
+      client.close();
+    }
   });
 
   test.each<[string, (socket: net.Socket) => unknown, { ping: string; dials: number }]>([

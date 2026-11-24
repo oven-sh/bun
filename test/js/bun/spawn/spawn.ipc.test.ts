@@ -1352,34 +1352,6 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
   });
 });
 
-it.concurrent.skipIf(!isWindows)("a handler can run the event loop until the close after a failed write", async () => {
-  const result = await runPair(
-    `
-      const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
-      const child = spawnChild({
-        serialization: "advanced",
-        onDisconnect,
-        ipc(message) {
-          console.log(message);
-          runEventLoopUntil(disconnected);
-          console.log("disconnected");
-        },
-      });
-      // The event loop does not run until the child has exited, so "last" is still in the pipe when the write fails.
-      for (let isAlive = true; isAlive; Bun.sleepSync(1)) {
-        try {
-          process.kill(child.pid, 0);
-        } catch {
-          isAlive = false;
-        }
-      }
-      child.send("late");
-    `,
-    `process.send("last"); process.exit(0);`,
-  );
-  expect(result).toEqual({ stdout: ["last", "disconnected"], stderr: "", exitCode: 0 });
-});
-
 // Linux only: reads /proc/self/fd.
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
   // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.

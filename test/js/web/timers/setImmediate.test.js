@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 it("setImmediate", async () => {
@@ -80,23 +80,21 @@ it("setImmediate should not keep the process alive forever", async () => {
   expect(await Promise.race([success(), fail()])).toBe(true);
 });
 
-it("setImmediate fires while Bun.build() blocks on a plugin's setup() promise", async () => {
+it("setImmediate settles the top-level await of a preload while a socket is open", async () => {
+  using dir = tempDir("set-immediate-preload", {
+    // The first iterations consume the wakeups that are left from startup.
+    "preload.js": `globalThis.socket = await Bun.udpSocket({});
+      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));`,
+    "index.js": `socket.close();
+      console.log("loaded");`,
+  });
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const socket = await Bun.udpSocket({});
-      const setup = () => new Promise(resolve => setImmediate(resolve));
-      for (let i = 0; i < 3; i++) {
-        await Bun.build({ entrypoints: ["/e.js"], files: { "/e.js": "" }, plugins: [{ name: "a", setup }] });
-      }
-      socket.close();
-      console.log("built");`,
-    ],
+    cmd: [bunExe(), "--preload=./preload.js", "index.js"],
+    cwd: String(dir),
     // The GC timer would wake the event loop.
     env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "built\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "loaded\n", exitCode: 0 });
 });

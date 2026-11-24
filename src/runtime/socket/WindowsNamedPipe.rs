@@ -518,11 +518,9 @@ impl WindowsNamedPipe {
     /// Cancels a pending connect, which `on_connect` reports as `ECANCELED`, or else closes the pipe.
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub(crate) fn close_or_cancel_connect(&self) {
-        let Some(pending_connect) = self.pending_connect.take() else {
+        let Some(_pending_connect) = self.pending_connect.take() else {
             return self.close();
         };
-        let _keep_alive = self.keep_alive();
-        drop(pending_connect);
         self.on_connect(Err(bun_sys::Error::from_code(
             bun_sys::E::ECANCELED,
             bun_sys::Tag::connect,

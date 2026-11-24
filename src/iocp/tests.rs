@@ -234,29 +234,6 @@ fn cancel_and_wait_returns_completion_without_callback() {
 }
 
 #[test]
-fn nested_iteration_dispatches_outer_batch() {
-    let port = Port::new().unwrap();
-    let (first, first_peer) = create_pipe(&port, OverlappedFile::new_exclusive);
-    let (second, second_peer) = create_pipe(&port, OverlappedFile::new_exclusive);
-    let second_result = Rc::new(RefCell::new(None));
-    let is_done = Rc::new(Cell::new(false));
-    let on_first_read = {
-        let port = Rc::clone(&port);
-        let second_result = Rc::clone(&second_result);
-        let is_done = Rc::clone(&is_done);
-        move |_| {
-            run_until(&port, || second_result.borrow().is_some());
-            is_done.set(true);
-        }
-    };
-    let _first = first.read(Vec::with_capacity(1), 1, on_first_read);
-    let _second = start_read(&second, &second_result);
-    first_peer.write_all(b"1").unwrap();
-    second_peer.write_all(b"2").unwrap();
-    run_until(&port, || is_done.get());
-}
-
-#[test]
 fn request_dropped_before_dispatch_skips_callback() {
     let port = Port::new().unwrap();
     let (first, first_peer) = create_pipe(&port, OverlappedFile::new_exclusive);

@@ -934,7 +934,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(windows)]
         PollTag::IpcChannel => io_arm!(
             [Ipc],
-            RefPtr::init_ref,
+            <*mut _>::as_ref_unchecked,
             crate::ipc::SendQueue,
             |this, _, event| this.on_io(event)
         ),

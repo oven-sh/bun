@@ -1750,10 +1750,6 @@ impl VirtualMachine {
         });
         self.macro_mode.set(false);
         self.event_loop.set(&raw const self.regular_event_loop);
-        // The macro loop may have consumed the wakeup of a signal queued for the regular loop.
-        if self.regular_event_loop.signal_handler.get().is_some() {
-            self.regular_event_loop.wakeup();
-        }
         self.transpiler_store.enabled.set(true);
     }
 

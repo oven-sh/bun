@@ -86,7 +86,6 @@ struct Slot {
     /// The kernel cancels such a write when the issuing thread exits, before it closes any file.
     is_thread_bound_write: Cell<bool>,
     is_hangup: Cell<bool>,
-    result: Cell<Option<Box<dyn Any + Send>>>,
     event: OnceCell<OwnedHandle>,
     notifier: Notifier,
 }
@@ -165,17 +164,30 @@ impl Requests {
             return;
         }
         let completion = slot.take_completion();
-        let result = slot.result.take();
         let callback = self.take_callback(&slot);
         if callback.is_none() && slot.state.get() == State::PendingIo {
             self.abandoned_count.update(|count| count - 1);
         }
         self.slab.borrow_mut().release(token);
-        match (callback.filter(|_| !port.is_shutdown()), result) {
-            (Some(Callback::Io(done)), _) => done(completion),
-            (Some(Callback::Notify(done)), _) => done(),
-            (Some(Callback::Result(done)), Some(result)) => done(result),
+        match callback.filter(|_| !port.is_shutdown()) {
+            Some(Callback::Io(done)) => done(completion),
+            Some(Callback::Notify(done)) => done(),
             _ => {}
+        }
+    }
+
+    /// Discards `result` if the request was dropped.
+    pub(crate) fn complete_with_result(
+        &self,
+        port: &Port,
+        token: Token,
+        result: Box<dyn Any + Send>,
+    ) {
+        let Some(slot) = self.get(token) else { return };
+        let callback = self.take_callback(&slot);
+        self.slab.borrow_mut().release(token);
+        if let Some(Callback::Result(done)) = callback.filter(|_| !port.is_shutdown()) {
+            done(result);
         }
     }
 
@@ -187,17 +199,6 @@ impl Requests {
             (State::PendingIo, status) => NT_ERROR(status) && slot.file.is_some(),
             _ => slot.is_hangup.get(),
         })
-    }
-
-    /// Fails if the request was dropped.
-    pub(crate) fn try_store_result(&self, token: Token, result: Box<dyn Any + Send>) -> bool {
-        let slot = self.get(token);
-        let Some(slot) = slot.filter(|slot| slot.state.get() == State::PendingResult) else {
-            return false;
-        };
-        slot.result.set(Some(result));
-        slot.state.set(State::Ready);
-        true
     }
 
     fn abandon(&self, token: Token) {
@@ -215,7 +216,7 @@ impl Requests {
             }
             State::PendingSignal if !slot.notifier.try_cancel() => {}
             State::PendingSignal | State::PendingResult | State::Delayed | State::Ready => {
-                let _unused = (slot.take_completion(), slot.result.take());
+                let _unused = slot.take_completion();
                 self.slab.borrow_mut().release(token);
             }
         }

@@ -1211,11 +1211,9 @@ impl SendQueue {
                 socket.read_now();
             }
             #[cfg(windows)]
-            if self.read_before_close.take()
+            if self.read_before_close.get()
                 && let Some(event) = self.windows.reader.try_read()
             {
-                // A handler can run the event loop until the close is reported.
-                self.schedule_deferred();
                 self.on_io(event);
             }
             self.pending_close.set(false);

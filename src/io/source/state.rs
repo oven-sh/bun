@@ -120,13 +120,12 @@ impl SourceState {
         let max_len = self.read_limit.get()?;
         let mut event = self.buffered_event.take()?;
         self.read_limit.set(None);
-        match &mut event {
-            ReadEvent::Data(data) if data.len() > max_len => {
-                self.buffered_event
-                    .set(Some(ReadEvent::Data(data.split_off(max_len))));
-            }
-            ReadEvent::Data(_) => {}
-            _ => self.update_loop_ref(),
+        self.update_loop_ref();
+        if let ReadEvent::Data(data) = &mut event
+            && data.len() > max_len
+        {
+            self.buffered_event
+                .set(Some(ReadEvent::Data(data.split_off(max_len))));
         }
         Some(event)
     }

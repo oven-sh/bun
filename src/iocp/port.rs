@@ -140,7 +140,7 @@ pub enum Event {
     Socket(NonNull<c_void>, Readiness),
 }
 
-/// An iteration of the loop is [`prepare`](Port::prepare), [`wait`](Port::wait) and [`dispatch`](Port::dispatch). Callbacks may run nested iterations.
+/// An iteration of the loop is [`prepare`](Port::prepare), [`wait`](Port::wait) and [`dispatch`](Port::dispatch).
 pub struct Port {
     pub(crate) shared: Arc<Shared>,
     pub(crate) sockets: Sockets,
@@ -470,6 +470,7 @@ impl Port {
             self.last_budget_claim_count.set(claim_count);
         }
         self.iteration.update(|iteration| iteration + 1);
+        // A callback is running the loop. The kernel does not deliver these packets again.
         if self.batch_pos.get() < self.batch_len.get() {
             return self.undispatched_count();
         }
@@ -819,9 +820,8 @@ impl Port {
             key::COMPLETER_RESULTS => {
                 let results = core::mem::take(&mut *self.shared.completer_results.lock());
                 for (token, result) in results {
-                    if self.requests.try_store_result(token, result) {
-                        self.defer(Packet::new(key::REQUEST, token.to_raw()));
-                    }
+                    self.record_events(1);
+                    self.requests.complete_with_result(self, token, result);
                 }
             }
             _ => {}

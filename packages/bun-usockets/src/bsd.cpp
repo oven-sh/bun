@@ -872,87 +872,71 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 }
 
 #ifdef _WIN32
-/* accept() for a listening socket that another process also holds. Every process that polls
- * the socket wakes up for each connection. A non-blocking accept() only returns WSAEWOULDBLOCK
- * if no connection is pending when it starts. If another process takes the pending connection
- * first, accept() waits for the next one and the event loop stops. AcceptEx can be canceled
- * instead. libuv accepts with AcceptEx on every listening socket (win/tcp.c). */
-static SOCKET bsd_accept_shared_socket(SOCKET fd, struct bsd_addr_t *addr) {
-    /* Don't create a socket when no connection is pending. */
-    fd_set readable;
-    FD_ZERO(&readable);
-    FD_SET(fd, &readable);
-    struct timeval no_wait = {0, 0};
-    int ready = select(0, &readable, NULL, NULL, &no_wait);
-    if (ready != 1) {
-        if (ready == 0) {
-            WSASetLastError(WSAEWOULDBLOCK);
-        }
+/* Winsock's accept() on a non-blocking socket is two steps: it polls, then waits for the
+ * connection it saw. If another holder of the socket takes that connection in between, the wait
+ * lasts until the next client arrives. An overlapped AcceptEx() can be called off instead. */
+static SOCKET win32_accept_shared(SOCKET fd, struct bsd_addr_t *addr) {
+    WSAPOLLFD pending = {fd, POLLRDNORM, 0};
+    if (WSAPoll(&pending, 1, 0) == 0) {
+        WSASetLastError(WSAEWOULDBLOCK);
         return INVALID_SOCKET;
     }
 
-    GUID acceptex_guid = WSAID_ACCEPTEX;
-    LPFN_ACCEPTEX acceptex = NULL;
-    DWORD bytes = 0;
-    if (WSAIoctl(fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &acceptex_guid, sizeof(acceptex_guid),
-                 &acceptex, sizeof(acceptex), &bytes, NULL, NULL) != 0) {
-        /* A provider without AcceptEx keeps the plain accept(). */
-        return accept(fd, (struct sockaddr *) &addr->mem, &addr->len);
+    WSAPROTOCOL_INFOW info;
+    int info_length = (int) sizeof(info);
+    GUID id = WSAID_ACCEPTEX;
+    LPFN_ACCEPTEX accept_ex;
+    DWORD bytes, flags;
+    /* CancelIoEx() needs a socket that is a kernel handle. */
+    if (getsockopt(fd, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *) &info, &info_length) != 0
+            || !(info.dwServiceFlags1 & XP1_IFS_HANDLES)
+            || info.iProtocol != IPPROTO_TCP
+            || WSAIoctl(fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &id, sizeof(id), &accept_ex, sizeof(accept_ex), &bytes, NULL, NULL) != 0) {
+        return accept(fd, (struct sockaddr *) addr, &addr->len);
     }
 
-    struct sockaddr_storage local;
-    int local_len = sizeof(local);
-    if (getsockname(fd, (struct sockaddr *) &local, &local_len) != 0) {
+    /* A new socket of the same provider, not a duplicate. */
+    info.dwProviderReserved = 0;
+    us_fd_t accepted{WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &info, 0,
+                                WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT)};
+    if (!accepted) {
         return INVALID_SOCKET;
     }
-    SOCKET accepted = WSASocketW(local.ss_family, SOCK_STREAM, 0, NULL, 0,
-                                 WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
-    if (accepted == INVALID_SOCKET) {
-        return INVALID_SOCKET;
-    }
-    HANDLE event = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (event == NULL) {
-        closesocket(accepted);
+    WSAEVENT event = WSACreateEvent();
+    if (event == WSA_INVALID_EVENT) {
         return INVALID_SOCKET;
     }
 
-    /* AcceptEx writes both addresses here, each with 16 bytes of extra space. */
-    char addresses[2 * (sizeof(struct sockaddr_storage) + 16)];
-    OVERLAPPED overlapped;
-    memset(&overlapped, 0, sizeof(overlapped));
-    /* The low bit keeps the completion off any I/O completion port. */
+    /* The low bit keeps the completion off a port that another holder has tied the socket to. */
+    OVERLAPPED overlapped = {};
     overlapped.hEvent = (HANDLE) ((ULONG_PTR) event | 1);
-    int err = 0;
-    if (!acceptex(fd, accepted, addresses, 0, sizeof(struct sockaddr_storage) + 16,
-                  sizeof(struct sockaddr_storage) + 16, &bytes, &overlapped)) {
-        err = WSAGetLastError();
-        if (err == WSA_IO_PENDING) {
-            /* The request either gets a connection that arrives before the cancel, or is canceled.
-             * Both set the event. Wait for it, because the request writes to this stack frame. */
+    constexpr DWORD address_length = sizeof(struct sockaddr_storage) + 16;
+    char addresses[2 * address_length];
+    BOOL ok = accept_ex(fd, accepted.get(), addresses, 0, address_length, address_length, &bytes, &overlapped);
+    if (!ok && WSAGetLastError() == WSA_IO_PENDING) {
+        /* A queued connection has completed it by now. One that arrives later may still do so. */
+        if (!HasOverlappedIoCompleted(&overlapped)) {
             CancelIoEx((HANDLE) fd, &overlapped);
+            /* The request writes to this frame until it is over, whatever becomes of fd. */
             WaitForSingleObject(event, INFINITE);
-            DWORD flags = 0;
-            err = WSAGetOverlappedResult(fd, &overlapped, &bytes, FALSE, &flags) ? 0 : WSAGetLastError();
-            if (err == WSA_OPERATION_ABORTED) {
-                err = WSAEWOULDBLOCK;
-            }
         }
+        ok = WSAGetOverlappedResult(fd, &overlapped, &bytes, FALSE, &flags);
     }
-    CloseHandle(event);
-
-    if (err == 0 && setsockopt(accepted, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *) &fd, sizeof(fd)) != 0) {
-        err = WSAGetLastError();
-    }
-    if (err != 0) {
-        closesocket(accepted);
-        WSASetLastError(err);
+    int error = ok ? 0 : WSAGetLastError();
+    WSACloseEvent(event);
+    if (!ok) {
+        WSASetLastError(error == WSA_OPERATION_ABORTED ? WSAEWOULDBLOCK : error);
         return INVALID_SOCKET;
     }
-    /* A connection the peer already reset has no address. The first read reports the reset. */
-    if (getpeername(accepted, (struct sockaddr *) &addr->mem, &addr->len) != 0) {
+
+    if (setsockopt(accepted.get(), SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char *) &fd, sizeof(fd)) != 0) {
+        return INVALID_SOCKET;
+    }
+    /* A connection that the peer already reset has no address. The first read reports the reset. */
+    if (getpeername(accepted.get(), (struct sockaddr *) addr, &addr->len) != 0) {
         addr->mem.ss_family = AF_UNSPEC;
     }
-    return accepted;
+    return accepted.release();
 }
 #endif
 
@@ -973,7 +957,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
         // Linux, FreeBSD
         us_fd_t accepted_fd{accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK)};
 #elif defined(_WIN32)
-        us_fd_t accepted_fd{shared ? bsd_accept_shared_socket(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len)};
+        us_fd_t accepted_fd{shared ? win32_accept_shared(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len)};
 #else
         // OS X
         us_fd_t accepted_fd{accept(fd, (struct sockaddr *) addr, &addr->len)};

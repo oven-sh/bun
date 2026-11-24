@@ -33,7 +33,7 @@ export interface ClusterWorker extends InstanceType<typeof EventEmitter> {
 
 const ObjectFreeze = Object.freeze;
 
-const kEmptyObject: {} = ObjectFreeze(Object.create(null));
+const kEmptyObject: {} = ObjectFreeze({ __proto__: null });
 
 function Worker(this: ClusterWorker, options?: { id?: number; state?: string; process?: WorkerProcess } | null): void {
   if (!(this instanceof Worker)) return new Worker(options) as any;

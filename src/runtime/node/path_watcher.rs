@@ -14,7 +14,7 @@
 //!
 //!   PathWatcherManager        process-global, lazy, owns the OS resource
 //!     ├─ Linux:   one inotify fd + one reader thread, wd → PathWatcher map
-//!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream)
+//!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream per 4096 watchers)
 //!     └─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
 //!
 //!   PathWatcher               one per unique (realpath, recursive) — deduped
@@ -161,6 +161,8 @@ pub(crate) struct PathWatcher {
     pub(super) recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
+    #[cfg(target_os = "macos")]
+    pub(super) is_fifo: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
     /// for per-handler duplicate suppression (same as `win_watcher.rs`).
@@ -337,21 +339,31 @@ pub(crate) fn watch(
     let mut resolve_buf = path::path_buffer_pool::get();
     let mut is_file = false;
     let probe = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
-        Ok(fd) => sys::CloseOnDrop::new(fd),
-        Err(e) => {
-            if e.get_errno() == E::ENOTDIR {
-                is_file = true;
-                match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
-                    Ok(fd) => sys::CloseOnDrop::new(fd),
-                    Err(e2) => return Err(e2.without_path()),
-                }
-            } else {
-                return Err(e.without_path());
+        Ok(fd) => Some(sys::CloseOnDrop::new(fd)),
+        Err(e) if e.get_errno() != E::ENOTDIR => return Err(e.without_path()),
+        // Opening a FIFO waits for a writer without O_PATH, and with O_NONBLOCK it wakes one that waits.
+        #[cfg(target_os = "macos")]
+        Err(_) if sys::stat(path).is_ok_and(|st| bun_core::S::ISFIFO(st.st_mode as _)) => None,
+        Err(_) => {
+            is_file = true;
+            match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
+                Ok(fd) => Some(sys::CloseOnDrop::new(fd)),
+                Err(e2) => return Err(e2.without_path()),
             }
         }
     };
+    let resolved = match &probe {
+        Some(probe) => sys::get_fd_path_z(probe.fd(), &mut resolve_buf),
+        #[cfg(target_os = "macos")]
+        None => match sys::get_full_path(path, &mut resolve_buf).map(|full| full.len()) {
+            Ok(len) => Ok(ZStr::nul_terminate(&mut resolve_buf, len)),
+            Err(e) => Err(e),
+        },
+        #[cfg(not(target_os = "macos"))]
+        None => Ok(path),
+    };
     // fall back to the caller's path; best effort
-    let resolved = sys::get_fd_path_z(probe.fd(), &mut resolve_buf).unwrap_or(path);
+    let resolved = resolved.unwrap_or(path);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
@@ -377,6 +389,8 @@ pub(crate) fn watch(
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
+        #[cfg(target_os = "macos")]
+        is_fifo: probe.is_none(),
         handlers,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         descriptors: Vec::new(),
@@ -943,7 +957,7 @@ impl Linux {
 // ────────────────────────────────────────────────────────────────────────────────
 
 /// macOS: delegate to `fs_events.rs`, which already runs one CFRunLoop thread with
-/// one FSEventStream covering every watched path.
+/// FSEventStreams covering every watched path.
 #[cfg(target_os = "macos")]
 fn start_fsevents() -> sys::Result<()> {
     fsevents::start().map_err(|e| {
@@ -960,17 +974,20 @@ fn start_fsevents() -> sys::Result<()> {
 
 #[cfg(target_os = "macos")]
 impl PathWatcherManager {
-    /// Lock order: `FSEventsLoop::mutex`, then this.
     pub(super) fn lock() -> bun_threading::guarded::GuardedLock<'static, Self, Mutex> {
         DEFAULT_MANAGER.wait().lock()
     }
 
-    pub(super) fn watchers(&self) -> impl Iterator<Item = &PathWatcher> {
-        self.watchers.slots.iter().flatten()
+    /// `FSEventStreamStart` fails with more paths than this.
+    const PATHS_PER_STREAM: usize = 4096;
+
+    pub(super) fn stream_count(&self) -> usize {
+        self.watchers.slots.len().div_ceil(Self::PATHS_PER_STREAM)
     }
 
-    pub(super) fn watcher_count(&self) -> usize {
-        self.by_path.len()
+    pub(super) fn watchers_of_stream(&self, index: usize) -> impl Iterator<Item = &PathWatcher> {
+        let mut streams = self.watchers.slots.chunks(Self::PATHS_PER_STREAM);
+        streams.nth(index).into_iter().flatten().flatten()
     }
 }
 

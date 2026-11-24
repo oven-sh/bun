@@ -15,9 +15,10 @@ expectType(diff.lines("a", "b", { ignoreCase: true, ignoreWhitespace: true, stri
 expectType(diff.chars("a", "b", { ignoreCase: true })).is<Bun.diff.Change[]>();
 expectType(diff.createPatch("a", "b", { ignoreWhitespace: true })).is<string>();
 expectType(diff.parsePatch("")).is<Bun.diff.FilePatch[]>();
-expectType(diff.applyPatch("a", "")).is<string | undefined>();
-expectType(diff.applyPatch("a", diff.hunks("a", "b"))).is<string | undefined>();
-expectType(diff.applyPatch("a", [{ oldStart: 1, lines: ["-a"] }])).is<string | undefined>();
+expectType(diff.applyPatch("a", "")).is<string>();
+expectType(diff.applyPatch("a", diff.parsePatch("")[0]!)).is<string>();
+expectType(diff.applyPatch("a", diff.hunks("a", "b"))).is<string>();
+expectType(diff.applyPatch("a", [{ oldStart: 1, lines: ["-a"] }])).is<string>();
 
 // @ts-expect-error
 diff.lines("a", "b", { context: 1 });

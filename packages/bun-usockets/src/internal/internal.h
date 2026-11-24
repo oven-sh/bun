@@ -207,7 +207,8 @@ extern struct addrinfo_result Bun__addrinfo_getRequestResult(struct addrinfo_req
 
 /* Loop related */
 /* `eof` values for us_internal_dispatch_ready_poll: nonzero = read-side EOF hint (half-open honored);
- * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed. */
+ * LIBUS_POLL_HANGUP = both directions down with no socket error: epoll's EPOLLHUP (re-reported until the fd
+ * is closed), or kqueue's write-filter EV_EOF once the peer's EOF is seen (reported each time it is armed). */
 #define LIBUS_POLL_EOF 1
 #define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);

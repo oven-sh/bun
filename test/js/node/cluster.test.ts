@@ -488,6 +488,46 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
+// Every worker is woken for every connection. On Windows one that lost the race could wait inside accept().
+test("SCHED_NONE: the workers that do not get a connection go on running", async () => {
+  using dir = tempDir("cluster-shared-accept", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const { once } = require("node:events");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  (async () => {
+    const workers = Array.from({ length: 2 }, () => cluster.fork());
+    const [[{ port }]] = await Promise.all(workers.map(worker => once(worker, "listening")));
+    for (let round = 0; round < 300; round++) {
+      const client = net.connect(port, "127.0.0.1");
+      await once(client, "connect");
+      const expected = client.localAddress + ":" + client.localPort;
+      const [seen] = await once(client, "data");
+      if (String(seen) !== expected) throw new Error(seen + " is not " + expected);
+      client.destroy();
+      await Promise.all(workers.map(worker => (worker.send("ping"), once(worker, "message"))));
+    }
+    console.log("done");
+    cluster.disconnect();
+  })();
+} else {
+  process.on("message", () => process.send("pong"));
+  net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.end(socket.remoteAddress + ":" + socket.remotePort);
+  }).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "done", exitCode: 0 });
+});
+
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
     "main.ts": `

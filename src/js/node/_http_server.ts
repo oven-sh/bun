@@ -2980,7 +2980,7 @@ function renderNativeHeaders(res) {
     if (headersMap !== null && headersMap !== undefined) {
       for (const key in headersMap) {
         const entry = headersMap[key];
-        const name = entry[0];
+        const name = String(entry[0]);
         const value = entry[1];
         if (key === "date") hasDate = true;
         else if (key === "connection") {
@@ -3004,7 +3004,7 @@ function renderNativeHeaders(res) {
             valueLength >= 2 &&
             (key === "cookie" || (res[kUniqueHeaders] != null && res[kUniqueHeaders].$has(key)))
           ) {
-            flat.push(name, value.join("; "));
+            flat.push(name, String(value.join("; ")));
           } else {
             for (let i = 0; i < valueLength; i++) {
               flat.push(name, String(value[i]));

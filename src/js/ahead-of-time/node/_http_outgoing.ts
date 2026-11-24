@@ -1573,13 +1573,14 @@ function pushRenderedHeader(
   name: string,
   value: $Node.HttpHeaderValue,
 ): void {
+  name = String(name);
   if ($isArray(value)) {
     const valueLength = value.length;
     if (
       valueLength >= 2 &&
       (key === "cookie" || (message[kUniqueHeaders] != null && message[kUniqueHeaders].$has(key)))
     ) {
-      flat.push(name, value.join("; "));
+      flat.push(name, String(value.join("; ")));
     } else {
       for (let i = 0; i < valueLength; i++) {
         flat.push(name, String(value[i]));

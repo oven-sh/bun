@@ -2324,6 +2324,214 @@ export { greeting };`,
   });
 });
 
+describe("Bun.build runs onEnd callbacks one at a time", () => {
+  type OnEnd = Parameters<Bun.PluginBuilder["onEnd"]>[0];
+  const plugin = (name: string, ...callbacks: OnEnd[]): Bun.BunPlugin => ({
+    name,
+    setup(builder) {
+      for (const callback of callbacks) builder.onEnd(callback);
+    },
+  });
+
+  test("a callback starts after the promise of the previous plugin settles", async () => {
+    using dir = tempDir("onend-serial", { "index.ts": `console.log(1);` });
+    const log: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+
+    const building = Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        plugin("a", async () => {
+          log.push("a start");
+          started.resolve();
+          await gate.promise;
+          log.push("a end");
+        }),
+        plugin("b", async () => {
+          log.push("b start");
+        }),
+        plugin("c", () => {
+          log.push("c start");
+        }),
+      ],
+    });
+
+    await started.promise;
+    expect(log).toEqual(["a start"]);
+    gate.resolve();
+    await building;
+    expect(log).toEqual(["a start", "a end", "b start", "c start"]);
+  });
+
+  test("a later callback sees what an earlier callback did to the result", async () => {
+    using dir = tempDir("onend-serial-result", { "index.ts": `console.log(1);` });
+    const seen: unknown[] = [];
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+
+    const building = Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        {
+          name: "a",
+          async setup(builder) {
+            builder.onEnd(async result => {
+              started.resolve();
+              await gate.promise;
+              (result as any).pruned = true;
+            });
+            await Promise.resolve();
+            builder.onEnd(result => {
+              seen.push((result as any).pruned);
+            });
+          },
+        },
+        plugin("b", result => {
+          seen.push((result as any).pruned);
+        }),
+      ],
+    });
+
+    await started.promise;
+    expect(seen).toEqual([]);
+    gate.resolve();
+    expect((await building) as any).toMatchObject({ success: true, pruned: true });
+    expect(seen).toEqual([true, true]);
+  });
+
+  test("a callback that fails does not stop the later callbacks, and the first error rejects the build after the last one", async () => {
+    using dir = tempDir("onend-serial-errors", { "index.ts": `console.log(1);` });
+    const log: string[] = [];
+    const first = new Error("first");
+    const aStarted = Promise.withResolvers<void>();
+    const aGate = Promise.withResolvers<void>();
+    const cStarted = Promise.withResolvers<void>();
+    const cGate = Promise.withResolvers<void>();
+
+    let settled = false;
+    const outcome = Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        plugin("a", async () => {
+          log.push("a start");
+          aStarted.resolve();
+          await aGate.promise;
+          log.push("a reject");
+          throw first;
+        }),
+        plugin("b", () => {
+          log.push("b throw");
+          throw new Error("second");
+        }),
+        plugin("c", async () => {
+          log.push("c start");
+          cStarted.resolve();
+          await cGate.promise;
+          log.push("c end");
+        }),
+      ],
+    }).then(
+      () => ((settled = true), "resolved"),
+      error => ((settled = true), error),
+    );
+
+    await aStarted.promise;
+    expect(log).toEqual(["a start"]);
+    aGate.resolve();
+    await cStarted.promise;
+    expect({ log, settled }).toEqual({ log: ["a start", "a reject", "b throw", "c start"], settled: false });
+    cGate.resolve();
+    expect(await outcome).toBe(first);
+    expect(log).toEqual(["a start", "a reject", "b throw", "c start", "c end"]);
+  });
+
+  test("synchronous callbacks that throw reject the build with the first thrown value", async () => {
+    using dir = tempDir("onend-serial-sync-throw", { "index.ts": `console.log(1);` });
+    const log: string[] = [];
+    const first = { thrown: "first" };
+
+    const outcome = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        plugin("a", () => {
+          log.push("a");
+          throw first;
+        }),
+        plugin("b", () => {
+          log.push("b");
+          throw new Error("second");
+        }),
+        plugin("c", () => {
+          log.push("c");
+        }),
+      ],
+    }).then(
+      () => "resolved",
+      error => error,
+    );
+
+    expect(outcome).toBe(first);
+    expect(log).toEqual(["a", "b", "c"]);
+  });
+
+  test.each([true, false])("a build that fails with throw: %p settles after the last callback", async shouldThrow => {
+    using dir = tempDir("onend-serial-failed-build", { "index.ts": `import "./does-not-exist";` });
+    const log: string[] = [];
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+
+    const outcome = Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      throw: shouldThrow,
+      plugins: [
+        plugin("a", async result => {
+          log.push("a start success=" + result.success);
+          started.resolve();
+          await gate.promise;
+          log.push("a end");
+        }),
+        plugin("b", () => {
+          log.push("b start");
+        }),
+      ],
+    }).then(
+      result => ({ success: result.success }),
+      error => ({ rejected: error instanceof AggregateError, message: error.message }),
+    );
+
+    await started.promise;
+    expect(log).toEqual(["a start success=false"]);
+    gate.resolve();
+    expect(await outcome).toEqual(shouldThrow ? { rejected: true, message: "Bundle failed" } : { success: false });
+    expect(log).toEqual(["a start success=false", "a end", "b start"]);
+  });
+
+  test("a replaced Promise.all is not called", async () => {
+    using dir = tempDir("onend-serial-promise-all", {
+      "index.ts": `console.log("hello");`,
+      "build.ts": `
+        const calls = [];
+        const all = Promise.all;
+        Promise.all = function () {
+          calls.push("Promise.all");
+          return all.apply(this, arguments);
+        };
+        const plugin = name => ({ name, setup(builder) { builder.onEnd(async () => { await null; calls.push(name); }); } });
+        const build = await Bun.build({ entrypoints: ["./index.ts"], plugins: [plugin("a"), plugin("b")] });
+        console.log(JSON.stringify({ calls, success: build.success }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      out: { calls: ["a", "b"], success: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to

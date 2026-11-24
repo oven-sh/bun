@@ -1783,7 +1783,6 @@ describe("bundler", () => {
         builder.onEnd(async () => {
           events.push("fifth-throw");
           await Bun.sleep(0);
-          // Shouldn't reach here, promise should have already rejected elsewhere
           events.push("fifth-throw-after-await");
           errorCount++;
           throw new Error("fifth callback error");
@@ -1799,12 +1798,13 @@ describe("bundler", () => {
             "first-success",
             "second-throw",
             "third-throw",
+            "third-throw-after-await",
             "fourth-success",
             "fifth-throw",
-            "third-throw-after-await",
+            "fifth-throw-after-await",
           ]
         `);
-        expect(errorCount).toBe(2);
+        expect(errorCount).toBe(3);
       },
     };
   });
@@ -1883,7 +1883,7 @@ describe("bundler", () => {
         });
       },
       onAfterBundle(api) {
-        expect(events).toEqual(["first-start", "second-start", "third-start", "second-end", "first-end", "third-end"]);
+        expect(events).toEqual(["first-start", "first-end", "second-start", "second-end", "third-start", "third-end"]);
         expect(api.readFile("out/index.js")).toContain("gc test");
       },
     };

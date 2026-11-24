@@ -109,38 +109,79 @@ export function runOnEndCallbacks(
   promise: Promise<object>,
   buildResult: object,
   buildRejection: unknown,
-): Promise<void> | void {
+): Promise<unknown> | void {
   const callbacks = this.$onEndCallbacks;
   if (!callbacks) return;
-  const promises: PromiseLike<unknown>[] = [];
 
-  for (const callback of callbacks) {
+  // The callbacks run one at a time, as in esbuild. A callback that fails does not stop the later ones.
+  // The build rejects with the first error, after the last callback.
+  let hasError = false;
+  let firstError: unknown;
+
+  for (let i = 0; i < callbacks.length; i++) {
+    const callback = callbacks[i];
+    let result;
     try {
-      const result = callback(buildResult);
-
-      if (result && $isPromise(result)) {
-        $arrayPush(promises, result);
-      }
+      result = callback(buildResult);
     } catch (e) {
-      $arrayPush(promises, Promise.$reject(e));
+      if (!hasError) {
+        hasError = true;
+        firstError = e;
+      }
+      continue;
     }
-  }
 
-  if (promises.length > 0) {
-    // we return the promise here because the native bundler detects whether the
-    // promise was handled by checking if this function did not return undefined
-    return Promise.all(promises).then(
-      () => {
-        if (buildRejection !== undefined) {
+    if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) {
+      // Native code settles `promise` itself if and only if this function returns undefined.
+      // The arrow function captures nothing, so a build whose callbacks are all synchronous allocates no closure.
+      return (async (
+        callbacks: $Node.BundlerPlugin.OnEndCallback[],
+        i: number,
+        pending: unknown,
+        promise: Promise<object>,
+        buildResult: object,
+        buildRejection: unknown,
+        hasError: boolean,
+        firstError: unknown,
+      ) => {
+        try {
+          await pending;
+        } catch (e) {
+          if (!hasError) {
+            hasError = true;
+            firstError = e;
+          }
+        }
+
+        for (; i < callbacks.length; i++) {
+          const callback = callbacks[i];
+          try {
+            const result = callback(buildResult);
+            if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) {
+              await result;
+            }
+          } catch (e) {
+            if (!hasError) {
+              hasError = true;
+              firstError = e;
+            }
+          }
+        }
+
+        if (hasError) {
+          $rejectPromise(promise, firstError);
+        } else if (buildRejection !== undefined) {
           $rejectPromise(promise, buildRejection);
         } else {
           $resolvePromise(promise, buildResult);
         }
-      },
-      e => {
-        $rejectPromise(promise, e);
-      },
-    );
+      })(callbacks, i + 1, result, promise, buildResult, buildRejection, hasError, firstError);
+    }
+  }
+
+  if (hasError) {
+    $rejectPromise(promise, firstError);
+    return promise;
   }
 }
 

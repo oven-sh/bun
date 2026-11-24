@@ -2,9 +2,13 @@ use std::collections::BTreeMap;
 
 use bun_quic::Direction::Unidirectional;
 use bun_quic::Layer::Transport;
-use bun_quic::{Batch, ConnectionId, Duration, Instant, StreamId, TokenBucket};
+use bun_quic::Side::{Client, Server};
+use bun_quic::{Batch, Config, ConnectionId, Duration, Instant, StreamId, TokenBucket};
 
+use crate::harness::crypto::Toy;
+use crate::harness::keys::Secret;
 use crate::harness::paths::NEW;
+use crate::harness::peer::Peer;
 use crate::harness::raw::Kind::{Early, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::hex;
@@ -104,6 +108,30 @@ fn the_id_that_the_client_chose_leads_to_its_connection() {
 
 /// RFC 9000 §5.2.2.
 #[test]
+fn only_an_initial_packet_starts_a_connection() {
+    for (kind, token, count) in [(0, &[0][..], 1), (1, &[], 0), (2, &[], 0)] {
+        let mut raw = Raw::client();
+        let mut payload = raw.encode(Initial, "hello");
+        payload.resize(1200, 0);
+        let len = (0x4000 | (4 + payload.len() + 16) as u16).to_be_bytes();
+        let mut packet = [&raw.long_header(kind), token, &len, &[0; 4]].concat();
+        packet[0] |= 3;
+        let offset = packet.len() - 4;
+        let secret = Secret::initial(raw.peer.crypto, raw.version, &raw.original, Client);
+        let (key, nonce) = secret.packet_key(0);
+        let tag = key.seal(&nonce, &packet, &mut payload);
+        packet.extend([&payload[..], &tag].concat());
+        let mask = (secret.header_key()).mask(packet[offset + 4..].first_chunk().unwrap());
+        packet[0] ^= mask[0] & 0x0f;
+        (0..4).for_each(|at| packet[offset + at] ^= mask[1 + at]);
+        raw.next[0] = 1;
+        raw.deliver(&packet);
+        assert_eq!(raw.peer.endpoint.connection_count(), count);
+    }
+}
+
+/// RFC 9000 §5.2.2.
+#[test]
 fn refusal() {
     let mut raw = Raw::client();
     raw.peer.refuses = true;
@@ -163,6 +191,19 @@ fn stateless_resets() {
             assert_eq!(raw.take().pop().map(|it| it.datagram), expected);
         }
     }
+}
+
+/// RFC 9000 §10.3.2.
+#[test]
+fn reset_tokens_depend_on_a_secret_of_the_endpoint() {
+    let tokens = [1, 2].map(|seed| {
+        let mut raw = Raw::client();
+        raw.peer = Peer::new(Server, Toy::new(seed, &[]), Config::server());
+        raw.peer.resets = true;
+        raw.deliver(&[0x40; 100]);
+        *raw.take()[0].datagram.last_chunk::<16>().unwrap()
+    });
+    assert_ne!(tokens[0], tokens[1]);
 }
 
 #[test]

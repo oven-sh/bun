@@ -1,7 +1,7 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::Layer::Transport;
 use bun_quic::transport_code::PROTOCOL_VIOLATION;
-use bun_quic::{Config, StreamId, TransportParameters, Version};
+use bun_quic::{Config, Side, StreamId, TransportParameters, Version};
 
 use crate::harness::http3;
 use crate::harness::keys::V2;
@@ -115,6 +115,20 @@ fn frames_that_are_not_allowed() {
         assert_eq!(raw.error(), Some((Transport, PROTOCOL_VIOLATION)));
         assert_eq!(raw.reason, b"frame is not allowed in this type of packet");
     }
+}
+
+/// RFC 9001 §5.6.
+#[test]
+fn a_client_ignores_0_rtt_packets() {
+    let mut raw = Raw::server().with_ticket();
+    raw.resume();
+    raw.forget();
+    raw.send_in(Early, "close 1 0 -");
+    raw.side = Side::Client;
+    raw.send_in(Early, "close 1 0 -");
+    raw.side = Side::Server;
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready");
 }
 
 /// RFC 9001 §4.6.3 and RFC 9114 §7.2.4.2.
@@ -266,6 +280,41 @@ fn a_client_is_told_about_a_rejection() {
     assert_eq!(raw.events(), "early data rejected, ready");
     raw.confirm();
     assert_eq!(raw.events(), "confirmed");
+}
+
+#[test]
+fn datagrams_after_a_rejection() {
+    for (limit, events, frames) in [
+        (
+            100,
+            "datagram 1 lost, early data rejected, ready",
+            "datagram b",
+        ),
+        (
+            0,
+            "datagram 1 lost, early data rejected, ready, datagram 2 abandoned",
+            "",
+        ),
+    ] {
+        let mut raw = Raw::server()
+            .with("max_datagram_frame_size=100")
+            .with_ticket();
+        raw.resume();
+        raw.connection().send_datagram(1, b"a".to_vec());
+        raw.process();
+        raw.accepts_early_data = false;
+        raw.set(&format!("max_datagram_frame_size={limit}"));
+        raw.send_all(&[
+            (Initial, "hello"),
+            (Handshake, &format!("flight 0 {}", raw.flight().len() - 1)),
+        ]);
+        raw.connection().send_datagram(2, b"b".to_vec());
+        raw.take();
+        assert_eq!(raw.connection().unsent_datagrams(), 1);
+        raw.send_in(Handshake, "flight");
+        assert_eq!(raw.events(), events);
+        assert!(raw.frames().ends_with(frames));
+    }
 }
 
 #[test]

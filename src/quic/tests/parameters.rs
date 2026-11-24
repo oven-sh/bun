@@ -213,6 +213,28 @@ fn preferred_addresses_for_one_family() {
     }
 }
 
+/// RFC 9000 §18.2.
+#[test]
+fn preferred_addresses_need_ids() {
+    let (address, token) = ("01".repeat(24), "02".repeat(16));
+    for (source, id) in [
+        (&b"raw-id-0"[..], "00"),
+        (b"", "01aa"),
+        (b"raw-id-0", "15aa"),
+    ] {
+        let id = if id == "15aa" {
+            format!("15{}", "aa".repeat(21))
+        } else {
+            id.into()
+        };
+        let mut raw = Raw::server().with(&format!("preferred_address=#{address}{id}{token}"));
+        raw.source = source.to_vec();
+        raw.start(&[]);
+        raw.shake_hands();
+        assert_eq!(raw.error(), Some((Transport, TRANSPORT_PARAMETER_ERROR)));
+    }
+}
+
 #[test]
 fn ranges() {
     for (name, valid, invalid) in [

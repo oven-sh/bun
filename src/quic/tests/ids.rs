@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use bun_quic::Layer::Transport;
 use bun_quic::transport_code::*;
 
-use crate::harness::paths::{new_id, new_ids};
+use crate::harness::paths::{NEW, OLD, new_id, new_ids};
 use crate::harness::raw::Kind::{Handshake, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 
@@ -23,6 +23,19 @@ fn issues_no_more_than_the_peer_takes() {
             assert_eq!(stats.pings_received, 2 * issued as u64);
         }
     }
+}
+
+/// RFC 9000 §5.1.
+#[test]
+fn connection_ids_are_random() {
+    let raw = Raw::client();
+    let planned = ["first id", "2nd id..", "third id", "fourth.."].map(|it| it.as_bytes().to_vec());
+    raw.peer.crypto.planned.borrow_mut().extend(planned.clone());
+    let raw = raw.with("active_connection_id_limit=4").connected();
+    let mut ids: Vec<_> = raw.ids.values().map(|it| it.0.clone()).collect();
+    ids.insert(0, raw.destination);
+    assert!(ids.len() > 1);
+    assert_eq!(ids, planned[..ids.len()]);
 }
 
 #[test]
@@ -70,6 +83,24 @@ fn switches_when_asked_to_retire() {
         raw.wait();
         assert_eq!(raw.frames(), "retire_connection_id 8, ping");
     }
+}
+
+#[test]
+fn nothing_to_switch_to() {
+    let mut raw = Raw::client().connected();
+    raw.send(&format!("{}, {}", new_id(1, 1), new_id(2, 1)));
+    raw.use_id(1);
+    raw.move_to(NEW);
+    raw.send_expanded("path_challenge 12345678");
+    raw.move_to(OLD);
+    raw.send("ack");
+    raw.forget();
+    raw.send(&format!("{}, {}", new_id(2, 2), new_id(1, 0)));
+    assert_eq!(raw.frames(), "");
+    raw.send(&new_id(3, 0));
+    let packets = raw.take();
+    assert_eq!(packets[0].frames.last().unwrap(), "retire_connection_id 1");
+    assert_eq!(packets[0].destination, b"raw-id-3");
 }
 
 #[test]

@@ -233,6 +233,30 @@ fn uses_the_table_that_the_peer_allows() {
     }
 }
 
+/// RFC 9114 §7.2.4.2, RFC 9204 §3.2.3.
+#[test]
+fn no_dynamic_table_ahead_of_the_settings() {
+    for side in [Client, Server] {
+        let raw = Raw::http3(side).http3_config(|it| it.encodes_with_dynamic_table = true);
+        let mut raw = raw.connected();
+        let fields = format!("{} abc=defghijklmno", [OK, GET][side as usize]);
+        for id in (0..40).step_by(4) {
+            match side {
+                Client => {
+                    raw.write_http3(id, &format!("headers {GET}"), true);
+                    assert!(raw.peer.send_headers(id, &fields));
+                    raw.connection().finish(StreamId(id));
+                }
+                Server => drop(raw.request(&fields)),
+            }
+            raw.process();
+            // Required Insert Count and Base follow the type and the length of the frame.
+            assert_eq!(raw.streams[&id][2..4], [0, 0]);
+        }
+        assert_eq!(raw.streams[&(10 | !side as u64)], [2]);
+    }
+}
+
 #[test]
 fn stays_in_step_over_a_lossy_network() {
     for seed in 0..8 {

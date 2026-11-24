@@ -246,6 +246,32 @@ fn tunnels() {
     }
 }
 
+/// RFC 9114 §4.4.
+#[test]
+fn tunnels_only_have_data() {
+    let mut raw = Raw::http3(Client).exchange();
+    let head = ":method=CONNECT :authority=a:1 content-length=0";
+    raw.write_http3(0, &format!("headers {head}, data a"), false);
+    assert_eq!(raw.events(), format!("0 Head {head}, 0 data a"));
+    raw.write_http3(0, "headers a=b", false);
+    assert_eq!(raw.http3_error(), Some(FRAME_UNEXPECTED));
+
+    let mut raw = Raw::http3(Server).connected_with("");
+    raw.request(":method=CONNECT :authority=a:1");
+    raw.write_http3(0, "headers :status=100, headers :status=299", false);
+    assert_eq!(raw.error(), None);
+    raw.write_http3(0, "headers a=b", false);
+    assert_eq!(raw.http3_error(), Some(FRAME_UNEXPECTED));
+}
+
+#[test]
+fn no_content_starts_a_tunnel() {
+    let mut raw = Raw::http3(Server).connected_with("");
+    raw.request(":method=CONNECT :authority=a:1");
+    raw.write_http3(0, "headers :status=204, data a", false);
+    assert_eq!(raw.events(), "0 Head :status=204, 0 data a");
+}
+
 #[test]
 fn frames_that_do_not_start_a_message() {
     for (sides, frame, code) in [

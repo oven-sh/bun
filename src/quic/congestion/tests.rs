@@ -521,6 +521,15 @@ fn small_writes_stop_waiting_if_the_queue_is_gone() {
 }
 
 #[test]
+fn one_short_sample_does_not_mean_that_the_queue_is_gone() {
+    let (mut crowd, mut rtt) = (watching_crowd(), steady(millis(30)));
+    assert!(!crowd.wait(START, &rtt, || false).is_zero());
+    rtt.latest = millis(16);
+    crowd.on_feedback(START, &rtt);
+    assert!(!crowd.wait(START, &rtt, || false).is_zero());
+}
+
+#[test]
 fn small_writes_go_on_waiting_if_the_queue_has_come_back_before() {
     let (mut crowd, mut now) = (watching_crowd(), START);
     for len in [1, 16, 64] {
@@ -531,15 +540,17 @@ fn small_writes_go_on_waiting_if_the_queue_has_come_back_before() {
 
 #[test]
 fn small_writes_in_a_series_wait_after_a_loss() {
-    for (packets, elapsed, continues_series, waits) in [
-        (12, 32 * 16 - 1, true, true),
-        (12, 32 * 16, true, false),
-        (12, 0, false, false),
-        (11, 0, true, false),
+    for (packets, len, elapsed, continues_series, waits) in [
+        (12, 0, 32 * 16 - 1, true, true),
+        (12, 0, 32 * 16, true, false),
+        (12, 0, 0, false, false),
+        (11, 0, 0, true, false),
+        (12, 599, 0, true, true),
+        (12, 600, 0, true, false),
     ] {
         let (mut crowd, rtt) = (watching_crowd(), steady(millis(16)));
         (0..packets).for_each(|_| crowd.on_sent());
-        crowd.on_loss(START, 0, &rtt);
+        crowd.on_loss(START, packets * len, &rtt);
         let wait = crowd.wait(START + millis(elapsed), &rtt, || continues_series);
         assert_eq!(!wait.is_zero(), waits);
     }
@@ -2634,6 +2645,13 @@ fn bbr_does_not_take_the_delay_of_acknowledgments_for_a_queue() {
     sender.rtt.update(millis(40), millis(25));
     (sender.flights.iter()).for_each(|it| sender.controller.on_acked(it));
     sender.controller.end_ack(sender.now, &sender.rtt);
+    assert_eq!(min_rtt(&sender), millis(20));
+
+    sender.flights.clear();
+    while sender.window() <= 4 * SEGMENT {
+        sender.rounds_of(2, 1, millis(50));
+    }
+    ack_oldest_with_delay(sender.send(2).wait(millis(30)), millis(15));
     assert_eq!(min_rtt(&sender), millis(20));
 }
 

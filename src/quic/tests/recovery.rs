@@ -236,6 +236,23 @@ fn small_writes_are_gathered_if_many_seem_to_be_in_a_queue() {
 }
 
 #[test]
+fn what_is_known_about_the_queue_does_not_outlast_a_pause() {
+    let mut raw = Raw::client().connected();
+    let id = raw.peer.open(Unidirectional);
+    crowd(&mut raw, id, 3 * RTT);
+    raw.now = raw.now + Duration::from_millis(3 * RTT);
+    raw.send("ack");
+    raw.advance(20 * RTT);
+    raw.forget();
+    for _ in 0..20 {
+        raw.peer.send(id, b"a", false);
+        raw.process();
+        raw.now = raw.now + APART;
+    }
+    assert_eq!(raw.take().len(), 20);
+}
+
+#[test]
 fn only_a_little_new_data_waits_for_more() {
     let events: [(fn(&mut Raw), &str); 20] = [
         (|_| {}, ""),
@@ -333,6 +350,21 @@ fn small_writes_to_a_busy_stream_are_gathered_after_a_loss() {
             raw.peer.send(id, data.as_bytes(), fin);
         }
         raw.process();
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn a_stream_is_busy_if_it_has_sent_much_more_than_what_is_new() {
+    for (len, frames) in [(26, "stream 3 47 bb"), (27, "")] {
+        let mut raw = Raw::client().connected();
+        let id = raw.peer.open(Unidirectional);
+        crowd(&mut raw, id, RTT);
+        raw.peer.send(id, &vec![0; len], false);
+        raw.process();
+        raw.send("ack 5-6");
+        raw.forget();
+        raw.peer.send(id, b"bb", false);
         assert_eq!(raw.frames(), frames);
     }
 }
@@ -841,6 +873,24 @@ fn probe_timeout_without_a_round_trip_time() {
         raw.request_packets("a");
         assert_eq!(raw.wait(), 175);
     }
+}
+
+/// RFC 9002 §6.2.1.
+#[test]
+fn application_data_is_not_probed_until_the_handshake_is_confirmed() {
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.shake_hands();
+    let id = raw.peer.open(Bidirectional);
+    raw.peer.send(id, b"a", false);
+    assert!(raw.packets().ends_with("1[stream 0 0 a]"));
+    raw.advance(RTT);
+    raw.send_in(Handshake, "ack");
+    raw.advance(2000);
+    assert_eq!(raw.packets(), "");
+    raw.send_in(Short, "handshake_done");
+    raw.advance(2000);
+    assert!((raw.frames()).starts_with("new_connection_id 1 0, stream 0 0 a"));
 }
 
 #[test]

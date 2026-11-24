@@ -53,6 +53,26 @@ fn follows_a_client_that_probes_first() {
     assert_eq!(raw.connection().addresses().peer.to_string(), NEW);
 }
 
+/// RFC 9000 §8.2.1.
+#[test]
+fn challenges_are_random() {
+    let mut raw = Raw::client().connected_with_spare_id();
+    raw.use_id(1);
+    raw.move_to(NEW);
+    raw.peer
+        .crypto
+        .planned
+        .borrow_mut()
+        .push(b"whatever".to_vec());
+    raw.send_expanded("path_challenge 12345678");
+    assert_eq!(raw.challenges[0].1, b"whatever");
+    raw.advance(1000);
+    let mut all: Vec<_> = raw.challenges.iter().map(|it| &it.1).collect();
+    all.sort();
+    all.dedup();
+    assert!(all.len() > 1 && all.len() == raw.challenges.len());
+}
+
 #[test]
 fn validates_both_paths_when_a_client_moves() {
     for (address, is_same_network) in [("192.0.2.1:2000", true), (NEW, false)] {
@@ -78,6 +98,27 @@ fn validates_both_paths_when_a_client_moves() {
             let expected = format!("1[path_challenge, ack 0-3]; {address} 1[path_challenge]");
             assert_eq!(raw.packets(), expected);
         }
+    }
+}
+
+/// RFC 9002 §6.2.2.
+#[test]
+fn the_answer_to_a_challenge_is_no_round_trip_sample() {
+    for at in [0, 1] {
+        let mut raw = Raw::client().connected_with_spare_id();
+        let (old, before) = (raw.addresses, raw.connection().stats());
+        raw.move_to("192.0.2.1:2000");
+        raw.send_expanded("ping");
+        let challenged = raw.take().into_iter();
+        let challenged = challenged.filter(|it| it.frames.iter().any(|it| it == "path_challenge"));
+        let addresses: Vec<_> = challenged.map(|it| it.addresses).collect();
+        assert!(addresses.len() == 2 && addresses.contains(&old));
+        raw.advance(200);
+        raw.addresses = addresses[at];
+        raw.send_expanded("respond");
+        let after = raw.connection().stats();
+        assert_eq!(after.smoothed_rtt, before.smoothed_rtt);
+        assert_eq!(after.rtt_variation, before.rtt_variation);
     }
 }
 

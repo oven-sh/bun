@@ -836,6 +836,15 @@ fn a_client_waits_for_the_confirmation_as_long_as_for_the_handshake() {
 }
 
 #[test]
+fn no_handshake_timeout_is_none_for_the_confirmation_either() {
+    let mut raw = Raw::server().config(|it| it.handshake_timeout = Duration::ZERO);
+    raw.start(&[]);
+    raw.shake_hands();
+    raw.send_in(Handshake, "ack");
+    assert_eq!(raw.wait_for_the_end(), 30_000);
+}
+
+#[test]
 fn keep_alive_counts_from_the_last_packet() {
     for delay in [10_000, 20_000] {
         let mut raw = Raw::server().connected();

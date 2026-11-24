@@ -46,6 +46,18 @@ fn a_server_lists_its_versions() {
     }
 }
 
+#[test]
+fn long_ids_are_not_answered() {
+    for (lens, count) in [([20, 20], 1), ([21, 0], 0), ([0, 21], 0), ([255, 255], 0)] {
+        let mut raw = Raw::client();
+        let mut datagram = vec![0x80, 0, 0, 0, 2];
+        datagram.extend(lens.iter().flat_map(|&len| vec![len; 1 + usize::from(len)]));
+        datagram.resize(1200, 0);
+        raw.deliver(&datagram);
+        assert_eq!(raw.sizes().len(), count);
+    }
+}
+
 /// RFC 9000 §6.2.
 #[test]
 fn a_client_gives_up_unless_its_version_is_listed() {
@@ -119,6 +131,25 @@ fn a_server_moves_to_the_version_that_it_prefers() {
         raw.shake_hands();
         assert_eq!(raw.events(), "ready, confirmed");
     }
+}
+
+#[test]
+fn the_draft_is_not_compatible() {
+    const ALL: &[Version] = &[Version::V1, Version::Draft29, Version::V2];
+    for (versions, first, offered) in [
+        (ALL, DRAFT_29, "ff00001d000000016b3343cf"),
+        (&[Version::V1, Version::Draft29], V1, "00000001ff00001d"),
+    ] {
+        let mut raw = Raw::client().config(|it| it.versions = versions);
+        raw.set(&format!("version_information=#{first:08x}{offered}"));
+        raw.version = first;
+        raw.start(&[]);
+        assert_eq!(raw.versions_of_packets(), [first; 2]);
+    }
+    let mut raw = Raw::server().config(|it| it.versions = ALL);
+    raw.start(&[]);
+    let information = raw.peer_parameter("version_information");
+    assert_eq!(information.unwrap(), "#000000016b3343cf00000001");
 }
 
 #[test]

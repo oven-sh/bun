@@ -4,12 +4,12 @@ use bun_quic::Layer::Transport;
 use bun_quic::crypto::Cipher;
 use bun_quic::tls::{self, Alert, Level, Session, Status};
 use bun_quic::transport_code::*;
-use bun_quic::{Batch, Direction, Duration, Side};
+use bun_quic::{Batch, Direction, Duration, Side, Unrouted};
 
 use crate::harness::keys::{V1, V2};
-use crate::harness::raw::Kind::{Handshake, Initial, Short};
+use crate::harness::raw::Kind::{Early, Handshake, Initial, Short};
 use crate::harness::raw::{Packet, RTT, Raw};
-use crate::harness::tls::{FINISHED, TICKET, Toy, message};
+use crate::harness::tls::{FINISHED, Options, TICKET, Toy, message, next_message, secret};
 use crate::harness::wire::show_hex;
 
 #[test]
@@ -72,6 +72,44 @@ fn other_datagrams_are_not_expanded() {
     raw.send("ping");
     raw.send("ping");
     assert!(matches!(raw.sizes()[..], [..100, ..100]));
+}
+
+/// RFC 9000 §14.1, §17.2.2.
+#[test]
+fn initial_packets_with_a_token_or_in_a_small_datagram() {
+    for (len, token, for_server, for_client) in [
+        (1199, &b""[..], false, true),
+        (1200, b"", true, true),
+        (1200, b"a", true, false),
+    ] {
+        for (mut raw, is_read) in Raw::both().into_iter().zip([for_server, for_client]) {
+            raw.start(&[]);
+            raw.forget();
+            (raw.initial_len, raw.token) = (len, token.to_vec());
+            raw.send_in(Initial, "ping");
+            assert_eq!(raw.outline().starts_with("I[ack"), is_read);
+        }
+    }
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    raw.initial_len = 600;
+    raw.send_all(&[(Initial, "ping"), (Initial, "ping")]);
+    assert!(raw.packets().starts_with("I[ack 0-2,"));
+}
+
+/// RFC 9000 §14.
+#[test]
+fn a_datagram_that_is_too_small_is_no_error() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    raw.initial_len = 1199;
+    raw.send_in(Initial, "ping");
+    assert_eq!(raw.error(), None);
+    raw.initial_len = 1200;
+    raw.shake_hands();
+    assert!(raw.events().starts_with("ready"));
 }
 
 #[test]
@@ -251,6 +289,19 @@ fn a_server_sends_three_times_what_it_got_until_the_address_is_validated() {
     assert_eq!(raw.sizes().len(), 4);
     raw.send_in(Handshake, "ack, flight");
     assert_eq!(raw.events(), "ready, confirmed");
+}
+
+/// RFC 9002 §6.2.2.1.
+#[test]
+fn a_server_that_may_not_send_sets_no_probe_timer() {
+    let mut raw = Raw::client();
+    let start = raw.now;
+    raw.start(&[]);
+    raw.advance(150 + 300);
+    assert_eq!(raw.sizes(), [1200; 3]);
+    raw.advance(1000);
+    let timeout = raw.peer.endpoint.timeout();
+    assert_eq!(timeout, Some(start + Duration::from_secs(10)));
 }
 
 #[test]
@@ -586,6 +637,18 @@ fn packets_that_are_ahead_of_their_keys() {
     assert_eq!(raw.events(), "ready, confirmed, 0 opened, 0 fin a");
 }
 
+#[test]
+fn waiting_for_keys_is_not_part_of_the_round_trip() {
+    let mut raw = Raw::client().with_ticket();
+    raw.send_all(&[(Initial, "hello"), (Early, "fin 0 0 a")]);
+    raw.peer.send(0, b"b", true);
+    raw.advance(RTT);
+    raw.send_all(&[(Initial, "ack"), (Handshake, "ack"), (Short, "ack")]);
+    raw.advance(1000);
+    raw.send_in(Handshake, "flight");
+    assert_eq!(raw.connection().stats().smoothed_rtt.as_millis(), RTT);
+}
+
 /// RFC 9001 §4.9.
 #[test]
 fn keys_are_discarded() {
@@ -619,6 +682,23 @@ fn tickets_and_tokens() {
         assert_eq!(raw.events(), events);
         assert_eq!(raw.connection().tls().is_some(), wants_tickets);
     }
+}
+
+/// RFC 9000 §8.1.3.
+#[test]
+fn tokens_have_nothing_in_common() {
+    let mut raw = Raw::client();
+    let mut tokens = Vec::new();
+    for _ in 0..2 {
+        let now = raw.now;
+        raw.start(&[]);
+        raw.send_all(&[(Initial, "ack"), (Handshake, "ack, flight")]);
+        assert!(raw.now == now && !raw.new_token.is_empty());
+        tokens.push(raw.new_token.clone());
+        raw = raw.again();
+    }
+    let same = (tokens[0].iter().zip(&tokens[1])).filter(|(a, b)| a == b);
+    assert!(same.count() <= 2, "{tokens:?}");
 }
 
 #[test]
@@ -732,6 +812,75 @@ fn calls_of_tls_that_are_out_of_place() {
     let ticket = show_hex(&message(TICKET, &[b"a"]));
     raw.send(&format!("crypto 0 {ticket}"));
     assert_eq!((raw.events(), raw.frames()), ("ticket".into(), "".into()));
+}
+
+/// Has keys for reading sooner than BoringSSL. Goes no further than that if it `stalls`.
+struct Eager {
+    inner: Box<Toy>,
+    level: Option<Level>,
+    stalls: bool,
+}
+
+impl Session for Eager {
+    fn resume(&mut self, _: &[u8]) -> bool {
+        false
+    }
+
+    fn advance(
+        &mut self,
+        input: Option<(Level, &[u8])>,
+        handshake: &mut tls::Handshake<'_>,
+    ) -> Result<Status, Alert> {
+        let status = if self.stalls {
+            let (_, parts) = next_message(&mut input.unwrap().1).unwrap();
+            assert!(handshake.peer_parameters(parts[1], true));
+            Status::InProgress
+        } else {
+            self.inner.advance(input, handshake)?
+        };
+        if let Some(level) = self.level.take() {
+            let cipher = Options::default().cipher;
+            handshake.read_secret(level, cipher, &secret(cipher, 1, level, Side::Client));
+        }
+        Ok(status)
+    }
+}
+
+fn hello_to_eager_server(level: Level, stalls: bool) -> Raw {
+    let mut raw = Raw::client();
+    let mut hello = raw.packet(Initial, "hello");
+    let versions = raw.peer.config.versions;
+    let unrouted = (raw.peer.endpoint).receive(raw.now, &raw.addresses, &mut hello, versions);
+    let Some(Unrouted::Incoming(incoming)) = unrouted else {
+        panic!("not accepted");
+    };
+    let tls = Box::new(Eager {
+        inner: Toy::new(Side::Server, 0, raw.peer.tls),
+        level: Some(level),
+        stalls,
+    });
+    let config = Rc::new(raw.peer.config.clone());
+    raw.peer.handle = Some(raw.peer.endpoint.accept(raw.now, incoming, config, tls));
+    raw.forget();
+    raw
+}
+
+/// RFC 9001 §5.7.
+#[test]
+fn packets_wait_for_the_end_of_the_handshake_even_if_there_are_keys() {
+    let mut raw = hello_to_eager_server(Level::Application, false);
+    raw.send("stream 0 0 a");
+    assert_eq!(raw.events(), "");
+}
+
+/// RFC 9001 §5.6.
+#[test]
+fn a_server_does_not_write_with_the_keys_for_early_data() {
+    let mut raw = hello_to_eager_server(Level::EarlyData, true);
+    raw.send_in(Early, "ping");
+    assert_eq!(raw.connection().stats().pings_received, 1);
+    raw.advance(100);
+    assert_eq!(raw.packets(), "");
 }
 
 #[test]

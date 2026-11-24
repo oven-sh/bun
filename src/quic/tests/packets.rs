@@ -1,4 +1,6 @@
 use bun_quic::Direction::Unidirectional;
+use bun_quic::Layer::Transport;
+use bun_quic::transport_code::PROTOCOL_VIOLATION;
 use bun_quic::{Algorithm, Duration};
 
 use crate::harness::paths::new_id;
@@ -58,6 +60,15 @@ fn duplicates_are_dropped() {
         assert_eq!(raw.packets(), "1[ack 0-2]");
         assert_eq!(raw.connection().stats().pings_received, 2);
     }
+}
+
+/// RFC 9000 §17.3.1.
+#[test]
+fn reserved_bits_count_in_a_duplicate_too() {
+    let mut raw = Raw::client().connected();
+    raw.flipped = 0x08;
+    raw.send_as(0, "ping");
+    assert_eq!(raw.error(), Some((Transport, PROTOCOL_VIOLATION)));
 }
 
 #[test]

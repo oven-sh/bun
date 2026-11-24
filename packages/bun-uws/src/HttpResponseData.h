@@ -278,7 +278,8 @@ template <bool SSL>
 struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     /* lastMessageStartMs: when the request currently being received started
      * arriving (or when the connection was accepted, before its first
-     * request); 0 once the message has been fully received (idle).
+     * request); 0 once the message has been fully received (idle). It stays
+     * set for a request that the parser rejected.
      * headersCompleted: whether that request's head has been fully parsed.
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */

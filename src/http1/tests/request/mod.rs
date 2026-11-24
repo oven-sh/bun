@@ -126,6 +126,8 @@ impl Connection for &mut Server {
             let then = self.setup.after_data;
             return self.then(then);
         }
+        // `closeIdleConnections()` from the `end` listener of the request takes the connection.
+        assert!(!self.setup.is_node || !self.parser().has_incomplete_body());
         if self.setup.takes_trailers {
             let trailers = self.parser().take_trailers();
             let trailers = parse_trailers(&trailers, self.setup.has_lenient_values);
@@ -172,7 +174,13 @@ impl Setup {
         for (i, read) in reads.iter().enumerate() {
             match self.read(&mut server, read) {
                 Outcome::Consumed => {}
-                Outcome::Failed(error) => return format!("{}!{error:?}", server.log),
+                Outcome::Failed(error) => {
+                    // `closeIdleConnections()` leaves a rejected request alone. Bytes behind the last request begin none.
+                    let is_rejected = error != RequestError::ClosedConnection;
+                    let parser = server.parser.unwrap();
+                    assert_eq!(parser.has_incomplete_body(), is_rejected, "{error:?}");
+                    return format!("{}!{error:?}", server.log);
+                }
                 Outcome::Stopped { consumed } => {
                     let rest = [&read[consumed..], &reads[i + 1..].concat()].concat();
                     return format!("{}+{}", server.log, show(&rest));
@@ -635,11 +643,6 @@ fn content_length() {
             assert_eq!(setup.end(&bytes), expected, "{value}");
         }
     }
-
-    // `closeIdleConnections()` leaves it alone.
-    let mut server = NODE.server();
-    NODE.read(&mut server, &post("Content-Length: a\r\n", b""));
-    assert!(server.parser.unwrap().has_incomplete_body());
 }
 
 #[test]

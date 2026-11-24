@@ -48,12 +48,6 @@ pub enum Outcome {
     Failed(RequestError),
 }
 
-impl From<RequestError> for Outcome {
-    fn from(error: RequestError) -> Self {
-        Self::Failed(error)
-    }
-}
-
 /// What the next byte belongs to.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Body {
@@ -109,8 +103,18 @@ impl RequestParser {
         !self.partial_head.is_empty()
     }
 
+    /// Also once a request was rejected: that request never completes.
     pub fn has_incomplete_body(&self) -> bool {
         !matches!(self.body, Body::None | Body::AfterTrailers)
+    }
+
+    /// Rejects the request that began.
+    // Out of line: inlined, it adds instructions to the reads that do not fail.
+    #[cold]
+    #[inline(never)]
+    fn fail(&mut self, error: RequestError) -> Outcome {
+        self.body = Body::Failed(error);
+        Outcome::Failed(error)
     }
 
     /// The trailer section of the current request, with the empty line that ends it.
@@ -207,7 +211,7 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
                 }
                 Start::NotHttp => return Ok(()),
                 Start::Short if rest.len() >= self.max_head_len => {
-                    return Err(RequestError::HeadTooLarge.into());
+                    return Err(connection.parser().fail(RequestError::HeadTooLarge));
                 }
                 Start::Short => {
                     connection.parser().partial_head.extend_from_slice(rest);
@@ -227,12 +231,13 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
 
         let (mut connection, rest, start) = self.start(connection, &head, earlier, self.bytes)?;
         if let Start::Short = start {
-            let outcome = match head.len() == self.max_head_len {
-                true => RequestError::HeadTooLarge.into(),
+            let is_full = head.len() == self.max_head_len;
+            let parser = connection.parser();
+            parser.partial_head = head;
+            return Err(match is_full {
+                true => parser.fail(RequestError::HeadTooLarge),
                 false => Outcome::Consumed,
-            };
-            connection.parser().partial_head = head;
-            return Err(outcome);
+            });
         }
         head.clear();
         let parser = connection.parser();
@@ -273,7 +278,8 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         }
         if parser.is_closing {
             return match IS_NODE {
-                true => Err(RequestError::ClosedConnection.into()),
+                // No request began: the connection stays idle, as in Node.
+                true => Err(Outcome::Failed(RequestError::ClosedConnection)),
                 false => Ok((connection, after(message.len()), Start::NotHttp)),
             };
         }
@@ -283,10 +289,10 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
             match Request::parse::<IS_NODE>(message, &mut storage, self.options) {
                 Ok(parsed) => parsed,
                 Err(Stop::Short) => return Ok((connection, unread, Start::Short)),
-                Err(Stop::Failed(error)) => return Err(error.into()),
+                Err(Stop::Failed(error)) => return Err(parser.fail(error)),
             };
         if len > self.max_head_len {
-            return Err(RequestError::HeadTooLarge.into());
+            return Err(parser.fail(RequestError::HeadTooLarge));
         }
         parser.is_closing = request.is_http_1_0()
             || match IS_NODE {
@@ -294,15 +300,16 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
                 false => request.has_in_connection(b"close"),
             };
 
-        let content_length = request.content_length()?;
-        let framing = request.decide_framing::<IS_NODE>(content_length.is_some(), self.options)?;
+        let content_length = (request.content_length()).map_err(|error| parser.fail(error))?;
+        let framing = request
+            .decide_framing::<IS_NODE>(content_length.is_some(), self.options)
+            .map_err(|error| parser.fail(error))?;
         if self.options.requires_host && !request.is_http_1_0() && request.field(b"host").is_none()
         {
-            return Err(RequestError::MissingHost.into());
+            return Err(parser.fail(RequestError::MissingHost));
         }
         let Some(content_length) = content_length.map_or(Some(0), parse_content_length) else {
-            parser.body = Body::Failed(RequestError::InvalidContentLength);
-            return Err(RequestError::InvalidContentLength.into());
+            return Err(parser.fail(RequestError::InvalidContentLength));
         };
         parser.remaining = content_length;
         if content_length != 0 {
@@ -321,7 +328,7 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         let parser = connection.parser();
         parser.is_closing |= request.ends_connection();
         if framing == Framing::Invalid {
-            return Err(RequestError::InvalidTransferEncoding.into());
+            return Err(parser.fail(RequestError::InvalidTransferEncoding));
         }
         parser.trailers.clear();
         Ok((connection, rest, Start::Request(framing)))
@@ -377,17 +384,17 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
             let parser = connection.parser();
             let chunk = parser.next_chunk::<IS_NODE>(&mut rest, self.max_head_len);
             if parser.extension_len > MAX_EXTENSION_LEN {
-                return Err(RequestError::ChunkExtensionsTooLarge.into());
+                return Err(parser.fail(RequestError::ChunkExtensionsTooLarge));
             }
             let Some(data) = chunk else {
                 return match parser.body {
-                    Body::Failed(error) => Err(error.into()),
+                    Body::Failed(error) => Err(parser.fail(error)),
                     _ => Ok((connection, rest)),
                 };
             };
             let is_last = data.is_empty();
             if IS_NODE && is_last {
-                parser.check_trailers(self.options)?;
+                (parser.check_trailers(self.options)).map_err(|error| parser.fail(error))?;
             }
             connection = connection
                 .on_body(data, is_last)

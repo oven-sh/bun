@@ -162,6 +162,7 @@ struct alignas(8) HttpParser {
     HttpParser &operator=(const HttpParser &) = delete;
 
     bool hasBufferedPartialRequestHeaders() const { return http1::Bun__RequestParser__hasPartialHead(this); }
+    /* Also once the parser rejected a request: that request never completes. */
     bool hasIncompleteRequestBody() const { return http1::Bun__RequestParser__hasIncompleteBody(this); }
 
 private:

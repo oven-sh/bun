@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import type { Duplex } from "node:stream";
+import { Readable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -394,6 +397,240 @@ test.each(["from the request's 'end' listener", "a turn of the loop later"])(
     } finally {
       socket.destroy();
       server.closeAllConnections();
+    }
+  },
+);
+
+// A request that the parser rejects never completes. Node.js keeps its connection for a sweep, and the
+// 'clientError' listener can still answer on it. Returns what the client gets from the pending response on.
+async function answerOnRejectedConnection(
+  writes: string[],
+  options: {
+    secure?: boolean;
+    handler?: (req: IncomingMessage) => unknown;
+    defer?: (act: () => void) => unknown;
+    sweep?: (server: Server) => unknown;
+  } = {},
+) {
+  const {
+    secure = false,
+    handler = async req => {
+      // The break destroys the request and keeps its connection, so only the parser holds the connection open.
+      for await (const _ of req) break;
+    },
+    defer = act => act(),
+    sweep = server => server.closeIdleConnections(),
+  } = options;
+  let response: ServerResponse | undefined;
+  const onRequest = (req: IncomingMessage, res: ServerResponse) => {
+    if (req.url === "/barrier") return void res.end();
+    response = res;
+    return handler(req);
+  };
+  const server = secure ? createHttpsServer(tlsCert, onRequest) : createServer(onRequest);
+  server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+    defer(() => {
+      // A read clears the idle mark of its connection, and only the end of a response sets it again.
+      response!.end("early");
+      sweep(server);
+      socket.end(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n${error.code}`);
+    });
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const open = () =>
+    secure ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }) : connect(port, "127.0.0.1");
+
+  const socket = open();
+  try {
+    await once(socket, secure ? "secureConnect" : "connect");
+    socket.on("error", () => {});
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    const closed = once(socket, "close");
+    for (const [index, write] of writes.entries()) {
+      if (index > 0) {
+        // One round trip on another connection: the server has read the earlier write by then.
+        const barrier = open();
+        barrier.on("error", () => {});
+        barrier.resume();
+        barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await once(barrier, "close");
+      }
+      socket.write(write);
+    }
+    await closed;
+    return received.slice(received.indexOf("early"));
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+}
+
+const answerOf = (code: string) => `earlyHTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n${code}`;
+const chunkedHead = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n";
+const firstChunk = "\r\n5\r\nhello\r\n";
+const trailersWithContentLength = "0\r\nContent-Length: 5\r\n\r\n";
+// Its handler leaves the response to the 'clientError' listener.
+const pendingRequest = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+const invalidMethod = "G<T / HTTP/1.1\r\nHost: x\r\n\r\n";
+
+// A last chunk that the parser rejects completes nothing.
+// Each row reaches the last chunk from another place of the parser, or fails another of its two checks.
+test.each(
+  (
+    [
+      ["a trailer section", trailersWithContentLength, "HPE_INVALID_CONTENT_LENGTH"],
+      ["a chunk extension", `0;${Buffer.alloc(16385, "a")}\r\n\r\n`, "HPE_CHUNK_EXTENSIONS_OVERFLOW"],
+    ] as const
+  ).flatMap(([kind, last, code]) => {
+    return [
+      [`${kind}, in the read of its head`, code, [chunkedHead + firstChunk + last]],
+      [`${kind}, in a later read`, code, [chunkedHead + firstChunk, last]],
+      [
+        `${kind}, in the read that completes its head`,
+        code,
+        [chunkedHead.slice(0, 20), chunkedHead.slice(20) + firstChunk + last],
+      ],
+    ] as [string, string, string[]][];
+  }),
+)(
+  "closeIdleConnections() keeps a connection whose chunked request failed at its last chunk: %s",
+  async (_name, code, writes) => {
+    expect(await answerOnRejectedConnection(writes)).toBe(answerOf(code));
+  },
+);
+
+// A head that the parser rejects starts a request that never completes. The response that the listener ends
+// belongs to the request in front of it.
+test.each(
+  (
+    [
+      ["an invalid header line", "GET / HTTP/1.1\r\nHost: x\r\nBad Header\r\n\r\n", "HPE_INVALID_HEADER_TOKEN"],
+      [
+        "Content-Length with Transfer-Encoding",
+        "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "HPE_INVALID_TRANSFER_ENCODING",
+      ],
+      ["an invalid method", invalidMethod, "HPE_INVALID_METHOD"],
+    ] as const
+  ).flatMap(([kind, head, code]) => {
+    return [
+      [`${kind}, in the read of the request in front of it`, code, [pendingRequest + head]],
+      [`${kind}, in a later read`, code, [pendingRequest, head]],
+      [`${kind}, in two reads`, code, [pendingRequest, head.slice(0, 10), head.slice(10)]],
+    ] as [string, string, string[]][];
+  }),
+)(
+  "closeIdleConnections() keeps a connection whose request head failed behind a pending response: %s",
+  async (_name, code, writes) => {
+    expect(await answerOnRejectedConnection(writes)).toBe(answerOf(code));
+  },
+);
+
+// The parser rejects this request behind its dispatch. The handler has cancelled the body by then, which
+// destroys the request and keeps its connection.
+test("closeIdleConnections() keeps a connection whose request failed behind its dispatch", async () => {
+  const answer = await answerOnRejectedConnection(["POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n"], {
+    handler: req => void Readable.toWeb(req).cancel(),
+  });
+  expect(answer).toBe(answerOf("HPE_INVALID_TRANSFER_ENCODING"));
+});
+
+// The same two connections, for each other way to reach the sweep.
+test.each(
+  (
+    [
+      ["close() in the listener", { sweep: (server: Server) => void server.close() }],
+      [
+        "closeIdleConnections() after close()",
+        {
+          sweep: (server: Server) => {
+            server.close();
+            server.closeIdleConnections();
+          },
+        },
+      ],
+      ["closeIdleConnections() from a nextTick of the listener", { defer: process.nextTick }],
+      ["closeIdleConnections() from a turn of the loop behind the listener", { defer: setImmediate }],
+      ["https: closeIdleConnections() in the listener", { secure: true }],
+    ] as const
+  ).flatMap(([how, options]) => {
+    return [
+      [
+        `a last chunk, ${how}`,
+        "HPE_INVALID_CONTENT_LENGTH",
+        chunkedHead + firstChunk + trailersWithContentLength,
+        options,
+      ],
+      [`a head behind a pending response, ${how}`, "HPE_INVALID_METHOD", pendingRequest + invalidMethod, options],
+    ] as const;
+  }),
+)("a sweep keeps the connection of a request that the parser rejected: %s", async (_name, code, write, options) => {
+  expect(await answerOnRejectedConnection([write], options)).toBe(answerOf(code));
+});
+
+// The handler answers and sweeps while its response still drains, so its connection closes when the response
+// has left. The same read then brings a request that the parser rejects. Node.js keeps that connection, and
+// the listener can answer on it behind the response.
+// Winsock can take the whole response in one send(). Then nothing drains, and the sweep closes the connection at once.
+test.skipIf(isWindows).each([
+  ["closeIdleConnections() in the handler", false, (server: Server) => server.closeIdleConnections()],
+  ["close() from a nextTick of the handler", false, (server: Server) => process.nextTick(() => server.close())],
+  ["https: closeIdleConnections() in the handler", true, (server: Server) => server.closeIdleConnections()],
+] as const)(
+  "a rejected request keeps a connection that a sweep left to close behind a draining response: %s",
+  async (_name, secure, sweep) => {
+    // More than a loopback socket takes in one write.
+    const size = 64 * 1024 * 1024;
+    const answer = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\nHPE_INVALID_METHOD";
+    const rejected = Promise.withResolvers<Duplex>();
+    const onRequest = (req: IncomingMessage, res: ServerResponse) => {
+      res.end(Buffer.alloc(size, "a"));
+      sweep(server);
+    };
+    const server: Server = secure ? createHttpsServer(tlsCert, onRequest) : createServer(onRequest);
+    server.on("clientError", (error, socket) => rejected.resolve(socket));
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = secure
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+      : connect(port, "127.0.0.1");
+    try {
+      await once(socket, secure ? "secureConnect" : "connect");
+      socket.pause();
+      socket.on("error", () => {});
+      socket.write(pendingRequest + invalidMethod);
+      const serverSocket = await rejected.promise;
+
+      let bodyStart = -1;
+      let received = 0;
+      let tail = "";
+      const drained = Promise.withResolvers<void>();
+      socket.on("data", chunk => {
+        if (bodyStart < 0) bodyStart = chunk.indexOf("\r\n\r\n") + 4;
+        received += chunk.length;
+        tail = (tail + chunk.toString("latin1")).slice(-answer.length);
+        if (received === bodyStart + size) drained.resolve();
+      });
+      const closed = once(socket, "close");
+      closed.then(() => drained.resolve());
+      socket.resume();
+      // The client has the whole response, so the server has sent its last byte and decided about the connection.
+      await drained.promise;
+      serverSocket.end(answer);
+      await closed;
+      expect({ received: received - bodyStart - size, tail }).toEqual({ received: answer.length, tail: answer });
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
     }
   },
 );

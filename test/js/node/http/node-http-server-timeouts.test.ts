@@ -224,6 +224,54 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  // Like in Node.js, a request that the parser rejected never completes. When the 'clientError' listener leaves
+  // its connection open, the headers timeout reports that connection once.
+  test.each([
+    ["between requests", "GET / HTTP/1.1\r\nHost: a\r\n\r\n", "\r\n\r\nok"],
+    ["behind a response that is still in flight", "GET /hold HTTP/1.1\r\nHost: a\r\n\r\n", "held"],
+  ])("headersTimeout reports a connection whose request head was rejected %s", async (_where, first, answered) => {
+    const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => {
+      if (req.url === "/hold") return void res.write("held");
+      res.end("ok");
+    });
+    server.headersTimeout = 200;
+    server.requestTimeout = 800;
+    const reports: [clientPort: number | undefined, code: string][] = [];
+    server.on("clientError", (err: any, socket) => reports.push([(socket as net.Socket).remotePort, err.code]));
+    const reportsOf = (client: net.Socket) =>
+      reports.filter(([port]) => port === client.localPort).map(([, code]) => code);
+    const port = await listen(server);
+    const clients: net.Socket[] = [];
+    const open = async (bytes: string) => {
+      const client = net.connect(port, "127.0.0.1");
+      clients.push(client);
+      client.on("error", () => {});
+      client.setNoDelay(true);
+      await once(client, "connect");
+      client.write(bytes);
+      return client;
+    };
+    try {
+      const rejected = await open(first);
+      let response = "";
+      rejected.on("data", chunk => (response += chunk.toString("latin1")));
+      while (!response.includes(answered)) await once(rejected, "data");
+      rejected.write("GET / HTTP/1.1\r\nHost: a\r\nBad Header\r\n\r\n");
+      while (reportsOf(rejected).length === 0) await once(server, "clientError");
+      // Two connections stall behind it, one after the other. A sweep asks the older connection first, so each
+      // of their reports comes behind the report of the rejected one.
+      for (let i = 0; i < 2; i++) {
+        const stalled = await open("GET / HTTP/1.1\r\nHost: a\r\n");
+        while (reportsOf(stalled).length === 0) await once(server, "clientError");
+      }
+      expect(reportsOf(rejected)).toEqual(["HPE_INVALID_HEADER_TOKEN", "ERR_HTTP_REQUEST_TIMEOUT"]);
+    } finally {
+      for (const client of clients) client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("headersTimeout answers 408 when there is no 'clientError' listener", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => res.end("ok"));
     server.headersTimeout = 200;

@@ -252,6 +252,22 @@ private:
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 
+    /* node:http: the parser rejected a request. That message never completes, so as in Node.js (last_message_start_ stays set) its connection is
+     * not idle again: the 'clientError' listener, the peer or a timeout ends it. A close that a sweep left for the drain is off, also one from
+     * an earlier read, and the request timeout gets the start of a head that one read rejected. */
+    [[gnu::noinline, gnu::cold]] static void keepRejectedNodeHttpRequestOpen(HttpResponseData<SSL> *httpResponseData, bool trackNodeHttpTimings) {
+        /* Bytes behind the last request of a connection begin no request (HPE_CLOSED_CONNECTION), and the parser records none. */
+        if (!httpResponseData->hasIncompleteRequestBody()) {
+            return;
+        }
+        httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+        auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
+        if (trackNodeHttpTimings && nodeHttpResponseData->lastMessageStartMs == 0) {
+            nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
+            nodeHttpResponseData->headersCompleted = false;
+        }
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
@@ -741,6 +757,7 @@ private:
              * connection down, exactly like Node. The native layer only stops
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
+                keepRejectedNodeHttpRequestOpen(httpResponseData, trackNodeHttpTimings);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.error, data, length);
                 if (!isClosedOrUpgraded(s)) {

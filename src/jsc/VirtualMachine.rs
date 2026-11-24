@@ -1907,10 +1907,12 @@ impl VirtualMachine {
         size
     }
 
-    /// `Bun.reseedRandom()`: the BoringSSL bump reaches every thread lazily; the per-VM
-    /// part runs here now and on every other live VM when its event loop next runs.
+    /// `Bun.reseedRandom()`: the BoringSSL bump and the random generation reach every
+    /// thread at its next draw; `Math.random` seeds change here now and on every other
+    /// live VM when its event loop next runs.
     pub fn reseed_random_state(&mut self) {
         bun_boringssl::bump_fork_generation();
+        crate::rare_data::advance_random_generation();
         self.rederive_local_random_state();
         Bun__postReseedRandomToOtherVMs(self.jsc_vm());
     }

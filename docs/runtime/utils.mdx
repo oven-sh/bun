@@ -178,7 +178,7 @@ Bun reseeds from the operating system (`getrandom` on Linux). The kernel's own g
 The call does not reach:
 
 - Random values that were already copied into JavaScript values or user buffers before the call, such as a session token your code generated before the snapshot.
-- A Worker's buffered values and `Math.random()` seeds until its event loop next runs.
+- The `Math.random()` seeds of a Worker until its event loop next runs. A Worker that is blocked at the call, for example in `Atomics.wait()`, gets new buffered values at its next draw, but its `Math.random()` continues the old sequence until its event loop runs.
 - DNS transaction IDs of queries already buffered by the resolver (`node:dns`, hostname lookups for `fetch`), the `random()` and `randomblob()` functions of `bun:sqlite` and `node:sqlite`, and the non-cryptographic generator behind retry jitter and temporary file names.
 
 Bun does not detect a VM snapshot restore by itself. The platform that restores the snapshot has to call this function.

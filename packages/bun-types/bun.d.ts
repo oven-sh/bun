@@ -6193,8 +6193,8 @@ declare module "bun" {
    * `RNDADDENTROPY` plus `RNDRESEEDCRNG` does it on any kernel).
    *
    * It does not reach random values already copied into JavaScript values or
-   * user buffers, a Worker's buffered values and `Math.random()` seeds before
-   * its event loop next runs, DNS transaction IDs the resolver already
+   * user buffers, a Worker's `Math.random()` seeds before its event loop next
+   * runs, DNS transaction IDs the resolver already
    * buffered, or the `random()` functions of `bun:sqlite` and `node:sqlite`.
    *
    * @example

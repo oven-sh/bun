@@ -94,6 +94,36 @@ describe.concurrent("Bun.reseedRandom", () => {
     expect(result).toEqual({ contextChanged: true, distinct: true });
   });
 
+  test("drops the default CSRF secret of a Worker that is blocked at the call", async () => {
+    const result = await run(`
+      const source = \`
+        self.onmessage = ({ data }) => {
+          const flag = new Int32Array(data);
+          const token = Bun.CSRF.generate();
+          Atomics.store(flag, 0, 1);
+          Atomics.notify(flag, 0);
+          // This handler does not return before the check, so the task that
+          // Bun.reseedRandom() posts to this VM cannot run first.
+          Atomics.wait(flag, 0, 1);
+          postMessage(Bun.CSRF.verify(token));
+        };
+      \`;
+      const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+      worker.onerror = event => { console.error(event.message); process.exit(1); };
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const reply = new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+      worker.postMessage(flag.buffer);
+      await Atomics.waitAsync(flag, 0, 0).value;
+      Bun.reseedRandom();
+      Atomics.store(flag, 0, 2);
+      Atomics.notify(flag, 0);
+      const tokenStillValid = await reply;
+      worker.terminate();
+      console.log(JSON.stringify({ tokenStillValid }));
+    `);
+    expect(result).toEqual({ tokenStillValid: false });
+  });
+
   test("a call from a Worker reseeds the main thread", async () => {
     const result = await run(`
       const { getRandomSeed } = require("bun:jsc");

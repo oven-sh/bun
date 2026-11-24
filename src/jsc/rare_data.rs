@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::JSGlobalObject;
@@ -113,15 +113,31 @@ impl HotMap {
 // EntropyCache
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Advanced by `Bun.reseedRandom()` after the BoringSSL bump. Process-wide like that
+/// fork generation: a VM whose event loop has not yet run the posted reseed (a Worker
+/// blocked in `Atomics.wait`) still sees it before it hands out bytes drawn earlier.
+static RANDOM_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+pub(crate) fn random_generation() -> u64 {
+    RANDOM_GENERATION.load(Ordering::Acquire)
+}
+
+pub(crate) fn advance_random_generation() {
+    RANDOM_GENERATION.fetch_add(1, Ordering::Release);
+}
+
 pub struct EntropyCache {
     pub(crate) cache: [u8; Self::SIZE],
     pub(crate) index: usize,
+    generation: u64,
 }
 impl Default for EntropyCache {
     fn default() -> Self {
         Self {
             cache: [0u8; Self::SIZE],
             index: 0,
+            generation: 0,
         }
     }
 }
@@ -130,11 +146,16 @@ impl EntropyCache {
     pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
     pub(crate) fn fill(&mut self) {
+        self.generation = random_generation();
         bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
+    #[inline]
+    fn must_refill(&self, len: usize) -> bool {
+        self.index + len > self.cache.len() || self.generation != random_generation()
+    }
     pub fn get(&mut self) -> [u8; 16] {
-        if self.index + 16 > self.cache.len() {
+        if self.must_refill(16) {
             self.fill();
         }
         let mut r = [0u8; 16];
@@ -146,7 +167,7 @@ impl EntropyCache {
         if len > self.cache.len() {
             return &mut [];
         }
-        if self.index + len > self.cache.len() {
+        if self.must_refill(len) {
             self.fill();
         }
         let s = self.index;
@@ -269,6 +290,7 @@ pub struct RareData {
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
+    default_csrf_secret_generation: u64,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
     /// [`Self::tls_default_ciphers`] strips it.
@@ -313,6 +335,7 @@ impl Default for RareData {
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
+            default_csrf_secret_generation: 0,
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
             path_buf: PathBuf::default(),
@@ -806,10 +829,13 @@ impl RareData {
     }
 
     pub fn default_csrf_secret(&mut self) -> &[u8] {
-        if self.default_csrf_secret.is_empty() {
+        let generation = random_generation();
+        if self.default_csrf_secret.is_empty() || self.default_csrf_secret_generation != generation
+        {
             let mut secret = vec![0u8; 16].into_boxed_slice();
             bun_boringssl::rand_bytes(&mut secret);
             self.default_csrf_secret = secret;
+            self.default_csrf_secret_generation = generation;
         }
         &self.default_csrf_secret
     }

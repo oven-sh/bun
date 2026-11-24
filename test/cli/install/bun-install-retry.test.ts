@@ -1248,11 +1248,6 @@ describe.concurrent("a tarball that cannot be installed", () => {
 
 describe.concurrent("an optional dependency for which there is no memory", () => {
   const CAP = 8;
-  const withCap = {
-    ASAN_OPTIONS: [env.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${CAP}`]
-      .filter(Boolean)
-      .join(":"),
-  };
   const long = () => Buffer.alloc(1.5 * CAP * 1024 * 1024, "a").toString();
   const manifestOf = (name: string, more?: object) => JSON.stringify({ name, version: "1.0.0", ...more });
   const tarball = async (files: Record<string, string>, level: 0 | 1) =>
@@ -1290,6 +1285,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       /** The answer to the second request for what is long. */
       again: "the same" as number | "nothing" | "a page" | "the same",
       status: 200,
+      refuses: 0,
       refusesFullManifests: false,
       /** The registry takes no connection once it is asked for a tarball. */
       stops: false,
@@ -1300,6 +1296,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       // One of the two addresses of localhost.
       hostname: "127.0.0.1",
       async fetch({ url, headers }) {
+        if (served.refuses) return new Response(null, { status: served.refuses });
         if (url.endsWith("/never")) return new Promise<Response>(() => {});
         if (url.endsWith("/scanner-1.0.0.tgz")) return new Response(await scannerTarball());
         if (served.again !== "the same" && url.endsWith(".tgz") === (served.long === "tarball")) {
@@ -1382,7 +1379,15 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       async prepare(...args: string[]) {
         expect(await run(args)).toEqual({ said: [], exitCode: 0 });
       },
-      async withoutMemory(args = ["install"], more: Record<string, string> = withCap, launcher?: string[]) {
+      async withoutMemory(
+        args = ["install"],
+        more: Record<string, string> = {
+          ASAN_OPTIONS: [env.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${CAP}`]
+            .filter(Boolean)
+            .join(":"),
+        },
+        launcher?: string[],
+      ) {
         const before = saved();
         const result = await run(args, more, launcher);
         return { ...result, saved: saved() === before ? "nothing" : "something" };
@@ -1468,15 +1473,6 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       expect(await app.withoutMemory()).toEqual(withoutManifest);
     });
 
-    it("manifest, if the next attempt gets a page", async () => {
-      using app = project();
-      Object.assign(app.served, { long: "manifest", again: "a page" });
-      const { said, ...result } = await app.withoutMemory();
-      expect({ ...result, said: said.slice(-2) }).toEqual(
-        fails("recv", "error: PackageFailedToParse parsing package manifest for bar"),
-      );
-    });
-
     it("manifest, for `bun outdated`, if the next attempt gets 503", async () => {
       using app = project();
       await app.prepare("install");
@@ -1505,7 +1501,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     });
 
     describe.each(["hoisted", "isolated"])("tarball of what is installed, %s", linker => {
-      it.each([404, 503, "nothing", "a page"])("if the next attempt gets %s", async again => {
+      it.each([404, 503, "nothing"])("if the next attempt gets %s", async again => {
         using app = project({}, "^1.0.0", linker);
         await app.prepare("install");
         rmSync(app.path(".bun-cache"), { recursive: true });
@@ -1581,13 +1577,13 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     expect(await app.withoutMemory(["install", "--force"])).toEqual({ said: [], exitCode: 0, saved: "something" });
   });
 
-  it.skipIf(!isASAN).each(["manifest", "tarball"])(
-    "tells bunx that the copy that it has is untouched if the next attempt gets a page for the %s",
-    async long => {
-      using app = project({ "package.json": "{}" });
-      Object.assign(app.served, { long, again: "a page" });
-      const env = { BUN_INTERNAL_BUNX_INSTALL: app.path(), ...withCap };
-      expect(await app.withoutMemory(["add", "scanner"], env)).toMatchObject({ exitCode: 75 });
+  it.skipIf(!isASAN).each(["hoisted", "isolated"])(
+    "is left out if the next attempt gets what is not a tarball, %s",
+    async linker => {
+      using app = project({}, "^1.0.0", linker);
+      Object.assign(app.served, { long: "tarball", again: "a page" });
+      const { said, exitCode } = await app.withoutMemory();
+      expect({ said: said.at(-1), exitCode }).toEqual({ said: "warn: Fail extracting tarball from bar", exitCode: 0 });
     },
   );
 
@@ -1847,10 +1843,9 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       ...(await after(from["a registry that refuses full manifests"](), ["install"])),
       args: ["outdated"],
     }),
-    "a registry that does not have it": async () => {
+    "a registry that does not have it": () => {
       const app = project();
-      app.served.again = 404;
-      await fetch(app.url + "bar");
+      app.served.refuses = 404;
       return app;
     },
     "a registry, for `bun info`": () => ({ ...project(), args: ["info", "bar"] }),
@@ -2183,6 +2178,17 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     };
     const { said, ...result } = await withoutCall({ ...app, env }, "ENOBUFS recv * 1");
     expect({ ...result, said: said.slice(-1) }).toEqual(fails("recv"));
+  });
+
+  it.skipIf(!failSyscall).each([
+    ["^1.0.0", 404, 0],
+    ["^1.0.0", 503, 1],
+    ["http://127.0.0.1:PORT/bar.tgz", 404, 0],
+    ["http://127.0.0.1:PORT/bar.tgz", 503, 1],
+  ])("to read the first answer for %s, if the next one is %d, exits with %d", async (spec, refuses, exitCode) => {
+    using app = project({}, spec);
+    app.served.refuses = refuses;
+    expect(await withoutCall(app, "ENOBUFS recv * -1")).toMatchObject({ exitCode });
   });
 
   it.skipIf(!failSyscall)("fails `bun pm migrate`", async () => {

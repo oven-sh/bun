@@ -407,6 +407,7 @@ pub(crate) fn run_tasks(
                 let err = download_error(&task.response).unwrap_or(crate::Error::HTTPError);
                 if download_failed && err.is_out_of_memory() {
                     task.out_of_memory = Some(err);
+                    task.lost_a_body |= task.response.metadata.is_some();
                 }
 
                 // Handle retry-able errors.
@@ -438,7 +439,8 @@ pub(crate) fn run_tasks(
                     }
                 }
 
-                let err = blame_memory(task.out_of_memory, &mut task.response).unwrap_or(err);
+                let out_of_memory = task.out_of_memory.filter(|_| retry || task.lost_a_body);
+                let err = blame_memory(out_of_memory, &mut task.response).unwrap_or(err);
 
                 // Try once more, because the full document was only requested for `libc`.
                 if retry
@@ -659,6 +661,7 @@ pub(crate) fn run_tasks(
                     download_error(&task.response).unwrap_or(crate::Error::TarballFailedToDownload);
                 if download_failed && err.is_out_of_memory() {
                     task.out_of_memory = Some(err);
+                    task.lost_a_body |= task.response.metadata.is_some();
                 }
 
                 if retry {
@@ -692,7 +695,8 @@ pub(crate) fn run_tasks(
                     }
                 }
 
-                let err = blame_memory(task.out_of_memory, &mut task.response).unwrap_or(err);
+                let out_of_memory = task.out_of_memory.filter(|_| retry || task.lost_a_body);
+                let err = blame_memory(out_of_memory, &mut task.response).unwrap_or(err);
 
                 // Past this point we will not retry. If streaming state was
                 // allocated but never scheduled, release it now so the
@@ -881,11 +885,6 @@ pub(crate) fn run_tasks(
                         err.name(),
                         bstr::BStr::new(name),
                     );
-                    (network.out_of_memory.unwrap_or(err)).note_if_out_of_memory();
-                    if crate::error::check_memory().is_err() {
-                        fail_update_requests(manager, task.id, name, None, true);
-                        caller.exit_if_out_of_memory(manager);
-                    }
                     let failure = ManifestFailure {
                         spares_optional: false,
                         ..Default::default()
@@ -950,11 +949,9 @@ pub(crate) fn run_tasks(
                 let Some(data) = data else {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
-                    let (fail_url, out_of_memory): (&[u8], _) = match source {
-                        Task::TarballSource::Network(network) => {
-                            (&network.url_buf, network.out_of_memory)
-                        }
-                        Task::TarballSource::Local { .. } => (tarball.url.slice(), None),
+                    let fail_url: &[u8] = match source {
+                        Task::TarballSource::Network(network) => &network.url_buf,
+                        Task::TarballSource::Local { .. } => tarball.url.slice(),
                     };
                     // A linker's task for a local tarball is not in the map, so it gets no mark.
                     let Some(is_required) = caller.dispatch_tarball_error(
@@ -963,7 +960,7 @@ pub(crate) fn run_tasks(
                         dependency_id,
                         alias,
                         resolution,
-                        out_of_memory.unwrap_or(err),
+                        err,
                         fail_url,
                     ) else {
                         continue;
@@ -976,14 +973,7 @@ pub(crate) fn run_tasks(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
-                    let is_unanswered = out_of_memory.is_some();
-                    fail_update_requests(
-                        manager,
-                        task.id,
-                        alias,
-                        Some(dependency_id),
-                        is_unanswered,
-                    );
+                    fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
 
                     // Resolve phase: drain the
                     // `task_queue` entry too so a later install-phase

@@ -1,6 +1,7 @@
 // fail-syscall <errno> <call,...> <pattern> <spared> <command...>
 //
 // Runs the command, and fails each <call> behind the first <spared> whose path matches <pattern>.
+// With a minus, it is the first ones that fail.
 // Its children are left alone. Exits with 77 if the kernel does not go along.
 #define _GNU_SOURCE
 #include <errno.h>
@@ -111,11 +112,11 @@ int main(int argc, char **argv) {
   }
   while (*listener <= 0) sched_yield();
 
-  for (int spared = atoi(argv[4]);;) {
+  for (int spared = atoi(argv[4]), seen = 0;;) {
     struct seccomp_notif call = {0};
     if (ioctl(*listener, SECCOMP_IOCTL_NOTIF_RECV, &call) != 0) continue;
     struct seccomp_notif_resp answer = {.id = call.id, .flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE};
-    if (matches(&call, argv[3]) && spared-- <= 0) {
+    if (matches(&call, argv[3]) && (seen++ < abs(spared)) == (spared < 0)) {
       answer.flags = 0;
       answer.error = -atoi(argv[1]);
     }

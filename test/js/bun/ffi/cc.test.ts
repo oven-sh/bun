@@ -13,6 +13,7 @@ import {
   normalizeBunSnapshot,
   tempDir,
   tempDirWithFiles,
+  type DirectoryTree,
 } from "harness";
 import path from "path";
 
@@ -2068,5 +2069,165 @@ describe.concurrent("disabling cc()", () => {
     const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost('["--smol"]'));
     expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// cc() lists the directories of its bundled headers ahead of the two that
+// TinyCC adds by itself: {B}/include, then /usr/include. {B} is compiled in as
+// /usr/local/lib/tcc (on Windows it is the directory of bun.exe). `-B` moves
+// it, so "a header in TinyCC's own directory" is a file of the test.
+describe.concurrent("include order of the bundled headers", () => {
+  // What cc() passes to TinyCC when `flags` is not set.
+  const defaultFlags = ["-std=c11", "-Wl,--export-all-symbols", "-g", "-O2"];
+
+  const fixture = /* js */ `
+    import { cc } from "bun:ffi";
+    try {
+      const options = JSON.parse(process.argv[2]);
+      const { symbols } = cc({ ...options, symbols: { answer: { args: [], returns: "int" } } });
+      console.log(symbols.answer());
+    } catch (e) {
+      console.log(e.message);
+    }
+  `;
+
+  // Compiles source.c in a new process. `stdout` is what `int answer(void)`
+  // returns, or the compile error.
+  async function answer(files: DirectoryTree, options: object = {}) {
+    using dir = tempDir("bun-ffi-cc-include-order", { "fixture.js": fixture, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js", JSON.stringify({ source: "./source.c", ...options })],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode };
+  }
+
+  const bundled = [
+    ...["stdbool.h", "stdarg.h", "stdnoreturn.h", "stdalign.h", "tgmath.h", "stddef.h", "varargs.h"],
+    ...["node_api.h", "node_api_types.h", "js_native_api.h", "js_native_api_types.h"].flatMap(name => [
+      name,
+      "node/" + name,
+    ]),
+  ];
+
+  it("a header in TinyCC's own directory does not replace a bundled header", async () => {
+    const { stdout, exitCode } = await answer(
+      {
+        // TinyCC's directory has a header for every bundled name, and each one
+        // records that it was read.
+        ...Object.fromEntries(bundled.map((name, i) => ["tcc/include/" + name, `#define FOREIGN_${i} 1\n`])),
+        // The two libc headers that the bundled headers include. `-I` is
+        // searched first, so the host's headers are not read.
+        "libc/math.h": "",
+        "libc/stdint.h": /* c */ `
+          typedef short int16_t;
+          typedef unsigned short uint16_t;
+          typedef int int32_t;
+          typedef unsigned int uint32_t;
+          typedef long long int64_t;
+          typedef unsigned long long uint64_t;
+        `,
+        "source.c": [
+          ...bundled.map(name => `#include <${name}>`),
+          "int answer(void) {",
+          "  return 0",
+          ...bundled.flatMap((_, i) => [`#ifdef FOREIGN_${i}`, `    | 1 << ${i}`, "#endif"]),
+          "  ;",
+          "}",
+          "",
+        ].join("\n"),
+      },
+      { flags: [...defaultFlags, "-B", "tcc", "-I", "libc"] },
+    );
+    const foreign = bundled.filter((_, i) => Number(stdout) & (1 << i));
+    expect({ foreign, stdout, exitCode }).toEqual({ foreign: [], stdout: "0", exitCode: 0 });
+  });
+
+  // `-nostdinc` takes TinyCC's own directories off the include path. The
+  // bundled headers stay on it.
+  it.each([
+    ["is searched after the bundled headers", [], "107"],
+    ["is not searched with -nostdinc", ["-nostdinc"], "142"],
+  ])("TinyCC's own directory %s", async (_, extra, expected) => {
+    expect(
+      await answer(
+        {
+          "tcc/include/stdbool.h": "#define true 5\n",
+          "tcc/include/only_in_tcc.h": "#define ONLY_IN_TCC 7\n",
+          "source.c": /* c */ `
+            #include <stdbool.h>
+            #if __has_include(<only_in_tcc.h>)
+            #include <only_in_tcc.h>
+            #else
+            #define ONLY_IN_TCC 42
+            #endif
+            int answer(void) { return true * 100 + ONLY_IN_TCC; }
+          `,
+        },
+        { flags: [...defaultFlags, "-B", "tcc", ...extra] },
+      ),
+    ).toEqual({ stdout: expected, exitCode: 0 });
+  });
+
+  it.each(["-I", "-isystem"])("a header in a %s directory replaces a bundled header", async option => {
+    expect(
+      await answer(
+        {
+          "mine/stdbool.h": "#define true 7\n",
+          "source.c": "#include <stdbool.h>\nint answer(void) { return true; }\n",
+        },
+        { flags: [...defaultFlags, option, "mine"] },
+      ),
+    ).toEqual({ stdout: "7", exitCode: 0 });
+  });
+
+  // The <tgmath.h> of glibc and of musl include <complex.h>, and TinyCC has no
+  // _Complex. The bundled one needs <math.h>, which cc() does not find on
+  // Windows (#14545).
+  it.skipIf(isWindows)("<tgmath.h> is the bundled header, not the one of the libc", async () => {
+    expect(
+      await answer({
+        "source.c": /* c */ `
+          #include <tgmath.h>
+          int answer(void) {
+            float narrow = 16;
+            double wide = 16;
+            return (int)sizeof(sqrt(narrow)) * 100 + (int)sizeof(sqrt(wide)) * 10 + (int)sqrt(narrow);
+          }
+        `,
+      }),
+    ).toEqual({ stdout: "484", exitCode: 0 });
+  });
+
+  // musl defines wchar_t in <bits/alltypes.h>, as unsigned on aarch64, unless
+  // __DEFINED_wchar_t says that it is defined. TinyCC's wchar_t is int, and
+  // TinyCC rejects a second typedef with another type.
+  it.each([
+    ["<stddef.h>", '"alltypes.h"'],
+    ['"alltypes.h"', "<stddef.h>"],
+  ])("wchar_t has one definition after #include %s and #include %s", async (first, second) => {
+    expect(
+      await answer({
+        "alltypes.h": "#ifndef __DEFINED_wchar_t\ntypedef unsigned wchar_t;\n#define __DEFINED_wchar_t\n#endif\n",
+        "source.c": `#include ${first}\n#include ${second}\nint answer(void) { return sizeof(wchar_t) > 1; }\n`,
+      }),
+    ).toEqual({ stdout: "1", exitCode: 0 });
+  });
+
+  // The same with the libc of the host. <stdlib.h> is one of the headers that
+  // ask musl for wchar_t.
+  it.skipIf(!isLinux).each([
+    ["<stddef.h>", "<stdlib.h>"],
+    ["<stdlib.h>", "<stddef.h>"],
+  ])("the libc compiles after #include %s and #include %s", async (first, second) => {
+    expect(
+      await answer({
+        "source.c": `#include ${first}\n#include ${second}\nint answer(void) { return sizeof(wchar_t) + sizeof(div_t); }\n`,
+      }),
+    ).toEqual({ stdout: "12", exitCode: 0 });
   });
 });

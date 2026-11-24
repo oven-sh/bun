@@ -639,6 +639,7 @@ impl CompileC {
         // TODO: correctly handle invalid user-provided options
         let mut state = match TCC::OwnedState::init::<CompileC, true>(&TCC::Config {
             options: Some(compile_options),
+            sys_include_paths_before_defaults: &CompilerRT::INCLUDE_DIRS,
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(ctx),
@@ -655,7 +656,7 @@ impl CompileC {
             }
         };
 
-        CompilerRT::add_include_paths(&mut state);
+        state.set_open_func::<CompilerRT>();
 
         #[cfg(target_os = "macos")]
         {
@@ -2011,6 +2012,7 @@ impl Function {
         };
         let mut state = match TCC::OwnedState::init::<Function, false>(&TCC::Config {
             options: Some(tcc_options),
+            sys_include_paths_before_defaults: &[],
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
@@ -2355,15 +2357,10 @@ impl CompilerRT {
         }
     }
 
-    /// Puts the bundled headers on the include path of `state`.
-    pub(crate) fn add_include_paths(state: &mut TCC::State) {
-        state.set_open_func::<Self>();
-        for dir in [Self::DIR, Self::NODE_DIR] {
-            if state.add_sys_include_path(dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
-            }
-        }
-    }
+    /// On the include path ahead of TinyCC's own directories and the host's: the bundled
+    /// headers are the compiler's and this bun's N-API headers, and TinyCC cannot compile
+    /// the `tgmath.h` of a libc. `-I` and `-isystem` in the options are still searched first.
+    const INCLUDE_DIRS: [&'static ZStr; 2] = [Self::DIR, Self::NODE_DIR];
 
     /// The bundled header at `path` below `DIR`: `.`, `..` and empty components are resolved as text.
     fn bundled_header(path: &[u8]) -> Option<&'static [u8]> {

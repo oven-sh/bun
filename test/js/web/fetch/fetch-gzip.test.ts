@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, tempDir, tls } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import { truncateSync } from "node:fs";
 import { createServer } from "node:http";
@@ -1280,7 +1280,8 @@ describe("a compressed stream that is unfinished when the body ends", () => {
     });
     const body = kind === "file" ? Bun.file(upload) : new Uint8Array(size);
     const response = await fetch(targets.http.url + key, { method: "POST", body, proxy: false });
-    expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
+    // Winsock takes a send() of any size whole, so there the request is sent.
+    expect(await outcome(response.bytes(), small)).toBe(isWindows ? "ok" : "ECONNRESET");
   });
 
   it("rejects if a reset comes right behind more than the reader takes at once", async () => {

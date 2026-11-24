@@ -2332,6 +2332,14 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       for (const callback of callbacks) builder.onEnd(callback);
     },
   });
+  // Waits for a callback to say that it runs. If the build settles first, the test fails at once.
+  const reached = (signal: Promise<void>, build: Promise<unknown>) =>
+    Promise.race([
+      signal,
+      build.then(value => {
+        throw new Error("the build settled before the onEnd callback ran: " + Bun.inspect(value));
+      }),
+    ]);
 
   test("a callback starts after the promise of the previous plugin settles", async () => {
     using dir = tempDir("onend-serial", { "index.ts": `console.log(1);` });
@@ -2357,7 +2365,7 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       ],
     });
 
-    await started.promise;
+    await reached(started.promise, building);
     expect(log).toEqual(["a start"]);
     gate.resolve();
     await building;
@@ -2393,7 +2401,7 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       ],
     });
 
-    await started.promise;
+    await reached(started.promise, building);
     expect(seen).toEqual([]);
     gate.resolve();
     expect((await building) as any).toMatchObject({ success: true, pruned: true });
@@ -2436,10 +2444,10 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       error => ((settled = true), error),
     );
 
-    await aStarted.promise;
+    await reached(aStarted.promise, outcome);
     expect(log).toEqual(["a start"]);
     aGate.resolve();
-    await cStarted.promise;
+    await reached(cStarted.promise, outcome);
     expect({ log, settled }).toEqual({ log: ["a start", "a reject", "b throw", "c start"], settled: false });
     cGate.resolve();
     expect(await outcome).toBe(first);
@@ -2473,6 +2481,42 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
 
     expect(outcome).toBe(first);
     expect(log).toEqual(["a", "b", "c"]);
+  });
+
+  test.each(["sync", "async"])("an onEnd registered from inside a callback runs after the others (%s)", async kind => {
+    using dir = tempDir("onend-serial-late", { "index.ts": `console.log(1);` });
+    const log: string[] = [];
+
+    await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        {
+          name: "a",
+          setup(builder) {
+            const late = () => {
+              log.push("late");
+            };
+            builder.onEnd(
+              kind === "sync"
+                ? () => {
+                    log.push("a");
+                    builder.onEnd(late);
+                  }
+                : async () => {
+                    log.push("a");
+                    await null;
+                    builder.onEnd(late);
+                  },
+            );
+          },
+        },
+        plugin("b", () => {
+          log.push("b");
+        }),
+      ],
+    });
+
+    expect(log).toEqual(["a", "b", "late"]);
   });
 
   test("a thrown undefined rejects the build", async () => {
@@ -2524,7 +2568,7 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       error => error,
     );
 
-    await started.promise;
+    await reached(started.promise, outcome);
     gate.resolve();
     expect(await outcome).toBe(thrown);
   });
@@ -2554,7 +2598,7 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
       error => ({ rejected: error instanceof AggregateError, message: error.message }),
     );
 
-    await started.promise;
+    await reached(started.promise, outcome);
     expect(log).toEqual(["a start success=false"]);
     gate.resolve();
     expect(await outcome).toEqual(shouldThrow ? { rejected: true, message: "Bundle failed" } : { success: false });

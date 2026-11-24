@@ -113,6 +113,7 @@ export function runOnEndCallbacks(
   const callbacks = this.$onEndCallbacks;
   if (!callbacks) return;
 
+  // Both loops read `callbacks.length` each time: an onEnd that a callback registers runs too, as in esbuild.
   for (let i = 0; i < callbacks.length; i++) {
     const callback = callbacks[i];
     let result;

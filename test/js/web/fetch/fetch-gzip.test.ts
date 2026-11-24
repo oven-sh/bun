@@ -1058,8 +1058,11 @@ describe("a compressed stream that is unfinished when the body ends", () => {
     // `response` can only settle first by rejecting.
     const connection = await Promise.race([accepted, response as Promise<never>]);
     expect(connection.wire).toBeDefined();
+    // The client can hang up before `response` settles: it needs no connection to hold a whole message.
+    const { promise: wireClosed, resolve } = Promise.withResolvers<boolean>();
+    connection.wire.once("close", resolve);
     connection.origin.write(head);
-    return { ...connection, response: await response };
+    return { ...connection, wireClosed, response: await response };
   }
   const outcome = (bytes: Promise<Uint8Array>, expected: Buffer) =>
     bytes.then(
@@ -1077,9 +1080,9 @@ describe("a compressed stream that is unfinished when the body ends", () => {
     "close": (body: Buffer) => ["", body, ""],
   } satisfies Record<string, (body: Buffer) => [field: string, framed: Buffer, terminator: string]>;
   type Framing = keyof typeof framings;
-  const frame = (coding: string, framing: Framing, body: Buffer) => {
+  const frame = (coding: string, framing: Framing, body: Buffer, connection = "close") => {
     const [field, framed, terminator] = framings[framing](body);
-    const head = `HTTP/1.1 200 OK\r\nContent-Encoding: ${coding.replace("raw ", "")}\r\nConnection: close\r\n${field}\r\n`;
+    const head = `HTTP/1.1 200 OK\r\nContent-Encoding: ${coding.replace("raw ", "")}\r\nConnection: ${connection}\r\n${field}\r\n`;
     return { head: Buffer.from(head), framed, terminator };
   };
 
@@ -1222,11 +1225,18 @@ describe("a compressed stream that is unfinished when the body ends", () => {
       });
     });
 
-    it.each(["Content-Length", "chunked"] as const)("%s: a reset after the message changes nothing", async framing => {
-      const { head, framed, terminator } = frame(coding, framing, flushed(zeros));
-      const { response, wire } = await request("http", Buffer.concat([head, framed, Buffer.from(terminator)]));
+    it.each([
+      ["Content-Length", "close"],
+      ["Content-Length", "keep-alive"],
+      ["chunked", "close"],
+      ["chunked", "keep-alive"],
+    ] as const)("%s, %s: a reset after the message changes nothing", async (framing, connection) => {
+      const { head, framed, terminator } = frame(coding, framing, flushed(zeros), connection);
+      const message = Buffer.concat([head, framed, Buffer.from(terminator)]);
+      const { response, wire, wireClosed } = await request("http", message);
+      if (connection === "keep-alive") expect(wire.readyState).toBe("open");
       wire.resetAndDestroy();
-      await once(wire, "close");
+      await wireClosed;
       const chunks = Array.fromAsync(response.body!).then(chunks => Buffer.concat(chunks));
       expect(await outcome(chunks, zeros)).toBe("ok");
     });

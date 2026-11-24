@@ -234,13 +234,8 @@ fn get_temporary_directory_run(
     };
 
     'brk: loop {
-        let file = match tempdir.create_file_z(
-            tmpname,
-            sys::CreateFlags {
-                truncate: true,
-                ..Default::default()
-            },
-        ) {
+        let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC;
+        let probe = match sys::Tmpfile::open(tempdir.fd(), tmpname, flags, 0o666) {
             Ok(f) => f,
             Err(err2) => {
                 if !tried_dot_tmp {
@@ -267,13 +262,10 @@ fn get_temporary_directory_run(
                 return Err(DirectoryError::ProbeTemporary(err2));
             }
         };
-        drop(file);
 
-        match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
+        match probe.close().rename_to(cache_directory, tmpname) {
             Ok(()) => {}
             Err(err) => {
-                // The rename failed, so the probe is still sitting in `tempdir`.
-                let _ = tempdir.delete_file_z(tmpname);
                 if !tried_dot_tmp {
                     tried_dot_tmp = true;
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {

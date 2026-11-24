@@ -177,7 +177,7 @@ impl HmrSocket {
                             dev.publish(
                                 HmrTopic::TestingWatchSynchronization,
                                 &[MessageId::TestingWatchSynchronization.char(), 0],
-                                bun_uws::Opcode::BINARY,
+                                bun_uws::Opcode::Binary,
                             );
                         }
                     }
@@ -302,22 +302,7 @@ impl HmrSocket {
     }
 }
 
-/// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
-pub(super) fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
-}
-
-// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
-// to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
-// `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
-// `dev_server::hmr_socket`.
 impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
-    // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
-    // `HAS_ON_* == false`.
-    const HAS_ON_DRAIN: bool = false;
-    const HAS_ON_PING: bool = false;
-    const HAS_ON_PONG: bool = false;
-
     #[inline]
     unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
         // SAFETY: `this` is the live user-data pointer (per trait contract). The dev server closes
@@ -358,7 +343,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         this: *mut Self,
         res: *mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
+        upgrade_ctx: &WebSocketUpgradeContext,
         id: usize,
     ) {
         debug_assert_eq!(id, 0);
@@ -392,16 +377,16 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         let _pending = PendingRequest::new(server);
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let socket = unsafe {
+        let upgraded = unsafe {
             (&mut *res).upgrade(
-                dw,
+                dw.cast(),
                 req.header(b"sec-websocket-key").unwrap_or(b""),
                 req.header(b"sec-websocket-protocol").unwrap_or(b""),
                 req.header(b"sec-websocket-extension").unwrap_or(b""),
-                Some(upgrade_ctx),
+                upgrade_ctx,
             )
         };
-        if socket.is_null() {
+        if !upgraded {
             // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
             // SAFETY: `this` is live (see above).
             let _ = unsafe { (*this).active_websocket_connections.remove(&dw) };

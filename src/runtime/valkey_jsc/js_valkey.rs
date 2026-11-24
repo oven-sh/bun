@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::{AutoFlusher, HasAutoFlusher};
 use bun_boringssl as boringssl;
-use bun_core::{Utf8Bytes, strings};
+use bun_core::{EncodedSlice, Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
@@ -424,7 +424,7 @@ impl JSValkeyClient {
             match valkey::Protocol::MAP.get(protocol_slice) {
                 Some(v) => *v,
                 None => return Err(cx.global().throw(format_args!(
-                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
+                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
                 ))),
             }
         } else {
@@ -432,11 +432,8 @@ impl JSValkeyClient {
         };
 
         // Extract all URL components
-        let username_str = parsed_url.username();
-        let username_utf8 = username_str.to_utf8();
-
-        let password_str = parsed_url.password();
-        let password_utf8 = password_str.to_utf8();
+        let username = decode_credential(cx.global(), "username", parsed_url.encoded_username())?;
+        let password = decode_credential(cx.global(), "password", parsed_url.encoded_password())?;
 
         let hostname_str = parsed_url.host();
         let hostname_utf8 = hostname_str.to_utf8();
@@ -487,11 +484,11 @@ impl JSValkeyClient {
         let Options { mut config, tls } = if options.is_object() {
             Options::from_js(cx.global(), options)?
         } else {
-            Options::default()
+            Options::from_env()
         };
 
-        config.username = username_utf8.slice().into();
-        config.password = password_utf8.slice().into();
+        config.username = username;
+        config.password = password;
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         config.database = match uri {
@@ -1309,6 +1306,22 @@ impl<const SSL: bool> SocketHandler<SSL> {
 // Options
 // ───────────────────────────────────────────────────────────────────────────
 
+/// `Parsed::username()` and `password()` give an empty string for what is not UTF-8.
+fn decode_credential(
+    global: &JSGlobalObject,
+    name: &str,
+    encoded: EncodedSlice<'_>,
+) -> JsResult<Box<[u8]>> {
+    let decoded = bun_url::PercentEncoding::decode_lenient_alloc(encoded.to_utf8().slice());
+    if strings::is_valid_utf8(&decoded) {
+        return Ok(decoded);
+    }
+    let message = format_args!(
+        "The {name} in the Redis URL does not decode to UTF-8. Encode it with encodeURIComponent()."
+    );
+    Err(global.err(jsc::ErrorCode::INVALID_URI, message).throw())
+}
+
 // Parse JavaScript options into Valkey client options
 #[derive(Default)]
 struct Options {
@@ -1317,12 +1330,17 @@ struct Options {
 }
 
 impl Options {
-    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<Options> {
+    fn from_env() -> Options {
         let mut this = Options::default();
         this.config.enable_auto_pipelining =
             !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
                 .get()
                 .unwrap_or(false);
+        this
+    }
+
+    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<Options> {
+        let mut this = Options::from_env();
 
         if let Some(idle_timeout) =
             options_obj.get_optional_int::<u32>(global_object, "idleTimeout")?

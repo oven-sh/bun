@@ -190,8 +190,7 @@ impl Ref {
     /// (would require >268M symbols or a >268MB source-contents-slice offset).
     const INNER_BITS: u64 = (1u64 << 28) - 1;
     /// Bits 28..31 — opaque per-node flags (E::Identifier side-effect hints,
-    /// E::ImportIdentifier `was_originally_identifier`, E::CommonJSExportIdentifier
-    /// `base`). Never set by `pack()`; only via `set_user_bit`. Masked out of
+    /// E::CommonJSExportIdentifier `base`). Never set by `pack()`; only via `set_user_bit`. Masked out of
     /// identity (`eq`/`hash`/`as_u64`).
     const USER_BITS_MASK: u64 = 0b111 << 28;
     const SRC_SHIFT: u32 = 33;

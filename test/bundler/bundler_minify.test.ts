@@ -2046,6 +2046,269 @@ describe("bundler", () => {
   });
 });
 
+// What a call gets as `this` depends on how the callee is written, so each callee is tried in each form.
+describe("`this` of a rewritten callee", () => {
+  type This = "undefined" | "object";
+  const callees: Record<string, This> = {
+    "o.m": "object",
+    "o[key]": "object",
+    "o?.m": "object",
+    "local": "undefined",
+    "named": "undefined",
+    "lifted.named": "object",
+    "wrappedDefault": "undefined",
+    "wrappedNamed": "undefined",
+    "wrapped.named": "object",
+    "DEFINED": "object",
+    "require('./lifted.cjs').named": "object",
+  };
+  // `$` is the callee. "same" keeps what a direct call gets.
+  const forms: [setup: string, callee: string, expected: This | "same"][] = [
+    ["", "($)", "same"],
+    ["", "(0, $)", "undefined"],
+    ["", "(() => local(), $)", "undefined"],
+    ["", "(true ? $ : 0)", "undefined"],
+    ["", "(typeof o ? $ : 0)", "undefined"],
+    ["", "(typeof o && 0 ? 0 : $)", "undefined"],
+    ["", "(true && $)", "undefined"],
+    ["", "(false || $)", "undefined"],
+    ["", "(null ?? $)", "undefined"],
+    ["", "(true && (false || $))", "undefined"],
+    ["", "({}.x ??= $)", "undefined"],
+    ["", "[$][0]", "object"],
+    ["", "(0, [$][0])", "undefined"],
+    ["", "({ f: $ }).f", "object"],
+    ["", "({ f: $ })['f']", "object"],
+    ["const t = $;", "t", "undefined"],
+    ["const t = $;", "(false || t)", "undefined"],
+    ["const c = [local()] && 0;", "(c ? 0 : $)", "undefined"],
+  ];
+  const expected: Record<string, This> = {};
+  for (const [callee, direct] of Object.entries(callees)) {
+    for (const [setup, form, value] of forms) {
+      for (const call of ["()", "?.()", "`é${1}`", "`a`"]) {
+        expected[`${setup} return ${form}${call}`.replaceAll("$;", callee + ";").replace(/\$(?!\{)/g, callee)] =
+          value === "same" ? direct : value;
+      }
+    }
+  }
+  const probe = `function () { "use strict"; return typeof this; }`;
+  const files = {
+    "/entry.mjs": /* js */ `
+      import { named } from "./lifted.cjs";
+      import * as lifted from "./lifted.cjs";
+      import wrappedDefault, { named as wrappedNamed } from "./wrapped.cjs";
+      import * as wrapped from "./wrapped.cjs";
+      let key = globalThis.unset ?? "m";
+      function local() { return typeof this; }
+      globalThis.defined = { m: local };
+      const arg = { m: local };
+      console.log(JSON.stringify({
+        ${Object.keys(expected)
+          .map(body => `${JSON.stringify(body)}: (o => { ${body} })(arg),`)
+          .join("\n")}
+      }));
+    `,
+    "/lifted.cjs": `exports.named = ${probe};`,
+    "/wrapped.cjs": `module.exports = ${probe}; module.exports.named = ${probe};`,
+  };
+
+  const builds: Record<string, Partial<BundlerTestInput>> = {
+    Plain: {},
+    MinifyAll: { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true },
+    TargetBun: { target: "bun" },
+  };
+  for (const [name, options] of Object.entries(builds)) {
+    itBundled(`minify/ThisOfRewrittenCallee${name}`, {
+      files,
+      define: { DEFINED: "defined.m" },
+      ...options,
+      run: { validate: ({ stdout }) => expect(JSON.parse(stdout)).toEqual(expected) },
+    });
+  }
+
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("this-of-callee", files);
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { printed: stderr || JSON.parse(stdout), exitCode };
+  }
+
+  test.concurrent("bun run", async () => {
+    const relative = Object.fromEntries(Object.entries(files).map(([path, text]) => [path.slice(1), text]));
+    expect(await run(relative, "--define", "DEFINED=defined.m", "entry.mjs")).toEqual({
+      printed: expected,
+      exitCode: 0,
+    });
+  });
+
+  const table = (rows: Record<string, unknown>) =>
+    `console.log(JSON.stringify({ ${Object.keys(rows).map(row => `${JSON.stringify(row)}: ${row}`)} }));`;
+
+  test.concurrent("inside `with`", async () => {
+    const rows = {
+      "f()": true,
+      "(f)()": true,
+      "f``": true,
+      "eval?.()": true,
+      "eval``": true,
+      "(0, f)()": false,
+      "(0, f)``": false,
+      "(true && f)()": false,
+      "(true ? f : 0)()": false,
+      "(() => { const g = f; return g(); })()": false,
+      "(() => { const g = f; return g``; })()": false,
+    };
+    const source = `var o = { f() { return this === o; } }; o.eval = o.f; module.exports = 0; with (o) { ${table(rows)} }`;
+    expect(await run({ "entry.cjs": source }, "entry.cjs")).toEqual({ printed: rows, exitCode: 0 });
+  });
+
+  test.concurrent("inside a TypeScript namespace, like tsc", async () => {
+    const rows = { "f()": true, "f``": true, "(0, f)()": false, "(true && f)``": false };
+    const declare = `export const f = function (this: unknown) { return this === N; };`;
+    expect({
+      sameBlock: await run({ "entry.ts": `namespace N { ${declare} ${table(rows)} }` }, "entry.ts"),
+      otherBlock: await run({ "entry.ts": `namespace N { ${declare} } namespace N { ${table(rows)} }` }, "entry.ts"),
+    }).toEqual({ sameBlock: { printed: rows, exitCode: 0 }, otherBlock: { printed: rows, exitCode: 0 } });
+  });
+
+  test.concurrent("a private method of a class with decorators", async () => {
+    const rows = {
+      "this.#m()": true,
+      "(0, this.#m)()": false,
+      "(0, this.#m)``": false,
+      "(true && this.#m)``": false,
+    };
+    const source = /* js */ `
+      const keep = value => value;
+      class A {
+        @keep #m() { return this instanceof A; }
+        constructor() { ${table(rows)} }
+      }
+      new A();
+    `;
+    expect(await run({ "entry.js": source }, "entry.js")).toEqual({ printed: rows, exitCode: 0 });
+  });
+
+  test.concurrent("`delete` and `typeof` of an inlined value", async () => {
+    const rows = {
+      "(delete [o.p][0], o.p)": 1,
+      "delete 'ab'[0]": false,
+      "(() => { try { const a = missing; return typeof a; } catch (e) { return e.name; } })()": "ReferenceError",
+    };
+    expect(await run({ "entry.cjs": `var o = { p: 1 }; module.exports = 0; ${table(rows)}` }, "entry.cjs")).toEqual({
+      printed: rows,
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("`eval` stays indirect when it is a parameter", async () => {
+    const rows = {
+      "eval('typeof local')": "number",
+      "(0, eval)('typeof local')": "undefined",
+      "(true && eval)('typeof local')": "undefined",
+    };
+    const source = `module.exports = 0; (function (eval) { var local = 1; ${table(rows)} })(eval);`;
+    expect(await run({ "entry.cjs": source }, "entry.cjs")).toEqual({ printed: rows, exitCode: 0 });
+  });
+
+  test.concurrent("`new` of a template whose tag is a call", async () => {
+    const rows = { "new (f()`x`)().k": 1, "new (f()`x`.C)().k": 1, "new (o.f()`x`)().k": 1 };
+    const source = `class C { k = 1; static C = C; } const f = () => () => C, o = { f }; ${table(rows)}`;
+    expect(await run({ "entry.mjs": source }, "entry.mjs")).toEqual({ printed: rows, exitCode: 0 });
+  });
+
+  for (const minifySyntax of [false, true]) {
+    for (const deoptimize of ["", "Object.keys(exports);", "module.exports = exports = { m };"]) {
+      const rows = {
+        "exports.m()": "object",
+        "exports.m``": "object",
+        "module.exports.m()": "object",
+        "(true && exports.m)()": "undefined",
+        "(true && exports.m)``": "undefined",
+        "(0, exports.m)()": "undefined",
+        "(0, module.exports.m)``": "undefined",
+      };
+      itBundled(`minify/ThisOfOwnCommonJSExport ${minifySyntax} ${deoptimize}`.replace(/[^\w/]+/g, "_"), {
+        files: {
+          "/entry.mjs": `import "./lib.cjs";`,
+          "/lib.cjs": `const m = ${probe}; exports.m = m; ${deoptimize} ${table(rows)}`,
+        },
+        minifySyntax,
+        run: { validate: ({ stdout }) => expect(JSON.parse(stdout)).toEqual(rows) },
+      });
+    }
+
+    const rows = {
+      "module.exports()": "object",
+      "module.exports``": "object",
+      "(true && module.exports)()": "undefined",
+      "(0, module.exports)``": "undefined",
+    };
+    itBundled(`minify/ThisOfModuleExports_${minifySyntax}`, {
+      files: { "/entry.mjs": `import "./lib.cjs";`, "/lib.cjs": `module.exports = ${probe}; ${table(rows)}` },
+      minifySyntax,
+      run: { validate: ({ stdout }) => expect(JSON.parse(stdout)).toEqual(rows) },
+    });
+  }
+
+  for (const format of ["cjs", "iife"] as const) {
+    const rows = {
+      "named()": "undefined",
+      "named``": "undefined",
+      "ns.named()": "object",
+      "(0, ns.named)()": "undefined",
+    };
+    itBundled(`minify/ThisOfExternalImport_${format}`, {
+      files: { "/entry.mjs": `import { named } from "ext"; import * as ns from "ext"; ${table(rows)}` },
+      runtimeFiles: { "/node_modules/ext/index.js": `exports.named = ${probe};` },
+      external: ["ext"],
+      format,
+      run: { validate: ({ stdout }) => expect(JSON.parse(stdout)).toEqual(rows) },
+    });
+  }
+
+  {
+    const rows = {
+      "named()": "undefined",
+      "named``": "undefined",
+      "named?.()": "undefined",
+      "ns.named()": "object",
+      "ns.named``": "object",
+      "props.m()": "object",
+      "props.o.m()": "object",
+      "(0, props.o.m)()": "undefined",
+      "(true && props.o.m)()": "undefined",
+      "(true ? props.o.m : 0)``": "undefined",
+      "(true && props.o.m)?.()": "undefined",
+    };
+    itBundled("minify/ThisInReactCompilerOutput", {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { named } from "./wrapped.cjs";
+          import * as ns from "./wrapped.cjs";
+          ${Object.keys(rows)
+            .map((row, i) => `function C${i}(props) { const value = ${row}; return <a>{value}</a>; }`)
+            .join("\n")}
+          const props = { m: named, o: { m: named } };
+          console.log(JSON.stringify({ ${Object.keys(rows).map((row, i) => `${JSON.stringify(row)}: C${i}(props)`)} }));
+        `,
+        "/wrapped.cjs": files["/wrapped.cjs"],
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = (type, props) => props.children;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props.children;`,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js").match(/ = \$c\(\d+\)/g)).toHaveLength(Object.keys(rows).length);
+      },
+      run: { validate: ({ stdout }) => expect(JSON.parse(stdout)).toEqual(rows) },
+    });
+  }
+});
+
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables
 // minify-syntax for bun targets but never bundles. A block-bodied arrow must
 // keep its block body there so `Function.prototype.toString()` is unchanged —

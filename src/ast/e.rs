@@ -258,7 +258,7 @@ pub struct Call {
     pub target: ExprNodeIndex,
     pub args: ExprNodeList,
     pub optional_chain: Option<OptionalChain>,
-    pub is_direct_eval: bool,
+    pub kind: CallKind,
     pub close_paren_loc: crate::Loc,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -280,13 +280,37 @@ impl Default for Call {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
-            is_direct_eval: false,
+            kind: CallKind::AsPrinted,
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
         }
     }
 }
+
+/// What the form of a call target or a template tag means for the call.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallKind {
+    /// "a.b()", or generated code: the callee means what it looks like.
+    AsPrinted,
+    /// "a()", "(0, a.b)()": `this` is undefined, whatever the callee is rewritten to.
+    Plain,
+    /// "eval()"
+    DirectEval,
+}
+
+impl CallKind {
+    #[inline]
+    pub fn of(callee: &ExprNodeIndex) -> Self {
+        if callee.has_value_for_this_in_call() {
+            Self::AsPrinted
+        } else {
+            Self::Plain
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
@@ -495,8 +519,6 @@ impl Identifier {
 /// "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
 /// "{x: importedNamespace.x}". This separate type forces code to opt-in to
 /// doing this instead of opt-out.
-/// 8-byte import-identifier payload — `was_originally_identifier` rides in
-/// `Ref` user bit 0 (see `Identifier` doc for the packing rationale).
 #[derive(Clone, Copy)]
 pub struct ImportIdentifier {
     pub ref_: Ref,
@@ -509,23 +531,11 @@ impl Default for ImportIdentifier {
 }
 impl ImportIdentifier {
     #[inline]
-    pub const fn new(ref_: Ref, was_originally_identifier: bool) -> Self {
-        // Strip any incoming user bits (the caller may pass an
-        // `E::Identifier.ref_` carrying its own flags in bits 1/2) before
-        // applying ours, so foreign flags can't leak into this node.
+    pub const fn new(ref_: Ref) -> Self {
+        // The caller may pass an `E::Identifier.ref_`, which carries its own flags.
         Self {
-            ref_: ref_
-                .without_user_bits()
-                .with_user_bit(0, was_originally_identifier),
+            ref_: ref_.without_user_bits(),
         }
-    }
-
-    /// If true, this was originally an identifier expression such as "foo". If
-    /// false, this could potentially have been a member access expression such
-    /// as "ns.foo" off of an imported namespace object.
-    #[inline]
-    pub const fn was_originally_identifier(self) -> bool {
-        self.ref_.user_bit(0)
     }
 }
 
@@ -2004,8 +2014,24 @@ pub struct TemplatePart {
     pub tail: TemplateContents,
 }
 
+#[derive(Clone, Copy)]
+pub struct TemplateTag {
+    pub expr: ExprNodeIndex,
+    pub kind: CallKind,
+}
+
+impl TemplateTag {
+    #[inline]
+    pub fn new(expr: ExprNodeIndex) -> Self {
+        Self {
+            kind: CallKind::of(&expr),
+            expr,
+        }
+    }
+}
+
 pub struct Template {
-    pub tag: Option<ExprNodeIndex>,
+    pub tag: Option<TemplateTag>,
     /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use

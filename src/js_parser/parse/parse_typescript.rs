@@ -169,6 +169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let args = p.parse_call_args()?;
                     expr = p.new_expr(
                         E::Call {
+                            kind: E::CallKind::of(&expr),
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,

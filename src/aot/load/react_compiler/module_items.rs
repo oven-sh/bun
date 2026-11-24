@@ -42,9 +42,10 @@ impl ModuleItems {
         symbol: &ObservedSymbol<'_>,
     ) -> Atom {
         match symbol.origin {
-            SymbolOrigin::Source | SymbolOrigin::Local | SymbolOrigin::NamespaceMember(_) => {
-                atoms.intern(symbol.name)
-            }
+            SymbolOrigin::Source
+            | SymbolOrigin::Local
+            | SymbolOrigin::NamespaceMember(_)
+            | SymbolOrigin::DefinedPath => atoms.intern(symbol.name),
             SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", symbol.name),
             SymbolOrigin::JsxImport(kind) => {
                 let import = jsx_import_of(kind);

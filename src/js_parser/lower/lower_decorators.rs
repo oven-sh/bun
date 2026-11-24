@@ -440,8 +440,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::ETemplate(e) => {
-                if let Some(t) = &mut e.tag {
-                    self.rewrite_private_accesses_in_expr(t, map);
+                if let Some(tag) = &mut e.tag {
+                    self.rewrite_private_accesses_in_expr(&mut tag.expr, map);
                 }
                 for part in e.parts_mut().iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);

@@ -900,7 +900,7 @@ impl AsyncPrefixExpression {
 }
 
 // Packed u8 — assign_target:u2, is_delete_target:b1,
-// was_originally_identifier:b1, is_call_target:b1, _padding:u3 (LSB-first).
+// _padding:u1, is_call_target:b1, ... (LSB-first).
 // Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
 // transparent u8 with manual shift accessors.
 #[repr(transparent)]
@@ -910,7 +910,6 @@ pub struct IdentifierOpts(u8);
 impl IdentifierOpts {
     const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
     const IS_DELETE_TARGET: u8 = 1 << 2;
-    const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
     const IS_TEMPLATE_TAG: u8 = 1 << 5;
     const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
@@ -934,17 +933,13 @@ impl IdentifierOpts {
         self.0 & Self::IS_DELETE_TARGET != 0
     }
     #[inline]
-    pub(crate) const fn was_originally_identifier(self) -> bool {
-        self.0 & Self::WAS_ORIGINALLY_IDENTIFIER != 0
-    }
-    #[inline]
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
-    /// The tag of a tagged template, which passes `this` like a call target.
+    /// A call target or a template tag. Both pass `this`.
     #[inline]
-    pub(crate) const fn is_template_tag(self) -> bool {
-        self.0 & Self::IS_TEMPLATE_TAG != 0
+    pub(crate) const fn is_callee(self) -> bool {
+        self.0 & (Self::IS_CALL_TARGET | Self::IS_TEMPLATE_TAG) != 0
     }
     /// See `ExprIn::is_property_access_target`.
     #[inline]
@@ -966,11 +961,6 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_delete_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_was_originally_identifier(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
         self
     }
     #[inline]

@@ -1284,7 +1284,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 },
             ]));
             self.record_usage(ref_);
-            self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
+            self.new_expr(E::ImportIdentifier::new(ref_), loc)
         };
         self.import_meta_glob_imports.push(self.s(import, loc));
         value

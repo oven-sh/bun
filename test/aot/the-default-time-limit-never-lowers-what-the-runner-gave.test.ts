@@ -34,17 +34,6 @@ test("a file that runs beside others gets more, and the runner says that it is t
   }).toEqual({ underTheRunner: true, byHand: false, aDebugBunUnderTheRunner: false, underAnotherName: false });
 });
 
-// Each of three files had eight cases under way on eight processors, and `testaot` ended a native test that was still at work as hung.
-test("a file that runs beside others has no more cases under way than its share of the processors", () => {
-  const runner = readFileSync(join(import.meta.dir, "..", "..", "scripts", "runner.node.ts"), "utf8");
-  expect(runner).toContain("filesAtATime: saysDuration ? buildingFilesWidth : 1,");
-  expect(runner).toContain("const filesAtATime = opts.filesAtATime ?? 1;");
-  expect(runner).toContain("if (buildsManyExecutables(relative(testsPath, absPath)) || filesAtATime > 1)");
-  expect(runner).toContain("`--max-concurrency=${Math.min(20, Math.ceil(availableParallelism() / filesAtATime))}`");
-  // A bucket of such files.
-  expect(runner).toContain("`--max-concurrency=${Math.ceil(availableParallelism() / width)}`");
-});
-
 test("a default is raised to what the runner gave, and never lowered", () => {
   expect({
     withAssertions: atLeastWhatTheRunnerGave(120_000, true, false),

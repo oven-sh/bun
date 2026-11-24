@@ -228,8 +228,8 @@ export function irTests(part: number, parts: number) {
 }
 
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and
-// as many of them run at once as there are processors: whoever is done takes the next. CI runs several of these files at once, and
-// a share keeps its processor busy, so the files count their shares together.
+// as many of them run at once as the runner lets the file have tests under way, at most one for each processor: whoever is done takes
+// the next. CI runs several of these files at once, and a share keeps its processor busy, so the files count their shares together.
 const sharesOfAFile = 16;
 
 /** Every `parts`-th native test, from the `part`-th on. */

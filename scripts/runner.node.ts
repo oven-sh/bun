@@ -2664,7 +2664,7 @@ interface TestError {
 
 interface SpawnBunTestOptions {
   cwd: string;
-  /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long, and each has its share of the processors. */
+  /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. With a sanitizer each has that share of the processors for its tests. */
   filesAtATime?: number;
   args?: string[];
   env?: SpawnEnv;
@@ -2685,12 +2685,13 @@ async function spawnBunTest(
   const args = opts.args ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
-  // A test holds the executables that it has built until it ends, and `bun test` has twenty tests under way. The files that run
-  // beside this one share the processors, and more tests under way in a file than its share of them end no sooner: their
-  // executables only lie there together, and a child that a clock judges gets a fraction of a processor.
-  const filesAtATime = opts.filesAtATime ?? 1;
-  if (buildsManyExecutables(relative(testsPath, absPath)) || filesAtATime > 1)
-    testArgs.push(`--max-concurrency=${Math.min(20, Math.ceil(availableParallelism() / filesAtATime))}`);
+  // A test holds the executables that it has built until it ends, and `bun test` has up to twenty tests under way. Alone, more
+  // of them than there are processors end no sooner: their executables only lie there together.
+  // With a sanitizer every test of such a file runs beside the others (test/aot/supported.ts), and what a file has under way
+  // beyond its share of the processors it takes from the files beside it, where `testaot` then ended a native test as hung.
+  const sharing = isAsan ? (opts.filesAtATime ?? 1) : 1;
+  if (buildsManyExecutables(relative(testsPath, absPath)) || sharing > 1)
+    testArgs.push(`--max-concurrency=${Math.min(20, Math.ceil(availableParallelism() / sharing))}`);
 
   // This will be set if a JUnit file is generated
   let junitFilePath: string | null = null;

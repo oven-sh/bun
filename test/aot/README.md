@@ -100,7 +100,7 @@ A test that does not pass today is a `test.todo(..)` with its body.
 - A platform or a sanitizer that cannot run a program has a line for it in `test/expectations.txt`, with the reason.
 - A file is killed after three minutes.
 - A file that judges by a clock or by memory has a line `// Runs alone: <why>`.
-- The other files run beside one another, and each has no more tests under way than its share of the processors. A clock that must hold whatever runs beside the file still needs `// Runs alone:`.
+- The other files run beside one another. With a sanitizer each has the processors divided by the files at a time, rounded up, as its tests under way. What one test starts is not counted, so a clock that must hold whatever runs beside the file still needs `// Runs alone:`.
 - A path is short. Windows does not find a path of 260 characters.
 - A group of tests that needs more than a Bun is switched on by an environment variable `AOT_<GROUP>`. The top of each such file says what it needs.
 

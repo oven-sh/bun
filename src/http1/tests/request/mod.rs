@@ -463,19 +463,6 @@ fn lookups() {
         assert_eq!(fields, "[Host= x=b HOST=c Empty= ab=d]");
     });
 
-    for (method, lowercase) in [
-        ("GeT", "get"),
-        ("M-SEARCH", "m-search"),
-        ("A", "a"),
-        ("ABCDEFGHIJKLMNOP", "abcdefghijklmnop"),
-        ("ABCDEFGHIJKLMNOPQ", "ABCDEFGHIJKLMNOPQ"),
-    ] {
-        let head = format!("{method} / HTTP/1.1\r\n\r\n");
-        SERVE.with_request(head.as_bytes(), |request| {
-            assert_eq!(request.lowercase_method(), lowercase.as_bytes());
-        });
-    }
-
     for (target, path) in [
         ("/", "/"),
         ("/a/b", "/a/b"),

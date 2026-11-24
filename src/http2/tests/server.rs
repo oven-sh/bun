@@ -124,7 +124,7 @@ impl server::Host for Host {
     type Field = ();
 
     fn field(_: &[u8], _: &[u8]) {}
-    fn route(&self, stream: &Stream, _: &[()]) -> bool {
+    fn route(&self, stream: &Stream, _: server::Request<'_, ()>) -> bool {
         log("request");
         self.0(stream);
         true

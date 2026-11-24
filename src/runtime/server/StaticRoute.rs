@@ -280,7 +280,7 @@ impl StaticRoute {
     }
 
     pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
+        let method = req.method();
         if method == Method::GET {
             self.on_get(req, resp);
         } else if method == Method::HEAD {

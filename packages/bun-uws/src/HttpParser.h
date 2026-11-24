@@ -26,7 +26,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
-#include <utility>
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
@@ -59,6 +58,8 @@ struct HttpParser;
 namespace http1 {
 
 struct Request;
+struct Routes;
+struct RouteParameters;
 
 struct Bytes {
     const char *data;
@@ -96,55 +97,30 @@ extern "C" Result Bun__RequestParser__read(Socket *, const char *data, size_t le
 extern "C" Result Bun__RequestParser__readForNode(Socket *, const char *data, size_t length, const Options *);
 extern "C" bool Bun__RequestParser__hasPartialHead(const HttpParser *);
 extern "C" bool Bun__RequestParser__hasIncompleteBody(const HttpParser *);
-extern "C" void Bun__Http1Request__method(const Request *, Bytes *);
 extern "C" void Bun__Http1Request__target(const Request *, Bytes *);
-extern "C" void Bun__Http1Request__path(const Request *, Bytes *);
 extern "C" void Bun__Http1Request__afterHead(const Request *, Bytes *);
 extern "C" bool Bun__Http1Request__isHttp10(const Request *);
-extern "C" void Bun__Http1Request__field(const Request *, const char *name, size_t length, Bytes *);
-extern "C" bool Bun__Http1Request__fieldAt(const Request *, size_t index, Bytes *name, Bytes *value);
+extern "C" bool Bun__Http1Request__nextField(const Request *, size_t *index, Bytes *name, Bytes *value);
+extern "C" bool Bun__Http1Routes__dispatch(const Routes *, int ssl, void *response, const Request *, bool answersExpect);
+extern "C" void Bun__RouteParameters__at(const RouteParameters *, size_t index, Bytes *);
 
 }
 
-/* A parsed request and what the router adds to it. */
+/* The start of Routed in src/uws_sys/Request.rs. */
 struct HttpRequest {
     const http1::Request *parsed;
 
-    explicit HttpRequest(const http1::Request *parsed) : parsed(parsed) {}
-
     bool isAncient() { return http1::Bun__Http1Request__isHttp10(parsed); }
-    std::string_view getCaseSensitiveMethod() { return get<http1::Bun__Http1Request__method>(); }
     std::string_view getFullUrl() { return get<http1::Bun__Http1Request__target>(); }
-    std::string_view getUrlForRouting() { return get<http1::Bun__Http1Request__path>(); }
     /* The `head` argument of node:http's 'connect' and 'upgrade' events. */
     std::string_view getBytesAfterHead() { return get<http1::Bun__Http1Request__afterHead>(); }
-    std::string_view getHeader(std::string_view name) { return get<http1::Bun__Http1Request__field>(name.data(), name.length()); }
-
-    template <typename Fn> void forEachHeader(Fn &&fn) {
-        http1::Bytes name, value;
-        for (size_t i = 0; http1::Bun__Http1Request__fieldAt(parsed, i, &name, &value); i++) {
-            fn(name, value);
-        }
-    }
-
-    bool getYield() { return didYield; }
-    /* If you do not want to handle this route */
-    void setYield(bool yield) { didYield = yield; }
-
-    void setParameters(std::pair<int, std::string_view *> parameters) { currentParameters = parameters; }
-    std::string_view getParameter(unsigned short index) {
-        return currentParameters.first < (int) index ? std::string_view() : currentParameters.second[index];
-    }
 
 private:
-    template <auto getter, typename... Arguments> std::string_view get(Arguments... arguments) {
+    template <auto getter> std::string_view get() {
         http1::Bytes bytes;
-        getter(parsed, arguments..., &bytes);
+        getter(parsed, &bytes);
         return bytes;
     }
-
-    bool didYield = false;
-    std::pair<int, std::string_view *> currentParameters;
 };
 
 /* RequestParser in src/http1/request/mod.rs. */

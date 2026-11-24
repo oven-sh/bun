@@ -284,7 +284,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     RequestArguments args;
     args.append(thisValue);
     args.append(jsStringFromUTF8(vm, request->getFullUrl()));
-    args.append(methodString.isUndefinedOrNull() ? jsStringFromUTF8(vm, request->getCaseSensitiveMethod()) : methodString);
+    args.append(methodString);
 
     auto* httpResponseData = response->getHttpResponseData();
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).

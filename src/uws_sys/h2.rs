@@ -1,12 +1,11 @@
 //! HTTP/2 for `Bun.serve()`. Method names mirror NewApp/NewResponse (and h3) 1:1 so
 //! callers (including the AnyResponse dispatch arms) see the same surface
-//! regardless of transport. Requests are [`crate::h3::Request`]: both
-//! transports hand C++ the same decoded header list.
+//! regardless of transport. Requests are [`crate::h3::Request`].
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::ManuallyDrop;
-use core::ptr::{self, NonNull};
+use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::rc::Rc;
 use std::time::Instant;
@@ -16,7 +15,9 @@ use bun_http_types::Method::Method;
 use bun_http2::server;
 use bun_ptr::{AnyRefCounted, RefPtr};
 
+use crate::h3::Head;
 use crate::quic::Header;
+use crate::request::Routes;
 use crate::response::{State, TCPResponse, WriteResult};
 use crate::socket_group::VTable;
 use crate::thunk::OpaqueHandle;
@@ -247,24 +248,6 @@ extern "C" fn uws_h2_res_state(res: &mut Response) -> *mut server::State {
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_opaque::opaque_ffi! { pub struct App; }
-bun_opaque::opaque_ffi! { struct Router; }
-
-const ANY: &str = "*";
-
-fn route_method(method: Method) -> Option<&'static str> {
-    Some(match method {
-        Method::GET => "get",
-        Method::POST => "post",
-        Method::PUT => "put",
-        Method::DELETE => "delete",
-        Method::PATCH => "patch",
-        Method::OPTIONS => "options",
-        Method::HEAD => "head",
-        Method::CONNECT => "connect",
-        Method::TRACE => "trace",
-        _ => return None,
-    })
-}
 
 #[derive(Clone, Copy)]
 struct Socket(*mut us_socket_t);
@@ -304,16 +287,9 @@ impl server::Socket for Socket {
 }
 
 struct Host {
-    router: NonNull<Router>,
+    routes: Routes<Response, Request>,
     date: &'static Cell<[u8; 29]>,
     schedule_drain: Cell<Option<(fn(*mut App), *mut App)>>,
-}
-
-impl Drop for Host {
-    fn drop(&mut self) {
-        // SAFETY: created in `Context::new`, destroyed once.
-        unsafe { c::uws_h2_router_destroy(self.router.as_ptr()) }
-    }
 }
 
 impl server::Host for Host {
@@ -323,10 +299,13 @@ impl server::Host for Host {
     fn field(name: &[u8], value: &[u8]) -> Header {
         Header::init(name, value, None)
     }
-    fn route(&self, stream: &Rc<Stream>, fields: &[Header]) -> bool {
-        let (router, len) = (self.router.as_ptr(), fields.len() as c_uint);
-        // SAFETY: what the fields point to lasts for the call.
-        unsafe { c::uws_h2_router_route(router, Response::of(stream), fields.as_ptr(), len) }
+    fn route(&self, stream: &Rc<Stream>, request: server::Request<'_, Header>) -> bool {
+        let head = Head {
+            target: request.path,
+            authority: request.authority,
+            fields: request.fields,
+        };
+        head.dispatch(request.method, &self.routes, Response::of(stream))
     }
     fn date(&self) -> [u8; 29] {
         self.date.get()
@@ -357,7 +336,7 @@ struct Context {
 impl Context {
     fn new(idle_timeout_s: u32) -> Rc<Self> {
         let host = Host {
-            router: c::uws_h2_router_create(),
+            routes: Routes::default(),
             date: c::uws_loop_date(),
             schedule_drain: Cell::new(None),
         };
@@ -487,8 +466,8 @@ impl App {
         // SAFETY: from `OwnedApp::as_ptr`, which its holder keeps for as long as it uses this.
         &unsafe { &*self.as_mut_ptr().cast::<Context>() }.server
     }
-    fn router(&mut self) -> &mut Router {
-        Router::opaque_mut(self.server().host.router.as_ptr())
+    fn routes(&self) -> &Routes<Response, Request> {
+        &self.server().host.routes
     }
     /// Streams parked on backpressure need another drain pass outside the
     /// current call; `cb` should arrange for [`drain`] to run soon.
@@ -500,20 +479,18 @@ impl App {
         Rc::clone(self.server()).drain()
     }
     pub fn clear_routes(&mut self) {
-        c::uws_h2_router_clear(self.router())
+        self.routes().clear()
     }
 
-    fn route<UD, H>(which: &str, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
+    fn route<UD, H>(&mut self, method: Option<Method>, pattern: &[u8], ud: *mut UD, _handler: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
+            // SAFETY: `Routes::dispatch` passes `res`/`req` as live disjoint handles,
             // `p` is the registered `*mut UD` (non-null by route registration).
             unsafe {
                 let Some(ud) = p.cast::<UD>().as_ref() else {
@@ -522,14 +499,14 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
-        Self::route_raw(which, this, pattern, cb::<UD, H>, ud.cast());
+        self.routes().add(method, pattern, cb::<UD, H>, ud.cast());
     }
 
     /// `route` for an intrusively-refcounted `U` as the route userdata; see
     /// [`method_ref`](Self::method_ref).
     fn route_ref<U: AnyRefCounted + 'static, H>(
-        which: &str,
-        this: &mut App,
+        &mut self,
+        method: Option<Method>,
         pattern: &[u8],
         owner: &RefPtr<U>,
     ) where
@@ -546,36 +523,21 @@ impl App {
             let owner = unsafe { RefPtr::init_ref(p.cast::<U>()) };
             thunk::zst::<H>()(owner, AnyRequest::H3(req), AnyResponse::H2(res));
         }
-        Self::route_raw(which, this, pattern, cb::<U, H>, owner.as_ptr().cast());
-    }
-
-    fn route_raw(which: &str, this: &mut App, pattern: &[u8], cb: c::Handler, ud: *mut c_void) {
-        let (router, method, path) = (this.router(), which.as_ptr(), pattern.as_ptr());
-        // SAFETY: a live handle and two slices.
-        unsafe { c::uws_h2_router_add(router, method, which.len(), path, pattern.len(), cb, ud) }
-    }
-
-    pub fn head<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
-    where
-        H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
-    {
-        self.method(Method::HEAD, p, ud, h);
+        (self.routes()).add(method, pattern, cb::<U, H>, owner.as_ptr().cast());
     }
 
     pub fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        Self::route(ANY, self, p, ud, h);
+        self.route(None, p, ud, h);
     }
 
     pub fn method<UD, H>(&mut self, m: Method, p: &[u8], ud: *mut UD, h: H)
     where
         H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        if let Some(kind) = route_method(m) {
-            Self::route(kind, self, p, ud, h);
-        }
+        self.route(Some(m), p, ud, h);
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
@@ -590,9 +552,7 @@ impl App {
     ) where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        if let Some(kind) = route_method(m) {
-            Self::route_ref::<U, H>(kind, self, p, owner);
-        }
+        self.route_ref::<U, H>(Some(m), p, owner);
     }
 
     /// [`any`](Self::any) counterpart of [`method_ref`](Self::method_ref).
@@ -600,7 +560,7 @@ impl App {
     where
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        Self::route_ref::<U, H>(ANY, self, p, owner);
+        self.route_ref::<U, H>(None, p, owner);
     }
 }
 
@@ -610,8 +570,6 @@ impl App {
 
 mod c {
     use super::*;
-
-    pub(super) type Handler = extern "C" fn(*mut Response, *mut Request, *mut c_void);
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
     // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
@@ -627,23 +585,5 @@ mod c {
             allow_http1: bool,
         );
         pub(super) safe fn uws_h2_socket_on_close(socket: &mut us_socket_t);
-        pub(super) safe fn uws_h2_router_create() -> NonNull<Router>;
-        pub(super) fn uws_h2_router_destroy(router: *mut Router);
-        pub(super) fn uws_h2_router_route(
-            router: *mut Router,
-            res: &mut Response,
-            fields: *const Header,
-            count: c_uint,
-        ) -> bool;
-        pub(super) safe fn uws_h2_router_clear(router: &mut Router);
-        pub(super) fn uws_h2_router_add(
-            router: &mut Router,
-            method: *const u8,
-            method_len: usize,
-            pattern: *const u8,
-            pattern_len: usize,
-            handler: Handler,
-            user_data: *mut c_void,
-        );
     }
 }

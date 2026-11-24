@@ -48,7 +48,7 @@ unsafe extern "C" {
         values: FfiSlice<'_, StringPointer>,
         buf: FfiSlice<'_>,
     ) -> *mut FetchHeaders;
-    // safe: `arg1` is an opaque handle to a C++-owned uWS HttpRequest, never dereferenced here.
+    // safe: `arg1` is an opaque handle to a uWS HttpRequest, never dereferenced here.
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.

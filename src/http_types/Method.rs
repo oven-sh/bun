@@ -222,6 +222,11 @@ impl Method {
     pub fn which(str: &[u8]) -> Option<Method> {
         METHOD_MAP.get(str).copied()
     }
+
+    #[inline]
+    pub fn find_uppercase(str: &[u8]) -> Option<Method> {
+        Self::which(str).filter(|_| str[0].is_ascii_uppercase())
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -368,6 +373,8 @@ mod tests {
             assert_eq!(Method::which(upper.as_bytes()), Some(m), "upper {upper}");
             let lower = upper.to_ascii_lowercase();
             assert_eq!(Method::which(lower.as_bytes()), Some(m), "lower {lower}");
+            assert_eq!(Method::find_uppercase(upper.as_bytes()), Some(m));
+            assert_eq!(Method::find_uppercase(lower.as_bytes()), None);
         }
         // Mixed case must reject (only all-upper / all-lower are accepted).
         assert_eq!(Method::which(b"Get"), None);

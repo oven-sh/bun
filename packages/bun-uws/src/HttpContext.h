@@ -30,8 +30,6 @@
 #include <string_view>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
-#include <span>
-#include <array>
 #include <mutex>
 #include <openssl/ssl.h>
 
@@ -41,59 +39,9 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
-namespace detail {
-
-template <typename T, typename... Args>
-[[nodiscard]] constexpr auto makeArray(T&& el0, Args&&... values) noexcept {
-    return std::array<std::decay_t<T>, 1 + sizeof...(Args)>{
-        std::forward<T>(el0), std::forward<Args>(values)...
-    };
-}
-
-static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
-    "ACL",
-    "BIND",
-    "CHECKOUT",
-    "CONNECT",
-    "COPY",
-    "DELETE",
-    "GET",
-    "HEAD",
-    "LINK",
-    "LOCK",
-    "M-SEARCH",
-    "MERGE",
-    "MKACTIVITY",
-    "MKADDRESSBOOK",
-    "MKCALENDAR",
-    "MKCOL",
-    "MOVE",
-    "NOTIFY",
-    "OPTIONS",
-    "PATCH",
-    "POST",
-    "PROPFIND",
-    "PROPPATCH",
-    "PURGE",
-    "PUT",
-    "QUERY",
-    "REBIND",
-    "REPORT",
-    "SEARCH",
-    "SOURCE",
-    "SUBSCRIBE",
-    "TRACE",
-    "UNBIND",
-    "UNLINK",
-    "UNLOCK",
-    "UNSUBSCRIBE"
-);
-
-} // namespace detail
-
 template<bool> struct HttpResponse;
 
-/* Real heap-allocated owner of one HTTP server's socket group + router state.
+/* Real heap-allocated owner of one HTTP server's socket group + state.
  * Replaces the old reinterpret_cast over us_socket_context_t — `group.ext`
  * points back to `this` so socket handlers recover the typed context via
  * `(HttpContext<SSL>*) us_socket_group_ext(us_socket_group(s))`. */
@@ -450,7 +398,6 @@ private:
 
         http1::Socket socket = {httpResponseData, s, [](void *s, const http1::Request *parsed) -> void * {
 
-            HttpRequest request(parsed), *httpRequest = &request;
             HttpContextData<SSL> *httpContextData = getSocketContextDataS((us_socket_t *) s);
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
@@ -560,7 +507,7 @@ private:
 
                 /* An ancient (HTTP/1.0) request gets no keep-alive and no chunked
                  * framing; so does an explicit `Connection: close`. */
-                const bool isAncient = httpRequest->isAncient();
+                const bool isAncient = http1::Bun__Http1Request__isHttp10(parsed);
                 if (isAncient) {
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 } else if (httpResponseData->sawConnectionClose) {
@@ -586,8 +533,7 @@ private:
             }
 
             /* Route the method and URL */
-            httpContextData->router.getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!httpContextData->router.route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
+            if (!http1::Bun__Http1Routes__dispatch(httpContextData->routes, SSL, s, parsed, !httpContextData->flags.usingCustomExpectHandler)) {
                 /* We have to force close this socket as we have no handler for it.
                  * close() first sends the responses to earlier requests of this read. */
                 ((AsyncSocket<SSL> *) s)->close();
@@ -1169,55 +1115,6 @@ public:
 
     void filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {
         getSocketContextData()->filterHandlers.emplace_back(std::move(filterHandler));
-    }
-
-    /* Register an HTTP route handler acording to URL pattern */
-    void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
-        HttpContextData<SSL> *httpContextData = getSocketContextData();
-
-        std::span<const std::string_view> methods;
-        std::string method_buffer;
-        std::string_view method_sv_buffer;
-        // When it's NOT node:http, allow the uWS default precedence ordering.
-        if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
-            methods = detail::supportedHttpMethods;
-        } else {
-            method_buffer = std::string(method);
-            method_sv_buffer = std::string_view(method_buffer);
-            methods = {&method_sv_buffer, 1};
-        }
-
-        uint32_t priority = method == "*" ? httpContextData->router.LOW_PRIORITY : (upgrade ? httpContextData->router.HIGH_PRIORITY : httpContextData->router.MEDIUM_PRIORITY);
-
-        /* If we are passed nullptr then remove this */
-        if (!handler) {
-            for (const auto &method : methods) {
-                httpContextData->router.remove(method, pattern, priority);
-            }
-            return;
-        }
-
-        httpContextData->router.add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
-            auto user = r->getUserData();
-            user.httpRequest->setYield(false);
-            user.httpRequest->setParameters(r->getParameters());
-
-            if (!httpContextData->flags.usingCustomExpectHandler) {
-                /* Middleware? Automatically respond to expectations */
-                std::string_view expect = user.httpRequest->getHeader("expect");
-                if (expect.length() && expect == "100-continue") {
-                    user.httpResponse->writeContinue();
-                }
-            }
-
-            handler(user.httpResponse, user.httpRequest);
-
-            /* If any handler yielded, the router will keep looking for a suitable handler. */
-            if (user.httpRequest->getYield()) {
-                return false;
-            }
-            return true;
-        }, priority);
     }
 
     /* Whether this context runs the node:http compat instantiation. The installed

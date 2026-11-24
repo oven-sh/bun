@@ -187,17 +187,6 @@ pub(crate) enum RouteMethod {
     Specific(Method),
 }
 
-impl RouteMethod {
-    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
-    /// read off the request.
-    pub(crate) fn specific(&self) -> Option<Method> {
-        match self {
-            RouteMethod::Any => None,
-            RouteMethod::Specific(method) => Some(*method),
-        }
-    }
-}
-
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -340,7 +329,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
 
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
-    // handler route: uWS keeps the last registration for the same method and path.
+    // handler route: the last registration for the same method and path wins.
     if !path_has_user_head_route && serves_head(&method) {
         app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
@@ -431,7 +420,7 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 
 /// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
-/// is the uWS route userdata; the route table holds a ref on it for as long as
+/// is its handler's userdata; the route table holds a ref on it for as long as
 /// it is registered.
 pub(crate) trait StaticRouteLike: AnyRefCounted + 'static {
     fn set_server(&self, server: AnyServer);

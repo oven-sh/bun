@@ -300,12 +300,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     }
     let route_bundle_index = route_bundle::Index::init(index);
 
-    dev.serve_client_script(
-        route_bundle_index,
-        generation,
-        resp,
-        Method::which(req.method()).unwrap_or(Method::POST),
-    );
+    dev.serve_client_script(route_bundle_index, generation, resp, req.method());
 }
 
 fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {

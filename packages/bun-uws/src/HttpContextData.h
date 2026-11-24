@@ -18,14 +18,11 @@
 #ifndef UWS_HTTPCONTEXTDATA_H
 #define UWS_HTTPCONTEXTDATA_H
 
-#include "HttpRouter.h"
-
 #include <vector>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
 namespace uWS {
 template<bool> struct HttpResponse;
-struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
@@ -61,11 +58,6 @@ private:
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
-    struct RouterData {
-        HttpResponse<SSL> *httpResponse;
-        HttpRequest *httpRequest;
-    };
-
     /* The socket onData is currently parsing, nullptr outside a parse. The
      * close gates in internalEnd need the per-socket identity: a DIFFERENT
      * socket's response can complete inside this window (a microtask drained
@@ -74,7 +66,7 @@ private:
      * checks the parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
-    HttpRouter<RouterData> router;
+    const http1::Routes *routes = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;
@@ -94,14 +86,6 @@ private:
     /* With HTTP/2 attached: whether HTTP/1.x is still served (ALPN fallback
      * and non-preface cleartext). */
     bool allowHttp1 = true;
-
-    void clearRoutes() {
-        this->router = HttpRouter<RouterData>{};
-        /* Not filterHandlers: filters are per-context open/close hooks, not
-         * routes. server.reload() never re-registers them, so wiping them here
-         * leaves Bun's active_connection_count (and node:http's 'connection'
-         * event) decoupled for the rest of the server's life. */
-    }
 
 public:
     

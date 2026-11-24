@@ -1,11 +1,20 @@
-//! The request parser for packages/bun-uws/src/HttpParser.h.
+//! The request parser and the routes for packages/bun-uws/src/HttpParser.h.
 
-use core::ffi::c_void;
+use core::cell::RefCell;
+use core::ffi::{c_int, c_void};
 use core::mem::{MaybeUninit, offset_of};
+use core::ptr;
 
+use bun_http_types::Method::Method;
+use bun_http_types::router::{Parameters, Router};
 use bun_http1::request::{
     Connection, Outcome, Request, RequestOptions, RequestParser, read as read_requests,
 };
+
+use crate::request::{self, Routed};
+use crate::response::c::uws_res_write_continue;
+use crate::uws_res;
+use crate::web_socket::UpgradeRoute;
 
 const _: () = assert!(
     size_of::<RequestParser>() == 80
@@ -16,7 +25,7 @@ const _: () = assert!(
 );
 
 #[repr(C)]
-struct Bytes {
+pub(crate) struct Bytes {
     data: *const u8,
     len: usize,
 }
@@ -31,7 +40,7 @@ impl From<&[u8]> for Bytes {
 }
 
 /// LTO does not inline a function that returns `Bytes`: clang and rustc give it different types.
-type Out<'a> = &'a mut MaybeUninit<Bytes>;
+pub(crate) type Out<'a> = &'a mut MaybeUninit<Bytes>;
 
 /// The handlers return null if the read is over, as it is once the parser is destroyed.
 #[repr(C)]
@@ -134,18 +143,8 @@ extern "C" fn Bun__RequestParser__hasIncompleteBody(parser: &RequestParser) -> b
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__method(request: &Request<'_>, out: Out<'_>) {
-    out.write(request.method().into());
-}
-
-#[unsafe(no_mangle)]
 extern "C" fn Bun__Http1Request__target(request: &Request<'_>, out: Out<'_>) {
     out.write(request.target().into());
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__path(request: &Request<'_>, out: Out<'_>) {
-    out.write(request.path().into());
 }
 
 #[unsafe(no_mangle)]
@@ -158,29 +157,73 @@ extern "C" fn Bun__Http1Request__isHttp10(request: &Request<'_>) -> bool {
     request.is_http_1_0()
 }
 
-/// SAFETY: `name` has `len` bytes.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Http1Request__field(
+extern "C" fn Bun__Http1Request__nextField(
     request: &Request<'_>,
-    name: *const u8,
-    len: usize,
-    out: Out<'_>,
-) {
-    // SAFETY: forwarded.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
-    out.write(request.field(name).unwrap_or_default().into());
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__fieldAt(
-    request: &Request<'_>,
-    index: usize,
+    index: &mut usize,
     name: Out<'_>,
     value: Out<'_>,
 ) -> bool {
-    request.field_at(index).is_some_and(|field| {
+    request.field_at(*index).is_some_and(|field| {
+        *index += 1;
         name.write(field.name.into());
         value.write(field.value.into());
         true
     })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__RouteParameters__at(parameters: &Parameters<'_>, index: usize, out: Out<'_>) {
+    out.write(parameters.get(index).copied().unwrap_or_default().into());
+}
+
+#[derive(Default)]
+pub(crate) struct Routes {
+    pub(crate) requests: request::Routes<uws_res, crate::Request>,
+    /// They go first.
+    pub(crate) upgrades: RefCell<Router<UpgradeRoute>>,
+}
+
+impl Routes {
+    fn find_upgrade<'a>(
+        &self,
+        path: &'a [u8],
+        request: &mut Routed<'a, &Request<'_>>,
+    ) -> Option<UpgradeRoute> {
+        let upgrades = self.upgrades.borrow();
+        if upgrades.is_empty() || request.head.field(b"sec-websocket-key")?.len() != 24 {
+            return None;
+        }
+        upgrades.find(Method::GET, path, 0, &mut request.parameters)
+    }
+}
+
+/// False if no handler took it.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Http1Routes__dispatch(
+    routes: &Routes,
+    ssl: c_int,
+    response: *mut uws_res,
+    head: &Request<'_>,
+    answers_expect: bool,
+) -> bool {
+    let Some(method) = Method::find_uppercase(head.method()) else {
+        return false;
+    };
+    let write_continue = || {
+        if answers_expect && head.field(b"expect") == Some(b"100-continue") {
+            uws_res_write_continue(ssl, uws_res::opaque_mut(response));
+        }
+    };
+    let (path, mut request) = (head.path(), Routed::new(method, head));
+    if method == Method::GET
+        && let Some(upgrade) = routes.find_upgrade(path, &mut request)
+    {
+        write_continue();
+        let handle = crate::Request::opaque_mut(ptr::from_mut(&mut request).cast());
+        upgrade.run(response, handle);
+        debug_assert!(!request.has_yielded.get());
+        return true;
+    }
+    (routes.requests).dispatch(path, response, &mut request, write_continue)
 }

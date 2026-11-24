@@ -9,6 +9,7 @@ use core::mem::{MaybeUninit, take};
 
 use bun_core::strings::eql_case_insensitive_ascii_check_length as eql_ignoring_case;
 
+use crate::byte_sets::ABOVE_SPACE;
 pub use error::RequestError;
 use framing::{Framing, parse_content_length};
 pub use head::{Field, Request, parse_trailers};
@@ -18,6 +19,15 @@ use head::{MAX_FIELDS, Stop};
 const MAX_FRAMING_LEN: u64 = (MAX_FIELDS as u64 + 2) * 4 + 64;
 /// Of one chunk.
 const MAX_EXTENSION_LEN: usize = 16 * 1024;
+
+/// Whether `method` goes with that `:path` (RFC 9113 §8.3.1, RFC 9114 §4.3.1).
+pub fn is_path_for(method: &[u8], path: &[u8]) -> bool {
+    match (method, path) {
+        (b"CONNECT", _) => path.is_empty(),
+        (_, [b'/', ..]) | (b"OPTIONS", b"*") => ABOVE_SPACE.prefix_len(path) == path.len(),
+        _ => false,
+    }
+}
 
 #[repr(C)]
 pub struct RequestOptions {

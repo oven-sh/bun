@@ -15,7 +15,7 @@ use super::request::DecodeBuffer;
 use super::stream::{DEFAULT_TIMEOUT, Stream};
 use super::{
     CONNECTION_WINDOW, HIGH_WATER_MARK, Host, INITIAL_STREAM_WINDOW, MAX_CONCURRENT_STREAMS,
-    MAX_FRAME_SIZE, Server, Socket,
+    MAX_FRAME_SIZE, Request, Server, Socket,
 };
 
 const PADDED: u8 = 0x8;
@@ -858,14 +858,20 @@ impl<H: Host> Connection<H> {
         }
         let stream = self.open_stream(frame, head.content_length);
         self.has_progressed.set(true);
-        if !head.is_method_known() {
+        let Some(method) = head.known_method() else {
             stream.end_with_status(b"501");
             return Ok(());
-        }
+        };
         if head.expects_continue() {
             stream.write_continue();
         }
-        if !server.host.route(&stream, fields) && !stream.is_retired() {
+        let request = Request {
+            method,
+            path: head.path,
+            authority: head.authority(),
+            fields,
+        };
+        if !server.host.route(&stream, request) && !stream.is_retired() {
             stream.end_with_status(b"404");
         }
         if stream.is_remote_closed.get() {

@@ -29,6 +29,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes, strings
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
+use bun_http_types::router::Parameters;
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
@@ -116,7 +117,6 @@ trait RequestCtxOps: RequestCtx {
         server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
-        method: Option<http::Method>,
     );
     fn dispatch(&self) -> Self::Dispatch;
     fn respond(
@@ -166,7 +166,6 @@ where
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
-        method: Option<http::Method>,
     ) {
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
         // MaybeUninit for in-place construction — `&mut` scoped to this call.
@@ -175,7 +174,6 @@ where
             server,
             std::ptr::from_mut(req).cast(),
             any_resp,
-            method,
         );
     }
     #[inline]
@@ -280,7 +278,8 @@ trait ReqLike {
     /// Whether the transport frames the body with a Transfer-Encoding header.
     /// This is the parser's verdict, not a lookup of the first header field.
     fn has_transfer_encoding(&mut self) -> bool;
-    fn method(&mut self) -> &[u8];
+    fn method(&mut self) -> http::Method;
+    fn parameters(&mut self) -> &Parameters<'_>;
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
@@ -294,8 +293,12 @@ impl ReqLike for uws_sys::Request {
         uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::Request::method(self)
+    }
+    #[inline]
+    fn parameters(&mut self) -> &Parameters<'_> {
+        uws_sys::Request::parameters(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
@@ -319,8 +322,12 @@ impl ReqLike for uws_sys::h3::Request {
         false
     }
     #[inline]
-    fn method(&mut self) -> &[u8] {
+    fn method(&mut self) -> http::Method {
         uws_sys::h3::Request::method(self)
+    }
+    #[inline]
+    fn parameters(&mut self) -> &Parameters<'_> {
+        uws_sys::h3::Request::parameters(self)
     }
     #[inline]
     fn url(&mut self) -> &[u8] {
@@ -2250,7 +2257,8 @@ where
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
     pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
         if self.config.get().on_request.is_empty() {
-            return Self::on_mux_404(self, req, resp);
+            resp.write_status(b"404 Not Found");
+            return resp.end_without_body(false);
         }
         self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
@@ -2263,11 +2271,6 @@ where
         Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
             user_route, req, resp,
         );
-    }
-
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
-        resp.write_status(b"404 Not Found");
-        resp.end_without_body(false);
     }
 
     pub(crate) fn do_ref<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
@@ -2341,33 +2344,25 @@ where
             return;
         };
 
-        let Some((request, ctx)) = server.prepare_js_request_context_for::<Ctx, R>(
-            req,
-            resp,
-            user_route.route.method.specific(),
-        ) else {
+        let Some((request, ctx)) = server.prepare_js_request_context_for::<Ctx, R>(req, resp)
+        else {
             return;
         };
 
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
-        let call_route = if Ctx::IS_MUX {
-            Bun__ServerRouteList__callRouteH3
-        } else {
-            Bun__ServerRouteList__callRoute
-        };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server.global_this);
         let (request, response_value) =
             DispatchedRequest::call_route(request, global, |request, js_request| {
-                call_route(
+                Bun__ServerRouteList__callRoute(
                     global,
                     index,
                     request,
                     server_js,
                     server_request_list,
                     js_request,
-                    std::ptr::from_mut(req).cast::<c_void>(),
+                    std::ptr::from_ref(ReqLike::parameters(req)).cast::<c_void>(),
                 )
             });
 
@@ -2399,8 +2394,7 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let Some((request, ctx)) = self.prepare_js_request_context_for::<Ctx, R>(req, resp, None)
-        else {
+        let Some((request, ctx)) = self.prepare_js_request_context_for::<Ctx, R>(req, resp) else {
             return;
         };
 
@@ -2423,7 +2417,6 @@ where
         &self,
         req: &mut Ctx::Req,
         resp: &mut R,
-        method: Option<http::Method>,
     ) -> Option<(RefPtr<Request>, Ctx::Dispatch)> {
         jsc::mark_binding!();
 
@@ -2441,12 +2434,8 @@ where
             }
         }
 
-        // Resolve once, reuse for both `has_request_body()` and the forward to
-        // `Ctx::create`.
-        let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
-
         let request_body_length: Option<usize> = 'request_body_length: {
-            if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
+            if ReqLike::method(req).has_request_body() {
                 let len: usize = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
                         break 'brk bun_http_types::parse_content_length(content_length);
@@ -2504,12 +2493,12 @@ where
                     "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
                 let slot = (*self.mux_request_pool.get()).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
+                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
                 let slot = self.request_pool.claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
+                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             }
@@ -2637,7 +2626,6 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &WebSocketUpgradeContext,
-        method: Option<http::Method>,
     ) {
         // BACKREF: `UserRoute.server` is set at construction from the owning
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
@@ -2653,7 +2641,7 @@ where
             return;
         };
 
-        let Some((request, ctx)) = server.prepare_js_request_context(req, resp, method) else {
+        let Some((request, ctx)) = server.prepare_js_request_context(req, resp) else {
             return;
         };
         ctx.upgrade_context
@@ -2671,7 +2659,7 @@ where
                     server_js,
                     server_request_list,
                     js_request,
-                    std::ptr::from_mut(req).cast::<c_void>(),
+                    std::ptr::from_ref(req.parameters()).cast::<c_void>(),
                 )
             });
 
@@ -2701,7 +2689,7 @@ where
             // intermediate `&mut Self` was ever created; shared suffices (the
             // route entry is only read).
             let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx);
             return;
         }
         // Access `this` as *ThisServer only if id is 0
@@ -2734,7 +2722,6 @@ where
             this,
             req,
             RespLike::to_any_response(resp),
-            None,
         );
         // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
         let ctx = Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
@@ -2785,14 +2772,7 @@ where
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
-        if cfg!(debug_assertions) {
-            // NOTE: scoped_log! expands each arg twice (ANSI/no-ANSI branches);
-            // copy to owned buffers so the two `&req` borrows in the expansion
-            // don't overlap with the returned slice lifetimes.
-            let m = req.method().to_vec();
-            let u = req.url().to_vec();
-            httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
-        }
+        httplog!("{:?} - {}", req.method(), BStr::new(req.url()));
 
         let authorized = 'brk: {
             let Some(dev_server) = self.dev_server.get().as_deref() else {
@@ -3235,7 +3215,7 @@ unsafe extern "C" {
     ) -> JSValue;
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
-    // preconditions; `req` is an opaque handle that C++
+    // preconditions; `parameters` is an opaque handle that C++
     // forwards (module-private — sole callers pass live pointers).
     pub(super) safe fn Bun__ServerRouteList__callRoute(
         global: &JSGlobalObject,
@@ -3244,17 +3224,7 @@ unsafe extern "C" {
         server_object: JSValue,
         route_list_object: JSValue,
         request_object: &mut JSValue,
-        req: *mut c_void, // *uws.Request
-    ) -> JSValue;
-
-    safe fn Bun__ServerRouteList__callRouteH3(
-        global: &JSGlobalObject,
-        index: u32,
-        request: RefPtr<Request>,
-        server_object: JSValue,
-        route_list_object: JSValue,
-        request_object: &mut JSValue,
-        req: *mut c_void,
+        parameters: *const c_void,
     ) -> JSValue;
 
     // `global` is the live VM global; `callbacks`/`paths` are the ptr/len of

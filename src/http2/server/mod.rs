@@ -10,6 +10,8 @@ use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
+use bun_http_types::Method::Method;
+
 pub use connection::Connection;
 pub use stream::{OnData, OnEvent, OnWritable, State, Stream};
 
@@ -38,6 +40,15 @@ pub trait Socket: Copy {
     fn set_timeout(self, seconds: u32);
 }
 
+pub struct Request<'a, F> {
+    pub method: Method,
+    pub path: &'a [u8],
+    /// Or `host`, if there is none.
+    pub authority: &'a [u8],
+    /// With the pseudo-headers.
+    pub fields: &'a [F],
+}
+
 pub trait Host: Sized {
     type Socket: Socket;
     /// It may point to what it was made of until `route` returns.
@@ -45,7 +56,7 @@ pub trait Host: Sized {
 
     fn field(name: &[u8], value: &[u8]) -> Self::Field;
     /// False if no handler took it.
-    fn route(&self, stream: &Rc<Stream<Self>>, fields: &[Self::Field]) -> bool;
+    fn route(&self, stream: &Rc<Stream<Self>>, request: Request<'_, Self::Field>) -> bool;
     fn date(&self) -> [u8; 29];
     fn max_header_size(&self) -> usize;
     /// [`Server::drain`] has to run soon, but not under this call.

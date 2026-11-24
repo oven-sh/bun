@@ -168,31 +168,38 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     );
 }
 
-pub(crate) extern "C" fn on_upgrade<Server: WebSocketUpgradeServer<SSL>, const SSL: bool>(
+#[derive(Clone, Copy)]
+pub(crate) struct UpgradeRoute {
+    handler: fn(Self, *mut uws_res, &mut Request),
     server: *mut c_void,
-    res: *mut uws_res,
-    req: &mut Request,
-    context: *const c_void,
+    context: BackRef<WebSocketUpgradeContext>,
     id: usize,
-) {
-    if prepare_upgrade(req) {
-        // SAFETY: `App::ws` registered both pointers, and the context lasts as long as the app.
-        unsafe {
-            Server::on_websocket_upgrade(server.cast(), res.cast(), req, &*context.cast(), id)
-        }
-    }
 }
 
-/// False if the request is for the next route.
-fn prepare_upgrade(req: &mut Request) -> bool {
-    if req.header(b"sec-websocket-key").unwrap_or_default().len() != 24 {
-        req.set_yield(true);
-        return false;
+impl UpgradeRoute {
+    pub(crate) fn new<Server: WebSocketUpgradeServer<SSL>, const SSL: bool>(
+        server: *mut c_void,
+        context: BackRef<WebSocketUpgradeContext>,
+        id: usize,
+    ) -> Self {
+        Self {
+            // SAFETY: as it was passed to `App::ws`.
+            handler: |this, res, req| unsafe {
+                let server = this.server.cast();
+                Server::on_websocket_upgrade(server, res.cast(), req, &this.context, this.id)
+            },
+            server,
+            context,
+            id,
+        }
     }
-    if handshake::has_broken_compression(req.header(b"user-agent").unwrap_or_default()) {
-        req.parsed().clear_field(b"sec-websocket-extensions");
+
+    pub(crate) fn run(self, res: *mut uws_res, req: &mut Request) {
+        if handshake::has_broken_compression(req.header(b"user-agent").unwrap_or_default()) {
+            req.parsed().clear_field(b"sec-websocket-extensions");
+        }
+        (self.handler)(self, res, req);
     }
-    true
 }
 
 #[derive(Clone, Copy)]

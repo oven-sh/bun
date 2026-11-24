@@ -291,87 +291,9 @@ public:
         return closed;
     }
 
-    /* Goes before get() */
-    void ws(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        httpContext->onHttp("GET", pattern, std::move(handler), true);
-    }
-
-    TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("GET", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&post(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("POST", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&options(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("OPTIONS", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&del(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("DELETE", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&patch(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("PATCH", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&put(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("PUT", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    void clearRoutes() {
-        if (httpContext) {
-            httpContext->getSocketContextData()->clearRoutes();
-        }
-    }
-
-
-    TemplatedApp &&head(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("HEAD", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&connect(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("CONNECT", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&trace(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("TRACE", pattern, std::move(handler));
-        }
-        return std::move(*this);
-    }
-
-    /* This one catches any method */
-    TemplatedApp &&any(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
-        if (httpContext) {
-            httpContext->onHttp("*", pattern, std::move(handler));
-        }
-        return std::move(*this);
+    /* OwnedApp owns them. */
+    const http1::Routes *&routes() {
+        return httpContext->getSocketContextData()->routes;
     }
 
 private:

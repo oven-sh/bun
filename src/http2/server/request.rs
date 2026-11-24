@@ -2,7 +2,8 @@ use bun_core::strings::ByteSet;
 use bun_hpack::{Decoder, Error};
 use bun_http_types::Method::Method;
 use bun_http_types::h2::ErrorCode;
-use bun_http1::byte_sets::{ABOVE_SPACE, CONTENT_OR_DELETE, TOKEN, UPPERCASE_METHOD};
+use bun_http1::byte_sets::{CONTENT_OR_DELETE, TOKEN};
+use bun_http1::request::is_path_for;
 
 /// As for HTTP/1.
 const MAX_FIELDS: usize = 200;
@@ -97,7 +98,7 @@ impl Name {
 pub(super) struct Head<'a> {
     method: &'a [u8],
     scheme: &'a [u8],
-    path: &'a [u8],
+    pub(super) path: &'a [u8],
     authority: &'a [u8],
     host: &'a [u8],
     expect: Option<&'a [u8]>,
@@ -143,15 +144,11 @@ impl<'a> Head<'a> {
 
     /// RFC 9113 §8.3.1
     pub(super) fn is_malformed(&self) -> bool {
-        let is_target_valid = match (self.method, self.path) {
-            (b"CONNECT", path) => {
-                path.is_empty() && self.scheme.is_empty() && !self.authority.is_empty()
-            }
-            (_, [b'/', ..]) | (b"OPTIONS", b"*") => {
-                !self.scheme.is_empty() && ABOVE_SPACE.prefix_len(self.path) == self.path.len()
-            }
-            _ => false,
-        };
+        let is_target_valid = is_path_for(self.method, self.path)
+            && match self.method {
+                b"CONNECT" => self.scheme.is_empty() && !self.authority.is_empty(),
+                _ => !self.scheme.is_empty(),
+            };
         let is_authority_valid = match (self.authority, self.host) {
             (b"", host) => !host.is_empty(),
             (authority, host) => {
@@ -166,9 +163,15 @@ impl<'a> Head<'a> {
             || TOKEN.prefix_len(self.method) != self.method.len()
     }
 
-    pub(super) fn is_method_known(&self) -> bool {
-        UPPERCASE_METHOD.prefix_len(self.method) == self.method.len()
-            && Method::which(self.method).is_some()
+    pub(super) fn known_method(&self) -> Option<Method> {
+        Method::find_uppercase(self.method)
+    }
+
+    pub(super) fn authority(&self) -> &'a [u8] {
+        match self.authority {
+            b"" => self.host,
+            authority => authority,
+        }
     }
 
     pub(super) fn expects_continue(&self) -> bool {

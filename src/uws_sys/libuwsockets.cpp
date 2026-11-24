@@ -67,14 +67,17 @@ extern "C"
     return shared.get();
   }
 
-  uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options, const void *web_sockets)
+  uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options, const void *web_sockets, const uWS::http1::Routes *routes)
   {
     uWS::SocketContextOptions socket_context_options;
     memcpy(&socket_context_options, &options,
            sizeof(uWS::SocketContextOptions));
     return withSSL(ssl, [&](auto isSSL) {
       auto *app = uWS::TemplatedApp<isSSL>::create(socket_context_options);
-      if (app) app->webSockets = web_sockets;
+      if (app) {
+        app->webSockets = web_sockets;
+        app->routes() = routes;
+      }
       return (uws_app_t *)app;
     });
   }
@@ -84,260 +87,9 @@ extern "C"
     return withSSL(ssl, [&](auto isSSL) { return ((uWS::TemplatedApp<isSSL> *)app)->webSockets; });
   }
 
-  void uws_app_clear_routes(int ssl, uws_app_t *app)
+  const void *uws_app_routes(int ssl, uws_app_t *app)
   {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->clearRoutes();
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->clearRoutes();
-    }
-  }
-
-  void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->get(pattern, nullptr);
-        return;
-      }
-      uwsApp->get(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->get(pattern, nullptr);
-        return;
-      }
-      uwsApp->get(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_post(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->post(pattern, nullptr);
-        return;
-      }
-      uwsApp->post(pattern, [handler, user_data](auto *res, auto *req)
-                   { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->post(pattern, nullptr);
-        return;
-      }
-      uwsApp->post(pattern, [handler, user_data](auto *res, auto *req)
-                   { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_options(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->options(pattern, nullptr);
-        return;
-      }
-      uwsApp->options(pattern, [handler, user_data](auto *res, auto *req)
-                      { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->options(pattern, nullptr);
-        return;
-      }
-      uwsApp->options(pattern, [handler, user_data](auto *res, auto *req)
-                      { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_delete(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->del(pattern, nullptr);
-        return;
-      }
-      uwsApp->del(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->del(pattern, nullptr);
-        return;
-      }
-      uwsApp->del(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_patch(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->patch(pattern, nullptr);
-        return;
-      }
-      uwsApp->patch(pattern, [handler, user_data](auto *res, auto *req)
-                    { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->patch(pattern, nullptr);
-        return;
-      }
-      uwsApp->patch(pattern, [handler, user_data](auto *res, auto *req)
-                    { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_put(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->put(pattern, nullptr);
-        return;
-      }
-      uwsApp->put(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->put(pattern, nullptr);
-        return;
-      }
-      uwsApp->put(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_head(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->head(pattern, nullptr);
-        return;
-      }
-      uwsApp->head(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->head(pattern, nullptr);
-        return;
-      }
-      uwsApp->head(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-  void uws_app_connect(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->connect(pattern, nullptr);
-        return;
-      }
-      uwsApp->connect(pattern, [handler, user_data](auto *res, auto *req)
-                      { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->connect(pattern, nullptr);
-        return;
-      }
-      uwsApp->connect(pattern, [handler, user_data](auto *res, auto *req)
-                      { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-  }
-
-  void uws_app_trace(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->trace(pattern, nullptr);
-        return;
-      }
-      uwsApp->trace(pattern, [handler, user_data](auto *res, auto *req)
-                    { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->trace(pattern, nullptr);
-        return;
-      }
-      uwsApp->trace(pattern, [handler, user_data](auto *res, auto *req)
-                    { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
+    return withSSL(ssl, [&](auto isSSL) { return ((uWS::TemplatedApp<isSSL> *)app)->routes(); });
   }
 
   size_t uws_res_get_buffered_amount(int ssl, uws_res_t *res) nonnull_fn_decl;
@@ -362,33 +114,6 @@ extern "C"
         uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
         return uwsRes->hasFullyDrained();
       }
-  }
-
-  void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
-  {
-    std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->any(pattern, nullptr);
-        return;
-      }
-      uwsApp->any(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      if (handler == nullptr)
-      {
-        uwsApp->any(pattern, nullptr);
-        return;
-      }
-      uwsApp->any(pattern, [handler, user_data](auto *res, auto *req)
-                  { handler((uws_res_t *)res, (uws_req_t *)req, user_data); });
-    }
   }
 
   void uws_app_run(int ssl, uws_app_t *app)
@@ -588,15 +313,6 @@ extern "C"
       uwsApp->filter([handler, user_data](auto res, auto i)
                      { handler((uws_res_t *)res, i, user_data); });
     }
-  }
-
-  void uws_app_ws(int ssl, uws_app_t *app, const char *pattern, size_t pattern_length,
-                  uws_websocket_upgrade_handler handler, void *user_data, const void *context, size_t id)
-  {
-    withSSL(ssl, [&](auto isSSL) {
-      ((uWS::TemplatedApp<isSSL> *)app)->ws(stringViewFromC(pattern, pattern_length), [=](auto *res, auto *req)
-                                            { handler(user_data, (uws_res_t *)res, (uws_req_t *)req, context, id); });
-    });
   }
 
   void uws_socket_on_upgraded_close(us_socket_r s)
@@ -1156,26 +872,6 @@ extern "C"
         uwsRes->onData(optional_data, nullptr);
       }
     }
-  }
-
-  void uws_req_set_yield(uws_req_t *res, bool yield)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    return uwsReq->setYield(yield);
-  }
-
-  const void *uws_req_get_parsed(uws_req_t *res)
-  {
-    return ((uWS::HttpRequest *)res)->parsed;
-  }
-
-  size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
-                               const char **dest)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getParameter(index);
-    *dest = value.data();
-    return value.length();
   }
 
   void *uws_res_get_parser(int ssl, uws_res_r res)

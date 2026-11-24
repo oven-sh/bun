@@ -6176,6 +6176,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         }
         if (!reloadedImporters.isEmpty()) [[unlikely]]
             linkedAhead.removeAllMatching([&](const auto& linked) { return reloadedImporters.contains(linked.importer); });
+        // A CommonJS file that a test file imports mocks what the load of that test file has linked already.
+        if (mocked && !mock->isFromPreload && !mock->importsOriginal) {
+            for (auto& importer : JSC::AOT::importersFetchedByRunningTestFile(globalObject, *mocked))
+                linkedAhead.append({ specifier, importer });
+        }
     }
 #endif
 

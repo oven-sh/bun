@@ -488,19 +488,42 @@ pub(crate) fn create_patch<'a>(
     ))
 }
 
-fn parse<'a, T: Unit>(heap: &JsHeap<'a>, text: &[T]) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
-    patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))
+/// The lines of the hunks are places in `text` as it is afterwards.
+fn parse<'a, T: Unit>(
+    heap: &JsHeap<'a>,
+    text: &mut Cow<'_, [T]>,
+) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
+    let files = patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))?;
+    if files.last().is_some_and(|file| file.lost_cr) {
+        text.to_mut().push(T::from_u8(b'\r'));
+    }
+    Ok(files)
 }
 
-pub(crate) fn parse_patch<'a, 's>(
+fn parse_string<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
-    text: &'s String,
-) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<'s>> {
-    let files = if text.is_utf16() {
-        parse(heap, text.utf16())?
-    } else {
-        parse(heap, text.latin1())?
-    };
+    text: &String,
+) -> bindgen::Result<'a, (String, Vec<patch::FilePatch>)> {
+    let mut units = T::of(text);
+    let files = parse(heap, &mut units)?;
+    if units.len() == text.length() {
+        return Ok((text.clone(), files));
+    }
+    if units.len() > String::max_length() {
+        return Err(heap.string_too_long());
+    }
+    let restored = clone_units(&units);
+    if restored.is_dead() {
+        return Err(heap.memory_allocation_failed());
+    }
+    Ok((restored, files))
+}
+
+pub(crate) fn parse_patch<'a>(
+    heap: &JsHeap<'a>,
+    text: &String,
+) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<>> {
+    let (text, files) = by_width!([text], parse_string(heap, text))?;
     let name = |name: Option<patch::Name>| name.map(|name| String::clone_utf16(&name));
     let flag = |is_set: bool| is_set.then_some(true);
     let hunk = move |hunk| hunk_with(hunk, |line| text.shared_substring(line));
@@ -518,7 +541,7 @@ pub(crate) fn parse_patch<'a, 's>(
         is_create: flag(file.is_create),
         is_delete: flag(file.is_delete),
         is_binary: flag(file.is_binary),
-        hunks: file.hunks.into_iter().map(hunk).collect(),
+        hunks: file.hunks.into_iter().map(&hunk).collect(),
     }))
 }
 
@@ -526,9 +549,8 @@ fn apply<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[patch::HunkToApply<'_, T>],
-    trimmed: usize,
 ) -> bindgen::Result<'a, String> {
-    match patch::apply(&T::of(source), hunks, trimmed) {
+    match patch::apply(&T::of(source), hunks) {
         Ok(patched) => Ok(clone_units(&patched)),
         Err(patch::ApplyError::Mismatch { hunk, reason }) => Err(heap.error_with_code(
             ErrorCode::PATCH_DOES_NOT_APPLY,
@@ -555,8 +577,8 @@ fn apply_text<'a, T: JsUnit>(
     source: &String,
     text: &String,
 ) -> bindgen::Result<'a, String> {
-    let text = T::of(text);
-    let files = parse(heap, &text)?;
+    let mut text = T::of(text);
+    let files = parse(heap, &mut text)?;
     if files.len() > 1 {
         return Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
@@ -576,17 +598,11 @@ fn apply_text<'a, T: JsUnit>(
             "The patch has no line that starts with \"@@ -start,lines +start,lines @@\""
         )));
     }
-    let last_lines = hunks
-        .last()
-        .map_or(&[][..], |hunk| &hunk.lines)
-        .iter()
-        .rev();
-    let trimmed = last_lines.take_while(|line| line.end == text.len()).count();
     let hunks = hunks.iter().map(|hunk| patch::HunkToApply {
         old_start: hunk.old_start as u32,
         lines: hunk.lines.iter().map(|line| &text[line.clone()]).collect(),
     });
-    apply(heap, source, &hunks.collect::<Vec<_>>(), trimmed)
+    apply(heap, source, &hunks.collect::<Vec<_>>())
 }
 
 fn apply_hunks<'a, T: JsUnit>(
@@ -601,7 +617,7 @@ fn apply_hunks<'a, T: JsUnit>(
         old_start: hunk.old_start,
         lines: lines.iter().map(|line| &**line).collect(),
     });
-    apply(heap, source, &hunks.collect::<Vec<_>>(), 0)
+    apply(heap, source, &hunks.collect::<Vec<_>>())
 }
 
 pub(crate) fn apply_patch<'a>(

@@ -213,6 +213,8 @@ pub struct FilePatch {
     pub is_create: bool,
     pub is_delete: bool,
     pub is_binary: bool,
+    /// The patch was trimmed. Its last lines include a `\r` that has to be appended to it.
+    pub lost_cr: bool,
     /// A line is its place in the patch.
     pub hunks: Vec<PatchHunk<Range<usize>>>,
 }
@@ -656,19 +658,56 @@ impl<'a, T: Unit> Parser<'a, T> {
             return Err(ParseError::InvalidHunkHeader { at: self.number });
         }
 
+        let mut first_text = None;
         while let Some(line) = self.peek()
             && !is_diff_header(line)
             && !self.is_at_file_header()
             && !is_rule(line)
         {
             if is_hunk_header(line) {
-                file.hunks.push(self.hunk(line)?);
+                let header = self.line.clone().map_or(&[][..], |line| &self.text[line]);
+                let mut hunk = self.hunk(line)?;
+                file.lost_cr = self.restore_cr(header, &mut hunk.lines);
+                file.hunks.push(hunk);
             } else {
+                if first_text.is_none() && !trim(line).is_empty() {
+                    first_text = Some((self.number, line));
+                }
                 // `Only in dir: file` of `diff -r`, `Property changes on:` of `svn diff`, the rest of an email.
                 self.advance();
             }
         }
-        Ok(file)
+        match first_text {
+            Some((at, line))
+                if file.hunks.is_empty() && strip(line, b"Property changes on:").is_none() =>
+            {
+                Err(ParseError::InvalidHunkHeader { at })
+            }
+            _ => Ok(file),
+        }
+    }
+
+    /// See [`FilePatch::lost_cr`].
+    fn restore_cr(&self, header: &[T], lines: &mut [Range<usize>]) -> bool {
+        let end = self.text.len();
+        if self.line.is_some() || is(self.text.last(), b'\r') {
+            return false;
+        }
+        let (whole, trimmed) = lines.split_at_mut(lines.partition_point(|line| line.end < end));
+        let is_marker = |line: &Range<usize>| is(self.text.get(line.start), b'\\');
+        let has_cr = |line: &Range<usize>| is(self.text[line.clone()].last(), b'\r');
+        let lost_cr = !trimmed.is_empty()
+            && (is(header.last(), b'\r')
+                || !trimmed.iter().any(is_marker)
+                    && whole.iter().any(has_cr)
+                    && whole
+                        .iter()
+                        .zip(whole[1..].iter().map(is_marker).chain([false]))
+                        .all(|(line, is_marked)| is_marked || is_marker(line) || has_cr(line)));
+        if lost_cr {
+            trimmed.iter_mut().for_each(|line| line.end += 1);
+        }
+        lost_cr
     }
 
     /// At a line that only a hunk has.
@@ -757,16 +796,14 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
 
 /// Whether `text`, which has `file` or none and no hunks, is a patch that changes no lines.
 pub fn can_lack_hunks<T: Unit>(text: &[T], file: Option<&FilePatch>) -> bool {
-    let text = trim(text);
-    match file {
-        None => text.is_empty(),
-        Some(file) if file.new_header.is_some() => {
-            is_file_header(&text[line_start(text, text.len())..])
-        }
-        Some(file) => {
-            file.is_rename || file.is_copy || file.old_mode.is_some() || file.new_mode.is_some()
-        }
-    }
+    let Some(file) = file else {
+        return trim(text).is_empty();
+    };
+    file.is_rename
+        || file.is_copy
+        || file.old_mode.is_some()
+        || file.new_mode.is_some()
+        || file.new_header.is_some()
 }
 
 // ───────────────────────────── apply ─────────────────────────────
@@ -878,17 +915,6 @@ fn steps_of<'a, T: Unit>(lines: &[&'a [T]]) -> Result<Vec<Step<'a, T>>, usize> {
         })
     };
     lines.iter().enumerate().map(step).collect()
-}
-
-/// The last `trimmed` lines end like all the others.
-fn restore_cr<T: Unit>(hunks: &mut [Vec<Step<'_, T>>], trimmed: usize) {
-    let steps = || hunks.iter().flatten().rev().skip(trimmed);
-    let mut endings = steps().filter(|step| step.has_line_ending).peekable();
-    if endings.peek().is_some() && endings.all(|step| step.cr.is_some()) {
-        let steps = hunks.iter_mut().flatten().rev().take(trimmed);
-        let steps = steps.filter(|step| step.has_line_ending);
-        steps.for_each(|step| step.cr = Some(T::from_u8(b'\r')));
-    }
 }
 
 /// A patch with only `\n` gets `\r\n` for a source with only `\r\n`, and the other way round.
@@ -1223,12 +1249,7 @@ impl<'a, T: Unit> Source<'a, T> {
     }
 }
 
-/// `trimmed`: how many lines at the end of the last hunk have no newline after them in the patch.
-pub fn apply<T: Unit>(
-    source: &[T],
-    hunks: &[HunkToApply<'_, T>],
-    trimmed: usize,
-) -> Result<Vec<T>, ApplyError> {
+pub fn apply<T: Unit>(source: &[T], hunks: &[HunkToApply<'_, T>]) -> Result<Vec<T>, ApplyError> {
     let mut steps = Vec::with_capacity(hunks.len());
     for (hunk, HunkToApply { lines, .. }) in hunks.iter().enumerate() {
         steps.push(steps_of(lines).map_err(|line| ApplyError::InvalidOperation { hunk, line })?);
@@ -1238,9 +1259,6 @@ pub fn apply<T: Unit>(
         Err(ApplyError::Mismatch { hunk, reason })
     };
 
-    if trimmed > 0 {
-        restore_cr(&mut steps, trimmed);
-    }
     convert_line_endings(source, &mut steps);
     // Without the empty one after the last newline.
     let line_count = Split::Lines.count(source);

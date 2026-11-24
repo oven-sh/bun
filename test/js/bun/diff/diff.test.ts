@@ -801,6 +801,8 @@ describe("parsePatch", () => {
     ["cut before the first change", "@@ -1,2 +1,2 @@\n a", "Added line count did not match for hunk at line 1"],
     ["short after the marker", "@@ -1,2 +1 @@\n-a\n\\ x", "Added line count did not match for hunk at line 1"],
     ["lines without a hunk header", "--- f\n+++ f\n-a\n+b\n", 'Hunk at line 3 does not start with "@@ -start,lines +start,lines @@"'],
+    ["text in place of a hunk", "--- f\n+++ f\n\nReplace a with b.\n", 'Hunk at line 4 does not start with "@@ -start,lines +start,lines @@"'],
+    ["git: text in place of a hunk", "diff --git a/f b/f\nnew file mode 100644\n--- /dev/null\n+++ b/f\nb\n", 'Hunk at line 5 does not start with "@@ -start,lines +start,lines @@"'],
     ["four lines short", "@@ -1,5 +1,5 @@\n-a\n+b", "Added line count did not match for hunk at line 1"],
     ["only a hunk", body, [{ hunks: [hunk] }]],
     ["no newline at the end", body.trimEnd(), [{ hunks: [hunk] }]],
@@ -1064,9 +1066,7 @@ describe("applyPatch", () => {
     "1c1\n< a\n---\n> b\n",
     "  @@ -1 +1 @@\n  -a\n  +b\n",
     "\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-a\x1b[m\n\x1b[32m+b\x1b[m\n",
-    "--- f\n+++ f\nReplace a with b.\n",
     "diff --git a/f b/f\nindex 1..2 100644\n",
-    "diff --git a/f b/f\nnew file mode 100644\n--- /dev/null\n+++ b/f\nb\n",
   ])("no hunks in %j", patch => {
     expect(() => diff.applyPatch("a\n", patch)).toThrow(
       new SyntaxError('The patch has no line that starts with "@@ -start,lines +start,lines @@"'),
@@ -1077,6 +1077,7 @@ describe("applyPatch", () => {
     "",
     " \r\n",
     `Index: f\n${rule}\n--- f\n+++ f\n`,
+    `Index: f\n${rule}\n--- f\n+++ f\n\nProperty changes on: f\n___\nAdded: svn:executable\n## -0,0 +1 ##\n+*\n`,
     "diff --git a/f b/g\nrename from f\nrename to g\n-- \n2.43.0\n",
     "diff --git a/f b/g\ncopy from f\ncopy to g\n",
     "diff --git a/f b/f\nold mode 100644\nnew mode 100755\n",
@@ -1099,10 +1100,19 @@ describe("applyPatch", () => {
     ["a\n", "a\nb\n"],
     ["a\nb\n", "a\n"],
     ["a\nc", "b\nc"],
+    ["a", "b"],
+    ["a", "世\n"],
   ])("a trimmed CRLF patch: %j to %j", (a, b) => {
     const [oldText, newText] = [a, b].map(text => text.replaceAll("\n", "\r\n"));
+    const converted = diff.createPatch(a, b).replaceAll("\n", "\r\n").trim();
+    expect([diff.applyPatch(a, converted), diff.applyPatch(a, diff.parsePatch(converted)[0])]).toEqual(
+      Array(2).fill(a.includes("\n") ? b : newText),
+    );
+    if (!a.includes("\n")) return;
     const patch = diff.createPatch(oldText, newText).trim();
-    expect([diff.applyPatch(oldText, patch), diff.applyPatch(a, patch)]).toEqual([newText, b]);
+    for (const it of [patch, diff.parsePatch(patch)[0], diff.parsePatch(patch)[0].hunks]) {
+      expect([diff.applyPatch(oldText, it), diff.applyPatch(a, it)]).toEqual([newText, b]);
+    }
   });
 
   test("a string", () => {

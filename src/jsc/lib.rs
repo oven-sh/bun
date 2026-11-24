@@ -340,7 +340,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     }
 }
 
-pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{HasJsRef, JsCellRefExt, JsRef};
@@ -1172,7 +1171,6 @@ pub mod debugger;
 pub use self::debugger as Debugger;
 #[path = "SavedSourceMap.rs"]
 pub mod saved_source_map;
-pub use self::saved_source_map as SavedSourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine / ModuleLoader / event_loop. Downstream-compat re-exports

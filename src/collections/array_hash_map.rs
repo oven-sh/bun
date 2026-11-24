@@ -1561,19 +1561,6 @@ impl<A: Allocator + Default> From<Box<[u8], A>> for StringHashMapKey<A> {
     }
 }
 
-impl<A: Allocator + Default> From<&'static [u8]> for StringHashMapKey<A> {
-    /// Zero-copy: the slice is stored by reference. This is the conversion
-    /// `hashbrown::VacantEntryRef::insert` calls on miss in the
-    /// [`StringHashMap::put_borrowed`] / [`StringHashMap::get_or_put_borrowed`]
-    /// fast paths, so it must NOT allocate (the `'static` here is the
-    /// caller-asserted lifetime erasure, not a literal program-lifetime
-    /// requirement — see those methods' safety docs).
-    #[inline]
-    fn from(s: &'static [u8]) -> Self {
-        Self::borrowed(s)
-    }
-}
-
 impl<V, A: MapAllocator> Default for StringHashMap<V, A> {
     fn default() -> Self {
         Self {

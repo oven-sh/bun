@@ -148,7 +148,6 @@ export const mydep: Dependency = {
 - **brotli.ts** — simplest direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool; `enabled` for a dep that only some targets build
-- **cares.ts** — direct build with hand-written per-target config.h
 - **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **lolhtml.ts** — cargo build with rustflags

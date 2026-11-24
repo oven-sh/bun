@@ -309,7 +309,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "zlib", ZLIB_VERSION },
         { "tinycc", BUN_VERSION_TINYCC },
         { "lolhtml", BUN_VERSION_LOLHTML },
-        { "ares", BUN_VERSION_C_ARES },
+        // Not linked: src/dns/client is modeled on this version.
+        { "ares", "1.34.9" },
         { "usockets", BUN_VERSION_USOCKETS },
         // Not linked: src/zstd writes what this version writes.
         { "zstd", "1.5.7" },

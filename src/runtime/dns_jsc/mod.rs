@@ -6,5 +6,5 @@ mod dns_body;
 pub(crate) use dns_body::dns_sd;
 pub(crate) use dns_body::{Order, Resolver, internal, netc};
 
-pub(crate) mod cares_jsc;
+pub(crate) mod answer_jsc;
 pub(crate) mod options_jsc;

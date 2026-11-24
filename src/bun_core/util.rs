@@ -2275,11 +2275,11 @@ pub fn is_writable(fd: Fd) -> Pollable {
 // ── os_entropy ────────────────────────────────────────────────────────────
 // Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
 // RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
-// graph so it cannot reach `RAND_bytes`; this is used only to seed
-// `fast_random()`'s thread-local PRNG once per thread. Every other caller
-// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
-// call).
-fn os_entropy(bytes: &mut [u8]) {
+// graph so it cannot reach `RAND_bytes`; this seeds `fast_random()`'s
+// thread-local PRNG once per thread. Prefer `bun_boringssl_sys::rand_bytes`
+// (userspace DRBG, no syscall per call) unless the bytes are asked for in
+// batches.
+pub fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2299,10 +2299,10 @@ fn os_entropy(bytes: &mut [u8]) {
                 }
                 // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
                 use std::io::Read;
-                if std::fs::File::open("/dev/urandom")
-                    .and_then(|mut f| f.read_exact(&mut bytes[filled..]))
-                    .is_err()
-                {
+                // It stays open: there may be no descriptor left the next time.
+                static URANDOM: Once<std::io::Result<std::fs::File>> = Once::new();
+                let file = URANDOM.get_or_init(|| std::fs::File::open("/dev/urandom"));
+                if !(file.as_ref()).is_ok_and(|mut f| f.read_exact(&mut bytes[filled..]).is_ok()) {
                     panic!("getrandom failed: errno {err}");
                 }
                 return;

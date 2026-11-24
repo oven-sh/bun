@@ -7,9 +7,9 @@
 
 use core::ffi::c_int;
 use core::mem::{self, MaybeUninit};
-use core::net::Ipv4Addr;
+use core::net::{IpAddr, Ipv4Addr};
 
-use bun_cares_sys::c_ares as ares;
+use bun_core::ip_address::{self, IpText};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
@@ -189,26 +189,9 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.slice(); // presentation address
-        let mut buf = [0; inet::INET6_ADDRSTRLEN + 1];
-        // A `%scope` suffix populates `scope_id`, but
-        // `ares_inet_pton` does not accept it, so we strip and parse it here.
-        // (WHATWG URL host parsing rejects zone identifiers, so in practice
-        // `URL::host_()` should not yield one — handled defensively.)
-        let addr = if paddr.len() >= 2 && paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
-            let mut inner = &paddr[1..paddr.len() - 1];
-            let mut scope_id: u32 = 0;
-            if let Some(pct) = strings::index_of_char_usize(inner, b'%') {
-                let zone = &inner[pct + 1..];
-                inner = &inner[..pct];
-                // Numeric zone → scope_id directly.
-                // Non-numeric zone would require if_nametoindex; treat as invalid here.
-                scope_id = bun_core::fmt::parse_int::<u32>(zone, 10).ok()?;
-            }
-            let octets = bun_cares_sys::pton(strings::copy_z(&mut buf, inner)?)?;
-            Self::init_ipv6(octets, port_, 0, scope_id)
-        } else {
-            let octets = bun_cares_sys::pton(strings::copy_z(&mut buf, paddr)?)?;
-            Self::init_ipv4(octets, port_)
+        let addr = match ip_address::parse_strict(ip_address::strip_ipv6_brackets(paddr))? {
+            IpAddr::V4(ip) => Self::init_ipv4(ip.octets(), port_),
+            IpAddr::V6(ip) => Self::init_ipv6(ip.octets(), port_, 0, 0),
         };
 
         Some(addr.into_js(heap))
@@ -290,39 +273,25 @@ impl SocketAddress {
     /// Semi-structured JS api for creating a `SocketAddress`. If you have raw
     /// socket address data, prefer `SocketAddress::init`.
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::EMPTY;
-
-        // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
-        // copy the string.
-        // PERF: could use a small stack buffer with heap fallback.
-
-        let addr: sockaddr = match options.family {
-            AF::INET => {
-                let octets = if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
-                    bun_cares_sys::pton(&slice).ok_or_else(|| throw_invalid_ip_address(global))?
-                } else {
-                    Ipv4Addr::LOCALHOST.octets()
-                };
-                sockaddr::v4(options.port.to_be(), u32::from_ne_bytes(octets))
+        let (ip, presentation) = match (options.address, options.family) {
+            (Some(address), _) => {
+                let text = address.to_utf8();
+                let ip = ip_address::parse_uv_inet_pton(&text);
+                let goes_on = strings::index_of_any(&text, b"%\0").is_some();
+                drop(text);
+                (ip, if goes_on { BunString::DEAD } else { address })
             }
-            AF::INET6 => {
-                let octets = if let Some(address_str) = options.address {
-                    presentation = address_str;
-                    let mut slice = presentation.to_owned_slice_z();
-                    // As in libuv's `uv_inet_pton`, the address ends at a zone id.
-                    if let Some((address, _)) = strings::split_once_char(slice.as_bytes(), b'%') {
-                        slice = bun_core::ZBox::from_bytes(address);
-                        presentation = BunString::DEAD;
-                    }
-                    bun_cares_sys::pton(&slice).ok_or_else(|| throw_invalid_ip_address(global))?
-                } else {
-                    inet::IN6ADDR_ANY_INIT
-                };
-                let flowinfo = options.flowlabel.unwrap_or(0);
-                sockaddr::v6(options.port.to_be(), octets, flowinfo, 0)
+            (None, AF::INET) => (Some(Ipv4Addr::LOCALHOST.into()), BunString::EMPTY),
+            (None, AF::INET6) => (Some(inet::IN6ADDR_ANY_INIT.into()), BunString::EMPTY),
+        };
+
+        let port = options.port.to_be();
+        let addr = match (options.family, ip) {
+            (AF::INET, Some(IpAddr::V4(ip))) => sockaddr::v4(port, u32::from_ne_bytes(ip.octets())),
+            (AF::INET6, Some(IpAddr::V6(ip))) => {
+                sockaddr::v6(port, ip.octets(), options.flowlabel.unwrap_or(0), 0)
             }
+            _ => return Err(throw_invalid_address(global)),
         };
 
         Ok(SocketAddress {
@@ -483,10 +452,8 @@ impl SocketAddress {
     }
 
     fn fmt_presentation(&self) -> BunString {
-        let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
-        let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(
-            formatted.as_bytes(),
+            &self._addr.text(),
             crate::node::types::Encoding::Latin1,
         );
         debug_assert!(presentation.tag() != bun_core::Tag::Dead);
@@ -592,9 +559,9 @@ impl SocketAddress {
     }
 }
 
-fn throw_invalid_ip_address(global: &JSGlobalObject) -> JsError {
+fn throw_invalid_address(global: &JSGlobalObject) -> JsError {
     global.throw_sys_error(
-        bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+        bun_jsc::ErrorCode::ERR_INVALID_ADDRESS,
         format_args!("Invalid socket address"),
     )
 }
@@ -799,16 +766,11 @@ impl sockaddr {
         }
     }
 
-    pub(crate) fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
-        let len = match self.as_sin6() {
-            Some(sin6) => bun_cares_sys::ntop(&sin6.addr, buf),
-            None => bun_cares_sys::ntop(&self.sin.addr.to_ne_bytes(), buf),
-        }
-        .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
-        .len();
-        let formatted = ZStr::from_buf(&buf[..], len);
-        debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
-        formatted
+    pub(crate) fn text(&self) -> IpText {
+        IpText::new(match self.as_sin6() {
+            Some(sin6) => sin6.addr.into(),
+            None => self.sin.addr.to_ne_bytes().into(),
+        })
     }
 
     // I'd bet money endianness is going to screw us here.
@@ -825,20 +787,12 @@ impl sockaddr {
 // =============================================================================
 
 // The same types are defined in a bunch of different places. We should probably unify them.
-// Compile-time checks: socklen_t shape parity + layout of `sockaddr` + AF constant parity with c-ares.
-#[cfg(not(windows))]
-const _: () = {
-    assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<libc::socklen_t>());
-    assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<libc::socklen_t>());
-};
 const _: () = {
     use inet::{sockaddr_in, sockaddr_in6};
     assert!(mem::size_of::<sockaddr>() == mem::size_of::<sockaddr_in6>());
     assert!(mem::align_of::<sockaddr>() == mem::align_of::<sockaddr_in6>());
     assert!(mem::offset_of!(sockaddr_in, family) == mem::offset_of!(sockaddr_in6, family));
     assert!(mem::offset_of!(sockaddr_in, port) == mem::offset_of!(sockaddr_in6, port));
-    assert!(AF::INET as c_int == ares::AF::INET);
-    assert!(AF::INET6 as c_int == ares::AF::INET6);
 };
 
 /// Fills `out` with `host`:`port` when `host` is numeric (inet_aton shorthand and `%zone` included) and returns 1, or 0 when it is a name — the one parse behind uSockets' connect paths, so a literal never reaches the resolver; `host` must be NUL-terminated and `out` writable.
@@ -869,6 +823,21 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     1
 }
 
+/// Replaces the octets at the start of `buffer` with their NUL-terminated text, and returns its length.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__formatIpAddress(buffer: &mut [u8; 64], is_ipv6: bool) -> usize {
+    let octets: [u8; 16] = core::array::from_fn(|i| buffer[i]);
+    let [a, b, c, d, ..] = octets;
+    let text = IpText::new(if is_ipv6 {
+        octets.into()
+    } else {
+        [a, b, c, d].into()
+    });
+    buffer[..text.len()].copy_from_slice(&text);
+    buffer[text.len()] = 0;
+    text.len()
+}
+
 /// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
 fn scope_index(zone: &[u8]) -> u32 {
     #[cfg(not(windows))]
@@ -894,10 +863,12 @@ fn scope_index(zone: &[u8]) -> u32 {
 
 pub(crate) mod inet {
     #![allow(non_camel_case_types)]
-    pub(crate) use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub(crate) use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub(crate) use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-    pub(crate) type socklen_t = super::ares::ares_socklen_t;
+    #[cfg(windows)]
+    pub(crate) use bun_sys::windows::ws2_32::socklen_t;
+    #[cfg(not(windows))]
+    pub(crate) use libc::socklen_t;
 }

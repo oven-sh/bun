@@ -380,9 +380,7 @@ unsafe extern "C" fn us_poll_start_rc(p: NonNull<Poll>, loop_: &Loop, events: c_
         use crate::fault_inject::{POLL_START, us_fault_hit};
         let fd = poll.fd.get() as c_int;
         let mut injected = 0;
-        let mut unused = 0;
-        // SAFETY: both out-pointers refer to locals.
-        if unsafe { us_fault_hit(POLL_START, fd, &raw mut injected, &raw mut unused) } != 0 {
+        if us_fault_hit(POLL_START, fd, &mut injected, &mut 0) != 0 {
             return injected as c_int;
         }
     }

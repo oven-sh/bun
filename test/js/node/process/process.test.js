@@ -845,7 +845,6 @@ it("process.versions", async () => {
     mimalloc: "mimalloc",
     tinycc: "tinycc",
     lolhtml: "lolhtml",
-    ares: "cares",
   };
 
   const expectedVersions = {};
@@ -868,6 +867,9 @@ it("process.versions", async () => {
 
   // Not linked. It is the version whose output src/zstd reproduces.
   expect(process.versions.zstd).toBe("1.5.7");
+
+  // Not linked. It is the version that src/dns/client is modeled on.
+  expect(process.versions.ares).toBe("1.34.9");
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");

@@ -108,8 +108,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
-    //            by one instead (BoringSSL via the hooks in boringssl.ts,
-    //            c-ares via ares_library_init_mem).
+    //            by one instead (BoringSSL via the hooks in boringssl.ts).
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {

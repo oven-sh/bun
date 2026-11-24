@@ -1,6 +1,6 @@
 use core::cell::Cell;
-use std::collections::TryReserveError;
 
+use bun_alloc::AllocError;
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::Optional as StrongOptional;
@@ -101,14 +101,19 @@ impl Buffered {
         bytes
     }
 
-    fn extend(&self, chunk: &[u8]) {
-        self.bytes.with_mut(|b| b.extend_from_slice(chunk));
-    }
-
-    fn try_extend(&self, chunk: &[u8]) -> Result<(), TryReserveError> {
-        self.bytes.with_mut(|b| b.try_reserve(chunk.len()))?;
-        self.extend(chunk);
-        Ok(())
+    fn try_extend(&self, chunk: &[u8]) -> Result<(), AllocError> {
+        #[cfg(socket_fault_injection)]
+        {
+            use bun_uws_sys::fault_inject::{BYTE_STREAM_BUFFER, fails};
+            if !chunk.is_empty() && fails(BYTE_STREAM_BUFFER) {
+                return Err(AllocError);
+            }
+        }
+        self.bytes.with_mut(|b| {
+            b.try_reserve(chunk.len()).map_err(|_| AllocError)?;
+            b.extend_from_slice(chunk);
+            Ok(())
+        })
     }
 
     /// Drop every buffered byte and release the allocation.
@@ -523,7 +528,13 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result<'_>) {
+    #[inline]
+    pub(crate) fn on_data(&self, stream: streams::Result<'_>) {
+        bun_core::handle_oom(self.try_on_data(stream));
+    }
+
+    /// `Err`: the chunk is lost, so the producer has to send an error next.
+    pub(crate) fn try_on_data(&self, mut stream: streams::Result<'_>) -> Result<(), AllocError> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -532,7 +543,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
-            return;
+            return Ok(());
         }
 
         debug_assert!(
@@ -547,14 +558,12 @@ impl ByteStream {
             if let streams::Result::Err(err) = stream {
                 self.detach_sink(Some(&err));
                 sink.end(Some(err));
-                return;
+                return Ok(());
             }
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream, 0)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-                return;
+                return self.append(stream, 0);
             }
 
             let is_done = stream.is_done();
@@ -565,12 +574,12 @@ impl ByteStream {
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
-                    return;
+                    return Ok(());
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
                     sink.end(None);
-                    return;
+                    return Ok(());
                 }
                 _ => {
                     self.signal_drained();
@@ -581,7 +590,7 @@ impl ByteStream {
                 self.detach_sink(None);
                 sink.end(None);
             }
-            return;
+            return Ok(());
         }
 
         if self.buffer_action.get().is_some() {
@@ -601,7 +610,7 @@ impl ByteStream {
                 self.pending_error.set(None);
                 self.buffer_action.set(None);
 
-                return;
+                return Ok(());
             }
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
@@ -612,7 +621,7 @@ impl ByteStream {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
                 let Some(mut action) = self.buffer_action.replace(None) else {
                     // Consumed re-entrantly during `signal_drained`.
-                    return;
+                    return Ok(());
                 };
 
                 if self.buffered.capacity() == 0 && matches!(stream, streams::Result::Done) {
@@ -623,7 +632,7 @@ impl ByteStream {
 
                     let mut blob = self.to_any_blob().unwrap();
                     action.fulfill(self.parent_const().global_this(), &mut blob);
-                    return;
+                    return Ok(());
                 }
                 if self.buffered.capacity() == 0 {
                     if let streams::Result::OwnedAndDone(owned) = stream {
@@ -638,7 +647,7 @@ impl ByteStream {
                         self.buffered.adopt(owned, 0);
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
-                        return;
+                        return Ok(());
                     }
                 }
 
@@ -648,7 +657,8 @@ impl ByteStream {
                 );
 
                 if self.buffered.try_extend(stream.slice()).is_err() {
-                    return self.reject_out_of_memory(action);
+                    self.reject_out_of_memory(action);
+                    return Ok(());
                 }
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
@@ -659,7 +669,7 @@ impl ByteStream {
                 self.reject_out_of_memory(action);
             }
 
-            return;
+            return Ok(());
         }
 
         let chunk = stream.slice();
@@ -680,6 +690,10 @@ impl ByteStream {
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
             let has_remaining = chunk.len() > to_copy_len;
+            if has_remaining {
+                let stream = core::mem::replace(&mut stream, streams::Result::Done);
+                self.append(stream, to_copy_len)?;
+            }
 
             let is_really_done =
                 self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
@@ -702,10 +716,7 @@ impl ByteStream {
                 streams::Result::IntoArray(into_array())
             };
 
-            if has_remaining {
-                self.append(stream, to_copy_len)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-            } else {
+            if !has_remaining {
                 // Only resume the producer when the whole chunk fit the pull
                 // view. When the tail spilled into `buffer` the next `on_pull`
                 // signals once it drains, so resuming now would let another
@@ -719,13 +730,12 @@ impl ByteStream {
 
             self.pending.run(result);
 
-            return;
+            return Ok(());
         }
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
-            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
     }
 
     fn reject_out_of_memory(&self, mut action: BufferAction) {
@@ -736,18 +746,14 @@ impl ByteStream {
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
-    fn append(
-        &self,
-        stream: streams::Result<'_>,
-        offset: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result<'_>, offset: usize) -> Result<(), AllocError> {
         if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
                     self.buffered.adopt(owned, offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                    self.buffered.adopt(temp[offset..].to_vec(), 0);
+                    self.buffered.try_extend(&temp[offset..])?;
                 }
                 streams::Result::Err(err) => self.pending_error.set(Some(err)),
                 streams::Result::Done => {}
@@ -758,10 +764,10 @@ impl ByteStream {
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffered.extend(&temp[offset..]);
+                self.buffered.try_extend(&temp[offset..])?;
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffered.extend(&owned.slice()[offset..]);
+                self.buffered.try_extend(&owned.slice()[offset..])?;
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {

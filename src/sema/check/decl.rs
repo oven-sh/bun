@@ -5015,7 +5015,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `m.MapsThisOnly()`
-    fn maps_this_only(&self, mapper: MapperId) -> bool {
+    pub(super) fn maps_this_only(&self, mapper: MapperId) -> bool {
         matches!(
             self.types().mapping(mapper),
             &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
@@ -5078,6 +5078,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `isThislessVariableLikeDeclaration`: if a mapper `maps_this_only`, `instantiateSymbol` returns the parameter `p`
+    /// unchanged, whatever its type is.
+    pub(super) fn is_thisless_parameter(&self, file: FileId, p: ParamId) -> bool {
+        let hir = self.hir(file);
+        match hir[p].ty.is_some() {
+            true => super::errors_unused::is_thisless_type(hir, hir[p].ty),
+            false => hir[p].default.is_none(),
+        }
+    }
+
     /// Returns the type of `declared`, a result of `declared_parameter`, in a signature that has `mapper`.
     /// `UNRESOLVED` if it isn't known and neither `is_asked` nor a rest parameter.
     fn instantiate_parameter(
@@ -5087,18 +5097,11 @@ impl<'p, 's> Checker<'p, 's> {
         maps_this_only: bool,
         is_asked: bool,
     ) -> TypeId {
-        // `instantiateSymbol` returns a symbol that `isThisless` unchanged, whatever its type is
-        // (`isThislessVariableLikeDeclaration`).
-        if maps_this_only && let Some((file, p)) = declared.declaration {
-            let hir = self.hir(file);
-            let value_declaration = &hir[p];
-            let is_kept = match value_declaration.ty.is_some() {
-                true => super::errors_unused::is_thisless_type(hir, value_declaration.ty),
-                false => value_declaration.default.is_none(),
-            };
-            if is_kept {
-                return declared.ty;
-            }
+        if maps_this_only
+            && let Some((file, p)) = declared.declaration
+            && self.is_thisless_parameter(file, p)
+        {
+            return declared.ty;
         }
         if is_asked || declared.rest {
             return self.instantiate(declared.ty, mapper);
@@ -5435,7 +5438,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let declaration = &self.hir(file)[func];
         if declaration.this_param.is_some() {
+            let this_parameter = declaration.this_param;
             let declared = self.type_of_this_parameter(file, func);
+            if self.maps_this_only(mapper) && self.is_thisless_parameter(file, this_parameter) {
+                return Some((declared, sig));
+            }
             let ty = self.instantiate(declared, mapper);
             // `instantiateSymbol(sig.thisParameter, m)`, as for the parameters.
             if let Some(target) = self.instantiated_target(sig)

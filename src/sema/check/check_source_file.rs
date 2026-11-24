@@ -517,7 +517,8 @@ impl<'s> Checker<'_, 's> {
         if p != hir[func].this_param {
             // `checkExpressionCached(initializer)`: a loop that's being analyzed is hidden from it.
             let check = |c: &mut Self| {
-                let exits = c.check_name_and_initializer(file, node.pat, node.default, !has_body);
+                let (exits, _) =
+                    c.check_name_and_initializer(file, node.pat, node.default, !has_body);
                 if !exits {
                     c.check_parameter_initializer(file, p);
                 }
@@ -643,26 +644,27 @@ impl<'s> Checker<'_, 's> {
     /// The part of `checkVariableLikeDeclaration` from `node.Name()` to the initializer, for a
     /// parameter or a binding element. `is_bodiless` means the declaration belongs to a parameter
     /// of a function without a body. Returns true where tsgo reports TS2371 and returns early. The
-    /// caller reports it on its own node.
+    /// caller reports it on its own node. Also returns the result of `check_binding_name`.
     fn check_name_and_initializer(
         &mut self,
         file: FileId,
         name: PatId,
         initializer: ExprId,
         is_bodiless: bool,
-    ) -> bool {
+    ) -> (bool, Option<TypeId>) {
         let exits = is_bodiless && initializer.is_some();
         // Binding pattern elements are checked before the early return. An identifier's type is
         // resolved after it.
+        let mut type_of_name = None;
         if !exits || !matches!(self.hir(file)[name].kind, PatKind::Ident(_)) {
-            self.check_binding_name(file, name, is_bodiless);
+            type_of_name = self.check_binding_name(file, name, is_bodiless);
         }
         if exits || self.is_binding_pattern_in_ambient_or_type_node(file, name) {
             self.leave_unvisited(file, initializer);
         } else {
             self.check_expression(file, initializer);
         }
-        exits
+        (exits, type_of_name)
     }
 
     /// `IsBindingPattern(name) && isInAmbientOrTypeNode(node)`, for `name`'s declaration `node`. If
@@ -687,18 +689,26 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
-    /// pattern (`checkBindingElement`).
-    fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
+    /// pattern (`checkBindingElement`). Returns what `getTypeOfSymbol` returns for a name.
+    fn check_binding_name(
+        &mut self,
+        file: FileId,
+        pat: PatId,
+        is_bodiless: bool,
+    ) -> Option<TypeId> {
         if pat.is_none() || self.is_stack_low() {
-            return;
+            return None;
         }
         let hir = self.hir(file);
         match hir[pat].kind {
             PatKind::Missing => {}
             PatKind::Ident(name) => {
-                self.type_of_pat(file, pat);
+                let cuts = self.interruptions();
+                let ty = self.type_of_pat(file, pat);
+                let is_complete = cuts == self.interruptions();
                 self.report_on_circular_pat(file, pat);
                 self.check_collisions_for_declaration_name(file, pat, name);
+                return is_complete.then_some(ty);
             }
             PatKind::Object(props) => {
                 self.check_empty_binding_pattern(file, pat);
@@ -738,10 +748,12 @@ impl<'s> Checker<'_, 's> {
                     {
                         continue;
                     }
-                    if self.check_name_and_initializer(file, name, prop.default, is_bodiless) {
+                    let (exits, type_of_name) =
+                        self.check_name_and_initializer(file, name, prop.default, is_bodiless);
+                    if exits {
                         self.error(file, name, 2371, &[]);
                     }
-                    self.check_binding_element_initializer(file, hir[p].value, hir[p].default);
+                    self.check_binding_element_initializer(file, name, prop.default, type_of_name);
                 }
                 self.current_source_element = saved;
             }
@@ -768,19 +780,18 @@ impl<'s> Checker<'_, 's> {
                     {
                         continue;
                     }
-                    if self.check_name_and_initializer(
-                        file,
-                        hir[e].pat,
-                        hir[e].default,
-                        is_bodiless,
-                    ) {
-                        self.error(file, hir[e].pat, 2371, &[]);
+                    let (name, default) = (hir[e].pat, hir[e].default);
+                    let (exits, type_of_name) =
+                        self.check_name_and_initializer(file, name, default, is_bodiless);
+                    if exits {
+                        self.error(file, name, 2371, &[]);
                     }
-                    self.check_binding_element_initializer(file, hir[e].pat, hir[e].default);
+                    self.check_binding_element_initializer(file, name, default, type_of_name);
                 }
                 self.current_source_element = saved;
             }
         }
+        None
     }
 
     /// True if the pattern element `p` has a `PropertyName` and a name: `{ a: b }`, not `{ a }`.
@@ -853,7 +864,7 @@ impl<'s> Checker<'_, 's> {
             }
             return;
         }
-        self.check_binding_name(file, decl.pat, false);
+        let type_of_name = self.check_binding_name(file, decl.pat, false);
         // "Don't validate for-in initializer as it is already an error"
         if is_in_for_in {
             self.leave_unvisited(file, decl.init);
@@ -864,7 +875,7 @@ impl<'s> Checker<'_, 's> {
         } else {
             self.check_expression(file, decl.init);
         }
-        self.check_variable_initializer(file, d);
+        self.check_variable_initializer(file, d, type_of_name);
         if matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing) {
             self.check_initializer_of_using_declaration(file, d);
         }

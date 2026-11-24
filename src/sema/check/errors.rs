@@ -261,6 +261,7 @@ impl Checker<'_, '_> {
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
         self.instantiations_up_to_a_limit.clear();
+        self.mapped_constraints_up_to_a_limit.clear();
         self.relations_cut_short.clear();
         self.variances_cut_short.clear();
         self.generic_mapped_types_cut_short.clear();
@@ -1433,6 +1434,7 @@ impl Checker<'_, '_> {
         if self.task.file == Some(file) {
             let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
+                self.discard_task_unless_first();
                 return;
             }
         } else {

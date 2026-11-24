@@ -199,6 +199,11 @@ impl ActiveMappers {
         self.mappers.iter().rposition(|&m| m == mapper)
     }
 
+    /// 0 if there is none.
+    pub(super) fn serial_of_outermost(&self) -> u32 {
+        self.activations.first().map_or(0, |it| it.serial)
+    }
+
     /// True if an `instantiate_cached` with `mapper` is in progress.
     #[inline]
     pub(super) fn is_active(&self, mapper: MapperId) -> bool {

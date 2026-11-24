@@ -424,9 +424,17 @@ impl<'p, 's> Checker<'p, 's> {
                 self.recent_symbol_types.forget(sym);
             }
             Ok(stored) => {
-                self.p.symbol_types.insert(&self.task, sym, ty, stored);
+                if self.p.symbol_types.insert(&self.task, sym, ty, stored) != ty {
+                    self.note_unassigned_type();
+                }
             }
-            Err(open) => self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open),
+            Err(open) => {
+                self.cache_provisionally(Query::Symbol(sym), u64::from(ty.0), open);
+                let assigned = self.p.symbol_types.get(&self.task, &sym);
+                if assigned.is_some_and(|assigned| assigned != ty) {
+                    self.note_unassigned_type();
+                }
+            }
         }
         ty
     }
@@ -2313,7 +2321,9 @@ impl<'p, 's> Checker<'p, 's> {
         let result = Prop {
             name: prop.name,
             // `createSymbolWithType`
-            flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
+            flags: PropFlags::OPTIONAL
+                | prop.flags
+                    & (PropFlags::READONLY | PropFlags::ACCESSOR | PropFlags::WRITE_ONLY),
             source: Self::copy_of(missing, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
@@ -2871,6 +2881,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.taint_from(pushed_at);
             }
             let quick = self.quick_type_of_expr(file, e);
+            self.check_callee_in_flow_loop(file, e);
             self.quick_initializers.pop();
             let _ = self.leave(Query::Expr(file, e));
             if let Some(quick) = quick {
@@ -2888,9 +2899,29 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.type_of_expr(file, e)
         };
+        let mode_of_check = match self.is_rechecking() {
+            true => check_mode,
+            false => self.mode_of_recheck,
+        };
+        let mode_outside = std::mem::replace(&mut self.mode_of_recheck, mode_of_check);
         self.check_expression_in_flow_loop(file, e);
+        self.mode_of_recheck = mode_outside;
         self.type_only_node = outside;
         ty
+    }
+
+    /// `getQuickTypeOfExpression` checks the callee of `e`.
+    fn check_callee_in_flow_loop(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Await(awaited) => self.check_callee_in_flow_loop(file, awaited),
+            ExprKind::Call(call) | ExprKind::New(call)
+                if !matches!(hir[hir[call].callee].kind, ExprKind::Super) =>
+            {
+                self.check_expression_in_flow_loop(file, hir[call].callee);
+            }
+            _ => {}
+        }
     }
 
     /// Call after `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is

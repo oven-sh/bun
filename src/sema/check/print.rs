@@ -1096,6 +1096,8 @@ pub(super) trait SymbolTracker<'p> {
     fn report(&mut self, c: &mut Checker<'p, '_>, report: Report);
     /// `ReportInferenceFallback` for `node` of `file`.
     fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
+    /// The same for the parameter name in the type predicate `node`.
+    fn report_predicate_parameter(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: TypeNodeId);
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
 }
@@ -1226,8 +1228,8 @@ struct Printer<'c, 'p, 's> {
     /// type parameter. `None` for such a parameter after `instantiateSymbol`.
     fake_scope_type_parameters: Vec<(Vec<u8>, Option<TypeId>)>,
     /// The locals of the parameters' fake scope, as a value lookup finds them. `None` for a symbol
-    /// that `instantiateSymbol` created.
-    fake_scope_parameters: Vec<(Atom, Option<Sym>)>,
+    /// that `instantiateSymbol` created, and for a rest parameter that's expanded, which has the flag.
+    fake_scope_parameters: Vec<(Atom, Option<Sym>, bool)>,
 }
 
 /// `encodeUtf16EscapeSequence`
@@ -1864,15 +1866,27 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getTypeAliasForTypeLiteral`
     fn type_alias_for_type_literal(&self, ty: TypeId) -> Option<Sym> {
-        let TypeData::Anon {
-            origin: Origin::TypeLiteral(file, node),
-            ..
-        } = *self.c.data(ty)
-        else {
-            return None;
+        // A function type and a mapped type have the symbol of a type literal too.
+        let (file, node) = match self.c.data(ty) {
+            &TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
+                ..
+            } => (file, node),
+            TypeData::Fns { decls, .. } => {
+                let &(file, func) = decls.first()?;
+                match self.c.bound(file).fns[func.idx()].owner {
+                    FnOwner::Type(node) => (file, node),
+                    _ => return None,
+                }
+            }
+            _ => return None,
         };
         let aliases = &self.c.hir(file).aliases;
         let index = aliases.iter().position(|alias| alias.ty == node)?;
+        // An `@typedef` is a `KindJSTypeAliasDeclaration`.
+        if aliases[index].flags.contains(Flags::REPARSED) {
+            return None;
+        }
         let symbol = self.c.bound(file).alias_symbol[index];
         symbol.is_some().then(|| self.c.files().sym(file, symbol))
     }
@@ -2372,7 +2386,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             locals.push((name, SymFlags::TYPE_PARAMETER, symbol));
         }
         let type_parameters = locals.len();
-        for &(name, parameter) in self.fake_scope_parameters.iter().rev() {
+        for &(name, parameter, _) in self.fake_scope_parameters.iter().rev() {
             let mut parameters = locals[type_parameters..].iter();
             if !parameters.any(|local| local.0 == name) {
                 locals.push((name, SymFlags::FUNCTION_SCOPED_VARIABLE, parameter));
@@ -3250,8 +3264,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         expanded_parameters: &[Option<(FileId, ParamId)>],
         type_parameters: &[TypeId],
         original_parameters: Option<&[Option<(FileId, ParamId)>]>,
-        is_instantiated: bool,
+        mapper: MapperId,
     ) -> OuterScope {
+        let is_instantiated = self.c.is_instantiating(mapper);
+        let maps_this_only = self.c.maps_this_only(mapper);
         let outer = OuterScope {
             type_parameter_names: self.type_parameter_names.len(),
             type_parameter_name_counts: self.type_parameter_name_counts.len(),
@@ -3294,15 +3310,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     let symbol = self.c.files().sym(file, bound.pat_symbol[pat.idx()]);
                     // `instantiateSymbol` returns the symbol itself if its type can't contain type
                     // variables. `bindPattern` adds the symbols of the declarations.
-                    let is_declared_symbol = !is_instantiated || pat != hir[declaration].pat || {
-                        let declared = self.c.type_of_pat(file, pat);
-                        !self.c.types().object_flags(declared).intersects(
-                            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
-                                | ObjectFlags::HAS_REVERSE_MAPPED,
-                        )
-                    };
-                    self.fake_scope_parameters
-                        .push((name, is_declared_symbol.then_some(symbol)));
+                    let is_declared_symbol = !is_instantiated
+                        || pat != hir[declaration].pat
+                        || maps_this_only && self.c.is_thisless_parameter(file, declaration)
+                        || {
+                            let declared = self.c.type_of_pat(file, pat);
+                            !self.c.types().object_flags(declared).intersects(
+                                ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+                                    | ObjectFlags::HAS_REVERSE_MAPPED,
+                            )
+                        };
+                    let symbol = is_declared_symbol.then_some(symbol);
+                    (self.fake_scope_parameters).push((name, symbol, is_expanded));
                 }
             }
             for &type_parameter in type_parameters {
@@ -3891,14 +3910,22 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `propertySymbol.Flags&SymbolFlagsPrototype != 0` for a property of `owner`.
     fn is_prototype_property(&self, owner: TypeId, property: &Prop) -> bool {
-        self.c.is_prototype_of_class(property)
-            && matches!(
-                self.c.data(owner),
-                TypeData::Anon {
-                    origin: Origin::ClassStatic(_),
-                    ..
-                }
-            )
+        if !self.c.is_prototype_of_class(property) {
+            return false;
+        }
+        let is_of_class = matches!(
+            self.c.data(owner),
+            TypeData::Anon {
+                origin: Origin::ClassStatic(_),
+                ..
+            }
+        );
+        // `getSpreadSymbol` returns the symbol itself, unless the result is `readonly`.
+        let is_spread = matches!(property.source, PropSource::Type(instance)
+            if matches!(self.c.data(instance), TypeData::Ref { target, .. }
+                if self.c.files().flags(*target).contains(SymFlags::CLASS)));
+        let of_copies = PropFlags::READONLY | PropFlags::OPTIONAL;
+        is_of_class || is_spread && !property.flags.intersects(of_copies)
     }
 
     fn type_literal_to_node(
@@ -5372,11 +5399,15 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let hir = self.c.hir(file);
         let parameters = hir[func].params;
         let strict = self.c.p.files.options.strict_null_checks;
+        let maps_this_only = self.c.maps_this_only(mapper);
         let mut list = Vec::with_capacity(parameters.len());
         for (i, p) in parameters.iter().enumerate() {
             let parameter = &hir[p];
             let declared = self.c.type_of_param(file, p);
-            let mut ty = self.c.instantiate(declared, mapper);
+            let mut ty = match maps_this_only && self.c.is_thisless_parameter(file, p) {
+                true => declared,
+                false => self.c.instantiate(declared, mapper),
+            };
             let optional = self.c.is_optional_parameter(file, p);
             // `requiresAddingImplicitUndefined`: a parameter with an initializer that can't be
             // omitted accepts `undefined`.
@@ -5663,8 +5694,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let declared = self.signature_parameters(signature);
         let expanded = self.expanded_parameters(&declared);
         let own_type_parameters = self.c.sig_type_params(signature).into_vec();
-        let is_instantiated = (self.c.sig_decl(signature))
-            .is_some_and(|declared| self.c.is_instantiating(declared.2));
+        let mapper = (self.c.sig_decl(signature)).map_or(MapperId::IDENTITY, |declared| declared.2);
         let declarations_of = |parameters: &[Parameter]| -> Vec<Option<(FileId, ParamId)>> {
             parameters.iter().map(|p| p.declaration).collect()
         };
@@ -5672,7 +5702,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             &declarations_of(&expanded),
             &own_type_parameters,
             Some(&declarations_of(&declared)),
-            is_instantiated,
+            mapper,
         );
         outer_scope.mapper = saved_mapper;
         (expanded, outer_scope)
@@ -5792,7 +5822,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
         };
         let parameter = self.c.mapped_type_param(ty);
-        let outer_scope = self.enter_new_scope(&[], &[parameter], None, false);
+        let outer_scope = self.enter_new_scope(&[], &[parameter], None, MapperId::IDENTITY);
         let name = if self.enclosing_declaration.is_some() {
             self.type_parameter_to_name(parameter)
         } else {

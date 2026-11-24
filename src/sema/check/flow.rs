@@ -7142,7 +7142,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(name) = name else { return declared };
             names.push(name);
         };
-        self.narrow_path_of(file, init, &names, declared)
+        self.with_flow_loops_visible(|c| c.narrow_path_of(file, init, &names, declared))
     }
 
     /// `getFlowTypeOfDestructuring` for `e`, an element of an array literal or a property value of

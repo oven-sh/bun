@@ -2942,6 +2942,19 @@ impl<'p> SymbolTracker<'p> for SymbolTrackerImpl {
             c.iso_report(isolated_declarations, node);
         }
     }
+
+    fn report_predicate_parameter(
+        &mut self,
+        c: &mut Checker<'p, '_>,
+        file: FileId,
+        node: TypeNodeId,
+    ) {
+        if let Some(isolated_declarations) = &mut self.isolated_declarations
+            && file == self.current_source_file
+        {
+            c.iso_report_predicate_parameter(isolated_declarations, node);
+        }
+    }
 }
 
 // ───────────────────────────── `DeclarationTransformer` ─────────────────────────────
@@ -6597,19 +6610,28 @@ impl<'p, 's> Checker<'p, 's> {
         // The specifier of an import that resolves to one of the paths, by its `ResolvedFileName`.
         let importer = self.files().module(importing);
         let mut existing: Vec<(Atom, ResolutionMode, Vec<u8>)> = Vec::new();
-        for &specifier in &self.bound(importing).specifiers {
-            for used in [
-                importer.default_mode,
-                ResolutionMode::Import,
-                ResolutionMode::Require,
-                ResolutionMode::None,
-            ] {
-                if importer.imports.get(&(specifier, used)) == Some(&target)
-                    && !existing.iter().any(|it| it.0 == specifier && it.1 == used)
-                {
-                    let resolved = self.resolved_file_name_of_import(importing, specifier, used);
-                    existing.push((specifier, used, resolved));
-                }
+        // `importingSourceFile.Imports()`: only the first import that resolves to a path counts, whichever its mode is.
+        let mut uses: Vec<_> = self.hir(importing).specifier_uses.iter().collect();
+        uses.shared_sort_by_key(|it| (it.kind.is_dynamic(), it.pos));
+        let options = &self.files().options;
+        let in_order = uses.into_iter().map(|it| {
+            let mode = crate::program::mode_for_usage_location(options, importer.default_mode, it);
+            (it.spec, mode)
+        });
+        let modes = [
+            importer.default_mode,
+            ResolutionMode::Import,
+            ResolutionMode::Require,
+            ResolutionMode::None,
+        ];
+        let specifiers = self.bound(importing).specifiers.iter();
+        let in_any_mode = specifiers.flat_map(|&it| modes.map(|mode| (it, mode)));
+        for (specifier, used) in in_order.chain(in_any_mode) {
+            if importer.imports.get(&(specifier, used)) == Some(&target)
+                && !existing.iter().any(|it| it.0 == specifier && it.1 == used)
+            {
+                let resolved = self.resolved_file_name_of_import(importing, specifier, used);
+                existing.push((specifier, used, resolved));
             }
         }
         for (path, _) in &paths {

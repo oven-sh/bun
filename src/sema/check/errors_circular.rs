@@ -58,6 +58,14 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `GetDiagnostics` reads a file's diagnostics right after checking it, in program order, so diagnostics that checking
+    /// a later file adds to it are never read.
+    fn is_checked_before_visited_file(&self, file: FileId) -> bool {
+        let files = self.files();
+        let order = |f: FileId| (!files.module(f).is_lib, files.rank_of_file(f));
+        (self.task.file).is_some_and(|visited| order(file) < order(visited))
+    }
+
     /// `getResolvedBaseConstraint`: reports 2313 for the key of the mapped type at `mapped`, whose base constraint
     /// turned out to be circular.
     pub(super) fn report_circular_mapped_key(&mut self, file: FileId, mapped: TypeNodeId) {
@@ -66,13 +74,8 @@ impl Checker<'_, '_> {
             return;
         };
         let param = &hir[hir[m].param];
-        // `GetDiagnostics` reads a file's diagnostics right after checking it, in program order, so diagnostics that
-        // checking a later file adds to it are never read.
-        let files = self.files();
-        let order = |f: FileId| (!files.module(f).is_lib, files.rank_of_file(f));
-        let is_read = (self.task.file).is_none_or(|checked| order(checked) <= order(file));
         let constraint = param.constraint;
-        if constraint.is_none() || !is_read {
+        if constraint.is_none() || self.is_checked_before_visited_file(file) {
             return;
         }
         let start = start_of_type(hir, constraint);
@@ -368,6 +371,9 @@ impl Checker<'_, '_> {
                 };
             }
         } else if hir[func].ret.is_some() {
+            if self.is_checked_before_visited_file(file) {
+                return;
+            }
             let ret = hir[func].ret;
             let start = start_of_type(hir, ret);
             let at = (file, start, self.end_of_type_node_from(file, ret, start));

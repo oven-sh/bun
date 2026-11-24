@@ -153,6 +153,7 @@ struct Provisional {
     /// - 16: the cycle passes a barrier (`is_behind_barrier`)
     /// - 32: a request for members got the members in place, which bit 1 doesn't cover
     /// - 64: `anySignature` was read
+    /// - 128: the query itself has reported something
     event_bits: u8,
     serial: u64,
 }
@@ -1020,6 +1021,7 @@ impl<'s> Program<'s> {
             records_cycles_entered: Default::default(),
             keys_of_properties_in_progress: Vec::new(),
             instantiations_up_to_a_limit: Default::default(),
+            mapped_constraints_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
             enum_relation: Default::default(),
             enum_literal_types: Default::default(),
@@ -1694,6 +1696,10 @@ struct QueryFrame {
     /// `checkExpression` doesn't store anything, and the next visit sees whatever members exist by then, so no
     /// type is stored here either. Not set if there's no next visit, see `note_members_in_place_read_above`.
     has_read_members_in_place: bool,
+    /// The next visit gets another type for a name that was read under it. See `note_unassigned_type`.
+    has_read_unassigned_type: bool,
+    /// Something was reported while it was the innermost one.
+    has_reported: bool,
     /// `getNarrowableTypeForReference` reached `isConstraintPosition` under it, so whether the
     /// constraints are substituted depends on the check mode and the contextual type. See `is_rechecked`.
     may_substitute_constraints: bool,
@@ -1721,6 +1727,8 @@ impl QueryFrame {
             incomplete_flow: false,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
+            has_read_unassigned_type: false,
+            has_reported: false,
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: None,
@@ -1987,6 +1995,10 @@ pub struct Checker<'p, 's> {
     /// (`activeTypeMappersCaches`). The next caller hits the limit itself. An entry stored while no mapper was active has
     /// the number 0 and serves every caller until the end of the file.
     instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
+    /// The same for `mapped_constraint`: tsgo assigns `constraintType` at any depth, and each level of `Partial<Partial<..>>`
+    /// requests that of the next one twice. If `limits` changed, the number is that of the outermost activation, and
+    /// otherwise 0.
+    mapped_constraints_up_to_a_limit: FxHashMap<(FileId, TypeNodeId, MapperId), (u32, TypeId)>,
     /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` changed.
     relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
     /// `enumRelation`, keyed by the source and target symbols.
@@ -2066,7 +2078,7 @@ pub struct Checker<'p, 's> {
     /// `links.resolvedSymbol == c.unknownSymbol` for identifiers in the file being checked, meaning
     /// the `onFailedToResolveSymbol` error has been created. `true` if it was also discarded.
     unknown_symbols: FxHashMap<ExprId, bool>,
-    /// The other files in which this task has found an error since its last commit. See `View::hides`.
+    /// The files in which this task has found an error since its last commit. See `View::hides`.
     files_with_errors: crate::util::FxHashSet<FileId>,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
@@ -3069,7 +3081,9 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn push_frame(&mut self, class: u32, next_of_class: u32) {
         // A query made under a context that a non-cacheable query has pushed is non-cacheable too.
-        let tainted = !self.inference_contexts.is_empty() && self.is_innermost_tainted();
+        let tainted = !self.inference_contexts.is_empty()
+            && self.is_innermost_tainted()
+            && !self.is_declared_outside_of_inference();
         // Diagnostics reported under a loop in progress are kept (`taint_from`).
         let drops_reported =
             tainted && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported());
@@ -3090,11 +3104,39 @@ impl<'p, 's> Checker<'p, 's> {
             incomplete_flow,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
+            has_read_unassigned_type: false,
+            has_reported: false,
             may_substitute_constraints: false,
             is_quick_type: false,
             source_element: self.current_source_element,
             held_back: self.task.held_back(),
         });
+    }
+
+    /// True if the innermost query is about the type of a variable that isn't declared in any of the expressions being checked
+    /// as arguments. Nothing about those calls is a context for its initializer, and tsgo stores its type.
+    #[cold]
+    #[inline(never)]
+    fn is_declared_outside_of_inference(&self) -> bool {
+        let declared = match self.stack.last() {
+            Some(&Query::Symbol(sym)) => match self.files().value_declaration(sym) {
+                Some((file, crate::bind::Decl::Var(pat))) => Some((file, pat)),
+                _ => None,
+            },
+            Some(&Query::Pat(file, pat)) => Some((file, pat)),
+            _ => None,
+        };
+        let Some((file, pat)) = declared else {
+            return false;
+        };
+        let at = self.hir(file)[pat].pos;
+        matches!(root_declaration(self.bound(file), pat), crate::bind::PatParent::Var(_))
+            && self.inference_contexts.iter().all(|it| {
+                let is_inside = || {
+                    (self.start_of(file, it.node)..self.end_of_expr(file, it.node)).contains(&at)
+                };
+                it.file != file || !is_inside()
+            })
     }
 
     #[inline]
@@ -3442,7 +3484,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// The target of an alias is an exception. A file that prints the name of a type it doesn't import resolves the
     /// exports of every module in the program (`exporting_modules`), whether it imports them or not.
-    fn is_reachable_only_by_importers(&self, from: usize) -> bool {
+    pub(super) fn is_reachable_only_by_importers(&self, from: usize) -> bool {
         let (files, Some(visited)) = (self.files(), self.task.file) else {
             return false;
         };
@@ -3507,6 +3549,27 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// True if repeating the path from `stack[i]` ends at a call that has been assigned its signature since
+    /// (`resolved_meanwhile`), and the return type of that is written. The path gets there before it reaches a resolution, or
+    /// the call is in `q`, an expression or a member of an object literal.
+    fn ends_at_resolved_call(&self, q: Query, i: usize) -> bool {
+        if self.resolved_meanwhile.is_empty() {
+            return false;
+        }
+        let resolution = self.first_resolution_from(i);
+        let has_written_return = |sig: SigId| {
+            let declaration = self.sig_decl(self.types().sig_origin(sig));
+            declaration.is_some_and(|(file, func, _)| self.hir(file)[func].ret.is_some())
+        };
+        self.resolved_meanwhile.iter().rev().any(|it| {
+            let call = Query::Expr(it.file, it.call);
+            let is_on_path = it.height <= resolution
+                || q == call
+                || q.syntax() == Some(it.file) && self.is_part_of(call, q);
+            it.height > i && is_on_path && it.resolved.sig.is_some_and(has_written_return)
+        })
+    }
+
     /// Handles an `enter` of a `q` that's in progress at `stack[i]`. Returns false if `q` is restarted.
     #[cold]
     #[inline(never)]
@@ -3559,6 +3622,7 @@ impl<'p, 's> Checker<'p, 's> {
         // - It does without the base constraint that's being resolved.
         // - It finds the members in place, the intersection as is, no equivalent base type, or a
         //   function that gets its type immediately.
+        // - It gets the signature that a call has been assigned since, before the call's errors are reported.
         // - It's below a stale entry, where `findResolutionCycleStartIndex` stops.
         // - It reaches the `typeToStringEx` call that led here, with no type resolution on the way, and
         //   prints one serialization level higher. That can close a cycle through what the first call
@@ -3579,6 +3643,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.ends_at_default_in_progress(i)
                 || self.ends_at_identical_base_type_in_progress(i)
                 || self.ends_at_function_in_context_check(i)
+                || self.ends_at_resolved_call(q, i)
                 || self.is_below_stale_resolution(i))
         {
             return false;
@@ -4084,6 +4149,38 @@ impl<'p, 's> Checker<'p, 's> {
             }
             self.frames[at].has_read_members_in_place |=
                 matches!(q, Query::Expr(..) | Query::LiteralProp(..));
+        }
+    }
+
+    /// `getTypeOfVariableOrParameterOrProperty` has returned a type that isn't `links.resolvedType`, which a request in between
+    /// has assigned. The caller gets the one type, and the next check of the expressions in progress gets the other. So they
+    /// are stored only where tsgo stores them.
+    #[cold]
+    #[inline(never)]
+    fn note_unassigned_type(&mut self) {
+        let in_flow_loop = self.is_in_flow_loop();
+        let is_stored = |at: usize| match self.stack[at] {
+            Query::Expr(file, e) => {
+                !self.frames[at].is_quick_type
+                    && self.is_checked_by_check_expression_cached(file, e)
+            }
+            // `getResolvedSignature`
+            Query::Call(..) => !in_flow_loop,
+            Query::LiteralProp(..) => false,
+            _ => true,
+        };
+        let innermost = (0..self.stack.len()).rposition(is_stored);
+        let from = innermost.map_or(0, |at| at + 1);
+        if from == self.stack.len() {
+            return;
+        }
+        self.taints += 1;
+        self.lowest_taint = self.lowest_taint.min(from);
+        self.note_taint_event(from);
+        self.note_state_was_read();
+        for frame in &mut self.frames[from..] {
+            frame.marks.taint();
+            frame.has_read_unassigned_type = true;
         }
     }
 
@@ -4809,6 +4906,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.left_frame.take() else {
             return;
         };
+        if frame.has_read_unassigned_type {
+            return;
+        }
         // A frame that `enter` pushed above a resolution inherits the mark of the frame below it, but it hasn't seen a
         // loop from below the resolution (`is_flow_loop_visible`). So its result is no more short-lived than that of
         // any other non-cacheable frame. It's also requested from places where the loop isn't visible, where a result
@@ -4857,7 +4957,8 @@ impl<'p, 's> Checker<'p, 's> {
                         | since(self.rejected_at) << 3
                         | u8::from(is_behind_barrier) << 4
                         | since(self.members_in_place_hit_at) << 5
-                        | since(self.any_signature_read_at) << 6,
+                        | since(self.any_signature_read_at) << 6
+                        | u8::from(frame.has_reported) << 7,
                     serial: scope.serial,
                 },
             );
@@ -4897,6 +4998,13 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if entry.event_bits & 8 != 0 && self.stack.len() < entry.height as usize {
+            return None;
+        }
+        // What it reported may have been dropped with an argument that was checked as one candidate expects it.
+        if entry.event_bits & 128 != 0
+            && self.is_checking_in_flow_loop
+            && matches!(q, Query::Expr(..))
+        {
             return None;
         }
         // `checkExpressionCached` empties `flowLoopStack`, so what follows from a loop's incomplete
@@ -4946,7 +5054,7 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.frames.get(entry.depth as usize)?;
         let is_valid = scope.serial == entry.serial
             && entry.from != u32::MAX
-            && entry.event_bits & !(1 | 32) == 0;
+            && entry.event_bits & !(1 | 32 | 128) == 0;
         is_valid.then_some(entry.raw)
     }
 

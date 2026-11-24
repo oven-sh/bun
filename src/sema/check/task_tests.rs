@@ -770,6 +770,7 @@ fn is_like_new(task: &mut Task) -> bool {
         closed_a_cycle,
         order_dependent_variances,
         held_back,
+        held_back_at_error,
         view,
         was_discarded,
         is_trusted,
@@ -799,6 +800,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && !*closed_a_cycle
         && order_dependent_variances.is_empty()
         && held_back.get() == 0
+        && held_back_at_error.get() == 0
         && view.is_none()
         && !was_discarded.get()
         && !*is_trusted
@@ -867,6 +869,7 @@ fn ended_task_is_like_new() {
         });
     });
     check(&|task| task.hold_back());
+    check(&|task| task.held_back_at_error.set(1));
     ends_like_new(&tables, &session, |task| {
         task.view = Some(commits.view(3));
     });

@@ -2118,9 +2118,32 @@ impl<'p, 's> Checker<'p, 's> {
             self.links.note_circular_mapped_constraint();
             return TypeId::ERROR;
         }
+        let outermost = self.active_mappers.serial_of_outermost();
+        if self.instantiation_limit_hits != 0
+            && let Some(&(under, known)) = self.mapped_constraints_up_to_a_limit.get(&key)
+            && (under == 0 || under == outermost)
+        {
+            // A cache hit records the same marks as recomputing it would.
+            self.instantiation_limit_hits += 1;
+            if under != 0 {
+                self.note_limit();
+                self.mark_tainted_from(0);
+            }
+            return known;
+        }
+        let (hits, limits, cycles) = (self.instantiation_limit_hits, self.limits, self.cycles);
         self.mapped_constraints_in_progress
             .push((key, self.stack.len(), false));
         let constraint = self.instantiated_constraint_of_mapped_param(file, node, mapper);
+        let is_tainted = self.limits != limits;
+        if self.instantiation_limit_hits != hits
+            && self.instantiation_count < 5_000_000
+            && self.cycles == cycles
+            && (!is_tainted || outermost != 0)
+        {
+            let under = if is_tainted { outermost } else { 0 };
+            (self.mapped_constraints_up_to_a_limit).insert(key, (under, constraint));
+        }
         // `!popTypeResolution()` in `getResolvedBaseConstraint`
         if (self.mapped_constraints_in_progress.pop()).is_some_and(|it| it.2) {
             (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());

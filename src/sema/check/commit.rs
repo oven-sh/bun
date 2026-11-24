@@ -66,6 +66,9 @@
 //!   gets there. So a task ignores what a task of a later file has stored under a file, if the later task found an error
 //!   there and this task would still report it (`View::hides`). A task only moves forward in program order, so it
 //!   never finds such entries of its own. This covers the entries under nodes, not those under records.
+//! - **A task that finds an error while it prints a message is only trusted if it's first**
+//!   (`Checker::discard_task_unless_first`). tsc drops what it finds two messages deep. The check of an earlier file may
+//!   get there in more messages or in fewer, but not if it finds what the later task has stored.
 //! - **What a task stores about an expression of the file it visits never leaves the task**
 //!   (`crate::table::Location::KEEPS_VISITED_FILE_LOCAL`). That's most of what a check stores, and other tasks rarely
 //!   look it up. It's neither logged nor counted as a `Task::hold_back`.
@@ -106,8 +109,8 @@ pub(super) struct Commits<'s> {
     cycle_commits: Guarded<Vec<CycleCommit>>,
     /// `Files::rank_of_file`, indexed by file.
     ranks_of_files: &'s [u32],
-    /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
-    /// about this file, and has committed. See `View::hides`.
+    /// One bit per file. Set once a task has found an error while evaluating something about this file, and has committed.
+    /// See `View::hides`.
     with_errors: &'s [AtomicU32],
     /// One bit per file. Set until the file's type errors have been collected. See `Checker::needs_argument_check`.
     pending_checks: &'s [AtomicU32],
@@ -1005,6 +1008,7 @@ impl<'s> Checker<'_, 's> {
                     continue;
                 };
                 self.instantiations_up_to_a_limit.clear();
+                self.mapped_constraints_up_to_a_limit.clear();
                 let hits = self.instantiation_limit_hits;
                 self.instantiate(ty, mapper);
                 self.instantiations_spent_on_refused += u64::from(self.instantiation_count);
@@ -1029,6 +1033,7 @@ impl<'s> Checker<'_, 's> {
         self.refused_instantiations_tried
             .extend(chains.into_iter().flatten());
         self.instantiations_up_to_a_limit.clear();
+        self.mapped_constraints_up_to_a_limit.clear();
         match has_computed {
             true => RefusedInstantiations::Computed,
             false => RefusedInstantiations::StillRefused,

@@ -727,6 +727,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `iso_report` for the parameter name in `predicate`, which is its first word or the one after `asserts`.
+    pub(super) fn iso_report_predicate_parameter(&mut self, tx: &mut Emit, predicate: TypeNodeId) {
+        let hir = self.hir(tx.file);
+        let TypeNodeKind::Predicate { param, asserts, .. } = hir[predicate].kind else {
+            return;
+        };
+        self.iso_report(tx, hir.node(predicate));
+        if let Some(reported) = tx.reported.last_mut().filter(|it| it.code == 9039) {
+            if asserts {
+                let after = reported.start as usize + b"asserts".len();
+                reported.start = skip_trivia(&hir.text, after) as u32;
+            }
+            let name = self.atoms().bytes(param);
+            reported.end = reported.start + name.len() as u32;
+            reported.args = vec![name.to_vec()];
+        }
+    }
+
     // ───────────────────────────── types derived from the syntax (`pseudochecker/lookup.go`)
     // ─────────────────────────────
 

@@ -148,6 +148,8 @@ pub struct Task<'s> {
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
     /// See `hold_back`.
     held_back: Cell<u64>,
+    /// `held_back` after the last error.
+    held_back_at_error: Cell<u64>,
     /// `Some`: the task commits while it runs and sees other tasks' commits. See `super::commit`.
     view: Option<View<'s>>,
     /// See `discard`. Set under `&Checker`.
@@ -204,6 +206,7 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             order_dependent_variances: Vec::new(),
             held_back: Cell::new(0),
+            held_back_at_error: Cell::new(0),
             view: None,
             was_discarded: Cell::new(false),
             is_trusted: false,
@@ -417,12 +420,25 @@ impl<'s> Task<'s> {
             self.cycle_members_added
                 .set(self.cycle_members_added.get() + added);
         }
-        if self.is_first_in_order.get()
-            || self.is_trusted
-            || self.is_first_in_component.get() && is_reachable_only_by_importers()
-        {
+        if self.is_first(is_reachable_only_by_importers) {
             self.keep_results_of_cycle(from);
         } else {
+            self.discard_until_recheck();
+        }
+    }
+
+    /// True if no check of an earlier file can still get to where the task is. For `is_reachable_only_by_importers`, see
+    /// `close_cycle`.
+    fn is_first(&self, is_reachable_only_by_importers: impl FnOnce() -> bool) -> bool {
+        self.is_first_in_order.get()
+            || self.is_trusted
+            || self.is_first_in_component.get() && is_reachable_only_by_importers()
+    }
+
+    /// For what is different if the check of an earlier file gets there first. Another task rechecks the file once the
+    /// earlier files are final.
+    pub(super) fn discard_unless_first(&self, is_reachable_only_by_importers: impl FnOnce() -> bool) {
+        if !self.was_discarded() && !self.is_first(is_reachable_only_by_importers) {
             self.discard_until_recheck();
         }
     }
@@ -554,6 +570,19 @@ impl<'s> Task<'s> {
         self.held_back.set(self.held_back.get() + 1);
     }
 
+    /// Call for an error. Entries under records whose computations are in progress stay in the task: whoever computes one of
+    /// them comes to the error in a state of its own, which decides whether it's reported.
+    pub(super) fn note_error(&self) {
+        self.hold_back();
+        self.held_back_at_error.set(self.held_back.get());
+    }
+
+    /// True if there has been an error since the computation behind `stored` began.
+    #[inline]
+    pub(crate) fn has_error_since(&self, stored: Stored) -> bool {
+        stored.0 < self.held_back_at_error.get()
+    }
+
     /// Number of `hold_back` calls so far.
     #[inline]
     pub(crate) fn held_back(&self) -> u64 {
@@ -596,6 +625,7 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             order_dependent_variances,
             held_back,
+            held_back_at_error,
             view,
             was_discarded,
             is_trusted,
@@ -624,6 +654,7 @@ impl<'s> Task<'s> {
         (*closed_a_cycle, *is_trusted) = (false, false);
         order_dependent_variances.clear();
         held_back.set(0);
+        held_back_at_error.set(0);
         was_discarded.set(false);
         can_recheck_early.set(false);
         is_first_in_order.set(false);

@@ -1390,14 +1390,15 @@ impl Unused<'_, '_> {
                 }
             }
         }
-        // `export default I`, `export = I`: a type is accepted too.
-        for &(e, scope) in &bound.free_idents {
+        // `export default I`, `export = I`: a type is accepted too, also an imported one.
+        for &(e, scope) in bound.free_idents.iter().chain(bound.alias_idents.iter()) {
             if let Parent::Stmt(s) = bound.parent_of_expr(e)
                 && matches!(
                     hir[s].kind,
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
                 )
                 && let ExprKind::Ident(name) = hir[e].kind
+                && !is_parenthesized(hir, e)
                 && !self.is_never_checked(hir[e].pos)
             {
                 self.note_name(scope, name, SymFlags::all(), ALL);

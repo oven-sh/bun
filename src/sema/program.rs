@@ -3218,20 +3218,24 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                         all
                     };
                     let scope = bound.import_equals_scope[import.idx()];
-                    // `resolveEntityName` marks `getAliasDeclarationFromName(name)` where a name is
-                    // found to be an alias.
-                    if self.is_type_only_import_or_export_declaration(file, decl)
-                        && (1..=names.len()).any(|n| {
-                            let meaning = if n == names.len() {
-                                meaning
-                            } else {
-                                SymFlags::NAMESPACE
-                            };
-                            self.resolve_entity(file, scope, &names[..n], meaning)
-                                .is_some_and(|found| self.flags(found).contains(SymFlags::ALIAS))
-                        })
-                    {
-                        self.mark_symbol_of_alias_declaration_if_type_only(node, None, type_only);
+                    // `resolveEntityName` resolves each alias it finds, also one that is merged with a namespace, and
+                    // marks `getAliasDeclarationFromName(name)`.
+                    for n in 1..=names.len() {
+                        let meaning = match n == names.len() {
+                            true => meaning,
+                            false => SymFlags::NAMESPACE,
+                        };
+                        let found = self.resolve_entity(file, scope, &names[..n], meaning);
+                        if let Some(found) = found
+                            && self.flags(found).contains(SymFlags::ALIAS)
+                        {
+                            self.alias_links(found);
+                            if self.is_type_only_import_or_export_declaration(file, decl) {
+                                self.mark_symbol_of_alias_declaration_if_type_only(
+                                    node, None, type_only,
+                                );
+                            }
+                        }
                     }
                     let target = self.resolve_entity(file, scope, &names, meaning);
                     if target.is_none()

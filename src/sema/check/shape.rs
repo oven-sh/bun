@@ -2115,13 +2115,16 @@ impl<'p, 's> Checker<'p, 's> {
         let mut group_indexes = FxHashMap::<Atom, usize>::default();
         for m in members.iter() {
             let member = &hir[m];
-            if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
+            let is_constructor = member.kind == MemberKind::Constructor;
+            let is_static = member.flags.contains(Flags::STATIC);
+            // `bindParameter` declares the properties of a constructor for the instance, also where it's `static`.
+            if (has_static_side && is_static && !is_constructor) != want_static {
                 continue;
             }
             let is_dynamic = matches!(member.key, PropKey::Computed(e) if is_dynamic_name(hir, e));
             // `getResolvedMembersOrExportsOfSymbol`: `isStatic == HasStaticModifier(member)`, no
             // matter what declares the member.
-            if is_dynamic && (early || member.flags.contains(Flags::STATIC) != want_static) {
+            if is_dynamic && (early || is_static != want_static) {
                 continue;
             }
             // `getDeclarationName`: a private name outside every class is `InternalSymbolNameMissing`, and
@@ -2236,10 +2239,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 MemberKind::Constructor => {
-                    if want_static {
-                        continue;
-                    }
-                    b.has_non_property_symbols = true;
+                    b.has_non_property_symbols |= !is_static;
                     for p in hir[member.func].params.iter() {
                         let param = &hir[p];
                         if !param.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -6085,7 +6085,14 @@ impl<'p, 's> Checker<'p, 's> {
         let (type_params, owner) = match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => (hir[c].type_params, bound.class_symbol[c.idx()]),
             MemberOwner::Interface(i) => (hir[i].type_params, bound.interface_symbol[i.idx()]),
-            _ => return false,
+            // Its mapper has the same sources in every instantiation.
+            MemberOwner::TypeLiteral(literal) => {
+                let declared = self.type_from_node(file, literal);
+                return matches!(*self.data(declared), TypeData::Anon { mapper, .. }
+                    if self.maps_this_only(mapper))
+                    && self.is_thisless(sym);
+            }
+            MemberOwner::None => return false,
         };
         if !type_params.is_empty() || owner.is_none() {
             return false;
@@ -6095,7 +6102,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.outer_type_params_of_symbol(owner).is_empty()
     }
 
-    /// `isThisless`, for a member of a class or interface.
+    /// `isThisless`, for a member of a class, an interface or a type literal.
     fn is_thisless(&mut self, sym: Sym) -> bool {
         let declarations = self.declarations_of_property(sym);
         let [(file, Decl::Member(m))] = declarations[..] else {

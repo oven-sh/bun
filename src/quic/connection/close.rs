@@ -28,7 +28,7 @@ const MIN_YIELDING_PERIOD: Duration = Duration::from_secs(1);
 pub(super) struct CloseFrame {
     layer: Layer,
     code: u64,
-    reason: Vec<u8>,
+    reason: Box<[u8]>,
 }
 
 impl CloseFrame {
@@ -44,7 +44,7 @@ impl CloseFrame {
         Self {
             layer,
             code: code.min(MAX_VARINT),
-            reason: reason.to_vec(),
+            reason: reason.into(),
         }
     }
 

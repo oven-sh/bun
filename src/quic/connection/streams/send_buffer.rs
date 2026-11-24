@@ -5,6 +5,7 @@ use crate::range_set::RangeSet;
 
 const CHUNK_LEN: usize = 16 * 1024;
 const MIN_CAPACITY: usize = 256;
+const MAX_IDLE_CAPACITY: usize = 2048;
 
 /// The bytes of a stream from the first one that is not acknowledged.
 #[derive(Default)]
@@ -116,7 +117,10 @@ impl SendBuffer {
             self.base += CHUNK_LEN as u64;
         }
         if start == self.end {
-            self.rest.clear();
+            match self.rest.capacity() > MAX_IDLE_CAPACITY {
+                true => self.rest = Vec::new(),
+                false => self.rest.clear(),
+            }
             self.base = start;
         }
         if self.chunks.is_empty() {
@@ -140,5 +144,21 @@ impl SendBuffer {
             sent: self.sent,
             ..Self::default()
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_little_room_when_all_is_acknowledged() {
+        for (len, kept) in [(2048, 2048), (2049, 0), (20_000, 0)] {
+            let mut buffer = SendBuffer::default();
+            buffer.write(&vec![0; len]);
+            buffer.send(0..len as u64, &mut Vec::new());
+            buffer.on_acked(0..len as u64);
+            assert_eq!((buffer.rest.len(), buffer.rest.capacity()), (0, kept));
+        }
     }
 }

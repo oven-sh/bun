@@ -240,7 +240,7 @@ impl Connection {
     fn begin(&mut self, id: SpaceId, out: &mut Vec<u8>, end: usize) -> Option<(Draft, usize)> {
         let space = self.spaces.open(id);
         if id == SpaceId::Data && space.next_number == self.next_skip {
-            (self.skipped, self.next_skip) = (Some(space.next_number), u64::MAX);
+            (self.skipped, self.next_skip) = (space.next_number, u64::MAX);
             space.next_number += 1;
         }
         let number = space.next_number;

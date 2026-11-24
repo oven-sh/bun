@@ -54,9 +54,7 @@ impl Connection {
                 && (ack.ranges().take_while(|it| it.end > skipped)).any(|it| it.start <= skipped)
         };
         // RFC 9000 §13.1 and §21.4.
-        if ack.largest >= space.next_number
-            || id == SpaceId::Data && self.skipped.is_some_and(is_skipped)
-        {
+        if ack.largest >= space.next_number || id == SpaceId::Data && is_skipped(self.skipped) {
             return Err(Error::violation("acknowledged a packet that was not sent"));
         }
         let gap_at = space.received.gap_at;
@@ -181,7 +179,7 @@ impl Connection {
             }
         }
         if id == SpaceId::Data {
-            if self.next_skip == u64::MAX && self.skipped.is_some_and(|it| it < ack.largest) {
+            if self.next_skip == u64::MAX && self.skipped < ack.largest {
                 self.plan_skip();
             }
             let (rtt, sent) = (self.rtt.smoothed, self.spaces.data.next_number);
@@ -228,8 +226,8 @@ impl Connection {
                 continue;
             }
             let (sent_at, before) = (packet.flight.at, *packet);
-            let skipped = (self.skipped).filter(|it| (packet.number..largest).contains(it));
-            let distance = largest - packet.number - u64::from(skipped.is_some());
+            let has_skipped = (packet.number..largest).contains(&self.skipped);
+            let distance = largest - packet.number - u64::from(has_skipped);
             if sent_at + delay > now && distance < self.packet_threshold {
                 space.sent.loss_time = sent_at + delay;
                 break;

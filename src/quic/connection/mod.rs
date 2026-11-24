@@ -125,8 +125,8 @@ pub struct Connection {
     integrity_limit: u64,
     /// The packet number that is going to be left out (RFC 9000 §21.4).
     next_skip: u64,
-    /// The last one that was.
-    skipped: Option<u64>,
+    /// The last one that was, or the largest number.
+    skipped: u64,
     /// They do not spin. The IDs of the peer take them in turn (RFC 9000 §17.4).
     spin_bits: u8,
 
@@ -264,7 +264,7 @@ impl Connection {
             key_update: KeyUpdate::default(),
             integrity_limit: u64::MAX,
             next_skip: u64::MAX,
-            skipped: None,
+            skipped: u64::MAX,
             spin_bits,
             congestion: Controller::new(config.congestion, path.mtu.current, random),
             first_peer: path.addresses.peer,

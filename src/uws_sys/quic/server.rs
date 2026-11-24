@@ -2,6 +2,7 @@
 
 use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::net::IpAddr;
 use core::ptr::NonNull;
 use std::rc::{Rc, Weak};
 
@@ -359,8 +360,13 @@ unsafe extern "C" fn us_quic_socket_context_listen(
             let is_done = it.has_sent_everything() && !(socket.is_some() && it.is_delivering());
             (!is_done && it.deserted_from() > now).then_some(())
         };
+        let is_in_the_way = socket.as_ref().is_none_or(|new| {
+            let [a, b] = [&**new, it].map(|it| it.local().ip().to_canonical());
+            let covers = |a: IpAddr, b: IpAddr| a.is_unspecified() && (a.is_ipv6() || b.is_ipv4());
+            a == b || covers(a, b) || covers(b, a)
+        });
         let engine = it.owner.engine();
-        !engine.has_unsent() && engine.find_map(is_busy).is_none()
+        is_in_the_way && !engine.has_unsent() && engine.find_map(is_busy).is_none()
     });
     let socket = socket.or_else(bind);
     socket.map_or(core::ptr::null(), |it| Rc::as_ptr(&it))

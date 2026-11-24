@@ -926,31 +926,28 @@ pub mod fs {
             err: crate::Error,
         ) -> crate::CrateResult<&'static EntriesOption> {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
+            let mut value = dir_entry::Err {
+                original_err: err,
+                canonical_error: err,
+                listing: None,
+            };
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
-                return Ok(temp_entries_option_write(EntriesOption::Err(
-                    dir_entry::Err {
-                        original_err: err,
-                        canonical_error: err,
-                    },
-                )));
+                return Ok(temp_entries_option_write(EntriesOption::Err(value)));
             }
-            if let Some(index) = self.entries.inner().parked(&get_or_put_result)
-                && let Some(EntriesOption::Err(parked)) = self.entries.at_index(index)
-                && parked.original_err == err
-            {
-                self.entries.inner().restore(&mut get_or_put_result, index);
-                let parked = self.entries.at_index(index).expect("unreachable");
-                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                return Ok(unsafe { &*std::ptr::from_ref(parked) });
+            if let Some(index) = self.entries.inner().parked(&get_or_put_result) {
+                match self.entries.at_index(index).expect("unreachable") {
+                    EntriesOption::Err(parked) if parked.original_err == err => {
+                        self.entries.inner().restore(&mut get_or_put_result, index);
+                        let parked = self.entries.at_index(index).expect("unreachable");
+                        // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                        return Ok(unsafe { &*std::ptr::from_ref(parked) });
+                    }
+                    EntriesOption::Err(parked) => value.listing = parked.listing,
+                    EntriesOption::Entries(_) => value.listing = Some(index),
+                }
             }
-            let opt = self.entries.put(
-                &mut get_or_put_result,
-                EntriesOption::Err(dir_entry::Err {
-                    original_err: err,
-                    canonical_error: err,
-                }),
-            )?;
+            let opt = (self.entries).put(&mut get_or_put_result, EntriesOption::Err(value))?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &*opt })
         }
@@ -990,7 +987,10 @@ pub mod fs {
             let mut in_place: Option<*mut DirEntry> = None;
 
             let mut cache_result = self.entries.get_or_put(dir)?;
-            if !cache_result.has_checked_if_exists() || generation > 0 {
+            // Not past a cached error: the `DirInfo` can be cached too, and then nothing checks the real paths.
+            if !cache_result.has_checked_if_exists()
+                || (generation > 0 && cache_result.status == bun_alloc::ItemStatus::NotFound)
+            {
                 self.restore_parked(&mut cache_result, dir, generation);
             }
             if cache_result.has_checked_if_exists() {
@@ -1014,6 +1014,7 @@ pub mod fs {
                         dir_entry::Err {
                             original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                             canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            listing: None,
                         },
                     )));
                 }
@@ -1090,7 +1091,7 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
-        /// The caller holds `entries_mutex`, and `result` is what `entries` says of `dir`.
+        /// The caller holds `entries_mutex`, `result` is what `entries` says of `dir`, and if that is a cached error, `restore_dir_info` comes next.
         #[inline]
         pub(crate) fn restore_parked(
             &mut self,
@@ -1098,7 +1099,13 @@ pub mod fs {
             dir: &[u8],
             generation: Generation,
         ) {
-            if let Some(index) = self.entries.inner().parked(result)
+            let mut parked = self.entries.inner().parked(result);
+            if let Some(EntriesOption::Err(err)) =
+                self.entries.at_index(parked.unwrap_or(result.index))
+            {
+                parked = err.listing;
+            }
+            if let Some(index) = parked
                 && let Some(EntriesOption::Entries(it)) = self.entries.at_index(index)
                 // It can be that of a directory that has been moved away.
                 && !it.fd.is_valid()

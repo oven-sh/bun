@@ -334,6 +334,8 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// The slot of the last listing of the key, if it was parked: an error takes its place there.
+        pub(crate) listing: Option<bun_alloc::IndexType>,
     }
 }
 

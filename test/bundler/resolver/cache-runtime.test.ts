@@ -209,7 +209,7 @@ describe.concurrent("a failed lookup does not keep a copy of what it read", () =
       ...(isLinux && { cases: Object.fromEntries(twins.map(it => [it, ""])) }),
       "leak.mjs": `
         import { once } from "events";
-        import { renameSync, unlinkSync, writeFileSync } from "fs";
+        import { renameSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
         import { createRequire } from "module";
         import { dirname } from "path";
         import { Worker } from "worker_threads";
@@ -233,6 +233,19 @@ describe.concurrent("a failed lookup does not keep a copy of what it read", () =
             const folder = dirname(importer);
             renameSync(folder, folder + "~");
             try { Bun.resolveSync(folder + "/missing", import.meta.dir); } catch {}
+            renameSync(folder + "~", folder);
+            require(missing);
+          },
+          async replace() {
+            const folder = dirname(found.length ? require.resolve(found[0]) : importer);
+            renameSync(folder, folder + "~");
+            for (const put of [() => symlinkSync(folder, folder), () => writeFileSync(folder, "")]) {
+              put();
+              for (const from of [import.meta.dir, import.meta.dir, folder]) {
+                try { Bun.resolveSync(folder + "/missing", from); } catch {}
+              }
+              unlinkSync(folder);
+            }
             renameSync(folder + "~", folder);
             require(missing);
           },
@@ -287,7 +300,9 @@ describe.concurrent("a failed lookup does not keep a copy of what it read", () =
         });
       `,
     });
-    for (const copy of ["created", "moved"]) cpSync(path.join(dir, "files"), path.join(dir, copy), { recursive: true });
+    for (const copy of ["created", ...(isWindows ? [] : ["moved", "path", "name"])]) {
+      cpSync(path.join(dir, "files"), path.join(dir, copy), { recursive: true });
+    }
     symlinkSync("found.js", path.join(dir, "files/link.js"));
     symlinkSync("removed.js", path.join(dir, "files/dangling-missing"));
     symlinkSync(path.join(dir, "files"), path.join(dir, "linked"), "junction");
@@ -378,6 +393,17 @@ describe.concurrent("a failed lookup does not keep a copy of what it read", () =
   test("require on the main thread and in a worker", () => run("threads", 150, "package/a.js", "missing"));
   describe.skipIf(isWindows /* a scanner can have a file in it open */)("a directory is moved away and back", () => {
     test("between lookups", () => run("move", 300, "moved/a.js", "missing"));
+    test.each([
+      ["path", "./missing"],
+      ["name", "missing"],
+    ])("with a link to itself, then a file in its place, before a lookup by %s", (folder, missing) =>
+      run("replace", 300, `${folder}/a.js`, missing),
+    );
+    test("the same for a package that was installed on import", async () => {
+      using project = await projectThatInstalls({ pkg: { imports } }, { "package.json": "{}" });
+      await runWith(project, "replace", 150, project.at("a.js"), "./missing", "pkg");
+      expect(project.requests()).toEqual(["/pkg", "/pkg/-/pkg-1.0.0.tgz"]);
+    });
     test("before a build", () => run("rebuild", 60, "rebuilt/a.js", "./missing"));
   });
   test("require of a package", () => run("require", 300, "files/a.js", "missing"));
@@ -612,6 +638,25 @@ describe.concurrent("after a failed lookup, the next one sees what has changed",
     p.write("lib");
     p.missIn("lib");
     expect(await errors()).not.toContain("ELOOP");
+  });
+
+  test.each(["lookups", "builds"])("a link to a directory is moved, and %s found a file in between", async what => {
+    using p = project({
+      "v1/a.js": `console.log("v1");`,
+      "v2/a.js": `console.log("v2");`,
+      "a.js": `import "./current/a.js";`,
+    });
+    const fail = async () => (what === "builds" ? expect(await p.build("a.js")).toBeNull() : p.missIn("current"));
+    p.link("current", "v1", "junction");
+    expect(p.resolve("./current/a.js")).toBe("v1/a.js");
+    p.remove("current");
+    await fail();
+    p.write("current");
+    await fail();
+    p.link("current", "v2", "junction");
+    p.missIn(".");
+    expect(await p.build("current/a.js")).toContain(`console.log("v2")`);
+    expect(p.resolve("./current/a.js")).toBe("v2/a.js");
   });
 
   test("a link becomes a file", () => {

@@ -1968,7 +1968,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
-    /// The slot that each key lost last, unless it was abandoned.
+    /// The slot that `remove` or `mark_not_found` took from each key last, unless it was abandoned.
     parked: IndexMap,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
@@ -2159,7 +2159,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.parked.get(&result.hash).copied()
     }
 
-    /// `put` for the value that is in the slot from [`Self::parked`].
+    /// `put` for the value that is in `index`, a slot that was parked for the key of `result`.
     pub fn restore(&mut self, result: &mut Result, index: IndexType) {
         let _guard = self.mutex.lock();
         (result.index, result.status) = (index, ItemStatus::Exists);

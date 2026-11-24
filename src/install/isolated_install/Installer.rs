@@ -2365,19 +2365,19 @@ impl<'a> Installer<'a> {
             return Ok(());
         }
         let staging = self.global_store_entry_path(entry_id, Which::Staging)?;
+        let staging = sys::DeleteTreeOnDrop::new(Fd::cwd(), staging);
         let final_ = self.global_store_entry_path(entry_id, Which::Final)?;
 
         let mut retry = RenameRetry::new();
         let Err(err) = retry.rename(Fd::cwd(), &staging, Fd::cwd(), &final_) else {
+            staging.keep();
             return Ok(());
         };
         if !is_rename_collision(&err.err, &final_) {
-            let _ = Fd::cwd().delete_tree(&staging);
             return Err(global_store_publish_error(err, &final_));
         }
         if !self.manager().options.enable.force_install() {
             // A concurrent install renamed first; its content-addressed bytes are as good as ours.
-            let _ = Fd::cwd().delete_tree(&staging);
             return Ok(());
         }
 
@@ -2394,23 +2394,20 @@ impl<'a> Installer<'a> {
                 sys::RenameMode::Exchange,
             );
             if swapped.is_ok() {
-                let _ = Fd::cwd().delete_tree(&staging);
                 return Ok(());
             }
         }
         let mut old = Path::from(&final_);
         write!(old, ".old-{:x}", bun_core::fast_random());
         if let Err(err) = retry.rename(Fd::cwd(), &final_, Fd::cwd(), &old) {
-            let _ = Fd::cwd().delete_tree(&staging);
             return Err(global_store_publish_error(err, &final_));
         }
+        let _old = sys::DeleteTreeOnDrop::new(Fd::cwd(), old);
         let Err(err) = retry.rename(Fd::cwd(), &staging, Fd::cwd(), &final_) else {
-            let _ = Fd::cwd().delete_tree(&old);
+            staging.keep();
             return Ok(());
         };
         // Another --force install raced us between swap-out and publish. Theirs is fresh too.
-        let _ = Fd::cwd().delete_tree(&staging);
-        let _ = Fd::cwd().delete_tree(&old);
         if is_rename_collision(&err.err, &final_) {
             return Ok(());
         }
@@ -2478,10 +2475,11 @@ impl<'a> Installer<'a> {
             return false;
         };
 
+        let staging = sys::DeleteTreeOnDrop::new(Fd::cwd(), staging);
         if rename_staging_into_place(Fd::cwd(), &staging, &final_).is_ok() {
+            staging.keep();
             return true;
         }
-        let _ = Fd::cwd().delete_tree(&staging);
         false
     }
 
@@ -2546,11 +2544,9 @@ impl<'a> Installer<'a> {
                             ))
                         })?;
                         do_symlink(&tmp, &target_abs)?;
-                        let renamed = sys::renameat(Fd::cwd(), &tmp, Fd::cwd(), &dest);
-                        if renamed.is_err() {
-                            let _ = sys::unlink(&tmp);
-                        }
-                        return renamed.map(|()| false);
+                        return sys::UnlinkOnDrop::new(Fd::cwd(), tmp)
+                            .rename_to(Fd::cwd(), &dest)
+                            .map(|()| false);
                     }
                     Ok(_) => {
                         if let Err(err) = remove_link(&dest)

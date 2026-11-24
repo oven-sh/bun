@@ -12,7 +12,7 @@ use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, Fd, File, Tmpfile};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -1288,18 +1288,15 @@ pub mod package_manifest {
             // This needs many more call sites, doesn't have much impact on this location.
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                &bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
+                bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
-            let tmpdir = temp_dir.handle.fd();
+            let tmpdir = &temp_dir.handle;
             #[cfg(not(windows))]
             let cache_dir = temp_dir.cache.handle.fd();
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let mut is_using_o_tmpfile = false;
-
             #[allow(unused_labels)]
-            let file: File = 'brk: {
+            let tmp = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]
                 let mask = 0o664;
@@ -1336,58 +1333,43 @@ pub mod package_manifest {
                                 warn_once();
                             }
                         }
-                        bun_sys::Result::Ok(f) => {
-                            is_using_o_tmpfile = true;
-                            break 'brk f;
+                        bun_sys::Result::Ok(file) => {
+                            file.write_all(&buffer)?;
+                            if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                                return Ok(());
+                            }
+                            // Keep the entry in place the whole time: rename over it below.
+                            bun_sys::linkat_tmpfile(file.handle, tmpdir.fd(), tmp_path)?;
+                            break 'brk bun_sys::UnlinkOnDrop::new(tmpdir, tmp_path);
                         }
                     }
                 }
 
-                File::openat(
+                let tmp = Tmpfile::open(
                     tmpdir,
                     path_to_use_for_opening_file,
                     flags | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mask,
-                )?
+                )?;
+                tmp.file.write_all(&buffer)?;
+                tmp.close()
             };
-
-            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
-                drop(file);
-                bun_sys::renameat(
-                    Fd::cwd(),
-                    path_to_use_for_opening_file,
-                    Fd::cwd(),
-                    cache_path_abs,
-                )?;
+                tmp.rename_to(Fd::cwd(), cache_path_abs)?;
                 return Ok(());
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if is_using_o_tmpfile {
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
-                    return Ok(());
-                }
-                // Keep the entry in place the whole time: rename over it below instead of unlinking
-                // it first.
-                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]
             {
                 // Attempt #1. Rename the file.
-                let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
+                let rc = bun_sys::renameat(tmpdir, &tmp, cache_dir, outpath);
 
                 match &rc {
                     bun_sys::Result::Err(err) => {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
-                        // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
-                        scopeguard::defer! {
-                            let _ = bun_sys::unlinkat(tmpdir, tmp_path);
-                        }
 
                         // On Darwin `Errno::EOPNOTSUPP` resolves to 102 while
                         // the kernel reports errno **45** (ENOTSUP), so match
@@ -1404,8 +1386,8 @@ pub mod package_manifest {
                         {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
-                                tmpdir,
-                                tmp_path,
+                                tmpdir.fd(),
+                                &tmp,
                                 cache_dir,
                                 outpath,
                                 bun_sys::RenameMode::Exchange,
@@ -1415,7 +1397,9 @@ pub mod package_manifest {
                             return Ok(());
                         }
                     }
-                    bun_sys::Result::Ok(()) => {}
+                    bun_sys::Result::Ok(()) => {
+                        tmp.keep();
+                    }
                 }
 
                 rc?;

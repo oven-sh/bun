@@ -52,7 +52,7 @@ mod verbose;
 pub use async_http::AsyncHTTP;
 pub(crate) use async_http::InFlightRequest;
 pub use certificate_info::CertificateInfo;
-pub use decompressor::Decompressor;
+pub use decompressor::{Decompressor, UnfinishedStream};
 pub use header_builder::HeaderBuilder;
 pub use headers::Headers;
 pub(crate) use http_cert_error::HTTPCertError;
@@ -203,6 +203,7 @@ pub struct Flags {
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
     pub(crate) disable_decompression: bool,
+    pub unfinished_stream: UnfinishedStream,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
     /// pool, so a weaker request re-pooling it doesn't downgrade the record.
@@ -231,6 +232,7 @@ impl Default for Flags {
             disable_keepalive: false,
             pool_bypass: PoolBypass::Off,
             disable_decompression: false,
+            unfinished_stream: UnfinishedStream::Reject,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
@@ -434,7 +436,7 @@ impl HTTPClient<'_> {
             self.state.flags.received_last_chunk = ended;
             report |= self.handle_response_body(body, false)?;
         } else if ended {
-            self.end_body()?;
+            self.end_body(TransportEnd::Clean)?;
         }
         if self.state.is_done() {
             return Ok(StreamProgress::Complete);
@@ -908,7 +910,7 @@ use bun_uws as uws;
 use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
-use crate::internal_state::{RequestStage, ResponseStage};
+use crate::internal_state::{RequestStage, ResponseStage, TransportEnd};
 use crate::proxy_tunnel::TunnelClosed;
 use crate::ssl_wrapper::SSLWrapper;
 use crate::verbose::{CurlFormatter, HeaderFormatter, ResponseFormatter, trace_line_prefix};
@@ -2108,7 +2110,7 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::BodyChunk
     }
 
-    pub(crate) fn on_close(&mut self) -> ControlFlow<NextStep> {
+    pub(crate) fn on_close(&mut self, end: TransportEnd) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
 
         if self.signals.get(signals::Field::Aborted) {
@@ -2116,7 +2118,7 @@ impl<'a> HTTPClient<'a> {
         }
         self.proxy_tunnel = None;
         if self.state.is_body_complete_on_close() {
-            if let Err(err) = self.end_body() {
+            if let Err(err) = self.end_body_on_close(end) {
                 return self.fail(err);
             }
             return Break(NextStep::Deliver);
@@ -3116,7 +3118,7 @@ impl<'a> HTTPClient<'a> {
                     Ok(has_backpressure) => Ok(has_backpressure),
                     Err(TunnelClosed) => {
                         drop(locked);
-                        return self.on_proxy_tunnel_close(socket);
+                        return self.on_proxy_tunnel_close(TransportEnd::Failed, socket);
                     }
                 }
             }
@@ -3185,7 +3187,7 @@ impl<'a> HTTPClient<'a> {
         if let Some(proxy) = &self.proxy_tunnel
             && let Err(TunnelClosed) = proxy.on_writable(socket.into(), lent_wrapper)
         {
-            return self.on_proxy_tunnel_close(socket);
+            return self.on_proxy_tunnel_close(TransportEnd::Failed, socket);
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -3351,7 +3353,7 @@ impl<'a> HTTPClient<'a> {
                                 Ok(written.map_err(|_| Error::ConnectionClosed)?.unwrap_or(0))
                             });
                             if closed {
-                                return self.on_proxy_tunnel_close(socket);
+                                return self.on_proxy_tunnel_close(TransportEnd::Failed, socket);
                             }
                             match status {
                                 crate::send_file::Status::Done => {
@@ -3848,8 +3850,11 @@ impl<'a> HTTPClient<'a> {
         if self.drop_abandoned_body() {
             return Ok(false);
         }
+        let unfinished = self.flags.unfinished_stream;
         if !self.decodes_in_passes() {
-            return self.state.process_body_buffer(is_final_chunk, usize::MAX);
+            return self
+                .state
+                .process_body_buffer(is_final_chunk, usize::MAX, unfinished);
         }
         // The resume that is due takes these bytes too.
         if self.holds_off_receiving() {
@@ -3869,7 +3874,9 @@ impl<'a> HTTPClient<'a> {
         }
         for _ in 0..WHOLE_BODY_PASSES_PER_TURN {
             let max_output = self.state.decoded_body.list.len() + budget;
-            let has_bytes = self.state.process_body_buffer(is_final_chunk, max_output)?;
+            let has_bytes =
+                self.state
+                    .process_body_buffer(is_final_chunk, max_output, unfinished)?;
             if !self.state.has_pending_compressed() || !self.signals.wants_whole_body() {
                 return Ok(has_bytes);
             }
@@ -3901,7 +3908,9 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.receive_paused
             || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.holds_off_receiving()
-            || socket.is_closed_or_has_error()
+            // Not `get_error()`: reading SO_ERROR clears it, and the reset would then look like a FIN.
+            || socket.is_closed()
+            || socket.is_shutdown()
         {
             return;
         }
@@ -3935,9 +3944,18 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// The carrier ended the body with no bytes to go with it: a FIN, a tunnel's close, END_STREAM.
-    pub(crate) fn end_body(&mut self) -> crate::Result<()> {
-        self.state.flags.received_last_chunk = true;
+    fn end_body(&mut self, end: TransportEnd) -> crate::Result<()> {
+        self.state.end_body(end);
         self.process_received_body(true).map(drop)
+    }
+
+    /// For an HTTP/1 connection that closes.
+    pub(crate) fn end_body_on_close(&mut self, end: TransportEnd) -> crate::Result<()> {
+        // A reset that `send()` reported first reads as a FIN.
+        if !self.is_request_fully_sent() {
+            return self.end_body(TransportEnd::Failed);
+        }
+        self.end_body(end)
     }
 
     /// Decodes the next piece of a held body. Returns whether there is an update to send.
@@ -4213,8 +4231,12 @@ impl<'a> HTTPClient<'a> {
         Self::trace_received_chunk(self.tracing.as_deref(), incoming_data);
         if !self.drop_abandoned_body() {
             if self.state.encoding.is_compressed() {
-                self.state
-                    .decompress_bytes(incoming_data, true, usize::MAX)?;
+                self.state.decompress_bytes(
+                    incoming_data,
+                    true,
+                    usize::MAX,
+                    self.flags.unfinished_stream,
+                )?;
             } else {
                 self.state
                     .get_body_buffer()

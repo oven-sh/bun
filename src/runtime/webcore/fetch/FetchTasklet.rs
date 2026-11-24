@@ -2193,6 +2193,7 @@ impl FetchTasklet {
         );
         http.client.flags.is_streaming_request_body = is_stream;
         http.client.flags.forced_protocol = fetch_options.forced_protocol;
+        http.client.flags.unfinished_stream = http::UnfinishedStream::Accept;
         if fetch_tasklet.upgraded_connection {
             http.client.expect_upgrade();
         }

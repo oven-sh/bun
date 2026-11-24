@@ -4315,8 +4315,6 @@ it.each([
   ["a Ping leaves alone", OP.ping, ["ping", "early"]],
 ])("under open, %s the frames that didn't wait for the 101", async (_, opcode, expected) => {
   const seen: string[] = [];
-  const requested = Promise.withResolvers<void>();
-  const sent = Promise.withResolvers<void>();
   const arrived = Promise.withResolvers<void>();
   const upgraded = Promise.withResolvers<void>();
   function see(event: string) {
@@ -4327,9 +4325,7 @@ it.each([
     port: 0,
     hostname: "127.0.0.1",
     async fetch(request, server) {
-      if (!request.headers.has("upgrade")) return new Response("fence");
-      requested.resolve();
-      await sent.promise;
+      await new Promise(resolve => setImmediate(resolve));
       server.upgrade(request);
       upgraded.resolve();
     },
@@ -4345,14 +4341,9 @@ it.each([
   });
   const client = net.connect(server.port!, "127.0.0.1").on("error", () => {});
   try {
-    client.write(
-      "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-    );
-    await requested.promise;
-    client.write(encodeFrame(OP.text, "early", { mask: true }));
-    // The server polls its sockets.
-    await (await fetch(server.url)).text();
-    sent.resolve();
+    const request =
+      "GET / HTTP/1.1\r\nHost: a\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    client.write(Buffer.concat([Buffer.from(request), encodeFrame(OP.text, "early", { mask: true })]));
     await upgraded.promise;
     expect(seen).toEqual(expected);
   } finally {

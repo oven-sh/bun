@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
 
@@ -270,7 +270,12 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
 
     fn on_close(&mut self) {
         if self.next_step.is_continue() {
-            self.next_step = self.client.on_proxy_tunnel_close(self.socket);
+            let end = if self.wrapper.flags.received_ssl_shutdown() {
+                TransportEnd::Clean
+            } else {
+                TransportEnd::Failed
+            };
+            self.next_step = self.client.on_proxy_tunnel_close(end, self.socket);
         }
     }
 
@@ -332,12 +337,15 @@ impl HTTPClient<'_> {
         };
         match tunnel.write(socket.into(), lent_wrapper, buf) {
             Ok(written) => Continue(written),
-            Err(TunnelClosed) => self.on_proxy_tunnel_close(socket).map_continue(|()| None),
+            Err(TunnelClosed) => self
+                .on_proxy_tunnel_close(TransportEnd::Failed, socket)
+                .map_continue(|()| None),
         }
     }
 
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
+        end: TransportEnd,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
@@ -345,12 +353,12 @@ impl HTTPClient<'_> {
         // treat connection close as end-of-body for identity transfer when no content-length.
         if self.retries_on_close() {
             crate::HTTPContext::<IS_SSL>::terminate_socket(socket);
-            return self.on_close();
+            return self.on_close(end);
         }
         if !self.state.is_body_complete_on_close() {
             return self.close_and_fail(Error::ConnectionClosed, socket);
         }
-        match self.end_body() {
+        match self.end_body_on_close(end) {
             Ok(()) => self.progress_update(socket),
             Err(err) => self.close_and_fail(err, socket),
         }

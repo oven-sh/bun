@@ -407,8 +407,6 @@ fn process_watch_event_batch(
         return Ok(());
     }
 
-    // log("event_count: {d}\n", .{event_count});
-
     let all_events = &mut thread.watch_events[0..event_count];
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 

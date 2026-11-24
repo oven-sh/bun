@@ -49,16 +49,6 @@ void us_fault_set(int sc, const struct us_fault_rule *rule) {
     Bun__unlock(&us_fault_lock);
 }
 
-void us_fault_clear(int sc) {
-    if ((unsigned)sc >= US_FAULT_COUNT) return;
-    Bun__lock(&us_fault_lock);
-    us_fault_state[sc].rule.action = US_FAULT_NONE;
-    us_fault_state[sc].calls_seen = 0;
-    us_fault_state[sc].fired = 0;
-    us_fault_recompute_armed();
-    Bun__unlock(&us_fault_lock);
-}
-
 void us_fault_clear_all(void) {
     Bun__lock(&us_fault_lock);
     for (int i = 0; i < US_FAULT_COUNT; i++) {

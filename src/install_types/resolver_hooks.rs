@@ -1283,6 +1283,7 @@ pub enum EnqueueResult {
 /// `Resolver::use_package_manager()`.
 pub trait AutoInstaller {
     // ── Lockfile reads ────────────────────────────────────────────────────
+    fn lockfile_package_count(&self) -> usize;
     fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
     fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
     fn lockfile_package_resolution(&self, id: PackageID) -> Resolution;

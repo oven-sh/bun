@@ -785,8 +785,8 @@ pub mod fs {
         pub(crate) fn mark_not_found(&mut self, result: bun_alloc::Result) {
             self.inner().mark_not_found(result)
         }
-        pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+        pub(crate) fn remove(&mut self, key: &[u8], old_slot: bun_alloc::OldSlot) -> bool {
+            self.inner().remove(key, old_slot)
         }
     }
 
@@ -935,6 +935,15 @@ pub mod fs {
                     },
                 )));
             }
+            if let Some(index) = self.entries.inner().parked(&get_or_put_result)
+                && let Some(EntriesOption::Err(parked)) = self.entries.at_index(index)
+                && parked.original_err == err
+            {
+                self.entries.inner().restore(&mut get_or_put_result, index);
+                let parked = self.entries.at_index(index).expect("unreachable");
+                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                return Ok(unsafe { &*std::ptr::from_ref(parked) });
+            }
             let opt = self.entries.put(
                 &mut get_or_put_result,
                 EntriesOption::Err(dir_entry::Err {
@@ -981,6 +990,9 @@ pub mod fs {
             let mut in_place: Option<*mut DirEntry> = None;
 
             let mut cache_result = self.entries.get_or_put(dir)?;
+            if !cache_result.has_checked_if_exists() || generation > 0 {
+                self.restore_parked(&mut cache_result, dir, generation);
+            }
             if cache_result.has_checked_if_exists() {
                 if let Some(cached_result) = self.entries.at_index(cache_result.index) {
                     // erase to raw immediately so the early-return reborrow
@@ -1078,17 +1090,23 @@ pub mod fs {
             Ok(unsafe { &*out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
-        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
-            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
-            // `read_directory`/`dir_info_cached_maybe_log`).
-            let _g = self.entries_mutex.lock_guard();
-            self.entries.remove(file_path)
+        /// The caller holds `entries_mutex`, and `result` is what `entries` says of `dir`.
+        #[inline]
+        pub(crate) fn restore_parked(
+            &mut self,
+            result: &mut bun_alloc::Result,
+            dir: &[u8],
+            generation: Generation,
+        ) {
+            if let Some(index) = self.entries.inner().parked(result)
+                && let Some(EntriesOption::Entries(it)) = self.entries.at_index(index)
+                // It can be that of a directory that has been moved away.
+                && !it.fd.is_valid()
+                && let Ok(handle) = bun_sys::Dir::open(dir)
+                && it.refill(&handle, generation).is_some()
+            {
+                self.entries.inner().restore(result, index);
+            }
         }
 
         /// lstat + (if symlink) open + fstat +
@@ -1099,11 +1117,16 @@ pub mod fs {
             &self,
             dir_: &[u8],
             base: &[u8],
-            existing_fd: Fd,
+            existing: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
+
+            let intern = |real: &[u8]| match real == existing.symlink.as_bytes() {
+                true => Ok(existing.symlink),
+                false => (FilenameStore::instance().append_slice(real)).map(Interned::from_static),
+            };
 
             let mut cache = EntryCache {
                 kind: EntryKind::File,
@@ -1120,7 +1143,7 @@ pub mod fs {
             {
                 use bun_sys::windows::{self as w, Win32ErrorExt as _};
                 use std::os::windows::io::AsRawHandle as _;
-                let _ = (existing_fd, store_fd);
+                let _ = store_fd;
                 let file = bun_sys::get_file_attributes(absolute_path_c)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
                 // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
@@ -1186,8 +1209,7 @@ pub mod fs {
 
                 let mut buf2 = bun_paths::path_buffer_pool::get();
                 if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
+                    cache.symlink = intern(real)?;
                 }
                 return Ok(cache);
             }
@@ -1204,8 +1226,8 @@ pub mod fs {
 
                 if is_symlink {
                     let mut opened = None;
-                    let file: &bun_sys::File = if existing_fd.is_valid() {
-                        bun_sys::File::borrow(&existing_fd)
+                    let file: &bun_sys::File = if existing.fd.is_valid() {
+                        bun_sys::File::borrow(&existing.fd)
                     } else {
                         let result = if store_fd {
                             bun_sys::open_file_absolute_z(
@@ -1236,7 +1258,7 @@ pub mod fs {
                     symlink = bun_sys::get_fd_path(file.fd(), &mut symlink_buf)?;
                     cache.fd = opened
                         .filter(|_| store_fd && !self.need_to_close_files())
-                        .map_or(existing_fd, bun_sys::CloseOnDrop::into_raw);
+                        .map_or(existing.fd, bun_sys::CloseOnDrop::into_raw);
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }
 
@@ -1248,8 +1270,7 @@ pub mod fs {
                     EntryKind::File
                 };
                 if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
+                    cache.symlink = intern(symlink)?;
                 }
 
                 Ok(cache)
@@ -1272,10 +1293,10 @@ pub mod fs {
             &self,
             dir: &[u8],
             base: &[u8],
-            existing_fd: bun_sys::Fd,
+            existing: EntryCache,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            self.kind(dir, base, existing_fd, store_fd)
+            self.kind(dir, base, existing, store_fd)
         }
     }
 

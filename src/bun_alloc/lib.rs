@@ -825,6 +825,14 @@ pub enum ItemStatus {
     NotFound,
 }
 
+/// What [`BSSMapInner::remove`] does with the slot of the key, which is never freed.
+#[derive(Clone, Copy, Debug)]
+pub enum OldSlot {
+    Abandon,
+    /// [`BSSMapInner::restore`] can give it back.
+    Park,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
 // Per-monomorphization statics are emitted at the declare site via the
@@ -1960,6 +1968,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
+    /// The slot that each key lost last, unless it was abandoned.
+    parked: IndexMap,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
@@ -1986,6 +1996,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).index).write(IndexMap::default());
+            addr_of_mut!((*slot).parked).write(IndexMap::default());
             addr_of_mut!((*slot).backing_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
@@ -2056,7 +2067,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn mark_not_found(&mut self, result: Result) {
         let _guard = self.mutex.lock();
-        self.index.insert(result.hash, NOT_FOUND);
+        let replaced = self.index.insert(result.hash, NOT_FOUND);
+        Self::park(&mut self.parked, result.hash, replaced);
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
@@ -2121,10 +2133,37 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     /// Returns true if the entry was removed.
-    pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
+    pub fn remove(&mut self, denormalized_key: &[u8], old_slot: OldSlot) -> bool {
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
-        self.index.remove(&_key).is_some()
+        let removed = self.index.remove(&_key);
+        match old_slot {
+            OldSlot::Abandon => _ = self.parked.remove(&_key),
+            OldSlot::Park => Self::park(&mut self.parked, _key, removed),
+        }
+        removed.is_some()
+    }
+
+    fn park(parked: &mut IndexMap, hash: u64, index: Option<IndexType>) {
+        if let Some(index) = index.filter(|&it| it != NOT_FOUND && it != UNASSIGNED) {
+            parked.insert(hash, index);
+        }
+    }
+
+    /// `None` while the key of `result` has a slot.
+    pub fn parked(&mut self, result: &Result) -> Option<IndexType> {
+        if result.status == ItemStatus::Exists {
+            return None;
+        }
+        let _guard = self.mutex.lock();
+        self.parked.get(&result.hash).copied()
+    }
+
+    /// `put` for the value that is in the slot from [`Self::parked`].
+    pub fn restore(&mut self, result: &mut Result, index: IndexType) {
+        let _guard = self.mutex.lock();
+        (result.index, result.status) = (index, ItemStatus::Exists);
+        self.index.insert(result.hash, index);
     }
 }
 

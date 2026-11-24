@@ -2766,16 +2766,32 @@ impl<'a> Resolver<'a> {
 
     /// [`Self::bust_dir_cache`] without a resolver: both caches are process-wide.
     pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
+        Self::bust_dir_cache_with(fs, path, allocators::OldSlot::Abandon)
+    }
+
+    /// [`Self::bust_dir_cache`] where nothing says that `path` changed: the next read takes back what is still right.
+    pub fn bust_dir_cache_after_miss(&mut self, path: &[u8]) -> bool {
+        Self::bust_dir_cache_with(&mut self.fs_mut().fs, path, allocators::OldSlot::Park)
+    }
+
+    fn bust_dir_cache_with(
+        fs: &mut Fs::file_system::RealFS,
+        path: &[u8],
+        old_slot: allocators::OldSlot,
+    ) -> bool {
         let path = bun_paths::without_trailing_sep(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = fs.bust_entries_cache(path);
+        // Both or neither: a listing has real paths from its `DirInfo`, which `restore_dir_info` checks.
+        let _entries_lock = fs.entries_mutex.lock_guard();
+        let first_bust = fs.entries.remove(path, old_slot);
         // SAFETY: the never-freed singleton of `dir_cache_mut`. Other threads can hold it too:
         // `remove` touches nothing of the map before it takes the map's mutex.
-        let second_bust = unsafe { (*DirInfo::hash_map_instance()).remove(path) };
+        let second_bust = unsafe { (*DirInfo::hash_map_instance()).remove(path, old_slot) };
         bun_core::scoped_log!(
             ResolverDev,
-            "Bust {} = {}, {}",
+            "Bust {} ({:?}) = {}, {}",
             bstr::BStr::new(path),
+            old_slot,
             first_bust,
             second_bust
         );
@@ -2805,8 +2821,8 @@ impl<'a> Resolver<'a> {
     }
 
     fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
-        let a = bun_paths::dirname(path).is_some_and(|dir| self.bust_dir_cache(dir));
-        let b = self.bust_dir_cache(path);
+        let a = bun_paths::dirname(path).is_some_and(|dir| self.bust_dir_cache_after_miss(dir));
+        let b = self.bust_dir_cache_after_miss(path);
         a || b
     }
 
@@ -3620,6 +3636,7 @@ impl<'a> Resolver<'a> {
         let dir_path = bun_paths::without_trailing_sep(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
+        let _unlock = self.mutex.lock_guard();
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
@@ -3644,6 +3661,16 @@ impl<'a> Resolver<'a> {
         // route loaders iterate the `DirEntry.data` map under this lock.
         let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
+        rfs!().restore_parked(&mut cached_dir_entry_result, dir_path, self.generation);
+        if let Some(info) = self.restore_dir_info(
+            &mut dir_cache_info_result,
+            dir_path,
+            &mut cached_dir_entry_result.index,
+            allocators::NOT_FOUND,
+            Some(package_id),
+        ) {
+            return Ok(Some(info));
+        }
 
         // NOTE: always assigned by either the cached-hit arm or the
         // `needs_iter` block below; null-init so rustc accepts the proof.
@@ -3663,6 +3690,7 @@ impl<'a> Resolver<'a> {
                 return Err(err.into());
             }
         };
+        let opened = bun_sys::Dir::from_fd(open_dir);
 
         if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
             if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
@@ -3719,7 +3747,7 @@ impl<'a> Resolver<'a> {
             }
 
             if self.store_fd {
-                new_entry.fd = open_dir;
+                new_entry.fd = opened.into_raw();
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
             // so a zeroed slot is UB; box `new_entry` directly for the fresh case.
@@ -4253,6 +4281,7 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
+        let hash = bun_wyhash::hash(&contents);
         // `TSConfigJSON` owns copies of every field, so the bytes drop with `source`.
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
@@ -4265,6 +4294,8 @@ impl<'a> Resolver<'a> {
                 Some(r) => r,
                 None => return Ok(None),
             };
+
+        result.sources.push((file.into(), Some(hash)));
 
         // `baseUrl` can be longer than a path buffer. Joins against it are checked, so a long one never matches.
         let in_file_dir = |path: &[u8]| -> Box<[u8]> {
@@ -4697,6 +4728,27 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
+            let mut cached_dir_entry_result =
+                (rfs!().entries.get_or_put(queue_top_unsafe_path)).expect("unreachable");
+            rfs!().restore_parked(
+                &mut cached_dir_entry_result,
+                queue_top_unsafe_path,
+                self.generation,
+            );
+            if let Some(info) = self.restore_dir_info(
+                &mut queue_top.result,
+                queue_top_safe_path,
+                &mut cached_dir_entry_result.index,
+                top_parent.index,
+                None,
+            ) {
+                if queue_slice_len == 0 {
+                    return Ok(Some(info));
+                }
+                top_parent = queue_top.result;
+                continue;
+            }
+
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 queue_top_safe_path
             } else {
@@ -4728,9 +4780,6 @@ impl<'a> Resolver<'a> {
                 );
                 &safe_path[..end]
             };
-
-            let mut cached_dir_entry_result =
-                rfs!().entries.get_or_put(dir_path).expect("unreachable");
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
@@ -4879,6 +4928,99 @@ impl<'a> Resolver<'a> {
         }
 
         unreachable!()
+    }
+
+    /// The parked `DirInfo` of `result`, if what `dir_info_uncached` built it from has not changed.
+    fn restore_dir_info(
+        &mut self,
+        result: &mut allocators::Result,
+        path: &[u8],
+        entries: &mut allocators::IndexType,
+        parent: allocators::IndexType,
+        package_id: Option<Install::PackageID>,
+    ) -> Option<DirInfoRef> {
+        let index = self.dir_cache_mut().parked(result)?;
+        // SAFETY: each index is a sentinel or was assigned by `put`; resolver mutex held.
+        let [info, above] = [index, parent]
+            .map(|it| unsafe { DirInfo::slot_ptr_at(it).map(|p| DirInfoRef::from_raw(p)) });
+        let info = info.filter(|it| it.entries == *entries)?;
+        if !self.has_same_real_path(&info, above) {
+            // Read it again: the entries can have real paths that start with the old one.
+            *entries = allocators::UNASSIGNED;
+            return None;
+        }
+        let listing = info.get_entries_ref_locked(self.generation)?;
+        let kind_of = |name| {
+            let found = listing.get_comptime_query(name)?;
+            Some(found.entry().kind(&Fs::FileSystem::get().fs, false))
+        };
+        let is_file = |name| kind_of(name) == Some(Fs::file_system::EntryKind::File);
+        let has_node_modules = !info.is_node_modules()
+            && kind_of(b"node_modules") == Some(Fs::file_system::EntryKind::Dir);
+        let tsconfig = [&b"tsconfig.json"[..], b"jsconfig.json"]
+            .into_iter()
+            .find(|&name| self.opts.load_tsconfig_json && is_file(name));
+        let has_package_json = self.opts.load_package_json && is_file(b"package.json");
+        let is_same = info.parent == parent
+            && (bun_paths::has_trailing_sep(info.abs_path) || info.abs_path == path)
+            && info.has_node_modules() == has_node_modules
+            && (info.quiet_at)
+                .is_some_and(|it| it <= bun_ast::Level::Warn || it <= self.log_ref().level)
+            && match info.package_json() {
+                Some(it) => {
+                    let (options, known_to_installer) = self.package_json_options(package_id);
+                    has_package_json
+                        && info.parsed_with.0 == options
+                        // A worker does not install, and shares the cache with the thread that does.
+                        && info.parsed_with.1 >= known_to_installer
+                        && self.read_config(it.source.path.text).as_deref()
+                            == Some(&*it.source_contents)
+                }
+                None => !has_package_json,
+            }
+            && match info.tsconfig_json() {
+                Some(it) => {
+                    tsconfig == it.sources.last().map(|(path, _)| bun_paths::basename(path))
+                        && it.sources.iter().all(|(path, hash)| {
+                            *hash == self.read_config(path).map(|it| bun_wyhash::hash(&it))
+                        })
+                }
+                None => tsconfig.is_none(),
+            };
+        is_same.then(|| {
+            self.dir_cache_mut().restore(result, index);
+            info
+        })
+    }
+
+    fn read_config(&mut self, path: &[u8]) -> Option<Vec<u8>> {
+        self.caches.fs.read_file_and_close(path, FD::INVALID).ok()
+    }
+
+    fn has_same_real_path(&self, info: &DirInfo::DirInfo, parent: Option<DirInfoRef>) -> bool {
+        let base = bun_paths::basename(info.abs_path);
+        let found = (parent.as_deref())
+            .filter(|_| !self.opts.preserve_symlinks)
+            .and_then(|it| Some((it, it.get_entries_ref_locked(self.generation)?.get(base)?)))
+            .map(|(it, q)| (it.abs_real_path, q.entry().symlink(self.rfs_ref(), false)));
+        match found {
+            None | Some(([], [])) => info.abs_real_path.is_empty(),
+            Some((above, [])) => bun_paths::strip_prefix(info.abs_real_path, above) == Some(base),
+            Some((_, target)) => info.abs_real_path == target,
+        }
+    }
+
+    /// A hash of `package_id` and the main fields that `PackageJSON::parse` keeps, and a number that grows with what it can record for auto-install.
+    fn package_json_options(&mut self, package_id: Option<Install::PackageID>) -> (u64, usize) {
+        let id = u64::from(package_id.unwrap_or(Install::INVALID_PACKAGE_ID));
+        (
+            (self.opts.main_fields.iter())
+                .fold(id, |seed, it| bun_wyhash::hash_with_seed(seed, it)),
+            match self.use_package_manager() {
+                true => 1 + (self.auto_installer()).map_or(0, |it| it.lockfile_package_count()),
+                false => 0,
+            },
+        )
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
@@ -6266,12 +6408,18 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        let problems_in = |log: &bun_ast::Log| log.warnings + log.errors;
+        let quiet_at =
+            |log: &bun_ast::Log, before| (problems_in(log) == before).then_some(log.level);
+
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 if lookup.entry().kind(self.rfs_ref(), self.store_fd)
                     == Fs::file_system::EntryKind::File
                 {
+                    info.parsed_with = self.package_json_options(package_id);
+                    let problems = problems_in(self.log_ref());
                     // A package in the global cache has a `package_id`, and keeps it even if its
                     // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
@@ -6302,6 +6450,7 @@ impl<'a> Resolver<'a> {
                         .ok()
                         .flatten()
                     };
+                    info.quiet_at = quiet_at(self.log_ref(), problems);
 
                     if let Some(pkg) = info.package_json() {
                         if pkg.browser_map.count() > 0 {
@@ -6367,9 +6516,12 @@ impl<'a> Resolver<'a> {
                 // one that reads another in its place.
                 let (mut ignored, log) = (bun_ast::Log::init(), self.log);
                 if self.opts.tsconfig_override.is_some() {
+                    ignored.level = self.log_ref().level;
                     self.log = NonNull::from(&mut ignored);
                 }
+                let problems = problems_in(self.log_ref());
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
+                info.quiet_at = (info.quiet_at).and_then(|_| quiet_at(self.log_ref(), problems));
                 self.log = log;
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
                 info.tsconfig_json = loaded?.map(|it| {
@@ -6432,12 +6584,15 @@ impl<'a> Resolver<'a> {
                                 bun_core::fmt::quote(&extended)
                             ),
                         );
-                        break;
+                        None
                     }
                 };
                 if let Some(parent_config) = parent_config_maybe {
                     parent_configs.append(core::mem::replace(&mut current, parent_config))?;
                 } else {
+                    current
+                        .sources
+                        .insert(0, (extended.as_bytes().into(), None));
                     break;
                 }
             }
@@ -6447,6 +6602,7 @@ impl<'a> Resolver<'a> {
             // successively apply the inheritable attributes to the next config
             while let Some(mut parent_config) = parent_configs.pop() {
                 let mc = &mut *merged_config;
+                mc.sources.append(&mut parent_config.sources);
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {

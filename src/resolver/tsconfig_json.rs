@@ -166,6 +166,8 @@ pub struct TSConfigJSON {
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
     pub(crate) has_compiler_options: bool,
+    /// The files that this one extends, then itself, each with the hash of its bytes. `None`: it gave no configuration.
+    pub(crate) sources: Vec<(Box<[u8]>, Option<u64>)>,
 }
 
 pub(crate) struct PathsWildcardMatch<'a> {
@@ -189,6 +191,7 @@ impl Default for TSConfigJSON {
             experimental_decorators: false,
             use_define_for_class_fields: None,
             has_compiler_options: false,
+            sources: Vec::new(),
         }
     }
 }

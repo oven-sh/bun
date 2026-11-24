@@ -146,6 +146,10 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+    /// `Resolver::package_json_options` of the resolver that parsed `package_json`.
+    pub(crate) parsed_with: (u64, usize),
+    /// The level of the log that `package_json` and `tsconfig_json` added nothing to. `None`: a failed lookup has to show what they add.
+    pub(crate) quiet_at: Option<bun_ast::Level>,
 }
 
 impl Default for DirInfo {
@@ -164,6 +168,8 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            parsed_with: (0, 0),
+            quiet_at: Some(bun_ast::Level::Verbose),
         }
     }
 }

@@ -4823,7 +4823,7 @@ impl VirtualMachine {
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let bust_dir_cache =
-            |dir: &[u8]| self.transpiler.with_mut(|t| t.resolver.bust_dir_cache(dir));
+            |dir: &[u8]| (self.transpiler).with_mut(|t| t.resolver.bust_dir_cache_after_miss(dir));
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt

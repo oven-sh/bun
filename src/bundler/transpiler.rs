@@ -284,14 +284,14 @@ impl<'a> Transpiler<'a> {
                 // Bust directory cache and try again
                 let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 let buster_name = bun_paths::Path::resolve(&[top_level_dir, entry_point, b".."]);
-                let mut busted = self.resolver.bust_dir_cache(&buster_name);
+                let mut busted = self.resolver.bust_dir_cache_after_miss(&buster_name);
                 // `load_as_file` caches the listing under the entry point's own spelling.
                 if bun_paths::is_absolute(entry_point) {
                     let as_spelled = bun_paths::dirname_or_root(entry_point);
-                    busted |= self.resolver.bust_dir_cache(as_spelled);
+                    busted |= self.resolver.bust_dir_cache_after_miss(as_spelled);
                     if bun_paths::has_trailing_sep(entry_point) {
                         let directory = bun_paths::Path::resolve(&[top_level_dir, entry_point]);
-                        busted |= self.resolver.bust_dir_cache(&directory);
+                        busted |= self.resolver.bust_dir_cache_after_miss(&directory);
                     }
                 }
 

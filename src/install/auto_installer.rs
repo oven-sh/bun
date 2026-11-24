@@ -175,6 +175,10 @@ impl Drop for Parked {
 impl hooks::AutoInstaller for PackageManager {
     // ── Lockfile reads ────────────────────────────────────────────────────
 
+    fn lockfile_package_count(&self) -> usize {
+        self.lockfile.packages.len()
+    }
+
     fn lockfile_package_dependencies(&self, id: PackageID) -> hooks::DependencySlice {
         let s = self.lockfile.packages.get(id as usize).dependencies;
         // `lockfile::DependencySlice` and `hooks::DependencySlice` are both

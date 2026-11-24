@@ -103,7 +103,7 @@ pub trait EntryKindResolver {
         &self,
         dir: &[u8],
         base: &[u8],
-        existing_fd: Fd,
+        existing: EntryCache,
         store_fd: bool,
     ) -> crate::CrateResult<EntryCache>;
 }
@@ -147,6 +147,8 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
+    /// `None` once two listings have disagreed. Under `entries_mutex`.
+    listed_as: core::cell::Cell<Option<bun_sys::FileKind>>,
 
     abs_path: OnceLock<Interned>,
 }
@@ -234,46 +236,34 @@ impl Entry {
     // which `RealFS` copy `fs` points at (see file-top comment).
     pub fn kind<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
-            let _guard = self.mutex.lock_guard();
-            // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
-                // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return self.cache().kind;
-                    }
-                }
-                // Clear the flag only after the `cache` write: lock-free readers
-                // that observe `false` skip the mutex, so this Release store is
-                // what publishes `cache` to them.
-                self.need_stat.store(false, Ordering::Release);
-            }
+            return self.stat_if_needed(fs, store_fd).kind;
         }
         self.cache().kind
     }
 
     /// See [`Entry::kind`].
     pub(crate) fn symlink<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> &'static [u8] {
-        if self.need_stat.load(Ordering::Acquire) {
-            let _guard = self.mutex.lock_guard();
-            // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
+        // Another thread can be writing the pointer and the length.
+        if self.need_stat.load(Ordering::Acquire) || !self.cache().symlink.is_empty() {
+            return self.stat_if_needed(fs, store_fd).symlink.as_bytes();
+        }
+        b""
+    }
+
+    fn stat_if_needed<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> EntryCache {
+        let _guard = self.mutex.lock_guard();
+        // Relaxed: every write happens under `mutex`, which we hold.
+        if self.need_stat.load(Ordering::Relaxed) {
+            match fs.resolve_kind(self.dir, self.base(), self.cache(), store_fd) {
+                Ok(c) => self.cache.set(c),
                 // This error can happen if the file was deleted between the time the directory
                 // was scanned and the time it was read
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return b"";
-                    }
-                }
-                // See `Entry::kind`: Release-publish `cache` before the flag clear.
-                self.need_stat.store(false, Ordering::Release);
+                Err(_) => self.set_cache_symlink(Interned::EMPTY),
             }
+            // After the `cache` write: this publishes it to the readers that skip the mutex.
+            self.need_stat.store(false, Ordering::Release);
         }
-        self.cache().symlink.as_bytes()
+        self.cache()
     }
 }
 
@@ -462,6 +452,7 @@ impl DirEntry {
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
+                    (existing.listed_as).update(|it| it.filter(|&it| it == entry.kind));
                     break 'brk existing_ptr;
                 }
             }
@@ -502,6 +493,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).listed_as).write(Some(entry.kind).into());
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
@@ -532,6 +524,41 @@ impl DirEntry {
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         Ok(Some(stored_ref))
+    }
+
+    /// Lists `handle` as a new `DirEntry` would, with each entry of `self` that is still right. `None` leaves the names as they are.
+    #[cold]
+    pub(crate) fn refill(&mut self, handle: &bun_sys::Dir, generation: Generation) -> Option<()> {
+        let normal_dir = bun_paths::Path::resolve(&[bun_core::top_level_dir(), self.dir]);
+        let mut next = DirEntry::init(self.dir, generation);
+        next.data.reserve(self.data.count());
+        let mut filename_store = FilenameStoreAppender::new();
+        // Names that differ only in case share an entry, which is that of the last one.
+        let mut shared = Vec::new();
+        let mut iter = bun_sys::iterate_dir(handle.fd());
+        while let Some(found) = iter.next().ok()? {
+            let name = found.name.slice_u8();
+            let old = self.get(name).map(|it| it.entry());
+            if let Some(old) = old.filter(|it| it.base() != name) {
+                if next.data.contains_key(old.base_lowercase()) {
+                    return None;
+                }
+                shared.push(old.base_lowercase());
+                continue;
+            }
+            let is_kept = old.is_some_and(|old| {
+                // It can have the case of an import, or be where the router found a link to lead.
+                let abs_path = old.abs_path().as_bytes();
+                let is_in = |dir| bun_paths::strip_prefix(abs_path, dir) == Some(name);
+                old.listed_as.get() == Some(found.kind)
+                    && (abs_path.is_empty() || is_in(self.dir) || is_in(&normal_dir))
+            });
+            let prev_map = is_kept.then_some(&mut self.data);
+            (next.add_entry_with_store(prev_map, &found, &mut filename_store)).ok()?;
+        }
+        // Not `dir` and `fd`, which are read without the lock.
+        (shared.into_iter().all(|it| next.data.contains_key(it)))
+            .then(|| (self.data, self.generation) = (next.data, generation))
     }
 
     /// Debug-only contract check: every `.data` probe must run under
@@ -634,8 +661,7 @@ impl ModKey {
     }
 }
 
-// SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
-// `mutex` discipline described on `Entry`.
+// SAFETY: `cache` and `listed_as` are the `!Sync` fields, each shared under the lock that `Entry` names for it.
 unsafe impl Sync for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════

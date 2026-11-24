@@ -1,5 +1,6 @@
 import { randomUUIDv7, RedisClient, S3Client } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { ConnectionType, createClient, ctx, isEnabled, readCommands } from "../test-utils";
 
 /**
@@ -508,14 +509,39 @@ describe("Valkey: Command Arguments", () => {
   // One character is one byte on the wire.
   test.each([
     ["jos%C3%A9:pw", "jos\xc3\xa9", "pw"],
-    ["jos%E9:pw", "jos\xe9", "pw"],
-    ["user:p%E9ss", "user", "p\xe9ss"],
-    [":%ff%fe", "default", "\xff\xfe"],
+    [":p%40ss%2541+", "default", "p@ss%41+"],
     ["us%00er:p%00w", "us\0er", "p\0w"],
     ["a@b:%zz%4", "a@b", "%zz%4"],
   ])("redis://%s@host logs in as %j with %j", async (credentials, username, password) => {
     using server = await connect(port => `redis://${credentials}@127.0.0.1:${port}`);
     expect(server.received).toEqual([["HELLO", "3", "AUTH", username, password]]);
+  });
+
+  test.each([
+    ["jos%E9:pw", "username"],
+    ["user:p%E9ss", "password"],
+    [":%ff%fe", "password"],
+    [":%ED%A0%80", "password"],
+    [":%C0%AF", "password"],
+  ])("redis://%s@host throws for its %s, as decodeURIComponent() does", (credentials, part) => {
+    expect(() => decodeURIComponent(credentials)).toThrow(URIError);
+    expect(() => new RedisClient(`redis://${credentials}@localhost`)).toThrow(
+      expect.objectContaining({
+        name: "URIError",
+        code: "ERR_INVALID_URI",
+        message: `The ${part} in the Redis URL does not decode to UTF-8. Encode it with encodeURIComponent().`,
+      }),
+    );
+  });
+
+  test("Bun.redis throws for such a REDIS_URL", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `try { Bun.redis } catch (error) { console.log(error.code) }`],
+      env: { ...bunEnv, REDIS_URL: "redis://:ab%cd@localhost" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ERR_INVALID_URI\n", stderr: "", exitCode: 0 });
   });
 
   test("the error for an unknown scheme names every scheme", () => {

@@ -424,6 +424,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     errors[0].owner = 123;
 
     // Fix the file so subsequent tests don't fail
+    const fixedPromise = session.waitForEvent("BunFrontendDevServer.bundleComplete");
     fs.writeFileSync(
       join(tempdir, "utils.ts"),
       `
@@ -433,6 +434,15 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
       }
     `,
     );
+
+    // A rebuild that reads the file in the middle of that write fails. Its event must not reach the next test.
+    let status: number;
+    do {
+      const response = await fetch(serverUrl.href);
+      await response.blob();
+      status = response.status;
+    } while (status !== 200);
+    await fixedPromise;
 
     return errors;
   }

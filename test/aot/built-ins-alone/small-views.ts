@@ -234,6 +234,8 @@ const notCalled: Record<string, string> = {
   "%TypedArray%": "it throws whatever it is handed",
   "%LinkTimeConstant:isTypedArrayOutOfBounds%": "no name of a program leads to it",
   "%CompilerHelpers%.newResponseFromParts": "no name of a program leads to it",
+  "native:Bindgen:node_util_binding.bind.ts:diffNumbers": "util.diff() hands it views of its own, never a program's",
+  "%NativeFunctions%.Node_util_bindingBindTsDiffNumbers": "util.diff() hands it views of its own, never a program's",
   "Atomics.wait": "it asks for shared memory, which never lies in the cell",
   "Atomics.waitAsync": "it asks for shared memory, which never lies in the cell",
 };

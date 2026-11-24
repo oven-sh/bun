@@ -3,7 +3,7 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_core::zstr;
+use bun_core::{ZBox, zstr};
 use bun_ptr::AliasableBox;
 use bun_sys::{DynLib, RTLD};
 use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
@@ -51,6 +51,15 @@ pub(crate) struct CFRunLoopSourceContext {
     pub(crate) schedule: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
     pub(crate) cancel: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
     pub(crate) perform: unsafe extern "C" fn(*mut c_void),
+}
+
+#[repr(C)]
+struct FSEventStreamContext {
+    version: CFIndex,
+    info: *mut c_void,
+    retain: *const c_void,
+    release: *const c_void,
+    copy_description: *const c_void,
 }
 
 const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
@@ -222,7 +231,7 @@ pub(crate) struct FSEventsLoop {
 
 struct FSEventsLoopState {
     has_scheduled_watchers: bool,
-    stream: Option<StartedStream>,
+    streams: Vec<StartedStream>,
 }
 
 /// The array does not retain the strings in it.
@@ -268,7 +277,7 @@ impl Drop for StartedStream {
     }
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used on the CF thread; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
 unsafe impl Sync for FSEventsLoop {}
 
 pub(crate) struct Task {
@@ -359,7 +368,7 @@ impl FSEventsLoop {
             thread: UnsafeCell::new(None),
             mutex: Guarded::new(FSEventsLoopState {
                 has_scheduled_watchers: false,
-                stream: None,
+                streams: Vec::new(),
             }),
         });
         // SAFETY: leaked once the CF thread has it, and not used after an early return.
@@ -432,7 +441,7 @@ impl FSEventsLoop {
     // `FSEventStreamCallback` pointer type.
     extern "C" fn events_cb(
         _: FSEventStreamRef,
-        _: *mut c_void,
+        index: *mut c_void,
         num_events: usize,
         event_paths: *mut c_void,
         event_flags: *mut FSEventStreamEventFlags,
@@ -444,7 +453,7 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
-        for watcher in PathWatcherManager::lock().watchers() {
+        for watcher in PathWatcherManager::lock().watchers_of_stream(index.addr()) {
             let watcher_path = watcher.path.as_bytes();
 
             for (i, path_ptr) in paths.iter().enumerate() {
@@ -452,7 +461,10 @@ impl FSEventsLoop {
                 // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
                 let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
                 // Filter out paths that are outside watcher's request
-                if path.len() < watcher_path.len() || !path.starts_with(watcher_path) {
+                let Some(rest) = path.strip_prefix(watcher_path) else {
+                    continue;
+                };
+                if !matches!(rest.first(), None | Some(b'/')) && !watcher_path.ends_with(b"/") {
                     continue;
                 }
                 let is_file = (flags & K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR) == 0;
@@ -510,10 +522,19 @@ impl FSEventsLoop {
 
     // Runs on CF Thread
     fn schedule(&self) {
+        // Not held while the streams are rebuilt, which is slow: `reschedule` takes it on the JS thread.
         let mut state = self.mutex.lock();
         state.has_scheduled_watchers = false;
-        state.stream = None;
+        let previous = core::mem::take(&mut state.streams);
+        drop(state);
+        drop(previous);
 
+        let count = PathWatcherManager::lock().stream_count();
+        let streams = (0..count).filter_map(|i| self.start_stream(i)).collect();
+        self.mutex.lock().streams = streams;
+    }
+
+    fn start_stream(&self, index: usize) -> Option<StartedStream> {
         let cf = CoreFoundation::get();
         let cs = CoreServices::get();
 
@@ -521,21 +542,26 @@ impl FSEventsLoop {
         unsafe {
             let manager = PathWatcherManager::lock();
             let mut paths = StreamPaths {
-                strings: Vec::with_capacity(manager.watcher_count()),
+                strings: Vec::new(),
                 array: ptr::null_mut(),
             };
-            for watcher in manager.watchers() {
+            for watcher in manager.watchers_of_stream(index) {
+                // A FIFO is watched through its directory, so that nothing has to open it.
+                let parent = watcher
+                    .is_fifo
+                    .then(|| bun_paths::dirname(watcher.path.as_bytes()).map(ZBox::from_bytes))
+                    .flatten();
                 // SAFETY: a `ZBox` is NUL-terminated.
                 paths
                     .strings
                     .push((cf.string_create_with_file_system_representation)(
                         ptr::null_mut(),
-                        watcher.path.as_ptr().cast(),
+                        parent.as_ref().unwrap_or(&watcher.path).as_ptr().cast(),
                     ));
             }
             drop(manager);
             if paths.strings.is_empty() {
-                return;
+                return None;
             }
 
             paths.array = (cf.array_create)(
@@ -567,10 +593,17 @@ impl FSEventsLoop {
             // that is being watched now. Which will cause FSEventStream API to report
             // changes to files from the past.
             //
+            let mut context = FSEventStreamContext {
+                version: 0,
+                info: ptr::without_provenance_mut(index),
+                retain: ptr::null(),
+                release: ptr::null(),
+                copy_description: ptr::null(),
+            };
             let r#ref = (cs.fs_event_stream_create)(
                 ptr::null_mut(),
                 Self::events_cb,
-                ptr::null_mut(),
+                (&raw mut context).cast(),
                 paths.array,
                 cs.k_fs_event_stream_event_id_since_now,
                 latency,
@@ -579,7 +612,7 @@ impl FSEventsLoop {
             let Some(stream) = NonNull::new(r#ref).map(EventStream) else {
                 // FSEventStreamCreate can fail under rapid stream churn (resource
                 // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
-                return;
+                return None;
             };
 
             (cs.fs_event_stream_schedule_with_run_loop)(
@@ -587,12 +620,13 @@ impl FSEventsLoop {
                 self.loop_.load(Ordering::Relaxed),
                 *cf.run_loop_default_mode,
             );
-            if (cs.fs_event_stream_start)(r#ref) != 0 {
-                state.stream = Some(StartedStream {
-                    stream,
-                    _paths: paths,
-                });
+            if (cs.fs_event_stream_start)(r#ref) == 0 {
+                return None;
             }
+            Some(StartedStream {
+                stream,
+                _paths: paths,
+            })
         }
     }
 
@@ -649,7 +683,7 @@ pub(crate) fn start() -> crate::Result<()> {
     Ok(())
 }
 
-/// Rebuilds the stream for the paths that are watched now.
+/// Rebuilds the streams for the paths that are watched now.
 pub(crate) fn reschedule() {
     FSEVENTS_DEFAULT_LOOP.wait().reschedule();
 }

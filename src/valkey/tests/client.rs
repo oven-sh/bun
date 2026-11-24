@@ -1,4 +1,6 @@
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
+use bun_valkey::client::{
+    Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
+};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
@@ -189,6 +191,14 @@ impl Driver {
                     self.fail();
                     return self.lost();
                 }
+                Event::Busy(message) => {
+                    self.log
+                        .push(format!("busy ConnectionClosed {}", message.escape_ascii()));
+                    if !self.client.abandon_handshake() {
+                        self.fail();
+                    }
+                    return self.lost();
+                }
             };
             self.log.push(line);
             self.checkpoint();
@@ -309,7 +319,7 @@ mod lifecycle {
             Backoff
         } else if it.client.is_connected() {
             Ready
-        } else if !it.client.is_active() {
+        } else if it.client.awaited() == Awaited::No {
             Closed
         } else if it.client.is_ending() && it.client.rejection().is_some() {
             EndingFailed
@@ -550,6 +560,69 @@ mod lifecycle {
     }
 
     #[test]
+    fn only_a_reconnect_abandons_a_handshake() {
+        let abandon = |it: &mut Driver| assert!(!it.client.abandon_handshake());
+        check(abandon, &[]);
+
+        for (state, expected) in [
+            (Dialing, EndingPolicy),
+            (Hello, EndingPolicy),
+            (Select, EndingPolicy),
+            (Ready, Ready),
+        ] {
+            let mut it = reach(Ready);
+            it.lost();
+            it.dial();
+            if state != Dialing {
+                it.start();
+            }
+            if let Select | Ready = state {
+                it.read(HELLO);
+            }
+            if let Ready = state {
+                it.read("+OK\r\n");
+            }
+            let abandoned = it.client.abandon_handshake();
+            assert_eq!(abandoned, expected == EndingPolicy, "{state:?}");
+            assert_eq!(state_of(it), expected, "{state:?}");
+        }
+
+        let mut it = reach(Ready);
+        drop(it.client.close());
+        it.client.connect();
+        it.lost();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "close(), connect()");
+
+        let mut it = reach(Ready);
+        it.lost();
+        it.dial();
+        it.start();
+        it.client.connect();
+        assert!(
+            !it.client.abandon_handshake(),
+            "connect() during a reconnect"
+        );
+
+        let mut it = Driver::new(Config {
+            max_retries: 0,
+            ..Config::default()
+        });
+        it.attempt = it.client.preconnect();
+        it.start();
+        it.read(HELLO);
+        it.lost();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "a forgotten preconnect");
+
+        let mut it = reach(Ready);
+        it.lost();
+        it.client.connect();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "connect() dialed");
+    }
+
+    #[test]
     fn a_preconnect_that_is_lost_unclaimed_is_forgotten() {
         type Touch = fn(&mut Driver);
         let touches: [(&str, Touch, State); 5] = [
@@ -650,10 +723,36 @@ mod lifecycle {
             let mut it = Driver::new(Config::default());
             it.attempt = it.client.preconnect();
             it.fail();
-            assert!(it.client.is_preconnect() && it.client.rejection().is_some());
+            assert!(it.client.awaited() == Awaited::No && it.client.is_ending());
+            assert!(it.client.rejection().is_some());
             apply(&mut it);
             it.lost();
             assert_eq!(state_of(it), Closed, "{touch}");
+        }
+    }
+
+    #[test]
+    fn a_reconnect_is_awaited_until_it_is_turned_away() {
+        use Awaited::{ByWorkOrBytes, ByWorkOrHandlers, Yes};
+        let abandon = |it: &mut Driver| assert!(it.client.abandon_handshake());
+        let steps: [(fn(&mut Driver), Awaited); 10] = [
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (abandon, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::dial, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::handshake, ByWorkOrBytes),
+            (Driver::lost, Yes),
+        ];
+        for (last, (_, awaited)) in steps.iter().enumerate() {
+            let mut it = Driver::connected(Config::default());
+            steps[..=last].iter().for_each(|(step, _)| step(&mut it));
+            assert_eq!(it.client.awaited(), *awaited, "{last}");
+            it.client.connect();
+            assert!(it.client.is_connected() || it.client.awaited() == Yes);
         }
     }
 
@@ -754,20 +853,16 @@ mod handshake {
                 "broken UnsupportedProtocol Server does not support RESP3",
             ),
             (0, "-NO\r\n", "broken AuthenticationFailed NO"),
-            (0, "-LOADING x\r\n", "broken ConnectionClosed LOADING x"),
-            (0, "-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (0, "-LOADING x\r\n", "busy ConnectionClosed LOADING x"),
+            (0, "-BUSY x\r\n", "busy ConnectionClosed BUSY x"),
             (0, "-BUSYKEY x\r\n", "broken AuthenticationFailed BUSYKEY x"),
-            (
-                0,
-                "-MASTERDOWN x\r\n",
-                "broken ConnectionClosed MASTERDOWN x",
-            ),
-            (0, "-TRYAGAIN x\r\n", "broken ConnectionClosed TRYAGAIN x"),
-            (1, "+OK\r\n-BUSY x\r\n", "broken ConnectionClosed BUSY x"),
+            (0, "-MASTERDOWN x\r\n", "busy ConnectionClosed MASTERDOWN x"),
+            (0, "-TRYAGAIN x\r\n", "busy ConnectionClosed TRYAGAIN x"),
+            (1, "+OK\r\n-BUSY x\r\n", "busy ConnectionClosed BUSY x"),
             (
                 0,
                 "-ERR max number of clients reached\r\n",
-                "broken ConnectionClosed ERR max number of clients reached",
+                "busy ConnectionClosed ERR max number of clients reached",
             ),
             (
                 0,
@@ -802,6 +897,43 @@ mod handshake {
             it.start();
             it.read(replies);
             assert_eq!(it.log[1 + db as usize], expected);
+        }
+    }
+
+    #[test]
+    fn a_refusal_that_passes_costs_a_reconnect_one_attempt() {
+        const RETRY: &str = "retry in 100 []";
+        const GIVE_UP: &str = "closed [] Final";
+        for (replies, expected) in [
+            ("-LOADING Redis is loading\r\n", RETRY),
+            ("-BUSY Redis is busy\r\n", RETRY),
+            ("-MASTERDOWN Link is down\r\n", RETRY),
+            ("-TRYAGAIN Later\r\n", RETRY),
+            ("-ERR max number of clients reached\r\n", RETRY),
+            ("+OK\r\n-BUSY Redis is busy\r\n", RETRY),
+            ("-WRONGPASS invalid\r\n", GIVE_UP),
+            ("-NOAUTH required\r\n", GIVE_UP),
+            ("-NOPROTO unsupported\r\n", GIVE_UP),
+            ("-BUSYKEY exists\r\n", GIVE_UP),
+            (":1\r\n", GIVE_UP),
+            ("+OK\r\n-NOPERM no\r\n", GIVE_UP),
+            ("+OK\r\n-ERR DB index is out of range\r\n", GIVE_UP),
+        ] {
+            let mut it = Driver::new(database(1));
+            it.dial();
+            it.start();
+            it.read("+OK\r\n+OK\r\n");
+            it.lost();
+            it.dial();
+            it.start();
+            it.read(replies);
+            assert_eq!(it.log.last().unwrap(), expected, "{replies:?}");
+
+            let mut first = Driver::new(database(1));
+            first.dial();
+            first.start();
+            first.read(replies);
+            assert_eq!(first.log.last().unwrap(), GIVE_UP, "{replies:?}");
         }
     }
 }
@@ -938,7 +1070,7 @@ mod pipeline {
                 it.take(),
                 ["resolve #1 abc", "ignored", "resolve #2 ?", "resolve #3 OK"]
             );
-            assert!(!it.client.has_pending_commands());
+            assert!(!it.client.has_commands() && it.client.buffered_amount() == 0);
         }
     }
 

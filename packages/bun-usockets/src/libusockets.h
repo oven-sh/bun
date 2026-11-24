@@ -721,6 +721,8 @@ void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* Call before another process gets a duplicate of the listening socket. */
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) nonnull_fn_decl;
 /* SO_RCVBUF / SO_SNDBUF, like us_udp_socket_buffer_size. */
 int us_socket_buffer_size(us_socket_r s, int is_recv, int size, int *out) nonnull_fn_decl;

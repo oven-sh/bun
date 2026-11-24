@@ -1862,7 +1862,7 @@ impl Data {
                         .args
                         .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
                     optional_chain: el.optional_chain,
-                    is_direct_eval: el.is_direct_eval,
+                    kind: el.kind,
                     close_paren_loc: el.close_paren_loc,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     was_jsx_element: el.was_jsx_element,
@@ -1948,7 +1948,10 @@ impl Data {
             Data::ETemplate(el) => {
                 let item = bump.alloc(E::Template {
                     tag: match &el.tag {
-                        Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
+                        Some(tag) => Some(E::TemplateTag {
+                            expr: tag.expr.deep_clone_no_detach(bump, stack_check)?,
+                            kind: tag.kind,
+                        }),
                         None => None,
                     },
                     parts: el.parts,

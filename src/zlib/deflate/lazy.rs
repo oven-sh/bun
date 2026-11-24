@@ -61,7 +61,7 @@ impl Deflater {
                 {
                     let mut found;
                     if previous.len < MIN_MATCH_LEN as u32 {
-                        found = matcher.insert_and_match::<ROLLING>(target);
+                        found = matcher.insert_and_match::<ROLLING, true>(target);
                     } else {
                         let is_good_enough = previous.len >= tuning.max_lazy;
                         found = matcher.insert_and_improve::<ROLLING>(

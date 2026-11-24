@@ -227,12 +227,7 @@ fn pregrow_fd_table() {
 /// immediate NULL). Runs first thing in `main()`: these hooks only swap
 /// function pointers, so nothing may have allocated through the library yet.
 ///
-/// The two dependencies not switched here:
-/// - c-ares: `ares_library_init_mem(.., mi_malloc, mi_free, mi_realloc)` in
-///   `bun_cares_sys`, because it is part of the (lazy) library init.
-/// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` and
-///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
-///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
+/// BoringSSL is switched at link time, by the `OPENSSL_memory_*` and `OPENSSL_system_*` definitions in `bun_boringssl`.
 fn use_mimalloc_in_dependencies() {
     // libuv (only linked on Windows). Must precede the first uv call. Left on
     // the CRT heap under ASAN like BoringSSL, so the sanitizer sees

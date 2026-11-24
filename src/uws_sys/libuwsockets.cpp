@@ -3,9 +3,8 @@
 #include "libusockets.h"
 #include <bun-usockets/src/internal/internal.h>
 #include <cerrno>
-#include <cstring>
 
-extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
+extern "C" size_t Bun__formatIpAddress(char (&buffer)[64], bool is_ipv6);
 extern "C" int bun_is_exiting();
 extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 #ifndef _WIN32
@@ -89,17 +88,9 @@ extern "C"
     auto length = us_get_remote_address_info(b, res, dest, port, (int*)is_ipv6);
 
     if (length == 0) return 0;
-    if (length == 4) {
-      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-      *dest = &b[4];
-      *is_ipv6 = false;
-      return strlen(*dest);
-    } else {
-      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-      *dest = &b[16];
-      *is_ipv6 = true;
-      return strlen(*dest);
-    }
+    *dest = b;
+    *is_ipv6 = length != 4;
+    return Bun__formatIpAddress(b, *is_ipv6);
   }
 
   uint64_t uws_res_get_local_address_info(us_socket_r res, const char **dest, int *port, bool *is_ipv6)
@@ -108,17 +99,9 @@ extern "C"
     auto length = us_get_local_address_info(b, res, dest, port, (int*)is_ipv6);
 
     if (length == 0) return 0;
-    if (length == 4) {
-      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-      *dest = &b[4];
-      *is_ipv6 = false;
-      return strlen(*dest);
-    } else {
-      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-      *dest = &b[16];
-      *is_ipv6 = true;
-      return strlen(*dest);
-    }
+    *dest = b;
+    *is_ipv6 = length != 4;
+    return Bun__formatIpAddress(b, *is_ipv6);
   }
 
   // A thread that ran a uws loop (a Worker) is exiting; free its loop. On Windows the loop sits on

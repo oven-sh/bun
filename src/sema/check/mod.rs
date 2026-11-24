@@ -1033,6 +1033,7 @@ impl<'s> Program<'s> {
             unfinished_measurements: Vec::new(),
             last_measurement_cycle: MeasurementCycle::default(),
             has_uncommitted_measurement_cycle: false,
+            variances_awaiting_commit: Default::default(),
             in_progress_variance_reads: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
@@ -2459,6 +2460,7 @@ pub struct Checker<'p, 's> {
     unfinished_measurements: Vec<UnfinishedMeasurement>,
     last_measurement_cycle: MeasurementCycle,
     has_uncommitted_measurement_cycle: bool,
+    variances_awaiting_commit: std::cell::RefCell<Vec<(Sym, &'s [u8])>>,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// The computed names of `task.file` whose expression `GetConstantValue` was the first to
@@ -4958,6 +4960,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(never)]
     pub(super) fn note_gave_up(&self) {
         self.note_state_was_read();
+        self.share_variances_awaiting_commit();
         self.task.discard();
     }
 

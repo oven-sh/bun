@@ -1239,6 +1239,7 @@ impl<'s> Checker<'_, 's> {
         task.buffer().recycle_log(log);
         task.buffer().recycle_prepared(prepared.entries);
         self.has_uncommitted_measurement_cycle = false;
+        self.variances_awaiting_commit.get_mut().clear();
         true
     }
 

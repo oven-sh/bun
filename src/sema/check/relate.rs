@@ -3305,6 +3305,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => None,
         };
+        if reason == Some(NotShared::Notes) && self.has_uncommitted_measurement_cycle {
+            self.note_variances_awaiting_commit();
+        }
         let measured = &self.variances_measured[..];
         let may_share = reason.is_none();
         // What was measured inside can be complete even if the outermost result isn't.
@@ -3325,6 +3328,26 @@ impl<'p, 's> Checker<'p, 's> {
                 void_targets: 0,
                 inferred: 0,
             });
+        }
+    }
+
+    fn note_variances_awaiting_commit(&mut self) {
+        let awaiting = self.variances_awaiting_commit.get_mut();
+        let uses_no_others =
+            (self.order_dependent.keys()).all(|noted| awaiting.iter().any(|(sym, _)| sym == noted));
+        if uses_no_others
+            && self.task.is_trusted_about_every_cycle()
+            && !self.task.overlaps_a_cycle_commit()
+            && !self.task.was_discarded()
+        {
+            awaiting.extend_from_slice(&self.variances_measured);
+        }
+    }
+
+    pub(super) fn share_variances_awaiting_commit(&self) {
+        let awaiting = self.variances_awaiting_commit.take();
+        if !awaiting.is_empty() && !self.task.is_trusted() && !self.task.was_discarded() {
+            self.p.share_variances(&awaiting, true, None);
         }
     }
 

@@ -52,6 +52,7 @@ impl<'s> Checker<'_, 's> {
 
         self.order_dependent.clear();
         self.has_uncommitted_measurement_cycle = false;
+        self.variances_awaiting_commit.get_mut().clear();
         self.fixed_length_asked_last = None;
         self.refused_instantiations_tried.clear();
     }

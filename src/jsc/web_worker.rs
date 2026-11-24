@@ -133,7 +133,8 @@ pub struct WebWorker {
     /// `shutdown()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
-    /// `process.exit(code)` ran; later error paths must not overwrite its code.
+    /// `process.exit(code)` ran, or a fatal error ran the 'exit' listeners; later
+    /// error paths must not overwrite the code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
@@ -1112,8 +1113,9 @@ impl WebWorker {
         let promise = match vm.load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // A stop (process.exit(), a fatal error, terminate()) is not a failed load: the
+                // code is its requester's to set.
+                if !self.has_requested_terminate() {
                     vm.exit_handler.exit_code.set(1);
                 }
                 self.flush_logs(vm);
@@ -1281,7 +1283,7 @@ impl WebWorker {
             && !self.exit_called.load(Ordering::Relaxed)
     }
 
-    /// process.exit() inside the worker. Worker-thread only.
+    /// process.exit() inside the worker, or its fatal error. Worker-thread only.
     ///
     /// Takes `&self` (not `&mut self`) because `request_termination` /
     /// other threads may concurrently hold `&WebWorker` on another
@@ -1365,6 +1367,8 @@ fn on_unhandled_rejection(
         return;
     }
 
+    vm.exit_handler.exit_code.set(1);
+
     // The realm that raised the error may be a node:vm context.
     let global_object = vm.global();
 
@@ -1438,7 +1442,6 @@ fn on_unhandled_rejection(
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
-    let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
     // the `JSC::VM` and free the Bun `VirtualMachine`, then return through
@@ -1447,8 +1450,8 @@ fn on_unhandled_rejection(
     // JSC C++ frames operating on a destroyed `JSC::VM`, and back into
     // `spin()` which dereferences the freed `*vm`.
     //
-    // Instead, request the stop as `exit()` does and unwind to `run()`'s `shutdown()`.
-    vm.handle_ref().request_termination();
+    // Instead, stop as `process.exit()` does and unwind to `run()`'s `shutdown()`.
+    worker.exit();
 }
 
 /// What a program compiled ahead of time asks where a Worker is created, ahead of the Worker's own resolve, which reports what is wrong

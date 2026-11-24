@@ -240,6 +240,24 @@ impl ModuleGraph {
         &self.row(file).requests
     }
 
+    /// The loader binds some statements of test files at run time: those are no requests.
+    pub fn requests_transitively(&self, importer: FileId, target: FileId) -> bool {
+        let mut left = vec![importer];
+        let mut is_reached: FxHashSet<FileId> = FxHashSet::default();
+        while let Some(file) = left.pop() {
+            if file == target {
+                return true;
+            }
+            if let Some(row) = self.find_row(file).filter(|_| is_reached.insert(file)) {
+                left.extend(row.requests.iter().filter_map(|it| match it.target {
+                    ModuleRef::File(file) | ModuleRef::Facade(file) => Some(file),
+                    _ => None,
+                }));
+            }
+        }
+        false
+    }
+
     pub fn commonjs(&self) -> &CommonJsExports {
         &self.commonjs_exports
     }

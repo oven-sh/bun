@@ -644,7 +644,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 CalleeTest::IsRequireOf(exporter)
             }
             (OtherValues::Any, Some(exporter), Some(OwnRequire::MadeInOtherFile(_))) => {
-                if !modules.is_code_of_program(ModuleRef::File(exporter)) {
+                if !modules.is_code_of_program(ModuleRef::File(exporter))
+                    || (modules.runs_tests()
+                        && !modules.requests_transitively(self.file.file, exporter))
+                {
                     return None;
                 }
                 CalleeTest::IsMadeIn(exporter)

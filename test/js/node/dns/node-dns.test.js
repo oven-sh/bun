@@ -1698,6 +1698,31 @@ describe("resolve record types", () => {
     }
   });
 
+  test.concurrent("answers that have arrived are found among copies after the timeout", async () => {
+    using dir = tempDir("dns-copies", {});
+    const flag = path.join(String(dir), "sent");
+    const { socket, resolver } = await startFakeServer();
+    try {
+      socket.removeAllListeners("message");
+      let left = 60 * 4;
+      socket.on("message", (query, { port, address }) => {
+        for (let i = 0; i < 4; i++) socket.send(respond(query, []), port, address, () => --left || Bun.write(flag, ""));
+      });
+      const script = `
+        const resolver = new dns.promises.Resolver({ timeout: 250, tries: 1 });
+        resolver.setServers(${JSON.stringify(resolver.getServers())});
+        const all = Array.from({ length: 60 }, (_, i) => resolver.resolve4(i + ".test").then(String, err => err.code));
+        const deadline = Date.now() + 30_000;
+        while (!fs.existsSync(${JSON.stringify(flag)}) && Date.now() < deadline) Bun.sleepSync(1);
+        Bun.sleepSync(250);
+        console.log(...new Set(await Promise.all(all)));
+      `;
+      expect(await bunRun(["-e", script])).toSpawn(String(byType.A.expected));
+    } finally {
+      socket.close();
+    }
+  });
+
   test.concurrent("an answer over TCP counts after the query was asked again", async () => {
     let answerFirst;
     await using server = net.createServer(socket => {

@@ -48,8 +48,8 @@ const MAX_HOLD: Duration = Duration::from_secs(2);
 const MANY_SOCKETS: usize = 256;
 /// Half of the ids.
 const MAX_TRIES_PER_SOCKET: usize = 1 << 15;
-/// Messages that answer nothing, after which the event loop gets its turn.
-const MAX_STRAYS_PER_READ: usize = 64;
+/// Messages that answer nothing, after which the event loop gets its turn. Replies can be behind a full buffer of copies.
+const MAX_STRAYS_PER_READ: usize = 4096;
 /// Datagrams that are not accounted for, after which a socket counts as broken.
 const SPARE_STRAYS: usize = 32;
 const MAX_FRAME_LEN: usize = 2 + u16::MAX as usize;
@@ -570,7 +570,9 @@ impl<S: System, R> Client<S, R> {
         *server.socket(transport) = Some(socket);
 
         let failed_tries = query.as_ref().map_or(0, |it| it.failed_tries);
-        let (max, rounds) = (self.max_timeout, failed_tries / count);
+        // The list may have been longer.
+        let rounds = self.tries.min(failed_tries / count);
+        let max = self.max_timeout;
         let timeout = back_off(timeout, max, rounds, &mut self.system);
         let mut overtime_until = self.now;
         if let Some(query) = query {
@@ -832,7 +834,7 @@ impl<S: System, R> Client<S, R> {
 
     fn read(&mut self, connection: &mut Connection<S::Socket>) -> Result<(), Failed> {
         let mut buffer = core::mem::take(&mut connection.input);
-        let mut strays = 0;
+        let (mut strays, mut result) = (0, Ok(()));
         while strays < MAX_STRAYS_PER_READ
             && !connection.tries.is_empty()
             && !connection.is_connecting
@@ -845,6 +847,13 @@ impl<S: System, R> Client<S, R> {
                         (connection.room, connection.quiet_since) = (S::DATAGRAMS_HELD, self.now);
                     }
                     break;
+                }
+                // Linux reports it before the datagrams that have arrived.
+                Err(SocketError::Failed)
+                    if connection.transport == Transport::Udp && result.is_ok() =>
+                {
+                    result = Err(Failed);
+                    continue;
                 }
                 Err(SocketError::Failed) => return Err(Failed),
             };
@@ -876,7 +885,7 @@ impl<S: System, R> Client<S, R> {
         if !buffer.is_empty() {
             connection.input = buffer;
         }
-        Ok(())
+        result
     }
 
     /// Returns whether `bytes` were the reply to a try.

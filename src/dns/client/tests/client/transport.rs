@@ -680,21 +680,31 @@ fn unspecified_address_is_this_machine() {
 
 #[test]
 fn reading_takes_turns_with_the_event_loop() {
-    for (count, expected) in [(63, [2, 0]), (64, [0, 2])] {
-        for len in [0, 2] {
-            let mut test = one_server().start();
-            test.ask_many("test", 32);
-            test.wait(1);
-            let [a, b] = ["a.test", "b.test"].map(|name| test.ask(name));
-            test.wait(1999);
-            (0..count).for_each(|_| test.arrive(0, &a.bytes[..len]));
-            test.arrive(0, &good(&a));
-            test.arrive(0, &good(&b));
-            assert_eq!(
-                [(); 2].map(|()| test.process(0, true, false).len()),
-                expected
-            );
-        }
+    for (count, expected) in [(4095, [2, 0]), (4096, [0, 2])] {
+        let mut test = one_server().start();
+        let [a, b, c] = ["a.test", "b.test", "c.test"].map(|name| test.ask(name));
+        test.arrive(0, &a.bytes[..2]);
+        test.arrive(0, &good(&c));
+        (1..count).for_each(|_| test.arrive(0, &good(&c)));
+        test.arrive(0, &good(&a));
+        test.arrive(0, &good(&b));
+        let [first, second] = [(); 2].map(|()| test.process(0, true, false));
+        assert_eq!([first.len() - 1, second.len()], expected);
+        assert!(first.iter().chain(&second).all(|it| it.ends_with(GOOD[0])));
+
+        let mut test = one_server().start();
+        test.ask_many("test", 4090);
+        test.wait(1);
+        let [a, b] = ["a.test", "b.test"].map(|name| test.ask(name));
+        test.wait(1999);
+        (0..count).for_each(|_| test.arrive(0, b""));
+        test.arrive(0, &good(&a));
+        test.arrive(0, &good(&b));
+        assert_eq!(
+            [(); 2].map(|()| test.process(0, true, false).len()),
+            expected
+        );
+
         let (mut test, replies) = two_on_a_stream();
         let long = frame(&vec![0; u16::MAX.into()]);
         test.arrive(0, &[frame(b"").repeat(count), long, replies].concat());
@@ -955,6 +965,13 @@ fn place_of_a_late_try_is_taken() {
     assert_ne!(again.id(), first.id());
     assert_eq!(test.deliver(&second, &good(&second)), GOOD);
     assert_eq!(test.deliver(&other, &good(&other)), ["2: 1.1.1.1/60"]);
+}
+
+#[test]
+fn late_try_at_a_server_that_goes() {
+    let (mut test, ..) = on_two_streams(9);
+    assert_eq!(test.set_servers(&["10.0.0.2:53"]), NOTHING);
+    assert_eq!(test.sent_one().question(), "a.test A");
 }
 
 #[test]
@@ -1242,6 +1259,27 @@ fn error_on_a_socket() {
     test.arrive(0, &reply(&query.bytes, NXDOMAIN, [&[], &[], &[]]));
     assert_eq!(test.process_error(0), NOTHING);
     assert_eq!(test.sent_one().socket, 1);
+}
+
+#[test]
+fn replies_behind_an_error() {
+    for (setup, errors, expected) in [
+        (one_server(), 1, GOOD[0]),
+        (one_server(), 2, "ECONNREFUSED"),
+        (over_tcp(), 1, "ECONNREFUSED"),
+    ] {
+        let mut test = setup.tries(1).start();
+        let [a, _] = ["a.test", "b.test"].map(|name| test.ask(name));
+        (0..errors).for_each(|_| test.break_socket(0));
+        assert_eq!(test.deliver(&a, &good(&a)), [expected, "2: ECONNREFUSED"]);
+    }
+
+    let mut test = two_servers().start();
+    let query = test.ask("a.test");
+    test.break_socket(0);
+    assert_eq!(test.deliver(&query, &good(&query)), GOOD);
+    assert_eq!(test.servers(), ["10.0.0.1:53", "10.0.0.2:53"]);
+    assert!(test.is_idle());
 }
 
 #[test]

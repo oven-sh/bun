@@ -165,6 +165,14 @@ fn timer_that_fires_early_ends_nothing() {
 }
 
 #[test]
+fn timer_that_fires_late() {
+    let mut test = one_server().tries(1).start();
+    test.ask("a.test");
+    assert_eq!(test.tick(1500), NOTHING);
+    assert_eq!(test.tick(1500), ["ETIMEOUT"]);
+}
+
+#[test]
 fn many_rounds() {
     for asked in [None, Some(u64::MAX)] {
         let mut setup = one_server().tries(64);
@@ -176,6 +184,22 @@ fn many_rounds() {
         }
         assert_eq!(test.wait(u64::MAX), ["ETIMEOUT"]);
     }
+}
+
+#[test]
+fn rounds_with_a_list_that_got_shorter() {
+    let mut test = one_server().tries(2).start();
+    test.set_servers(&[FIRST, SECOND, THIRD]);
+    let mut query = test.ask("a.test");
+    for _ in 0..5 {
+        assert_eq!(test.wait(4000), NOTHING);
+        query = test.sent().swap_remove(0);
+    }
+    test.set_servers(&[&test.server_of(&query)]);
+    test.world().randoms.extend([1; 9]);
+    test.decline(&query, TRUNCATED);
+    test.sent_one();
+    assert_eq!(test.wait_for_timeout(), 8000);
 }
 
 fn answer_after(test: &mut Test, ms: u64, flags: u16) {

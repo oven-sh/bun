@@ -944,7 +944,7 @@ function describeAddress(options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptio
   if (path) return path;
   const hostname = options.hostname!;
   // A URL or credentials in the place of a host name.
-  const shown = /[@/=]|%40/.test(hostname) ? withoutSecrets(hostname) : hostname;
+  const shown = /[@/=]|%40/.test(hostname) ? REDACTED : hostname;
   const why = whyLocalhost.get(options);
   return `${shown}:${options.port}${why ? ` (${why})` : ""}`;
 }

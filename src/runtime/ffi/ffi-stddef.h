@@ -3,7 +3,11 @@
 
 typedef __SIZE_TYPE__ size_t;
 typedef __PTRDIFF_TYPE__ ssize_t;
+/* musl's <bits/alltypes.h> shares this guard: its wchar_t is unsigned on aarch64. */
+#ifndef __DEFINED_wchar_t
 typedef __WCHAR_TYPE__ wchar_t;
+#define __DEFINED_wchar_t
+#endif
 typedef __PTRDIFF_TYPE__ ptrdiff_t;
 typedef __PTRDIFF_TYPE__ intptr_t;
 typedef __SIZE_TYPE__ uintptr_t;

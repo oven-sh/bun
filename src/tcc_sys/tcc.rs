@@ -177,6 +177,11 @@ pub struct ConfigErr<ErrCtx> {
 
 pub struct Config<'a, ErrCtx> {
     pub options: Option<&'a ZStr>,
+    /// System include paths that TinyCC searches after the `-isystem`
+    /// directories of `options` and before its own default directories.
+    /// TinyCC appends the defaults when the output type is set, so
+    /// [`State::add_sys_include_path`] adds a path behind them.
+    pub sys_include_paths_before_defaults: &'a [&'a ZStr],
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
 }
@@ -241,6 +246,10 @@ impl OwnedState {
             if let Some(options) = config.options {
                 state.set_options(options)?;
             }
+        }
+
+        for pathname in config.sys_include_paths_before_defaults {
+            state.add_sys_include_path(pathname)?;
         }
 
         state.set_output_type(config.output_type)?;

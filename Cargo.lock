@@ -2078,7 +2078,6 @@ dependencies = [
  "bun_zstd",
  "const_format",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]

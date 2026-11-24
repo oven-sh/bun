@@ -7,8 +7,14 @@ const limit = b.f64;
 const maxEditLength = limit.optional;
 const context = limit.default(4);
 
+const off = b.bool.default(false);
+const forText = { maxEditLength, ignoreCase: off } as const;
+const forLines = { ...forText, ignoreWhitespace: off, stripTrailingCr: off } as const;
+
 export const Options = b.dictionary({ maxEditLength }, { reportedAs: "options" });
-export const HunksOptions = b.dictionary({ context, maxEditLength }, { reportedAs: "options" });
+export const TextOptions = b.dictionary(forText, { reportedAs: "options" });
+export const LinesOptions = b.dictionary(forLines, { reportedAs: "options" });
+export const HunksOptions = b.dictionary({ context, ...forLines }, { reportedAs: "options" });
 export const PatchOptions = b.dictionary(
   {
     oldFileName: b.string.utf8.optional,
@@ -16,7 +22,7 @@ export const PatchOptions = b.dictionary(
     oldHeader: b.string.optional,
     newHeader: b.string.optional,
     context,
-    maxEditLength,
+    ...forLines,
   },
   { reportedAs: "options" },
 );
@@ -56,13 +62,13 @@ export const PatchToApply = b.union({ text: b.string, hunks: b.array(HunkToApply
 const texts = { oldText: b.string, newText: b.string } as const;
 const throws = { capability: "heap", throws: true } as const;
 const text = {
-  args: { ...texts, options: Options.default({}) },
+  args: { ...texts, options: TextOptions.default({}) },
   returns: b.array(Change).optional,
   ...throws,
 } as const;
 
 export const diff = b.namespace({
-  lines: text,
+  lines: { ...text, args: { ...texts, options: LinesOptions.default({}) } },
   words: text,
   chars: text,
   /** An element can be a getter. */

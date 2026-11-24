@@ -4360,17 +4360,14 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
             ]
             .concat(),
         );
-        let is_complete = {
-            let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600)
-                .map(bun_sys::CloseOnDrop::new)
-                .ok()?;
-            file.write_all(contents).is_ok()
-        };
-        if !is_complete || bun_sys::rename(&scratch, &to).is_err() {
-            let _ = bun_sys::unlink(&scratch);
-            if !is_written() {
-                return None;
-            }
+        let flags = O::WRONLY | O::CREAT | O::EXCL;
+        let scratch = bun_sys::Tmpfile::open(bun_sys::Fd::cwd(), scratch, flags, 0o600).ok()?;
+        let is_complete = scratch.file.write_all(contents).is_ok();
+        let scratch = scratch.close();
+        if is_complete && bun_sys::rename(&scratch, &to).is_ok() {
+            scratch.keep();
+        } else if !is_written() {
+            return None;
         }
     }
     Some(written_path(addon.name).to_vec())

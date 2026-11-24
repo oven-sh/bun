@@ -254,9 +254,11 @@ impl String {
         if s.is_empty() {
             return Self::EMPTY;
         }
+        // A loop without an early exit is vectorized.
+        let is_ascii = |block: &[u16]| block.iter().fold(0, |all, &unit| all | unit) < 0x80;
         // SAFETY: s.as_ptr()/len describe a valid u16 slice.
         unsafe {
-            if strings::first_non_ascii16(s).is_none() {
+            if s.chunks(64).all(is_ascii) {
                 BunString__fromUTF16ToLatin1(s.as_ptr(), s.len())
             } else {
                 BunString__fromUTF16(s.as_ptr(), s.len())

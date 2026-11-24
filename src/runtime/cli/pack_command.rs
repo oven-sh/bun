@@ -2159,14 +2159,11 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
 
 /// The temporary file that `open_tarball` created. A failed pack can exit from many places, so an
 /// exit callback removes the file.
-static UNFINISHED_TARBALL: bun_core::Mutex<Option<(File, ZBox)>> = bun_core::Mutex::new(None);
+static UNFINISHED_TARBALL: bun_core::Mutex<Option<bun_sys::Tmpfile<Path>>> =
+    bun_core::Mutex::new(None);
 
 extern "C" fn remove_unfinished_tarball() {
-    if let Some((file, path)) = UNFINISHED_TARBALL.lock().take() {
-        // Windows cannot delete the file while it is open.
-        drop(file);
-        let _ = bun_sys::unlink(&path);
-    }
+    *UNFINISHED_TARBALL.lock() = None;
 }
 
 /// Creates a temporary file next to the destination, which `finish_tarball` renames over it. If
@@ -2193,32 +2190,34 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> 
     let mut tmp = Path::from(abs_tarball_dest);
     tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
     tmp.extend_from_slice(name);
-    let file = File::openat(
+    let tmp = bun_sys::Tmpfile::open(
         Fd::cwd(),
-        &tmp,
+        tmp,
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
         mode,
     )
     .ok()?;
-    let fd = file.fd();
-    *UNFINISHED_TARBALL.lock() = Some((file, tmp.to_zbox()));
+    let fd = tmp.file.fd();
+    *UNFINISHED_TARBALL.lock() = Some(tmp);
     Global::add_exit_callback(remove_unfinished_tarball);
     Some(fd)
 }
 
 fn finish_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) {
-    let Some((file, tmp)) = UNFINISHED_TARBALL.lock().take() else {
+    let Some(tmp) = UNFINISHED_TARBALL.lock().take() else {
         return;
     };
     // Windows cannot rename the file while it is open.
-    drop(file);
+    let tmp = tmp.close();
     if bun_sys::rename(&tmp, abs_tarball_dest).is_ok() {
+        tmp.keep();
         return;
     }
     // A file that is a mount point, or another user's file in a sticky directory, cannot be
     // replaced but can still be written to.
     let tarball_bytes = File::read_from(Fd::cwd(), tmp.as_bytes());
-    let _ = bun_sys::unlink(&tmp);
+    // What follows can exit.
+    drop(tmp);
     match tarball_bytes {
         Ok(tarball_bytes) => {
             write_tarball_in_place(abs_tarball_dest, &tarball_bytes, is_typed_filename)

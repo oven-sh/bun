@@ -1,5 +1,8 @@
 const { validateString } = require("internal/validators");
 
+const StringPrototypeSplit: (this: string, separator: string) => string[] = String.prototype.split;
+const diffArrays = Bun.diff.arrays;
+
 function validateInput(value, name) {
   if (!$isJSArray(value)) {
     validateString(value, name);
@@ -7,6 +10,11 @@ function validateInput(value, name) {
   }
   for (let i = 0; i < value.length; i++) validateString(value[i], `${name}[${i}]`);
 }
+
+// About four times what `nativeDiff` takes.
+const STEPS_PER_ITEM = 32;
+// `Bun.diff.arrays` throws for more.
+const MAX_NATIVE_LENGTH = 2 ** 28;
 
 // Myers' algorithm as in Node's lib/internal/assert/myers_diff.js, so that ties come out in the same order.
 // Node copies every diagonal at every level. A level here leaves out diagonals that no shortest path can still use:
@@ -20,8 +28,10 @@ function myersDiff(actual, expected) {
   const lowest = [previousLow];
   let low = 0;
   let high = 0;
+  let stepsLeft = STEPS_PER_ITEM * (actualLength + expectedLength + 1);
+  if (actualLength > MAX_NATIVE_LENGTH || expectedLength > MAX_NATIVE_LENGTH) stepsLeft = Infinity;
 
-  while (true) {
+  search: while ((stepsLeft -= (high - low) / 2 + 1) >= 0) {
     const current = new Int32Array((high - low) / 2 + 1);
     let nextLow = low - 1;
     let nextHigh = high + 1;
@@ -34,9 +44,13 @@ function myersDiff(actual, expected) {
       let x = below < next ? next : below + 1;
       below = next;
       let y = x - diagonalIndex;
-      while (x < actualLength && y < expectedLength && actual[x] === expected[y]) {
-        x++;
-        y++;
+      if (x < actualLength && y < expectedLength && actual[x] === expected[y]) {
+        stepsLeft += x;
+        do {
+          x++;
+          y++;
+        } while (x < actualLength && y < expectedLength && actual[x] === expected[y]);
+        if ((stepsLeft -= x) < 0) break search;
       }
       current[i] = x;
       // After a diagonal has used up an input, no shortest path continues along it or beyond it.
@@ -56,6 +70,20 @@ function myersDiff(actual, expected) {
     low = nextLow;
     high = nextHigh;
   }
+  return nativeDiff(actual, expected);
+}
+
+// `Bun.diff` breaks ties in the same way. It is slower to start, and neither its time nor its memory is quadratic.
+function nativeDiff(actual, expected) {
+  const result: [number, string][] = [];
+  const items = (value): string[] => ($isJSArray(value) ? value : StringPrototypeSplit.$call(value, ""));
+  const changes = diffArrays(items(actual), items(expected));
+  for (let change = 0; change < changes.length; change++) {
+    const { value, added, removed } = changes[change];
+    const kind = removed ? 1 : added ? -1 : 0;
+    for (let i = 0; i < value.length; i++) result.push([kind, value[i]]);
+  }
+  return result;
 }
 
 function backtrack(trace: Int32Array[], lowest: number[], actual, expected) {

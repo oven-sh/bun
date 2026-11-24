@@ -1593,9 +1593,16 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
+        let utf16 = utf16_within_reach(utf16, buf);
         let input = WithUtf8Len::utf16_worst_case(utf16, buf.len())
             .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(utf16));
         copy_utf16_into_utf8_with_utf8_len(buf, input)
+    }
+
+    /// A unit takes at least a byte, so no more can be written to `buf`. One more can complete a surrogate pair.
+    #[inline]
+    pub(crate) fn utf16_within_reach<'a>(utf16: &'a [u16], buf: &[u8]) -> &'a [u16] {
+        &utf16[..utf16.len().min(buf.len() + 1)]
     }
 
     pub fn copy_utf16_into_utf8_with_utf8_len(
@@ -1646,7 +1653,7 @@ pub(crate) mod strings_impl {
             };
         }
         const MIN_LEN_FOR_SIMDUTF: usize = 64;
-        if latin1.len() >= MIN_LEN_FOR_SIMDUTF {
+        if (MIN_LEN_FOR_SIMDUTF..=buf.len()).contains(&latin1.len()) {
             let input = WithUtf8Len::latin1(latin1);
             if buf.len() >= input.utf8_len() {
                 let mut out = BorrowedBuf::from(buf);

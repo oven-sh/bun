@@ -1,13 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-
-// Runs until it is killed.
-const idle = () =>
-  Bun.spawn({
-    cmd: [bunExe(), "-e", "setInterval(() => {}, 1000)"],
-    stdio: ["ignore", "ignore", "ignore"],
-    env: bunEnv,
-  });
+import { idle } from "./process-kill-helpers";
 
 let fromBeforeEach: ReturnType<typeof idle>;
 let fromBeforeAll: ReturnType<typeof idle>;

@@ -34,23 +34,43 @@ if (isFlaky && isLinux) {
   });
 }
 
-// Only the processes the timed-out test or hook spawned are killed, not the ones from earlier hooks.
-test.concurrent.each([
-  [
-    "test",
-    "process-kill-beforeall-fixture.ts",
-    "test timeout kills the processes this test spawned",
-    "process spawned in beforeAll and beforeEach survives the timeout",
-  ],
-  [
-    "beforeEach",
-    "process-kill-hook-timeout-fixture.ts",
-    "beforeEach times out > hook timeout kills the processes the hook spawned",
-    "process spawned in beforeAll survives the hook timeout",
-  ],
-])("%s timeout keeps processes spawned in earlier hooks", async (_, fixture, failing, passing) => {
+// Only the processes the timed-out test or hook spawned are killed, not the ones spawned before it.
+test.each([
+  {
+    name: "test",
+    fixture: "process-kill-beforeall-fixture.ts",
+    failing: "test timeout kills the processes this test spawned",
+    passing: "process spawned in beforeAll and beforeEach survives the timeout",
+  },
+  {
+    name: "beforeEach",
+    fixture: "process-kill-hook-timeout-fixture.ts",
+    failing: "beforeEach times out > hook timeout kills the processes the hook spawned",
+    passing: "process spawned in beforeAll survives the hook timeout",
+  },
+  {
+    name: "spawnSync",
+    fixture: "process-kill-spawnsync-fixture.ts",
+    failing: "test timeout kills the process spawnSync waits for",
+    passing: "process spawned in beforeAll survives the timeout",
+  },
+  {
+    name: "--isolate",
+    fixture: "process-kill-module-scope-fixture.ts",
+    args: ["--isolate"],
+    failing: "test timeout kills the processes this test spawned",
+    passing: "process spawned at the top of the file survives the timeout",
+  },
+  {
+    name: "--parallel",
+    fixture: "process-kill-module-scope-fixture.ts",
+    args: ["--parallel"],
+    failing: "test timeout kills the processes this test spawned",
+    passing: "process spawned at the top of the file survives the timeout",
+  },
+])("$name timeout keeps processes spawned before it", async ({ fixture, args = [], failing, passing }) => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, fixture)],
+    cmd: [bunExe(), "test", ...args, path.join(import.meta.dir, fixture)],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,

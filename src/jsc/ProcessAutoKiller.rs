@@ -41,7 +41,7 @@ impl ProcessAutoKiller {
         self.enabled.set(false);
     }
 
-    pub fn kill(&self) -> Result {
+    pub(crate) fn kill(&self) -> Result {
         Result {
             processes: self.kill_processes(),
         }

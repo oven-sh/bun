@@ -1,15 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-
-// Echoes stdin to stdout until it is killed.
-const echo = () =>
-  Bun.spawn({
-    cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "inherit",
-    env: bunEnv,
-  });
+import { echo, roundTrip } from "./process-kill-helpers";
 
 let server: ReturnType<typeof echo>;
 let hookProcess: ReturnType<typeof echo> | undefined;
@@ -32,14 +22,10 @@ describe("beforeEach times out", () => {
   test("hook timeout kills the processes the hook spawned", () => {});
 });
 
+// Its own timeout gives the process from beforeAll time to start on a slow machine.
 test("process spawned in beforeAll survives the hook timeout", async () => {
   // Only the timeout's kill ends this process.
   await hookProcess!.exited;
 
-  const reader = server.stdout.getReader();
-  server.stdin.write("ping\n");
-  server.stdin.flush();
-  const { value } = await reader.read();
-  expect(new TextDecoder().decode(value)).toBe("ping\n");
-  reader.releaseLock();
-});
+  expect(await roundTrip(server)).toBe("ping\n");
+}, 30_000);

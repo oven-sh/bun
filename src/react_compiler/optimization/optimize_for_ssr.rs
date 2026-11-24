@@ -275,6 +275,7 @@ pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                     } => InstructionValue::CallExpression {
                                         callee: callee.clone(),
                                         args: hir_vec![PlaceOrSpread::Place(arg.clone())],
+                                        bun_kind: bun_ast::E::CallKind::Plain,
                                         loc: *loc,
                                     },
                                 };

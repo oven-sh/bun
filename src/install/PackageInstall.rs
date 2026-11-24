@@ -872,7 +872,7 @@ impl LinkBatch {
         // Move the old package aside right before linking, so it's only missing for as long as
         // linking takes.
         let tree_dir = Dir::borrow(&job.tree_dir);
-        let old = if job.skip_delete {
+        let _old = if job.skip_delete {
             None
         } else {
             move_aside(tree_dir, &job.destination_dir_subpath, job.random)
@@ -890,9 +890,6 @@ impl LinkBatch {
             job.resolution_tag,
             None,
         );
-        if let Some(old) = old {
-            let _ = tree_dir.delete_tree(old.as_bytes());
-        }
         let _ = job.result.set(result);
     }
 
@@ -1268,7 +1265,7 @@ impl PackageFiles<'_> {
                             // `from_raw`'s release-mode transmute on an unexpected value.
                             Err(e) => match e.get_errno() {
                                 sys::Errno::EXDEV => return Err(crate::Error::NotSupported), // not same file system
-                                sys::Errno::EOPNOTSUPP => {
+                                sys::Errno::ENOTSUP | sys::Errno::EOPNOTSUPP => {
                                     return Err(crate::Error::NotSupported);
                                 }
                                 sys::Errno::ENOENT => {
@@ -1321,7 +1318,7 @@ impl PackageFiles<'_> {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
                 sys::Errno::EXDEV => Err(crate::Error::NotSupported), // not same file system
-                sys::Errno::EOPNOTSUPP => Err(crate::Error::NotSupported),
+                sys::Errno::ENOTSUP | sys::Errno::EOPNOTSUPP => Err(crate::Error::NotSupported),
                 sys::Errno::ENOENT => Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)),
                 // We first try to delete the directory
                 // But, this can happen if this package contains a node_modules folder
@@ -1552,9 +1549,10 @@ impl PackageFiles<'_> {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
                             fn map_linkat_err(err: sys::Error) -> crate::Error {
                                 match err.get_errno() {
-                                    sys::E::EXDEV | sys::E::EACCES | sys::E::EPERM => {
-                                        crate::Error::NotSameFileSystem
-                                    }
+                                    sys::E::EXDEV
+                                    | sys::E::EACCES
+                                    | sys::E::EPERM
+                                    | sys::E::ENOTSUP => crate::Error::NotSameFileSystem,
                                     _ => err.into(),
                                 }
                             }
@@ -1685,11 +1683,11 @@ pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
 /// Renames `subpath`, if it exists, to a name in `destination_dir` that's derived from `random`.
 /// Can run on any thread.
-pub(crate) fn move_aside(
-    destination_dir: &Dir,
+pub(crate) fn move_aside<'a>(
+    destination_dir: &'a Dir,
     subpath: &ZStr,
     random: u64,
-) -> Option<bun_core::ZBox> {
+) -> Option<sys::DeleteTreeOnDrop<bun_core::ZBox, &'a Dir>> {
     let old = bun_core::ZBox::from_vec(
         format!(
             "{MOVED_ASIDE_PREFIX}{}",
@@ -1698,7 +1696,7 @@ pub(crate) fn move_aside(
         .into_bytes(),
     );
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
-        Ok(()) => Some(old),
+        Ok(()) => Some(sys::DeleteTreeOnDrop::new(destination_dir, old)),
         // overlayfs can't rename a directory from a lower layer. Delete it instead, so the new
         // files don't mix with the old ones.
         Err(err) if err.get_errno() == sys::E::EXDEV => {
@@ -1725,14 +1723,13 @@ impl<'a> PackageInstall<'a> {
         let pool = &*THREAD_POOL;
         pool.warm(1);
         if !pool.has_workers() {
-            let _ = destination_dir.delete_tree(temp_path.as_bytes());
             return;
         }
         // Deleting a large tree takes a while. Now that it has a random name, another thread can
         // delete it.
         let top_level_dir = bun_fs::FileSystem::get().top_level_dir();
         let absolute_path =
-            path::Path::resolve(&[top_level_dir, &self.node_modules.path, &temp_path]);
+            path::Path::resolve(&[top_level_dir, &self.node_modules.path, &temp_path.keep()]);
         let task = Box::new(UninstallTask {
             absolute_path: absolute_path.as_bytes().into(),
             task: WorkPoolTask::default(),
@@ -2062,19 +2059,19 @@ impl PackageFiles<'_> {
             )
             && Self::make_staging_dir(destination_dir, staging, method_, skip_delete).is_ok()
         {
+            let staging = sys::DeleteTreeOnDrop::new(destination_dir, staging);
             let staged = PackageFiles {
-                destination_dir_subpath: staging,
+                destination_dir_subpath: &staging,
                 ..*self
             }
             .install_into(destination_dir, method_, resolution_tag, owner);
             if let failure @ InstallResult::Failure(_) = staged {
-                let _ = destination_dir.delete_tree(staging.as_bytes());
                 return failure;
             }
-            if rename_staging_into_place(destination_dir.fd(), staging, dest).is_ok() {
+            if rename_staging_into_place(destination_dir.fd(), &staging, dest).is_ok() {
+                staging.keep();
                 return InstallResult::Success;
             }
-            let _ = destination_dir.delete_tree(staging.as_bytes());
         }
         // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
         self.install_into(destination_dir, method_, resolution_tag, owner)

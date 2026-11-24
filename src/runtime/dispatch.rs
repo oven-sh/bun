@@ -265,7 +265,7 @@ pub(crate) fn run_task(
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Completion`; the erased entry runs `then` and frees it.
+            // its `Running`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
         task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
@@ -419,7 +419,7 @@ pub(crate) fn run_task(
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
-            |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
+            |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
         )?,
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
@@ -947,13 +947,16 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Dns],
             (
                 resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
-                fd: i32 = event.fd.native(),
-                readable: bool = event.flags.contains(PollFlag::Readable),
-                writable: bool = event.flags.contains(PollFlag::Writable),
+                socket: usize = bun_dns::os::socket_id(event.fd),
+                events: bun_dns_client::Events = bun_dns_client::Events {
+                    readable: !event.flags.is_disjoint(PollFlag::Readable | PollFlag::Eof | PollFlag::Hup),
+                    writable: event.flags.contains(PollFlag::Writable),
+                    failed: event.flags.contains(PollFlag::Eof),
+                },
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { RefPtr::init_ref(resolver) };
-                resolver.on_dns_poll(fd, readable, writable);
+                resolver.on_dns_poll(socket, events);
             }
         ),
         #[cfg(target_os = "macos")]
@@ -1112,78 +1115,6 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
     unsafe {
         Rc::increment_strong_count(ptr);
         Rc::from_raw(ptr)
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// io::Poll dispatch
-// ════════════════════════════════════════════════════════════════════════════
-
-#[cfg(not(windows))]
-use crate::webcore::blob::{fd_job::FdJob, read_file, write_file};
-#[cfg(not(windows))]
-type ReadFile = FdJob<read_file::ReadFile>;
-#[cfg(not(windows))]
-type WriteFile = FdJob<write_file::WriteFile>;
-
-/// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. The owner is recovered from the embedded `io_poll` field.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::WriteFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::Empty => {
-            // Waker / unblock-only — caller already filtered this out.
-            debug_assert!(false, "io::Poll on_ready with Empty tag");
-        }
-    }
-}
-
-/// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
-/// `bun_io`.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_io_error(
-    tag: bun_io::PollableTag,
-    poll: *mut bun_io::Poll,
-    err: &bun_sys::Error,
-) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-                this.on_io_error(err);
-            }
-        ),
-        bun_io::PollableTag::WriteFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                this.on_io_error(err);
-            }
-        ),
-        bun_io::PollableTag::Empty => {
-            debug_assert!(false, "io::Poll on_io_error with Empty tag");
-        }
     }
 }
 
@@ -1384,9 +1315,9 @@ pub(crate) unsafe fn fire_timer(
             }
         }
         EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
+            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, _now, vm| {
                 if let Some(resolver) = (*c).timer_ref.take() {
-                    resolver.check_timeouts(now, vm)
+                    resolver.check_timeouts(vm)
                 }
             })
         }
@@ -1708,7 +1639,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
         task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
+            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()

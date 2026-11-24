@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 371355a0a2f6c26d64277b6679930a86640b27449c378d7591a9931958086749.
+// Written against that file with the SHA-256 dd2c01cab1e28d971897858bf8b432528a4a964af79a82327986aef336f40499.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1215,7 +1215,7 @@ Server.prototype[kRealListen] = function (
       bunServer: $Node.NativeHTTPServer,
       url: string,
       method: string,
-      // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+      // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
       dispatchBits: number,
       handle: $Node.NodeHTTPResponse,
       hasBody: boolean,
@@ -1667,7 +1667,7 @@ Server.prototype[kRealListen] = function (
         bunServer: $Node.NativeHTTPServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+        // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
         dispatchBits: number,
         handle: $Node.NodeHTTPResponse,
         hasBody: boolean,
@@ -2085,7 +2085,7 @@ function onServerRequestEvent(this: $Node.HttpServerSocket, event: NodeHTTPRespo
     }
   }
 }
-// uWS::HttpParserError
+// RequestError in src/http1/request/error.rs
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
   HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
@@ -3545,7 +3545,6 @@ function ServerResponse(
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
 function publishResponseCreated(request: $Node.IncomingMessage, response: $Node.ServerResponse): void {
-  if (request === requestOfNobody) return;
   const handle = response[kHandle];
   if (handle) {
     // A subscriber may write to a response whose turn has not come.
@@ -3703,9 +3702,9 @@ const ServerResponsePrototype: object = ServerResponse.prototype;
 // A response that another constructor made has no exchange. The server gives it one whose response nobody holds, so it takes the
 // functions of an object that stands in the place of a response, which keep the state on their receiver.
 let responseOfNobody: $Node.ServerResponse | undefined;
-let requestOfNobody: $Node.IncomingMessage | undefined;
 function adoptResponse(res: $Node.ServerResponse): void {
-  const nobody = (responseOfNobody ??= new ServerResponse((requestOfNobody = new IncomingMessage(null))));
+  // It is not constructed, so that no setter of the program hears of it and no channel publishes it.
+  const nobody = (responseOfNobody ??= Object.create(ServerResponsePrototype) as $Node.ServerResponse);
   const exchange = makeExchange(nobody, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks | ExchangeFlags.has_stand_in;
   res.$exchange = exchange;
@@ -4025,7 +4024,8 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
       exchange.flags &= ~ExchangeFlags.finishes_here;
       req._dump();
     }
-    finishConnection(exchange, this, req, exchange.connection!, false);
+    const connection = exchange.connection!;
+    finishConnection(exchange, this, req, connection, connection.parser, false);
     return;
   }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
@@ -4084,8 +4084,7 @@ function onResponseFinishHandleSocket(
   }
   // Another response is already in flight on this connection (pipelining):
   // it is not idle, so leave its timeout alone.
-  const inFlight = socket._httpMessage;
-  if (inFlight && inFlight !== res) {
+  if (socket._httpMessage && socket._httpMessage !== res) {
     return;
   }
   // Pipelined responses are still queued behind this one: the connection is
@@ -4567,7 +4566,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const enum DispatchBits {
   // Native dispatch bitfield: presence/token bits for the request headers the
   // dispatcher consults, computed in one native pass over the raw headers
-  // (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+  // (Dispatch in src/runtime/server/NodeHTTPResponse.rs - keep in sync). This is what
   // lets the framework never materialize req.headers/req.rawHeaders unless
   // user code reads them.
   conn_close = 1 << 0,
@@ -5306,9 +5305,11 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeAmongOthers(exchange, res, req, socket, flags, isSilent);
   }
   if (isSilent && (kind === RequestKind.unseen || kind === RequestKind.consumed)) {
+    // Read in front of the stores that may be refused: what a getter of it throws is heard.
+    const parser = socket.parser;
     try {
       if (kind === RequestKind.unseen) endUnseen(req);
-      finishConnection(exchange, res, req, socket, true);
+      finishConnection(exchange, res, req, socket, parser, true);
     } catch {
       takesStores = false;
     }
@@ -5349,10 +5350,10 @@ const finishConnection = function onResponseFinishHandleSocket(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
   socket: $Node.HttpServerSocket,
+  parser: $Node.HttpServerParserShim | null,
   isSilent: boolean,
 ): void {
   const kind = exchange.requestKind;
-  const parser = socket.parser;
   if (kind === RequestKind.unseen) {
     if (isSilent) {
       if (parser != null && parser.incoming === req) parser.incoming = null;
@@ -5432,7 +5433,7 @@ const finishExchangeAmongOthers = function emitResponseFinished(
   queueTick1(emitCloseNT, res);
   exchange.flags |= ExchangeFlags.finishes_here | ExchangeFlags.others_wait;
   if (isSilent) {
-    finishConnection(exchange, res, req, socket, false);
+    finishConnection(exchange, res, req, socket, socket.parser, false);
     return;
   }
   try {

@@ -44,7 +44,7 @@ use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
+use bun_uws::{self as uws, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use bun_wyhash::hash;
 
@@ -1291,7 +1291,7 @@ where
         this: *mut Self,
         res: *mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
-        context: &mut WebSocketUpgradeContext,
+        context: &WebSocketUpgradeContext,
         id: usize,
     ) {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -1451,7 +1451,7 @@ where
             return Ok(0);
         }
 
-        Ok(self.app_mut().num_subscribers(topic.slice()))
+        Ok(self.app_mut().web_sockets().num_subscribers(topic.slice()))
     }
 
     pub(crate) fn publish(
@@ -1488,9 +1488,7 @@ where
         let Some(app) = self.app() else {
             return Ok(JSValue::js_number(0.0));
         };
-        let status = AnyWebSocket::publish_with_options(
-            SSL,
-            app.cast::<c_void>(),
+        let status = bun_opaque::opaque_deref_mut(app).web_sockets().publish(
             topic.slice(),
             bytes.slice(),
             payload.opcode(),
@@ -1662,8 +1660,7 @@ where
         let mut cookies_to_write = upgrader.cookies.replace(None);
 
         let mut upgraded: JsResult<bool> = Ok(false);
-        // Cork once for the whole 101 response. `HttpResponse::upgrade()` transfers the cork to
-        // the WebSocket and then releases it.
+        // Cork once for the whole 101 response. `upgrade()` releases the cork.
         resp.corked(|| {
             if options.headers.is_some() || cookies_to_write.is_some() {
                 resp.write_status(b"101 Switching Protocols");
@@ -1721,18 +1718,13 @@ where
             upgrader.reclaim_promise_cell();
             drop(detached);
 
-            if resp
-                .upgrade(
-                    ws,
-                    sec_websocket_key.slice(),
-                    sec_websocket_protocol,
-                    sec_websocket_extensions.slice(),
-                    // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
-                    // deref; `UpgradeState::Pending` documents who keeps it alive.
-                    Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
-                )
-                .is_null()
-            {
+            if !resp.upgrade(
+                ws,
+                sec_websocket_key.slice(),
+                sec_websocket_protocol,
+                sec_websocket_extensions.slice(),
+                &upgrade_ctx,
+            ) {
                 // SAFETY: `ws` is stored inline in its JS wrapper, which it keeps alive. uWS never stored it.
                 unsafe { &*ws }.discard_unopened();
                 return;
@@ -1816,10 +1808,7 @@ where
                 .with_mut(|config| config.on_error = new_config.on_error);
         }
 
-        if let Some(mut ws) = new_config.websocket.take() {
-            ws.handler
-                .flags
-                .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
+        if let Some(ws) = new_config.websocket.take() {
             self.config.with_mut(|config| config.websocket = Some(ws));
             self.write_ws_handler_slots(server_js, global);
         }
@@ -2647,7 +2636,7 @@ where
         this: &UserRoute<SSL, DEBUG>,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
+        upgrade_ctx: &WebSocketUpgradeContext,
         method: Option<http::Method>,
     ) {
         // BACKREF: `UserRoute.server` is set at construction from the owning
@@ -2668,7 +2657,7 @@ where
             return;
         };
         ctx.upgrade_context
-            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
+            .set(UpgradeState::Pending(bun_ptr::BackRef::new(upgrade_ctx)));
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
@@ -2701,7 +2690,7 @@ where
         this: *mut Self,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
+        upgrade_ctx: &WebSocketUpgradeContext,
         id: usize,
     ) {
         jsc::mark_binding!();
@@ -2767,7 +2756,7 @@ where
             body_hive,
         ));
         ctx.upgrade_context
-            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
+            .set(UpgradeState::Pending(bun_ptr::BackRef::new(upgrade_ctx)));
         ctx.request_weakref.set(bun_ptr::WeakPtr::new(&request));
 
         let global = this.global();

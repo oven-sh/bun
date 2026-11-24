@@ -69,7 +69,7 @@ template<bool SSL>
 void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 {
     if (upgraded) {
-        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(socket);
+        auto* webSocket = (uWS::UpgradedSocketData*)us_socket_ext(socket);
         webSocket->socketData = nullptr;
     } else {
         auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
@@ -229,75 +229,6 @@ void JSNodeHTTPServerSocket::releaseTunnelReadsForUpgrade()
     if (socket && !us_socket_is_closed(socket)) {
         us_socket_resume(socket);
     }
-}
-
-template<bool SSL>
-static std::string* requestTrailersFor(us_socket_t* socket)
-{
-    /* A JSNodeHTTPServerSocket only exists for node:http compat connections,
-     * whose ext block is the derived NodeHttpResponseData (HttpContext::onOpen). */
-    auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
-    return &httpResponseData->nodeHttpRequestTrailers;
-}
-
-/* Copied and cleared by NodeHTTPResponse at the request's body fin, still inside the
- * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__requestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
-{
-    *out = nullptr;
-    if (!socket || us_socket_is_closed(socket)) {
-        return 0;
-    }
-    std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
-    *out = trailers->data();
-    return trailers->size();
-}
-
-extern "C" void Bun__NodeHTTP__clearRequestTrailerBytes(bool is_ssl, us_socket_t* socket)
-{
-    std::string().swap(is_ssl ? *requestTrailersFor<true>(socket) : *requestTrailersFor<false>(socket));
-}
-
-/* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
- * jsUndefined() when it contains no fields. */
-extern "C" JSC::EncodedJSValue Bun__NodeHTTP__parseRequestTrailers(JSC::JSGlobalObject* globalObject, const char* data, size_t length, bool useInsecureHTTPParser)
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    /* parseTrailerFields post-pads the section in place, so it needs an owned copy. */
-    std::string section(data, length);
-
-    /* Parse with the same field-line primitives the request-header parser uses
-     * (uWS::HttpParser::consumeFieldName / tryConsumeFieldValue / OWS-trim). */
-    std::pair<std::string_view, std::string_view> fields[uWS::HttpParser::MAX_TRAILER_FIELDS];
-    unsigned count = uWS::HttpParser::parseTrailerFields(section, fields, useInsecureHTTPParser);
-    if (count == 0) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, count * 2);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    unsigned index = 0;
-    for (unsigned i = 0; i < count; i++) {
-        // HTTP/1.1 obs-text bytes (0x80-0xFF) are valid header content (RFC 9110 §5.5); preserve
-        // them 1:1 as Latin-1 like Node's req.rawTrailers (OneByteString) and like NodeHTTP.cpp's
-        // rawHeaders construction. UTF-8 decoding would corrupt them to U+FFFD.
-        std::span<Latin1Character> nameData;
-        auto nameString = WTF::String::createUninitialized(fields[i].first.size(), nameData);
-        if (!fields[i].first.empty())
-            memcpy(nameData.data(), fields[i].first.data(), fields[i].first.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, nameString));
-        RETURN_IF_EXCEPTION(scope, {});
-        std::span<Latin1Character> valueData;
-        auto valueString = WTF::String::createUninitialized(fields[i].second.size(), valueData);
-        if (!fields[i].second.empty())
-            memcpy(valueData.data(), fields[i].second.data(), fields[i].second.size());
-        array->putDirectIndex(globalObject, index++, JSC::jsString(vm, valueString));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSC::JSValue::encode(array);
 }
 
 template<bool SSL>

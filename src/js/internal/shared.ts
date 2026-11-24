@@ -144,10 +144,10 @@ function once<This, Arguments extends any[], Result>(
   };
 }
 
-const kEmptyObject = ObjectFreeze(Object.create(null));
+const kEmptyObject = ObjectFreeze({ __proto__: null } as any);
 
 // process.send() options marking cluster-internal traffic; the flag is a private name so user code cannot set it.
-const kInternalSendOptions: any = Object.create(null);
+const kInternalSendOptions: any = { __proto__: null };
 $putByIdDirectPrivate(kInternalSendOptions, "internal", true);
 ObjectFreeze(kInternalSendOptions);
 

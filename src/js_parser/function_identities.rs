@@ -1356,7 +1356,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             }
             Data::ETemplate(e) => {
                 self.byte(t | 14);
-                self.optional_expr(e.tag.as_ref());
+                self.optional_expr(e.tag.as_ref().map(|tag| &tag.expr));
                 self.number(e.parts().len() as u64);
                 for part in e.parts() {
                     self.expr(&part.value);

@@ -635,6 +635,25 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
+            let line = usize2loc(data.line_count).start;
+            let column = usize2loc(data.column_count).start;
+            let length = if r.len > -1 {
+                u32::try_from(r.len).expect("int cast") as usize
+            } else {
+                1
+            };
+            let offset = usize::try_from(r.loc.start.max(0)).expect("int cast");
+            if source.secrecy == SourceSecrecy::Secret {
+                return Some(Location {
+                    file,
+                    namespace,
+                    line,
+                    column,
+                    length,
+                    line_text: None,
+                    offset,
+                });
+            }
             let mut full_line = &source.contents[data.line_start..data.line_end];
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
@@ -659,15 +678,11 @@ impl Location {
             return Some(Location {
                 file,
                 namespace,
-                line: usize2loc(data.line_count).start,
-                column: usize2loc(data.column_count).start,
-                length: if r.len > -1 {
-                    u32::try_from(r.len).expect("int cast") as usize
-                } else {
-                    1
-                },
+                line,
+                column,
+                length,
                 line_text: Some(Box::from(bun_core::trim_left(full_line, b"\n\r"))),
-                offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
+                offset,
             });
         }
         None
@@ -1542,7 +1557,7 @@ impl Log {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
-        let range = Range { loc, len: 1 };
+        let range = Range { loc, len: 0 };
         let text = alloc_print(args);
         self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
         if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
@@ -2030,7 +2045,21 @@ pub struct Source<'a> {
     pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
+
+    pub secrecy: SourceSecrecy,
 }
+
+/// Whether a [`Source`] can hold credentials. No diagnostic copies a byte out of one that can.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SourceSecrecy {
+    #[default]
+    Public,
+    /// bunfig.toml, a `--config` file, `.npmrc`.
+    Secret,
+}
+
+// `secrecy` sits in the padding after `index`.
+const _: () = assert!(core::mem::size_of::<Source>() == 112);
 
 impl Default for Source<'_> {
     fn default() -> Self {
@@ -2039,6 +2068,7 @@ impl Default for Source<'_> {
             contents: Cow::Borrowed(b""),
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
+            secrecy: SourceSecrecy::Public,
         }
     }
 }
@@ -2493,6 +2523,7 @@ fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) 
 #[derive(Default, Clone, Copy)]
 pub struct ToSourceOptions {
     pub convert_bom: bool,
+    pub secrecy: SourceSecrecy,
 }
 
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
@@ -2519,7 +2550,10 @@ fn source_from_file_at(
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
         }
     }
-    Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
+    Ok(Source {
+        secrecy: opts.secrecy,
+        ..Source::init_path_string_owned(path.as_bytes(), bytes)
+    })
 }
 
 /// `source_from_file_at` rooted at the process CWD.

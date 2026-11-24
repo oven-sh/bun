@@ -59,6 +59,11 @@ fn unreadable_config(
     Global::exit(exit_code_of_failure(cmd));
 }
 
+const CONFIG_SOURCE: bun_ast::ToSourceOptions = bun_ast::ToSourceOptions {
+    convert_bom: true,
+    secrecy: bun_ast::SourceSecrecy::Secret,
+};
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ConfigFile {
     /// `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
@@ -93,13 +98,12 @@ fn load_bunfig(
     // Set this even if the read fails. Otherwise the later stages of `bun run` that check the flag
     // would try to load the file again and print the warning twice.
     ctx.debug.loaded_bunfig = true;
-    let source =
-        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
-            Ok(s) => s,
-            Err(err) => {
-                return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes());
-            }
-        };
+    let source = match bun_ast::to_source(config_path, CONFIG_SOURCE) {
+        Ok(s) => s,
+        Err(err) => {
+            return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes());
+        }
+    };
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();
@@ -159,7 +163,7 @@ pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> 
 
 fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
     let path = config_path.as_bytes();
-    match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
+    match bun_ast::to_source(config_path, CONFIG_SOURCE) {
         Ok(source) => Bunfig::has_security_scanner(&source).map_err(|_| path.into()),
         Err(_) => Ok(false),
     }
@@ -181,11 +185,10 @@ pub fn load_user_install_section() -> Result<Option<Box<api::BunInstall>>, Box<[
 
 fn read_install_section(config_path: &ZStr) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let path = config_path.as_bytes();
-    let source =
-        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
-            Ok(source) => source,
-            Err(_) => return Ok(None),
-        };
+    let source = match bun_ast::to_source(config_path, CONFIG_SOURCE) {
+        Ok(source) => source,
+        Err(_) => return Ok(None),
+    };
     Bunfig::parse_install_section(&source).map_err(|_| path.into())
 }
 

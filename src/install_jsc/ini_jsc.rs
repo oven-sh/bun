@@ -17,7 +17,10 @@ pub(crate) fn load_npmrc<'a>(
     use bun_options_types::schema::api::{BunInstall, NpmRegistry};
 
     let global = cx.global();
-    let source = Source::init_path_string(b"<js>", contents);
+    let source = Source {
+        secrecy: bun_ast::SourceSecrecy::Secret,
+        ..Source::init_path_string(b"<js>", contents)
+    };
 
     let mut log = Log::init();
 

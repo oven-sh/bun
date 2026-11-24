@@ -1087,7 +1087,10 @@ mod draft {
         for &npmrc_path in npmrc_paths {
             match bun_ast::source_from_file(
                 npmrc_path,
-                bun_ast::ToSourceOptions { convert_bom: true },
+                bun_ast::ToSourceOptions {
+                    convert_bom: true,
+                    secrecy: bun_ast::SourceSecrecy::Secret,
+                },
             ) {
                 Ok(source) => {
                     if source
@@ -1373,6 +1376,7 @@ mod draft {
         source_idx: u32,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
+        debug_assert!(source.secrecy == bun_ast::SourceSecrecy::Secret);
         let arena = Arena::new();
         let bump = &arena;
         let mut parser = Parser::init(source, env);
@@ -1562,10 +1566,8 @@ mod draft {
                     && !bun_core::strings::contains_char(word, b'/')
                     && folds_to_credential_option(word)
                 {
-                    // No excerpt, because the redactor doesn't recognize a secret under a
-                    // misspelled name.
-                    log.add_warning_fmt_no_excerpt(
-                        source,
+                    log.add_warning_fmt(
+                        Some(source),
                         keyexpr.loc,
                         format_args!("ignoring unknown .npmrc option {}", bstr::BStr::new(word),),
                     );

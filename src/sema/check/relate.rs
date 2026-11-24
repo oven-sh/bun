@@ -3299,6 +3299,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
             _ if now.2 != before.2
                 || self.has_uncommitted_measurement_cycle
+                || self.task.overlaps_a_cycle_commit()
                 || self.task.was_discarded() =>
             {
                 Some(NotShared::Notes)

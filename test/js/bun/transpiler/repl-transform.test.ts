@@ -180,6 +180,208 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
+  // A lowering declares temporaries beside the statement it rewrites, and the parser prints the
+  // same names for every input. They must stay in the wrapper of their input.
+  describe.each(["transformSync", "transform"] as const)("temporaries of a lowering (%s)", method => {
+    // A lowered input imports its helpers from "bun:wrap".
+    const evalOptions = { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER };
+    // A field decorator: the field starts at its initial value plus `amount`.
+    // A decorated field reads the temporaries of its class when an instance is made.
+    const add = (amount: number) => () => (initial: number) => initial + amount;
+    // The bindings of a helper import are still global. The hash at the end of a name is dropped.
+    const decoratorHelpers = [
+      "__decorateElement",
+      "__decoratorMetadata",
+      "__decoratorStart",
+      "__runInitializers",
+      "import_bun_wrap",
+    ];
+
+    function replTranspiler(options: Bun.TranspilerOptions = {}) {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true, ...options });
+      return async (line: string) => await transpiler[method](line);
+    }
+
+    /** The names that the inputs added to `context`, read from inside it. */
+    function addedNames(context: vm.Context, globals: Record<string, unknown> = {}): string[] {
+      return (vm.runInContext("Object.keys(globalThis)", context) as string[])
+        .filter(name => !Object.hasOwn(globals, name))
+        .map(name => name.replace(/_[a-z0-9]{8}$/, ""))
+        .sort();
+    }
+
+    /** Evaluates the lines in one context. */
+    async function runSession(
+      lines: string[],
+      { options, globals = {} }: { options?: Bun.TranspilerOptions; globals?: Record<string, unknown> } = {},
+    ) {
+      const transform = replTranspiler(options);
+      const context = vm.createContext({ ...globals });
+      const results: any[] = [];
+      for (const line of lines) {
+        const result = await vm.runInContext(await transform(line), context, evalOptions);
+        results.push(result?.value ?? result);
+      }
+      return { results, added: addedNames(context, globals) };
+    }
+
+    test("a lowered class keeps working after later inputs", async () => {
+      const { results, added } = await runSession(
+        [
+          "class P { @add(100) v = 1 }",
+          "class Q { @add(200) v = 2 }",
+          "[new P().v, new Q().v]",
+          "class A { accessor x = 1 }",
+          "var a = new A()",
+          "class B { accessor x = 2 }",
+          "[a.x, new B().x]",
+          "function tagged(value) { return class extends value { tag = value.name } }",
+          "@tagged class R {}",
+          "@tagged class S {}",
+          "[new R().tag, new S().tag]",
+        ],
+        { globals: { add } },
+      );
+      expect({ fieldDecorators: results[2], accessors: results[6], classDecorators: results[10], added }).toEqual({
+        fieldDecorators: [101, 202],
+        accessors: [1, 2],
+        classDecorators: ["R", "S"],
+        added: [
+          ...["P", "Q", "A", "a", "B", "tagged", "R", "S"],
+          ...decoratorHelpers,
+          ...["__privateAdd", "__privateGet", "__privateSet"],
+        ].sort(),
+      });
+    });
+
+    // Each input declares `K<n>`, a class expression with a decorated field,
+    // and the other names listed.
+    test.each([
+      ["in a declaration", [], (n: number) => `var K${n} = class { @add(${n}00) x = ${n} }`],
+      [
+        "in a parameter default",
+        ["f"],
+        (n: number) => `function f${n}(C = class { @add(${n}00) x = ${n} }) { return C }; var K${n} = f${n}()`,
+      ],
+      [
+        "in a field initializer",
+        ["O"],
+        (n: number) => `class O${n} { inner = class { @add(${n}00) x = ${n} } }; var K${n} = new O${n}().inner`,
+      ],
+      ["in the head of a loop", [], (n: number) => `for (var K${n} = class { @add(${n}00) x = ${n} };;) break`],
+      // The temporaries of these three are registered in the scope of the enum (#38761).
+      [
+        "in an enum initializer in a block",
+        [],
+        (n: number) => `var K${n}; { enum E { A = (K${n} = class { @add(${n}00) x = ${n} }, 0) } }`,
+      ],
+      [
+        "in an enum initializer in a namespace",
+        ["N"],
+        (n: number) =>
+          `var K${n}; namespace N${n} { export enum E { A = (K${n} = class { @add(${n}00) x = ${n} }, 0) } }`,
+      ],
+      [
+        "in an enum initializer in a function",
+        ["h"],
+        (n: number) =>
+          `var K${n}; function h${n}() { enum E { A = (K${n} = class { @add(${n}00) x = ${n} }, 0) } }; h${n}()`,
+      ],
+    ] as [string, string[], (n: number) => string][])(
+      "a lowered class expression %s keeps working after a later input",
+      async (_, names, input) => {
+        const { results, added } = await runSession([input(1), input(2), "[new K1().x, new K2().x]"], {
+          globals: { add },
+        });
+        expect({ values: results[2], added }).toEqual({
+          values: [101, 202],
+          added: [...["K", ...names].flatMap(name => [name + 1, name + 2]), ...decoratorHelpers].sort(),
+        });
+      },
+    );
+
+    test("one output evaluated twice makes two classes", async () => {
+      const transform = replTranspiler();
+      const context = vm.createContext({ add, made: [] });
+      const code = await transform("class K { @add(made.length * 100) x = 1 }; made.push(K); made.map(K => new K().x)");
+      const first = await vm.runInContext(code, context, evalOptions);
+      const second = await vm.runInContext(code, context, evalOptions);
+      expect([first.value, second.value]).toEqual([[1], [1, 101]]);
+    });
+
+    test("inputs that overlap dispose their own resources", async () => {
+      const transform = replTranspiler();
+      const log: string[] = [];
+      const holding = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const globals = { log, holding, release };
+      const context = vm.createContext({ ...globals });
+      const resource = (name: string) => `{ async [Symbol.asyncDispose]() { log.push("dispose ${name}") } }`;
+
+      const first = vm.runInContext(
+        await transform(
+          `await using a = ${resource("a")}; holding.resolve(); await release.promise; log.push("first done")`,
+        ),
+        context,
+        evalOptions,
+      );
+      // The first input holds `a` and waits. The second one runs to its end.
+      await holding.promise;
+      await vm.runInContext(
+        await transform(`await using b = ${resource("b")}; log.push("second done")`),
+        context,
+        evalOptions,
+      );
+      release.resolve();
+      await first;
+
+      expect(log).toEqual(["second done", "dispose b", "first done", "dispose a"]);
+      // The stack of a lowered `using` is not among them.
+      expect(addedNames(context, globals)).toEqual(["__callDispose", "__using", "import_bun_wrap"]);
+    });
+
+    test("every name the input declares persists beside a lowered class", async () => {
+      const { results, added } = await runSession(
+        [
+          `class Lowered { @add(100) x = 1 }
+           var v = 2; let l = 3; const c = 4;
+           var { a, b: [, d, ...rest], ...others } = { a: 5, b: [0, 6, 7], e: 8 };
+           var twice = 0; var twice = 19;
+           function fn() { return 9 }
+           async function afn() {}
+           function* gen() {}
+           class Cls { static v = 10 }
+           abstract class Abs { static v = 11 }
+           import def, { join, sep as separator } from "node:path";
+           import * as ns from "node:path";
+           import req = require("node:path");
+           enum En { A = 12 }
+           const enum ConstEn { A = 13 }
+           namespace Ns { export const v = 14 }
+           for (var i = 0; i < 15; i++);
+           var merged; function merged() { return 16 }`,
+          `[new Lowered().x, v, l, c, a, d, rest, others, fn(), typeof afn, typeof gen, Cls.v, Abs.v,
+            def === ns.default, join === def.join, separator === def.sep, req === def,
+            En.A, En[12], ConstEn.A, Ns.v, i, merged(), twice]`,
+        ],
+        { globals: { add, require } },
+      );
+      expect(results[1]).toEqual([
+        ...[101, 2, 3, 4, 5, 6, [7], { e: 8 }, 9, "function", "function", 10, 11],
+        ...[true, true, true, true],
+        ...[12, "A", 13, 14, 15, 16, 19],
+      ]);
+      expect(added).toEqual(
+        [
+          ...["Lowered", "v", "l", "c", "a", "d", "rest", "others", "twice", "fn", "afn", "gen", "Cls", "Abs"],
+          ...["def", "join", "separator", "ns", "req", "En", "ConstEn", "Ns", "i", "merged"],
+          // The module of a named import is still a global too.
+          ...[...decoratorHelpers, "import_node_path"],
+        ].sort(),
+      );
+    });
+  });
+
   describe("object literal detection", () => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 

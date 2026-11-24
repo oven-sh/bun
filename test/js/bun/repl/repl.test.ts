@@ -1017,6 +1017,15 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e keeps the stack of a lowered `using` out of the global object", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `using resource = { [Symbol.dispose]() { console.log("disposed") } };
+         console.log(Object.keys(globalThis).filter(name => name.startsWith("__bun_temp_ref")));`,
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\ndisposed\n", stderr: "", exitCode: 0 });
+    });
+
     test("-e supports require()", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "require('path').posix.join('/a', 'b')"]);
       expect(stdout).toBe('"/a/b"\n');
@@ -1115,6 +1124,26 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should be back at a clean prompt
       send("1 + 1\n");
       await waitFor("2");
+    });
+  });
+
+  test("a line stopped with Ctrl+C still disposes its own `using`", async () => {
+    await withTerminalRepl(async ({ send, waitFor, proc }) => {
+      const resource = (name: string) => `{ async [Symbol.asyncDispose]() { log.push("dispose ${name}") } }`;
+      // The immediate runs in the loop that waits for the line, which is where the REPL takes a SIGINT.
+      send(
+        `globalThis.log = []; globalThis.release = Promise.withResolvers(); await using a = ${resource("a")}; ` +
+          `await new Promise(resolve => setImmediate(resolve)); console.log("hold" + "ing"); ` +
+          `await release.promise; log.push("a done")\n`,
+      );
+      await waitFor("holding");
+      // The line stays suspended and holds `a`. The next line runs to its end.
+      proc.kill("SIGINT");
+      await waitFor(/\u276f|> /);
+      send(`await using b = ${resource("b")}; log.push("b done")\n`);
+      send('release.resolve(); await new Promise(resolve => setImmediate(resolve)); "l" + "og: " + log.join(", ")\n');
+      const output = stripAnsi(await waitFor(/"log: [^"]*"/));
+      expect(output.match(/"log: [^"]*"/)![0]).toBe('"log: b done, dispose b, a done, dispose a"');
     });
   });
 

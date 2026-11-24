@@ -3,7 +3,7 @@
 //! This module provides transformations for REPL mode:
 //! - Wraps the last expression in { value: expr } for result capture
 //! - Wraps code with await in async IIFE with variable hoisting
-//! - Hoists declarations for variable persistence across REPL lines
+//! - Hoists the declarations the input wrote for variable persistence across REPL lines
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -12,7 +12,7 @@ use bun_collections::VecExt;
 use bun_ast as js_ast;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, Ref, S, Stmt};
 
 use crate::p::P;
 
@@ -88,38 +88,33 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let mut hoisted_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
         let mut inner_stmts = BumpVec::<Stmt>::with_capacity_in(all_stmts.len(), bump);
 
-        // Process each statement - hoist all declarations for REPL persistence
+        // Process each statement - hoist the declarations the input wrote for REPL persistence
         for stmt in all_stmts.iter() {
             match stmt.data {
                 StmtData::SLocal(local) => {
-                    // Hoist all declarations as var so they become context properties
+                    // Hoist the declarations the input wrote as var so they become context properties
                     // In sloppy mode, var at top level becomes a property of the global/context object
                     // This is essential for REPL variable persistence across vm.runInContext calls
                     let kind = S::Kind::KVar;
 
-                    // Extract individual identifiers from binding patterns for hoisting
                     let mut hoisted_decl_list = BumpVec::<G::Decl>::new_in(bump);
                     for decl in local.decls.slice() {
+                        if !self.repl_binding_persists(decl.binding) {
+                            inner_stmts.push(self.repl_wrapper_local(
+                                local.kind,
+                                decl.binding,
+                                decl.value,
+                                stmt.loc,
+                            ));
+                            continue;
+                        }
+
+                        // Extract individual identifiers from binding patterns for hoisting
                         self.repl_extract_identifiers_from_binding(
                             decl.binding,
                             &mut hoisted_decl_list,
                         )?;
-                    }
 
-                    if !hoisted_decl_list.is_empty() {
-                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
-                        hoisted_stmts.push(self.s(
-                            S::Local {
-                                kind,
-                                decls,
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        ));
-                    }
-
-                    // Create assignment expressions for the inner statements
-                    for decl in local.decls.slice() {
                         if let Some(value) = decl.value {
                             // Create assignment expression: binding = value
                             let assign_expr =
@@ -132,6 +127,18 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                 stmt.loc,
                             ));
                         }
+                    }
+
+                    if !hoisted_decl_list.is_empty() {
+                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
+                        hoisted_stmts.push(self.s(
+                            S::Local {
+                                kind,
+                                decls,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     }
                 }
                 StmtData::SFunction(func) => {
@@ -622,6 +629,53 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         Ok(())
+    }
+
+    /// A declaration that stays inside the wrapper.
+    fn repl_wrapper_local(
+        &mut self,
+        kind: S::Kind,
+        binding: Binding,
+        value: Option<Expr>,
+        loc: bun_ast::Loc,
+    ) -> Stmt {
+        self.s(
+            S::Local {
+                kind,
+                decls: G::DeclList::init_one(G::Decl { binding, value }),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// Whether the input declared `ref_` at its top level: the module scope's member for its name.
+    fn repl_persists(&self, ref_: Ref) -> bool {
+        // "var" declarations of one name are merged into the first one.
+        let ref_ = js_ast::symbol::follow_symbols(&self.symbols, ref_);
+        let name = self.symbols[ref_.inner_index() as usize]
+            .original_name
+            .slice();
+        self.module_scope()
+            .members
+            .get(name)
+            .is_some_and(|member| member.ref_ == ref_)
+    }
+
+    /// Whether every name that `binding` declares persists.
+    fn repl_binding_persists(&self, binding: Binding) -> bool {
+        match binding.data {
+            B::B::BIdentifier(ident) => self.repl_persists(ident.r#ref),
+            B::B::BArray(arr) => arr
+                .items()
+                .iter()
+                .all(|item| self.repl_binding_persists(item.binding)),
+            B::B::BObject(obj) => obj
+                .properties()
+                .iter()
+                .all(|prop| self.repl_binding_persists(prop.value)),
+            B::B::BMissing(_) => true,
+        }
     }
 
     /// Wrap the last expression in return { value: expr }

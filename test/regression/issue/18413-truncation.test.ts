@@ -96,56 +96,17 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
   });
 }
 
-// Test truncated gzip stream
-test("truncated gzip stream should throw error", async () => {
-  using server = createTruncatedServer("gzip", 5);
+// The message is complete by its Content-Length, so the body is what the bytes decode to.
+test.each([
+  ["gzip", 5, "Hello World! This is a test message."],
+  ["br", 5, "Hello"],
+  ["zstd", 5, "Hello World! This is a test mes"],
+  ["deflate", 1, "Hello World! This is a test message."],
+] as const)("truncated %s stream gives what it decodes to", async (compression, truncateBytes, expected) => {
+  using server = createTruncatedServer(compression, truncateBytes);
 
-  try {
-    const response = await fetch(`http://localhost:${server.port}`);
-    await response.text();
-    expect.unreachable("Should have thrown decompression error");
-  } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZlibError|ShortRead/);
-  }
-});
-
-// Test truncated brotli stream
-test("truncated brotli stream should throw error", async () => {
-  using server = createTruncatedServer("br", 5);
-
-  try {
-    const response = await fetch(`http://localhost:${server.port}`);
-    await response.text();
-    expect.unreachable("Should have thrown decompression error");
-  } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/BrotliDecompressionError/);
-  }
-});
-
-// Test truncated zstd stream
-test("truncated zstd stream should throw error", async () => {
-  using server = createTruncatedServer("zstd", 5);
-
-  try {
-    const response = await fetch(`http://localhost:${server.port}`);
-    await response.text();
-    expect.unreachable("Should have thrown decompression error");
-  } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZstdDecompressionError/);
-  }
-});
-
-// Test truncated deflate stream
-test("truncated deflate stream should throw error", async () => {
-  using server = createTruncatedServer("deflate", 1);
-
-  try {
-    const response = await fetch(`http://localhost:${server.port}`);
-    await response.text();
-    expect.unreachable("Should have thrown decompression error");
-  } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZlibError|ShortRead/);
-  }
+  const response = await fetch(`http://localhost:${server.port}`);
+  expect(await response.text()).toBe(expected);
 });
 
 // Test delayed chunks for gzip (should succeed)

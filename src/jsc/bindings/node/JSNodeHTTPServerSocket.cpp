@@ -69,7 +69,7 @@ template<bool SSL>
 void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 {
     if (upgraded) {
-        auto* webSocket = (uWS::WebSocketData*)us_socket_ext(socket);
+        auto* webSocket = (uWS::UpgradedSocketData*)us_socket_ext(socket);
         webSocket->socketData = nullptr;
     } else {
         auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);

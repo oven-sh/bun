@@ -457,6 +457,29 @@ it.concurrent("recreates the staging directory in the temp dir instead of reusin
   expect(exitCode).toBe(1);
 });
 
+// Windows has no execute permission to leave out, and can't remove the working directory.
+it.concurrent.skipIf(isWindows)("removes what it unpacked when the new executable can't be started", async () => {
+  using download = tempDir("bun-upgrade-download", {
+    "release.zip": makeZipStored(`${releaseFolder}/bun`, Buffer.from(fakeReleaseScript("9.9.9")), 0o644),
+  });
+  using stagingRoot = tempDir("bun-upgrade-unpacked", {});
+  using server = startReleaseServer({ tagName: "bun-v9.9.9", zipPath: join(String(download), "release.zip") });
+
+  await using proc = Bun.spawn({
+    cmd: [standInExe, "upgrade", "--stable"],
+    cwd: standInDir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toEndWith("error: Failed to verify Bun (code: EACCES)\n");
+  expect(readdirSync(String(stagingRoot))).toEqual([]);
+  expect(exitCode).toBe(1);
+});
+
 it.concurrent("verifies the downloaded release archive against the digest reported by the release asset", async () => {
   const archiveBody = "this is not a real zip archive";
   const correctDigest = `sha256:${new Bun.CryptoHasher("sha256").update(archiveBody).digest("hex")}`;

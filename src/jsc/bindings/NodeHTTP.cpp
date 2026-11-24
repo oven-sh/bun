@@ -371,7 +371,7 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself
+// Headers that user code can't set on a 101 response. Response::upgrade (WebSocket.rs) writes the handshake headers
 // (RFC 6455 4.2.2), and a 1xx response must not have Content-Length or Transfer-Encoding (RFC 9110 8.6).
 static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
 {

@@ -662,9 +662,7 @@ impl RuntimeTranspilerCache {
         let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
-        let unlink_guard = scopeguard::guard(cache_file_path, |p| {
-            let _ = sys::unlink(p);
-        });
+        let cache_file = sys::UnlinkOnDrop::new(Fd::cwd(), cache_file_path);
 
         let stat = file.stat()?;
         if !sys::S::ISREG(stat.st_mode as _) {
@@ -695,7 +693,7 @@ impl RuntimeTranspilerCache {
 
         entry.load(&file, stat_size)?;
 
-        let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+        cache_file.keep();
         Ok(entry)
     }
 

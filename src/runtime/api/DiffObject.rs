@@ -9,11 +9,13 @@ use bun_jsc::{
     MarkedArgumentBuffer,
 };
 use bun_text_diff::patch;
-use bun_text_diff::tokens::{Edit, Split, Unit, diff_ids, diff_text};
+use bun_text_diff::tokens::{
+    Edit, Ignore, Split, Unit, diff_ids, diff_text_ignoring, strip_trailing_cr,
+};
 
 use crate::generated_bindgen::diff_object::{
-    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions,
-    PatchToApply,
+    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, LinesOptions, Options,
+    PatchOptions, PatchToApply, TextOptions,
 };
 
 trait JsUnit: Unit {
@@ -133,34 +135,109 @@ fn runs(
     runs
 }
 
+/// The options of all functions that compare text.
+#[derive(Clone, Copy)]
+struct Compare {
+    ignore: Ignore,
+    max_edits: usize,
+}
+
+impl Compare {
+    fn diff<T: Unit>(self, split: Split, a: &[T], b: &[T]) -> Option<Vec<Edit>> {
+        diff_text_ignoring(split, a, b, self.ignore, self.max_edits)
+    }
+}
+
+macro_rules! compare_lines {
+    ($heap:expr, $options:expr) => {
+        Compare {
+            ignore: Ignore {
+                case: $options.ignore_case,
+                whitespace: $options.ignore_whitespace,
+            },
+            max_edits: max_edits($heap, $options.max_edit_length)?,
+        }
+    };
+}
+
+/// The old one and the new one.
+struct Texts<'s> {
+    given: [&'s String; 2],
+    without_cr: Option<Box<[String; 2]>>,
+}
+
+impl<'s> Texts<'s> {
+    #[inline]
+    fn new<'a>(
+        heap: &JsHeap<'a>,
+        given: [&'s String; 2],
+        strip_trailing_cr: bool,
+    ) -> bindgen::Result<'a, Self> {
+        let without_cr = match strip_trailing_cr {
+            true => Some(without_cr(given).ok_or_else(|| heap.memory_allocation_failed())?),
+            false => None,
+        };
+        Ok(Self { given, without_cr })
+    }
+
+    #[inline]
+    fn get(&self) -> [&String; 2] {
+        (self.without_cr.as_ref()).map_or(self.given, |texts| texts.each_ref())
+    }
+}
+
+#[cold]
+fn without_cr(texts: [&String; 2]) -> Option<Box<[String; 2]>> {
+    let texts = texts.map(|text| {
+        let stripped = if text.is_utf16() {
+            strip_trailing_cr(text.utf16()).map(|it| clone_units(&it))
+        } else {
+            strip_trailing_cr(text.latin1()).map(|it| clone_units(&it))
+        };
+        stripped.unwrap_or_else(|| text.clone())
+    });
+    (!texts.iter().any(String::is_dead)).then(|| Box::new(texts))
+}
+
+#[inline(never)]
 fn text_runs<T: JsUnit>(
     split: Split,
     old: &String,
     new: &String,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<Vec<Run>> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(split, &a, &b, max_edits)?;
+    let edits = compare.diff(split, &a, &b)?;
     let kept_at_end = |from| split.count(&b[from..]);
     Some(runs(edits.into_iter(), b.len(), kept_at_end))
 }
 
-fn changes<'a, 's>(
-    heap: &JsHeap<'a>,
+#[inline(always)]
+fn changes<'s>(
     split: Split,
-    old: &'s String,
-    new: &'s String,
-    options: &Options,
-) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
-    let max_edits = max_edits(heap, options.max_edit_length)?;
-    let runs = by_width!([old, new], text_runs(split, old, new, max_edits));
+    texts: Texts<'s>,
+    compare: Compare,
+) -> Option<impl Iterator<Item = Change> + use<'s>> {
+    let [old, new] = texts.get();
+    let runs = by_width!([old, new], text_runs(split, old, new, compare));
     let change = move |Run { kind, range, count }| Change {
-        value: if kind == Kind::Removed { old } else { new }.shared_substring(range),
+        value: texts.get()[usize::from(kind != Kind::Removed)].shared_substring(range),
         added: kind == Kind::Added,
         removed: kind == Kind::Removed,
         count,
     };
-    Ok(runs.map(|runs| runs.into_iter().map(change)))
+    Some(runs?.into_iter().map(change))
+}
+
+pub(crate) fn lines<'a, 's>(
+    heap: &JsHeap<'a>,
+    old: &'s String,
+    new: &'s String,
+    options: &LinesOptions,
+) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    Ok(changes(Split::Lines, texts, compare))
 }
 
 macro_rules! split_by {
@@ -169,14 +246,15 @@ macro_rules! split_by {
             heap: &JsHeap<'a>,
             old: &'s String,
             new: &'s String,
-            options: &Options,
+            options: &TextOptions,
         ) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
-            changes(heap, $split, old, new, options)
+            let ignore = Ignore { case: options.ignore_case, whitespace: false };
+            let max_edits = max_edits(heap, options.max_edit_length)?;
+            Ok(changes($split, Texts::new(heap, [old, new], false)?, Compare { ignore, max_edits }))
         }
     )*};
 }
 split_by! {
-    lines: Split::Lines;
     words: Split::Words;
     chars: Split::Chars;
 }
@@ -296,10 +374,10 @@ fn hunks_of<T: JsUnit>(
     old: &String,
     new: &String,
     context: usize,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<Vec<Hunk>> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
+    let edits = compare.diff(Split::Lines, &a, &b)?;
     let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
         hunk_with(hunk, |line| match line {
             patch::Line::Text(operation, text) => T::line(operation, text),
@@ -316,11 +394,10 @@ pub(crate) fn hunks<'a>(
     options: &HunksOptions,
 ) -> bindgen::Result<'a, Option<Vec<Hunk>>> {
     let context = limit(heap, "context", options.context)?;
-    let max_edits = max_edits(heap, options.max_edit_length)?;
-    Ok(by_width!(
-        [old, new],
-        hunks_of(old, new, context, max_edits)
-    ))
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    let [old, new] = texts.get();
+    Ok(by_width!([old, new], hunks_of(old, new, context, compare)))
 }
 
 struct FileHeader<'a> {
@@ -334,10 +411,10 @@ fn format_patch<T: JsUnit>(
     new: &String,
     headers: &[FileHeader<'_>],
     context: usize,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<String> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
+    let edits = compare.diff(Split::Lines, &a, &b)?;
     let mut out = Vec::new();
     // As `diff -u`: no differences, no output.
     if !edits.is_empty() {
@@ -362,7 +439,9 @@ pub(crate) fn create_patch<'a>(
     options: &PatchOptions<'_>,
 ) -> bindgen::Result<'a, Option<String>> {
     let context = limit(heap, "context", options.context)?;
-    let max_edits = max_edits(heap, options.max_edit_length)?;
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    let [old, new] = texts.get();
     let (old_name, new_name) = (options.old_file_name, options.new_file_name);
     let mut headers = Vec::new();
     for (marker, name, option, header) in [
@@ -405,7 +484,7 @@ pub(crate) fn create_patch<'a>(
     let strings = headers.iter().map(|file| file.header).chain([old, new]);
     Ok(by_width!(
         strings,
-        format_patch(old, new, &headers, context, max_edits)
+        format_patch(old, new, &headers, context, compare)
     ))
 }
 

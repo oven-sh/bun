@@ -3,34 +3,11 @@
 use bun_core::{feature_flag, handle_oom};
 use bun_zlib::{Deflater, Inflater, deflate, inflate};
 
-use crate::permessage_deflate::{
-    InflateError, deflate_message, inflate_message, inflate_message_at_once,
+pub use bun_websocket::deflate::Params;
+use bun_websocket::deflate::{
+    InflateError, MIN_RAW_DEFLATE_WINDOW_BITS, deflate_message, inflate_message,
+    inflate_message_at_once,
 };
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Params {
-    pub(crate) server_max_window_bits: u8,
-    pub(crate) client_max_window_bits: u8,
-    pub(crate) server_no_context_takeover: u8,
-    pub(crate) client_no_context_takeover: u8,
-}
-
-impl Default for Params {
-    fn default() -> Self {
-        Self {
-            server_max_window_bits: 15,
-            client_max_window_bits: 15,
-            server_no_context_takeover: 0,
-            client_no_context_takeover: 0,
-        }
-    }
-}
-
-impl Params {
-    pub(crate) const MAX_WINDOW_BITS: u8 = 15;
-    pub(crate) const MIN_WINDOW_BITS: u8 = 8;
-}
 
 /// Parent module references this type as `WebSocketDeflate`.
 pub type WebSocketDeflate = PerMessageDeflate;
@@ -46,10 +23,6 @@ pub struct PerMessageDeflate {
     compress_no_context_takeover: bool,
     decompress_no_context_takeover: bool,
 }
-
-/// There is no 8-bit window for raw deflate. A peer that negotiated 8 bits can still decode
-/// 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250.
-const MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
 /// Output space reserved up front for one message. The one-shot
 /// path gets exactly that space, so it is skipped for compressed inputs at

@@ -606,6 +606,9 @@ impl Resolver<'_, '_> {
                     let read = hir.member_key(object).map(|(_, key)| key);
                     matches!(read, Some(MemberKey::Name(known::mock)))
                 }
+                known::mock => {
+                    self.is_handed_on_whole(member) && !self.is_mock_of_another_object(object)
+                }
                 known::mockReturnThis => !self.is_mock_of_another_object(object),
                 known::mockImplementation
                 | known::mockImplementationOnce
@@ -616,6 +619,26 @@ impl Resolver<'_, '_> {
                 _ => false,
             }
         })
+    }
+
+    /// Whether more is done with the value of `member` than to call it, to compare it or to read a name off it.
+    fn is_handed_on_whole(&self, member: ExprId) -> bool {
+        let hir = self.input.hir;
+        let value = self.outermost_assertion_of(member);
+        match self.input.bound.parent_of_expr(value) {
+            Parent::Expr(user) => match hir[user].kind {
+                ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee != value,
+                ExprKind::Assign { target, .. } => target != value,
+                ExprKind::Binary { op, .. } => matches!(
+                    op,
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma | BinOp::In
+                ),
+                ExprKind::Unary { .. } => false,
+                _ => !matches!(hir.member_key(user), Some((_, MemberKey::Name(_)))),
+            },
+            Parent::Stmt(statement) => matches!(hir[statement].kind, StmtKind::Return(_)),
+            _ => true,
+        }
     }
 
     fn is_given_function_reading_this(&self, method: ExprId) -> bool {

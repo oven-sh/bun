@@ -797,6 +797,10 @@ fn replaced_member_receivers_are_exposed() {
         "jest.spyOn(process, 'exit').mockReturnThis();",
         "const spy = vi.spyOn(process, 'exit'); f(spy.mock.contexts[0]);",
         "let spy; spy = spyOn(process, 'exit'); f(spy.mock.instances);",
+        "const spy = spyOn(process, 'exit'); f(spy.mock);",
+        "const spy = spyOn(process, 'exit'); const state = () => spy.mock;",
+        "const spy = spyOn(process, 'exit'); spy.mock[key];",
+        "const spy = spyOn(process, 'exit'); const state = spy.mock; f(state);",
     ] {
         let source = format!("{IMPORTS}{source}");
         with_case(TEST_RUN, &source, |case| {
@@ -817,6 +821,8 @@ fn replaced_member_receivers_are_exposed() {
         "spyOn(process, 'exit'); mock().mockImplementation(function () { return this; });",
         "spyOn(process, 'exit'); jest.fn().mockName('a').mockImplementation(function () { return this; });",
         "const spy = spyOn(process, 'exit'); f(spy.mock.calls, spy.mock.results, g.instances);",
+        "const spy = spyOn(process, 'exit'); if (spy.mock) f(spy.mock['calls'], typeof spy.mock);",
+        "spyOn(process, 'exit'); jest.mock('./other', () => ({})); f(mock().mock);",
     ] {
         let source = format!("{IMPORTS}{source}");
         with_case(TEST_RUN, &source, |case| {

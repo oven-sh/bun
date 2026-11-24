@@ -3216,7 +3216,8 @@ function onResponseFinishHandleSocket(server, socket, res) {
   }
   // Another response is already in flight on this connection (pipelining):
   // it is not idle, so leave its timeout alone.
-  if (socket._httpMessage && socket._httpMessage !== res) {
+  const inFlight = socket._httpMessage;
+  if (inFlight && inFlight !== res) {
     return;
   }
   // Nor while responses, or the listener of a 'connect' or an 'upgrade', wait behind this one.

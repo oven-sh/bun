@@ -45,7 +45,9 @@ use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
 };
 use bun_sema::node::NodeData;
-use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
+use bun_sema::program::{
+    CodeAnswer, CodeView, EntryPointsFound, FileId, Files, may_name_type_at_run_time,
+};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -214,6 +216,22 @@ fn warn_of_names_unread_at_loads_found_late(
             {
                 let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
                 let code = Code::ModuleMayBeNamedAtRunTime;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+            }
+        }
+    }
+}
+
+fn warn_of_types_unread_at_requires(diagnostics: &mut Diagnostics, view: ProgramView<'_, '_>) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        for site in analysis.import_sites {
+            if matches!(site.specifier, ImportSpecifier::Constant(_))
+                && may_name_type_at_run_time(hir, files.bound(file), &analysis.decisions, site)
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
+                let code = Code::RequiredTypeIsNotRead;
                 diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
             }
         }
@@ -958,6 +976,7 @@ impl<'a> Build<'a> {
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
             warn_of_guesses_left_out(&mut self.diagnostics, view, host);
+            warn_of_types_unread_at_requires(&mut self.diagnostics, view);
             if !options.aot.loads_code_from_disk {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
                 warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);

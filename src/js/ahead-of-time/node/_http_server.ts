@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 787f5f1ee1096e7ae73400037746484eaf07503ba9af585c19ca491809aaaac1.
+// Written against that file with the SHA-256 396cd36da25d8fc1e90c7878772c782b306500a6f1254c1bfa61953ae15cc9a7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -3985,7 +3985,6 @@ function ServerResponse(
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
 function publishResponseCreated(request: $Node.IncomingMessage, response: $Node.ServerResponse): void {
-  if (request === requestOfNobody) return;
   const handle = response[kHandle];
   if (handle === null || (handle && holdsOutput(handle))) response[fakeSocketSymbol] = null;
   onResponseCreatedChannel.publish({ request, response });
@@ -4131,9 +4130,9 @@ const ServerResponsePrototype: object = ServerResponse.prototype;
 // A response that another constructor made has no exchange. The server gives it one whose response nobody holds, so it takes the
 // functions of an object that stands in the place of a response, which keep the state on their receiver.
 let responseOfNobody: $Node.ServerResponse | undefined;
-let requestOfNobody: $Node.IncomingMessage | undefined;
 function adoptResponse(res: $Node.ServerResponse): void {
-  const nobody = (responseOfNobody ??= new ServerResponse((requestOfNobody = new IncomingMessage(null))));
+  // It is not constructed, so that no setter of the program hears of it and no channel publishes it.
+  const nobody = (responseOfNobody ??= Object.create(ServerResponsePrototype) as $Node.ServerResponse);
   const exchange = makeExchange(nobody, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks | ExchangeFlags.has_stand_in;
   res.$exchange = exchange;
@@ -4475,7 +4474,8 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
       exchange.flags &= ~ExchangeFlags.finishes_here;
       req._dump();
     }
-    finishConnection(exchange, this, req, exchange.connection!, false);
+    const connection = exchange.connection!;
+    finishConnection(exchange, this, req, connection, connection.parser, false);
     return;
   }
   // The stream destroyer nulls req.socket (pipeline, compose). The response's own socket still is the connection then.
@@ -4989,9 +4989,11 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeAmongOthers(exchange, res, req, socket, flags, isSilent);
   }
   if (isSilent && (kind === RequestKind.unseen || kind === RequestKind.consumed)) {
+    // Read in front of the stores that may be refused: what a getter of it throws is heard.
+    const parser = socket.parser;
     try {
       if (kind === RequestKind.unseen) endUnseen(req);
-      finishConnection(exchange, res, req, socket, true);
+      finishConnection(exchange, res, req, socket, parser, true);
     } catch {
       takesStores = false;
     }
@@ -5027,10 +5029,10 @@ const finishConnection = function onResponseFinishHandleSocket(
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
   socket: $Node.HttpServerSocket,
+  parser: $Node.HttpServerParserShim | null,
   isSilent: boolean,
 ): void {
   const kind = exchange.requestKind;
-  const parser = socket.parser;
   if (kind === RequestKind.unseen) {
     if (isSilent) {
       if (parser != null && parser.incoming === req) parser.incoming = null;
@@ -5109,7 +5111,7 @@ const finishExchangeAmongOthers = function emitResponseFinished(
   queueTick1(emitCloseNT, res);
   exchange.flags |= ExchangeFlags.finishes_here | ExchangeFlags.others_wait;
   if (isSilent) {
-    finishConnection(exchange, res, req, socket, false);
+    finishConnection(exchange, res, req, socket, socket.parser, false);
     return;
   }
   try {

@@ -7843,6 +7843,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             overrideLoadedModuleExports(globalObject, mock, inPlace);
             if (scope.exception()) [[unlikely]]
                 (void)scope.tryClearException();
+            // In `bun test` the mock has saved originals, and the eviction below evicts what test files have loaded above the module that it patches.
+            if (compiled && JSC::AOT::wasPatchedAfterEvaluation(globalObject, *compiled))
+                JSC::AOT::releaseImporters(globalObject, *compiled);
         } else if (compiled && (!JSC::AOT::hasStartedLoading(globalObject, *compiled) || waitsOverEvaluatedModule || (mock->state == JSModuleMock::State::NotCalled && isBuiltinModuleKey(specifier)))) {
             auto wait = [&](JSC::AOT::ModuleID variant) {
                 plugins.pendingCompiledMocks.removeAllMatching([&](const auto& entry) { return entry.first == variant.index(); });

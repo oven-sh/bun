@@ -308,7 +308,20 @@ const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFr
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
+const moduleLoaderFunctions = functionsIn(
+  "builtins/CommonJS",
+  "internalRequire",
+  "loadEsmIntoCjs",
+  "overridableRequire",
+  "require",
+  "requireESM",
+);
+
+// A module of the library that they have mocked is required of the loader.
+const mocksOfModules = ["bun:test.mock.module", ...["jest", "vi"].flatMap(api => [`bun:test.${api}.mock`, `bun:test.${api}.doMock`])];
+
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
+  ...Object.fromEntries(mocksOfModules.map(path => [path, moduleLoaderFunctions])),
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
@@ -1074,14 +1087,7 @@ export default b.declarations(
     namesOfMethodsCallingLoads: [customInspect],
     // The object behind `require.cache` prints a copy of itself.
     functionsLayingSuchMethods: functionsIn("builtins/CompiledCommonJS", "createRequireCacheOverCompiledProgram"),
-    moduleLoaderFunctions: functionsIn(
-      "builtins/CommonJS",
-      "internalRequire",
-      "loadEsmIntoCjs",
-      "overridableRequire",
-      "require",
-      "requireESM",
-    ),
+    moduleLoaderFunctions,
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),
   b.excluded("builtins/CommonJS", "createRequireCache"),

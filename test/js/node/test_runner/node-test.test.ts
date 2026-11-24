@@ -133,7 +133,7 @@ describe("node:test", () => {
   });
 
   test("should forward Infinity and finite timeouts so they override the runner default", async () => {
-    const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "1000"]);
+    const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "100"]);
     expect(stderr).toContain("2 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,

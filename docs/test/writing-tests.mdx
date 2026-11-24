@@ -119,13 +119,7 @@ test(
 
 When a test times out, Bun kills any still-running processes that the test spawned with `Bun.spawn`, `Bun.spawnSync`, or `node:child_process`, and logs a message to the console. This prevents zombie processes from lingering after timed-out tests.
 
-Bun goes by when a process started, not by which code started it. A process belongs to the test if it started while the test function ran. Processes that started earlier keep running, such as a server from a `beforeAll` or `beforeEach` hook or from the top of the file.
-
-- If a hook times out, Bun kills the processes that started while that hook ran.
-- If an `afterEach` or `afterAll` hook times out, Bun also kills the processes that started in the matching `beforeEach` or `beforeAll`.
-- If a test in a group of concurrent tests times out, Bun kills every process the group started, once all its tests have finished.
-- With `--bail`, Bun kills every process still running before it exits, since the `afterAll` hooks don't run.
-- In `node:test`, `beforeEach` and `afterEach` hooks run as part of the test, so Bun kills their processes with the test's.
+Bun goes by when a process started: a timeout kills only the processes that started while the timed-out test or hook ran. Processes that started earlier keep running, such as a server from a `beforeAll` or `beforeEach` hook or from the top of the file. In `node:test`, `beforeEach` and `afterEach` hooks run as part of the test.
 
 ## Test Modifiers
 

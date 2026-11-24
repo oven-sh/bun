@@ -83,8 +83,7 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
         require("node:fs").closeSync(fd);
         return;
       }
-      emit(target, serialized.msg, fd);
-      return;
+      return () => emit(target, serialized.msg, fd);
     }
     case "dgram.Native": {
       // A non-reading UDP handle (cluster-shared dgram socket): wrap the

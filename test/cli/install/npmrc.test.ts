@@ -2644,7 +2644,7 @@ describe(".npmrc diagnostics", () => {
   // An option with no value has no position in the file.
   it("names the file of an unknown option that has no value", async () => {
     const stderr = await stderrOf("registry=https://example.com/\n//example.com/:_authtoken=\n");
-    expect(stderr).toMatch(/warn: ignoring unknown .npmrc option _authtoken\n\s+at \S+[\\/]\.npmrc\n/);
+    expect(stderr).toMatch(/warn: ignoring unknown .npmrc option _authtoken\n\s+at [^\n]+[\\/]\.npmrc\n/);
     expect(stderr).toEndWith("No packages! Deleted empty lockfile\n");
   });
 

@@ -769,7 +769,7 @@ describe.concurrent("bun-install", () => {
         const { err, warnings, exitCode } = await install(ctx);
         expect(err).not.toContain("error:");
         expect(warnings).toEqual(['warn: skipping unnamed dependency ("*" in "peerDependencies")']);
-        expect(err).toMatch(/\n\s+at \S*package\.json\r?\n/);
+        expect(err).toMatch(/\n\s+at [^\n]*package\.json\r?\n/);
         expect(urls).toEqual([]);
         expect(await exists(join(ctx.package_dir, "node_modules", "packed", "package.json"))).toBeTrue();
         expect(exitCode).toBe(0);

@@ -660,8 +660,12 @@ impl Resolver {
     pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
         let mut used = self.pending[QueryKind::HostNative].used.get().iter_set();
         while let Some(slot) = used.next() {
-            // SAFETY: the request lives until its task runs, which frees the slot.
-            let _ = unsafe { libuv::uv_cancel(self.pending_uv_requests[slot].get()) };
+            // Teardown runs several passes; cancel each request once.
+            let request = self.pending_uv_requests[slot].replace(ptr::null_mut());
+            if !request.is_null() {
+                // SAFETY: the request lives until its task runs, which frees the slot.
+                let _ = unsafe { libuv::uv_cancel(request) };
+            }
         }
     }
 

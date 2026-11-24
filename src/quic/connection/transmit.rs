@@ -16,6 +16,7 @@ use crate::congestion::Permit;
 use crate::crypto::TAG_LEN;
 use crate::endpoint::Shared;
 use crate::error::Result;
+use crate::event::CloseReason;
 use crate::frame::kind;
 use crate::packet::{
     FIXED_BIT, KEY_PHASE, LongFields, LongKind, MIN_DATAGRAM_LEN, SPIN_BIT, Unsealed, number_len,
@@ -34,6 +35,18 @@ const MAX_INTEGER_FRAME_LEN: usize = 1 + 8;
 const MAX_NEW_TOKEN_FRAME_LEN: usize = 64;
 const MAX_SECS_BLOCKED_IN_SILENCE: u32 = 8;
 const MIN_RETAINED: u64 = 1024 * 1024;
+/// So that what waits for more fits into one packet.
+const FRAME_OVERHEAD: u64 = 16;
+/// Many clients have room for 16 KB of CRYPTO data behind a gap.
+const MAX_CRYPTO_AHEAD: u64 = 12 * 1024;
+
+/// Whether what has been written waits for more.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Gathering {
+    No,
+    Yes,
+    Forbidden,
+}
 
 /// A packet that is not sealed yet.
 struct Draft {
@@ -91,6 +104,9 @@ impl Connection {
             }
         }
         if self.ending == Ending::Closing {
+            if self.is_gathering() && matches!(self.close_reason, CloseReason::Local) {
+                self.write_datagram(now, Content::Anything, batch, shared);
+            }
             // The server needs the end of the handshake to read 1-RTT packets.
             while self.phase == Phase::Established
                 && self.close_frame.is_for_application()
@@ -134,6 +150,9 @@ impl Connection {
             self.restart_progress_timer(now);
         }
         self.timers.stop(Timer::Pacing);
+        if self.is_gathering() {
+            self.gathering = Gathering::No;
+        }
         if self.side.is_client() {
             self.listen(now);
         }
@@ -354,7 +373,8 @@ impl Connection {
             if !space.has_crypto_to_send() {
                 space.crypto_send.on_lost(0..space.crypto_send.sent());
             }
-            draft.is_eliciting = write_crypto_frames(self.side, space, out, end);
+            draft.is_eliciting =
+                write_crypto_frames(self.side, self.path.is_validated, space, out, end);
             if !draft.is_eliciting && space.probes > 0 && out.len() < end {
                 out.push(kind::PING as u8);
                 draft.is_eliciting = true;
@@ -366,9 +386,12 @@ impl Connection {
 
     #[inline]
     pub(super) fn has_frames(&self) -> bool {
-        self.streams.state.has_frames()
-            || !self.streams.state.owed.is_empty()
-            || self.has_datagrams()
+        self.streams.state.has_frames() || self.has_datagrams() || self.has_control_frames()
+    }
+
+    #[inline]
+    fn has_control_frames(&self) -> bool {
+        !self.streams.state.owed.is_empty()
             || self.spaces.data.has_crypto_to_send()
             || self.local_ids.has_frames()
             || self.remote_ids.has_frames()
@@ -393,6 +416,34 @@ impl Connection {
         }
     }
 
+    /// Only new data does, and only if no packet is due anyway.
+    #[inline]
+    pub(super) fn waits_for_more(&mut self, now: Instant) -> bool {
+        let state = &self.streams.state;
+        let frames = (state.sendable_streams() + self.datagrams.unsent.len()) as u64;
+        let unsent = state.unsent() + self.datagrams.unsent_len + frames * FRAME_OVERHEAD;
+        if !self.congestion.is_crowded(unsent)
+            || state.has_urgent_frames()
+            || state.owes_frames()
+            || self.has_control_frames()
+            || self.spaces.data.received.is_ack_due
+            || self.ending != Ending::No
+            || self.gathering == Gathering::Forbidden
+            || !self.is_confirmed()
+        {
+            return false;
+        }
+        let continues_series =
+            || self.datagrams.unsent.is_empty() && self.streams.only_continues_series();
+        let until = (self.congestion).gathers_until(now, &self.rtt, continues_series);
+        if now < until {
+            self.gathering = Gathering::Yes;
+            self.timers.set(Timer::Pacing, until);
+            self.streams.state.ask_for_more(now);
+        }
+        now < until
+    }
+
     #[inline]
     fn draft_data(
         &mut self,
@@ -406,7 +457,8 @@ impl Connection {
         if !has_frames && !self.streams.state.awaits_writes() {
             self.congestion.on_application_limited();
         }
-        let may_elicit = has_frames && (is_probe || self.may_send(now));
+        let may_elicit =
+            has_frames && (is_probe || self.may_send(now) && !self.waits_for_more(now));
         let breaks_silence = core::mem::take(&mut self.silence.owes_ping);
         let is_ack_due = self.spaces.data.received.is_ack_due || breaks_silence;
         if !may_elicit && !is_ack_due {
@@ -459,7 +511,7 @@ impl Connection {
         let has_datagrams = self.has_datagrams();
         let space = &mut self.spaces.data;
         if space.has_crypto_to_send() {
-            write_crypto_frames(self.side, space, out, end);
+            write_crypto_frames(self.side, self.path.is_validated, space, out, end);
         }
         let sent = &mut space.sent.frames;
         if self.local_ids.has_frames() {
@@ -670,6 +722,16 @@ impl Connection {
         let received = &mut self.spaces.data.received;
         received.is_ack_due |= received.unacked_eliciting > 0;
     }
+
+    /// Whether it waits for more data to fill a packet.
+    pub fn is_gathering(&self) -> bool {
+        self.gathering == Gathering::Yes
+    }
+
+    /// For good.
+    pub fn stop_gathering(&mut self) {
+        self.gathering = Gathering::Forbidden;
+    }
 }
 
 impl Draft {
@@ -698,10 +760,21 @@ impl Draft {
 }
 
 /// Returns whether it wrote any.
-fn write_crypto_frames(side: Side, space: &mut Space, out: &mut Vec<u8>, end: usize) -> bool {
+fn write_crypto_frames(
+    side: Side,
+    is_validated: bool,
+    space: &mut Space,
+    out: &mut Vec<u8>,
+    end: usize,
+) -> bool {
     let (buffer, start) = (&mut space.crypto_send, out.len());
     loop {
-        let range = (buffer.first_lost()).unwrap_or_else(|| buffer.sent()..buffer.end());
+        let unsent = buffer.sent()..buffer.end();
+        // There is little room, and the rest may just be on its way (RFC 9002 §6.2.4).
+        let is_far_ahead = buffer.len() - buffer.unsent_len() >= MAX_CRYPTO_AHEAD;
+        let lost =
+            (buffer.first_lost()).filter(|_| is_validated || is_far_ahead || unsent.is_empty());
+        let range = lost.unwrap_or(unsent);
         // Some servers make no use of a frame of which they have read a part.
         let next = (space.crypto_ends).partition_point(|&it| it <= range.start);
         let former_end = space.crypto_ends.get(next).copied();

@@ -16,7 +16,7 @@ pub(crate) struct Stream {
     pub(crate) received: Vec<u8>,
     pub(crate) is_read_to_end: bool,
     pub(crate) is_closed: bool,
-    unsent: VecDeque<u8>,
+    pub(crate) unsent: VecDeque<u8>,
     /// Of the current piece.
     rest: usize,
     finishes: bool,

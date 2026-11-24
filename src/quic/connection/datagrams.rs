@@ -16,6 +16,7 @@ const OVERHEAD: usize = 64;
 #[derive(Default)]
 pub(super) struct Datagrams {
     pub(super) unsent: VecDeque<(u64, Vec<u8>)>,
+    pub(super) unsent_len: u64,
     undelivered_len: usize,
 }
 
@@ -41,6 +42,7 @@ impl Datagrams {
         while let Some((id, data)) = (self.unsent).pop_front_if(|(_, data)| {
             frame_len(data) > max_frame_len || out.len() + frame_len(data) <= end
         }) {
+            self.unsent_len -= data.len() as u64;
             if frame_len(&data) > max_frame_len {
                 events.push_back(Event::DatagramAbandoned(id));
                 continue;
@@ -77,6 +79,7 @@ impl Connection {
     /// `id` comes back in the event that tells what became of it.
     pub fn send_datagram(&mut self, id: u64, data: Vec<u8>) {
         self.streams.state.made_progress = true;
+        self.datagrams.unsent_len += data.len() as u64;
         self.datagrams.unsent.push_back((id, data));
     }
 
@@ -85,6 +88,8 @@ impl Connection {
     }
 
     pub fn drop_oldest_datagram(&mut self) -> Option<u64> {
-        self.datagrams.unsent.pop_front().map(|it| it.0)
+        let (id, data) = self.datagrams.unsent.pop_front()?;
+        self.datagrams.unsent_len -= data.len() as u64;
+        Some(id)
     }
 }

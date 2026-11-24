@@ -26,7 +26,7 @@ const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 const PROBES_PER_IDLE_TIMEOUT: u64 = 8;
 const DELIVERY_PERIOD: Duration = Duration::from_secs(30);
 /// One part in so many of what has been sent has to be acknowledged in a period.
-const DELIVERY_PARTS: u64 = 8;
+const DELIVERY_PARTS: u64 = 64;
 const PROBES: u8 = 2;
 const MAX_PTO_COUNT_IF_HEARD: u32 = 4;
 /// After how many timeouts in a row the size of the packets is suspected.

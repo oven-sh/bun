@@ -1,9 +1,11 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
-use bun_quic::{Algorithm, Duration, KeepAlive, StreamId};
+use bun_quic::Side::Client;
+use bun_quic::{Algorithm, Duration, KeepAlive, Layer, StreamId};
 
-use crate::harness::paths::NEW;
+use crate::harness::messages::{GET, OK};
+use crate::harness::paths::{NEW, new_id};
 use crate::harness::raw::Kind::{Handshake, Initial, Short};
-use crate::harness::raw::{RTT, Raw};
+use crate::harness::raw::{APART, RTT, Raw};
 use crate::harness::wire::filler;
 
 const INITIAL_WINDOW: u64 = 32 * 1460;
@@ -200,11 +202,224 @@ fn small_writes_in_quick_succession_are_gathered() {
     }
 }
 
+/// Puts many small packets in flight, and acknowledges an older one after `rtt`.
+fn crowd(raw: &mut Raw, id: u64, rtt: u64) {
+    raw.peer.send(id, b"a", false);
+    raw.process();
+    let ack = raw.ack(Short);
+    raw.now = raw.now + Duration::from_millis(rtt) - APART * 20;
+    for _ in 0..20 {
+        raw.now = raw.now + APART;
+        raw.peer.send(id, b"a", false);
+        raw.process();
+    }
+    raw.send(&ack);
+    raw.now = raw.now + APART;
+    raw.forget();
+}
+
+#[test]
+fn small_writes_are_gathered_if_many_seem_to_be_in_a_queue() {
+    for algorithm in [Algorithm::Bbr, Algorithm::Cubic] {
+        for (rtt, packets) in [(RTT, 20), (3 * RTT, 13)] {
+            let mut raw = (Raw::client().config(|it| it.congestion = algorithm)).connected();
+            let id = raw.peer.open(Unidirectional);
+            crowd(&mut raw, id, rtt);
+            for _ in 0..20 {
+                raw.peer.send(id, b"a", false);
+                raw.advance(1);
+            }
+            raw.advance(2);
+            assert_eq!((raw.take().len(), raw.streams[&id].len()), (packets, 41));
+        }
+    }
+}
+
+#[test]
+fn only_a_little_new_data_waits_for_more() {
+    let events: [(fn(&mut Raw), &str); 20] = [
+        (|_| {}, ""),
+        (|raw| raw.send("ping"), ""),
+        (|raw| raw.send_as(99, "ping"), "stream 7 0 b"),
+        (|raw| raw.peer.send(7, &[0; 582], false), ""),
+        (|raw| raw.peer.send(7, &[0; 583], false), "stream 7 0 ~584"),
+        (
+            |raw| raw.peer.send(7, &[0; 1499], false),
+            "stream 7 0 ~1171, stream 7 1171 ~329",
+        ),
+        (|raw| raw.send("ack 5-6"), "stream 3 1 a, stream 7 0 b"),
+        (|raw| raw.peer.send(7, &[], true), ""),
+        (|raw| assert!(raw.connection().is_gathering()), ""),
+        (|raw| raw.connection().stop_gathering(), "stream 7 0 b"),
+        (
+            |raw| {
+                let now = raw.now;
+                raw.connection().abort(now, Layer::Application, 1, &[]);
+            },
+            "stream 7 0 b, application_close 0x1",
+        ),
+        (|raw| raw.send("handshake_done"), "close 0xa"),
+        (
+            |raw| {
+                raw.advance(20);
+                assert!(!raw.connection().is_gathering());
+            },
+            "stream 7 0 b",
+        ),
+        (
+            |raw| {
+                let now = raw.now;
+                raw.connection().close(now);
+            },
+            "stream 7 0 b",
+        ),
+        (|raw| raw.connection().send_datagram(0, vec![0; 566]), ""),
+        (
+            |raw| raw.connection().send_datagram(0, vec![0; 567]),
+            "datagram ~567, stream 7 0 b",
+        ),
+        (
+            |raw| raw.send("stop_sending 3 0"),
+            "reset_stream 3 0x0 21, stream 7 0 b",
+        ),
+        (
+            |raw| raw.send("fin 2 0 -"),
+            "max_streams_uni 4, stream 7 0 b",
+        ),
+        (
+            |raw| raw.send("retire_connection_id 1"),
+            "new_connection_id 2 0, stream 7 0 b",
+        ),
+        (
+            |raw| raw.send(&new_id(1, 1)),
+            "retire_connection_id 0, stream 7 0 b",
+        ),
+    ];
+    for (event, frames) in events {
+        let mut raw = (Raw::client().with("max_datagram_frame_size=1000")).connected();
+        let [busy, id] = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        crowd(&mut raw, busy, 3 * RTT);
+        raw.peer.send(id, b"b", false);
+        raw.process();
+        event(&mut raw);
+        raw.process();
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn small_writes_to_a_busy_stream_are_gathered_after_a_loss() {
+    let cases: [(_, &[_], _); 6] = [
+        ("ack 5-6", &[(3, "b", false)], ""),
+        ("ack 5-6", &[(3, "bb", false)], "stream 3 31 bb"),
+        ("ack 5-6", &[(3, "b", true)], "fin 3 31 b"),
+        ("ack 5-6", &[(7, "b", false)], "stream 7 0 b"),
+        (
+            "ack 5-6",
+            &[(3, "b", false), (7, "c", false)],
+            "stream 3 31 b, stream 7 0 c",
+        ),
+        ("ping", &[(3, "b", false)], "stream 3 31 b"),
+    ];
+    for (ack, writes, frames) in cases {
+        let mut raw = Raw::client().connected();
+        let [busy, _] = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        crowd(&mut raw, busy, RTT);
+        raw.peer.send(busy, &[0; 10], false);
+        raw.process();
+        raw.send(ack);
+        raw.forget();
+        for &(id, data, fin) in writes {
+            raw.peer.send(id, data.as_bytes(), fin);
+        }
+        raw.process();
+        assert_eq!(raw.frames(), frames);
+    }
+}
+
+#[test]
+fn what_waits_for_more_is_joined_by_what_is_written_on_request() {
+    for steps in [
+        [
+            (1, "7 writable", 0),
+            (1, "7 writable", 0),
+            (2000, "7 writable", 2),
+        ],
+        [(1, "7 writable", 0), (0, "7 writable", 0), (0, "", 0)],
+    ] {
+        let mut raw = Raw::client().connected();
+        let [busy, id] = [(); 2].map(|()| raw.peer.open(Unidirectional));
+        crowd(&mut raw, busy, 3 * RTT);
+        for (len, events, packets) in steps {
+            let stream = raw.peer.streams.entry(id).or_default();
+            stream.unsent.extend(vec![0; len]);
+            raw.connection().want_write(StreamId(id));
+            assert_eq!((raw.take().len(), &*raw.events()), (packets, events));
+        }
+    }
+}
+
+#[test]
+fn acknowledgments_of_sections_wait_for_more_too() {
+    for (pings, delay) in [(0, RTT), (1, 0)] {
+        let mut raw = Raw::http3(Client).connected_with("");
+        raw.write_encoder("#3fe11f, #41610162");
+        raw.write_http3(0, &format!("headers {GET}"), true);
+        assert!(raw.peer.send_headers(0, OK));
+        crowd(&mut raw, 0, 3 * RTT);
+        raw.send("fin 4 0 #01090200d1d7500161c180");
+        raw.peer.send(0, b"b", false);
+        assert!(raw.take().is_empty());
+        (0..pings).for_each(|_| raw.send_as(99, "ping"));
+        raw.advance(delay);
+        assert!(raw.frames().starts_with("stream 7 2 #84, stream 0 "));
+    }
+}
+
+#[test]
+fn datagrams_that_are_gone_do_not_count() {
+    let mut raw = (Raw::client().with("max_datagram_frame_size=1000")).connected();
+    raw.connection().send_datagram(0, vec![0; 600]);
+    raw.connection().send_datagram(1, vec![0; 600]);
+    assert_eq!(raw.connection().drop_oldest_datagram(), Some(0));
+    let id = raw.peer.open(Unidirectional);
+    crowd(&mut raw, id, 3 * RTT);
+    raw.peer.send(id, b"b", false);
+    raw.process();
+    assert!(raw.connection().is_gathering());
+}
+
+#[test]
+fn datagrams_are_not_gathered_after_a_loss() {
+    let mut raw = (Raw::client().with("max_datagram_frame_size=100")).connected();
+    let id = raw.peer.open(Unidirectional);
+    crowd(&mut raw, id, RTT);
+    raw.send("ack 5-6");
+    raw.forget();
+    raw.connection().send_datagram(0, vec![b'c']);
+    raw.process();
+    assert_eq!(raw.frames(), "datagram c");
+}
+
+#[test]
+fn control_streams_do_not_wait_for_more() {
+    let mut raw = Raw::http3(Client).connected_with("");
+    raw.write_http3(0, &format!("headers {GET}"), true);
+    assert!(raw.peer.send_headers(0, OK));
+    crowd(&mut raw, 0, 3 * RTT);
+    raw.peer.send(0, b"b", false);
+    raw.process();
+    assert!(raw.take().is_empty());
+    raw.connection().go_away();
+    raw.process();
+    assert_eq!(raw.take().len(), 1);
+}
+
 #[test]
 fn packet_threshold_has_no_limit() {
     let mut raw = Raw::client().connected();
     for _ in 0..8 {
-        raw.request_packets("a");
+        raw.request_many_packets(20);
         raw.now = raw.now + Duration::from_secs(1);
         raw.send("ack");
     }

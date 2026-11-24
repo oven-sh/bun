@@ -11,7 +11,7 @@ use super::peer::Peer;
 use super::wire::{self, prefixed, take, take_prefixed, varint};
 use super::{address, crypto, tls};
 
-/// Far enough for the pacer not to gather small packets, however many there are.
+/// Far enough for small packets not to be gathered, however many there are, unless the round trip time has just gone up.
 pub(crate) const APART: Duration = Duration::from_micros(251);
 /// The round trip time that a connection starts with, in milliseconds.
 pub(crate) const RTT: u64 = 20;
@@ -494,6 +494,22 @@ impl Raw {
     /// Has the peer send one packet for each byte, on a new stream.
     pub(crate) fn request_packets(&mut self, data: &str) {
         self.request_packets_every(Duration::ZERO, data);
+    }
+
+    /// Has the peer send three times as much as counts as progress, and returns the acknowledgments for each part.
+    pub(crate) fn request_three_parts(&mut self) -> [String; 3] {
+        let id = self.peer.open(Direction::Unidirectional);
+        self.forget();
+        [(); 3].map(|()| {
+            self.peer.send(id, &[0; 4096], false);
+            self.advance(1);
+            let packets = self.take();
+            format!(
+                "ack {}-{}",
+                packets[0].number,
+                packets.last().unwrap().number
+            )
+        })
     }
 
     pub(crate) fn request_many_packets(&mut self, count: usize) {

@@ -17,7 +17,7 @@ use crate::time::{Duration, Instant};
 pub(super) const MIN_FRAME_ROOM: usize = 1 + 8 + 1 + 2;
 /// There have to be up to three packets in a datagram.
 const MAX_HANDSHAKE_REASON_LEN: usize = 128;
-/// For how long to wait for the peer to take what has been written.
+/// For how long to wait for the peer to take more of what has been written.
 const GRACE_PERIOD: Duration = Duration::from_secs(30);
 const MIN_IDLE_PROBE_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_IDLE_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -268,8 +268,18 @@ impl Connection {
                 false if self.yields => self.settling_period().max(MIN_YIELDING_PERIOD),
                 false => self.settling_period(),
             };
-            let deadline = self.timers.get(Timer::Close).min(now + patience);
-            self.timers.set(Timer::Close, deadline);
+            let deadline = match core::mem::take(&mut self.streams.state.has_delivered) {
+                true => Instant::NEVER,
+                false => self.timers.get(Timer::Close),
+            };
+            self.timers.set(Timer::Close, deadline.min(now + patience));
+        }
+    }
+
+    pub(super) fn on_close_timeout(&mut self, now: Instant) {
+        match core::mem::take(&mut self.streams.state.has_delivered) {
+            true => self.timers.set(Timer::Close, now + GRACE_PERIOD),
+            false => self.send_close(now),
         }
     }
 

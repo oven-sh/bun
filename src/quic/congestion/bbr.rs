@@ -19,6 +19,7 @@ const CLEAR_ROUNDS: u8 = 4;
 const HIGH_LOSS_SEGMENTS: u64 = 6;
 const HIGH_LOSS_RATIO: u64 = 50;
 const PHASES: u8 = 8;
+const PHASES_IF_GROWING: u8 = 3;
 
 /// In 1024ths.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -31,6 +32,8 @@ impl Gain {
     const DRAIN: Self = Self(355);
     const PROBE_UP: Self = Self(1280);
     const PROBE_DOWN: Self = Self(768);
+    /// What probing has to yield to be repeated soon.
+    const GROWTH: Self = Self(1229);
     const WINDOW: Self = Self(2048);
     const MAX_WINDOW: Self = Self(3072);
 
@@ -235,7 +238,24 @@ impl Bbr {
                 self.round_end = feedback.last_sent;
             }
             self.update_bandwidth(now, feedback.acked, newest);
-            has_min_rtt_expired = self.update_min_rtt(now, now - newest.at);
+            let mut sample = now - newest.at;
+            let is_latest = sample == rtt.latest;
+            let starts_first_long_flight = self.is_restarting
+                && is_latest
+                && self.sampler.delivered < INITIAL_WINDOW + feedback.acked
+                && self.ran_dry_at != feedback.last_sent
+                && feedback.lost == 0;
+            let is_probing = matches!(self.mode, Mode::ProbeRtt { .. });
+            if is_probing && is_latest || starts_first_long_flight {
+                // The peer may wait for more packets than there are.
+                sample = rtt.latest_without_ack_delay();
+            }
+            has_min_rtt_expired = self.update_min_rtt(now, sample);
+            if starts_first_long_flight && sample / 2 > self.min_rtt {
+                // A window for the earlier samples would not get through. Not all of it, or else those who start
+                // together outbid one another.
+                (self.min_rtt, self.min_rtt_at) = (sample / 2, now);
+            }
             has_min_rtt_expired &= !core::mem::take(&mut self.is_restarting);
             self.update_excess_acked(now, feedback.acked);
         }
@@ -343,6 +363,12 @@ impl Bbr {
         let has_expired = !is_unknown && now > self.min_rtt_at + expiry;
         if is_unknown || has_expired || sample < self.min_rtt {
             (self.min_rtt, self.min_rtt_at) = (sample, now);
+        } else if self.is_last_sample_limited
+            && sample <= self.min_rtt + self.min_rtt / 8
+            && now > self.min_rtt_at + MIN_RTT_EXPIRY * 3 / 4
+        {
+            // Sending even less would not tell anything new.
+            self.min_rtt_at = now;
         }
         has_expired
     }
@@ -467,6 +493,7 @@ impl Bbr {
     fn probe_bandwidth(&mut self, now: Instant) {
         self.random = (self.random.wrapping_mul(1_664_525)).wrapping_add(1_013_904_223);
         let phase = (self.random >> 24) as u8 % (PHASES - 1);
+        self.bandwidth_to_beat = Gain::GROWTH.of(self.bandwidth.get());
         self.mode = Mode::ProbeBandwidth {
             phase: match phase > 0 || self.was_congested_in_cycle {
                 true => phase.max(1) + 1,
@@ -503,7 +530,15 @@ impl Bbr {
                 && (!self.was_congested_in_cycle || feedback.prior_in_flight >= capacity / 2)
         };
         if is_over {
-            let phase = (phase + 1) % PHASES;
+            let bandwidth = self.bandwidth.get();
+            let has_paid = phase == PHASES_IF_GROWING - 1
+                && bandwidth >= self.bandwidth_to_beat
+                && !self.was_congested_in_cycle
+                && !self.is_last_sample_limited;
+            let phase = if has_paid { 0 } else { (phase + 1) % PHASES };
+            if phase == 0 {
+                self.bandwidth_to_beat = Gain::GROWTH.of(bandwidth);
+            }
             self.was_congested_in_cycle &= phase > 0 || is_congested;
             self.mode = Mode::ProbeBandwidth { phase, since: now };
         }

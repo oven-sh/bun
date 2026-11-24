@@ -14,7 +14,7 @@ pub struct Config {
     pub congestion: Algorithm,
     /// Zero turns it off, like the other durations.
     pub handshake_timeout: Duration,
-    /// For how long the application may neither read nor write.
+    /// For how long the application may neither read nor write, nor the peer acknowledge 4 KB of what it has written.
     pub progress_timeout: Duration,
     pub keep_alive: KeepAlive,
     /// Whether a timeout goes without CONNECTION_CLOSE.

@@ -35,6 +35,7 @@ use sent::Control;
 use space::{Space, Spaces};
 use streams::Streams;
 use timers::{Timer, Timers};
+use transmit::Gathering;
 
 use crate::cid::{ConnectionId, LocalId};
 use crate::config::{Config, KeepAlive};
@@ -143,6 +144,7 @@ pub struct Connection {
     rtt: Rtt,
     first_sample_at: Instant,
     congestion: Controller,
+    gathering: Gathering,
     runs: Runs,
     pto_count: u32,
     /// How many times in a row the peer was quick to acknowledge all that was in flight, without a probe.
@@ -194,6 +196,8 @@ pub(crate) struct Introduction {
     pub(crate) destination: ConnectionId,
     /// Of the packet that was answered with a Retry packet.
     pub(crate) original_destination: Option<ConnectionId>,
+    /// An earlier copy of the packet may have been answered with one.
+    pub(crate) may_be_retried: bool,
     pub(crate) read_keys: Keys,
     pub(crate) write_keys: Keys,
 }
@@ -277,6 +281,7 @@ impl Connection {
             remote_ids: RemoteIds::default(),
             rtt: Rtt::default(),
             first_sample_at: Instant::NEVER,
+            gathering: Gathering::No,
             runs: Runs::default(),
             pto_count: 0,
             prompt_acks: 0,
@@ -357,6 +362,7 @@ impl Connection {
         let path = Path::new(addresses, remote, client.original_destination.is_some());
         let mut setup = Setup::new(now, client.version, client.destination);
         setup.initial_source = Some(client.source);
+        setup.may_be_retried = client.may_be_retried;
         let mut this = Self::new(now, slot, Side::Server, config, path, setup, tls, shared);
         this.initial_route = Some(client.destination);
         this.spaces.initial = Some(Box::new(Space {
@@ -436,7 +442,7 @@ impl Connection {
                 self.fail(now, error);
             }
             Timer::Close if self.ending == Ending::Closing => self.end(),
-            Timer::Close => self.send_close(now),
+            Timer::Close => self.on_close_timeout(now),
             Timer::Loss => self.on_loss_timeout(now),
             Timer::Ack => self.spaces.data.received.is_ack_due = true,
             Timer::Qpack => {

@@ -32,6 +32,9 @@ const MAX_SHARE_AHEAD: u64 = 7;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
 const MAX_REPEATED_LEN: u64 = 256;
+/// In bytes. What counts as progress.
+const MIN_DELIVERY: u64 = 4096;
+const MIN_SERIES_LEN: u64 = 24;
 
 /// Streams by rank.
 pub(super) type Line = VecDeque<(u64, StreamId)>;
@@ -192,7 +195,14 @@ impl State {
     pub(crate) fn start_write_round(&mut self, now: Instant) {
         self.renew_crumbs(now);
         self.write_round += 1;
-        self.is_write_round_over = false;
+        (self.is_write_round_over, self.has_written_in_round) = (false, false);
+    }
+
+    /// For while what has been written is held back.
+    pub(crate) fn ask_for_more(&mut self, now: Instant) {
+        if self.has_written_in_round {
+            self.start_write_round(now);
+        }
     }
 
     /// Whatever the limits are.
@@ -203,6 +213,7 @@ impl State {
             self.unsent += part.len() as u64;
             self.retained += part.len() as u64;
             stream.share = stream.share.saturating_sub(part.len() as u64);
+            self.has_written_in_round |= !part.is_empty();
         }
         self.mark_sendable(id, stream);
     }
@@ -241,6 +252,15 @@ impl State {
     fn release(&mut self, len: u64) {
         self.retained -= len;
         self.released += len;
+    }
+
+    #[inline]
+    fn count_delivery(&mut self, len: u64) {
+        let delivered = u64::from(self.delivered) + len;
+        self.delivered = (delivered % MIN_DELIVERY) as u16;
+        if delivered >= MIN_DELIVERY {
+            (self.made_progress, self.has_delivered) = (true, true);
+        }
     }
 
     /// How many bytes have been let go of, and how many of those that have been sent have not.
@@ -435,12 +455,30 @@ impl State {
     }
 
     #[inline]
+    pub(crate) fn sendable_streams(&self) -> usize {
+        self.sendable.len()
+    }
+
+    pub(crate) fn owes_frames(&self) -> bool {
+        !self.owing.is_empty()
+    }
+
+    #[inline]
     pub(crate) fn has_frames(&self) -> bool {
         !(self.sendable.is_empty() && self.lost.is_empty() && self.owing.is_empty())
     }
 }
 
 impl Streams {
+    /// Whether those that have something to send go on, and have many times as much on its way.
+    pub(crate) fn only_continues_series(&self) -> bool {
+        let mut streams = (self.state.sendable.iter()).filter_map(|it| self.table.get(it.1));
+        streams.all(|it| {
+            it.send.len() > MIN_SERIES_LEN * it.send.unsent_len()
+                && !it.flags.contains(Flags::WRITE_DONE)
+        })
+    }
+
     pub(crate) fn on_max_data(&mut self, limit: u64) {
         let Self { table, state, .. } = self;
         if limit > state.send_limit {
@@ -611,6 +649,9 @@ impl Streams {
         let Some(stream) = stream.filter(|it| !it.flags.contains(Flags::RESET)) else {
             return;
         };
+        if !stream.is_internal() {
+            (self.state).count_delivery(stream.send.unacked_len(range.clone()));
+        }
         let reached = stream.send.reached();
         self.state.release(stream.send.on_acked(range));
         self.state.reached += stream.send.reached() - reached;

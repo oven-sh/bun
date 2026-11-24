@@ -3,6 +3,7 @@
 mod bandwidth_sampler;
 mod bbr;
 mod ceiling;
+mod crowd;
 mod cubic;
 mod pacer;
 mod rtt;
@@ -11,6 +12,7 @@ mod trial;
 mod windowed_filter;
 
 use bbr::Bbr;
+use crowd::Crowd;
 use cubic::Cubic;
 use pacer::{Pacer, Place};
 pub(crate) use rtt::{GRANULARITY, Rtt};
@@ -99,6 +101,7 @@ pub(crate) struct Controller {
     model: Model,
     pacer: Pacer,
     spread: Spread,
+    crowd: Crowd,
     in_flight: u64,
     /// Until when to wait for more room in a window that has been full.
     refill_at: Instant,
@@ -109,7 +112,7 @@ pub(crate) struct Controller {
     last_foreign: u64,
     last_lost: u64,
     /// How many packets in a row were lost up to `last_lost`, unless the first of them started a burst.
-    lost_run: Option<u64>,
+    lost_run: Option<u32>,
     /// How many packets the last bursts have lost at their ends, and the last of them.
     lost_ends: u64,
     last_lost_end: u64,
@@ -130,6 +133,7 @@ impl Controller {
             },
             pacer: Pacer::default(),
             spread: Spread::default(),
+            crowd: Crowd::default(),
             in_flight: 0,
             refill_at: Instant::default(),
             prior_in_flight: 0,
@@ -209,6 +213,26 @@ impl Controller {
         self.pacer.delay(now).map_or(Permit::Now, Permit::At)
     }
 
+    /// Whether what is `unsent` would be one more of many small packets.
+    #[inline]
+    pub(crate) fn is_crowded(&self, unsent: u64) -> bool {
+        self.crowd.would_grow(unsent, self.in_flight) && self.pacer.has_run_dry()
+    }
+
+    /// Until when it waits for more, if it is all there is to send.
+    pub(crate) fn gathers_until(
+        &mut self,
+        now: Instant,
+        rtt: &Rtt,
+        continues_series: impl FnOnce() -> bool,
+    ) -> Instant {
+        let until = self.pacer.last_sent_at() + self.crowd.wait(now, rtt, continues_series);
+        if now < until {
+            self.pacer.on_limited_otherwise();
+        }
+        until
+    }
+
     /// After how many packets to make way for other connections, which may share the queues.
     #[inline]
     pub(crate) fn max_turn(&self) -> usize {
@@ -237,6 +261,7 @@ impl Controller {
             self.on_idle_restart(now, rtt);
         }
         self.in_flight += u64::from(len);
+        self.crowd.on_sent();
         self.prior_in_flight = self.in_flight;
         self.last_sent += 1;
         let mut flight = Flight {
@@ -259,6 +284,7 @@ impl Controller {
             Model::Cubic(cubic) => cubic.on_idle_restart(now),
             Model::Bbr(bbr) => bbr.on_idle_restart(now),
         }
+        (self.crowd).on_idle_restart(now - self.pacer.last_sent_at(), rtt);
         self.pacer.on_idle_restart(now, self.is_recovering());
         if matches!(&self.model, Model::Bbr(bbr) if bbr.suspects_short_queue()) {
             self.pacer.shorten_burst();
@@ -300,6 +326,7 @@ impl Controller {
         let is_counted = flight.sequence > self.last_foreign;
         if is_counted {
             self.in_flight = self.in_flight.saturating_sub(flight.len.into());
+            self.crowd.on_settled();
         }
         is_counted
     }
@@ -329,12 +356,12 @@ impl Controller {
                 self.pacer.on_start_settled(!self.spread.is_on);
             }
             self.lost_run = match flight.sequence == self.last_lost + 1 {
-                true => self.lost_run.map(|it| it + 1),
+                true => self.lost_run.map(|it| it.saturating_add(1)),
                 false => (!flight.starts_burst()).then_some(1),
             };
             self.last_lost = flight.sequence;
             if ends_burst && let Some(len) = self.lost_run {
-                self.on_end_lost(flight, len);
+                self.on_end_lost(flight, len.into());
             }
             let feedback = &mut self.feedback;
             feedback.lost += u64::from(flight.len);
@@ -380,6 +407,10 @@ impl Controller {
             return;
         }
         self.pacer.on_feedback(feedback.lost > 0);
+        self.crowd.on_feedback(now, rtt);
+        if feedback.lost > 0 {
+            self.crowd.on_loss(now, self.in_flight, rtt);
+        }
         let is_queue_short = self.is_queue_short(rtt);
         if feedback.is_overflow
             || matches!(&self.model, Model::Cubic(cubic) if cubic.is_congested(&feedback))

@@ -61,6 +61,7 @@ pub(crate) struct Http3 {
     pub(crate) encoder_stream: StreamId,
     /// A bit for each type of which the peer has opened a stream.
     peer_streams: u8,
+    pub(crate) peak_streams: u64,
     /// How many bytes of field sections are being held.
     collected: usize,
     max_collected: usize,
@@ -96,6 +97,7 @@ impl Http3 {
             decoder_stream: decoder,
             encoder_stream: encoder,
             peer_streams: 0,
+            peak_streams: 0,
             collected: 0,
             max_collected: (config.tolerated_fields.size)
                 .saturating_mul(COLLECTED_SECTIONS)

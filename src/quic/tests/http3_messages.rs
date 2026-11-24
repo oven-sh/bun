@@ -28,15 +28,15 @@ fn field_sections_can_arrive_side_by_side() {
     let raw = Raw::http3(Server).http3_config(|it| {
         (it.kept_fields.size, it.tolerated_fields.size) = (20_000, 20_000);
     });
-    let mut raw = raw.with("max_streams_bidi=100").connected_with("");
+    let mut raw = raw.with("max_streams_bidi=300").connected_with("");
     let head = http3(&format!("headers :status=200 a={}", "~".repeat(19_000)));
     let (most, rest) = head.split_at(head.len() - 1);
-    let ids = Vec::from_iter((0..100).map(|_| raw.request(GET)));
+    let ids = Vec::from_iter((0..300).map(|_| raw.request(GET)));
     for part in [most, rest] {
         ids.iter().for_each(|&id| raw.write(id, part, false));
     }
     let heads = raw.peer.log.iter().filter(|it| it.ends_with("a=~19000"));
-    assert_eq!(heads.count(), 100);
+    assert_eq!(heads.count(), 300);
 }
 
 #[test]

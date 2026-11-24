@@ -25,6 +25,11 @@ struct SSL_QUIC_METHOD {
 }
 
 const SSL_ERROR_EARLY_DATA_REJECTED: c_int = 15;
+/// As in a packed error.
+const ERR_LIB_SSL: u32 = 16 << 24;
+const SSL_R_DECODE_ERROR: u32 = 137;
+const SSL_R_INVALID_ALPN_PROTOCOL: u32 = 259;
+const SSL_R_UNEXPECTED_COMPATIBILITY_MODE: u32 = 306;
 const SSL_SESS_CACHE_CLIENT: c_int = 1;
 const SSL_VERIFY_OK: c_uint = 0;
 const SSL_VERIFY_INVALID: c_uint = 1;
@@ -230,8 +235,9 @@ impl tls::Session for Session {
             }
             let status = advance(ssl, input, call);
             ssl::SSL_set_ex_data(ssl.as_mut_ptr(), EX_INDEX, null_mut());
+            let status = status.ok_or_else(|| (*call).failure());
             ssl::ERR_clear_error();
-            status.ok_or_else(|| (*call).alert.unwrap_or(Alert::INTERNAL_ERROR))
+            status
         }
     }
 }
@@ -273,6 +279,20 @@ impl Call<'_, '_> {
         (SSL_is_quic(ssl) == 1).then_some(())?;
         // SAFETY: it is null or the `Call` of the `advance` that is on the stack, which holds no reference into it.
         f(unsafe { ssl::SSL_get_ex_data(ssl, EX_INDEX).cast::<Call>().as_mut() }?)
+    }
+
+    /// RFC 9001 §4.6.1, §8.1 and §8.4.
+    fn failure(&mut self) -> Alert {
+        let alert = self.alert.unwrap_or(Alert::INTERNAL_ERROR);
+        if alert == Alert::ILLEGAL_PARAMETER {
+            match ssl::ERR_get_error() ^ ERR_LIB_SSL {
+                SSL_R_INVALID_ALPN_PROTOCOL => return Alert::NO_APPLICATION_PROTOCOL,
+                SSL_R_DECODE_ERROR if self.session.is_complete => self.handshake.violation(),
+                SSL_R_UNEXPECTED_COMPATIBILITY_MODE => self.handshake.violation(),
+                _ => {}
+            }
+        }
+        alert
     }
 
     fn set_local_parameters(&mut self, ssl: &SSL) -> Option<()> {

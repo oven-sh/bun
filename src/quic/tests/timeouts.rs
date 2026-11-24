@@ -823,13 +823,16 @@ fn a_server_does_not_expect_more_data() {
 
 #[test]
 fn a_client_waits_for_the_confirmation_as_long_as_for_the_handshake() {
-    let mut raw = Raw::server();
-    raw.start(&[]);
-    raw.advance(5000);
-    raw.shake_hands();
-    raw.send_in(Handshake, "ack");
-    assert_eq!(raw.wait_for_the_end(), 10_000);
-    assert_eq!(raw.events(), "closed: HandshakeTimeout");
+    for delay in [0, 9000] {
+        let mut raw = Raw::server();
+        raw.start(&[]);
+        raw.advance(5000);
+        raw.shake_hands();
+        raw.advance(delay);
+        raw.send_in(Handshake, "ack");
+        assert_eq!(raw.wait_for_the_end(), 10_000);
+        assert_eq!(raw.events(), "closed: HandshakeTimeout");
+    }
 }
 
 #[test]
@@ -866,6 +869,29 @@ fn application_that_neither_reads_nor_writes() {
         assert_eq!(raw.wait_for_the_end(), timeout);
         assert_eq!(raw.error(), Some((Transport, APPLICATION_ERROR)));
     }
+}
+
+#[test]
+fn peer_that_takes_what_has_been_written_bit_by_bit() {
+    let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(5));
+    raw = raw.connected();
+    for ack in raw.request_three_parts() {
+        raw.advance(4000);
+        raw.send(&ack);
+    }
+    assert_eq!(raw.wait_for_the_end(), 5000);
+}
+
+#[test]
+fn what_arrives_behind_a_gap_or_fills_it_is_progress() {
+    let mut raw = Raw::client().config(|it| it.progress_timeout = Duration::from_secs(5));
+    raw = raw.connected();
+    let [.., last] = raw.request_three_parts();
+    for ack in [&last, "ack"] {
+        raw.advance(4000);
+        raw.send(ack);
+    }
+    assert_eq!(raw.wait_for_the_end(), 5000);
 }
 
 #[test]

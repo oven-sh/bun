@@ -95,6 +95,8 @@ const TICKET_DELIVERY_DELAY: Duration = Duration::from_millis(500);
 /// For how long a peer that cannot send more has to wait for a reader.
 const READER_DELAY: Duration = Duration::from_secs(1);
 const CLOSING_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60);
+/// Those that wait for more take up room.
+const MIN_PENDING_DATAGRAMS_TO_GATHER: u16 = 64;
 
 /// Indices into the session stats buffer — must match
 /// [`SESSION_STATS_FIELDS`] positions exactly (the JS layer reads the
@@ -1601,6 +1603,11 @@ impl QuicSession {
             }
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_some() {
+                let was_gathering = self.get(Connection::is_gathering);
+                self.update(Connection::stop_gathering);
+                if was_gathering == Some(true) {
+                    self.endpoint_ref().map(QuicEndpoint::drive_once);
+                }
                 self.pending_graceful.set(Some(close));
                 self.mark();
                 if !self.endpoint_ref().is_some_and(|ep| ep.scope_held()) {
@@ -1647,6 +1654,7 @@ impl QuicSession {
                 // Node's server acks the packet that triggered the destroying
                 // callback.
                 self.update(Connection::acknowledge);
+                self.update(Connection::stop_gathering);
                 self.endpoint_ref().map(QuicEndpoint::drive_once);
                 // Node parity: Session::Destroy without close options.
                 self.update(Connection::abort_silently);
@@ -1726,6 +1734,9 @@ impl QuicSession {
             .replace(self.next_datagram_id.get() + 1);
         // SAFETY: state buffer is live.
         let max_pending = self.with_state(|s| s.max_pending_datagrams);
+        if (1..MIN_PENDING_DATAGRAMS_TO_GATHER).contains(&max_pending) {
+            self.update(Connection::stop_gathering);
+        }
         if max_pending > 0 && self.get(Connection::unsent_datagrams) >= Some(max_pending.into()) {
             // Node reports the abandonment synchronously from within
             // sendDatagram.

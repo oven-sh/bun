@@ -98,8 +98,12 @@ pub(crate) struct State {
     pub(super) removed: VecDeque<(StreamId, Context)>,
     /// The frames about the connection that have to be sent.
     pub(super) owed: Control,
-    /// The application has read or written.
+    /// The application has read or written, or the peer has acknowledged enough of it.
     pub(super) made_progress: bool,
+    /// The same for the peer only.
+    pub(super) has_delivered: bool,
+    /// In bytes. Not enough yet.
+    delivered: u16,
     pub(super) asked: Asked,
     /// The stream that asked last, and whether it is finished, until something arrives.
     pub(super) unanswered: Option<(StreamId, bool)>,
@@ -142,6 +146,7 @@ pub(crate) struct State {
     pub(super) unsent_target: u64,
     write_round: u64,
     is_write_round_over: bool,
+    has_written_in_round: bool,
 
     sendable: Line,
     turns: u64,
@@ -445,6 +450,10 @@ impl Table {
     #[inline]
     pub(super) fn has_application_streams(&self) -> bool {
         self.unreleased > 0
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.map.len()
     }
 
     pub(super) fn has_unfinished_reads(&self) -> bool {

@@ -26,7 +26,7 @@ use crate::path::{AMPLIFICATION_FACTOR, Addresses, is_reserved_port, without_zon
 use crate::stream_id::{Side, StreamId};
 use crate::time::{Duration, Instant};
 use crate::tls;
-use crate::token::{Scope, Tokens, Validation};
+use crate::token::{RETRY_LIFETIME, Scope, Tokens, Validation};
 use crate::token_bucket::TokenBucket;
 use crate::version::Version;
 
@@ -224,6 +224,7 @@ pub struct Endpoint {
     awaiting_finished: Queue,
     /// A client gives its permit back when its address is validated. Without one it has to see to that first.
     unvalidated_clients: TokenBucket,
+    last_retry_expires_at: Instant,
     version_negotiations: TokenBucket,
     /// They can be earlier than what the connections say.
     deadlines: Deadlines,
@@ -261,6 +262,7 @@ impl Endpoint {
             recent_resets: [Default::default(); _],
             awaiting_finished: Queue::new(MAX_AWAITING_FINISHED),
             unvalidated_clients: UNVALIDATED_CLIENTS,
+            last_retry_expires_at: Instant::default(),
             version_negotiations: VERSION_NEGOTIATIONS,
             deadlines: Deadlines::default(),
             with_events: VecDeque::new(),
@@ -622,6 +624,7 @@ impl Endpoint {
                 Validation::Retry(id) => Some(id),
                 _ => None,
             },
+            may_be_retried: has_permit && now < self.last_retry_expires_at,
             read_keys,
             write_keys: secret.keys(Side::Server),
         };
@@ -658,6 +661,7 @@ impl Endpoint {
 
     /// RFC 9000 §8.1.2.
     fn retry(&mut self, now: Instant, from: &Addresses, header: &LongHeader) {
+        self.last_retry_expires_at = now + RETRY_LIFETIME;
         let (crypto, version) = (self.shared.crypto, header.version);
         let [unused, id @ ..] = crypto.random::<{ 1 + LocalId::LEN }>();
         let scope = Scope {

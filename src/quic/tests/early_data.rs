@@ -268,6 +268,26 @@ fn a_client_is_told_about_a_rejection() {
     assert_eq!(raw.events(), "confirmed");
 }
 
+#[test]
+fn small_writes_do_not_wait_for_more() {
+    let mut raw = Raw::server().with_ticket();
+    raw.resume();
+    let id = raw.peer.open(Unidirectional);
+    for (kind, millis, frames) in [
+        (Initial, 16, "ack, hello"),
+        (Handshake, 200, "ack"),
+        (Handshake, 20, "ack"),
+    ] {
+        raw.forget();
+        for _ in 0..millis {
+            raw.advance(1);
+            raw.peer.send(id, b"a", false);
+        }
+        raw.send_in(kind, frames);
+    }
+    assert!(raw.take().len() >= 20);
+}
+
 /// RFC 9369 §5.
 #[test]
 fn a_client_resumes_with_the_version_of_the_ticket() {

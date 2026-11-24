@@ -10,7 +10,7 @@ use crate::version::Version;
 
 const RETRY: u8 = 0;
 const NEW_TOKEN: u8 = 1;
-const RETRY_LIFETIME: Duration = Duration::from_secs(10);
+pub(crate) const RETRY_LIFETIME: Duration = Duration::from_secs(10);
 const NEW_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 3600);
 
 #[derive(Clone, Copy, PartialEq, Eq)]

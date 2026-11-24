@@ -456,6 +456,8 @@ impl Connection {
         }
         if self.is_confirmed() {
             self.setup = None;
+        } else if self.phase == Phase::Established && self.timers.is_set(Timer::Handshake) {
+            (self.timers).set(Timer::Handshake, now + self.config.handshake_timeout);
         }
         crate::with(self.setup.as_mut(), |it| it.is_catching_up = false);
         Ok(())

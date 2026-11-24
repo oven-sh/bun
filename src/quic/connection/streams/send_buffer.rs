@@ -96,6 +96,12 @@ impl SendBuffer {
         self.sent = self.sent.max(range.end);
     }
 
+    #[inline]
+    pub(crate) fn unacked_len(&self, range: Range<u64>) -> u64 {
+        let gaps = self.acked.gaps(range.start.max(self.start)..range.end);
+        gaps.map(|it| it.end - it.start).sum()
+    }
+
     /// Returns how many bytes it lets go of.
     #[inline]
     pub(crate) fn on_acked(&mut self, range: Range<u64>) -> u64 {
@@ -150,6 +156,18 @@ impl SendBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_what_is_not_acknowledged() {
+        let mut buffer = SendBuffer::default();
+        buffer.write(&[0; 100]);
+        buffer.send(0..100, &mut Vec::new());
+        for range in [0..10, 20..30, 40..50] {
+            buffer.on_acked(range);
+        }
+        let lens = [0..5, 5..15, 25..45, 20..30, 0..100].map(|it| buffer.unacked_len(it));
+        assert_eq!(lens, [0, 5, 10, 0, 70]);
+    }
 
     #[test]
     fn keeps_little_room_when_all_is_acknowledged() {

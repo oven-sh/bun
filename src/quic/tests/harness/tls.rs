@@ -5,6 +5,7 @@ use bun_quic::tls::{Alert, Handshake, Level, Session, Status};
 pub(crate) const CLIENT_HELLO: u8 = 1;
 pub(crate) const SERVER_HELLO: u8 = 2;
 pub(crate) const TICKET: u8 = 4;
+const END_OF_EARLY_DATA: u8 = 5;
 pub(crate) const EXTENSIONS: u8 = 8;
 pub(crate) const CERTIFICATE: u8 = 11;
 pub(crate) const FINISHED: u8 = 20;
@@ -203,6 +204,10 @@ impl Toy {
                 self.is_complete = true;
             }
             (Side::Client, Level::Application, TICKET, [ticket]) => handshake.ticket(ticket),
+            (_, _, END_OF_EARLY_DATA, _) => {
+                handshake.violation();
+                return Err(Alert(10));
+            }
             _ => return Err(Alert(10)),
         }
         Ok(())

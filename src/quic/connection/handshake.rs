@@ -45,8 +45,6 @@ const MIN_HTTP3_WINDOW: u64 = 4096;
 /// RFC 8446 §4.
 const NEW_SESSION_TICKET: u8 = 4;
 const CERTIFICATE_REQUEST: u8 = 13;
-const UNEXPECTED_MESSAGE: Alert = Alert(10);
-const NO_APPLICATION_PROTOCOL: Alert = Alert(120);
 
 /// What is needed until the handshake is confirmed.
 pub(super) struct Setup {
@@ -62,6 +60,7 @@ pub(super) struct Setup {
     /// To read Initial packets of the version that a server left, or that a client may move to.
     pub(super) other_keys: Option<(Version, Keys)>,
     pub(super) is_version_settled: bool,
+    pub(super) may_be_retried: bool,
     /// The server has validated the address of the client (RFC 9002 §6.2.2.1).
     pub(super) is_validated_by_peer: bool,
     /// The parameters that early data is sent with.
@@ -89,6 +88,7 @@ impl Setup {
             token: Vec::new(),
             other_keys: None,
             is_version_settled: false,
+            may_be_retried: false,
             is_validated_by_peer: false,
             remembered: None,
             hello: Vec::new(),
@@ -231,6 +231,11 @@ impl Handshake<'_> {
         }
     }
 
+    /// For a failure about which QUIC has a rule of its own.
+    pub fn violation(&mut self) {
+        (self.error).get_or_insert(Error::violation("TLS message is not valid in QUIC"));
+    }
+
     pub fn early_data_rejected(&mut self) {
         self.connection.on_early_data_rejected(self.now);
     }
@@ -255,7 +260,7 @@ impl Handshake<'_> {
 
 fn alert_error(alert: Alert) -> Error {
     let reason = match alert {
-        NO_APPLICATION_PROTOCOL => "no application protocol",
+        Alert::NO_APPLICATION_PROTOCOL => "no application protocol",
         _ => "TLS alert",
     };
     Error::transport(transport_code::CRYPTO_ERROR + u64::from(alert.0), reason)
@@ -392,7 +397,7 @@ impl Connection {
         }
         if id == SpaceId::Data {
             if self.side.is_server() {
-                return Err(alert_error(UNEXPECTED_MESSAGE));
+                return Err(alert_error(Alert::UNEXPECTED_MESSAGE));
             }
             // Messages are told apart for as long as they arrive in order (RFC 9000 §7.5).
             while let Some(at) = self.next_message_at.checked_sub(offset)
@@ -402,7 +407,7 @@ impl Connection {
                     NEW_SESSION_TICKET => {}
                     // RFC 9001 §4.4.
                     CERTIFICATE_REQUEST => return Err(Error::violation("late authentication")),
-                    _ => return Err(alert_error(UNEXPECTED_MESSAGE)),
+                    _ => return Err(alert_error(Alert::UNEXPECTED_MESSAGE)),
                 }
                 self.next_message_at += 4 + u64::from(u32::from_be_bytes([0, a, b, c]));
             }
@@ -558,6 +563,7 @@ impl Connection {
         let preferred = self.compatible_versions().find(is_available);
         // Some clients go by the first packet that they get.
         let has_answered = self.local.retry_source_connection_id.is_some()
+            || (self.setup.as_ref()).is_some_and(|it| it.may_be_retried)
             || (self.spaces.initial.as_ref()).is_none_or(|it| it.next_number > 0);
         let may_switch = !accepts_early_data && !has_answered;
         if let Some(version) = preferred.filter(|&it| it != self.version && may_switch) {
@@ -594,7 +600,7 @@ impl Connection {
         self.early_keys = None;
         self.resend_all(SpaceId::Data);
         with(self.setup.as_mut(), |it| it.remembered = None);
-        for (id, _) in core::mem::take(&mut self.datagrams.unsent) {
+        while let Some(id) = self.drop_oldest_datagram() {
             self.emit(Event::DatagramLost(id));
         }
         self.emit(Event::EarlyDataRejected);
@@ -632,9 +638,6 @@ impl Connection {
 
     fn on_handshake_complete(&mut self, now: Instant, shared: &mut Shared) -> Result {
         self.phase = Phase::Established;
-        if self.timers.is_set(Timer::Handshake) {
-            (self.timers).set(Timer::Handshake, now + self.config.handshake_timeout);
-        }
         with(self.setup.as_mut(), |it| it.can_read_more = true);
         if self.side.is_client() {
             self.path.remote.reset_token = self.peer.stateless_reset_token;

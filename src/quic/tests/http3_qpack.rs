@@ -51,6 +51,43 @@ fn encoder_that_does_without_the_table_need_not_read_cancellations() {
 }
 
 #[test]
+fn every_request_that_is_allowed_can_have_an_acknowledgment_on_its_way() {
+    let raw = Raw::http3(Client).config(|it| it.parameters.initial_max_streams_bidi = 20_000);
+    let mut raw = raw.connected_with("");
+    raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));
+    for at in 0..20_000 {
+        raw.send(&format!("fin {} 0 #01090200d1d7500161c180", 4 * at));
+        raw.forget();
+    }
+    raw.advance(10);
+    assert_eq!(raw.http3_error(), None);
+}
+
+#[test]
+fn cancellations_can_outlast_their_requests() {
+    let raw = Raw::http3(Server).with("max_streams_bidi=30001 max_stream_data_uni=100");
+    let mut raw = raw.connected_with("");
+    raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));
+    let ids = Vec::from_iter((0..30_000).map(|_| raw.request(GET)));
+    for &id in &ids {
+        raw.connection().stop(StreamId(id), 0);
+        raw.connection().reset(StreamId(id), 0);
+    }
+    while !raw.take().is_empty() {
+        raw.send("ack");
+        raw.advance(10);
+    }
+    for packet in ids.chunks(100) {
+        let frames = packet.iter().map(|id| format!("reset_stream {id} 0 0"));
+        raw.send(&frames.collect::<Vec<_>>().join(", "));
+    }
+    raw.write_encoder(INSERT_AB);
+    raw.request(GET);
+    raw.advance(1000);
+    assert_eq!(raw.http3_error(), None);
+}
+
+#[test]
 fn instructions_wait_for_a_packet() {
     let mut raw = Raw::http3(Client).exchange();
     raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));

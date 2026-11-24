@@ -8,8 +8,8 @@ use crate::time::{Duration, Instant};
 /// In packets.
 const BURST: u8 = 10;
 /// In bytes. What a packet counts as at least if the last one has only just taken all there was to send, so that what is
-/// written bit by bit gets time to gather.
-const MIN_CHARGE: u16 = 1200;
+/// written bit by bit gets time to gather, up to [`GRANULARITY`].
+const MIN_CHARGE: u64 = 1200;
 const MAX_QUANTUM: u64 = 64 * 1024;
 const MICROS_PER_HALVING: u64 = 512;
 pub(super) const MAX_OVERFLOWS: u32 = 5;
@@ -193,6 +193,15 @@ impl Pacer {
     }
 
     #[inline]
+    pub(super) fn has_run_dry(&self) -> bool {
+        self.has_run_dry
+    }
+
+    pub(super) fn last_sent_at(&self) -> Instant {
+        self.last_sent_at
+    }
+
+    #[inline]
     pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> Place {
         let time = self.time_per_byte.saturating_mul(len.into());
         let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
@@ -203,8 +212,9 @@ impl Pacer {
             false => Place::Later,
         };
         let is_urgent = core::mem::take(&mut self.is_urgent);
+        let len = u64::from(len);
         let charge = match self.has_run_dry && gap <= MAX_PAUSE && !is_urgent {
-            true => len.max(MIN_CHARGE),
+            true => MIN_CHARGE.clamp(len, len.saturating_add(self.steady)),
             false => len,
         };
         (self.last_sent_at, self.has_run_dry) = (now, false);
@@ -214,16 +224,15 @@ impl Pacer {
             self.burst_tokens -= 1;
             return place;
         }
-        self.rest = self.rest.saturating_sub(charge.into());
-        self.sent_since_overflow += u64::from(len);
+        self.rest = self.rest.saturating_sub(charge);
+        self.sent_since_overflow += len;
         if self.sent_since_overflow > QUANTA_PER_OVERFLOW * self.max_quantum() {
             self.forget_overflow();
         }
         if now > self.catch_up_until {
             self.next = self.next.max(now);
         }
-        let time =
-            (self.time_per_byte.saturating_mul(charge.into())).saturating_add(self.remainder);
+        let time = (self.time_per_byte.saturating_mul(charge)).saturating_add(self.remainder);
         self.remainder = time % (1 << FRACTION_BITS);
         self.next = self.next + Duration::from_micros(time >> FRACTION_BITS);
         place

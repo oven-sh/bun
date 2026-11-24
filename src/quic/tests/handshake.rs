@@ -254,6 +254,42 @@ fn a_server_sends_three_times_what_it_got_until_the_address_is_validated() {
 }
 
 #[test]
+fn a_server_that_may_send_more_starts_with_what_it_has_not_sent() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 4000;
+    raw.start(&[]);
+    let sent = raw.crypto[1].len();
+    raw.forget();
+    raw.send_in(Initial, "hello");
+    assert_eq!(raw.sizes(), [1200; 3]);
+    assert!(sent < 4000 && raw.crypto[1].len() > 4000);
+}
+
+#[test]
+fn a_server_does_not_get_far_ahead_of_what_is_lost() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 30_000;
+    raw.start(&[]);
+    for _ in 0..10 {
+        raw.advance(1000);
+        raw.send_in(Initial, "hello");
+    }
+    assert!((12_000..16_384).contains(&raw.crypto[1].len()));
+}
+
+#[test]
+fn a_server_that_may_send_everything_starts_with_what_is_lost() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 20_000;
+    raw.start(&[]);
+    raw.forget();
+    raw.send_in(Initial, "hello");
+    let last = raw.take().pop().unwrap().number;
+    raw.send_in(Handshake, &format!("ack {last}"));
+    assert!(raw.frames().starts_with("crypto 0 "));
+}
+
+#[test]
 fn a_client_repeats_its_hello_until_it_gives_up() {
     let mut raw = Raw::server();
     raw.start(&[]);
@@ -461,6 +497,14 @@ fn a_server_that_waits_for_the_end_of_the_handshake_is_heard_from() {
     raw.send_all(&[(Initial, "ack, hello"), (Handshake, "ping")]);
     raw.forget();
     assert_eq!(answered(&mut raw, 3), []);
+}
+
+#[test]
+fn rules_of_quic_go_before_alerts() {
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.send_in(Handshake, "crypto 0 #05000000");
+    assert_eq!(raw.error(), Some((Transport, PROTOCOL_VIOLATION)));
 }
 
 /// RFC 9001 §4.8.

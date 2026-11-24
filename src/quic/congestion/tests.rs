@@ -3,6 +3,7 @@ use std::ops::RangeInclusive;
 
 use super::bandwidth_sampler::BandwidthSampler;
 use super::ceiling::Ceiling;
+use super::crowd::Crowd;
 use super::pacer::MAX_OVERFLOWS;
 use super::spread::Spread;
 use super::trial::Trial;
@@ -411,6 +412,192 @@ fn pacer_looks_ahead_by_the_granularity() {
         (0, micros(2), (1, millis(2))),
     ] {
         assert_eq!(pace(&mut pacer_at(len, per), START), expected);
+    }
+}
+
+#[test]
+fn pacer_lets_small_writes_gather_for_no_longer_than_the_granularity() {
+    for (per, expected) in [(micros(500), 600), (millis(50), 6000)] {
+        let mut pacer = pacer_at(1000, per);
+        pacer.on_sent(START, 0);
+        for _ in 0..10 {
+            pacer.on_application_limited();
+            pacer.on_sent(START, 100);
+        }
+        assert_eq!(pacer.delay(START), Some(START + micros(expected) * 10));
+    }
+}
+
+fn watching_crowd() -> Crowd {
+    let mut crowd = Crowd::default();
+    crowd.on_feedback(START, &steady(millis(16)));
+    crowd
+}
+
+/// On a path that has once taken 16 ms.
+fn steady(smoothed: Duration) -> Rtt {
+    let mut rtt = Rtt::default();
+    rtt.update(millis(16), Duration::ZERO);
+    (rtt.latest, rtt.smoothed, rtt.variation) = (smoothed, smoothed, millis(1));
+    rtt
+}
+
+#[test]
+fn many_small_packets_are_a_crowd() {
+    for (packets, unsent, in_flight, expected) in [
+        (12, 599, 7199, true),
+        (11, 599, 6599, false),
+        (12, 600, 7199, false),
+        (12, 599, 7200, false),
+    ] {
+        let mut crowd = Crowd::default();
+        (0..=packets).for_each(|_| crowd.on_sent());
+        crowd.on_settled();
+        assert_eq!(crowd.would_grow(unsent, in_flight), expected);
+    }
+}
+
+#[test]
+fn small_writes_wait_if_there_seems_to_be_a_queue() {
+    for (rtt, expected) in [(20_001, 1250), (20_000, 0), (400_000, 20_000)] {
+        let wait = watching_crowd().wait(START, &steady(micros(rtt)), || false);
+        assert_eq!(wait, micros(expected));
+    }
+    for (ack_delay, expected) in [(0, millis(20) / 16), (16, Duration::ZERO)] {
+        let mut rtt = steady(millis(16));
+        rtt.update(millis(48), millis(ack_delay));
+        rtt.variation = millis(13);
+        assert_eq!(watching_crowd().wait(START, &rtt, || false), expected);
+    }
+}
+
+/// For how many round trips of `rtt` small writes wait from `now` on.
+fn trial_len(crowd: &mut Crowd, now: &mut Instant, rtt: u64) -> u64 {
+    let (rtt, start) = (steady(millis(rtt)), *now);
+    while !crowd.wait(*now, &rtt, || false).is_zero() {
+        *now = *now + rtt.smoothed;
+        crowd.on_feedback(*now, &rtt);
+    }
+    (*now - start).as_micros() / rtt.smoothed.as_micros()
+}
+
+#[test]
+fn small_writes_stop_waiting_if_the_path_has_become_longer() {
+    let (mut crowd, mut now) = (watching_crowd(), START);
+    assert_eq!(trial_len(&mut crowd, &mut now, 80), 4);
+    now = now + millis(1000);
+    assert_eq!(trial_len(&mut crowd, &mut now, 92), 0);
+    assert_eq!(trial_len(&mut crowd, &mut now, 93), 4);
+    now = now + millis(1000);
+    crowd.on_feedback(now, &steady(millis(40)));
+    assert_eq!(trial_len(&mut crowd, &mut now, 80), 4);
+}
+
+#[test]
+fn small_writes_wait_for_longer_if_the_queue_grows_when_they_stop() {
+    let (mut crowd, mut now) = (watching_crowd(), START);
+    let lens = [30, 40, 50, 60, 70].map(|rtt| trial_len(&mut crowd, &mut now, rtt));
+    assert_eq!(lens, [4, 16, 64, 256, 256]);
+    now = now + millis(90 * 4);
+    assert_eq!(trial_len(&mut crowd, &mut now, 90), 4);
+    // It is back to what it was before, which was not the path after all.
+    assert!(!crowd.wait(now, &steady(millis(110)), || false).is_zero());
+    assert_eq!(trial_len(&mut crowd, &mut now, 90), 16);
+}
+
+#[test]
+fn small_writes_stop_waiting_if_the_queue_is_gone() {
+    for (smoothed, is_gone) in [(19_000, true), (19_001, false)] {
+        let (mut crowd, rtt) = (watching_crowd(), steady(micros(smoothed)));
+        assert!(!crowd.wait(START, &steady(millis(30)), || false).is_zero());
+        crowd.on_feedback(START, &rtt);
+        assert_eq!(crowd.wait(START, &rtt, || false).is_zero(), is_gone);
+        assert!(
+            !crowd
+                .wait(START, &steady(micros(20_001)), || false)
+                .is_zero()
+        );
+    }
+}
+
+#[test]
+fn small_writes_go_on_waiting_if_the_queue_has_come_back_before() {
+    let (mut crowd, mut now) = (watching_crowd(), START);
+    for len in [1, 16, 64] {
+        assert!(!crowd.wait(now, &steady(millis(30)), || false).is_zero());
+        assert_eq!(trial_len(&mut crowd, &mut now, 16), len);
+    }
+}
+
+#[test]
+fn small_writes_in_a_series_wait_after_a_loss() {
+    for (packets, elapsed, continues_series, waits) in [
+        (12, 32 * 16 - 1, true, true),
+        (12, 32 * 16, true, false),
+        (12, 0, false, false),
+        (11, 0, true, false),
+    ] {
+        let (mut crowd, rtt) = (watching_crowd(), steady(millis(16)));
+        (0..packets).for_each(|_| crowd.on_sent());
+        crowd.on_loss(START, 0, &rtt);
+        let wait = crowd.wait(START + millis(elapsed), &rtt, || continues_series);
+        assert_eq!(!wait.is_zero(), waits);
+    }
+}
+
+#[test]
+fn small_writes_do_not_wait_for_less_than_the_granularity() {
+    for (smoothed, expected) in [(15_999, 0), (16_000, 1000)] {
+        let mut rtt = steady(micros(smoothed));
+        rtt.latest = millis(30);
+        let wait = watching_crowd().wait(START, &rtt, || false);
+        assert_eq!(wait, micros(expected));
+    }
+}
+
+#[test]
+fn waiting_for_more_is_not_made_up_for() {
+    let mut sender = Sender::new(Algorithm::Cubic);
+    sender.rounds_of(10, 1, millis(40)).wait(millis(40)).burst();
+    (sender.rtt.latest, sender.rtt.smoothed) = (millis(320), millis(320));
+    sender.now = (sender.controller).gathers_until(sender.now, &sender.rtt, || false);
+    assert_eq!(sender.burst(), 2);
+}
+
+#[test]
+fn small_writes_stop_waiting_after_a_long_pause() {
+    for (idle, waits) in [(120_000, true), (120_001, false)] {
+        let (mut crowd, rtt) = (watching_crowd(), steady(millis(30)));
+        assert!(!crowd.wait(START, &rtt, || false).is_zero());
+        crowd.on_idle_restart(micros(idle), &rtt);
+        assert_eq!(!crowd.wait(START, &rtt, || false).is_zero(), waits);
+        crowd.on_feedback(START, &rtt);
+        assert!(!crowd.wait(START, &rtt, || false).is_zero());
+    }
+}
+
+#[test]
+fn ack_delay_is_left_out_if_it_is_plausible() {
+    for (ack_delay, expected) in [
+        (0, 48_000),
+        (31_000, 17_000),
+        (34_000, 16_000),
+        (34_001, 48_000),
+    ] {
+        let mut rtt = steady(millis(16));
+        rtt.update(millis(48), micros(ack_delay));
+        assert_eq!(rtt.latest_without_ack_delay(), micros(expected));
+    }
+}
+
+#[test]
+fn path_that_has_become_longer_goes_by_the_latest_sample() {
+    let (mut crowd, mut rtt) = (watching_crowd(), steady(millis(18)));
+    rtt.latest = millis(80);
+    for (elapsed, waits) in [(0, true), (71, true), (72, false)] {
+        crowd.on_feedback(START + millis(elapsed), &rtt);
+        let wait = crowd.wait(START + millis(elapsed), &rtt, || false);
+        assert_eq!(!wait.is_zero(), waits);
     }
 }
 
@@ -2156,6 +2343,30 @@ fn bbr_probes_until_there_is_loss() {
 }
 
 #[test]
+fn bbr_probes_again_soon_if_that_has_paid() {
+    for (segments, lost, runs_dry, expected) in [
+        (80, 0, false, [0, 5]),
+        (79, 0, false, [5, 5]),
+        (80, 1, false, [5, 5]),
+        (80, 0, true, [5, 5]),
+    ] {
+        let mut sender = bbr_probing();
+        let rounds_until_probe = [lost, 0].map(|lost| {
+            sender.rounds_of(segments, 1, millis(11));
+            sender.send(200).wait(millis(40)).feedback(0, 1);
+            sender.feedback(lost, usize::MAX);
+            (0..20).position(|_| {
+                if runs_dry {
+                    sender.send(1).run_dry();
+                }
+                gain(sender.rounds_of(60, 1, millis(11))) > 140
+            })
+        });
+        assert_eq!(rounds_until_probe, expected.map(Some));
+    }
+}
+
+#[test]
 fn bbr_does_not_wait_for_a_probe_that_starts_with_a_queue() {
     for acked_first in [0, 1] {
         let mut sender = bbr_probing();
@@ -2303,6 +2514,135 @@ fn bbr_resumes_startup_after_probing_the_round_trip_time() {
     windows.dedup();
     assert!(windows.ends_with(&[60, 62, 4, 62]));
     assert_eq!(sender.rounds(1, millis(20)).segments(), 124);
+}
+
+#[test]
+fn bbr_measures_what_has_paid_from_the_start_of_the_cycle() {
+    let rounds_until_probe = (0..64).map(|random| {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.controller = Controller::new(Algorithm::Bbr, 1200, random * 1000);
+        sender.rounds_of(1, 1, millis(10));
+        sender.rounds_of(66, 1, millis(11));
+        sender.rounds_of(80, 3, millis(11));
+        (0..).position(|_| gain(sender.rounds_of(84, 1, millis(11))) > 140)
+    });
+    assert_eq!(rounds_until_probe.max(), Some(Some(5)));
+}
+
+#[test]
+fn bbr_does_not_probe_the_round_trip_time_if_it_sees_it_without_filling_the_path() {
+    for (rtt, until, runs_dry, probes) in [
+        (11_250, 10_100, true, false),
+        (11_252, 10_100, true, true),
+        (11_250, 10_100, false, true),
+        (11_250, 7600, true, false),
+        (11_250, 7400, true, true),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(1, 1, millis(10)).send(10).wait(millis(10));
+        let mut smallest = u64::MAX;
+        while sender.now < START + millis(10_200) {
+            let rtt = match sender.now < START + millis(until) {
+                true => micros(rtt),
+                false => millis(20),
+            };
+            sender.send(10);
+            if runs_dry {
+                sender.run_dry();
+            }
+            sender.wait(rtt / 2).feedback(0, 10);
+            smallest = smallest.min(sender.segments());
+        }
+        assert_eq!(smallest == 4, probes, "{rtt} {until}");
+    }
+}
+
+fn min_rtt(sender: &Sender) -> Duration {
+    match &sender.controller.model {
+        Model::Bbr(bbr) => bbr.min_rtt(&sender.rtt),
+        Model::Cubic(_) => Duration::ZERO,
+    }
+}
+
+fn ack_oldest_with_delay(sender: &mut Sender, ack_delay: Duration) {
+    if let Some(flight) = sender.flights.pop_front() {
+        sender.controller.on_acked(&flight);
+        sender.rtt.update(sender.now - flight.at, ack_delay);
+        sender.controller.end_ack(sender.now, &sender.rtt);
+    }
+}
+
+#[test]
+fn bbr_makes_room_for_what_the_first_long_flight_finds() {
+    for (before, has_paused, is_long, lost, expected) in [
+        (31, true, true, 0, 15),
+        (32, true, true, 0, 10),
+        (31, false, true, 0, 10),
+        (31, true, false, 0, 10),
+        (31, true, true, 1, 10),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(before, 1, millis(10));
+        if has_paused {
+            sender.run_dry();
+        }
+        sender.send(20);
+        if !is_long {
+            sender.run_dry();
+        }
+        sender.wait(millis(30)).feedback(lost, 2);
+        assert_eq!(min_rtt(&sender), millis(expected));
+    }
+}
+
+#[test]
+fn bbr_keeps_what_the_first_long_flight_finds_for_as_long_as_any_sample() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(5, 1, millis(10)).run_dry();
+    sender.wait(millis(4000)).rounds(300, millis(30));
+    assert_eq!(min_rtt(&sender), millis(15));
+}
+
+#[test]
+fn bbr_makes_no_room_without_a_sample() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(5, 1, millis(10)).run_dry().send(20);
+    sender
+        .wait(millis(50))
+        .rtt
+        .update(millis(30), Duration::ZERO);
+    (sender.flights.iter().take(1)).for_each(|it| sender.controller.on_acked(it));
+    sender.controller.end_ack(sender.now, &sender.rtt);
+    assert_eq!(min_rtt(&sender), millis(10));
+}
+
+#[test]
+fn bbr_does_not_take_the_delay_of_acknowledgments_for_a_queue() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(5, 1, millis(10)).run_dry().send(20);
+    ack_oldest_with_delay(sender.wait(millis(30)), millis(15));
+    assert_eq!(min_rtt(&sender), millis(10));
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(40, 1, millis(10));
+    while sender.window() > 4 * SEGMENT {
+        sender.rounds_of(40, 1, millis(50));
+    }
+    ack_oldest_with_delay(sender.send(2).wait(millis(45)), millis(25));
+    assert_eq!(min_rtt(&sender), millis(20));
+    // This frame makes for no new sample.
+    sender.rtt.update(millis(40), millis(25));
+    (sender.flights.iter()).for_each(|it| sender.controller.on_acked(it));
+    sender.controller.end_ack(sender.now, &sender.rtt);
+    assert_eq!(min_rtt(&sender), millis(20));
+}
+
+#[test]
+fn bbr_probes_more_often_while_the_bandwidth_grows() {
+    let mut path = Path::new(Algorithm::Bbr, micros(500), millis(80), 4000);
+    path.saturate(millis(3000), |_| {});
+    path.time_per_packet = micros(100);
+    assert_within(path.saturate(millis(4000), |_| {}), 68..=80);
 }
 
 #[test]

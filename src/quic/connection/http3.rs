@@ -17,6 +17,7 @@ use crate::time::{Duration, Instant};
 use crate::transport_parameters::TransportParameters;
 
 const MAX_UNACKED_INSTRUCTIONS_LEN: u64 = 64 * 1024;
+const EXTRA_INSTRUCTIONS_LEN_PER_STREAM: u64 = 32;
 const MAX_INSTRUCTION_DELAY: Duration = Duration::from_secs(1);
 const MAX_PRESSING_INSTRUCTION_DELAY: Duration = Duration::from_millis(5);
 const MAX_ORIGIN_FRAMES: u8 = 16;
@@ -38,7 +39,10 @@ impl Streams {
         let [Some(a), Some(b), Some(c)] = ids else {
             return None;
         };
-        let max_requests = local.initial_max_streams_bidi as usize;
+        let max_requests = match side {
+            Side::Client => usize::MAX,
+            Side::Server => local.initial_max_streams_bidi as usize,
+        };
         Some(Box::new(Http3::new(config, max_requests, [a, b, c])))
     }
 
@@ -103,11 +107,12 @@ impl Connection {
         let Some(decoder) = decoder.filter(|it| it.has_instructions()) else {
             return Ok(());
         };
-        if self.has_frames() {
+        let is_pressing = decoder.has_pressing_instructions();
+        if self.has_frames() && !self.waits_for_more(now) {
             return self.send_qpack_instructions();
         }
         let deadline = self.timers.get(Timer::Qpack);
-        let deadline = if decoder.has_pressing_instructions() {
+        let deadline = if is_pressing {
             deadline.min(now + MAX_PRESSING_INSTRUCTION_DELAY)
         } else if self.streams.table.has_application_streams() {
             deadline.min(now + MAX_INSTRUCTION_DELAY)
@@ -124,7 +129,8 @@ impl Connection {
             let instructions = http3.decoder.instructions();
             let unacked = (self.streams).write_internal(http3.decoder_stream, instructions);
             instructions.clear();
-            unacked
+            http3.peak_streams = http3.peak_streams.max(self.streams.table.len() as u64);
+            unacked.saturating_sub(EXTRA_INSTRUCTIONS_LEN_PER_STREAM * http3.peak_streams)
         });
         if unacked > Some(MAX_UNACKED_INSTRUCTIONS_LEN) {
             let reason = "peer does not read the decoder stream";

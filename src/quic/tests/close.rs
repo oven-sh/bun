@@ -4,7 +4,7 @@ use bun_quic::{Config, Duration, Layer, PreferredAddress, StreamId};
 
 use crate::harness::http3;
 use crate::harness::messages::{GET, OK};
-use crate::harness::raw::Kind::{Handshake, Initial};
+use crate::harness::raw::Kind::{Handshake, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::{MAX, bytes, filler};
 
@@ -354,6 +354,25 @@ fn graceful_close_does_not_wait_forever() {
     assert_eq!(raw.events(), "3 closed, closed: Local");
 }
 
+#[test]
+fn graceful_close_waits_for_as_long_as_the_peer_takes_more() {
+    let mut raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = 0);
+    raw = raw.with("max_idle_timeout=0").connected();
+    let [first, second, _] = raw.request_three_parts();
+    raw.close_gracefully();
+    raw.advance(20_000);
+    raw.send(&first);
+    raw.advance(29_999);
+    let (mut packet, addresses) = (raw.packet(Short, &second), raw.addresses);
+    raw.peer.receive(raw.now, &addresses, &mut packet);
+    raw.now = raw.now + Duration::from_millis(1);
+    raw.advance(29_999);
+    assert_eq!(raw.error(), None);
+    raw.forget();
+    raw.advance(1);
+    assert_eq!(raw.frames(), "close 0x0");
+}
+
 /// RFC 9114 §5.2.
 #[test]
 fn server_closes_when_the_client_knows_that_it_goes_away() {
@@ -416,6 +435,21 @@ fn client_that_does_not_acknowledge_the_last_response_seems_to_be_gone() {
             expected
         );
     }
+}
+
+#[test]
+fn stream_that_is_opened_after_the_notice_puts_off_the_end() {
+    let raw = Raw::client().config(|it| it.parameters.max_idle_timeout_millis = 0);
+    let mut raw = (raw.config(http3).with("max_idle_timeout=0")).connected_with("");
+    raw.connection().go_away();
+    raw.process();
+    let [first, ..] = raw.request_three_parts();
+    raw.send(&first);
+    raw.advance(SETTLING_PERIOD + 29_000);
+    assert_eq!(raw.error(), None);
+    raw.forget();
+    raw.advance(1000);
+    assert!(raw.frames().ends_with("application_close 0x100"));
 }
 
 #[test]

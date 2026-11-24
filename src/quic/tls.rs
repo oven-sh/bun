@@ -17,7 +17,10 @@ pub enum Level {
 pub struct Alert(pub u8);
 
 impl Alert {
+    pub(crate) const UNEXPECTED_MESSAGE: Self = Self(10);
+    pub const ILLEGAL_PARAMETER: Self = Self(47);
     pub const INTERNAL_ERROR: Self = Self(80);
+    pub const NO_APPLICATION_PROTOCOL: Self = Self(120);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

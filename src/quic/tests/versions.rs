@@ -145,8 +145,35 @@ fn a_retry_packet_is_an_answer() {
     };
     (raw.token, raw.destination) = (retry.token, retry.source.clone());
     raw.retry_source = Some(retry.source);
+    raw.advance(10_000);
     raw.send_in(Initial, "hello");
     assert_eq!(raw.versions_of_packets(), [V1; 2]);
+}
+
+#[test]
+fn a_retry_packet_may_be_on_its_way() {
+    for (delay, version) in [(150, V1), (9999, V1), (10_000, V2)] {
+        let mut raw = Raw::client().with("version_information=#000000016b3343cf00000001");
+        while raw.take().is_empty() {
+            raw.send_in(Initial, "ping");
+        }
+        raw.advance(delay);
+        raw.send_in(Initial, "hello");
+        assert_eq!(raw.versions_of_packets(), [version; 2]);
+    }
+}
+
+#[test]
+fn not_to_a_client_with_a_token_from_an_earlier_connection() {
+    let first = Raw::client().connected();
+    let token = first.new_token.clone();
+    let mut raw = (first.again()).with("version_information=#000000016b3343cf00000001");
+    while raw.take().is_empty() {
+        raw.send_in(Initial, "ping");
+    }
+    raw.token = token;
+    raw.send_in(Initial, "hello");
+    assert_eq!(raw.versions_of_packets(), [V2; 2]);
 }
 
 /// RFC 9369 §4.1.

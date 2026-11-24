@@ -152,7 +152,7 @@ impl Watcher {
         Ok(OwnedWatcher(this))
     }
 
-    /// Hands `watch_events[..event_count]` to the trace writer and to `on_file_update`.
+    /// Hands `watch_events[..event_count]`, less mere metadata events, to the trace writer and `on_file_update`.
     pub(crate) fn dispatch_file_updates(
         &self,
         thread: &mut WatcherThread,
@@ -163,6 +163,11 @@ impl Watcher {
         if !self.running.load() {
             return;
         }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        let event_count = resolve_metadata_events(
+            &mut state.watchlist,
+            &mut thread.watch_events[..event_count],
+        );
         let events = &thread.watch_events[..event_count];
         WatcherTrace::write_events(&state.watchlist, events, changed_files);
         thread.ctx.on_file_update(
@@ -257,7 +262,8 @@ impl Watcher {
             // place. See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             if let Some(Some(moved)) = watchlist.items_file().get(item as usize) {
-                self.add_file_descriptor_to_kqueue_without_checks(moved, item as usize);
+                let kind = watchlist.items_kind()[item as usize];
+                self.add_file_descriptor_to_kqueue_without_checks(moved, item as usize, kind);
             }
 
             last_item = item;
@@ -278,9 +284,14 @@ impl Watcher {
     ///
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    fn add_file_descriptor_to_kqueue_without_checks(&self, file: &File, watchlist_id: usize) {
+    fn add_file_descriptor_to_kqueue_without_checks(
+        &self,
+        file: &File,
+        watchlist_id: usize,
+        kind: WatchItemKind,
+    ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
+        use libc::{NOTE_ATTRIB, NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -290,6 +301,10 @@ impl Watcher {
         event.filter = EVFILT_VNODE as _;
 
         event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
+        if kind == WatchItemKind::File {
+            // All that a truncation to a shorter length raises.
+            event.fflags |= NOTE_ATTRIB;
+        }
 
         // id
         event.ident = usize::try_from(file.fd().native()).expect("int cast");
@@ -327,9 +342,16 @@ impl Watcher {
             }
         }
 
+        // Before the registration: a truncation that has an event then differs from it.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        let size = size_of_file(file.as_deref()).unwrap_or(0);
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         if let Some(file) = &file {
-            self.add_file_descriptor_to_kqueue_without_checks(file, watchlist.len());
+            self.add_file_descriptor_to_kqueue_without_checks(
+                file,
+                watchlist.len(),
+                WatchItemKind::File,
+            );
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = self
@@ -344,6 +366,8 @@ impl Watcher {
             kind: WatchItemKind::File,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size,
         });
         Ok(())
     }
@@ -377,7 +401,11 @@ impl Watcher {
             Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(&dir, watchlist.len());
+        self.add_file_descriptor_to_kqueue_without_checks(
+            &dir,
+            watchlist.len(),
+            WatchItemKind::Directory,
+        );
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let trimmed = if file_path.len() > 1 {
@@ -398,6 +426,8 @@ impl Watcher {
             kind: WatchItemKind::Directory,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size: 0,
         });
         Ok((watchlist.len() - 1) as WatchItemIndex)
     }
@@ -631,6 +661,36 @@ fn copy_path(path: &[u8]) -> Cow<'static, [u8]> {
     Cow::Owned(path.to_vec())
 }
 
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn size_of_file(file: Option<&File>) -> Option<u64> {
+    sys::get_file_size(file?.fd()).ok()
+}
+
+/// kqueue reports a truncation like a `chmod`. Makes it a write, drops the `chmod`, returns how many are left.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn resolve_metadata_events(watchlist: &mut WatchList, events: &mut [WatchEvent]) -> usize {
+    let mut kept = 0;
+    for at in 0..events.len() {
+        let mut event = events[at];
+        let index = event.index as usize;
+        if event.op.intersects(Op::METADATA | Op::WRITE)
+            && watchlist.items_kind().get(index) == Some(&WatchItemKind::File)
+            && let Some(size) = size_of_file(watchlist.items_file()[index].as_deref())
+        {
+            let before = core::mem::replace(&mut watchlist.items_size_mut()[index], size);
+            // 0 is the `open(O_TRUNC)` of a save: its `write()` follows and is reported.
+            if size != before && size != 0 {
+                event.op |= Op::WRITE;
+            }
+        }
+        if event.op != Op::METADATA {
+            events[kept] = event;
+            kept += 1;
+        }
+    }
+    kept
+}
+
 // ─── WatchEvent ───────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Default)]
@@ -719,6 +779,9 @@ pub struct WatchItem {
     pub kind: WatchItemKind,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
+    /// Of a file, at its registration (0 if unknown) or its last event.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub size: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -738,6 +801,8 @@ pub trait WatchItemColumns {
     fn items_kind(&self) -> &[WatchItemKind];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size_mut(&mut self) -> &mut [u64];
 }
 
 impl WatchItemColumns for WatchList {
@@ -762,5 +827,9 @@ impl WatchItemColumns for WatchList {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size_mut(&mut self) -> &mut [u64] {
+        self.items_mut::<"size", u64>()
     }
 }

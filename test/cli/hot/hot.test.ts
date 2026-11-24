@@ -2,15 +2,19 @@ import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
 import {
+  closeSync,
   copyFileSync,
   cpSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
@@ -1082,6 +1086,35 @@ it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => 
 
   writeFileSync(join(root, "imported.js"), `console.log("second");`);
   expect(await stdout("second")).toBe(true);
+});
+
+// `Bun.write` and `fs.writeFile` write over the old text and then truncate. A reload can land between the two.
+it.each(["--hot", "--watch"])("%s loads a file again after the truncation that ends a save", async flag => {
+  using dir = tempDir("hot-save-ends-with-truncation", {
+    "main.js": `import "./imported.js";\nconsole.log("end");\n`,
+    "imported.js": `console.log("one");console.log("tail");`,
+  });
+  const imported = join(String(dir), "imported.js");
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("one\ntail\nend\n")).toBe(true);
+
+  // The new bytes only: the file still ends with the old `console.log("tail");`.
+  const two = `console.log("two");`;
+  const fd = openSync(imported, "r+");
+  writeSync(fd, two);
+  closeSync(fd);
+  expect(await stdout("two\ntail\nend\n")).toBe(true);
+
+  truncateSync(imported, two.length);
+  expect(await stdout("two\nend\n")).toBe(true);
 });
 
 // The Windows watcher never reads the cached listing.

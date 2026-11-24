@@ -8,7 +8,7 @@ import { refusesExecuteOnlyStart } from "./execute-only-start";
 import { isHardened } from "./hardened";
 import { afterAll } from "./harness/default-timeout";
 import "./harness/real-executables";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { testOneByOne as test } from "./supported";
 
 const program = `import { readFileSync } from "node:fs";

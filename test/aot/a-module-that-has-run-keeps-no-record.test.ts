@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { testOneByOne as test } from "./supported";
 
 // What the loader makes to load, link and run an ES module of the program goes when no graph is being loaded any more:

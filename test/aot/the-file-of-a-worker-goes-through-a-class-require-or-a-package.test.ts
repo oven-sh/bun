@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { testOneByOne as test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or

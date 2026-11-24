@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { describeKill, heldTooMuchTogether } from "./harness/killed-for-memory";
 import { endAtMemoryLimitTogether } from "./harness/memory-limit";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { testOneByOne as test } from "./supported";
 
 const MB = 2 ** 20;

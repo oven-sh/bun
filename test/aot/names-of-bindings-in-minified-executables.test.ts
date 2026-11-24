@@ -9,7 +9,7 @@ import { afterAll } from "./harness/default-timeout";
 import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
-// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+// One by one: its cases are builds, and the runner has other such files beside it: at once they were too many builds for the processors.
 import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const sources = {

@@ -25,6 +25,8 @@ use crate::with;
 /// How far ahead of what TLS has got CRYPTO frames can be (RFC 9000 §7.5).
 const CRYPTO_WINDOW: u64 = 64 * 1024;
 const UNVALIDATED_CRYPTO_WINDOW: u64 = 16 * 1024;
+/// More than RFC 9000 §7.5 asks for.
+const MAX_SCATTERED_CRYPTO_LEN: u64 = 5 * 1024;
 const MAX_HELLO_LEN: usize = 16 * 1024;
 /// TLS has room for one ticket and not much more.
 const MAX_TICKET_INPUT_LEN: usize = 256;
@@ -341,6 +343,7 @@ impl Connection {
     pub(super) fn release_tls(&mut self) {
         if self.tls.is_some() && self.is_confirmed() && self.tickets_wanted == 0 {
             self.tls = None;
+            self.spaces.data.crypto_kept = Default::default();
         }
     }
 
@@ -412,10 +415,11 @@ impl Connection {
             return Err(CRYPTO_BUFFER_EXCEEDED);
         }
         let Some(known) = space.crypto_read.checked_sub(offset) else {
-            return space
-                .crypto_kept
-                .insert(offset, data)
-                .map_err(|_| CRYPTO_BUFFER_EXCEEDED);
+            space.crypto_kept.insert(offset, data);
+            return match space.crypto_kept.scattered_len() {
+                ..=MAX_SCATTERED_CRYPTO_LEN => Ok(()),
+                _ => Err(CRYPTO_BUFFER_EXCEEDED),
+            };
         };
         self.read_crypto(
             now,

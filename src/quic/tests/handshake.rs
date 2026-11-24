@@ -181,6 +181,27 @@ fn buffers_4096_bytes_that_are_out_of_order() {
 }
 
 #[test]
+fn buffers_4096_bytes_that_have_many_gaps() {
+    for mut raw in Raw::both() {
+        raw.hello_len = 3900;
+        if raw.side.is_server() {
+            raw.start(&[]);
+        }
+        let len = raw.hello().len();
+        for first in [1, 2, 0] {
+            let pieces = (first..len)
+                .step_by(3)
+                .map(|at| format!("hello {at} {}", at + 1));
+            for packet in pieces.collect::<Vec<_>>().chunks(100) {
+                raw.send_in(Initial, &packet.join(", "));
+            }
+        }
+        raw.send_in(Handshake, "flight");
+        assert!(raw.peer.has_logged("ready"));
+    }
+}
+
+#[test]
 fn long_flights() {
     let mut raw = Raw::server();
     raw.peer.tls.hello_len = 2500;

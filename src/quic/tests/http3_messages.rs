@@ -56,6 +56,35 @@ fn as_many_heads_can_arrive_side_by_side_as_requests_are_allowed() {
 }
 
 #[test]
+fn messages_that_have_many_gaps() {
+    let (body, value) = ("a".repeat(300), "b".repeat(300));
+    let stream = http3(&format!(
+        "headers :status=103 a={value}, headers :status=200, data {body}, headers a={value}"
+    ));
+    let name = |at| {
+        if at + 1 == stream.len() {
+            "fin"
+        } else {
+            "stream"
+        }
+    };
+    for polls in [true, false] {
+        let mut raw = Raw::http3(Server).exchange();
+        raw.peer.polls = polls;
+        for first in [1, 2, 0] {
+            for at in (first..stream.len()).step_by(3).rev() {
+                let byte = show_hex(&stream[at..=at]);
+                raw.send(&format!("{} 0 {at} {byte}", name(at)));
+            }
+        }
+        raw.peer.polls = true;
+        raw.process();
+        assert_eq!(raw.peer.streams[&0].received, body.as_bytes());
+        assert!(raw.peer.has_logged("0 fin -"));
+    }
+}
+
+#[test]
 fn responses_that_have_no_context_can_be_stopped() {
     let mut raw = Raw::http3(Server).connected_with("");
     let [kept, _] = [raw.request(GET), raw.request(GET)];

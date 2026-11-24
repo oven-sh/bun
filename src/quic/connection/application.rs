@@ -458,7 +458,7 @@ fn try_read(
     let rest = feed(stream, data, reader)?;
     let mut takes_more = rest.is_empty();
     if !takes_more {
-        stream.keep(stream.read_offset(), rest)?;
+        stream.keep(stream.read_offset(), rest);
     }
     while takes_more && let Some((known, chunk)) = stream.take_kept() {
         let offset = stream.read_offset() - known as u64;
@@ -467,7 +467,6 @@ fn try_read(
             stream.put_back(offset, chunk);
         }
     }
-    stream.check_kept()?;
     match (&stream.role, reader) {
         (Role::Message(message), Some(reader)) if stream.is_read_to_end() => {
             message.check_end(reader)

@@ -8,8 +8,6 @@ use crate::http3::Http3;
 use crate::stream_id::StreamId;
 
 const MAX_READY_HINT: usize = 256 * 1024;
-const TOO_MANY_GAPS: Error =
-    Error::transport(transport_code::INTERNAL_ERROR, "too many gaps in a stream");
 
 impl Stream {
     #[inline]
@@ -18,14 +16,8 @@ impl Stream {
     }
 
     /// For bytes at `offset` that cannot be used yet.
-    pub(crate) fn keep(&mut self, offset: u64, data: &[u8]) -> Result {
-        self.kept.insert(offset, data).map_err(|_| TOO_MANY_GAPS)
-    }
-
-    /// For after [`Self::take_kept`].
-    #[inline]
-    pub(crate) fn check_kept(&self) -> Result {
-        self.kept.check().map_err(|_| TOO_MANY_GAPS)
+    pub(crate) fn keep(&mut self, offset: u64, data: &[u8]) {
+        self.kept.insert(offset, data);
     }
 
     /// Takes bytes that were kept, and returns how many of them have been read.
@@ -157,7 +149,8 @@ impl State {
             return Ok(None);
         }
         let Some(known) = stream.read.checked_sub(offset) else {
-            return stream.keep(offset, data).map(|()| None);
+            stream.keep(offset, data);
+            return Ok(None);
         };
         let new = data.get(known as usize..);
         Ok(new.filter(|new| fin || !new.is_empty()))

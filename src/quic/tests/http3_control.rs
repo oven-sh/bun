@@ -215,6 +215,21 @@ fn every_split_of_the_control_stream() {
 }
 
 #[test]
+fn control_stream_that_has_many_gaps() {
+    let stream = http3(&format!(
+        "#00, settings, 0x21 {}, goaway 4",
+        "a".repeat(500)
+    ));
+    let mut raw = Raw::http3(Server).connected();
+    for first in [1, 0] {
+        for at in (first..stream.len()).step_by(2) {
+            raw.send(&format!("stream 3 {at} {}", show_hex(&stream[at..=at])));
+        }
+    }
+    assert_eq!(raw.connection().peer_go_away(), Some(StreamId(4)));
+}
+
+#[test]
 fn types_of_streams() {
     for (sides, start, code) in [
         (BOTH, "#00", STREAM_CREATION_ERROR),

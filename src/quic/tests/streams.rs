@@ -175,6 +175,19 @@ fn reassembles_pieces_of_all_sizes() {
 }
 
 #[test]
+fn reassembles_small_pieces_however_many_are_missing() {
+    for len in [1, 50] {
+        let mut raw = Raw::client().connected();
+        for first in [1, 0] {
+            for at in (first..2000).step_by(2) {
+                raw.send(&format!("stream 0 {} *{len}", at * len));
+            }
+        }
+        assert!(raw.peer.streams[&0].received == filler(0, 2000 * len));
+    }
+}
+
+#[test]
 fn frames_for_streams_that_cannot_have_them() {
     for (name, rest, is_about_receiving) in [
         ("stream", "0 a", true),

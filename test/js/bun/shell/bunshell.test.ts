@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, closeSync, mkdirSync, openSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -3765,6 +3765,138 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+// POSIX XCU 2.9.1.6: when `execve` answers ENOEXEC, a shell runs the file with sh, unless the file cannot be a
+// script. Windows has no ENOEXEC and no /bin/sh.
+describe.concurrent.skipIf(isWindows)("an executable file with no #! line", () => {
+  // 127 bytes with no NUL and no newline. The next byte is byte 128 of the file: the last one that the check reads.
+  const line127 = "echo ok #" + Buffer.alloc(127 - 9, "x").toString();
+
+  function tool(contents: string | ((at: { root: string }) => string), name = "tool", mode = 0o755) {
+    const dir = tempDir("shell-no-shebang", { [name]: contents, empty: "" });
+    chmodSync(join(String(dir), name), mode);
+    chmodSync(join(String(dir), "empty"), 0o755);
+    return { cwd: String(dir), [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  async function run(contents: string | ((at: { root: string }) => string), name = "tool", mode = 0o755) {
+    using file = tool(contents, name, mode);
+    const { stdout, stderr, exitCode } = await $`./${name} ${"a b"} ${"$HOME"} ${"*"} -c "" -- -x`
+      .cwd(file.cwd)
+      .quiet()
+      .nothrow();
+    const text = (output: Buffer) => output.toString().replaceAll(file.cwd, "<cwd>");
+    return { stdout: text(stdout), stderr: text(stderr), exitCode };
+  }
+
+  test.each([
+    // The script gets each argument as one word, and sh takes none for an option.
+    [
+      "prints its arguments",
+      `printf '[%s]' "$0" "$#" "$@" "$PWD"\n`,
+      "[<cwd>/tool][7][a b][$HOME][*][-c][][--][-x][<cwd>]",
+      0,
+    ],
+    ["exits 7", "exit 7\n", "", 7],
+    ["starts with a comment and a blank line", "# a tool\n\necho after\n", "after\n", 0],
+    // sh runs a file that has no command, and exits 0.
+    ["is one newline", "\n", "", 0],
+    ["is blank lines and a comment", " \n\t# placeholder\n", "", 0],
+    ["has a NUL after its first line", "echo one\nexit\n\0\0\0", "one\n", 0],
+    ["has a NUL in byte 129 of its first line", line127 + "x\0\n", "ok\n", 0],
+    ["starts with 128 bytes of comment", "#" + Buffer.alloc(126, "x").toString() + "\necho after\n", "after\n", 0],
+  ])("a file that %s runs with sh", async (_, contents, stdout, exitCode) => {
+    expect(await run(contents)).toEqual({ stdout, stderr: "", exitCode });
+  });
+
+  // sh runs the file, not Bun Shell, which has no functions.
+  test("a file with a .sh name runs with sh", async () => {
+    expect(await run("f() { echo in-a-function; }\nf\n", "tool.sh")).toEqual({
+      stdout: "in-a-function\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a pipeline and a redirect reach the script", async () => {
+    using file = tool(`read line\necho "out:$line"\necho "err:$line" >&2\n`);
+    const { stdout, stderr, exitCode } = await $`echo in | ./tool 2>&1 | cat`.cwd(file.cwd).quiet().nothrow();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "out:in\nerr:in\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a variable that the command assigns reaches the script", async () => {
+    using file = tool(`echo "$FROM_COMMAND"\n`);
+    expect(await $`FROM_COMMAND=assigned ./tool`.cwd(file.cwd).text()).toBe("assigned\n");
+  });
+
+  // 1 is the status of every command that Bun Shell cannot start.
+  const refused = (name = "tool") => ({ stdout: "", stderr: `bun: Exec format error: <cwd>/${name}\n`, exitCode: 1 });
+
+  // An empty file is a placeholder: sh exits 0 for it and prints nothing. A `#!` line names an interpreter that the
+  // kernel could not run, and that is not sh.
+  test.each([
+    ["is empty", ""],
+    ["has a NUL in its first line", "echo a\0b\n"],
+    ["has a NUL in byte 128 of its first line", line127 + "\0\n"],
+    ["is the 4 bytes of the ELF magic", "\x7fELF"],
+    ["has a #! line that names an empty file", ({ root }: { root: string }) => `#!${root}/empty\necho ran-by-sh\n`],
+  ])("a file that %s keeps the error", async (_, contents) => {
+    expect(await run(contents)).toEqual(refused());
+  });
+
+  // sh would run the JavaScript as commands.
+  test("a file with a JavaScript name keeps the error", async () => {
+    expect(await run("echo ran-by-sh\n", "tool.mjs")).toEqual(refused("tool.mjs"));
+  });
+
+  // root can read a file of any mode.
+  test.skipIf(isRoot)("a file that cannot be read keeps the error", async () => {
+    expect(await run("echo ran-by-sh\n", "tool", 0o111)).toEqual(refused());
+  });
+
+  test("a file whose #! line names a missing file keeps ENOENT", async () => {
+    expect(await run(({ root }) => `#!${root}/missing\necho ran-by-sh\n`)).toEqual({
+      stdout: "",
+      stderr: "bun: No such file or directory: <cwd>/tool\n",
+      exitCode: 1,
+    });
+  });
+
+  // Only ENOEXEC reaches sh. Linux answers ETXTBSY for a file that is open for writing. macOS does not, and neither do
+  // some Linux kernels.
+  function busyTool() {
+    const dir = tempDir("shell-no-shebang-busy", { tool: "echo ran-by-sh\n" });
+    const tool = join(String(dir), "tool");
+    chmodSync(tool, 0o755);
+    const fd = openSync(tool, "r+");
+    return { cwd: String(dir), tool, [Symbol.dispose]: () => (closeSync(fd), dir[Symbol.dispose]()) };
+  }
+  const isBusyWhileOpenForWriting =
+    isLinux &&
+    (() => {
+      using busy = busyTool();
+      try {
+        Bun.spawnSync({ cmd: [busy.tool] });
+        return false;
+      } catch (error: any) {
+        return error.code === "ETXTBSY";
+      }
+    })();
+
+  test.skipIf(!isBusyWhileOpenForWriting)("a file that is open for writing keeps ETXTBSY", async () => {
+    using busy = busyTool();
+    const { stdout, stderr, exitCode } = await $`./tool`.cwd(busy.cwd).quiet().nothrow();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: `bun: Text file busy: ${busy.tool}\n`,
+      exitCode: 1,
+    });
+  });
 });
 
 test.if(isWindows)("an operand that starts with // is on the drive of the shell's cwd", async () => {

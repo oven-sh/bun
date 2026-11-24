@@ -75,6 +75,8 @@ bunx --bun my-cli # good
 bunx my-cli --bun # bad
 ```
 
+On macOS and Linux, an executable text file that has no shebang runs as a shell script with `/bin/sh`, as it does with `npx`. The same applies to `bun run <executable>`. An empty file and a file with a JavaScript or TypeScript extension do not run: the command exits with code 1.
+
 ## Package flag
 
 **`--package <pkg>` or `-p <pkg>`** - Run a binary from a specific package. Useful when the binary name differs from the package name:

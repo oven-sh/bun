@@ -20,6 +20,7 @@ strum.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 bun_analytics.workspace = true
+bun_paths.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true

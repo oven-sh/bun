@@ -77,7 +77,6 @@ impl<'a> CStrList<'a> {
     }
 
     /// Without the `None`.
-    #[cfg(windows)]
     #[inline]
     pub fn unterminated(self) -> &'a [Option<CStrRef<'a>>] {
         &self.0[..self.0.len() - 1]

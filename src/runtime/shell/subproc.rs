@@ -100,6 +100,41 @@ pub(crate) type Subprocess = ShellSubprocess;
 
 pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 
+/// The `shell_fallback` of Bun Shell, `bun run <bin>` and bunx: whether sh runs the file at `path` as a script (#11563).
+#[cfg(unix)]
+pub(crate) fn is_shell_script(path: &bun_core::ZStr) -> bun_sys::Result<bool> {
+    use bun_core::strings;
+    use bun_sys::{E, O};
+    // O_NONBLOCK: a FIFO that replaced the file must not make the open wait for a writer.
+    let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK | O::NOCTTY;
+    let file = match bun_sys::File::open(path, flags, 0) {
+        Ok(file) => file,
+        // sh cannot read the file either.
+        Err(err) if err.get_errno() == E::EACCES => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let mut head = [0u8; 128];
+    let len = file.read_all(&mut head)?;
+    let text = &head[..len];
+    // An empty file is a placeholder that a postinstall did not replace: sh exits 0 for it in silence (#24329).
+    if text.is_empty() {
+        return Ok(false);
+    }
+    let first_line = strings::index_of_char_usize(text, b'\n').map_or(text, |end| &text[..end]);
+    // `#!` names an interpreter that is not sh. bash also refuses the ELF magic and a NUL in the first line.
+    if text.starts_with(b"#!")
+        || text.starts_with(b"\x7fELF")
+        || strings::contains_char(first_line, 0)
+    {
+        return Ok(false);
+    }
+    // sh would run the source of a JavaScript or TypeScript file as commands. Without the fd path, a symlink hides the name.
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let name = bun_sys::get_fd_path(file.fd(), &mut buf).map_or(path.as_bytes(), |real| &*real);
+    let loader = bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(name));
+    Ok(!loader.is_some_and(|loader| loader.is_javascript_like()))
+}
+
 /// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
 /// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
 /// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
@@ -477,6 +512,9 @@ impl ShellSubprocess {
             cwd: spawn_args.cwd.into(),
             #[cfg(unix)]
             no_sigpipe,
+            // POSIX XCU 2.9.1.6: a shell runs a script that `execve` answers ENOEXEC for with sh.
+            #[cfg(unix)]
+            shell_fallback: Some(is_shell_script),
             #[cfg(windows)]
             windows: WindowsOptions {
                 hide_window: true,

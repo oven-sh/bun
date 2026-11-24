@@ -61,7 +61,8 @@ pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 use bun_spawn_sys::uv_getrusage;
 pub use bun_spawn_sys::{
-    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, StdioKind,
+    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, ShellFallback,
+    StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -1785,6 +1786,9 @@ mod spawn_process_body {
 
             pub use_execve_on_macos: bool,
             pub argv0: Option<CStrRef<'a>>,
+            /// POSIX only: Windows has no ENOEXEC and no `/bin/sh`.
+            #[cfg(unix)]
+            pub shell_fallback: Option<ShellFallback>,
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
@@ -1832,6 +1836,8 @@ mod spawn_process_body {
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
+                    #[cfg(unix)]
+                    shell_fallback: None,
                     #[cfg(windows)]
                     windows: Default::default(),
                     #[cfg(windows)]
@@ -1853,6 +1859,8 @@ mod spawn_process_body {
                     stream: false,
                     argv0: self.argv0,
                     new_process_group,
+                    #[cfg(unix)]
+                    shell_fallback: self.shell_fallback,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
                     #[cfg(windows)]

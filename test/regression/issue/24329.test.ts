@@ -1,21 +1,17 @@
 import { expect, test } from "bun:test";
-import { bunEnv, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, mkdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 // This test verifies that the placeholder scripts created during npm package build
 // print an error message and exit with code 1, rather than silently succeeding.
 // See: https://github.com/oven-sh/bun/issues/24329
 
-test("bun npm placeholder script should exit with error if postinstall hasn't run", async () => {
-  // Skip on Windows as the placeholder is a shell script
-  if (isWindows) {
-    return;
-  }
-
-  // This is the placeholder script content that gets written to bin/bun.exe
-  // during npm package build (see packages/bun-release/scripts/upload-npm.ts)
-  // Note: no shebang — a #!/bin/sh shebang breaks Windows because npm's cmd-shim
-  // bakes the interpreter path into .ps1/.cmd wrappers before postinstall runs.
-  const placeholderScript = `echo "Error: Bun's postinstall script was not run." >&2
+// This is the placeholder script content that gets written to bin/bun.exe
+// during npm package build (see packages/bun-release/scripts/upload-npm.ts)
+// Note: no shebang — a #!/bin/sh shebang breaks Windows because npm's cmd-shim
+// bakes the interpreter path into .ps1/.cmd wrappers before postinstall runs.
+const placeholderScript = `echo "Error: Bun's postinstall script was not run." >&2
 echo "" >&2
 echo "This occurs when using --ignore-scripts during installation, or when using a" >&2
 echo "package manager like pnpm that does not run postinstall scripts by default." >&2
@@ -26,6 +22,12 @@ echo "" >&2
 echo "Or reinstall bun without the --ignore-scripts flag." >&2
 exit 1
 `;
+
+test("bun npm placeholder script should exit with error if postinstall hasn't run", async () => {
+  // Skip on Windows as the placeholder is a shell script
+  if (isWindows) {
+    return;
+  }
 
   using dir = tempDir("issue-24329", {
     "bun-placeholder": placeholderScript,
@@ -101,4 +103,44 @@ test("empty shell script exits with code 0 (demonstrating why the fix is needed)
   expect(stdout).toBe("");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// `execve` answers ENOEXEC for the placeholder, because it has no `#!` line. Bun then runs it with sh, as npx does.
+test.skipIf(isWindows).each([
+  ["bun x", ["x", "--no-install", "bun", "--version"]],
+  ["bun run", ["run", "--silent", "bun", "--version"]],
+  ["Bun Shell", ["exec", "./node_modules/.bin/bun --version"]],
+])("%s prints the message of the placeholder that an install linked", async (_, cmd) => {
+  using dir = tempDir("issue-24329-linked", {
+    "package.json": `{ "name": "app" }`,
+    "node_modules/bun/package.json": `{ "name": "bun", "version": "1.0.0", "bin": { "bun": "bin/bun.exe" } }`,
+    "node_modules/bun/bin/bun.exe": placeholderScript,
+  });
+  chmodSync(join(String(dir), "node_modules", "bun", "bin", "bun.exe"), 0o755);
+  mkdirSync(join(String(dir), "node_modules", ".bin"));
+  symlinkSync("../bun/bin/bun.exe", join(String(dir), "node_modules", ".bin", "bun"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "",
+    stderr: `Error: Bun's postinstall script was not run.
+
+This occurs when using --ignore-scripts during installation, or when using a
+package manager like pnpm that does not run postinstall scripts by default.
+
+To fix this, run the postinstall script manually:
+  cd node_modules/bun && node install.js
+
+Or reinstall bun without the --ignore-scripts flag.
+`,
+    exitCode: 1,
+  });
 });

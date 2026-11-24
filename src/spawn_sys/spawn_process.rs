@@ -2,16 +2,18 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(unix)]
 use core::ffi::CStr;
 #[cfg(unix)]
 use core::sync::atomic::Ordering;
 
 #[cfg(unix)]
 use bun_core::CStrList;
-use bun_core::CStrRef;
 #[cfg(target_os = "macos")]
 use bun_core::Output;
+use bun_core::{CStrRef, ZStr};
+#[cfg(unix)]
+use bun_paths::Path;
 use bun_sys::{self, Fd, File};
 
 #[cfg(not(windows))]
@@ -256,6 +258,10 @@ impl RusageFields for WinRusage {
 // Spawn option / result types
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Asked when `execve` answers ENOEXEC for the file at the absolute `path`: `Ok(true)` runs `sh <path> <args>` in its place, as a shell does.
+pub type ShellFallback = fn(path: &ZStr) -> bun_sys::Result<bool>;
+
+#[derive(Clone)]
 pub struct PosixSpawnOptions<'a> {
     pub stdin: PosixStdio,
     pub stdout: PosixStdio,
@@ -299,6 +305,7 @@ pub struct PosixSpawnOptions<'a> {
     /// Linux only. Directory fd of a cgroup the child starts inside
     /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.
     pub cgroup_fd: Option<Fd>,
+    pub shell_fallback: Option<ShellFallback>,
 }
 
 impl Default for PosixSpawnOptions<'_> {
@@ -323,6 +330,7 @@ impl Default for PosixSpawnOptions<'_> {
             pty_slave_fd: -1,
             linux_pdeathsig: None,
             cgroup_fd: None,
+            shell_fallback: None,
         }
     }
 }
@@ -360,6 +368,7 @@ pub struct Dup2 {
     pub to: StdioKind,
 }
 
+#[derive(Clone)]
 pub enum PosixStdio {
     Path(Box<[u8]>),
     Inherit,
@@ -890,11 +899,19 @@ pub fn spawn_process_posix(
     }
 
     let argv0 = options.argv0.or_else(|| argv.first());
-    let argv0_cstr = argv0.expect("argv[0] is required").to_cstr();
-    let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
+    let argv0 = argv0.expect("argv[0] is required");
+    let spawn_result =
+        posix_spawn::spawn_z(argv0.to_cstr(), Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {
         Err(err) => {
+            if err.get_errno() == bun_sys::E::ENOEXEC
+                && let Some(is_script) = options.shell_fallback
+            {
+                // The spawn of the shell probes the stdio slots again, so the descriptors of this spawn close first.
+                drop((cleanup, spawned, extra_fds));
+                return spawn_shell_for_script(options, is_script, argv0, argv, envp, err);
+            }
             return Ok(Err(err));
         }
         Ok(pid) => {
@@ -928,6 +945,61 @@ pub fn spawn_process_posix(
 
             return Ok(Ok(spawned));
         }
+    }
+}
+
+/// `execve` answered ENOEXEC for `path`. If `is_script` accepts the file, run `sh <path> <args>` in its place, as a shell does.
+#[cfg(unix)]
+#[cold]
+fn spawn_shell_for_script(
+    options: &PosixSpawnOptions<'_>,
+    is_script: ShellFallback,
+    path: CStrRef<'_>,
+    argv: CStrList<'_>,
+    envp: Option<CStrList<'_>>,
+    enoexec: bun_sys::Error,
+) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
+    // `_PATH_BSHELL`
+    const SHELL: &CStr = if cfg!(target_os = "android") {
+        c"/system/bin/sh"
+    } else {
+        c"/bin/sh"
+    };
+    // The child that failed was the session leader of the pty. macOS revoked the pty when it exited.
+    if options.pty_slave_fd >= 0 {
+        return Ok(Err(enoexec));
+    }
+    // The child ran a relative `path` from `options.cwd`. This process reads the file, and sh must not read its name as an option.
+    let path = path.to_cstr().to_bytes();
+    let file = if path.starts_with(b"/") {
+        Path::from(path)
+    } else if options.cwd.starts_with(b"/") {
+        Path::from_parts(&[&options.cwd[..], path])
+    } else {
+        match bun_sys::getcwd_alloc() {
+            Ok(cwd) => Path::from_parts(&[cwd.as_bytes(), &options.cwd[..], path]),
+            Err(err) => return Ok(Err(err)),
+        }
+    };
+    match is_script(&file) {
+        Ok(true) => {}
+        Ok(false) => return Ok(Err(enoexec)),
+        Err(err) => return Ok(Err(err)),
+    }
+    let args = argv.unterminated().get(1..).unwrap_or_default();
+    let mut shell_argv = Vec::with_capacity(args.len() + 3);
+    shell_argv.extend_from_slice(&[Some(SHELL.into()), Some((&*file).into())]);
+    shell_argv.extend_from_slice(args);
+    let shell_argv = CStrList::from_unterminated(&mut shell_argv);
+    let shell_options = PosixSpawnOptions {
+        argv0: Some(SHELL.into()),
+        shell_fallback: None,
+        ..options.clone()
+    };
+    match spawn_process_posix(&shell_options, shell_argv, envp)? {
+        // There is no system shell: the error stays the one of the file.
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => Ok(Err(enoexec)),
+        shell => Ok(shell),
     }
 }
 

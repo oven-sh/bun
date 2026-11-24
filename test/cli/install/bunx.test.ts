@@ -907,6 +907,26 @@ console.log("node v" + process.versions.node + " running in " + (typeof Bun === 
   expect(exited).toBe(0);
 });
 
+// POSIX: `execve` answers ENOEXEC for a bin that is a script with no `#!` line, and bunx then runs it with sh, as npx
+// does. pnpm 12 and the `bun` package ship such a bin. The one of `bun` has a name that ends in `.exe`.
+it.concurrent.skipIf(isWindows).each(["bin/tool", "bin/tool.exe"])(
+  "runs an installed bin that is a script with no #! line: %s",
+  async bin => {
+    using registry = await localRegistry({
+      name: "sh-tool",
+      version: "1.0.0",
+      bin: { "sh-tool": bin },
+      files: { [bin]: `#${Buffer.alloc(130, "x").toString()}\nprintf '[%s]' "\${0##*/}" "$@"\n` },
+    });
+    using box = sandbox(registry);
+    const ran = { stdout: "[sh-tool][a b][$HOME][*]", exitCode: 0 };
+
+    expect(await box.run(["sh-tool@1.0.0", "a b", "$HOME", "*"])).toMatchObject(ran);
+    // The second run takes the bin from the cache of bunx.
+    expect(await box.run(["sh-tool@1.0.0", "a b", "$HOME", "*"])).toMatchObject({ ...ran, stderr: "", requests: [] });
+  },
+);
+
 describe("--package flag", () => {
   const run = async (...args: string[]): Promise<[err: string, out: string, exited: number]> => {
     const subprocess = spawn({

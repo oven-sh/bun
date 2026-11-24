@@ -1,8 +1,19 @@
 import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir, unprivilegedSpawnOptions } from "harness";
 import { delimiter, dirname, join } from "path";
 
 let cwd: string | undefined;
@@ -124,6 +135,236 @@ describe.concurrent.skipIf(!isLinux)("a working directory close to PATH_MAX", ()
       using project = deepProject(cwdBytes, { "package.json": packageJson });
       expect(await run(["x", "hello"], project.cwd)).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
     });
+  });
+});
+
+// POSIX: `execve` answers ENOEXEC for a text file that has no `#!` line, and a shell then runs the file with sh.
+// npm runs a command through a shell, and pnpm 12.21.0 ships such a bin. Windows has no ENOEXEC and no /bin/sh.
+describe.concurrent.skipIf(isWindows)("a command that is a script with no #! line", () => {
+  // 127 bytes with no NUL and no newline. The next byte is byte 128 of the file: the last one that the check reads.
+  const line127 = "echo ok #" + Buffer.alloc(127 - 9, "x").toString();
+
+  function project(bin: string | ((at: { root: string }) => string), mode = 0o755) {
+    const dir = tempDir("run-no-shebang", {
+      "package.json": `{ "name": "app", "scripts": { "from-script": "tool from-script" } }`,
+      "node_modules/.bin/tool": bin,
+      "node_modules/.bin/sibling": `#!/bin/sh\nprintf '[sibling of %s]' "$1"\n`,
+      empty: "",
+    });
+    const tool = join(String(dir), "node_modules", ".bin", "tool");
+    chmodSync(tool, mode);
+    chmodSync(join(String(dir), "node_modules", ".bin", "sibling"), 0o755);
+    chmodSync(join(String(dir), "empty"), 0o755);
+    return { cwd: String(dir), tool, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  async function run(
+    cmd: string[],
+    cwd: string,
+    env: Record<string, string | undefined> = bunEnv,
+    user: { uid?: number; gid?: number } = {},
+  ) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd, env, stdout: "pipe", stderr: "pipe", ...user });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** What `bun run tool` prints when the spawn of the bin fails. */
+  const failedToRun = (code: string, message: string) => ({
+    stdout: "",
+    stderr: `error: Failed to run "tool" due to:\n${code}: <tool>: ${message} (posix_spawn())\n`,
+    exitCode: 1,
+  });
+  const enoexec = failedToRun("ENOEXEC", "Exec format error");
+
+  async function runTool(app: { cwd: string; tool: string }, user?: { uid?: number; gid?: number }) {
+    const { stdout, stderr, exitCode } = await run(["run", "tool"], app.cwd, bunEnv, user);
+    return { stdout, stderr: stderr.replaceAll(app.tool, "<tool>"), exitCode };
+  }
+
+  test.each([[["run", "tool"]], [["tool"]], [["run", "--silent", "tool"]], [["x", "tool"]]])(
+    "bun %j runs it with sh",
+    async cmd => {
+      // `sibling` is on the `PATH` that Bun makes for the bin, and not on the one of the test.
+      using app = project(`printf '[%s]' "$0" "$#" "$@" "$PWD" "$FROM_TEST"\nsibling "$npm_package_name"\n`);
+      // The script gets each argument as one word: nothing expands `$HOME` or `*`, and sh takes none for an option.
+      const args = ["a b", "$HOME", "*", "-c", "", "--", "-x"];
+      expect(await run([...cmd, ...args], app.cwd, { ...bunEnv, FROM_TEST: "env" })).toEqual({
+        stdout: `[${app.tool}][7][a b][$HOME][*][-c][][--][-x][${app.cwd}][env][sibling of app]`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("a script on $PATH that is not in node_modules/.bin runs too", async () => {
+    using dir = tempDir("run-no-shebang-path", { "package.json": `{ "name": "app" }`, "bin/tool": "echo on-path\n" });
+    chmodSync(join(String(dir), "bin", "tool"), 0o755);
+    const env = { ...bunEnv, PATH: join(String(dir), "bin") + delimiter + bunEnv.PATH };
+    expect(await run(["run", "tool"], String(dir), env)).toEqual({ stdout: "on-path\n", stderr: "", exitCode: 0 });
+  });
+
+  // `bun install` sets BUN_WHICH_IGNORE_CWD for a lifecycle script. bunx then finds the bin by a relative path.
+  test("bunx runs a script that it finds through a relative entry of $PATH", async () => {
+    using dir = tempDir("run-no-shebang-relative", {
+      "package.json": `{ "name": "app" }`,
+      "relbin/tool": `printf '[%s]' "$0" "$@"\n`,
+    });
+    const tool = join(String(dir), "relbin", "tool");
+    chmodSync(tool, 0o755);
+    const env = { ...bunEnv, PATH: "relbin" + delimiter + bunEnv.PATH, BUN_WHICH_IGNORE_CWD: join(String(dir), "x") };
+    expect(await run(["x", "tool", "a"], String(dir), env)).toEqual({
+      stdout: `[${tool}][a]`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["bun run --shell=bun <script>", ["run", "--silent", "--shell=bun", "from-script"], "from-script"],
+    ["bun exec", ["exec", "./node_modules/.bin/tool from-exec"], "from-exec"],
+  ])("Bun Shell runs it with sh: %s", async (_, cmd, arg) => {
+    using app = project(`printf '[%s]' "$0" "$@"\n`);
+    expect(await run(cmd, app.cwd)).toEqual({ stdout: `[${app.tool}][${arg}]`, stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["exits 7", "exit 7\n", "", 7],
+    ["starts with a comment and a blank line", "# a tool\n\necho after\n", "after\n", 0],
+    // sh runs a file that has no command, and exits 0.
+    ["is one newline", "\n", "", 0],
+    ["is blank lines and a comment", " \n\t# placeholder\n", "", 0],
+    ["has a NUL after its first line", "echo one\nexit\n\0\0\0", "one\n", 0],
+    ["has a NUL in byte 129 of its first line", line127 + "x\0\n", "ok\n", 0],
+    ["starts with 128 bytes of comment", "#" + Buffer.alloc(126, "x").toString() + "\necho after\n", "after\n", 0],
+  ])("a bin that %s runs", async (_, bin, stdout, exitCode) => {
+    using app = project(bin);
+    expect(await run(["run", "--silent", "tool"], app.cwd)).toEqual({ stdout, stderr: "", exitCode });
+  });
+
+  // `bun install` links a bin as a symlink. A `.sh` file runs in sh and not in Bun Shell, which has no functions.
+  test("a bin that is a symlink to a file with a .sh name runs", async () => {
+    using dir = tempDir("run-no-shebang-sh", {
+      "package.json": `{ "name": "app" }`,
+      "node_modules/pkg/tool.sh": "f() { echo in-a-function; }\nf\n",
+    });
+    chmodSync(join(String(dir), "node_modules", "pkg", "tool.sh"), 0o755);
+    mkdirSync(join(String(dir), "node_modules", ".bin"));
+    symlinkSync("../pkg/tool.sh", join(String(dir), "node_modules", ".bin", "tool"));
+    expect(await run(["run", "tool"], String(dir))).toEqual({ stdout: "in-a-function\n", stderr: "", exitCode: 0 });
+  });
+
+  // sh cannot tell prose from a script. Such a bin is a placeholder that a postinstall did not replace.
+  test("a bin that is prose fails in sh", async () => {
+    using app = project("This file is a placeholder\n");
+    const { stdout, stderr, exitCode } = await run(["run", "--silent", "tool"], app.cwd);
+    expect(stderr).toContain("not found");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 127 });
+  });
+
+  // A shell refuses a file that cannot be a script. An empty file is a placeholder: sh exits 0 for it and prints
+  // nothing. A `#!` line names an interpreter that the kernel could not run, and that is not sh.
+  test.each([
+    ["is empty", ""],
+    ["has a NUL in its first line", "echo a\0b\n"],
+    ["has a NUL in byte 128 of its first line", line127 + "\0\n"],
+    ["is the 4 bytes of the ELF magic", "\x7fELF"],
+    ["has a #! line that names an empty file", ({ root }: { root: string }) => `#!${root}/empty\necho ran-by-sh\n`],
+  ])("a bin that %s keeps ENOEXEC", async (_, bin) => {
+    using app = project(bin);
+    expect(await runTool(app)).toEqual(enoexec);
+  });
+
+  // sh would run the JavaScript as commands. Bun runs such a bin as a module only on Windows.
+  test("a bin whose file has a JavaScript name keeps ENOEXEC", async () => {
+    using dir = tempDir("run-no-shebang-js", {
+      "package.json": `{ "name": "app" }`,
+      "node_modules/pkg/cli.mjs": "echo ran-by-sh\n",
+    });
+    chmodSync(join(String(dir), "node_modules", "pkg", "cli.mjs"), 0o755);
+    mkdirSync(join(String(dir), "node_modules", ".bin"));
+    const tool = join(String(dir), "node_modules", ".bin", "tool");
+    symlinkSync("../pkg/cli.mjs", tool);
+    expect(await runTool({ cwd: String(dir), tool })).toEqual(enoexec);
+  });
+
+  // root can read a file of any mode, so Bun does not run as root here.
+  test("a bin that cannot be read keeps ENOEXEC", async () => {
+    using app = project("echo ran-by-sh\n", 0o111);
+    using unprivileged = unprivilegedSpawnOptions(app.cwd);
+    expect(await runTool(app, unprivileged)).toEqual(enoexec);
+  });
+
+  test("a bin whose #! line names a missing file keeps ENOENT", async () => {
+    using app = project(({ root }) => `#!${root}/missing\necho ran-by-sh\n`);
+    expect(await runTool(app)).toEqual(failedToRun("ENOENT", "No such file or directory"));
+  });
+
+  // Only ENOEXEC reaches sh. Linux answers ETXTBSY for a file that is open for writing. macOS does not, and neither do
+  // some Linux kernels.
+  const isBusyWhileOpenForWriting =
+    isLinux &&
+    (() => {
+      using app = project("exit\n");
+      const fd = openSync(app.tool, "r+");
+      try {
+        spawnSync({ cmd: [app.tool], env: bunEnv });
+        return false;
+      } catch (error: any) {
+        return error.code === "ETXTBSY";
+      } finally {
+        closeSync(fd);
+      }
+    })();
+
+  test.skipIf(!isBusyWhileOpenForWriting)("a bin that is open for writing keeps ETXTBSY", async () => {
+    using app = project("echo ran-by-sh\n");
+    const fd = openSync(app.tool, "r+");
+    try {
+      expect(await runTool(app)).toEqual(failedToRun("ETXTBSY", "Text file busy"));
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // `--no-orphans` puts the bin in a process group of its own. sh is in that group when it runs the bin.
+  test.skipIf(!isLinux).each([
+    [["run", "--no-orphans", "tool"], true],
+    [["run", "tool"], false],
+  ])("bun %j: the script leads a process group: %p", async (cmd, leadsGroup) => {
+    using app = project("echo $$\nread line\nexit 0\n");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: app.cwd,
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let pid = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      pid += chunk;
+      if (pid.endsWith("\n")) break;
+    }
+    expect(pid).toMatch(/^[1-9][0-9]*\n$/);
+    let groupExists = true;
+    try {
+      process.kill(-Number(pid), 0);
+    } catch (error: any) {
+      groupExists = error.code !== "ESRCH";
+    }
+    proc.stdin.end();
+    expect({ groupExists, stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({
+      groupExists: leadsGroup,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `Bun.spawn` is posix_spawn(3), not a shell: it returns the error of the kernel.
+  test("Bun.spawnSync keeps ENOEXEC", () => {
+    using app = project("echo hi\n");
+    expect(() => spawnSync({ cmd: [app.tool], env: bunEnv })).toThrow(expect.objectContaining({ code: "ENOEXEC" }));
   });
 });
 

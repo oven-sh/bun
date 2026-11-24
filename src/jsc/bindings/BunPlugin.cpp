@@ -1023,10 +1023,12 @@ static JSValue requireModuleKey(Zig::GlobalObject* globalObject, const String& f
     RETURN_IF_EXCEPTION(scope, {});
     if (required)
         return required;
-    if (globalObject->aotInstance() && registeredModuleMock(globalObject, key)) {
-        if (auto compiled = Bun::compiledModuleForPath(key))
-            RELEASE_AND_RETURN(scope, JSC::AOT::requireModule(globalObject, *compiled));
-    }
+    bool isMocked = globalObject->aotInstance() && registeredModuleMock(globalObject, key);
+    if (auto compiled = isMocked ? Bun::compiledModuleForPath(key) : std::nullopt)
+        RELEASE_AND_RETURN(scope, JSC::AOT::requireModule(globalObject, *compiled));
+    // The image has no module of this name: the build reads the global object instead.
+    if (vm.hasCompiledCode() && key == "bun"_s && !isMocked)
+        return globalObject->bunObject();
 #endif
     JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, from, Bun::testFileModuleGraph(globalObject));
     RETURN_IF_EXCEPTION(scope, {});

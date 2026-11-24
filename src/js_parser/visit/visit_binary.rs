@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{ExprIn, float_to_int32, prefill};
+use crate::parser::{UsedAs, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -101,8 +101,7 @@ pub struct BinaryExpressionVisitor {
     pub(crate) e: StoreRef<E::Binary>,
     pub(crate) loc: bun_ast::Loc,
 
-    /// Input for visiting the left child
-    pub(crate) left_in: ExprIn,
+    pub(crate) left_used_as: UsedAs,
 }
 
 impl BinaryExpressionVisitor {
@@ -119,8 +118,9 @@ impl BinaryExpressionVisitor {
         let e_ptr: *mut E::Binary = e_handle.as_ptr();
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        let is_call_target = p
+            .called_binary
+            .is_some_and(|it| core::ptr::eq(it.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -770,10 +770,7 @@ impl BinaryExpressionVisitor {
             _ => {}
         }
 
-        v.left_in = ExprIn {
-            assign_target: Op::Code::binary_assign_target(e_.op),
-            ..ExprIn::default()
-        };
+        v.left_used_as = Op::Code::binary_assign_target(e_.op).into();
 
         None
     }

@@ -94,9 +94,6 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  // The `bun install` "Slow filesystem detected" warning is timing-dependent
-  // and flakes stderr assertions on slow CI filesystems.
-  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
   // `bun install` waits 250ms, 500ms, ... between the attempts of a failed request:
   // 7.75s for each request a test lets fail for good.
   BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",

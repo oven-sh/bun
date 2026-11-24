@@ -223,16 +223,6 @@ fn get_temporary_directory_run(
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent
-        && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
-            .get()
-            .unwrap_or(false)
-    {
-        Some(bun_core::time::Timer::start())
-    } else {
-        None
-    };
-
     'brk: loop {
         let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC;
         let probe = match sys::Tmpfile::open(tempdir.fd(), tmpname, flags, 0o666) {
@@ -293,22 +283,6 @@ fn get_temporary_directory_run(
         }
         let _ = cache_directory.delete_file_z(tmpname);
         break;
-    }
-
-    if let Some(timer) = timer.as_mut() {
-        let elapsed = timer.read();
-        if elapsed > bun_core::time::NS_PER_MS * 100 {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory.fd(), &mut path_buf)
-            {
-                Ok(p) => &p[..],
-                Err(_) => b"it",
-            };
-            bun_core::pretty_errorln!(
-                "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                bun_fmt::s(cache_dir_path)
-            );
-        }
     }
 
     #[cfg(windows)]

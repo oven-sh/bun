@@ -279,6 +279,11 @@ pub struct VirtualMachine {
     /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
     /// on the 0↔1 transition so the guard is reentrant.
     pub(crate) macro_guard_depth: Cell<u32>,
+    /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call
+    /// made, on a thread that had none. [`Self::serve_macro_caller`] rebuilds it for another caller.
+    macro_owner: JsCell<Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>>,
+    /// Counts those rebuilds. `MacroEntryPoint::generate_id` takes it, so an id from before one is not found.
+    macro_epoch: Cell<u32>,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: Cell<bool>,
@@ -519,6 +524,7 @@ unsafe extern "C" {
 }
 
 bun_core::define_scoped_log!(teardown_log, Worker, hidden);
+bun_core::define_scoped_log!(macro_vm_log, MacroVM, hidden);
 
 pub use bun_options_types::context::HotReload;
 
@@ -1909,6 +1915,95 @@ impl VirtualMachine {
         promise.ok_or(crate::CrateError::JSError)
     }
 
+    /// What a VM's transpiler has that `Transpiler::init` does not give it.
+    fn configure_transpiler(
+        t: &mut Transpiler<'static>,
+        global_cache: bun_options_types::global_cache::GlobalCache,
+        preserve_symlinks: bool,
+    ) {
+        t.options.emit_dce_annotations = false;
+        t.options.global_cache = global_cache;
+        t.resolver.opts.global_cache = global_cache;
+        t.resolver.opts.preserve_symlinks = preserve_symlinks;
+        t.resolver.prefer_module_field = false;
+    }
+
+    pub fn macro_epoch(&self) -> u32 {
+        self.macro_epoch.get()
+    }
+
+    /// For the VM a macro call made. `owner` is the caller whose options `init` got a copy of.
+    pub fn set_macro_owner(
+        &self,
+        owner: std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
+    ) {
+        self.macro_owner.set(Some(owner));
+    }
+
+    /// Moves what the VM a macro call made has logged to `log`. That VM has a log of its own.
+    pub fn take_macro_vm_log(&self, log: &mut bun_ast::Log) {
+        if self.macro_owner.get().is_some()
+            && let Some(vm_log) = self.log_mut()
+        {
+            vm_log.append_to(log);
+        }
+    }
+
+    /// Before a macro loads for `caller`. If the VM was made for a caller with other options, this
+    /// drops every module and loaded macro, and rebuilds the transpiler's options from
+    /// `transform_options()`, as `init` does. Then it returns true: call `configure_defines`.
+    pub fn serve_macro_caller(
+        &self,
+        caller: &std::sync::Arc<bun_options_types::schema::api::TransformOptions>,
+        transform_options: impl FnOnce() -> bun_options_types::schema::api::TransformOptions,
+    ) -> crate::CrateResult<bool> {
+        use std::sync::Arc;
+        let Some(owner) = self.macro_owner.get() else {
+            return Ok(false);
+        };
+        // A parse that a macro starts runs its macros in the VM as it is.
+        if self.macro_guard_depth.get() != 0 || Arc::ptr_eq(owner, caller) {
+            return Ok(false);
+        }
+        if owner.eq_for_macro_vm(caller) {
+            // Held, so this address cannot come to name another caller's options.
+            self.macro_owner.set(Some(Arc::clone(caller)));
+            return Ok(false);
+        }
+        macro_vm_log!("rebuild for another caller");
+
+        // The modules go first: if the options then fail, the VM is still the owner's, only empty.
+        self.macro_epoch.update(|epoch| epoch.wrapping_add(1));
+        self.macro_entry_points.with_mut(|points| points.clear());
+        self.module_loader
+            .macro_load_states
+            .set_epoch(self.macro_epoch.get());
+        {
+            // `reload` runs the microtasks that are left. Every script of this VM runs in macro mode.
+            let _mode_guard = MacroModeGuard::new(self);
+            self.run_with_api_lock(|| {
+                self.macros.with_mut(MacroMap::clear_retaining_capacity);
+                self.global().reload()
+            })
+            .map_err(|_| crate::CrateError::JSError)?;
+        }
+
+        let mut args = transform_options();
+        let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
+        args.write = Some(false);
+        args.target = Some(bun_options_types::schema::api::Target::Bun);
+        self.transpiler.with_mut(|t| -> crate::CrateResult<()> {
+            let global_cache = t.options.global_cache;
+            t.reset_transform_options(args)?;
+            Self::configure_transpiler(t, global_cache, preserve_symlinks);
+            // As `init_runtime_state` does for a VM without a module graph.
+            t.configure_linker();
+            Ok(())
+        })?;
+        self.macro_owner.set(Some(Arc::clone(caller)));
+        Ok(true)
+    }
+
     pub fn is_watcher_enabled(&self) -> bool {
         self.bun_watcher.get().is_some()
     }
@@ -3062,6 +3157,8 @@ impl VirtualMachine {
             macro_entry_points: JsCell::default(),
             macro_mode: Cell::new(false),
             macro_guard_depth: Cell::new(0),
+            macro_owner: JsCell::new(None),
+            macro_epoch: Cell::new(0),
             auto_killer: Default::default(),
             has_any_macro_remappings: Cell::new(false),
             is_from_devserver: false,
@@ -3145,13 +3242,8 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(this.as_ptr(), core::sync::atomic::Ordering::Release);
         }
 
-        vm.transpiler.with_mut(|t| {
-            t.options.emit_dce_annotations = false;
-            t.options.global_cache = opts.global_cache;
-            t.resolver.opts.global_cache = opts.global_cache;
-            t.resolver.opts.preserve_symlinks = preserve_symlinks;
-            t.resolver.prefer_module_field = false;
-        });
+        vm.transpiler
+            .with_mut(|t| Self::configure_transpiler(t, opts.global_cache, preserve_symlinks));
 
         // Before the global object, whose creation arms `WTFTimer`s on `RuntimeState::timer`.
         if let Some(hooks) = runtime_hooks() {

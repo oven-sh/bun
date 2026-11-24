@@ -1,6 +1,7 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
+use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
@@ -124,64 +125,95 @@ fn call_macro(
 
     let mut specifier_buf = [0u8; 64];
     let mut specifier_buf_len: u32 = 0;
-    let hash = MacroEntryPoint::generate_id(
+    let mut hash = MacroEntryPoint::generate_id(
         input_specifier,
         function_name,
+        ctx.macro_load_states.epoch(),
         &mut specifier_buf,
         &mut specifier_buf_len,
     );
 
-    let vm = match ctx.macro_load_states.get(hash) {
-        Some(MacroLoadState::Loaded) => VirtualMachine::get(),
-        Some(MacroLoadState::Disabled) => return Ok(caller),
-        None => {
-            ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
-            let is_new_vm = !VirtualMachine::is_loaded();
-            let vm = if is_new_vm {
+    let mut reloaded = false;
+    loop {
+        let vm = match ctx.macro_load_states.get(hash) {
+            Some(MacroLoadState::Loaded) => VirtualMachine::get(),
+            Some(MacroLoadState::Disabled) => return Ok(caller),
+            None => {
+                ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
                 // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
                 // outlives the build and nothing writes to it while parse tasks run.
                 let (options, env) = unsafe {
                     (
-                        &*(*transpiler).options.transform_options,
+                        Arc::clone(&(*transpiler).options.transform_options),
                         (*transpiler).env.as_ref(),
                     )
                 };
-                init_macro_vm(log, env, options)?
-            } else {
-                VirtualMachine::get()
-            };
-            load_macro(
+                let (vm, configure_defines) = if VirtualMachine::is_loaded() {
+                    let vm = VirtualMachine::get();
+                    let rebuilt =
+                        vm.serve_macro_caller(&options, || macro_vm_transform_options(&options));
+                    vm.take_macro_vm_log(log);
+                    (vm, rebuilt?)
+                } else {
+                    (init_macro_vm(log, env, &options)?, true)
+                };
+                // The VM was rebuilt after this table was filled, so it has none of those macros.
+                let epoch = vm.macro_epoch();
+                if ctx.macro_load_states.epoch() != epoch {
+                    ctx.macro_load_states.set_epoch(epoch);
+                    hash = MacroEntryPoint::generate_id(
+                        input_specifier,
+                        function_name,
+                        epoch,
+                        &mut specifier_buf,
+                        &mut specifier_buf_len,
+                    );
+                    ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
+                }
+                let loaded = load_macro(
+                    vm,
+                    configure_defines,
+                    input_specifier,
+                    function_name,
+                    &specifier_buf[0..specifier_buf_len as usize],
+                    hash,
+                );
+                vm.take_macro_vm_log(log);
+                loaded?;
+                ctx.macro_load_states.set(hash, MacroLoadState::Loaded);
+                Output::flush();
+                vm
+            }
+        };
+        let _flush_guard = Output::flush_guard();
+
+        // Enables macro mode now; disables on scope exit.
+        let _mode_guard = MacroModeGuard::new(vm);
+        vm.event_loop().ensure_waker();
+
+        let ret = vm.run_with_api_lock(|| {
+            Runner::run(
                 vm,
-                is_new_vm,
-                input_specifier,
+                log,
+                bump,
                 function_name,
-                &specifier_buf[0..specifier_buf_len as usize],
+                caller,
+                source,
                 hash,
-            )?;
-            ctx.macro_load_states.set(hash, MacroLoadState::Loaded);
-            Output::flush();
-            vm
-        }
-    };
-    let _flush_guard = Output::flush_guard();
-
-    // Enables macro mode now; disables on scope exit.
-    let _mode_guard = MacroModeGuard::new(vm);
-    vm.event_loop().ensure_waker();
-
-    let ret = vm.run_with_api_lock(|| {
-        Runner::run(
-            vm,
-            log,
-            bump,
-            function_name,
-            caller,
-            source,
-            hash,
-            JSValue::from_encoded(ctx.javascript_object.0 as usize),
-        )
-    });
-    Ok(ret?)
+                JSValue::from_encoded(ctx.javascript_object.0 as usize),
+            )
+        });
+        return match ret {
+            // The table is older than the realm, or than the caller the VM now serves. Load again.
+            Err(MacroError::NotLoaded) if !reloaded => {
+                reloaded = true;
+                ctx.macro_load_states.remove(hash);
+                continue;
+            }
+            Err(MacroError::NotLoaded) => Ok(caller),
+            ret => Ok(ret?),
+        };
+    }
 }
 
 // `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
@@ -237,17 +269,21 @@ fn __bun_macro_context_call(
     })
 }
 
-fn init_macro_vm(
-    log: &mut Log,
-    env: Option<&DotEnvLoader>,
-    transform_options: &TransformOptions,
-) -> crate::Result<&'static VirtualMachine> {
-    let mut transform_options = transform_options.clone();
+/// The caller's options as the macro VM's transpiler takes them.
+fn macro_vm_transform_options(caller: &TransformOptions) -> TransformOptions {
+    let mut transform_options = caller.clone();
     // Build-only flags about the output bundle. The macro module's own
     // imports must still resolve.
     transform_options.external = Vec::new();
     transform_options.packages = None;
+    transform_options
+}
 
+fn init_macro_vm(
+    log: &mut Log,
+    env: Option<&DotEnvLoader>,
+    caller: &Arc<TransformOptions>,
+) -> crate::Result<&'static VirtualMachine> {
     // JSC needs to be initialized if building from CLI
     jsc::initialize(jsc::InitializeOptions::default());
 
@@ -257,22 +293,33 @@ fn init_macro_vm(
         Some(env) => Some(AliasableBox::new(env.clone_loaded()?)),
         None => None,
     };
+    // The VM outlives the caller's log. `take_macro_vm_log` moves what a load writes to this one.
+    let mut vm_log = AliasableBox::new(Log::init());
+    vm_log.level = log.level;
 
     let options = VirtualMachineInitOptions {
-        transform_options,
+        transform_options: macro_vm_transform_options(caller),
         env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
         is_main_thread: false,
         ..Default::default()
     };
-    let vm = VirtualMachine::init(log, options)?;
+    let vm = match VirtualMachine::init(vm_log.as_ptr(), options) {
+        Ok(vm) => vm,
+        Err(err) => {
+            vm_log.append_to(log);
+            return Err(err.into());
+        }
+    };
+    vm.set_macro_owner(Arc::clone(caller));
     // This VM stays until the process exits.
     let _ = env_loader.map(AliasableBox::into_raw);
+    let _ = AliasableBox::into_raw(vm_log);
     Ok(vm)
 }
 
 fn load_macro(
     vm: &VirtualMachine,
-    is_new_vm: bool,
+    configure_defines: bool,
     input_specifier: &[u8],
     function_name: &[u8],
     specifier: &[u8],
@@ -281,7 +328,7 @@ fn load_macro(
     // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
-    if is_new_vm {
+    if configure_defines {
         vm.transpiler.with_mut(|t| t.configure_defines())?;
     }
 
@@ -361,6 +408,9 @@ thread_local! {
 pub enum MacroError {
     #[error("MacroFailed")]
     MacroFailed,
+    /// The VM has no function for the id. `call_macro` loads the macro again.
+    #[error("MacroNotLoaded")]
+    NotLoaded,
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error(transparent)]
@@ -383,7 +433,7 @@ bun_core::oom_from_alloc!(MacroError);
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
-            MacroError::MacroFailed => crate::Error::MacroFailed,
+            MacroError::MacroFailed | MacroError::NotLoaded => crate::Error::MacroFailed,
             MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
             MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
@@ -416,7 +466,7 @@ impl<'a> Run<'a> {
         id: i32,
     ) -> Result<Expr, MacroError> {
         let Some(macro_callback) = vm.macros.get().get(&id).map(jsc::Strong::get) else {
-            return Ok(caller);
+            return Err(MacroError::NotLoaded);
         };
 
         let global = vm.global();

@@ -137,6 +137,99 @@ pub mod api {
         pub bunfig_path: Box<[u8]>,
     }
 
+    impl TransformOptions {
+        /// Whether a macro VM made from `self` is the one a caller with `other` would get. It has
+        /// no `..`, so a new field does not compile until it is compared or ignored here.
+        pub fn eq_for_macro_vm(&self, other: &Self) -> bool {
+            let Self {
+                jsx,
+                tsconfig_override,
+                origin,
+                // Sets the process's working directory, and only the first time.
+                absolute_working_dir: _,
+                define,
+                drop,
+                feature_flags,
+                preserve_symlinks,
+                // What a build bundles. The VM runs the files a macro import names.
+                entry_points: _,
+                // `VirtualMachine::init` sets `write` and `target`.
+                write: _,
+                inject,
+                output_dir,
+                // A macro VM is made without `external` and `packages`.
+                external: _,
+                loaders,
+                main_fields,
+                target: _,
+                serve,
+                env_files,
+                disable_default_env_files,
+                extension_order,
+                no_summary,
+                disable_hmr,
+                port,
+                log_level,
+                source_map,
+                conditions,
+                packages: _,
+                ignore_dce_annotations,
+                serve_plugins,
+                serve_minify_syntax,
+                serve_minify_whitespace,
+                serve_minify_identifiers,
+                serve_env_behavior,
+                serve_env_prefix,
+                serve_splitting,
+                serve_public_path,
+                serve_hmr,
+                serve_define,
+                serve_sourcemap,
+                allow_addons,
+                allow_ffi_cc,
+                unhandled_rejections,
+                bunfig_path,
+            } = self;
+            *jsx == other.jsx
+                && *tsconfig_override == other.tsconfig_override
+                && *origin == other.origin
+                && *define == other.define
+                && *drop == other.drop
+                && *feature_flags == other.feature_flags
+                && *preserve_symlinks == other.preserve_symlinks
+                && *inject == other.inject
+                && *output_dir == other.output_dir
+                && *loaders == other.loaders
+                && *main_fields == other.main_fields
+                && *serve == other.serve
+                && *env_files == other.env_files
+                && *disable_default_env_files == other.disable_default_env_files
+                && *extension_order == other.extension_order
+                && *no_summary == other.no_summary
+                && *disable_hmr == other.disable_hmr
+                && *port == other.port
+                && *log_level == other.log_level
+                && *source_map == other.source_map
+                && *conditions == other.conditions
+                && *ignore_dce_annotations == other.ignore_dce_annotations
+                && *serve_plugins == other.serve_plugins
+                && *serve_minify_syntax == other.serve_minify_syntax
+                && *serve_minify_whitespace == other.serve_minify_whitespace
+                && *serve_minify_identifiers == other.serve_minify_identifiers
+                && *serve_env_behavior == other.serve_env_behavior
+                && *serve_env_prefix == other.serve_env_prefix
+                && *serve_splitting == other.serve_splitting
+                && *serve_public_path == other.serve_public_path
+                && *serve_hmr == other.serve_hmr
+                && *serve_define == other.serve_define
+                && *serve_sourcemap == other.serve_sourcemap
+                && *allow_addons == other.allow_addons
+                && *allow_ffi_cc == other.allow_ffi_cc
+                && *unhandled_rejections == other.unhandled_rejections
+                && *bunfig_path == other.bunfig_path
+        }
+    }
+
     // ─── BunInstall + supporting types ───────────────────────────────────────
 
     /// `Default` is empty slices.
@@ -440,7 +533,7 @@ pub mod api {
     }
 
     /// JSX transform configuration (factory, fragment, runtime, …).
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
     pub struct Jsx {
         pub factory: Box<[u8]>,
         pub runtime: JsxRuntime,
@@ -451,7 +544,7 @@ pub mod api {
     }
 
     /// Parallel-array string→string map as transmitted on the wire.
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
     pub struct StringMap {
         pub keys: Vec<Box<[u8]>>,
         pub values: Vec<Box<[u8]>>,
@@ -465,7 +558,7 @@ pub mod api {
     }
 
     /// Parallel-array map from file extension to [`Loader`].
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
     pub struct LoaderMap {
         pub extensions: Vec<Box<[u8]>>,
         pub loaders: Vec<Loader>,

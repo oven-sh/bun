@@ -36,7 +36,7 @@ pub use parse::parse_entry::{
 #[allow(non_snake_case)]
 pub mod Macro {
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
-    use core::cell::RefCell;
+    use core::cell::{Cell, RefCell};
 
     pub const NAMESPACE: &[u8] = b"macro";
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
@@ -74,22 +74,41 @@ pub mod Macro {
 
     /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
     #[derive(Default)]
-    pub struct MacroLoadStates(RefCell<ArrayHashMap<i32, MacroLoadState>>);
+    pub struct MacroLoadStates {
+        states: RefCell<ArrayHashMap<i32, MacroLoadState>>,
+        /// The `VirtualMachine::macro_epoch` the ids were made with.
+        epoch: Cell<u32>,
+    }
     impl MacroLoadStates {
         pub fn get(&self, id: i32) -> Option<MacroLoadState> {
-            self.0.borrow().get(&id).copied()
+            self.states.borrow().get(&id).copied()
         }
 
         pub fn set(&self, id: i32, state: MacroLoadState) {
-            self.0.borrow_mut().insert(id, state);
+            self.states.borrow_mut().insert(id, state);
+        }
+
+        pub fn remove(&self, id: i32) {
+            self.states.borrow_mut().swap_remove(&id);
         }
 
         pub fn clear(&self) {
-            self.0.borrow_mut().clear();
+            self.states.borrow_mut().clear();
+        }
+
+        pub fn epoch(&self) -> u32 {
+            self.epoch.get()
+        }
+
+        /// Empties the table: an id made with another epoch names nothing.
+        pub fn set_epoch(&self, epoch: u32) {
+            self.clear();
+            self.epoch.set(epoch);
         }
 
         pub fn replace(&self, states: Self) -> Self {
-            self.0.swap(&states.0);
+            self.states.swap(&states.states);
+            self.epoch.swap(&states.epoch);
             states
         }
     }

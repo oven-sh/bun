@@ -145,13 +145,15 @@ impl MacroEntryPoint {
         &self.code_buffer[..self.code_len]
     }
 
+    /// `epoch` is the `VirtualMachine::macro_epoch` of the VM that loads the macro.
     pub fn generate_id(
         entry_path: &[u8],
         function_name: &[u8],
+        epoch: u32,
         buf: &mut [u8],
         len: &mut u32,
     ) -> i32 {
-        let mut hasher = Wyhash11::init(0);
+        let mut hasher = Wyhash11::init(u64::from(epoch));
         hasher.update(js_ast::Macro::NAMESPACE_WITH_COLON);
         hasher.update(entry_path);
         hasher.update(function_name);

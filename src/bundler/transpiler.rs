@@ -57,6 +57,8 @@ pub struct Transpiler<'a> {
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
+    /// What `load_defines` allocates after a [`Self::reset_transform_options`], which frees the one before.
+    define_arena: Option<Arena>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -171,6 +173,7 @@ impl<'a> Transpiler<'a> {
             elapsed: 0,
             linker: crate::linker::Linker::init(log),
             env: from.env,
+            define_arena: None,
         }
     }
 
@@ -399,7 +402,8 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        let define_arena = self.define_arena.as_ref().unwrap_or(self.arena);
+        self.options.load_defines(define_arena, Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -425,6 +429,16 @@ impl<'a> Transpiler<'a> {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
         }
+        Ok(())
+    }
+
+    /// Replaces `options` with what [`Self::init`] makes of `opts`, for a macro VM that another
+    /// caller takes over. Nothing may hold the defines. Call [`Self::configure_defines`] after it.
+    pub fn reset_transform_options(&mut self, opts: api::TransformOptions) -> crate::Result<()> {
+        self.options = options::BundleOptions::from_api(self.log, opts)?;
+        // After `options`: its defines pointed into the arena this drops.
+        self.define_arena = Some(Arena::new());
+        self.sync_resolver_opts();
         Ok(())
     }
 
@@ -1018,6 +1032,7 @@ impl<'a> Transpiler<'a> {
             // .thread_pool = pool,
             linker: crate::linker::Linker::init(log),
             env: env_loader,
+            define_arena: None,
         })
     }
 

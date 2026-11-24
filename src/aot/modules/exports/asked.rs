@@ -84,7 +84,11 @@ impl AskedNames {
         let mut handed_on: Vec<Vec<u32>> = vec![Vec::new(); stars.components.len()];
         let mut comes_to_run: Vec<bool> = stars.dynamic_targets.iter().map(is_dynamic).collect();
         for (table, module) in entries.iter().enumerate() {
-            let sites = &scans.of(module.file).sites;
+            // A declaration file that code names has an empty table and no scan.
+            let Some(scan) = scans.find(module.file) else {
+                continue;
+            };
+            let sites = &scan.sites;
             let is_among_stars = !module.stars.is_empty() || stars.is_taken_by_star[table];
             for &(name, entry) in &module.own {
                 let is_variable = match entry {

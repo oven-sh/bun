@@ -612,18 +612,20 @@ pub(super) fn type_to_string_with(
     checker.serialization_level += u32::from(counts);
     checker.printing_closes_cycles = counts;
     checker.printing_floors.push(checker.stack.len());
-    let (enclosing_declaration, enclosing_expression) = enclosing_declaration.unzip();
-    let text = with_printer(checker, enclosing_declaration, None, flags, |printer| {
-        printer.enclosing_expression = enclosing_expression;
-        printer.type_to_node(ty).text
-    });
-    checker.printing_floors.pop();
-    checker.serialization_level -= u32::from(counts);
     let maximum = 2 * if no_truncation {
         NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH
     } else {
         DEFAULT_MAXIMUM_TRUNCATION_LENGTH
     };
+    let (enclosing_declaration, enclosing_expression) = enclosing_declaration.unzip();
+    let text = with_printer(checker, enclosing_declaration, None, flags, |printer| {
+        printer.enclosing_expression = enclosing_expression;
+        // `deep_clone` makes a text at most this many times as short.
+        printer.longest_text = maximum * ELIDED.len().div_ceil(b"any".len());
+        printer.type_to_node(ty).text
+    });
+    checker.printing_floors.pop();
+    checker.serialization_level -= u32::from(counts);
     if text.len() < maximum {
         return text;
     }
@@ -675,6 +677,7 @@ fn with_printer<'p, T>(
             container_pos: usize::MAX,
             approximate_length: 0,
             truncating: false,
+            longest_text: usize::MAX,
             visited_types: Vec::new(),
             symbol_depth: Vec::new(),
             infer_type_parameters: Vec::new(),
@@ -1179,6 +1182,9 @@ struct Printer<'c, 'p, 's> {
     container_pos: usize,
     approximate_length: usize,
     truncating: bool,
+    /// Where the text of each type is cut. A text is written twice into that of `{ a: T, b: T }`, so whole texts could
+    /// be 2^n bytes long.
+    longest_text: usize,
     visited_types: Vec<TypeId>,
     symbol_depth: Vec<(Identity, u32)>,
     infer_type_parameters: Vec<TypeId>,
@@ -1989,7 +1995,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     }
 
     /// `visitAndTransformType` from where `transform` has returned `node`.
-    fn end_type_visit(&mut self, visit: TypeVisit, node: Node) -> Node {
+    fn end_type_visit(&mut self, visit: TypeVisit, mut node: Node) -> Node {
         let TypeVisit {
             ty,
             identity,
@@ -1998,6 +2004,12 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             previous_tracked_symbols,
             start_length,
         } = visit;
+        for text in node.texts() {
+            text.truncate(self.longest_text);
+        }
+        // It's only compared with a maximum, so it needn't grow to 2^n either.
+        self.approximate_length =
+            (self.approximate_length).min(2 * NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH);
         let added_length = self.approximate_length.saturating_sub(start_length);
         let tracked_symbols =
             std::mem::replace(&mut self.tracked_symbols, previous_tracked_symbols);

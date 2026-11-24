@@ -1911,6 +1911,7 @@
     "aot/library-class-fields.test.ts",
     "aot/library-comparisons.test.ts",
     "aot/library-loads.test.ts",
-    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts"
+    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts",
+    "aot/the-idle-gc-timer-collects-in-an-executable-only-what-was-allocated.test.ts"
   ]
 }

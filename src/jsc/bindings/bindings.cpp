@@ -3566,6 +3566,12 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync();
 }
 
+void JSC__VM__collectAsyncIfNecessary(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.collectAsyncIfNecessary();
+}
+
 // The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
 // optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)

@@ -95,6 +95,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * gl
     return JSValue::encode(jsUndefined());
 }
 
+// What GarbageCollectionController's tick asks JSC: false if the heap turned the collection down.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectAsyncIfNecessary, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsBoolean(JSC::getVM(globalObject).heap.collectAsyncIfNecessary()));
+}
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -124,6 +130,11 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "isLiveCellAtRawAddress"_s), 1,
         jsFunctionIsLiveCellAtRawAddress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "collectAsyncIfNecessary"_s), 0,
+        jsFunctionCollectAsyncIfNecessary, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
 #if OS(WINDOWS)

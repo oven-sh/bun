@@ -1,6 +1,7 @@
+// Runs alone: it judges by a clock and by the memory that a process holds.
 import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { join } from "path";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
@@ -160,6 +161,461 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     const { eden } = await countEdenCollections({ BUN_GC_TIMER_INTERVAL: "20" }, 80, 4_000, 20);
     expect(eden).toBeLessThan(55);
   });
+});
+
+// The tick requested a collection every time it fired: in a program that allocates nothing, one eden collection a second
+// for 30 s and one every 30 s from then on. Each of them stopped the JS thread and woke the collector's threads to free
+// nothing. A tick now asks JSC with Heap::collectAsyncIfNecessary(), and JSC turns the request down if the collection
+// would be an eden one with nothing to sweep. JSC then leaves its own eden timer as that collection would.
+describe("the tick of the idle GC timer", () => {
+  // The children run from a file and with two GC markers on every machine (a child of "bun -e" has one). A collection
+  // that lets the program run on before everything is marked is then finished by the helper thread, and it ends the
+  // next time the JS thread wakes. With one marker it would wait for the program to allocate again.
+  const env = {
+    ...bunEnv,
+    BUN_GC_TIMER_DISABLE: undefined,
+    BUN_GC_TIMER_INTERVAL: "100",
+    BUN_IDLE_GC_SECONDS: "0",
+    BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+    BUN_JSC_numberOfGCMarkers: "2",
+  };
+
+  // 20 ticks pass between the two marks.
+  const idleBetweenMarks = `setTimeout(() => console.error("MARK"), 500); setTimeout(() => console.error("DONE"), 2500);`;
+  // The same with a timer that fires at every tick.
+  const timerBetweenMarks = (callback: string) => `
+    const holder = { n: 0 };
+    setInterval(() => void (${callback}), 100);
+    setTimeout(() => console.error("MARK"), 500);
+    setTimeout(() => {
+      console.error("DONE");
+      process.exit(0);
+    }, 2500);
+  `;
+
+  async function collectionsBetweenMarks(script: string, extraEnv: Record<string, string> = {}) {
+    using dir = tempDir("gc-tick", { "child.js": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "child.js"],
+      env: { ...env, BUN_JSC_logGC: "1", ...extraEnv },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode, stderr).toBe(0);
+    const mark = stderr.indexOf("MARK");
+    const done = stderr.indexOf("DONE");
+    expect(mark, stderr).toBeGreaterThanOrEqual(0);
+    expect(done, stderr).toBeGreaterThan(mark);
+    return { collections: stderr.slice(mark, done).match(/=> (Eden|Full)Collection/g) ?? [], stderr };
+  }
+
+  // Each of the 20 ticks used to collect. Now one does: the first one after the callback that prints MARK, for what
+  // that callback allocated.
+  test.concurrent("requests no collection for a program that allocates nothing", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks(idleBetweenMarks);
+    expect(collections.length, stderr).toBeLessThanOrEqual(3);
+  });
+
+  // JavaScript runs at every tick here, so only the heap can tell this program from one that allocates.
+  test.concurrent("requests no collection for a timer whose callback allocates nothing", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks(timerBetweenMarks("holder.n++"));
+    expect(collections.length, stderr).toBeLessThanOrEqual(3);
+  });
+
+  // The counts below need collections that take less than a tick. On a debug or ASAN build they run into each other.
+  const counted = isDebug || isASAN ? test.skip : test.concurrent;
+
+  // One object per tick is enough to keep the collections: one at every tick, or at every second tick where a
+  // collection ends at the tick after its own. This also shows that the 20 ticks fire.
+  counted("keeps the collections of a timer whose callback allocates", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks(timerBetweenMarks("holder.kept = { a: 1 }"));
+    expect(collections.length, stderr).toBeGreaterThanOrEqual(6);
+  });
+
+  // A full collection can free what was allocated before the last collection, and it ages out code that no longer
+  // runs. So JSC turns no tick down where the tick's collection is a full one, and such a program keeps the
+  // collections it had. With 13 MB alive a full collection ends when the event loop next parks, which is after the
+  // next tick, so every second tick gets one. If the loop turns between two ticks, the collection ends there and the
+  // next tick asks again. On Windows the loop can turn once more just before a tick fires (the timer that wakes it
+  // counts whole milliseconds), and CI counted 16 collections in 20 ticks there. So the upper bound is for the other
+  // platforms.
+  const fullOnly: [string, Record<string, string>][] = [
+    ["without the JIT", { BUN_JSC_useJIT: "0" }],
+    ["without the generational collector", { BUN_JSC_useGenerationalGC: "0" }],
+  ];
+  // JSC reads the memory use of the process on Linux and macOS only.
+  if (!isWindows)
+    fullOnly.push(["over the critical memory threshold", { BUN_JSC_criticalGCMemoryThreshold: "0.000001" }]);
+  const liveBetweenMarks = `
+    globalThis.live = JSON.parse("[" + Buffer.alloc(200000 * 8, '{"a":1},').toString() + "{}]");
+    ${idleBetweenMarks}
+  `;
+  counted.each(fullOnly)("keeps the collections of a program that allocates nothing %s", async (_, extraEnv) => {
+    const { collections, stderr } = await collectionsBetweenMarks(liveBetweenMarks, extraEnv);
+    expect(collections, stderr).not.toContain("=> EdenCollection");
+    expect(collections.length, stderr).toBeGreaterThanOrEqual(5);
+    if (!isWindows) expect(collections.length, stderr).toBeLessThanOrEqual(13);
+  });
+
+  // The tick is not what ends a collection under way: a hint that did so would ask for the next one in the same
+  // call, and every tick would get a collection. Here 100,000 hints come in one turn of JavaScript, without the JIT,
+  // so nothing else reaches a safepoint. The first hint asks, and the others find its request queued and leave it.
+  // If one of them ran the collection, the dropped object would be gone.
+  test.concurrent("a hint does not run the collection that is queued", async () => {
+    const script = `
+      const { jscInternals } = require("bun:internal-for-testing");
+      const { fullGC } = require("bun:jsc");
+      const hint = () => jscInternals.collectAsyncIfNecessary();
+      // No local variable ever holds the object.
+      globalThis.dropped = { a: 1 };
+      const weak = new WeakRef(globalThis.dropped);
+      // Bun collects once when the entry module has run, so the rest runs from a timer.
+      setTimeout(() => {
+        hint();
+        fullGC();
+        globalThis.dropped = null;
+        let answeredYes = 0;
+        for (let i = 0; i < 100000; i++) if (hint()) answeredYes++;
+        // Read before anything is allocated: an allocation is a safepoint too.
+        const collected = weak.deref() === undefined;
+        console.log(JSON.stringify({ answeredYes, collected }));
+      }, 10);
+    `;
+    using dir = tempDir("gc-hint-queued", { "queued.js": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "queued.js"],
+      env: { ...env, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useJIT: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() === "" ? stderr : JSON.parse(stdout)).toEqual({ answeredYes: 100000, collected: false });
+    expect(exitCode).toBe(0);
+  });
+
+  // After an eden collection that leaves little room, JSC makes the next collection a full one, and nothing but the
+  // next request runs it. The ratio makes every eden collection such a one. So a tick after the eden collection
+  // gets a full collection, although the program has allocated nothing since. After that full collection an eden
+  // collection with nothing to sweep would leave the next one owing, and the ticks used to run the two in turns.
+  // JSC turns that eden collection down.
+  test.concurrent("runs the full collection that an eden collection left owing, and no more", async () => {
+    const { collections, stderr } = await collectionsBetweenMarks(idleBetweenMarks, {
+      BUN_JSC_minEdenToOldGenerationRatio: "2",
+    });
+    const eden = collections.indexOf("=> EdenCollection");
+    expect(collections.slice(eden, eden + 2), stderr).toEqual(["=> EdenCollection", "=> FullCollection"]);
+    expect(collections.length, stderr).toBeLessThanOrEqual(4);
+  });
+
+  // The tick has no floor on what the program must have allocated. A small object can own memory that JSC does not
+  // count (the unread output of a subprocess, a database), and with no idle collections only the tick frees it.
+  test.concurrent("collects a small object that an idle program drops", async () => {
+    const script = `
+      globalThis.registry = new FinalizationRegistry(() => {
+        console.log("finalized");
+        process.exit(0);
+      });
+      setTimeout(() => {
+        (() => registry.register({ small: true }, 1))();
+      }, 400);
+      setTimeout(() => {
+        console.log("not finalized");
+        process.exit(1);
+      }, 4000);
+    `;
+    using dir = tempDir("gc-tick-small-object", { "child.js": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "child.js"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("finalized\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The answers of Heap::collectAsyncIfNecessary(), one after the other, with no timer in the way. The child gets them
+  // all before it prints: a call it has not made before can allocate.
+  const answers = `
+    const { jscInternals } = require("bun:internal-for-testing");
+    const { edenGC, fullGC } = require("bun:jsc");
+    const hint = () => jscInternals.collectAsyncIfNecessary();
+    // Objects that stay alive.
+    function allocate(megabytes) {
+      const kept = [];
+      for (let i = 0; i < megabytes * 32768; i++) kept.push({ a: i, b: i });
+      return kept;
+    }
+    // An array whose butterfly is in a block, and a rope of 80,000 characters.
+    const small = [];
+    for (let i = 0; i < 100; i++) small.push(i);
+    const rope = Buffer.alloc(40000, "a").toString() + Buffer.alloc(40000, "b").toString();
+    let afterCollection, afterOneObject, afterItsCollections, afterPreciseAllocation, afterItsCollection;
+    let afterExtraMemory, afterExtraMemoryCollection, afterEdenCollection, afterFullCollection, one, kept;
+    hint();
+    allocate(0);
+    edenGC();
+    "ab".charCodeAt(0);
+
+    fullGC();
+    afterCollection = hint();
+    one = { a: 1 };
+    afterOneObject = hint();
+    fullGC();
+    afterItsCollections = hint();
+    // The butterfly becomes a precise allocation, which no block holds. Nothing else is allocated.
+    small.length = 50000;
+    afterPreciseAllocation = hint();
+    fullGC();
+    afterItsCollection = hint();
+    // The rope gets its characters, which JSC counts as extra memory. No cell is allocated.
+    rope.charCodeAt(0);
+    afterExtraMemory = hint();
+    fullGC();
+    afterExtraMemoryCollection = hint();
+    kept = allocate(2);
+    edenGC();
+    afterEdenCollection = hint();
+    fullGC();
+    afterFullCollection = hint();
+    console.log(
+      JSON.stringify({
+        afterCollection,
+        afterOneObject,
+        afterItsCollections,
+        afterPreciseAllocation,
+        afterItsCollection,
+        afterExtraMemory,
+        afterExtraMemoryCollection,
+        afterEdenCollection,
+        afterFullCollection,
+      }),
+    );
+  `;
+  const turnedDownWhenEmpty = {
+    afterCollection: false,
+    afterOneObject: true,
+    afterItsCollections: false,
+    afterPreciseAllocation: true,
+    afterItsCollection: false,
+    afterExtraMemory: true,
+    afterExtraMemoryCollection: false,
+    afterEdenCollection: false,
+    afterFullCollection: false,
+  };
+  const neverTurnedDown = Object.fromEntries(Object.keys(turnedDownWhenEmpty).map(key => [key, true]));
+  const heaps: [string, Record<string, string>, Record<string, boolean>][] = [
+    ["by default", {}, turnedDownWhenEmpty],
+    // The ratio makes the eden collection leave a full one owing.
+    [
+      "with a full collection owed",
+      { BUN_JSC_minEdenToOldGenerationRatio: "2" },
+      { ...turnedDownWhenEmpty, afterEdenCollection: true },
+    ],
+    ["without the JIT", { BUN_JSC_useJIT: "0" }, neverTurnedDown],
+    ["without the generational collector", { BUN_JSC_useGenerationalGC: "0" }, neverTurnedDown],
+  ];
+  if (!isWindows) {
+    heaps.push([
+      "over the critical memory threshold",
+      { BUN_JSC_criticalGCMemoryThreshold: "0.000001" },
+      neverTurnedDown,
+    ]);
+  }
+  test.concurrent.each(heaps)("the heap's answers to the hint, %s", async (_, extraEnv, expected) => {
+    using dir = tempDir("gc-hint-answers", { "answers.js": answers });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "answers.js"],
+      env: { ...env, BUN_GC_TIMER_DISABLE: "1", ...extraEnv },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() === "" ? stderr : JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // After an eden collection that freed something, JSC's own timer collects soon after the next allocation. After one
+  // that freed nothing it stays off, and that is what every quiet tick used to leave. A hint that JSC turns down
+  // leaves the same, so after a quiet second the next collection is still the tick's.
+  const edenTimer = `
+    const { jscInternals } = require("bun:internal-for-testing");
+    const { edenGC, fullGC } = require("bun:jsc");
+    const withHint = process.argv[2] === "hint";
+    const hint = () => jscInternals.collectAsyncIfNecessary();
+    // Small objects in an array. No loop makes them, so no code is compiled between the collections.
+    const objects = count => "[" + Buffer.alloc(count * 8, '{"a":1},').toString() + "{}]";
+    const garbage = objects(200000);
+    // What stays alive is three times the garbage, so JSC's allocation budget is above the garbage.
+    globalThis.live = JSON.parse(objects(600000));
+    // Bun collects once when the entry module has run, so the rest runs from a timer.
+    setTimeout(() => {
+      hint();
+      fullGC();
+      JSON.parse(garbage);
+      edenGC();
+      const turnedDown = withHint ? !hint() : null;
+      console.error("MARK");
+      JSON.parse(garbage);
+      setTimeout(
+        () => {
+          console.error("DONE");
+          console.log(JSON.stringify({ turnedDown }));
+        },
+        withHint ? 2000 : 60000,
+      );
+    }, 10);
+  `;
+  function spawnEdenTimer(dir: string, mode: string) {
+    return Bun.spawn({
+      cmd: [bunExe(), "timer.js", mode],
+      env: { ...env, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_logGC: "1" },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  }
+
+  counted("a hint that JSC turned down leaves JSC's own eden timer off", async () => {
+    using dir = tempDir("gc-hint-eden-timer", { "timer.js": edenTimer });
+    await using proc = spawnEdenTimer(String(dir), "hint");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() === "" ? stderr : JSON.parse(stdout)).toEqual({ turnedDown: true });
+    const collections = stderr.slice(stderr.indexOf("MARK"), stderr.indexOf("DONE")).match(/=> (Eden|Full)Collection/g);
+    expect(collections ?? [], stderr).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The same child without the hint: the timer collects. The child waits until the test has seen that collection.
+  counted("without the hint that timer collects", async () => {
+    using dir = tempDir("gc-hint-eden-timer", { "timer.js": edenTimer });
+    await using proc = spawnEdenTimer(String(dir), "none");
+    const decoder = new TextDecoder();
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const mark = stderr.indexOf("MARK");
+      if (mark >= 0 && stderr.includes("=> EdenCollection", mark)) break;
+    }
+    proc.kill();
+    expect(stderr.slice(stderr.indexOf("MARK"))).toContain("=> EdenCollection");
+  });
+
+  // A string that is looked up as a property key takes the characters of the atom with the same text. JSC parks the
+  // string's own characters, because a compiler thread can still read them. A collection drops them, and so does
+  // JSC's sweeper, which only a collection starts. A tick that JSC turns down drops them as well.
+  (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
+    "a tick that JSC turns down frees the characters that strings left behind",
+    async () => {
+      const script = `
+        const rss = () => process.memoryUsage.rss() / 1048576;
+        const text = (i, length) => Buffer.alloc(length, "key" + i + ",").toString();
+        // Each key is an atom, and each string of "copies" has its own copy of the same characters.
+        function build(count, length) {
+          const keys = {};
+          const copies = [];
+          for (let i = 0; i < count; i++) {
+            keys[text(i, length)] = i;
+            copies.push(text(i, length));
+          }
+          return { keys, copies };
+        }
+        let sum = 0;
+        function lookUp({ keys, copies }) {
+          for (let i = 0; i < copies.length; i++) sum += keys[copies[i]];
+        }
+        // lookUp() gets its compiled code here, so that it allocates nothing later.
+        for (let round = 0; round < 40; round++) lookUp(build(2048, 8));
+        const big = build(2048, 16384); // 32 MB of characters, twice
+        const result = { before: 0 };
+        setTimeout(() => {
+          console.error("MARK");
+          Bun.gc(true);
+          // This read allocates, so one more collection comes, before the strings are looked up.
+          result.before = rss();
+        }, 300);
+        setTimeout(lookUp, 700, big);
+        setTimeout(() => {
+          const released = Math.round(result.before - rss());
+          console.error("DONE");
+          console.log(JSON.stringify({ released, sum }));
+        }, 2200);
+      `;
+      using dir = tempDir("gc-hint-atoms", { "atoms.js": script });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "atoms.js"],
+        env: { ...env, BUN_JSC_logGC: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { released, sum } = stdout.trim() === "" ? { released: stderr, sum: 0 } : JSON.parse(stdout);
+      // Every string found its key: 40 rounds and the one below, each the sum of 0 to 2047.
+      expect(sum).toBe(41 * ((2047 * 2048) / 2));
+      // The collections of the first timer, and none for the lookups.
+      const collections = stderr
+        .slice(stderr.indexOf("MARK"), stderr.indexOf("DONE"))
+        .match(/=> (Eden|Full)Collection/g);
+      expect(collections?.length, stderr).toBeLessThanOrEqual(3);
+      expect(released).toBeGreaterThan(16);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // bun:ffi keeps the UTF-8 copy of a string that it passed to a function until the second collection after the
+  // call. A tick that JSC turns down counts as one.
+  (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
+    "a tick that JSC turns down lets bun:ffi drop its copy of a string",
+    async () => {
+      const script = `
+        const { dlopen } = require("bun:ffi");
+        const { strlen } = dlopen(process.env.LIBC_PATH, { strlen: { args: ["cstring"], returns: "u32" } }).symbols;
+        const rss = () => process.memoryUsage.rss() / 1048576;
+        // 16 MB of characters that are two bytes each as UTF-8.
+        const text = Buffer.alloc(32 * 1024 * 1024, "\u00e9").toString();
+        const result = { before: 0, length: 0 };
+        setTimeout(() => {
+          console.error("MARK");
+          Bun.gc(true);
+          // This read allocates, so one more collection comes, before the call.
+          result.before = rss();
+        }, 300);
+        setTimeout(() => {
+          result.length = strlen(text);
+        }, 700);
+        setTimeout(() => {
+          const kept = Math.round(rss() - result.before);
+          console.error("DONE");
+          console.log(JSON.stringify({ kept, length: result.length }));
+        }, 2200);
+      `;
+      using dir = tempDir("gc-hint-ffi", { "ffi.js": script });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "ffi.js"],
+        env: { ...env, BUN_JSC_logGC: "1", LIBC_PATH: libcPathForDlopen() },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { kept, length } = stdout.trim() === "" ? { kept: stderr, length: 0 } : JSON.parse(stdout);
+      expect(length).toBe(32 * 1024 * 1024);
+      // The collections of the first timer and of the call, and none at the ticks after them.
+      const collections = stderr
+        .slice(stderr.indexOf("MARK"), stderr.indexOf("DONE"))
+        .match(/=> (Eden|Full)Collection/g);
+      expect(collections?.length, stderr).toBeLessThanOrEqual(4);
+      expect(kept).toBeLessThan(16);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,

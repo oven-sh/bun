@@ -2,31 +2,41 @@
 
 use crate::{Error, Result};
 
-pub(crate) const HEADER_LEN: usize = 10;
-pub(crate) const TRAILER_LEN: usize = 8;
+pub const HEADER_LEN: usize = 10;
+pub const TRAILER_LEN: usize = 8;
 
-const MAGIC_AND_METHOD: [u8; 3] = [0x1F, 0x8B, 8];
+pub const MAGIC_AND_METHOD: [u8; 3] = [0x1F, 0x8B, 8];
 
-const HAS_HEADER_CRC: u8 = 1 << 1;
-const HAS_EXTRA: u8 = 1 << 2;
-const HAS_NAME: u8 = 1 << 3;
-const HAS_COMMENT: u8 = 1 << 4;
-const RESERVED: u8 = 0b1110_0000;
+pub const HAS_HEADER_CRC: u8 = 1 << 1;
+pub const HAS_EXTRA: u8 = 1 << 2;
+pub const HAS_NAME: u8 = 1 << 3;
+pub const HAS_COMMENT: u8 = 1 << 4;
+pub const RESERVED: u8 = 0b1110_0000;
+
+pub const UNKNOWN_SYSTEM: u8 = 255;
+
+/// With no name and no time.
+pub const fn plain_header(effort: u8, system: u8) -> [u8; HEADER_LEN] {
+    let [a, b, c] = MAGIC_AND_METHOD;
+    [a, b, c, 0, 0, 0, 0, 0, effort, system]
+}
+
+/// `len` is modulo 2^32.
+pub const fn trailer_for(crc: u32, len: u32) -> [u8; TRAILER_LEN] {
+    (crc as u64 | (len as u64) << 32).to_le_bytes()
+}
 
 pub(crate) fn header(level: u8) -> [u8; HEADER_LEN] {
-    const UNKNOWN_SYSTEM: u8 = 255;
     let effort = match level {
         ..2 => 4,
         2..8 => 0,
         _ => 2,
     };
-    let [a, b, c] = MAGIC_AND_METHOD;
-    [a, b, c, 0, 0, 0, 0, 0, effort, UNKNOWN_SYSTEM]
+    plain_header(effort, UNKNOWN_SYSTEM)
 }
 
 pub(crate) fn trailer(data: &[u8]) -> [u8; TRAILER_LEN] {
-    let crc = bun_highway::crc32(0, data);
-    (u64::from(crc) | ((data.len() as u64) << 32)).to_le_bytes()
+    trailer_for(bun_highway::crc32(0, data), data.len() as u32)
 }
 
 /// Returns what follows the header.

@@ -3,7 +3,15 @@
 // node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const {
+  kEmptyObject,
+  once,
+  ConnResetException,
+  hasObserver,
+  startPerf,
+  stopPerf,
+  builtinChannel,
+} = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
   _checkIsHttpToken: checkIsHttpToken,
@@ -28,7 +36,6 @@ const { validateInteger, validateBoolean, validateString, validateOneOf } = requ
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
-const dc = require("node:diagnostics_channel");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -36,10 +43,10 @@ const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 
-const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
-const onClientRequestStartChannel = dc.channel("http.client.request.start");
-const onClientRequestErrorChannel = dc.channel("http.client.request.error");
-const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const onClientRequestCreatedChannel = builtinChannel("http.client.request.created");
+const onClientRequestStartChannel = builtinChannel("http.client.request.start");
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
+const onClientResponseFinishChannel = builtinChannel("http.client.response.finish");
 
 function emitErrorEvent(request, error) {
   if (onClientRequestErrorChannel.hasSubscribers) {

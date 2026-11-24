@@ -1325,6 +1325,7 @@ pub struct Options<'a> {
     /// Some `import()` / `require()` in this file reads through import items,
     /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
     pub has_dynamic_import_items: bool,
+    pub has_deferred_requires: bool,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1383,6 +1384,7 @@ impl<'a> Default for Options<'a> {
             ts_enums: None,
             import_member_bindings: None,
             has_dynamic_import_items: false,
+            has_deferred_requires: false,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -2582,6 +2584,13 @@ pub(crate) mod __gated_printer {
         pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord<'a> {
             // detached from `&self` so callers can interleave `&mut self` printing.
             &self.import_records[import_record_index]
+        }
+
+        #[inline]
+        fn is_deferred_require(&self, ref_: Ref) -> bool {
+            self.options.has_deferred_requires
+                && !ref_.is_source_contents_slice()
+                && (self.symbols().get_const(ref_)).is_some_and(|it| it.is_deferred_require())
         }
 
         pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
@@ -3852,13 +3861,22 @@ pub(crate) mod __gated_printer {
                         self.stmt_start == n || self.arrow_expr_start == n
                     };
 
+                    let props = e.properties.slice();
+                    let is_deferred = |it: &&G::Property| {
+                        (it.flags).contains(js_ast::flags::Property::IsDeferredRequire)
+                    };
+                    let is_lazy = self.options.has_deferred_requires
+                        && props.iter().any(|it| is_deferred(&it));
                     if wrap {
                         self.print(b"(");
+                    }
+                    if is_lazy {
+                        self.print_space_before_identifier();
+                        self.print(b"$Bun_lazy(");
                     }
                     self.add_source_mapping(expr.loc);
                     self.mark_object_brace();
                     self.print(b"{");
-                    let props = e.properties.slice();
                     if !props.is_empty() {
                         if !e.is_single_line || IS_JSON {
                             self.indent();
@@ -3898,6 +3916,13 @@ pub(crate) mod __gated_printer {
                         self.mark_object_brace();
                     }
                     self.print(b"}");
+                    if is_lazy {
+                        for key in props.iter().filter(is_deferred).filter_map(|it| it.key) {
+                            self.print(b",");
+                            self.print_expr(key, Level::Comma, ExprFlag::none());
+                        }
+                        self.print(b")");
+                    }
                     if wrap {
                         self.print(b")");
                     }
@@ -4173,9 +4198,11 @@ pub(crate) mod __gated_printer {
                     // A for-of loop initializer must not start with the token "let" and
                     // must not be the exact token sequence "async of" (e.g. the escaped
                     // identifier in "for (\u0061sync of []) ;"), so wrap in parentheses.
+                    let is_called = self.is_deferred_require(e.ref_);
                     let wrap = self.writer.written() == self.for_of_init_start
                         && (name == b"let"
-                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)));
+                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)))
+                        || is_called;
 
                     if wrap {
                         self.print(b"(");
@@ -4184,6 +4211,10 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
                     self.print_identifier(name);
+                    if is_called {
+                        // A `var` can be read before its declaration.
+                        self.print(b"?.()");
+                    }
 
                     if wrap {
                         self.print(b")");
@@ -4913,7 +4944,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
@@ -4953,7 +4984,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if item.flags.contains(js_ast::flags::Property::WasShorthand)
                                         || strings::utf16_eql_string(
                                             key_str.slice16(),
@@ -7673,6 +7704,7 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
+    opts.has_deferred_requires = tree.has_deferred_requires;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,

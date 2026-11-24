@@ -1,24 +1,24 @@
 // A method asks its parameter by `instanceof` and is called with strings, instances, heirs and other objects.
-class Token {
-    constructor(text, line) {
-        this._text = text;
-        this._line = line;
+class Ticket {
+    constructor(seat, row) {
+        this._row = row;
+        this._seat = seat;
     }
-    isEqualTo(other) {
-        if (other instanceof Token)
-            return this.text === other.text;
-        return this.text === other;
+    get seat() {
+        return this._seat;
     }
-    compare(other, more) {
-        return other instanceof Token ? this._line - other._line : more ? -1 : 1;
+    admits(guest) {
+        const asked = guest instanceof Ticket ? guest.seat : guest;
+        return asked === this.seat;
     }
-    get text() {
-        return this._text;
+    order(guest, isLate) {
+        if (!(guest instanceof Ticket)) return isLate ? -1 : 1;
+        return this._row - guest._row;
     }
 }
-class Keyword extends Token {
-    get text() {
-        return this._text.toUpperCase();
+class Pass extends Ticket {
+    get seat() {
+        return this._seat.toUpperCase();
     }
 }
 const key = JSON.parse('"hidden"');
@@ -27,32 +27,34 @@ function hide(value) {
     box[key] = value;
     return box[key];
 }
-const tokens = hide(["a", "b", "if", "\n", "a"].map((text, line) => hide(text === "if" ? new Keyword(text, line) : new Token(text, line))));
-class Parser {
-    constructor(all) {
-        this.all = all;
-        this.at = 0;
+const tickets = hide(["a", "b", "if", "\n", "a"].map((seat, row) => hide(seat === "if" ? new Pass(seat, row) : new Ticket(seat, row))));
+class Gate {
+    constructor(sold) {
+        this.left = 0;
+        this.sold = sold;
     }
-    count(text) {
-        let found = 0;
-        for (this.at = 0; this.at < this.all.length; this.at++) {
-            if (this.all[this.at].isEqualTo(text))
-                found++;
+    count(guest) {
+        let admitted = 0;
+        this.left = this.sold.length;
+        while (this.left > 0) {
+            const ticket = this.sold[this.sold.length - this.left];
+            this.left--;
+            if (ticket.admits(guest)) admitted++;
         }
-        return found;
+        return admitted;
     }
 }
-const parser = new Parser(tokens);
-const others = ["a", "IF", "if", "\n", null, undefined, 3, new Token("a", 9), new Keyword("if", 8), { _text: "a", text: "a" }, Object.create(Token.prototype), Object.create(new Token("b", 5)), new Proxy(new Token("a", 7), {})];
-const say = word => console.log(word, others.map(other => parser.count(other)).join(), others.map(other => tokens.map(token => token.compare(other, other)).join(" ")).join());
+const gate = new Gate(tickets);
+const guests = ["a", "IF", "if", "\n", null, undefined, 3, new Ticket("a", 9), new Pass("if", 8), { _seat: "a", seat: "a" }, Object.create(Ticket.prototype), Object.create(new Ticket("b", 5)), new Proxy(new Ticket("a", 7), {})];
+const say = word => console.log(word, guests.map(guest => gate.count(guest)).join(), guests.map(guest => tickets.map(ticket => ticket.order(guest, guest)).join(" ")).join());
 say("as made");
-Object.setPrototypeOf(tokens[0], Keyword.prototype);
+Object.setPrototypeOf(tickets[0], Pass.prototype);
 say("another prototype");
-Object.defineProperty(Token, Symbol.hasInstance, { value: other => typeof other === "string", configurable: true });
-console.log(tokens.map(token => {
+Object.defineProperty(Ticket, Symbol.hasInstance, { value: guest => typeof guest === "string", configurable: true });
+console.log(tickets.map(ticket => {
     try {
-        return token.isEqualTo("a");
+        return ticket.admits("a");
     } catch (error) {
-        return error.message;
+        return error.name;
     }
 }).join());

@@ -18,11 +18,6 @@ struct BunVmHandleRef;
 #include <wtf/URL.h>
 #include <JavaScriptCore/Weak.h>
 
-namespace uWS {
-template<bool isServer, bool isClient, typename UserData>
-struct WebSocketContext;
-}
-
 struct us_socket_t;
 struct us_socket_group_t;
 struct us_loop_t;
@@ -76,10 +71,6 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    const WTF::URL& url() const
-    {
-        return m_url;
-    }
     bool isMainThread() const { return realm().m_identifier == 1; }
     // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
     // graph's context makes and frees its own; a global's is bound to its VM's root context.
@@ -192,7 +183,6 @@ private:
     void* const m_bunVM;
     // What other threads use to reach the VM (see JSVMClientData::vmHandle).
     const ::BunVmHandleRef* const m_vmHandle;
-    WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.

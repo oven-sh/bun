@@ -2,7 +2,17 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { chmodSync, readFileSync, statSync } from "fs";
 import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isLinux, isRoot, isWindows, runBunInstall, tempDir, textLockfile } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isRoot,
+  isWindows,
+  MAX_PATH_BYTES,
+  runBunInstall,
+  tempDir,
+  textLockfile,
+} from "harness";
 import { join } from "path";
 import { installEnv, TestRegistry, toml } from "registry";
 
@@ -14,6 +24,18 @@ beforeAll(async () => {
 
 afterAll(() => {
   registry.stop();
+});
+
+// On Windows the path buffer is longer than any argument.
+it.skipIf(isWindows)("a .lockb path longer than the path buffer prints 'lockfile not found'", async () => {
+  using dir = tempDir("lockb-long-path", {});
+  const name = Buffer.alloc(MAX_PATH_BYTES, "a").toString() + ".lockb";
+
+  expect(await run(String(dir), name)).toEqual({
+    stdout: "",
+    stderr: `lockfile not found: "${join(String(dir), name)}"\n`,
+    exitCode: 1,
+  });
 });
 
 it("should not print anything to stderr when running bun.lockb", async () => {
@@ -679,6 +701,103 @@ async function run(cwd: string, ...args: string[]) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
+
+// Older versions wrote backslashes on Windows, and hashed them.
+it("the hash covers a backslash in the row of a folder until the file is saved", async () => {
+  const packageJson = (postinstall: string) =>
+    JSON.stringify({ name: "p", scripts: { postinstall }, dependencies: { library: "file:./vendor/library" } });
+  using dir = tempDir("lockb-backslash-row", {
+    "package.json": packageJson("echo one"),
+    "vendor/library/package.json": JSON.stringify({ name: "library", version: "1.0.0" }),
+    "bunfig.toml": "[install]\nsaveTextLockfile = false\n",
+  });
+  const cwd = String(dir);
+  expect(await run(cwd, "install")).toMatchObject({ exitCode: 0 });
+  const hashed = (await run(cwd, "pm", "hash-string")).stdout
+    .replace("vendor/library", "vendor\\library")
+    .replace("-- END HASH", "\n-- BEGIN SCRIPTS --\npostinstall: echo one\n\n-- END SCRIPTS --\n-- END HASH");
+  const lockb = readFileSync(join(cwd, "bun.lockb"));
+  lockb.write("vendor\\library", lockb.lastIndexOf("vendor/library"));
+  new Bun.CryptoHasher("sha512-256").update(hashed).digest().copy(lockb, 46);
+  await Promise.all([write(join(cwd, "bun.lockb"), lockb), rm(join(cwd, "node_modules"), { recursive: true })]);
+
+  expect(await run(cwd, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+  expect(await exists(join(cwd, "node_modules", "library", "package.json"))).toBe(true);
+  expect((await run(cwd, "pm", "hash-string")).stdout).toContain("vendor\\library");
+  expect((await run(cwd, "pm", "hash-print")).stdout).toStartWith(lockb.toString("hex", 46, 54).toUpperCase());
+
+  expect(await run(cwd, "install")).toMatchObject({ exitCode: 0 });
+  expect(readFileSync(join(cwd, "bun.lockb"))).toEqual(lockb);
+
+  await write(join(cwd, "package.json"), packageJson("echo two"));
+  expect(await run(cwd, "install", "--frozen-lockfile")).toMatchObject({
+    stderr: expect.stringContaining("lockfile is frozen"),
+    exitCode: 1,
+  });
+
+  expect(await run(cwd, "install")).toMatchObject({ exitCode: 0 });
+  expect(await run(cwd, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+});
+
+it("the hash leaves out a package that nothing depends on, beside a row with a backslash", async () => {
+  const dependencies = { library: "file:./vendor/library" };
+  using dir = tempDir("lockb-backslash-row-orphan", {
+    "package.json": JSON.stringify({ name: "p", dependencies: { ...dependencies, orphan: "file:./orphan" } }),
+    "vendor/library/package.json": JSON.stringify({ name: "library", version: "1.0.0" }),
+    "orphan/package.json": JSON.stringify({ name: "orphan", version: "1.0.0" }),
+    "bunfig.toml": "[install]\nsaveTextLockfile = false\n",
+  });
+  const cwd = String(dir);
+  expect(await run(cwd, "install")).toMatchObject({ exitCode: 0 });
+  const hashed = (await run(cwd, "pm", "hash-string")).stdout
+    .replace("vendor/library", "vendor\\library")
+    .replace("orphan@orphan\n", "");
+  const lockb = readFileSync(join(cwd, "bun.lockb"));
+  const { column, array } = layout(lockb);
+  for (const length of [column.dependencies + 4, column.resolutions + 4, array.trees.start + 16]) {
+    lockb.writeUInt32LE(1, length);
+  }
+  lockb.write("vendor\\library", lockb.lastIndexOf("vendor/library"));
+  new Bun.CryptoHasher("sha512-256").update(hashed).digest().copy(lockb, 46);
+  await Promise.all([
+    write(join(cwd, "bun.lockb"), lockb),
+    write(join(cwd, "package.json"), JSON.stringify({ name: "p", dependencies })),
+  ]);
+
+  expect(await run(cwd, "install", "--frozen-lockfile", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+});
+
+it("install saves the row of a member that has a backslash", async () => {
+  using dir = tempDir("lockb-backslash-member", {
+    "package.json": JSON.stringify({ name: "p", workspaces: ["packages/*"] }),
+    "packages/library/package.json": JSON.stringify({ name: "library", version: "1.0.0" }),
+    "bunfig.toml": "[install]\nsaveTextLockfile = false\n",
+  });
+  const cwd = String(dir);
+  expect(await run(cwd, "install")).toMatchObject({ exitCode: 0 });
+  const hashed = (await run(cwd, "pm", "hash-string")).stdout.replace("packages/library", "packages\\library");
+  const lockb = readFileSync(join(cwd, "bun.lockb"));
+  lockb.write("packages\\library", lockb.lastIndexOf("packages/library"));
+  new Bun.CryptoHasher("sha512-256").update(hashed).digest().copy(lockb, 46);
+  await write(join(cwd, "bun.lockb"), lockb);
+
+  expect(await run(cwd, "install")).toMatchObject({ stderr: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+  expect(await run(cwd, "install", "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+});
+
+it("the path of an override that has backslashes is stored once", async () => {
+  using dir = tempDir("lockb-backslash-override", {
+    "package.json": JSON.stringify({
+      name: "p",
+      dependencies: { library: "1.0.0" },
+      overrides: { library: "file:.\\vendor\\library" },
+    }),
+    "vendor/library/package.json": JSON.stringify({ name: "library", version: "1.0.0" }),
+    "bunfig.toml": "[install]\nsaveTextLockfile = false\n",
+  });
+  expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+  expect(readFileSync(join(String(dir), "bun.lockb"), "latin1").split(".\\vendor\\library")).toHaveLength(2);
+});
 
 describe.concurrent("a binary lockfile is refused when", () => {
   // root -> depa, depb; depa -> depb

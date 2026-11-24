@@ -9,6 +9,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
 #include "JSReadRequest.h"
@@ -23,7 +24,6 @@
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -444,69 +444,16 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseLock);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_constructor);
 
-class JSReadableStreamDefaultReaderPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSReadableStreamDefaultReaderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableStreamDefaultReaderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamDefaultReaderPrototype))) JSReadableStreamDefaultReaderPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamDefaultReaderPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableStreamDefaultReaderPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamDefaultReaderPrototype, JSReadableStreamDefaultReaderPrototype::Base);
+using JSReadableStreamDefaultReaderPrototype = JSDOMPrototype<JSReadableStreamDefaultReader>;
 
 // JSReadableStreamDefaultReaderConstructor = JSStreamConstructor<JSReadableStreamDefaultReader>.
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamDefaultReaderConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSReadableStreamDefaultReaderConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSReadableStreamDefaultReaderConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSReadableStreamDefaultReaderConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSReadableStreamDefaultReaderConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSReadableStreamDefaultReaderConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSReadableStreamDefaultReaderConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSReadableStreamDefaultReaderConstructor::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderConstructor) };
-
-template<> JSValue JSReadableStreamDefaultReaderConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSReadableStreamDefaultReaderConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSReadableStreamDefaultReaderConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSReadableStreamDefaultReaderConstructor);
 
 template<> GCClient::IsoSubspace* JSReadableStreamDefaultReaderConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -547,7 +494,7 @@ JSC_ANNOTATE_HOST_FUNCTION(JSReadableStreamDefaultReaderConstructorConstruct, JS
 // JSReadableStreamDefaultReaderPrototype
 
 static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamDefaultReaderPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSReadableStreamDefaultReaderPrototype::constructorGetter, 0 } },
     { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamDefaultReaderPrototypeGetter_closed, 0 } },
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamDefaultReaderPrototypeFunction_cancel, 0 } },
     { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamDefaultReaderPrototypeFunction_read, 0 } },
@@ -555,7 +502,7 @@ static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] 
     { "releaseLock"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamDefaultReaderPrototypeFunction_releaseLock, 0 } },
 };
 
-const ClassInfo JSReadableStreamDefaultReaderPrototype::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderPrototype) };
+template<> const ClassInfo JSReadableStreamDefaultReaderPrototype::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -577,7 +524,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototype_inspectCustom, (
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamDefaultReader"_s, data));
 }
 
-void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
+template<> void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
@@ -621,9 +568,7 @@ Structure* JSReadableStreamDefaultReader::createStructure(VM& vm, JSGlobalObject
 
 JSObject* JSReadableStreamDefaultReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSReadableStreamDefaultReaderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSReadableStreamDefaultReaderPrototype::create(vm, &globalObject, structure);
+    return JSReadableStreamDefaultReaderPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSReadableStreamDefaultReader::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -677,16 +622,6 @@ void JSReadableStreamDefaultReader::analyzeHeap(JSCell* cell, HeapAnalyzer& anal
 }
 
 // Prototype accessors and host functions
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSReadableStreamDefaultReaderPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSReadableStreamDefaultReader::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

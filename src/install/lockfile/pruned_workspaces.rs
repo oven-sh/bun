@@ -22,13 +22,13 @@ pub(crate) fn workspace_is_missing_on_disk(
     let Some(workspace_path) = lockfile.workspace_paths.get(&workspace_name_hash).copied() else {
         return false;
     };
-    let Some(mut package_json_path) = join_top_level_dir(&[
+    let Some(package_json_path) = join_top_level_dir(&[
         workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
         b"package.json",
     ]) else {
         return true;
     };
-    !bun_sys::exists_z(package_json_path.slice_z())
+    !bun_sys::exists_z(&package_json_path)
 }
 
 /// Doesn't apply to a dependency of a local package. That's an error (see

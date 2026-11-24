@@ -15,7 +15,7 @@ use self::measure::Measure;
 use self::output::Out;
 use super::element::{
     BestFitting, Condition, CursorMark, DedentMode, Fallback, Flat, FlatFlags, FormatElement,
-    Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, TextWidth,
+    Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, TextWidth, Token,
 };
 use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
 use crate::FormatError;
@@ -195,6 +195,22 @@ pub(crate) struct PrinterBuffers {
     before_try: BeforeTry,
     /// Output offsets of the last document's [`FormatElement::Cursor`]s.
     pub(crate) marks: [Option<u32>; 2],
+    pub(crate) outcome: Outcome,
+}
+
+/// Printed in place of statements that are printed on their own, as a [`FormatElement::TokenIfBreaks`].
+pub(crate) const PLACEHOLDER: &str = "debugger";
+
+/// What the statements behind a [`PLACEHOLDER`], and those after the document, need to know about the printer's state.
+#[derive(Default, Copy, Clone)]
+pub(crate) struct Outcome {
+    /// The last value of [`Printer::measured_group_fits`].
+    pub(crate) measured_group_fits: bool,
+    pub(crate) placeholders: u32,
+    /// [`Printer::measured_group_fits`] was false at one of them.
+    pub(crate) has_placeholder_after_flat_line_break: bool,
+    /// [`Printer::is_trying`] was true at one of them.
+    pub(crate) has_placeholder_in_try: bool,
 }
 
 /// Copies of the vectors that printing does more than append to, taken before the try. The others are just truncated to
@@ -268,6 +284,7 @@ pub(crate) fn print(
     buffers.group_modes.clear();
     buffers.before_try.unstable.clear();
     buffers.marks = [None; 2];
+    buffers.outcome = Outcome::default();
     let start = out.len();
     let mut printer = Printer {
         options,
@@ -295,6 +312,7 @@ pub(crate) fn print(
         buffers,
     };
     let result = printer.print_all();
+    printer.buffers.outcome.measured_group_fits = printer.measured_group_fits;
     printer.pull_marks_back();
     printer.out.finish();
     match printer.out.is_too_long() {
@@ -458,6 +476,9 @@ impl<'d> Printer<'d> {
                 }
                 FormatElement::TokenIfBreaks(token) => {
                     if !self.mode.is_flat() {
+                        if token.len() == PLACEHOLDER.len() {
+                            self.note_placeholder(token);
+                        }
                         self.print_pending();
                         self.out.token(token);
                         self.line_width += token.len();
@@ -1013,6 +1034,15 @@ impl<'d> Printer<'d> {
         self.push(FrameKind::FillSeparator, separator_mode);
         self.print_entry(mode)?;
         self.pop(FrameKind::FillSeparator)
+    }
+
+    fn note_placeholder(&mut self, token: &Token) {
+        if token.as_bytes() == PLACEHOLDER.as_bytes() {
+            let outcome = &mut self.buffers.outcome;
+            outcome.placeholders += 1;
+            outcome.has_placeholder_after_flat_line_break |= !self.measured_group_fits;
+            outcome.has_placeholder_in_try |= self.is_trying;
+        }
     }
 
     /// Prints the pending indentation and space before the next text.

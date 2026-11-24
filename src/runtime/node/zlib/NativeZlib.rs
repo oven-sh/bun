@@ -1,9 +1,10 @@
-use core::ffi::{CStr, c_int};
+use core::ffi::c_int;
 
 use bun_core::vec::BorrowedCursor;
-use bun_zlib as c;
+use bun_zlib::deflate::{self, Flush};
+use bun_zlib::{Deflater, GZIP_ID, Inflater, inflate};
 
-use crate::node::node_zlib_binding::{CompressionContext, Error};
+use crate::node::node_zlib_binding::{CompressionContext, Error, NodeMode, Z_BUF_ERROR};
 
 mod _impl {
     use super::*;
@@ -26,7 +27,7 @@ mod _impl {
     impl NativeZlib {
         pub(crate) fn constructor(mode: u8) -> Self {
             Self {
-                stream: Cell::new(Some(Stream::new(Context::new(c::NodeMode::from_int(mode))))),
+                stream: Cell::new(Some(Stream::new(Context::new(NodeMode::from_int(mode))))),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
             }
@@ -100,8 +101,7 @@ mod _impl {
                         ));
                     }
                 };
-                // `deflateSetDictionary`/`inflateSetDictionary` take a `uInt`
-                // length; reject anything larger before `Context::init` copies it.
+                // As for zlib, which takes the length in 32 bits.
                 if dictionary_buf.byte_len > u32::MAX as usize {
                     return Err(global.throw_range_error(
                         dictionary_buf.byte_len as i64,
@@ -163,36 +163,51 @@ pub(crate) use _impl::NativeZlib;
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
 enum State {
-    Deflate(c::DeflateEncoder),
-    Inflate(c::InflateDecoder),
+    Deflate(Box<Deflater>),
+    Inflate(Box<Inflater>),
 }
 
 pub(crate) struct Context {
-    mode: c::NodeMode,
-    /// `None` until `init()`: what would call zlib fails with `StreamError`.
+    mode: NodeMode,
+    /// `None` until `init()`: what needs it fails with `Z_STREAM_ERROR`.
     state: Option<State>,
-    err: c::ReturnCode,
-    flush: c::FlushValue,
+    flush: Flush,
     dictionary: Vec<u8>,
     gzip_id_bytes_read: u8,
-    avail_in: usize,
-    avail_out: usize,
+    write_result: Result<[u32; 2], Error>,
+}
+
+/// `default` is for what zlib has no message of its own for.
+fn zlib_error(error: bun_zlib::Error, default: &'static str) -> Error {
+    use bun_zlib::Error::*;
+    let (err, code) = match error {
+        InvalidParameter | InvalidState | Internal => (-2, c"Z_STREAM_ERROR"),
+        Damaged(_) | WrongDictionary => (-3, c"Z_DATA_ERROR"),
+        Alloc(_) => (-4, c"Z_MEM_ERROR"),
+        InputAfterFinish => (Z_BUF_ERROR, c"Z_BUF_ERROR"),
+    };
+    let msg = match error {
+        Damaged(damage) => damage.message(),
+        InvalidState => "stream error",
+        InputAfterFinish => "buffer error",
+        _ => default,
+    };
+    Error {
+        msg: msg.as_bytes(),
+        err,
+        code,
+    }
 }
 
 impl Context {
-    const GZIP_HEADER_ID1: u8 = 0x1f;
-    const GZIP_HEADER_ID2: u8 = 0x8b;
-
-    fn new(mode: c::NodeMode) -> Self {
+    fn new(mode: NodeMode) -> Self {
         Self {
             mode,
             state: None,
-            err: c::ReturnCode::Ok,
-            flush: c::FlushValue::NoFlush,
+            flush: Flush::None,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
-            avail_in: 0,
-            avail_out: 0,
+            write_result: Ok([0, 0]),
         }
     }
 
@@ -203,33 +218,37 @@ impl Context {
         mem_level: c_int,
         strategy: c_int,
         dictionary: &[u8],
-    ) -> Result<(), c::ZlibError> {
-        use c::NodeMode::*;
-        self.flush = c::FlushValue::NoFlush;
-        self.err = c::ReturnCode::Ok;
-
-        let window_bits_actual = match self.mode {
-            NONE => unreachable!(),
-            DEFLATE | INFLATE => window_bits,
-            GZIP | GUNZIP => window_bits + 16,
-            UNZIP => window_bits + 32,
-            DEFLATERAW | INFLATERAW => -window_bits,
-            BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
-            ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
-        };
-
+    ) -> bun_zlib::Result<()> {
+        use NodeMode::*;
+        self.flush = Flush::None;
         self.dictionary = dictionary.to_vec();
+
+        let window_bits = match self.mode {
+            GZIP | GUNZIP => window_bits.saturating_add(16),
+            UNZIP => window_bits.saturating_add(32),
+            DEFLATERAW | INFLATERAW => window_bits.saturating_neg(),
+            _ => window_bits,
+        };
 
         // `init` is JS-reachable twice on one handle: free the previous state first.
         self.state = None;
         self.state = Some(match self.mode {
-            DEFLATE | GZIP | DEFLATERAW => State::Deflate(c::DeflateEncoder::new(
-                level,
-                window_bits_actual,
-                mem_level,
-                strategy,
-            )?),
-            _ => State::Inflate(c::InflateDecoder::new(window_bits_actual)?),
+            DEFLATE | GZIP | DEFLATERAW => {
+                let (container, window_bits) = match window_bits {
+                    ..0 => (deflate::Container::Raw, window_bits.saturating_neg()),
+                    0..16 => (deflate::Container::Zlib, window_bits),
+                    16.. => (deflate::Container::Gzip, window_bits - 16),
+                };
+                let small = |n| u8::try_from(n).map_err(|_| bun_zlib::Error::InvalidParameter);
+                let options = deflate::Options {
+                    level: level.try_into()?,
+                    strategy: strategy.try_into()?,
+                    window_bits: small(window_bits)?,
+                    memory_level: small(mem_level)?,
+                };
+                State::Deflate(Deflater::new(container, options)?)
+            }
+            _ => State::Inflate(Box::new(Inflater::from_zlib_window_bits(window_bits)?)),
         });
 
         let _ = self.set_dictionary();
@@ -237,59 +256,37 @@ impl Context {
     }
 
     fn set_dictionary(&mut self) -> Result<(), Error> {
-        use c::NodeMode::*;
+        use NodeMode::*;
         if self.dictionary.is_empty() {
             return Ok(());
         }
-        self.err = match (self.mode, &mut self.state) {
-            (DEFLATE | DEFLATERAW, Some(State::Deflate(encoder))) => {
-                encoder.set_dictionary(&self.dictionary)
+        match (self.mode, &mut self.state) {
+            (DEFLATE | DEFLATERAW, Some(State::Deflate(deflater))) => {
+                deflater.set_dictionary(&self.dictionary)
             }
-            (INFLATERAW, Some(State::Inflate(decoder))) => decoder.set_dictionary(&self.dictionary),
-            _ => c::ReturnCode::Ok,
-        };
-        if self.err != c::ReturnCode::Ok {
-            return Err(self.error_for_message(c"Failed to set dictionary"));
+            (INFLATERAW, Some(State::Inflate(inflater))) => {
+                inflater.set_dictionary(&self.dictionary)
+            }
+            _ => Ok(()),
         }
-        Ok(())
+        .map_err(|error| Error {
+            msg: b"Failed to set dictionary",
+            ..zlib_error(error, "")
+        })
     }
 
     fn set_params(&mut self, level: c_int, strategy: c_int) -> Result<(), Error> {
-        use c::NodeMode::*;
-        self.err = match (self.mode, &mut self.state) {
-            (DEFLATE | DEFLATERAW, Some(State::Deflate(encoder))) => {
-                encoder.set_params(level, strategy)
-            }
-            (DEFLATE | DEFLATERAW, _) => c::ReturnCode::StreamError,
-            _ => c::ReturnCode::Ok,
-        };
-        if self.err != c::ReturnCode::Ok && self.err != c::ReturnCode::BufError {
-            return Err(self.error_for_message(c"Failed to set parameters"));
+        if !matches!(self.mode, NodeMode::DEFLATE | NodeMode::DEFLATERAW) {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    fn error_for_message(&self, default: &'static CStr) -> Error {
-        let message = match &self.state {
-            Some(State::Deflate(encoder)) => encoder.error_message(),
-            Some(State::Inflate(decoder)) => decoder.error_message(),
-            None => None,
+        let mut set = || match &mut self.state {
+            // Like Node, it keeps quiet about parameters that cannot change in the middle of a block.
+            Some(State::Deflate(deflater)) => deflater
+                .set_params(level.try_into()?, strategy.try_into()?)
+                .map(drop),
+            _ => Err(bun_zlib::Error::Internal),
         };
-        Error {
-            msg: message.unwrap_or(default),
-            err: self.err as c_int,
-            code: match self.err {
-                c::ReturnCode::Ok => c"Z_OK",
-                c::ReturnCode::StreamEnd => c"Z_STREAM_END",
-                c::ReturnCode::NeedDict => c"Z_NEED_DICT",
-                c::ReturnCode::ErrNo => c"Z_ERRNO",
-                c::ReturnCode::StreamError => c"Z_STREAM_ERROR",
-                c::ReturnCode::DataError => c"Z_DATA_ERROR",
-                c::ReturnCode::MemError => c"Z_MEM_ERROR",
-                c::ReturnCode::BufError => c"Z_BUF_ERROR",
-                c::ReturnCode::VersionError => c"Z_VERSION_ERROR",
-            },
-        }
+        set().map_err(|error| zlib_error(error, "Failed to set parameters"))
     }
 
     /// Resolves `UNZIP` to `GUNZIP` or `INFLATE` once the first bytes tell which it is.
@@ -297,119 +294,117 @@ impl Context {
         let mut header = input.iter().copied();
         if self.gzip_id_bytes_read == 0 {
             match header.next() {
-                Some(Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
+                Some(byte) if byte == GZIP_ID[0] => self.gzip_id_bytes_read = 1,
                 Some(_) => {
-                    self.mode = c::NodeMode::INFLATE;
+                    self.mode = NodeMode::INFLATE;
                     return;
                 }
                 None => return,
             }
         }
         match header.next() {
-            Some(Self::GZIP_HEADER_ID2) => self.mode = c::NodeMode::GUNZIP,
-            Some(_) => self.mode = c::NodeMode::INFLATE,
+            Some(byte) if byte == GZIP_ID[1] => self.mode = NodeMode::GUNZIP,
+            Some(_) => self.mode = NodeMode::INFLATE,
             None => {}
+        }
+    }
+
+    fn step(&mut self, input: &mut &[u8], mut out: BorrowedCursor<'_, u8>) -> Result<(), Error> {
+        const Z_NEED_DICT: c_int = 2;
+        let failed = |error| zlib_error(error, "Zlib error");
+        let inflater = match &mut self.state {
+            None => return Err(failed(bun_zlib::Error::Internal)),
+            Some(State::Deflate(deflater)) => {
+                let status = deflater.deflate(input, out, self.flush);
+                return status.map(drop).map_err(failed);
+            }
+            Some(State::Inflate(inflater)) => inflater,
+        };
+        let mut gives_dictionary = self.mode != NodeMode::INFLATERAW;
+        loop {
+            let status = if self.flush == Flush::Block {
+                inflater.inflate_block(input, out.reborrow())
+            } else {
+                inflater.inflate(input, out.reborrow())
+            };
+            match status.map_err(failed)? {
+                inflate::Status::NeedsDictionary => {
+                    let needs = |message| Error::init(message, Z_NEED_DICT, c"Z_NEED_DICT");
+                    if self.dictionary.is_empty() {
+                        return Err(needs(c"Missing dictionary"));
+                    }
+                    let result = if gives_dictionary {
+                        inflater.set_dictionary(&self.dictionary)
+                    } else {
+                        Err(bun_zlib::Error::WrongDictionary)
+                    };
+                    result.map_err(|error| match error {
+                        bun_zlib::Error::WrongDictionary => needs(c"Bad dictionary"),
+                        error => failed(error),
+                    })?;
+                }
+                // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
+                inflate::Status::StreamEnd
+                    if self.mode == NodeMode::GUNZIP
+                        && input.first().is_some_and(|&byte| byte != 0) =>
+                {
+                    inflater.reset();
+                    gives_dictionary = false;
+                }
+                inflate::Status::NeedsInput
+                    if self.flush == Flush::Finish && out.capacity() != 0 =>
+                {
+                    let message = c"unexpected end of file";
+                    return Err(Error::init(message, Z_BUF_ERROR, c"Z_BUF_ERROR"));
+                }
+                _ => return Ok(()),
+            }
         }
     }
 }
 
 impl CompressionContext for Context {
     fn reset(&mut self) -> Result<(), Error> {
-        self.err = match (self.mode, &mut self.state) {
-            (c::NodeMode::UNZIP, _) => c::ReturnCode::Ok,
-            (_, Some(State::Deflate(encoder))) => encoder.reset(),
-            (_, Some(State::Inflate(decoder))) => decoder.reset(),
-            (_, None) => c::ReturnCode::StreamError,
-        };
-        if self.err != c::ReturnCode::Ok {
-            return Err(self.error_for_message(c"Failed to reset stream"));
+        match (self.mode, &mut self.state) {
+            (NodeMode::UNZIP, _) => {}
+            (_, Some(State::Deflate(deflater))) => deflater.reset(),
+            (_, Some(State::Inflate(inflater))) => inflater.reset(),
+            (_, None) => {
+                return Err(zlib_error(
+                    bun_zlib::Error::Internal,
+                    "Failed to reset stream",
+                ));
+            }
         }
         self.set_dictionary()
     }
 
     fn flush_value_is_valid(flush: u32) -> bool {
-        flush <= 6
+        flush <= 5
     }
 
     fn set_flush(&mut self, flush: c_int) {
-        // Checked conversion;
-        // transmuting an arbitrary c_int into a Rust enum is UB.
         self.flush = match flush {
-            0 => c::FlushValue::NoFlush,
-            1 => c::FlushValue::PartialFlush,
-            2 => c::FlushValue::SyncFlush,
-            3 => c::FlushValue::FullFlush,
-            4 => c::FlushValue::Finish,
-            5 => c::FlushValue::Block,
-            6 => c::FlushValue::Trees,
+            0 => Flush::None,
+            1 => Flush::Partial,
+            2 => Flush::Sync,
+            3 => Flush::Full,
+            4 => Flush::Finish,
+            5 => Flush::Block,
             _ => unreachable!("invalid zlib flush value: {flush}"),
         };
     }
 
     fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
-        if self.mode == c::NodeMode::UNZIP {
+        if self.mode == NodeMode::UNZIP {
             self.detect_gzip_header(input);
         }
-
-        match &mut self.state {
-            None => self.err = c::ReturnCode::StreamError,
-            Some(State::Deflate(encoder)) => {
-                let consumed;
-                (consumed, self.err) = encoder.step_into(input, out.reborrow(), self.flush);
-                input = &input[consumed..];
-            }
-            Some(State::Inflate(decoder)) => {
-                let mut step = |decoder: &mut c::InflateDecoder, input: &mut &[u8]| {
-                    let (consumed, err) = decoder.step_into(input, out.reborrow(), self.flush);
-                    *input = &input[consumed..];
-                    err
-                };
-                self.err = step(decoder, &mut input);
-
-                if self.mode != c::NodeMode::INFLATERAW
-                    && self.err == c::ReturnCode::NeedDict
-                    && !self.dictionary.is_empty()
-                {
-                    self.err = match decoder.set_dictionary(&self.dictionary) {
-                        c::ReturnCode::Ok => step(decoder, &mut input),
-                        c::ReturnCode::DataError => c::ReturnCode::NeedDict,
-                        err => err,
-                    };
-                }
-                while self.mode == c::NodeMode::GUNZIP
-                    && self.err == c::ReturnCode::StreamEnd
-                    && input.first().is_some_and(|&byte| byte != 0)
-                {
-                    // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
-                    let _ = decoder.reset();
-                    self.err = step(decoder, &mut input);
-                }
-            }
-        }
-
-        self.avail_in = input.len();
-        self.avail_out = out.capacity();
+        self.write_result = self
+            .step(&mut input, out.reborrow())
+            .map(|()| [out.capacity(), input.len()].map(|n| u32::try_from(n).expect("int cast")));
     }
 
     fn write_result(&self) -> Result<[u32; 2], Error> {
-        match self.err {
-            c::ReturnCode::Ok | c::ReturnCode::BufError => {
-                if self.avail_out != 0 && self.flush == c::FlushValue::Finish {
-                    return Err(self.error_for_message(c"unexpected end of file"));
-                }
-            }
-            c::ReturnCode::StreamEnd => {}
-            c::ReturnCode::NeedDict => {
-                if self.dictionary.is_empty() {
-                    return Err(self.error_for_message(c"Missing dictionary"));
-                } else {
-                    return Err(self.error_for_message(c"Bad dictionary"));
-                }
-            }
-            _ => {
-                return Err(self.error_for_message(c"Zlib error"));
-            }
-        }
-        Ok([self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast")))
+        self.write_result
     }
 }

@@ -85,7 +85,6 @@ export const NativeZstd = compressionStream(
       processCallback: b.any,
       dictionary: b.any,
     },
-    returns: b.bool,
   },
   {},
 );

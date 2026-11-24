@@ -6,6 +6,7 @@ mod host_defaults;
 use super::CodeImportKind::Import;
 use super::memory_host::MemoryHost;
 use super::*;
+use crate::resolve::parent_directory;
 
 const INSTALLED: &str = "/p/node_modules/pkg/index.js";
 const MANIFEST: &str = "/p/node_modules/pkg/package.json";
@@ -23,7 +24,7 @@ fn import_request<'a>(importer: &'a str, specifier: &'a str) -> CodeRequest<'a> 
     CodeRequest {
         specifier: specifier.as_bytes(),
         importer: importer.as_bytes(),
-        directory: dirname::<Posix>(importer.as_bytes()),
+        directory: parent_directory(importer.as_bytes()),
         kind: Import,
         form: CodeImportForm::Static,
     }

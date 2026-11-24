@@ -272,6 +272,35 @@ registry = http://localhost:${registry.port}/
       expect(result).toEqual(usesRegistry(3));
     });
 
+    it.concurrent.each([
+      ["NPM_CONFIG_USERCONFIG", "<dir>\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "..\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "~\\..\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "<dir>/pkg/..\\elsewhere\\.npmrc"],
+      ["XDG_CONFIG_HOME", "<dir>\\elsewhere"],
+      ["XDG_CONFIG_HOME", "<dir>/pkg/..\\elsewhere"],
+    ])("finds the file when $%s is %s", async (name, value) => {
+      using dir = tempDir("npmrc-userconfig-backslash", {
+        ...pkg,
+        "home/.keep": "",
+        "elsewhere/.npmrc": npmrc(1),
+        ...(isWindows ? {} : { "pkg/..\\elsewhere\\.npmrc": npmrc(2), "pkg/..\\elsewhere/.npmrc": npmrc(2) }),
+      });
+      const result = await publishDryRun(String(dir), { [name]: value.replace("<dir>", () => String(dir)) });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent.skipIf(isWindows)(
+      "looks nowhere else for a file that a directory with a backslash lacks",
+      async () => {
+        using dir = tempDir("npmrc-userconfig-twin", { ...pkg, "ho\\me/.keep": "", "ho/me/ci.npmrc": npmrc(1) });
+        const HOME = join(String(dir), "ho\\me");
+        const result = await publishDryRun(String(dir), { HOME, NPM_CONFIG_USERCONFIG: "~/ci.npmrc" });
+        expect(result.stderr).toContain("missing authentication");
+        expect(result.exitCode).toBe(1);
+      },
+    );
+
     it.concurrent("accepts lowercase $npm_config_userconfig", async () => {
       using dir = tempDir("npmrc-userconfig-lowercase", {
         ...pkg,

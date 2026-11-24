@@ -171,7 +171,7 @@ const constructionOfObserver = {
     { ...refused, args: { callback: b.any.optional }, uses: { callback: b.inspected } },
   ],
 } satisfies b.ClassOptions;
-// JSTextDecoderStream.cpp :122-172: options that are no object, null or undefined are refused, and what is described there is a primitive. `fatal` and `ignoreBOM` are read and made booleans of; the label is made a text of.
+// JSTextDecoderStream.cpp: options that are no object, null or undefined are refused, and what is described there is a primitive. `fatal` and `ignoreBOM` are read and made booleans of; the label is made a text of.
 const constructionOfDecoderStream = {
   types: [b.viewType("TextDecoderStream")],
   call: refused,
@@ -355,7 +355,7 @@ const constructionsOfClasses: Readonly<Record<string, b.ClassOptions>> = {
     ...constructionOfEventBelowEvent("CloseEvent", membersOfOptionsOfEvent("code", "reason", "wasClean")),
     proto: { wasClean: readsStream(b.bool), code: readsStream(b.int(0, 65535)), reason: readsStream(b.string) },
   },
-  // JSCustomEvent.cpp :58-116 :160-190 :268-290, CustomEventCustom.cpp :37, CustomEvent.cpp :60: `detail` is read, kept as it is and answered as it is; an event that was handed none answers null. No native code makes a CustomEvent.
+  // JSCustomEvent.cpp, CustomEventCustom.cpp :37, CustomEvent.cpp :60: `detail` is read, kept as it is and answered as it is; an event that was handed none answers null. No native code makes a CustomEvent.
   CustomEvent: {
     ...constructionOfEventBelowEvent("CustomEvent", [
       ...membersOfOptionsOfEvent("detail"),
@@ -381,7 +381,7 @@ const constructionsOfClasses: Readonly<Record<string, b.ClassOptions>> = {
       },
     },
   },
-  // JSDOMException.cpp :122-167: the message and a name that is no object are made strings of; of options that are an object `name` is read and made a string of, and `cause` is laid on the new object as it is.
+  // JSDOMException.cpp: the message and a name that is no object are made strings of; of options that are an object `name` is read and made a string of, and `cause` is laid on the new object as it is.
   DOMException: {
     call: refused,
     construct: [
@@ -411,7 +411,7 @@ const constructionsOfClasses: Readonly<Record<string, b.ClassOptions>> = {
     ],
     proto: { code: readsStream(b.int(0, 65535)), name: readsStream(b.string), message: readsStream(b.string) },
   },
-  // JSErrorEvent.cpp :50-162 :206-236 :305-364, ErrorEvent.cpp :73: `colno` and `lineno` are made numbers of, `filename` and `message` strings; `error` is kept as it is. An event that has none answers null.
+  // JSErrorEvent.cpp, ErrorEvent.cpp :73: `colno` and `lineno` are made numbers of, `filename` and `message` strings; `error` is kept as it is. An event that has none answers null.
   // WorkerMessagingProxy.cpp, Worker.cpp and WebSocket.cpp make ErrorEvents of their own, with an error of their own making: the getter answers more than the program handed in.
   ErrorEvent: {
     ...constructionOfEventBelowEvent("ErrorEvent", [
@@ -426,7 +426,7 @@ const constructionsOfClasses: Readonly<Record<string, b.ClassOptions>> = {
       error: { ...readsStream(b.any), uses: { this: [b.returnedFrom(errorsOfEventsCell)] } },
     },
   },
-  // JSDOMFormData.cpp :158-178: it looks at none of its operands.
+  // JSDOMFormData.cpp: it looks at none of its operands.
   FormData: {
     call: refused,
     construct: {
@@ -463,7 +463,7 @@ const partOfByteStream = (name: string, proto: Readonly<Record<string, b.Field>>
     proto,
   });
 // A stream that the program has made runs the functions that it was made with. Every refusal has a message that is written in the C++.
-// write() and enqueue() describe nothing themselves. A chunk that a native transformer refuses in a later job (JSTextDecoderStream.cpp :350, JSCompressionStreamShared.cpp :128 :140 :151) is described there, by
+// write() and enqueue() describe nothing themselves. A chunk that a native transformer refuses in a later job (JSTextDecoderStream.cpp, JSCompressionStreamShared.cpp :128 :140 :151) is described there, by
 // determineSpecificType() in ErrorCode.cpp, which reads `constructor`, its `name`, makes a text of a name that is an object, and reads the symbol of inspection. What has a truthy constructor is called by that name.
 // What has none is described natively only if it is a plain object whose method of inspection is not callable, and is printed whole otherwise: an object that may have none brings the printer wherever it is refused
 // (noteInstancesLoseTheirConstructor() in AOTFactsOfProgram.cpp).

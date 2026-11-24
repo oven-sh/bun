@@ -1,10 +1,8 @@
-use core::ptr::NonNull;
-
 use bun_io::{Owner, PollTag};
 #[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
@@ -103,7 +101,7 @@ impl Writable {
         subprocess: &Subprocess<'_>,
         global: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        FileSink::assign_to_stream(pipe, stream, global).inspect_err(|_| {
+        pipe.assign_to_stream(stream, global).inspect_err(|_| {
             subprocess.weak_file_sink_stdin_ptr.set(None);
             subprocess.stdin_sink_ref.set(None);
         })
@@ -185,16 +183,12 @@ impl Writable {
                 let pipe_ref = FileSink::create(evtloop, file.fd());
 
                 let writer = &pipe_ref.writer;
-                match writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file.fd(), true) {
-                    // The writer closes it from now on.
-                    bun_sys::Result::Ok(()) => _ = file.into_raw(),
-                    bun_sys::Result::Err(err) => {
-                        drop(file);
-                        if let Stdio::ReadableStream(rs) = &mut stdio {
-                            rs.cancel(global)?;
-                        }
-                        return Err(global.throw_value(err.to_js(global)));
+                if let Err(err) = writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file, true)
+                {
+                    if let Stdio::ReadableStream(rs) = &mut stdio {
+                        rs.cancel(global)?;
                     }
+                    return Err(global.throw_value(err.to_js(global)));
                 }
 
                 writer.set_poll_flag(bun_io::FilePollFlag::Socket);
@@ -224,7 +218,10 @@ impl Writable {
         }
     }
 
-    pub(crate) fn to_js(subprocess: &Subprocess<'_>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(
+        subprocess: &RefPtr<Subprocess<'_>>,
+        global_this: &JSGlobalObject,
+    ) -> JSValue {
         // Take only the parent and project `stdin` here so no two `&mut`
         // overlap at any point.
         match subprocess.stdin.replace(Writable::Ignore) {
@@ -262,29 +259,25 @@ impl Writable {
                     // see https://github.com/oven-sh/bun/pull/14092).
                     pipe_ref.on_attached_process_exit(status);
                     // The wrapper takes `pipe_ref`'s ref.
-                    FileSink::to_js(pipe_ref, global_this)
+                    pipe_ref.to_js(global_this)
                 } else {
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
                     subprocess
                         .weak_file_sink_stdin_ptr
                         .set(Some(pipe_ref.as_non_null()));
-                    if subprocess.stdin_sink_ref.get().is_none() {
+                    if subprocess.stdin_sink_ref.is_none() {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
                         subprocess.hold_for_stdin_sink();
                     }
-                    let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
+                    let parent_ptr = subprocess.as_ptr().cast::<Subprocess<'static>>();
                     if matches!(pipe_ref.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                     {
                         pipe_ref.source.set(SourceHandle::None);
                     }
                     // The wrapper takes `pipe_ref`'s ref.
-                    FileSink::to_js_for_subprocess(
-                        pipe_ref,
-                        global_this,
-                        NonNull::from(subprocess).cast(),
-                    )
+                    pipe_ref.to_js_for_subprocess(global_this, subprocess.as_non_null().cast())
                 }
             }
         }

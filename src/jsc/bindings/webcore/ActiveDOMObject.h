@@ -45,7 +45,7 @@ public:
     void assertSuspendIfNeededWasCalled() const;
 
     // This function is used by JS bindings to determine if the JS wrapper should be kept alive or not.
-    // Also read on the GC thread (JS*Owner::isReachableFromOpaqueRoots), concurrently with the mutator.
+    // Also read on the GC thread (JSDOMWrapperOwner::isReachableFromOpaqueRoots), concurrently with the mutator.
     bool hasPendingActivity() const { return m_pendingActivityInstanceCount.load(std::memory_order_relaxed) || virtualHasPendingActivity(); }
 
     // This function must not have a side effect of creating an ActiveDOMObject.

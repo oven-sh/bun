@@ -10,8 +10,10 @@
 
 use core::ptr;
 
+use bun_event_loop::EventLoopTimer::{Clock, EventLoopTimer, OwnedTimer, Tag};
+
 use crate::virtual_machine::SweepResult;
-use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
+use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell, VirtualMachineRef};
 
 pub use bun_event_loop::ContextId;
 
@@ -55,19 +57,75 @@ pub struct ScriptExecutionContext {
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: core::cell::Cell<*mut core::ffi::c_void>,
-    /// The timers script of a graph's context set that have not been freed
-    /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
-    /// cancels exactly those. A VM's own contexts walk the timer heap.
-    timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
+    /// A graph's context: its [`ScriptTimer`]s that have not been freed. A VM's own contexts walk the timer heap.
+    timers: JsCell<bun_collections::ArrayHashMap<*const EventLoopTimer, ()>>,
 }
 
-/// What a pointer in a graph context's timer set points at.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ContextTimer {
-    /// `bun_runtime::timer::TimerObjectInternals` (setTimeout / setInterval / setImmediate).
-    Object,
-    /// [`crate::abort_signal::Timeout`] (`AbortSignal.timeout`).
-    AbortSignal,
+/// The node of a timer that script set: `setTimeout`, `setInterval`, `setImmediate`, `AbortSignal.timeout`.
+#[repr(C)]
+pub struct ScriptTimer {
+    node: OwnedTimer,
+    context: ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it was set.
+    generation: u32,
+}
+
+impl ScriptTimer {
+    #[inline]
+    pub fn new(
+        tag: Tag,
+        clock: Clock,
+        vm: &VirtualMachineRef,
+        context: &ScriptExecutionContext,
+    ) -> Self {
+        let node = OwnedTimer::init_paused(tag);
+        node.clock.set(clock);
+        Self {
+            node,
+            context: context.id(),
+            generation: vm.test_isolation_generation.get(),
+        }
+    }
+
+    /// The pointer to link, with the provenance of `this`.
+    pub const fn node(this: *const Self) -> *const EventLoopTimer {
+        this.cast()
+    }
+
+    /// Once `this`, made for `context`, has its final address: stopping a graph's context cancels it.
+    #[inline]
+    pub fn track(this: *const Self, vm: &VirtualMachineRef, context: &ScriptExecutionContext) {
+        if let Some(context) = vm.as_graph_context(context) {
+            context.track_timer(Self::node(this));
+        }
+    }
+
+    pub fn context(&self) -> ContextId {
+        self.context
+    }
+
+    /// Its context has stopped, or `bun test --isolate` has moved on to another file.
+    #[inline]
+    pub fn has_outlived_its_script(&self, vm: &VirtualMachineRef) -> bool {
+        self.generation != vm.test_isolation_generation.get() || !vm.is_context_live(self.context)
+    }
+}
+
+impl core::ops::Deref for ScriptTimer {
+    type Target = EventLoopTimer;
+
+    fn deref(&self) -> &EventLoopTimer {
+        &self.node
+    }
+}
+
+impl Drop for ScriptTimer {
+    fn drop(&mut self) {
+        if let Some(context) = VirtualMachineRef::get().timer_context(self.context) {
+            let node = Self::node(self);
+            context.timers.with_mut(|timers| timers.swap_remove(&node));
+        }
+    }
 }
 
 impl Default for ScriptExecutionContext {
@@ -170,26 +228,16 @@ impl ScriptExecutionContext {
         self.stop_again_queued.replace(true)
     }
 
-    /// A timer script of this (graph's) context set exists from here.
-    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+    fn track_timer(&self, timer: *const EventLoopTimer) {
         self.timers
-            .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
+            .with_mut(|timers| bun_core::handle_oom(timers.put(timer, ())));
         if self.is_stopped() {
-            crate::VirtualMachineRef::get().stop_graph_context_again(self.id());
+            VirtualMachineRef::get().stop_graph_context_again(self.id());
         }
     }
 
-    /// It is being freed.
-    pub fn untrack_timer(&self, timer: *mut core::ffi::c_void) {
-        self.timers.with_mut(|timers| {
-            timers.swap_remove(&timer);
-        });
-    }
-
     /// The context stopped: its live timers, for the caller to cancel.
-    pub fn take_timers(
-        &self,
-    ) -> bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer> {
+    pub fn take_timers(&self) -> bun_collections::ArrayHashMap<*const EventLoopTimer, ()> {
         self.timers.take()
     }
 

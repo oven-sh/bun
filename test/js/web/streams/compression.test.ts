@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import zlib from "node:zlib";
+import { streamOf } from "../../node/zlib/zlib-golden/engine";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
 // $inheritsTransformStream() returns true (node:stream utils). The JS-visible
@@ -172,6 +173,31 @@ describe("CompressionStream and DecompressionStream", () => {
       await writer.close();
       await readAll;
       expect(received).toBe(firstLine.length + secondLine.length);
+    });
+
+    const hello = zlib.brotliCompressSync("hello");
+    const junk = Buffer.from("junk");
+    const trailingJunk = {
+      code: "ERR_TRAILING_JUNK_AFTER_STREAM_END",
+      message: "Trailing junk found after the end of the compressed stream",
+    };
+    const unexpectedEnd = { message: "unexpected end of file" };
+
+    test.each([
+      ["junk in the last chunk", [Buffer.concat([hello, junk])], trailingJunk],
+      ["junk in a chunk of its own", [hello, junk], trailingJunk],
+      ["a second stream", [hello, hello], trailingJunk],
+      ["a stream without its last byte", [hello.subarray(0, -1)], unexpectedEnd],
+      ["no input", [], unexpectedEnd],
+    ])("DecompressionStream rejects %s", async (_, chunks, error) => {
+      const read = ReadableStream.from(chunks).pipeThrough(new DecompressionStream("brotli")).text();
+      await expect(read).rejects.toMatchObject({ name: "TypeError", ...error });
+    });
+
+    test("DecompressionStream takes a byte at a time, and empty chunks anywhere", async () => {
+      const empty = new Uint8Array(0);
+      const chunks = [empty, ...[...hello].flatMap(byte => [Uint8Array.of(byte), empty])];
+      expect(await ReadableStream.from(chunks).pipeThrough(new DecompressionStream("brotli")).text()).toBe("hello");
     });
   });
 
@@ -345,6 +371,18 @@ describe("CompressionStream and DecompressionStream", () => {
 
       const out = await new Response(new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
       expect(out).toBe("payload");
+    });
+
+    test("accepts any number of empty chunks inside a zstd frame", async () => {
+      const frame = zlib.zstdCompressSync(Buffer.from("hello"));
+      const ds = new DecompressionStream("zstd");
+      const writer = ds.writable.getWriter();
+      const read = new Response(ds.readable).text();
+      await writer.write(frame.subarray(0, -1));
+      for (let i = 0; i < 20; i++) await writer.write(new Uint8Array(0));
+      await writer.write(frame.subarray(-1));
+      await writer.close();
+      expect(await read).toBe("hello");
     });
 
     test("rejects trailing garbage after a zstd frame", async () => {
@@ -568,9 +606,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     } catch (e: any) {
       expect(e).toBeInstanceOf(TypeError);
       expect(Object.hasOwn(e, "code")).toBe(true);
-      // Node builds these as "ERR_" + BrotliDecoderErrorString(), and brotli
-      // returns the macro PREFIX+NAME ("_ERROR_FORMAT_" + "PADDING_2"), so the
-      // double underscore is what node:zlib emits.
+      // The double underscore is what node:zlib emits.
       expect(e.code).toBe("ERR__ERROR_FORMAT_PADDING_2");
       expect(e.cause.code).toBe(e.code);
     }
@@ -827,6 +863,59 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     ).text();
 
     expect(decoded).toBe("hello world");
+  });
+});
+
+describe("where a stream of the zlib formats ends", () => {
+  const text = "hello hello hello";
+  const streams = {
+    "deflate": zlib.deflateSync(text),
+    "deflate-raw": zlib.deflateRawSync(text),
+    "gzip": zlib.gzipSync(text),
+  };
+  const formats = Object.keys(streams) as (keyof typeof streams)[];
+
+  async function outcome(format: keyof typeof streams, ...chunks: Uint8Array[]) {
+    return new Response(streamOf(chunks).pipeThrough(new DecompressionStream(format))).text().catch(error => error);
+  }
+  const failure = (message: string) => expect.objectContaining({ name: "TypeError", message });
+  const junk = expect.objectContaining({ name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
+
+  test.each(formats)("%s: not before its last byte", async format => {
+    const whole = streams[format];
+    expect(await outcome(format, whole.subarray(0, -1), whole.subarray(-1))).toBe(text);
+    expect(await outcome(format, whole.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format, whole.subarray(0, 1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format)).toEqual(failure("unexpected end of file"));
+  });
+
+  test.each(["deflate", "deflate-raw"] as const)("%s: nothing may follow, not even another stream", async format => {
+    const whole = streams[format];
+    for (const more of [whole, Buffer.alloc(1)]) {
+      expect(await outcome(format, Buffer.concat([whole, more]))).toEqual(junk);
+      expect(await outcome(format, whole, more)).toEqual(junk);
+    }
+    expect(await outcome(format, whole, new Uint8Array())).toBe(text);
+  });
+
+  test("gzip: only a whole member may follow, in the same chunk or a later one", async () => {
+    const member = streams.gzip;
+    expect(await outcome("gzip", member, member)).toBe(text + text);
+    expect(await outcome("gzip", member, member.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome("gzip", Buffer.concat([member, member.subarray(0, 1)]))).toEqual(
+      failure("unexpected end of file"),
+    );
+    expect(await outcome("gzip", member, Buffer.from("junk"))).toBeInstanceOf(TypeError);
+    expect(await outcome("gzip", Buffer.concat([member, Buffer.from("junk")]))).toBeInstanceOf(TypeError);
+  });
+
+  test.each(formats)("%s: at damage", async format => {
+    expect(await outcome(format, Buffer.from([0xff, 0xff]))).toEqual(failure("inflate failed"));
+  });
+
+  test("deflate: where it asks for a dictionary", async () => {
+    const asks = zlib.deflateSync(text, { dictionary: Buffer.from("hello") });
+    expect(await outcome("deflate", asks)).toEqual(failure("Missing dictionary"));
   });
 });
 
@@ -1230,6 +1319,38 @@ describe("bounded output per input chunk", () => {
     await written;
     expect(largest(pieces)).toBeLessThanOrEqual(kDefaultHighWaterMark);
     expect(inflaters[format](Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test.each([16 * 1024, kDefaultHighWaterMark])("brotli: output of exactly %d bytes is one piece", async size => {
+    const through = (chunk: Uint8Array, codec: CompressionStream | DecompressionStream) =>
+      Array.fromAsync(ReadableStream.from([chunk]).pipeThrough(codec));
+    // Storing incompressible input adds four bytes.
+    const input = randomBytes(size - 4);
+    const compressed = await through(input, new CompressionStream("brotli"));
+    expect(compressed.map(piece => piece.byteLength)).toEqual([size]);
+    expect(zlib.brotliDecompressSync(compressed[0]).equals(input)).toBe(true);
+
+    const zeros = new Uint8Array(size);
+    expect(await through(zlib.brotliCompressSync(zeros), new DecompressionStream("brotli"))).toEqual([zeros]);
+  });
+
+  test.each([130_000, 200_000])("CompressionStream(brotli): a step ends in the middle of %d bytes", async size => {
+    // The encoder holds its output back until a match comes after a MiB of literals.
+    const chunks = Array.from({ length: Math.ceil(1_300_000 / size) }, () => randomBytes(size).fill(0, 0, 64));
+    const codec = new CompressionStream("brotli", { level: 4 });
+    const pieces = await Array.fromAsync(ReadableStream.from(chunks).pipeThrough(codec));
+    expect(largest(pieces)).toBe(size);
+    expect(zlib.brotliDecompressSync(Buffer.concat(pieces)).equals(Buffer.concat(chunks))).toBe(true);
+  });
+
+  test("DecompressionStream(brotli): a step ends in the middle of a chunk", async () => {
+    const plain = Buffer.from(randomBytes(20_000).toString("hex"));
+    // The decoder stops reading when its window is full.
+    const compressed = zlib.brotliCompressSync(plain, { params: { [zlib.constants.BROTLI_PARAM_LGWIN]: 10 } });
+    const codec = new DecompressionStream("brotli", { highWaterMark: 1000 });
+    const pieces = await Array.fromAsync(ReadableStream.from([compressed]).pipeThrough(codec));
+    expect(largest(pieces)).toBe(compressed.length);
+    expect(Buffer.concat(pieces).equals(plain)).toBe(true);
   });
 
   // The close algorithm clears the transform's algorithms (which normally frees

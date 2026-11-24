@@ -409,6 +409,11 @@ export const calls: Record<string, string[]> = {
   Iterator: ["new (class extends Iterator {})()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],
   URLPattern: ['new URLPattern({ pathname: "/a/:b" })', 'new URLPattern("/a/*", "https://example.com")'],
+  "URLPattern.prototype.exec": [
+    'new URLPattern({ pathname: "/a/:b" }).exec("https://example.com/a/1")',
+    'new URLPattern({ pathname: "/a/:b?" }).exec({ pathname: "/a" })',
+    'new URLPattern().exec("/a", "https://example.com")',
+  ],
   "Error.prepareStackTrace > Array": [
     'let handed;\nError.prepareStackTrace = (error, sites) => ((handed = sites), "");\nvoid new Error("x").stack;\nError.prepareStackTrace = undefined;\nhanded',
   ],

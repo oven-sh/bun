@@ -1,5 +1,6 @@
-import { randomUUIDv7, RedisClient } from "bun";
+import { randomUUIDv7, RedisClient, S3Client } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { ConnectionType, createClient, ctx, isEnabled, readCommands } from "../test-utils";
 
 /**
@@ -285,18 +286,19 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
 describe("Valkey: Command Arguments", () => {
   type Call = [method: string, ...args: unknown[]];
-  const show = (arg: unknown) => (arg instanceof String ? `new String("${arg}")` : Bun.inspect(arg));
+  const show = (arg: unknown) => (arg instanceof String ? `new String("${arg}")` : Bun.inspect(arg, { compact: true }));
   const title = ([method, ...args]: Call) => `${method}(${args.map(show).join(", ")})`;
   const run = (client: RedisClient, [method, ...args]: Call) => (client as any)[method](...args);
 
-  /** A client of a server that acknowledges SUBSCRIBE, answers GET with "v" and anything else with 1. */
-  async function connect() {
+  /** A client of a server that acknowledges SUBSCRIBE, has the replies below and answers anything else with 1. */
+  async function connect(url = (port: number): string | URL => `redis://127.0.0.1:${port}`) {
     const received: string[][] = [];
     const state = { buffer: Buffer.alloc(0) };
     const replies: Record<string, string> = {
       HELLO: "+OK\r\n",
       SUBSCRIBE: ">3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n",
       GET: "$1\r\nv\r\n",
+      SELECT: "+OK\r\n",
     };
     const server = Bun.listen({
       hostname: "127.0.0.1",
@@ -311,10 +313,11 @@ describe("Valkey: Command Arguments", () => {
         },
       },
     });
-    const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
+    const client = new RedisClient(url(server.port));
     await client.connect();
     return {
       client,
+      received,
       lastReceived: () => received.at(-1),
       [Symbol.dispose]() {
         client.close();
@@ -341,12 +344,61 @@ describe("Valkey: Command Arguments", () => {
     { call: ["lpush", "k", "a", undefined, "b"], sends: ["LPUSH", "k", "a", "b"], resolves: 1 },
     { call: ["del", "a", null, "b"], sends: ["DEL", "a", "b"], resolves: 1 },
     { call: ["sadd", "k", "a", null, "b"], sends: ["SADD", "k", "a", "b"], resolves: 1 },
+    { call: ["srem", "k", "a", "b"], sends: ["SREM", "k", "a", "b"], resolves: 1 },
     { call: ["srem", "k", undefined, "a", "b"], sends: ["SREM", "k", "a", "b"], resolves: 1 },
     { call: ["spop", "k"], sends: ["SPOP", "k"], resolves: 1 },
     { call: ["srandmember", "k", 2, 3], sends: ["SRANDMEMBER", "k", "2"], resolves: 1 },
     { call: ["hincrby", "k", false, new Number(2)], sends: ["HINCRBY", "k", "false", "2"], resolves: 1 },
     { call: ["hincrbyfloat", "k", "f", 1.5], sends: ["HINCRBYFLOAT", "k", "f", "1.5"], resolves: 1 },
     { call: ["publish", new String("ch"), "m"], sends: ["PUBLISH", "ch", "m"], resolves: 1 },
+    { call: ["publish", "ch", Buffer.of(0xff, 0)], sends: ["PUBLISH", "ch", "\xff\0"], resolves: 1 },
+    { call: ["publish", "ch", new Blob(["m"])], sends: ["PUBLISH", "ch", "m"], resolves: 1 },
+    { call: ["publish", "ch", 1], sends: ["PUBLISH", "ch", "1"], resolves: 1 },
+    { call: ["set", "k", "v", "NX", undefined, null], sends: ["SET", "k", "v", "NX"], resolves: 1 },
+    { call: ["set", "k", new Blob(["v"])], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["set", "k", new Blob([])], sends: ["SET", "k", ""], resolves: 1 },
+    { call: ["hmget", "k", "a", "b", undefined], sends: ["HMGET", "k", "a", "b"], resolves: 1 },
+    { call: ["mget", "a", "b", null, undefined], sends: ["MGET", "a", "b"], resolves: 1 },
+    { call: ["zmscore", "k", "a", undefined], sends: ["ZMSCORE", "k", "a"], resolves: 1 },
+    { call: ["set", "k", "v", undefined, "0"], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["set", "k", "v", undefined, ""], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["set", "k", "v", "EX", 60, null, "old value"], sends: ["SET", "k", "v", "EX", "60"], resolves: 1 },
+    { call: ["hincrby", "k", "f", Uint8Array.of(5)], sends: ["HINCRBY", "k", "f", "5"], resolves: 1 },
+    { call: ["set", "k", "v", undefined, 0], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["set", "k", "v", undefined, false], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["set", "k", "v", undefined, NaN], sends: ["SET", "k", "v"], resolves: 1 },
+    { call: ["hscan", "k", 0, undefined, null, "COUNT", 9], sends: ["HSCAN", "k", "0", "COUNT", "9"], resolves: 1 },
+    { call: ["zrank", "k", "a", undefined, "WITHSCORE"], sends: ["ZRANK", "k", "a", "WITHSCORE"], resolves: 1 },
+    { call: ["zrevrank", "k", "a", undefined, "WITHSCORE"], sends: ["ZREVRANK", "k", "a", "WITHSCORE"], resolves: 1 },
+    { call: ["hrandfield", "k", undefined, 2], sends: ["HRANDFIELD", "k", "2"], resolves: 1 },
+    { call: ["zrandmember", "k", undefined, 2], sends: ["ZRANDMEMBER", "k", "2"], resolves: 1 },
+    { call: ["zrangebylex", "k", "-", undefined, "+"], sends: ["ZRANGEBYLEX", "k", "-", "+"], resolves: 1 },
+    { call: ["zrevrangebylex", "k", "+", undefined, "-"], sends: ["ZREVRANGEBYLEX", "k", "+", "-"], resolves: 1 },
+    { call: ["lpop", "k", undefined, 2], sends: ["LPOP", "k", "2"], resolves: 1 },
+    { call: ["rpop", "k", undefined, 2], sends: ["RPOP", "k", "2"], resolves: 1 },
+    { call: ["zpopmin", "k", undefined, 2], sends: ["ZPOPMIN", "k", "2"], resolves: 1 },
+    { call: ["zpopmax", "k", undefined, 2], sends: ["ZPOPMAX", "k", "2"], resolves: 1 },
+    { call: ["bitcount", "k", 0], sends: ["BITCOUNT", "k"], resolves: 1 },
+    { call: ["increx", "k", undefined, "BYINT", 5], sends: ["INCREX", "k", "BYINT", "5"], resolves: 1 },
+    { call: ["hset", "k", "f", undefined], sends: ["HSET", "k", "f", "undefined"], resolves: 1 },
+    { call: ["hset", "k", { f: null }], sends: ["HSET", "k", "f", "null"], resolves: 1 },
+    { call: ["hmset", "k", ["f", null]], sends: ["HMSET", "k", "f", "null"], resolves: 1 },
+    { call: ["hset", Buffer.of(0xff), "f", "v"], sends: ["HSET", "\xff", "f", "v"], resolves: 1 },
+    { call: ["hset", "k", Buffer.of(0xff), "v"], sends: ["HSET", "k", "\xff", "v"], resolves: 1 },
+    { call: ["hset", "k", new Blob(["f"]), "v"], sends: ["HSET", "k", "f", "v"], resolves: 1 },
+    { call: ["hset", "k", "f", Uint8Array.of(7, 0xff)], sends: ["HSET", "k", "f", "\x07\xff"], resolves: 1 },
+    { call: ["hset", "k", "f", new Uint8Array(0)], sends: ["HSET", "k", "f", ""], resolves: 1 },
+    { call: ["hset", "k", "f", new ArrayBuffer(0)], sends: ["HSET", "k", "f", ""], resolves: 1 },
+    { call: ["hset", "k", { f: Buffer.of(0xff, 0, 0x41) }], sends: ["HSET", "k", "f", "\xff\0A"], resolves: 1 },
+    { call: ["hset", "k", { f: new Blob(["v"]) }], sends: ["HSET", "k", "f", "v"], resolves: 1 },
+    {
+      call: ["hset", "k", { a: true, b: 1n, c: ["x", "y"], d: new String("s") }],
+      sends: ["HSET", "k", "a", "true", "b", "1", "c", "x,y", "d", "s"],
+      resolves: 1,
+    },
+    { call: ["hmset", "k", [Buffer.of(0xfe), Buffer.of(0xff)]], sends: ["HMSET", "k", "\xfe", "\xff"], resolves: 1 },
+    { call: ["hincrby", "k", Buffer.of(0xff), 1n], sends: ["HINCRBY", "k", "\xff", "1"], resolves: 1 },
+    { call: ["hincrbyfloat", Buffer.of(0xff), "f", 1], sends: ["HINCRBYFLOAT", "\xff", "f", "1"], resolves: 1 },
   ];
   for (const { call, sends, resolves } of sent) {
     test(`${title(call)} sends ${JSON.stringify(sends)}`, async () => {
@@ -379,7 +431,26 @@ describe("Valkey: Command Arguments", () => {
     { call: ["spop"], throws: "Expected key to be a string or buffer for 'spop'." },
     { call: ["srandmember", "k", {}], throws: "Expected count to be a number or string for 'srandmember'." },
     { call: ["publish", 1, 2], throws: "Expected channel to be a string for 'publish'." },
-    { call: ["publish", "ch", Buffer.from("m")], throws: "Expected message to be a string for 'publish'." },
+    { call: ["publish", "ch", {}], throws: "Expected message to be a string or buffer for 'publish'." },
+    { call: ["set", "k", "v", undefined, "NX"], throws: "set() cannot send NX after a null or undefined argument" },
+    { call: ["set", "k", "v", undefined, undefined, "xx"], throws: "set() cannot send XX after" },
+    { call: ["set", "k", "v", undefined, 0, "GET"], throws: "set() cannot send GET after" },
+    { call: ["set", "k", "v", null, "EX", 60], throws: "set() cannot send EX after" },
+    { call: ["set", "k", "v", "IFEQ", null, "KEEPTTL"], throws: "set() cannot send KEEPTTL after" },
+    { call: ["set", "k", "v", "GET", false], throws: "Expected arguments to be a string or buffer for 'set'." },
+    {
+      call: ["mget", "a", undefined, "c"],
+      throws: "Expected additional arguments to be a string or buffer for 'mget'.",
+    },
+    {
+      call: ["zmscore", "k", null, "c"],
+      throws: "Expected additional arguments to be a string or buffer for 'zmscore'.",
+    },
+    { call: ["hmget", "k", "a", null, "b"], throws: "Expected field to be a string or buffer for 'hmget'." },
+    { call: ["hset", undefined, "f", "v"], throws: "Expected key to be a string or buffer for 'hset'." },
+    { call: ["hset", "k", null, "v"], throws: "Expected field to be a string or buffer for 'hset'." },
+    { call: ["hmset", "k", [null, "v"]], throws: "Expected field to be a string or buffer for 'hmset'." },
+    { call: ["hset", "k", Buffer.from("f")], throws: "HSET requires at least key, field, and value arguments" },
   ];
   for (const { call, throws } of refused) {
     test(`${title(call)} throws`, async () => {
@@ -388,8 +459,99 @@ describe("Valkey: Command Arguments", () => {
     });
   }
 
+  const file = Bun.file(import.meta.path);
+  const s3 = new S3Client({ endpoint: "http://127.0.0.1:1", accessKeyId: "k", secretAccessKey: "s" }).file("b/o");
+  const unread: { name: string; call: Call; throws: string }[] = [
+    { name: "set(k, Bun.file())", call: ["set", "k", file], throws: "File blob" },
+    { name: "set(k, new Blob([Bun.file()]))", call: ["set", "k", new Blob([file])], throws: "File blob" },
+    { name: "set(k, s3.file())", call: ["set", "k", s3], throws: "S3 blob" },
+    { name: "set(k, new Blob([s3.file()]))", call: ["set", "k", new Blob([s3])], throws: "S3 blob" },
+    { name: "send(SET, [k, Bun.file()])", call: ["send", "SET", ["k", file]], throws: "File blob" },
+    { name: "hset(k, f, s3.file())", call: ["hset", "k", "f", s3], throws: "S3 blob" },
+  ];
+  for (const { name, call, throws } of unread) {
+    test(`${name} throws`, async () => {
+      using server = await connect();
+      expect(() => run(server.client, call)).toThrow(`${throws} cannot be used here`);
+    });
+  }
+
+  const detached = Uint8Array.of(1);
+  detached.buffer.transfer();
+  const resizable = new ArrayBuffer(2, { maxByteLength: 2 });
+  const outOfBounds = new Uint8Array(resizable, 1, 1);
+  resizable.resize(0);
+  const gone: { name: string; call: Call }[] = [
+    { name: "hset(k, f, detached)", call: ["hset", "k", "f", detached] },
+    { name: "hset(k, detached, v)", call: ["hset", "k", detached, "v"] },
+    { name: "hset(k, f, outOfBounds)", call: ["hset", "k", "f", outOfBounds] },
+    { name: "hincrby(k, detached, 1)", call: ["hincrby", "k", detached, 1] },
+  ];
+  for (const { name, call } of gone) {
+    test(`${name} throws`, async () => {
+      using server = await connect();
+      expect(() => run(server.client, call)).toThrow("Underlying ArrayBuffer has been detached");
+    });
+  }
+
+  test("send() sends a buffer as its bytes and a number as text", async () => {
+    using server = await connect();
+    await server.client.send("SET", ["k", Buffer.of(0xff, 0), "EX", 60]);
+    expect(server.lastReceived()).toEqual(["SET", "k", "\xff\0", "EX", "60"]);
+  });
+
+  test("a URL object selects the database of its path", async () => {
+    using server = await connect(port => new URL(`redis://127.0.0.1:${port}/5`));
+    await server.client.ping();
+    expect(server.received).toEqual([["HELLO", "3"], ["SELECT", "5"], ["PING"]]);
+  });
+
+  // One character is one byte on the wire.
+  test.each([
+    ["jos%C3%A9:pw", "jos\xc3\xa9", "pw"],
+    [":p%40ss%2541+", "default", "p@ss%41+"],
+    ["us%00er:p%00w", "us\0er", "p\0w"],
+    ["a@b:%zz%4", "a@b", "%zz%4"],
+  ])("redis://%s@host logs in as %j with %j", async (credentials, username, password) => {
+    using server = await connect(port => `redis://${credentials}@127.0.0.1:${port}`);
+    expect(server.received).toEqual([["HELLO", "3", "AUTH", username, password]]);
+  });
+
+  test.each([
+    ["jos%E9:pw", "username"],
+    ["user:p%E9ss", "password"],
+    [":%ff%fe", "password"],
+    [":%ED%A0%80", "password"],
+    [":%C0%AF", "password"],
+  ])("redis://%s@host throws for its %s, as decodeURIComponent() does", (credentials, part) => {
+    expect(() => decodeURIComponent(credentials)).toThrow(URIError);
+    expect(() => new RedisClient(`redis://${credentials}@localhost`)).toThrow(
+      expect.objectContaining({
+        name: "URIError",
+        code: "ERR_INVALID_URI",
+        message: `The ${part} in the Redis URL does not decode to UTF-8. Encode it with encodeURIComponent().`,
+      }),
+    );
+  });
+
+  test("Bun.redis throws for such a REDIS_URL", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `try { Bun.redis } catch (error) { console.log(error.code) }`],
+      env: { ...bunEnv, REDIS_URL: "redis://:ab%cd@localhost" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ERR_INVALID_URI\n", stderr: "", exitCode: 0 });
+  });
+
+  test("the error for an unknown scheme names every scheme", () => {
+    expect(() => new RedisClient("http://localhost")).toThrow(
+      "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
+    );
+  });
+
   // No arguments: the mode is checked before they are.
-  for (const [method] of sent.map(row => row.call)) {
+  for (const method of new Set(sent.map(row => row.call[0]))) {
     test(`${method}() throws in subscriber mode`, async () => {
       using server = await connect();
       await server.client.subscribe("ch", () => {});

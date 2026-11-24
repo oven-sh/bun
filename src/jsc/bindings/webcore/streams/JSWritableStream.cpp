@@ -9,6 +9,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
@@ -19,7 +20,6 @@
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
@@ -36,70 +36,17 @@ static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked);
-static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_constructor);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom);
 
-class JSWritableStreamPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSWritableStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSWritableStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWritableStreamPrototype))) JSWritableStreamPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWritableStreamPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSWritableStreamPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWritableStreamPrototype, JSWritableStreamPrototype::Base);
+using JSWritableStreamPrototype = JSDOMPrototype<JSWritableStream>;
 
 // JSWritableStreamConstructor = JSStreamConstructor<JSWritableStream>.
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSWritableStreamConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSWritableStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSWritableStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSWritableStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSWritableStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSWritableStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSWritableStreamConstructor::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamConstructor) };
-
-template<> JSValue JSWritableStreamConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSWritableStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSWritableStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSWritableStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSWritableStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -153,14 +100,14 @@ JSC_ANNOTATE_HOST_FUNCTION(JSWritableStreamConstructorConstruct, JSWritableStrea
 // JSWritableStreamPrototype
 
 static const HashTableValue JSWritableStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWritableStreamPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSWritableStreamPrototype::constructorGetter, 0 } },
     { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsWritableStreamPrototypeGetter_locked, 0 } },
     { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamPrototypeFunction_abort, 0 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamPrototypeFunction_close, 0 } },
     { "getWriter"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamPrototypeFunction_getWriter, 0 } },
 };
 
-const ClassInfo JSWritableStreamPrototype::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamPrototype) };
+template<> const ClassInfo JSWritableStreamPrototype::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -191,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStream"_s, data));
 }
 
-void JSWritableStreamPrototype::finishCreation(VM& vm)
+template<> void JSWritableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
@@ -235,9 +182,7 @@ Structure* JSWritableStream::createStructure(VM& vm, JSGlobalObject* globalObjec
 
 JSObject* JSWritableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSWritableStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSWritableStreamPrototype::create(vm, &globalObject, structure);
+    return JSWritableStreamPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSWritableStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -305,16 +250,6 @@ void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 }
 
 // Prototype host functions
-
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSWritableStreamPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSWritableStream::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

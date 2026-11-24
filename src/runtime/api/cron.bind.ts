@@ -30,15 +30,17 @@ export const CronOptions = b.dictionary(
   { allowArray: true, reportedAs: "Bun.cron: options" },
 );
 
+export const CronPath = b.union({ text: b.string.utf8, url: b.url });
+
 const signature = { export: "Bun__Cron__cron", feature: "Cron", capability: "js", throws: true } as const;
 
 export const cron = b.overloads(
   /** An OS-level job. */
   {
     ...signature,
-    args: { path: b.string.utf8, schedule: b.string.utf8, title: b.string.utf8 },
+    args: { path: CronPath, schedule: b.string.utf8, title: b.string.utf8 },
     expected: {
-      path: "Bun.cron() expects a string path as the first argument",
+      path: "Bun.cron() expects a string or URL path as the first argument",
       schedule: "Bun.cron() expects a string schedule as the second argument",
       title: "Bun.cron() expects a string title as the third argument",
     },

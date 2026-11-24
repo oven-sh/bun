@@ -42,10 +42,10 @@ inline JSDOMObject* ScriptWrappable::wrapper() const
     return m_wrapper.get();
 }
 
-inline void ScriptWrappable::setWrapper(JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner, void* context)
+inline void ScriptWrappable::setWrapper(JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner)
 {
     ASSERT(!m_wrapper);
-    m_wrapper = JSC::Weak<JSDOMObject>(wrapper, wrapperOwner, context);
+    m_wrapper = JSC::Weak<JSDOMObject>(wrapper, wrapperOwner);
 }
 
 inline void ScriptWrappable::clearWrapper(JSDOMObject* wrapper)

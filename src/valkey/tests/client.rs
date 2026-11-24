@@ -1,10 +1,32 @@
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Sent};
+use bun_valkey::client::{
+    Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
+};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::RESPValue;
 
 /// Stands in for wtf-bindings.cpp; no test sends a double.
 #[unsafe(no_mangle)]
 extern "C" fn WTF__parseDouble(_: *const u8, _: usize, _: *mut usize) -> f64 {
+    unreachable!()
+}
+
+/// Stands in for highway_strings.cpp.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memmem(
+    text: *const u8,
+    len: usize,
+    part: *const u8,
+    part_len: usize,
+) -> *const u8 {
+    use core::slice::from_raw_parts;
+    // SAFETY: the caller passes two slices.
+    let (text, part) = unsafe { (from_raw_parts(text, len), from_raw_parts(part, part_len)) };
+    (text.windows(part_len).find(|window| *window == part))
+        .map_or(core::ptr::null(), <[u8]>::as_ptr)
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn highway_index_of_char(_: *const u8, _: usize, _: u8) -> usize {
     unreachable!()
 }
 
@@ -63,7 +85,10 @@ impl Driver {
     }
 
     fn dial(&mut self) {
-        let attempt = self.client.first_dial().or_else(|| self.client.redial());
+        let attempt = self
+            .client
+            .claim_and_dial()
+            .or_else(|| self.client.redial());
         self.attempt = Some(attempt.unwrap());
     }
 
@@ -166,6 +191,14 @@ impl Driver {
                     self.fail();
                     return self.lost();
                 }
+                Event::Busy(message) => {
+                    self.log
+                        .push(format!("busy ConnectionClosed {}", message.escape_ascii()));
+                    if !self.client.abandon_handshake() {
+                        self.fail();
+                    }
+                    return self.lost();
+                }
             };
             self.log.push(line);
             self.checkpoint();
@@ -187,7 +220,7 @@ impl Driver {
     fn lost(&mut self) {
         self.batch_is_due = false;
         let line = match self.lose(false) {
-            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason}"),
+            Lost::ForGood { reason, pending } => format!("closed {pending:?} {reason:?}"),
             Lost::Retry {
                 delay_ms,
                 in_flight,
@@ -216,6 +249,7 @@ mod lifecycle {
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
@@ -223,20 +257,21 @@ mod lifecycle {
     }
     use State::*;
 
-    const STATES: [State; 10] = [
+    const STATES: [State; 11] = [
         Idle,
         Dialing,
         Hello,
         Select,
         Ready,
         EndingPolicy,
+        EndingRequested,
         EndingFinal,
         EndingFailed,
         Backoff,
         Closed,
     ];
 
-    /// With commands 1 and 2 waiting wherever they can.
+    /// With two commands waiting wherever they can.
     fn reach(state: State) -> Driver {
         let mut it = Driver::new(database(1));
         if state != Idle {
@@ -257,7 +292,13 @@ mod lifecycle {
                 it.read("+OK\r\n");
             }
             EndingPolicy => it.client.dial_failed(),
-            EndingFinal => drop(it.client.close()),
+            EndingRequested => drop(it.client.close()),
+            EndingFinal => {
+                it.fail();
+                it.client.connect();
+                it.send("WATCH c");
+                it.send("WATCH d");
+            }
             EndingFailed => it.fail(),
             Backoff => it.lost(),
             Closed => {
@@ -272,29 +313,36 @@ mod lifecycle {
     /// The core keeps its state private, so this tells them apart through what they do.
     fn state_of(mut it: Driver) -> State {
         it.log.clear();
-        if it.client.first_dial().is_some() {
+        if it.client.claim_and_dial().is_some() {
             Idle
         } else if it.client.redial().is_some() {
             Backoff
         } else if it.client.is_connected() {
-            it.read(":1\r\n");
-            if it.log[0].starts_with("broken") {
-                Select
-            } else {
-                Ready
-            }
-        } else if !it.client.is_active() {
+            Ready
+        } else if it.client.awaited() == Awaited::No {
             Closed
         } else if it.client.is_ending() && it.client.rejection().is_some() {
             EndingFailed
         } else if it.client.is_ending() {
             match it.lose(false) {
+                Lost::ForGood {
+                    reason: Reason::Requested,
+                    ..
+                } => EndingRequested,
                 Lost::ForGood { .. } => EndingFinal,
                 Lost::Retry { .. } => EndingPolicy,
             }
         } else {
             it.start();
-            if it.log.is_empty() { Hello } else { Dialing }
+            if !it.log.is_empty() {
+                return Dialing;
+            }
+            it.read("+OK\r\n");
+            if it.client.is_connected() {
+                Select
+            } else {
+                Hello
+            }
         }
     }
 
@@ -321,7 +369,7 @@ mod lifecycle {
     #[test]
     fn dial() {
         check(
-            |it| it.attempt = it.client.first_dial().or(it.attempt.take()),
+            |it| it.attempt = it.client.claim_and_dial().or(it.attempt.take()),
             &[(Idle, "", Dialing)],
         );
         check(
@@ -335,7 +383,7 @@ mod lifecycle {
         check(
             |it| it.client.connect(),
             &[
-                (EndingFinal, "", EndingPolicy),
+                (EndingRequested, "", EndingPolicy),
                 (EndingFailed, "", EndingFinal),
                 (Closed, "", Backoff),
             ],
@@ -355,12 +403,12 @@ mod lifecycle {
         check(
             close,
             &[
-                (Dialing, "close the socket", EndingFinal),
-                (Hello, "close the socket", EndingFinal),
-                (Select, "close the socket", EndingFinal),
-                (Ready, "close the socket", EndingFinal),
-                (EndingPolicy, "", EndingFinal),
-                (Backoff, "disarm the retry", EndingFinal),
+                (Dialing, "close the socket", EndingRequested),
+                (Hello, "close the socket", EndingRequested),
+                (Select, "close the socket", EndingRequested),
+                (Ready, "close the socket", EndingRequested),
+                (EndingPolicy, "", EndingRequested),
+                (Backoff, "disarm the retry", EndingRequested),
             ],
         );
     }
@@ -376,7 +424,8 @@ mod lifecycle {
                 (Select, "fail Some([1, 2])", EndingFailed),
                 (Ready, "fail Some([1, 2])", EndingFailed),
                 (EndingPolicy, "fail Some([1, 2])", EndingFailed),
-                (EndingFinal, "fail Some([1, 2])", EndingFailed),
+                (EndingRequested, "fail Some([1, 2])", EndingFailed),
+                (EndingFinal, "fail Some([3, 4])", EndingFailed),
                 (EndingFailed, "fail None", EndingFailed),
                 (Backoff, "fail None", Backoff),
                 (Closed, "fail None", Closed),
@@ -399,8 +448,9 @@ mod lifecycle {
                 (Select, "retry in 50 []", Backoff),
                 (Ready, "retry in 50 [1]", Backoff),
                 (EndingPolicy, "retry in 50 []", Backoff),
-                (EndingFinal, "closed [1, 2] Connection closed", Closed),
-                (EndingFailed, "closed [] Connection closed", Closed),
+                (EndingRequested, "closed [1, 2] Requested", Closed),
+                (EndingFinal, "closed [3, 4] Final", Closed),
+                (EndingFailed, "closed [] Final", Closed),
             ],
         );
     }
@@ -458,9 +508,10 @@ mod lifecycle {
                 (Idle, 10000),
                 (Dialing, 10000),
                 (Hello, 10000),
-                (Select, 7),
+                (Select, 10000),
                 (Ready, 7),
                 (EndingPolicy, 10000),
+                (EndingRequested, 10000),
                 (EndingFinal, 10000),
                 (EndingFailed, 0),
                 (Backoff, 10000),
@@ -482,7 +533,7 @@ mod lifecycle {
         let mut expected = [50, 100, 200, 400, 800, 1600, 2000, 2000]
             .map(|ms| format!("retry in {ms} []"))
             .to_vec();
-        expected.push("closed [] Max reconnection attempts reached".into());
+        expected.push("closed [] RetriesUsedUp".into());
         assert_eq!(it.take(), expected);
 
         it.client.connect();
@@ -492,16 +543,217 @@ mod lifecycle {
     }
 
     #[test]
-    fn retries_start_over_when_hello_is_accepted() {
+    fn retries_start_over_when_the_handshake_is_complete() {
         let mut it = Driver::new(database(1));
-        for replies in ["", "", HELLO] {
+        for (replies, expected) in [
+            ("", "retry in 50 []"),
+            ("+OK\r\n", "retry in 100 []"),
+            ("+OK\r\n+OK\r\n", "retry in 50 []"),
+        ] {
             it.dial();
             it.start();
             it.read(replies);
             it.log.clear();
             it.lost();
+            assert_eq!(it.take(), [expected], "{replies:?}");
         }
-        assert_eq!(it.take(), ["retry in 50 []"]);
+    }
+
+    #[test]
+    fn only_a_reconnect_abandons_a_handshake() {
+        let abandon = |it: &mut Driver| assert!(!it.client.abandon_handshake());
+        check(abandon, &[]);
+
+        for (state, expected) in [
+            (Dialing, EndingPolicy),
+            (Hello, EndingPolicy),
+            (Select, EndingPolicy),
+            (Ready, Ready),
+        ] {
+            let mut it = reach(Ready);
+            it.lost();
+            it.dial();
+            if state != Dialing {
+                it.start();
+            }
+            if let Select | Ready = state {
+                it.read(HELLO);
+            }
+            if let Ready = state {
+                it.read("+OK\r\n");
+            }
+            let abandoned = it.client.abandon_handshake();
+            assert_eq!(abandoned, expected == EndingPolicy, "{state:?}");
+            assert_eq!(state_of(it), expected, "{state:?}");
+        }
+
+        let mut it = reach(Ready);
+        drop(it.client.close());
+        it.client.connect();
+        it.lost();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "close(), connect()");
+
+        let mut it = reach(Ready);
+        it.lost();
+        it.dial();
+        it.start();
+        it.client.connect();
+        assert!(
+            !it.client.abandon_handshake(),
+            "connect() during a reconnect"
+        );
+
+        let mut it = Driver::new(Config {
+            max_retries: 0,
+            ..Config::default()
+        });
+        it.attempt = it.client.preconnect();
+        it.start();
+        it.read(HELLO);
+        it.lost();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "a forgotten preconnect");
+
+        let mut it = reach(Ready);
+        it.lost();
+        it.client.connect();
+        it.dial();
+        assert!(!it.client.abandon_handshake(), "connect() dialed");
+    }
+
+    #[test]
+    fn a_preconnect_that_is_lost_unclaimed_is_forgotten() {
+        type Touch = fn(&mut Driver);
+        let touches: [(&str, Touch, State); 5] = [
+            ("nothing", |_| {}, Idle),
+            ("claim", |it| it.client.claim(), Backoff),
+            ("command", |it| drop(it.client.claim_and_dial()), Backoff),
+            ("connect", |it| it.client.connect(), Backoff),
+            ("close", |it| drop(it.client.close()), Closed),
+        ];
+        let phases: [(&str, Touch); 4] = [
+            ("dialing", |_| {}),
+            ("no socket", |it| it.client.dial_failed()),
+            ("hello", Driver::start),
+            ("ready", |it| {
+                it.start();
+                it.read("+OK\r\n")
+            }),
+        ];
+        for (phase, reach) in phases {
+            for (touch, apply, expected) in touches {
+                let mut it = Driver::new(Config::default());
+                it.attempt = it.client.preconnect();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(state_of(it), expected, "{phase}, {touch}");
+            }
+        }
+    }
+
+    #[test]
+    fn connect_after_close_is_retried() {
+        let mut it = reach(Closed);
+        it.client.connect();
+        it.attempt = it.client.redial();
+        it.lost();
+        assert_eq!(state_of(it), Backoff);
+    }
+
+    #[test]
+    fn a_preconnect_that_is_refused_is_forgotten() {
+        for replies in ["-NO\r\n", "+OK\r\n-NO\r\n"] {
+            let mut it = Driver::new(database(1));
+            it.attempt = it.client.preconnect();
+            it.start();
+            it.read(replies);
+            assert_eq!(state_of(it), Idle, "{replies:?}");
+        }
+    }
+
+    #[test]
+    fn retries_count_on_within_an_attempt() {
+        let phases: [fn(&mut Driver); 3] = [|_| {}, Driver::start, |it| it.client.dial_failed()];
+        let touches: [fn(&mut Driver); 4] = [
+            |_| {},
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| {
+                drop(it.client.close());
+                it.client.connect()
+            },
+        ];
+        for (phase, reach) in phases.into_iter().enumerate() {
+            for (touch, apply) in touches.into_iter().enumerate() {
+                let mut it = Driver::connected(Config::default());
+                it.lost();
+                it.dial();
+                reach(&mut it);
+                apply(&mut it);
+                it.lost();
+                assert_eq!(
+                    it.take().last().unwrap(),
+                    "retry in 100 []",
+                    "{phase}, {touch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn connect_starts_the_retries_over_between_attempts() {
+        let mut it = Driver::connected(Config::default());
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.lost();
+        assert_eq!(it.take(), ["retry in 50 []", "retry in 50 []"]);
+    }
+
+    #[test]
+    fn a_preconnect_that_failed_is_final_once_claimed() {
+        let touches: [fn(&mut Driver); 3] = [
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| drop(it.client.close()),
+        ];
+        for (touch, apply) in touches.into_iter().enumerate() {
+            let mut it = Driver::new(Config::default());
+            it.attempt = it.client.preconnect();
+            it.fail();
+            assert!(it.client.awaited() == Awaited::No && it.client.is_ending());
+            assert!(it.client.rejection().is_some());
+            apply(&mut it);
+            it.lost();
+            assert_eq!(state_of(it), Closed, "{touch}");
+        }
+    }
+
+    #[test]
+    fn a_reconnect_is_awaited_until_it_is_turned_away() {
+        use Awaited::{ByWorkOrBytes, ByWorkOrHandlers, Yes};
+        let abandon = |it: &mut Driver| assert!(it.client.abandon_handshake());
+        let steps: [(fn(&mut Driver), Awaited); 10] = [
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (abandon, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::dial, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::handshake, ByWorkOrBytes),
+            (Driver::lost, Yes),
+        ];
+        for (last, (_, awaited)) in steps.iter().enumerate() {
+            let mut it = Driver::connected(Config::default());
+            steps[..=last].iter().for_each(|(step, _)| step(&mut it));
+            assert_eq!(it.client.awaited(), *awaited, "{last}");
+            it.client.connect();
+            assert!(it.client.is_connected() || it.client.awaited() == Yes);
+        }
     }
 
     #[test]
@@ -525,29 +777,41 @@ mod lifecycle {
         it.start();
         it.send("GET k");
         it.read(HELLO);
-        it.send("WATCH k");
+        it.send("GET k");
         it.read("+OK\r\n");
+        it.send("WATCH k");
         assert_eq!(
             it.take(),
             [
                 "write HELLO 3 SELECT 1",
                 "refuse #1: Connection is closed and offline queue is disabled",
-                "connected map of 1",
                 "ignored",
+                "refuse #2: Connection is closed and offline queue is disabled",
+                "connected map of 1",
                 "write WATCH k",
             ]
         );
     }
 
     #[test]
-    fn a_batch_does_not_wait_for_select() {
+    fn a_batch_waits_for_select() {
         let mut it = Driver::new(database(1));
         it.dial();
         it.start();
         it.read(HELLO);
         it.send("GET k");
+        it.batch_is_due = true;
         it.checkpoint();
-        assert_eq!(it.log.last().unwrap(), "write GET k");
+        it.read("+OK\r\n");
+        assert_eq!(
+            it.take(),
+            [
+                "write HELLO 3 SELECT 1",
+                "ignored",
+                "connected map of 1",
+                "write GET k"
+            ]
+        );
     }
 }
 
@@ -581,7 +845,7 @@ mod handshake {
             (0, "+OK\r\n", "connected OK"),
             (0, HELLO, "connected map of 1"),
             (0, "|0\r\n+OK\r\n", "connected OK"),
-            (1, "+OK\r\n|0\r\n+OK\r\n", "ignored"),
+            (1, "+OK\r\n|0\r\n+OK\r\n", "connected OK"),
             (0, "%1\r\n$5\r\nproto\r\n:2\r\n", "connected map of 1"),
             (
                 0,
@@ -589,6 +853,22 @@ mod handshake {
                 "broken UnsupportedProtocol Server does not support RESP3",
             ),
             (0, "-NO\r\n", "broken AuthenticationFailed NO"),
+            (0, "-LOADING x\r\n", "busy ConnectionClosed LOADING x"),
+            (0, "-BUSY x\r\n", "busy ConnectionClosed BUSY x"),
+            (0, "-BUSYKEY x\r\n", "broken AuthenticationFailed BUSYKEY x"),
+            (0, "-MASTERDOWN x\r\n", "busy ConnectionClosed MASTERDOWN x"),
+            (0, "-TRYAGAIN x\r\n", "busy ConnectionClosed TRYAGAIN x"),
+            (1, "+OK\r\n-BUSY x\r\n", "busy ConnectionClosed BUSY x"),
+            (
+                0,
+                "-ERR max number of clients reached\r\n",
+                "busy ConnectionClosed ERR max number of clients reached",
+            ),
+            (
+                0,
+                "-ERR unknown command `HELLO`, with args beginning with: `3`, `AUTH`, `u`, `p`, \r\n",
+                "broken AuthenticationFailed ERR unknown command `HELLO`",
+            ),
             (
                 0,
                 "+NO\r\n",
@@ -599,7 +879,7 @@ mod handshake {
                 ":1\r\n",
                 "broken AuthenticationFailed Authentication failed with unexpected response",
             ),
-            (1, "%0\r\n+OK\r\n", "ignored"),
+            (1, "%0\r\n+OK\r\n", "connected map of 0"),
             (1, "+OK\r\n-NO\r\n", "broken InvalidCommand NO"),
             (
                 1,
@@ -617,6 +897,43 @@ mod handshake {
             it.start();
             it.read(replies);
             assert_eq!(it.log[1 + db as usize], expected);
+        }
+    }
+
+    #[test]
+    fn a_refusal_that_passes_costs_a_reconnect_one_attempt() {
+        const RETRY: &str = "retry in 100 []";
+        const GIVE_UP: &str = "closed [] Final";
+        for (replies, expected) in [
+            ("-LOADING Redis is loading\r\n", RETRY),
+            ("-BUSY Redis is busy\r\n", RETRY),
+            ("-MASTERDOWN Link is down\r\n", RETRY),
+            ("-TRYAGAIN Later\r\n", RETRY),
+            ("-ERR max number of clients reached\r\n", RETRY),
+            ("+OK\r\n-BUSY Redis is busy\r\n", RETRY),
+            ("-WRONGPASS invalid\r\n", GIVE_UP),
+            ("-NOAUTH required\r\n", GIVE_UP),
+            ("-NOPROTO unsupported\r\n", GIVE_UP),
+            ("-BUSYKEY exists\r\n", GIVE_UP),
+            (":1\r\n", GIVE_UP),
+            ("+OK\r\n-NOPERM no\r\n", GIVE_UP),
+            ("+OK\r\n-ERR DB index is out of range\r\n", GIVE_UP),
+        ] {
+            let mut it = Driver::new(database(1));
+            it.dial();
+            it.start();
+            it.read("+OK\r\n+OK\r\n");
+            it.lost();
+            it.dial();
+            it.start();
+            it.read(replies);
+            assert_eq!(it.log.last().unwrap(), expected, "{replies:?}");
+
+            let mut first = Driver::new(database(1));
+            first.dial();
+            first.start();
+            first.read(replies);
+            assert_eq!(first.log.last().unwrap(), GIVE_UP, "{replies:?}");
         }
     }
 }
@@ -753,7 +1070,7 @@ mod pipeline {
                 it.take(),
                 ["resolve #1 abc", "ignored", "resolve #2 ?", "resolve #3 OK"]
             );
-            assert!(!it.client.has_pending_commands());
+            assert!(!it.client.has_commands() && it.client.buffered_amount() == 0);
         }
     }
 
@@ -928,7 +1245,7 @@ mod subscriptions {
                 "write A B",
                 "broken ServerError NO",
                 "fail Some([2, 3])",
-                "closed [] Connection closed",
+                "closed [] Final",
             ]
         );
     }

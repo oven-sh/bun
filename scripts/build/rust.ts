@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink, usesIcuOfLinuxSystem } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
@@ -136,7 +136,8 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * real CPU instead (cortex-a72), which also assumed aes, sha2 and pmuv3
  * (`rustc --print cfg`), none of which the C++ side does.
  *
- * clang-cl (windows) spells the same flags `/clang:-march=...`.
+ * clang-cl (windows) spells the same flags `/clang:-march=...`. For apple-m1,
+ * that is not enough: see `ccidx` in flags.ts.
  */
 function rustCpuTargetFlags(cfg: Config): string[] {
   const rustflags: string[] = [];
@@ -156,6 +157,8 @@ function rustCpuTargetFlags(cfg: Config): string[] {
       if (extensions.length > 0) rustflags.push(`-Ctarget-feature=${extensions.map(ext => `+${ext}`).join(",")}`);
     }
   }
+  // clang turns this on by itself for the target and rustc does not, so LTO would inline no C++ into Rust.
+  if (cfg.abi === "android" && cfg.arm64) rustflags.push("-Zllvm-target-feature=+fix-cortex-a53-835769");
   return rustflags;
 }
 
@@ -474,6 +477,11 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (!cfg.codeGenerationFromStrings) {
     rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
   }
+  // `bun_system_icu`: `bun_icu` is empty.
+  rustflags.push("--check-cfg=cfg(bun_system_icu)");
+  if (usesIcuOfLinuxSystem(cfg)) {
+    rustflags.push("--cfg=bun_system_icu");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string
@@ -556,7 +564,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (rustLtoInLink(cfg)) {
     // Every release build but ASan's: the crates carry ThinLTO bitcode, not machine code, and bun's link optimises
     // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++ and JSC, and importing works across
-    // the languages; elsewhere (FreeBSD, Android, Windows arm64, `--lto=off`) it is ThinLTO over the crates alone.
+    // the languages; with `--lto=off` it is ThinLTO over the crates alone.
     // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
     // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //
@@ -738,12 +746,19 @@ function shimCargoInvocation(
   return { args, env: { ...main.env, CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f") }, rustflags };
 }
 
+export interface RustOutputs {
+  /** What bun's link takes. */
+  rlibs: string[];
+  /** What the link of another program takes for these crates of bun. */
+  rlibsFor: (crateNames: readonly string[]) => string[];
+}
+
 /**
  * Emit the Rust step: for bun_executable — and on Windows targets the .bin/ shim — a plan edge and, once the plans
  * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_executable` and of
  * every library it depends on, std's included. No crate is a final Rust artifact; the link is bun's own.
  */
-export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
+export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): RustOutputs {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
   });
@@ -809,7 +824,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
     n.phony("bun-rust", planFiles);
     n.blank();
-    return [];
+    return { rlibs: [], rlibsFor: () => [] };
   }
   const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
@@ -871,10 +886,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       rootValidations: [emitGeneratedInputsCheck(n, graph, cfg.codegenDir, generatedFilesOf)],
     },
   );
-  const rlibs = linkedRlibs(graph).map(unit => unit.output);
+  const linked = linkedRlibs(graph);
+  const rlibs = linked.map(unit => unit.output);
   n.phony("bun-rust", rlibs);
   n.blank();
-  return rlibs;
+  const rlibsFor = (crateNames: readonly string[]): string[] => {
+    const roots = linked.filter(unit => crateNames.includes(unit.crateName));
+    assert(roots.length === crateNames.length, `not all of ${crateNames.join(", ")} are crates that bun links`);
+    return [...new Set(roots.flatMap(root => linkedRlibs(graph, root)))].map(unit => unit.output);
+  };
+  return { rlibs, rlibsFor };
 }
 
 /**

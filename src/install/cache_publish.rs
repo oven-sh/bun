@@ -3,26 +3,18 @@
 use core::fmt;
 
 use bun_core::{ZBox, ZStr};
-use bun_sys::{self as sys, Dir, E, Fd, O};
+use bun_sys::{self as sys, DeleteTreeOnDrop, Dir, E, Fd, O};
 
 /// A cache entry being built under a name no other process knows. Deleted on drop if unpublished.
-pub(crate) struct StagedEntry<'a> {
-    parent: Fd,
-    name: &'a ZStr,
-    renamed: bool,
-}
+pub(crate) struct StagedEntry<'a>(DeleteTreeOnDrop<&'a ZStr>);
 
 impl<'a> StagedEntry<'a> {
     pub(crate) fn new(parent: Fd, name: &'a ZStr) -> Self {
-        Self {
-            parent,
-            name,
-            renamed: false,
-        }
+        Self(DeleteTreeOnDrop::new(parent, name))
     }
 
     pub(crate) fn name(&self) -> &'a ZStr {
-        self.name
+        self.0.name()
     }
 
     pub(crate) fn publish_and_open(
@@ -39,7 +31,7 @@ impl<'a> StagedEntry<'a> {
 
     /// The first writer wins: if a folder at `to` passes `is_complete`, it's kept and returned.
     pub(crate) fn publish(
-        mut self,
+        self,
         cache_dir: Fd,
         to: &ZStr,
         is_complete: &dyn Fn(&Dir) -> bool,
@@ -51,8 +43,8 @@ impl<'a> StagedEntry<'a> {
         let mut emptying_err: Option<sys::Error> = None;
         loop {
             // `rename` only replaces an empty directory, so it never replaces a published folder.
-            let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
-                self.renamed = true;
+            let Err(err) = retry.rename(self.0.dir(), &self.0, cache_dir, to) else {
+                self.0.keep();
                 return Ok(None);
             };
             attempts += 1;
@@ -79,48 +71,24 @@ impl<'a> StagedEntry<'a> {
     }
 }
 
-impl Drop for StagedEntry<'_> {
-    fn drop(&mut self) {
-        if !self.renamed {
-            let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
-        }
-    }
-}
-
 /// A [`StagedEntry`] that takes more than one task to build. Deleted on drop.
-pub(crate) struct UnfinishedEntry {
-    parent: Fd,
-    /// `None` once a `StagedEntry` has taken over.
-    name: Option<ZBox>,
-}
+pub(crate) struct UnfinishedEntry(DeleteTreeOnDrop<ZBox>);
 
 impl UnfinishedEntry {
     pub(crate) fn new(parent: Fd, name: &[u8]) -> Self {
-        Self {
-            parent,
-            name: Some(ZBox::from_bytes(name)),
-        }
+        Self(DeleteTreeOnDrop::new(parent, ZBox::from_bytes(name)))
     }
 
     pub(crate) fn parent(&self) -> Fd {
-        self.parent
+        self.0.dir()
     }
 
     pub(crate) fn name(&self) -> &[u8] {
-        (self.name.as_ref().expect("only `finish` takes the name")).as_bytes()
+        &self.0
     }
 
-    pub(crate) fn finish<R>(mut self, publish: impl FnOnce(StagedEntry<'_>) -> R) -> R {
-        let name = self.name.take().expect("only `finish` takes the name");
-        publish(StagedEntry::new(self.parent, &name))
-    }
-}
-
-impl Drop for UnfinishedEntry {
-    fn drop(&mut self) {
-        if let Some(name) = &self.name {
-            drop(StagedEntry::new(self.parent, name));
-        }
+    pub(crate) fn finish<R>(self, publish: impl FnOnce(StagedEntry<'_>) -> R) -> R {
+        publish(StagedEntry::new(self.0.dir(), &self.0.keep()))
     }
 }
 
@@ -236,26 +204,18 @@ pub(crate) fn create_index_link(
     {
         return;
     }
-    let mut link_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     {
         if Dir::borrow(&cache_dir).make_path(name).is_err() {
             return;
         }
-        let link = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Windows>(
-            cache_dir_path,
-            &mut link_buf[..],
-            &[name, version],
-        );
+        let link = &bun_paths::Path::resolve(&[cache_dir_path, name, version]);
         let _ = sys::sys_uv::symlink_uv(target, link, sys::windows::libuv::UV_FS_SYMLINK_JUNCTION);
     }
     #[cfg(not(windows))]
     {
         let _ = cache_dir_path;
-        let link = bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
-            &mut link_buf[..],
-            &[name, version],
-        );
+        let link = &bun_paths::Path::join(&[name, version]);
         if let Err(err) = sys::symlinkat(target, cache_dir, link)
             && err.get_errno() == E::ENOENT
             && Dir::borrow(&cache_dir).make_path(name).is_ok()

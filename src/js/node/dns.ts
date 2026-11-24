@@ -84,8 +84,8 @@ function withTranslatedError(error: any) {
   const code: string | undefined = error?.code;
   if (code?.startsWith?.("DNS_")) {
     error.code = code.slice(4);
-    // `Bun.dns` names it "DNSException". Node's inherits "Error".
-    delete error.name;
+    // `Bun.dns` names it "DNSException". Node's inherits "Error". `delete` throws for the sealed error of a mock.
+    Reflect.deleteProperty(error, "name");
   }
   return error;
 }

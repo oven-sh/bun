@@ -1,34 +1,35 @@
 # -- source: main.js
-# class Painter {
-#   box(text) {
-#     return "[" + text + "]";
+# class Till {
+#   taxed(price) {
+#     return price + (price >> 2);
 #   }
-#   line(of) {
-#     return of.text + ";";
+#   says(sum) {
+#     return "=" + sum;
 #   }
-#   sheet(sheet) {
-#     let top = "";
-#     let boxes = "";
-#     for (let i = 0; i < sheet.heads.length; i++) boxes += this.box(sheet.heads[i]);
-#     top += this.line({ text: boxes });
-#     let rest = "";
-#     for (let i = 0; i < sheet.lines.length; i++) {
-#       const line = sheet.lines[i];
-#       boxes = "";
-#       for (let k = 0; k < line.length; k++) boxes += this.box(line[k]);
-#       rest += this.line({ text: boxes });
+#   adds(bill) {
+#     let all = 0;
+#     let slip = "";
+#     for (let day = 0; day < bill.days.length; day++) {
+#       let sum = 0;
+#       const prices = bill.days[day];
+#       for (let at = 0; at < prices.length; at++) {
+#         sum += this.taxed(prices[at]);
+#         if (sum > 40) slip += "!";
+#       }
+#       slip += this.says(sum);
+#       all += sum;
 #     }
-#     if (rest) rest = `<${rest}>`;
-#     return "(" + top + ")" + rest;
+#     for (let at = 0; at < bill.tips.length; at++) all += bill.tips[at];
+#     return slip + this.says(all);
 #   }
 # }
-# const painter = new Painter();
-# globalThis.kept = painter;
-# print(painter.sheet({ heads: ["a", "b"], lines: [["1", "2"], ["3"], []] }));
+# const till = new Till();
+# globalThis.kept = till;
+# print(till.adds({ tips: [1, 2], days: [[8, 12], [40], []] }));
 # -- end of source
 # OPTIONS: check=ReplayFinalLoopVisits
 # RUN(ALONE): walk f4 mechanisms=all
 # ALONE: code f4:Body
 # RUN(RIGHT): run-in-shell
-# RIGHT: ([a][b];)<[1][2];[3];;>
+# RIGHT: =25!=50=0=78
 # RIGHT-NEXT: exited with 0

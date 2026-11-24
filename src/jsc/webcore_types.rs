@@ -30,14 +30,6 @@ pub type SizeType = u64;
 /// Maximum blob size (52 bits).
 pub const MAX_SIZE: SizeType = (1u64 << 52) - 1;
 
-#[cfg(not(windows))]
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum ClosingState {
-    Running,
-    Closing,
-}
-
 /// A Blob's `type` string with ownership encoded in the variant, so assigning
 /// a new value drops the old one and a static pointer can never be freed.
 /// `Owned` is `Arc` so `clone()` just bumps a refcount.
@@ -735,6 +727,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
+        /// Never written again. Pool jobs read it, `mode` and `seekable`, and write `last_modified`, without a lock.
         pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,

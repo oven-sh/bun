@@ -70,16 +70,7 @@ pub mod standalone_path {
     /// True iff `str_` lives under the embedded-module virtual root.
     #[inline]
     pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            // On Windows, remove NT path prefixes before checking.
-            let canonicalized = bun_paths::string_paths::without_nt_prefix::<u8>(str_);
-            return is_bun_standalone_file_path_canonicalized(canonicalized);
-        }
-        #[cfg(not(windows))]
-        {
-            is_bun_standalone_file_path_canonicalized(str_)
-        }
+        is_bun_standalone_file_path_canonicalized(bun_paths::without_nt_prefix(str_))
     }
 
     #[cfg(test)]

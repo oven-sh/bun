@@ -2,73 +2,70 @@
 // COUNTER in every build: DynamicSubclassInstances = 0
 (() => {
     var modules = {
-        "./node.js": ((module, exports, __webpack_require__) => {
+        "./peg.js": ((module, exports, __webpack_require__) => {
             "use strict";
-            class Node {
-                constructor(type) { this.type = type; this.parent = undefined; this.count = 0; }
-                get self() { return this; }
-                bump() { this.count += 1; return this.count; }
-                describe() { return this.type + Object.keys(this).join(); }
+            class Peg {
+                constructor(kind) { this.hung = 0; this.kind = kind; this.above = undefined; }
+                get whole() { return this; }
+                hang() { return ++this.hung; }
+                tell() { return Object.keys(this).join() + this.kind; }
             }
-            module.exports = Node;
-            Node.default = Node;
+            module.exports = Peg;
         }),
-        "./container.js": ((module, exports, __webpack_require__) => {
+        "./shelf.js": ((module, exports, __webpack_require__) => {
             "use strict";
-            let Node = __webpack_require__("./node.js");
-            let Rule;
-            class Container extends Node {
-                constructor(type) { super(type); this.nodes = []; }
-                push(child) { child.parent = this.self; this.nodes.push(child); return this; }
-                each(callback) {
-                    let result = 0;
-                    for (let index = 0; index < this.self.nodes.length; ++index)
-                        result += callback(this.self.nodes[index], index);
-                    return result;
+            let Peg = __webpack_require__("./peg.js");
+            let kinds = {};
+            class Shelf extends Peg {
+                constructor(kind) { super(kind); this.pegs = []; }
+                add(peg) { this.pegs.push(peg); peg.above = this; return this.whole; }
+                weigh(how) {
+                    let weight = 0;
+                    for (const peg of this.whole.pegs) weight += how(peg, weight & 7);
+                    return weight;
                 }
-                make() { return new Rule("made"); }
+                spare() { return new kinds.Box("spare"); }
             }
-            Container.registerRule = dependant => { Rule = dependant; };
-            module.exports = Container;
-            Container.default = Container;
+            Shelf.learns = (name, kind) => { kinds[name] = kind; };
+            Shelf.own = Shelf;
+            module.exports = Shelf;
         }),
-        "./rule.js": ((module, exports, __webpack_require__) => {
+        "./box.js": ((module, exports, __webpack_require__) => {
             "use strict";
-            let Container = __webpack_require__("./container.js");
-            let Base = Container;
-            class Rule extends Base {
-                constructor(selector) { super("rule"); this.selector = selector; }
-                describe() { return super.describe() + ":" + this.selector; }
+            let Shelf = __webpack_require__("./shelf.js");
+            let Base = Shelf;
+            class Box extends Base {
+                constructor(label) { super("box"); this.label = label; }
+                tell() { return this.label + ":" + super.tell(); }
             }
-            module.exports = Rule;
-            Rule.default = Rule;
-            Container.registerRule(Rule);
+            Shelf.learns("Box", Box);
+            module.exports = Box;
         }),
-        "./root.js": ((module, exports, __webpack_require__) => {
+        "./hall.js": ((module, exports, __webpack_require__) => {
             "use strict";
-            class Root extends __webpack_require__("./container.js") {
-                constructor() { super("root"); }
+            class Hall extends __webpack_require__("./shelf.js") {
+                constructor() { super("hall"); }
             }
-            module.exports = Root;
+            module.exports = Hall;
         }),
         "./entry.js": ((module, exports, __webpack_require__) => {
             "use strict";
-            let Rule = __webpack_require__("./rule.js"), Root = __webpack_require__("./root.js"), Node = __webpack_require__("./node.js"), Container = __webpack_require__("./container.js");
-            let root = new Root(), sum = 0;
+            let Box = __webpack_require__("./box.js"), Hall = __webpack_require__("./hall.js"), Peg = __webpack_require__("./peg.js"), Shelf = __webpack_require__("./shelf.js");
+            let hall = new Hall(), weight = 0;
             for (let i = 0; i < 50; ++i)
-                root.push(new Rule("s" + i).push(new Node("leaf")));
+                hall.add(new Box("s" + i).add(new Peg("bare")));
             for (let round = 0; round < 20; ++round)
-                sum += root.each((rule, index) => rule.each(leaf => leaf.bump() + index));
-            console.log(sum, root.describe(), root.nodes[3].describe(), root.nodes[3].nodes[0].describe());
-            console.log(root instanceof Container, root.nodes[0] instanceof Node, root.make().describe(), Object.getPrototypeOf(Rule) === Container, Container.default === Container);
+                weight += hall.weigh((box, at) => box.weigh(peg => peg.hang() + at));
+            console.log(weight, hall.tell(), hall.pegs[3].tell(), hall.pegs[3].pegs[0].tell());
+            console.log(hall instanceof Shelf, hall.pegs[0] instanceof Peg, hall.spare().tell(), Object.getPrototypeOf(Box) === Shelf, Shelf.own === Shelf);
             // What is laid between later is found.
-            Container.prototype.each = function () { return -1; };
-            Object.defineProperty(Node.prototype, "type", { set(value) { this.seen = value; }, get() { return "got"; }, configurable: true });
-            let late = new Rule("late");
-            console.log(root.each(() => 1), JSON.stringify(late), late.type);
-            Object.setPrototypeOf(Rule.prototype, Root.prototype);
-            Object.setPrototypeOf(Rule, Root);
-            console.log(new Rule("moved") instanceof Root, JSON.stringify(new Rule("moved")));
+            Shelf.prototype.weigh = function () { return -1; };
+            Object.defineProperty(Peg.prototype, "kind", { set(value) { this.seen = value; }, get() { return "got"; }, configurable: true });
+            let late = new Box("late");
+            console.log(hall.weigh(() => 1), JSON.stringify(late), late.kind);
+            Object.setPrototypeOf(Box.prototype, Hall.prototype);
+            Object.setPrototypeOf(Box, Hall);
+            console.log(new Box("moved") instanceof Hall, JSON.stringify(new Box("moved")));
         }),
     };
     var cache = {};

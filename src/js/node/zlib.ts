@@ -662,6 +662,12 @@ function _close(engine: $Node.ZlibBase) {
   engine._handle = null;
 }
 
+function validateDictionary(dictionary: ZlibOptions["dictionary"]) {
+  if (dictionary === undefined || isArrayBufferView(dictionary)) return dictionary;
+  if (isAnyArrayBuffer(dictionary)) return Buffer.from(dictionary) as Buffer;
+  throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
+}
+
 const zlibDefaultOpts = {
   flush: Z_NO_FLUSH,
   finishFlush: Z_FINISH,
@@ -700,18 +706,7 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
     // prettier-ignore
     strategy = checkRangesOrGetDefault(opts.strategy, "options.strategy", Z_DEFAULT_STRATEGY, Z_FIXED, Z_DEFAULT_STRATEGY);
 
-    dictionary = opts.dictionary;
-    if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
-      if (isAnyArrayBuffer(dictionary)) {
-        dictionary = Buffer.from(dictionary) as Buffer;
-      } else {
-        throw $ERR_INVALID_ARG_TYPE(
-          "options.dictionary",
-          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
-          dictionary,
-        );
-      }
-    }
+    dictionary = validateDictionary(opts.dictionary);
   }
 
   const handle = new NativeZlib(mode);
@@ -813,7 +808,12 @@ $toClass(Unzip, "Unzip", Zlib);
 type ZlibFunction = (this: $Node.Zlib, opts?: ZlibOptions) => void;
 type ZlibClass = new (opts?: ZlibOptions) => $Node.ZlibBase;
 
-function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, methodName: string, isZstd?: boolean) {
+function createConvenienceMethod(
+  ctor: ZlibFunction | ZlibClass,
+  sync: boolean,
+  methodName: string,
+  prepareOpts?: typeof withPledgedSrcSize,
+) {
   if (sync) {
     const fn = function (buffer: ZlibInput, opts?: ZlibOptions) {
       return zlibBufferSync(new (ctor as ZlibClass)(opts), buffer);
@@ -826,30 +826,29 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
         callback = opts;
         opts = {};
       }
-      // For zstd compression, we need to set pledgedSrcSize to the buffer size
-      // so that the content size is included in the frame header
-      if (isZstd) {
-        // Calculate buffer size
-        let bufferSize: number;
-        if (typeof buffer === "string") {
-          bufferSize = Buffer.byteLength(buffer);
-        } else if (isArrayBufferView(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else if (isAnyArrayBuffer(buffer)) {
-          bufferSize = buffer.byteLength;
-        } else {
-          bufferSize = 0;
-        }
-        // Set pledgedSrcSize if not already set
-        if (!opts?.pledgedSrcSize && bufferSize > 0) {
-          opts = { ...opts, pledgedSrcSize: bufferSize };
-        }
-      }
+      if (prepareOpts !== undefined) opts = prepareOpts(buffer, opts);
       return zlibBuffer(new (ctor as ZlibClass)(opts), buffer, callback!);
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
   }
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L846-L869
+function withPledgedSrcSize(buffer: ZlibInput, opts: ZlibOptions | undefined): ZlibOptions | undefined {
+  if (opts?.pledgedSrcSize !== undefined) return opts;
+  let pledgedSrcSize: number;
+  if (typeof buffer === "string") {
+    // The stream encodes strings with defaultEncoding.
+    const encoding = opts?.defaultEncoding;
+    if (encoding != null && encoding !== "utf8" && encoding !== "utf-8") return opts;
+    pledgedSrcSize = Buffer.byteLength(buffer);
+  } else if (isArrayBufferView(buffer) || isAnyArrayBuffer(buffer)) {
+    pledgedSrcSize = buffer.byteLength;
+  } else {
+    return opts;
+  }
+  return { __proto__: null, ...opts, pledgedSrcSize } as ZlibOptions;
 }
 
 const kMaxBrotliParam = 9;
@@ -880,18 +879,7 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
     });
   }
 
-  let dictionary = opts?.dictionary;
-  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
-    if (isAnyArrayBuffer(dictionary)) {
-      dictionary = Buffer.from(dictionary) as Buffer;
-    } else {
-      throw $ERR_INVALID_ARG_TYPE(
-        "options.dictionary",
-        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
-        dictionary,
-      );
-    }
-  }
+  const dictionary = validateDictionary(opts?.dictionary);
 
   const handle = new NativeBrotli(mode);
 
@@ -943,21 +931,12 @@ class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
       });
     }
 
+    const dictionary = validateDictionary(opts?.dictionary);
+
     const handle = new NativeZstd(mode);
 
-    const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
-
     const writeState = new Uint32Array(2);
-    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
-    // non-view is silently ignored — and re-reads it rather than caching. Both
-    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
-    handle.init(
-      initParamsArray,
-      pledgedSrcSize,
-      writeState,
-      processCallback,
-      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
-    );
+    handle.init(initParamsArray, opts?.pledgedSrcSize, writeState, processCallback, dictionary);
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }
@@ -1027,7 +1006,7 @@ const zlib = {
   brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
   brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
   brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
-  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", true),
+  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", withPledgedSrcSize),
   zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
   zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),

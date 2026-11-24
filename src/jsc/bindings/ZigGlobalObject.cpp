@@ -80,6 +80,7 @@
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
+#include "GeneratedURLPattern.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -116,6 +117,7 @@
 #include "JSDOMGuardedObject.h"
 #include "JSDOMFile.h"
 #include "JSDOMFormData.h"
+#include "JSDOMOperation.h"
 #include "JSDOMURL.h"
 #include "JSEnvironmentVariableMap.h"
 #include "JSErrorEvent.h"
@@ -158,7 +160,6 @@
 #include "streams/JSTextDecoderStream.h"
 #include "streams/JSTransformStream.h"
 #include "streams/JSTransformStreamDefaultController.h"
-#include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
@@ -177,6 +178,7 @@
 #include "NativePromiseContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
+#include "NodeDiagnosticsChannel.h"
 #include "NodeVM.h"
 #include "Performance.h"
 #include "ProcessBindingConstants.h"
@@ -290,9 +292,11 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-// LintHost.cpp
 namespace Bun {
+// LintHost.cpp
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
+// LintNodes.cpp
+void noteImportCallForLint(Zig::GlobalObject*);
 }
 
 // BunAOTRuntime.cpp
@@ -538,18 +542,53 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     // NOLINTEND
 }
 
+// As in JSCInitialize.
+static void letEnvironmentDecideAboutJIT(const char* envp[], size_t envc)
+{
+    for (size_t i = 0; i < envc; i++) {
+        auto variable = WTF::StringView::fromLatin1(envp[i]);
+        for (auto prefix : { "BUN_JSC_useConcurrentJIT="_s, "BUN_JSC_thresholdFor"_s }) {
+            if (variable.startsWithIgnoringASCIICase(prefix))
+                JSC::Options::setOption(envp[i] + 8, false);
+        }
+    }
+}
+
 // As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
 // 16 cores these took 10 % more time and 2.3 times the memory.
 // After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
-extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
+extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc, bool areShortLived)
 {
     RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
     JSC::Options::useConcurrentJIT() = false;
-    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
-    for (size_t i = 0; i < envc; i++) {
-        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
-            JSC::Options::setOption(envp[i] + 8, false);
-    }
+    // Each VM compiles the same functions again, and waits for it.
+    JSC::Options::thresholdForOptimizeAfterWarmUp() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForOptimizeAfterLongWarmUp() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForOptimizeSoon() *= areShortLived ? 32 : 4;
+    JSC::Options::thresholdForFTLOptimizeAfterWarmUp() *= areShortLived ? 300 : 30;
+    JSC::Options::thresholdForFTLOptimizeSoon() *= areShortLived ? 300 : 30;
+    letEnvironmentDecideAboutJIT(envp, envc);
+}
+
+// The last tier takes tens of megabytes to compile rules that are done before it pays. When to call it: as above.
+extern "C" void JSC__useOptionsForFewLintVMs(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::thresholdForFTLOptimizeAfterWarmUp() *= 8;
+    JSC::Options::thresholdForFTLOptimizeSoon() *= 8;
+    letEnvironmentDecideAboutJIT(envp, envc);
+}
+
+// A configuration runs once, and most of it is done before compiled code would pay. When to call it: as above.
+extern "C" void JSC__useOptionsForConfiguration(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::thresholdForJITAfterWarmUp() *= 4;
+    JSC::Options::thresholdForJITSoon() *= 4;
+    JSC::Options::thresholdForOptimizeAfterWarmUp() *= 10;
+    JSC::Options::thresholdForOptimizeAfterLongWarmUp() *= 10;
+    JSC::Options::thresholdForOptimizeSoon() *= 10;
+    letEnvironmentDecideAboutJIT(envp, envc);
 }
 
 extern "C" void* Bun__getVM();
@@ -1770,7 +1809,6 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLPattern);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
@@ -4298,26 +4336,14 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
-JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+JSC::JSPromise* GlobalObject::importModuleWithLoader(Zig::GlobalObject* globalObject,
     JSModuleLoader* loader,
     JSString* moduleNameValue,
-    RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin,
-    bool deferred)
+    RefPtr<JSC::ScriptFetchParameters>&& parameters,
+    const SourceOrigin& sourceOrigin)
 {
-    UNUSED_PARAM(deferred);
-    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    {
-        JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result) {
-            return result;
-        }
-    }
 
     // import() from code of a disposed Bun.ModuleGraph does not load into the graph's (dropped)
     // registry. Called by the host (a function of the graph it still holds) it rejects. Run by the
@@ -4393,6 +4419,36 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     return result;
 }
 
+JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader,
+    JSString* moduleNameValue,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
+{
+    UNUSED_PARAM(deferred);
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::noteImportCallForLint(globalObject);
+
+    {
+        JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result) {
+            return result;
+        }
+    }
+
+    if (JSObject* hook = globalObject->diagnosticsHook(Bun::DiagnosticsHook::ModuleImport)) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, Bun::traceImportCall(globalObject, hook, moduleNameValue, sourceOrigin, [&] {
+            return importModuleWithLoader(globalObject, loader, moduleNameValue, WTF::move(parameters), sourceOrigin);
+        }));
+    }
+    RELEASE_AND_RETURN(scope, importModuleWithLoader(globalObject, loader, moduleNameValue, WTF::move(parameters), sourceOrigin));
+}
+
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4432,7 +4488,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
         JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(referrer));
-        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
+        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr, referrer);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;

@@ -98,6 +98,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
+        let entered = self.while_loading.enter_function(open_parens_loc);
+
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol_in(name_ref, is_expr);
@@ -215,6 +217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
+        self.while_loading.functions_around -= entered;
 
         func
     }

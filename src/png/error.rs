@@ -41,10 +41,10 @@ impl From<std::collections::TryReserveError> for Error {
     }
 }
 
-impl From<bun_zlib::ZlibError> for Error {
-    fn from(error: bun_zlib::ZlibError) -> Self {
+impl From<bun_zlib::Error> for Error {
+    fn from(error: bun_zlib::Error) -> Self {
         match error {
-            bun_zlib::ZlibError::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
+            bun_zlib::Error::Alloc(error) => Self::Alloc(error),
             _ => Self::Zlib,
         }
     }

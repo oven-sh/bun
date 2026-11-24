@@ -21,6 +21,7 @@ mod doctor;
 mod embedded;
 mod eslintrc;
 mod evaluate;
+pub use evaluate::configuration_read_by;
 mod explain;
 pub mod fmt;
 pub mod for_tests;
@@ -40,6 +41,7 @@ mod rulesdir;
 mod run;
 mod suppressions;
 mod typed;
+mod walk;
 
 /// A linter with every rule registered.
 pub(crate) type Linter = bun_lint::linter::Linter<rules::Rules>;

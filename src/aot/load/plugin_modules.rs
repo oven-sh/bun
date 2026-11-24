@@ -9,9 +9,9 @@ use crate::options::EntryText;
 use bun_ast::{ImportKind, Kind, Loader, Log};
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings::BOM;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
-use bun_sema::resolve::{CodeImportForm, CodeImportKind, CodeRequest, Host, to_path};
+use bun_sema::resolve::{
+    CodeImportForm, CodeImportKind, CodeRequest, Host, parent_directory, to_path,
+};
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
@@ -436,7 +436,7 @@ impl<'a> PluginModules<'a> {
             return Some(working_directory.to_vec());
         }
         let as_file = from_argument(working_directory, plugin_path);
-        Some(dirname::<Posix>(&as_file).to_vec())
+        Some(parent_directory(&as_file).to_vec())
     }
 
     pub(crate) fn provider_path<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {

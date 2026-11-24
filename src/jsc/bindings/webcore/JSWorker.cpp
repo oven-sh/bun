@@ -22,7 +22,6 @@
 #include "JSWorker.h"
 #include "CodeGenerationFromStrings.h"
 
-#include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
 #if OS(WINDOWS)
 #include <uv.h>
@@ -35,8 +34,6 @@
 #endif
 
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -52,25 +49,18 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMURL.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 #include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
 #include "WorkerOptions.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
@@ -94,7 +84,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsWorkerConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsWorker_onmessage);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWorker_onmessage);
 static JSC_DECLARE_CUSTOM_GETTER(jsWorker_onmessageerror);
@@ -102,38 +91,7 @@ static JSC_DECLARE_CUSTOM_SETTER(setJSWorker_onmessageerror);
 static JSC_DECLARE_CUSTOM_GETTER(jsWorker_onerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWorker_onerror);
 
-class JSWorkerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSWorkerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSWorkerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWorkerPrototype))) JSWorkerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWorkerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSWorkerPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWorkerPrototype, JSWorkerPrototype::Base);
-
+using JSWorkerPrototype = JSDOMPrototype<JSWorker>;
 using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
 template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -428,11 +386,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSWorkerDOMConstructorConstruct, JSWorkerDOMConstruct
 
 template<> const ClassInfo JSWorkerDOMConstructor::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerDOMConstructor) };
 
-template<> JSValue JSWorkerDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
 template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "Worker"_s, JSWorker::prototype(vm, globalObject));
@@ -456,7 +409,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
 /* Hash table for prototype */
 
 static const HashTableValue JSWorkerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSWorkerPrototype::constructorGetter, 0 } },
     { "onerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onerror, setJSWorker_onerror } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessage, setJSWorker_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },
@@ -472,9 +425,9 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "cpuUsageInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_cpuUsageInternal, 0 } },
 };
 
-const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
+template<> const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
 
-void JSWorkerPrototype::finishCreation(VM& vm)
+template<> void JSWorkerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWorker::info(), JSWorkerPrototypeTableValues, *this);
@@ -483,38 +436,14 @@ void JSWorkerPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSWorker::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorker) };
 
-JSWorker::JSWorker(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Worker>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
-static_assert(std::is_base_of<ActiveDOMObject, Worker>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
-
 JSObject* JSWorker::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSWorkerPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSWorkerPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSWorker::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSWorker>(vm, globalObject);
+    return JSWorkerPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSWorkerPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSWorker::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsWorker_onmessageGetter(JSGlobalObject& lexicalGlobalObject, JSWorker& thisObject)
@@ -982,87 +911,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObj
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
 }
 
-JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSWorker, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorker, m_subspaceForWorker));
-}
-
-void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSWorker>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsWorker = uncheckedDowncast<JSWorker>(handle.slot()->asCell());
-    auto& wrapped = jsWorker->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-        if (reason) [[unlikely]]
-            *reason = "ActiveDOMObject with pending activity"_s;
-        return true;
-    }
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsWorker = static_cast<JSWorker*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsWorker->wrapped(), jsWorker);
-    return FinalizeResult::KeepImpl;
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7Worker@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore6WorkerE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<Worker>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7Worker@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore6WorkerE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // Worker has subclasses. If Worker has subclasses that get passed
-        // to toJS() we currently require Worker you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<Worker>(globalObject, WTF::move(impl));
-}
-
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
+template<> NEVER_INLINE JSC::JSValue toJS<Worker>(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
 {
     BUN_REMOVABLE_DEFINITION(Worker, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, Worker&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-Worker* JSWorker::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSWorker>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 } // namespace WebCore

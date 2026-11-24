@@ -1,6 +1,9 @@
 //! Where a client connects.
 
+use bstr::BStr;
+use bun_cares_sys::c_ares;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_sys::SystemErrno;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -72,6 +75,30 @@ pub(crate) enum Address {
 }
 
 impl Address {
+    /// In the words of `node:net`. `None` for a dial that was closed and did not fail.
+    pub(crate) fn connect_error(&self, code: i32) -> Option<String> {
+        let errno = match SystemErrno::init(i64::from(code))? {
+            SystemErrno::SUCCESS | SystemErrno::ECANCELED => return None,
+            // Windows: what uSockets' probe of a refused socket gets, and the number of the CRT's ECONNREFUSED.
+            SystemErrno::ENOTCONN => SystemErrno::ECONNREFUSED,
+            errno => errno,
+        };
+        Some(match self {
+            Address::Unix(path) => format!("connect {errno} {}", BStr::new(path)),
+            Address::Host { host, port } => {
+                let host = bun_core::ip_address::strip_ipv6_brackets(host);
+                format!("connect {errno} {}:{port}", BStr::new(host))
+            }
+        })
+    }
+
+    pub(crate) fn lookup_error(&self, code: i32) -> Option<String> {
+        let (Address::Unix(host) | Address::Host { host, .. }) = self;
+        let code = c_ares::Error::init_eai(code)?.code();
+        let code = code.strip_prefix("DNS_").unwrap_or(code);
+        Some(format!("getaddrinfo {code} {}", BStr::new(host)))
+    }
+
     /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///

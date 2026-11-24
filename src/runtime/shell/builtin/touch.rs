@@ -50,20 +50,12 @@ impl ShellWork for ShellTouchTask {
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     fn run_from_thread_pool(&mut self, _: &ShellTask) {
-        use bun_paths::resolve_path::{self, Platform, platform};
         // We have to give an absolute path. An operand that does not fit the
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
-            // Re-terminate (`filepath` is the bare argv bytes without the
-            // trailing NUL).
-            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&self.filepath])
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&self.cwd_path, &self.filepath],
-            )
+        let filepath: &bun_core::ZStr = &match bun_paths::is_absolute(&self.filepath) {
+            true => bun_paths::Path::join(&[&self.filepath]),
+            false => bun_paths::Path::join(&[&self.cwd_path, &self.filepath]),
         };
 
         // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid

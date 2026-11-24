@@ -28,6 +28,9 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::isCompiledObject(object)) {
         auto visit = [&](const PropertyWalk::OwnProperty& property) {
+            // Structure::canPerformFastPropertyEnumeration() refuses it too, enumerable or not.
+            if (property.name == vm.propertyNames->underscoreProto.impl())
+                return IterationStatus::Done;
             if (property.attributes & JSC::PropertyAttribute::DontEnum)
                 return IterationStatus::Continue;
             properties.names.append(property.name);
@@ -87,8 +90,10 @@ std::optional<bool> areCompiledPairsEqual(JSC::JSGlobalObject* globalObject, JSC
     return true;
 }
 
+using CompareCompiledObjects = bool (*)(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject*, JSC::JSObject*);
+
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
-template<bool isStrict, typename CompareValues>
+template<bool isStrict, CompareCompiledObjects compareWhatIsNotListed, typename CompareValues>
 std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
 {
     JSC::VM& vm = globalObject->vm();
@@ -96,6 +101,13 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::appendDifferingValues(o1, o2, sameIsEqual ? PropertyWalk::IdenticalValues::Skip : PropertyWalk::IdenticalValues::Append, pairs))
         return areCompiledPairsEqual(globalObject, scope, pairs, sameIsEqual, compareValues);
+
+    if constexpr (compareWhatIsNotListed != nullptr) {
+        bool isSame = compareWhatIsNotListed(globalObject, scope, o1, o2);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!isSame)
+            return false;
+    }
 
     OwnEnumerableProperties properties1;
     OwnEnumerableProperties properties2;
@@ -111,32 +123,30 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
         return true;
     }
 
+    // How many of the properties that the second loop counts are in `pairs`.
+    size_t remain = 0;
     for (size_t i = 0; i < properties1.names.size(); i++) {
-        WTF::UniquedStringImpl* name = properties1.names[i];
         JSC::JSValue left = properties1.values.at(i);
         JSC::JSValue right;
-        if (size_t found = properties2.indexOf(name, i); found != notFound)
+        if (size_t found = properties2.indexOf(properties1.names[i], i); found != notFound)
             right = properties2.values.at(found);
-        else if constexpr (!isStrict)
-            right = o2->getDirect(vm, JSC::PropertyName(name));
         if constexpr (!isStrict) {
             if (left.isUndefined() && right.isEmpty())
                 continue;
         }
         if (!right)
             return false;
+        if (isStrict || !right.isUndefined())
+            remain++;
         pairs.appendWithCrashOnOverflow(left);
         pairs.appendWithCrashOnOverflow(right);
     }
-    size_t remain = properties1.names.size();
     for (size_t i = 0; i < properties2.names.size(); i++) {
         if constexpr (!isStrict) {
             if (properties2.values.at(i).isUndefined())
                 continue;
         }
-        WTF::UniquedStringImpl* name = properties2.names[i];
-        bool isInFirst = properties1.indexOf(name, i) != notFound || o1->getDirect(vm, JSC::PropertyName(name));
-        if (!isInFirst || !remain)
+        if (!remain)
             return false;
         remain--;
     }

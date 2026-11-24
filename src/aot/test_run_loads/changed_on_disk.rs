@@ -1,11 +1,9 @@
 use bun_core::strings::{contains_char, index_of_char_usize, last_index_of_char};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{File, NodeData};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::FinishedFile;
+use bun_sema::resolve::{FinishedFile, parent_directory};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::from_argument;
 
@@ -71,7 +69,7 @@ pub(super) fn find_file_in_front_of_query(
     if !matches!(path, [b'/', ..] | [b'.', b'/', ..] | [b'.', b'.', b'/', ..]) {
         return None;
     }
-    let folder = dirname::<Posix>(files.module(importer).file_name());
+    let folder = parent_directory(files.module(importer).file_name());
     let whole = from_argument(folder, path);
     let with_end = |stem: &[u8], end: &[u8]| files.by_path.get(&[stem, end].concat());
     if let Some(file) = files.by_path.get(&whole) {
@@ -178,7 +176,7 @@ impl ChangedOnDisk {
             let starts_at_own_folder = analysis.is_path_from_own_directory(changed.operand)
                 || analysis.find_resolved_form(changed.operand).is_some();
             let folder = match starts_at_own_folder {
-                true => dirname::<Posix>(files.module(file).file_name()),
+                true => parent_directory(files.module(file).file_name()),
                 false => working_directory,
             };
             for alternative in analysis.alternatives_of(&changed.path) {

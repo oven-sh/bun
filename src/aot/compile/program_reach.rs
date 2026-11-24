@@ -15,9 +15,8 @@ use bun_sema::bind::{
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
-    self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId,
-    MemberKey, MemberKind, ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
-    VarDeclId, VarKind,
+    self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, MemberKey, MemberKind,
+    ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::{ThisPositions, evaluates_own_this};
@@ -1504,13 +1503,10 @@ impl<'a, 's> FileScan<'a, 's> {
             }
             self.units.interests[TOP_LEVEL as usize].extend(quiet_files.map(Interest::UsedImport));
         }
-        for import in (0..hir.import_equals.len() as u32).map(ImportEqualsId) {
-            if let Binding::Symbol(symbol) = bound.entity_root_binding(import) {
-                self.add_name_that_is_no_expression(symbol);
-            }
-        }
-        for reference in bound.runtime.implicit_references() {
-            if let Binding::Symbol(symbol) = reference.binding {
+        let analysis = self.input.files.analysis(self.file);
+        let read_without_expression = analysis.bindings_read_without_expression(hir, bound);
+        for binding in read_without_expression {
+            if let Binding::Symbol(symbol) = binding {
                 self.add_name_that_is_no_expression(symbol);
             }
         }

@@ -13,11 +13,14 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use bun_http1::request::RequestParser;
+
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
-use crate::us_socket_t;
+use crate::{WebSocketUpgradeContext, us_socket_t};
 use bun_core::{BoundedArray, Fd};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
+use bun_websocket::deflate::Params;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. The IP text is copied into
@@ -58,24 +61,6 @@ impl SocketAddress {
         }
         false
     }
-}
-
-bun_opaque::opaque_ffi! {
-    /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
-    pub struct Socket;
-    /// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
-    pub struct WebSocketUpgradeContext;
-}
-
-/// Negotiated permessage-deflate parameters (RFC 7692 7.1). Out-of-range window bits are clamped.
-/// Must match `uWS::PerMessageDeflateParams` in PerMessageDeflate.h.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PerMessageDeflateParams {
-    pub server_max_window_bits: c_int,
-    pub client_max_window_bits: c_int,
-    pub server_no_context_takeover: bool,
-    pub client_no_context_takeover: bool,
 }
 
 /// Opaque handle for `uws::Response<SSL>`.
@@ -161,6 +146,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
     }
 
+    fn take_request_trailers(&mut self) -> Vec<u8> {
+        let parser = c::uws_res_get_parser(Self::ssl_flag(), self.as_raw());
+        // SAFETY: null once the parser is destroyed. http1.rs does not borrow it while a handler runs.
+        unsafe { parser.cast::<RequestParser>().as_mut() }
+            .map_or_else(Vec::new, RequestParser::take_trailers)
+    }
+
     pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
         c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
     }
@@ -188,7 +180,7 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     /// False if the socket is closed or already sent its FIN / close_notify. `upgrade()` returns
-    /// null for those.
+    /// false for those.
     pub(crate) fn can_upgrade(&self) -> bool {
         let socket =
             us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>());
@@ -631,54 +623,6 @@ impl<const SSL: bool> Response<SSL> {
             handle::<U>,
         );
     }
-
-    pub fn upgrade<D>(
-        &mut self,
-        data: *mut D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: Option<&mut WebSocketUpgradeContext>,
-    ) -> *mut Socket {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_upgrade(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.cast::<c_void>(),
-                sec_web_socket_key.as_ptr(),
-                sec_web_socket_key.len(),
-                sec_web_socket_protocol.as_ptr(),
-                sec_web_socket_protocol.len(),
-                sec_web_socket_extensions.as_ptr(),
-                sec_web_socket_extensions.len(),
-                ctx.map_or(core::ptr::null_mut(), std::ptr::from_mut),
-            )
-        }
-    }
-
-    /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
-    /// and is written verbatim. `deflate_params` is `None` if permessage-deflate wasn't negotiated.
-    pub(crate) fn upgrade_raw<D>(
-        &mut self,
-        data: *mut D,
-        handshake: &[u8],
-        deflate_params: Option<&PerMessageDeflateParams>,
-        ctx: &mut WebSocketUpgradeContext,
-    ) -> *mut Socket {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; ptr+len from &[u8].
-        unsafe {
-            c::uws_res_upgrade_raw(
-                Self::ssl_flag(),
-                self.downcast(),
-                data.cast::<c_void>(),
-                handshake.as_ptr(),
-                handshake.len(),
-                deflate_params,
-                ctx,
-            )
-        }
-    }
 }
 
 pub type TCPResponse = Response<false>;
@@ -730,12 +674,9 @@ macro_rules! any_dispatch {
     };
 }
 
-/// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`.
-/// Each arm is a generic fn *item* monomorphized over `<U, H>`,
-/// so it is itself a ZST satisfying both the `Response<SSL>` bound
-/// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
-/// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
+/// Stamp one ZST adapter per variant and register it via that variant's `$method`.
+/// Each arm is a generic fn *item* monomorphized over `<U, H>`, so it is itself
+/// a ZST satisfying the `$method` bound (`Fn(*mut U, …)`).
 ///
 /// Syntax:
 ///   any_response_register_cb! {
@@ -743,8 +684,9 @@ macro_rules! any_dispatch {
 ///       <U, H: [bounds…]>
 ///       |u $(, pre: PreTy)* ; r, any $(, post: PostTy)*| -> Ret { body }
 ///   }
-/// - `u` is bound as `*mut U` in the body (H3's `&mut U` is rebound).
-/// - `r` is the typed `&mut {TLS,TCP,H3}Response` param; `any` is the
+/// - `u` is `*mut U`, never `&mut U`: handlers re-enter code that reaches `U`, and a
+///   `noalias` param lets LLVM fold away the ref they hold across that call.
+/// - `r` is the typed `&mut {TLS,TCP,H3,H2}Response` param; `any` is the
 ///   `AnyResponse` re-wrap of `r`. Underscore-prefix either if unused.
 macro_rules! any_response_register_cb {
     (
@@ -762,13 +704,11 @@ macro_rules! any_response_register_cb {
             let $any = AnyResponse::TCP(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h3<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h3<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H3Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
         }
-        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
-            let $u = std::ptr::from_mut::<$U>($u);
+        fn h2<$U, $H: $($bound)*>($u: *mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
             let $any = AnyResponse::H2(std::ptr::from_mut($r));
             $($body)*
         }
@@ -1069,35 +1009,17 @@ impl AnyResponse {
         }
     }
 
-    /// [`on_writable`](Self::on_writable) for a handler owned by an
-    /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
-    /// dispatched with and keeps a ref on `U` until it clears the handler, so
-    /// the trampoline can hand the handler a `ThisPtr` again.
-    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    /// The registrant keeps a ref on `owner` until it clears the handler, which gets a ref of its own.
+    pub fn on_aborted_ref<U: AnyRefCounted + 'static, H>(self, _handler: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
-    {
-        self.on_writable(
-            |u: *mut U, off, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
-            },
-            this.as_ptr(),
-        )
-    }
-
-    /// [`on_aborted`](Self::on_aborted) counterpart of
-    /// [`on_writable_this`](Self::on_writable_this).
-    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
-    where
-        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyResponse) + Copy + 'static,
     {
         self.on_aborted(
             |u: *mut U, any| {
-                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
-                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+                // SAFETY: `u` is the pointer registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { RefPtr::init_ref(u) }, any)
             },
-            this.as_ptr(),
+            owner.as_ptr(),
         )
     }
 
@@ -1129,6 +1051,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.is_connect_request())
     }
 
+    /// The trailer section that a `node:http` server received after the body.
+    pub fn take_request_trailers(self) -> Vec<u8> {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => Vec::new(),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).take_request_trailers(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).take_request_trailers(),
+        }
+    }
+
     pub fn end_stream(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_stream(close_connection))
     }
@@ -1150,7 +1081,7 @@ impl AnyResponse {
         }
     }
 
-    /// Returns null if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
+    /// Returns false if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
     /// the caller still owns `data`.
     pub fn upgrade<D>(
         self,
@@ -1158,22 +1089,22 @@ impl AnyResponse {
         sec_web_socket_key: &[u8],
         sec_web_socket_protocol: &[u8],
         sec_web_socket_extensions: &[u8],
-        ctx: Option<&mut WebSocketUpgradeContext>,
-    ) -> *mut Socket {
+        ctx: &WebSocketUpgradeContext,
+    ) -> bool {
         match self {
             // server.upgrade() returns false before reaching here for H3
             // (request_context.get(RequestContext) is null — the H3 ctx is a
             // different type and upgrade_context is never set).
             AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).upgrade(
-                data,
+                data.cast(),
                 sec_web_socket_key,
                 sec_web_socket_protocol,
                 sec_web_socket_extensions,
                 ctx,
             ),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).upgrade(
-                data,
+                data.cast(),
                 sec_web_socket_key,
                 sec_web_socket_protocol,
                 sec_web_socket_extensions,
@@ -1182,21 +1113,29 @@ impl AnyResponse {
         }
     }
 
-    /// See `Response::upgrade_raw`. Returns null in the same cases as `upgrade`.
-    pub fn upgrade_raw<D>(
+    /// See `Response::write_handshake`.
+    pub fn write_handshake(self, handshake: &[u8]) -> bool {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).write_handshake(handshake),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).write_handshake(handshake),
+        }
+    }
+
+    /// After `write_handshake` succeeded.
+    pub fn become_web_socket<D>(
         self,
         data: *mut D,
-        handshake: &[u8],
-        deflate_params: Option<&PerMessageDeflateParams>,
-        ctx: &mut WebSocketUpgradeContext,
-    ) -> *mut Socket {
+        deflate_params: Option<Params>,
+        ctx: &WebSocketUpgradeContext,
+    ) {
         match self {
-            AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
             AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+                TLSResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
             }
             AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+                TCPResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
             }
         }
     }
@@ -1326,6 +1265,7 @@ pub mod c {
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_get_parser(ssl: i32, res: &mut uws_res) -> *mut c_void;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
         pub(crate) safe fn uws_res_get_remote_address_info(
@@ -1457,7 +1397,10 @@ pub mod c {
         ) -> bool;
         pub(crate) safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
         pub(crate) safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
+        pub(crate) safe fn uws_res_get_native_handle(
+            ssl: i32,
+            res: &mut uws_res,
+        ) -> *mut us_socket_t;
         pub(crate) safe fn uws_res_on_data(
             ssl: i32,
             res: &mut uws_res,
@@ -1466,27 +1409,6 @@ pub mod c {
             >,
             optional_data: *mut c_void,
         );
-        pub(crate) fn uws_res_upgrade(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *mut c_void,
-            sec_web_socket_key: *const u8,
-            sec_web_socket_key_length: usize,
-            sec_web_socket_protocol: *const u8,
-            sec_web_socket_protocol_length: usize,
-            sec_web_socket_extensions: *const u8,
-            sec_web_socket_extensions_length: usize,
-            ws: *mut WebSocketUpgradeContext,
-        ) -> *mut Socket;
-        pub(crate) fn uws_res_upgrade_raw(
-            ssl: i32,
-            res: *mut uws_res,
-            data: *mut c_void,
-            handshake: *const u8,
-            handshake_length: usize,
-            deflate_params: Option<&PerMessageDeflateParams>,
-            ws: *mut WebSocketUpgradeContext,
-        ) -> *mut Socket;
         // safe: cork is synchronous — `ctx` is passed straight back to
         // `corker` without being dereferenced by the C++ shim itself, so the
         // call has no preconditions beyond the live opaque handle.

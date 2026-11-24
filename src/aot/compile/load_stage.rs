@@ -8,7 +8,7 @@ use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
 };
 use crate::link::run_beside;
-use crate::load::contents::entry_points::NameLeftOut;
+use crate::load::contents::entry_points::{NameLeftOut, NameOfLoad};
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
@@ -510,11 +510,12 @@ fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBui
         let mut builtins_held = expressions.filter_map(|it| builtins.builtin_of_expression(it));
         builtins_held.any(|id| is(id, BuiltinId::NodeModule))
     };
+    let hands_object_on = || (builtins.exposed().iter()).any(|&id| is(id, BuiltinId::NodeModule));
     builtins
         .mentioned()
         .iter()
         .any(|&id| match is(id, BuiltinId::NodeModule) {
-            true => holds_object(),
+            true => holds_object() || hands_object_on(),
             false => {
                 let mut members = table::members(BuiltinId::NodeModule).iter();
                 tables_of_loaders.iter().any(|&loaders| is(id, loaders))
@@ -549,6 +550,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
     followed_workers: Vec<(FileId, ExprId)>,
+    names_of_loads: Vec<NameOfLoad>,
     names_written: Vec<EntryPointPaths>,
     names_left_out: Vec<NameLeftOut>,
 }
@@ -778,11 +780,12 @@ impl<'a> Build<'a> {
                 let application = application?;
                 let names_written = finder.take_names_written();
                 let names_left_out = finder.take_excluded_names();
-                let (entry_points, followed_workers) =
+                let (entry_points, followed_workers, names_of_loads) =
                     finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
                     entry_points,
                     followed_workers,
+                    names_of_loads,
                     names_written,
                     names_left_out,
                 };
@@ -983,6 +986,7 @@ impl<'a> Build<'a> {
                 found.names_written,
             );
             self.started_workers.names = names;
+            self.started_workers.names_of_loads = found.names_of_loads;
             for diagnostic in said {
                 self.diagnostics.add(None, diagnostic);
             }
@@ -1465,6 +1469,7 @@ mod tests {
             ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
+            (r#"await vi.importActual("node:module");"#, PLAIN, false),
             (r#"vi.resetModules();"#, PLAIN, false),
         ];
         let mut wrong = Vec::new();

@@ -163,7 +163,6 @@ impl GarbageCollectionController {
     /// # Safety
     /// `self` is the controller of `vm`, and its timer was just popped from the heap.
     pub unsafe fn on_gc_repeating_timer(&self, vm: &VirtualMachine) {
-        self.gc_repeating_timer.state.set(TimerState::FIRED);
         if self.disabled.get() {
             return;
         }

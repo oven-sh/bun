@@ -2,7 +2,8 @@ use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
 use bun_collections::{HashMap, VecExt};
-use bun_core::FeatureFlags;
+use bun_core::{FeatureFlags, strings};
+use bun_resolver::package_json::Package;
 
 use crate::bundled_ast;
 use crate::options::{self, Format, Loader};
@@ -38,6 +39,22 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
             ScanImportsAndExportsError::ImportResolutionFailed => LinkError::ImportResolutionFailed,
         }
     }
+}
+
+/// Unlike `import`, `require()` does not read `\` as `/` everywhere the bundle may run.
+fn specifier_for_require<'a>(specifier: &'a [u8], arena: &'a bun_alloc::Arena) -> &'a [u8] {
+    let end = strings::index_of_char_usize(specifier, b'?').unwrap_or(specifier.len());
+    let name = Package::parse_name(specifier).unwrap_or_default();
+    // An absolute path, a key of package.json "imports", the name of a package and a URL stay.
+    if matches!(name, [] | [b'#', ..])
+        || strings::contains_any(name, b"\\:")
+        || !strings::contains_char(&specifier[..end], b'\\')
+    {
+        return specifier;
+    }
+    let text = arena.alloc_slice_copy(specifier);
+    strings::replace_char_in_place(&mut text[..end], b'\\', b'/');
+    text
 }
 
 pub(crate) fn scan_imports_and_exports(
@@ -1045,6 +1062,13 @@ pub(crate) fn scan_imports_and_exports(
                                 && should_call_runtime_require(output_format)
                             {
                                 runtime_require_uses += 1;
+                            }
+
+                            let record = &mut ast.import_records[id].as_mut_slice()
+                                [import_record_index as usize];
+                            if kind == ImportKind::Stmt && record.path.text == record.original_path
+                            {
+                                record.path.text = specifier_for_require(record.path.text, arena);
                             }
 
                             // A split `require()` whose target is CommonJS at link

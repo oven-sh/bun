@@ -16,7 +16,7 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 
 use bun_core::EncodedSlice;
 use bun_core::vec::{BorrowedCursor, append_with};
@@ -26,9 +26,8 @@ use bun_jsc::{
     ThreadIsolatedArg,
 };
 
-use bun_brotli::c as brotli;
-use bun_zlib as zlib;
-use bun_zstd::c as zstd;
+use bun_zlib::{Deflater, Inflater, deflate, inflate};
+use bun_zstd::{EndDirective, Status};
 
 /// Matches `Bun::WebStreams::CompressionFormat` in `StreamsForward.h`.
 #[repr(u8)]
@@ -52,38 +51,49 @@ impl Format {
             _ => return None,
         })
     }
-
-    fn window_bits(self) -> c_int {
-        match self {
-            Self::Deflate => zlib::MAX_WBITS,
-            Self::DeflateRaw => -zlib::MAX_WBITS,
-            Self::Gzip => zlib::MAX_WBITS + 16,
-            Self::Brotli | Self::Zstd => unreachable!(),
-        }
-    }
 }
 
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// One codec call: reserves up to [`CHUNK`] in `out`, and lends `step` the spare capacity up to `cap`.
+/// Reserves up to [`CHUNK`] in `out`, and returns how much it may grow by.
+fn reserve_step(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
+    debug_assert!(out.len() < cap);
+    let budget = cap - out.len();
+    out.try_reserve(budget.min(CHUNK))
+        .map_err(|_| CodecError::OutOfMemory)?;
+    Ok(budget)
+}
+
+/// One codec call: lends `step` the spare capacity up to `cap`.
 fn append_step<R>(
     out: &mut Vec<u8>,
     cap: usize,
     step: impl FnOnce(BorrowedCursor<'_, u8>) -> R,
 ) -> Result<R, CodecError> {
-    debug_assert!(out.len() < cap);
-    let budget = cap - out.len();
-    out.try_reserve(budget.min(CHUNK))
-        .map_err(|_| CodecError::OutOfMemory)?;
+    let budget = reserve_step(out, cap)?;
     Ok(append_with(out, budget, step))
 }
 
-fn zstd_error(code: bun_zstd::ErrorCode, message: &'static str) -> CodecError {
-    if code.is_alloc_failure() {
-        CodecError::OutOfMemory
-    } else {
-        CodecError::Message(message)
+fn zlib_error(error: bun_zlib::Error, message: &'static str) -> CodecError {
+    match error {
+        bun_zlib::Error::Alloc(_) => CodecError::OutOfMemory,
+        _ => CodecError::Message(message),
+    }
+}
+
+/// [`append_step`] for zstd. Returns the input consumed.
+fn append_zstd_step(
+    out: &mut Vec<u8>,
+    cap: usize,
+    failure: &'static str,
+    step: impl FnOnce(&mut bun_zstd::Output<'_>) -> (usize, Result<Status, bun_zstd::Error>),
+) -> Result<(usize, Status), CodecError> {
+    let budget = reserve_step(out, cap)?;
+    match step(&mut bun_zstd::Output::spare_capacity(out, budget)) {
+        (consumed, Ok(status)) => Ok((consumed, status)),
+        (_, Err(bun_zstd::Error::MemoryAllocation)) => Err(CodecError::OutOfMemory),
+        (_, Err(_)) => Err(CodecError::Message(failure)),
     }
 }
 
@@ -106,12 +116,12 @@ enum Progress {
 }
 
 enum Backend {
-    Deflate(zlib::DeflateEncoder),
-    Inflate(zlib::InflateDecoder),
-    BrotliEncode(bun_brotli::OwnedEncoder),
-    BrotliDecode(bun_brotli::OwnedDecoder),
-    ZstdEncode(bun_zstd::OwnedCCtx),
-    ZstdDecode(bun_zstd::OwnedDCtx),
+    Deflate(Box<Deflater>),
+    Inflate(Box<Inflater>),
+    BrotliEncode(Box<bun_brotli::Encoder>),
+    BrotliDecode(Box<bun_brotli::Decoder>),
+    ZstdEncode(Box<bun_zstd::Encoder>),
+    ZstdDecode(Box<bun_zstd::Decoder>),
 }
 
 pub(crate) struct CompressionStreamCoder {
@@ -142,9 +152,8 @@ enum CodecError {
     /// The output buffer or the codec's own state could not be allocated.
     OutOfMemory,
     Message(&'static str),
-    /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
-    /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
-    Brotli(&'static str),
+    /// Surfaced as TypeError with the `.code` that node:zlib has for it.
+    Brotli(bun_brotli::DecodeError),
 }
 
 impl CompressionStreamCoder {
@@ -154,22 +163,29 @@ impl CompressionStreamCoder {
         high_water_mark: usize,
         level: Option<i32>,
     ) -> Result<Box<Self>, CodecError> {
+        let inflater = |container| Backend::Inflate(Box::new(Inflater::new(container)));
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
-                // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                let s = zlib::DeflateEncoder::new(
-                    level.unwrap_or(-1),
-                    format.window_bits(),
-                    8, // default mem_level
-                    0, // Z_DEFAULT_STRATEGY
-                )
-                .map_err(|_| CodecError::Message("failed to initialize deflate"))?;
-                Backend::Deflate(s)
+                let container = match format {
+                    Format::DeflateRaw => deflate::Container::Raw,
+                    Format::Gzip => deflate::Container::Gzip,
+                    _ => deflate::Container::Zlib,
+                };
+                let deflater = level
+                    .map_or(Ok(deflate::Level::DEFAULT), deflate::Level::try_from)
+                    .and_then(|level| {
+                        let options = deflate::Options {
+                            level,
+                            ..Default::default()
+                        };
+                        Deflater::new(container, options)
+                    })
+                    .map_err(|_| CodecError::Message("failed to initialize deflate"))?;
+                Backend::Deflate(deflater)
             }
-            (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => Backend::Inflate(
-                zlib::InflateDecoder::new(format.window_bits())
-                    .map_err(|_| CodecError::Message("failed to initialize inflate"))?,
-            ),
+            (Format::Deflate, true) => inflater(inflate::Container::Zlib),
+            (Format::DeflateRaw, true) => inflater(inflate::Container::Raw),
+            (Format::Gzip, true) => inflater(inflate::Container::Gzip),
             (Format::Brotli, false) => {
                 if bun_removable_features::is_removed(
                     bun_removable_features::Feature::BrotliEncoder,
@@ -178,14 +194,8 @@ impl CompressionStreamCoder {
                         "Brotli compression isn't in this executable",
                     ));
                 }
-                let mut p = bun_brotli::OwnedEncoder::new(bun_brotli::Allocator::Libc)
-                    .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
-                if let Some(quality) = level {
-                    if !p.set_parameter(brotli::BROTLI_PARAM_QUALITY, quality as u32) {
-                        return Err(CodecError::Message("failed to set brotli quality"));
-                    }
-                }
-                Backend::BrotliEncode(p)
+                let quality = level.unwrap_or(bun_brotli::MAX_QUALITY);
+                Backend::BrotliEncode(Box::new(bun_brotli::Encoder::with_quality(quality)))
             }
             (Format::Brotli, true) => {
                 if bun_removable_features::is_removed(
@@ -195,25 +205,12 @@ impl CompressionStreamCoder {
                         "Brotli decompression isn't in this executable",
                     ));
                 }
-                let p = bun_brotli::OwnedDecoder::new(bun_brotli::Allocator::Libc)
-                    .ok_or(CodecError::Message("failed to initialize brotli decoder"))?;
-                Backend::BrotliDecode(p)
+                Backend::BrotliDecode(Box::default())
             }
-            (Format::Zstd, false) => {
-                let mut p = bun_zstd::OwnedCCtx::new()
-                    .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
-                if let Some(lvl) = level {
-                    if p.set_parameter(zstd::ZSTD_c_compressionLevel, lvl).is_err() {
-                        return Err(CodecError::Message("failed to set zstd level"));
-                    }
-                }
-                Backend::ZstdEncode(p)
-            }
-            (Format::Zstd, true) => {
-                let p = bun_zstd::OwnedDCtx::new()
-                    .ok_or(CodecError::Message("failed to initialize zstd decoder"))?;
-                Backend::ZstdDecode(p)
-            }
+            (Format::Zstd, false) => Backend::ZstdEncode(Box::new(bun_zstd::Encoder::new(
+                level.unwrap_or(bun_zstd::DEFAULT_LEVEL),
+            ))),
+            (Format::Zstd, true) => Backend::ZstdDecode(Box::new(bun_zstd::Decoder::new())),
         };
         Ok(Box::new(Self {
             backend,
@@ -226,20 +223,6 @@ impl CompressionStreamCoder {
                 .context_of_caller()
                 .id(),
         }))
-    }
-
-    const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
-    const ZSTD_MAGIC_SKIPPABLE: [u8; 3] = [0x2A, 0x4D, 0x18];
-
-    /// True when `head` (1..=4 bytes) is a prefix of a zstd or skippable
-    /// frame magic.
-    fn is_zstd_frame_prefix(head: &[u8]) -> bool {
-        head.iter().zip(Self::ZSTD_MAGIC).all(|(a, b)| *a == b)
-            || ((head[0] & 0xF0) == 0x50
-                && head[1..]
-                    .iter()
-                    .zip(Self::ZSTD_MAGIC_SKIPPABLE)
-                    .all(|(a, b)| *a == b))
     }
 
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
@@ -302,113 +285,10 @@ impl CompressionStreamCoder {
     ) -> Result<Progress, CodecError> {
         match &mut self.backend {
             Backend::Deflate(s) => {
-                let mut remaining = input;
-                loop {
-                    if out.len() >= cap {
-                        return Ok(Progress::More {
-                            consumed: input.len() - remaining.len(),
-                        });
-                    }
-                    // A step takes at most `u32::MAX` bytes.
-                    let tail = remaining.len() > u32::MAX as usize;
-                    let flush = if finish && !tail {
-                        zlib::FlushValue::Finish
-                    } else {
-                        zlib::FlushValue::NoFlush
-                    };
-                    let budget = cap - out.len();
-                    let (consumed, rc) =
-                        s.step_up_to(remaining, out, budget.min(CHUNK), budget, flush);
-                    remaining = &remaining[consumed..];
-                    match rc {
-                        zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
-                        zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("deflate failed")),
-                    }
-                    if s.avail_out() != 0 && remaining.is_empty() {
-                        return Ok(Progress::Done);
-                    }
-                }
-            }
-            Backend::Inflate(s) => {
-                // After a gzip member ends, further bytes must be another member (RFC 1952 §2.2).
-                let gzip = s.is_gzip_only();
-                if !continuing {
-                    // `self.ended` = "the last inflate returned StreamEnd" = "at
-                    // a member boundary". For gzip, a following chunk starts the
-                    // next member; for deflate/deflate-raw it is trailing junk.
-                    if self.ended && !input.is_empty() {
-                        if !gzip {
-                            return Err(CodecError::TrailingJunk);
-                        }
-                        if s.reset() != zlib::ReturnCode::Ok {
-                            return Err(CodecError::Message("inflate failed"));
-                        }
-                        self.ended = false;
-                    }
-                    if input.is_empty() && (self.ended || !finish) {
-                        return Ok(Progress::Done);
-                    }
-                }
-                let mut remaining = input;
-                loop {
-                    if out.len() >= cap {
-                        return Ok(Progress::More {
-                            consumed: input.len() - remaining.len(),
-                        });
-                    }
-                    // A step takes at most `u32::MAX` bytes.
-                    let tail = remaining.len() > u32::MAX as usize;
-                    let flush = if finish && !tail {
-                        zlib::FlushValue::Finish
-                    } else {
-                        zlib::FlushValue::NoFlush
-                    };
-                    let budget = cap - out.len();
-                    let (consumed, rc) =
-                        s.step_up_to(remaining, out, budget.min(CHUNK), budget, flush);
-                    remaining = &remaining[consumed..];
-                    match rc {
-                        zlib::ReturnCode::Ok => {}
-                        zlib::ReturnCode::BufError => {
-                            if finish && !tail {
-                                return Err(CodecError::Message("unexpected end of file"));
-                            }
-                        }
-                        zlib::ReturnCode::StreamEnd => {
-                            self.ended = true;
-                            if remaining.is_empty() {
-                                return Ok(Progress::Done);
-                            }
-                            if !gzip {
-                                return Err(CodecError::TrailingJunk);
-                            }
-                            if s.reset() != zlib::ReturnCode::Ok {
-                                return Err(CodecError::Message("inflate failed"));
-                            }
-                            self.ended = false;
-                            continue;
-                        }
-                        zlib::ReturnCode::NeedDict => {
-                            return Err(CodecError::Message("Missing dictionary"));
-                        }
-                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
-                        _ => return Err(CodecError::Message("inflate failed")),
-                    }
-                    if s.avail_out() != 0 && remaining.is_empty() {
-                        if finish && !self.ended {
-                            return Err(CodecError::Message("unexpected end of file"));
-                        }
-                        return Ok(Progress::Done);
-                    }
-                }
-            }
-            Backend::BrotliEncode(p) => {
-                let op = if finish {
-                    brotli::BrotliEncoderOperation::finish
+                let flush = if finish {
+                    deflate::Flush::Finish
                 } else {
-                    brotli::BrotliEncoderOperation::process
+                    deflate::Flush::None
                 };
                 let mut remaining = input;
                 loop {
@@ -417,19 +297,81 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, ok) =
-                        append_step(out, cap, |spare| p.step(remaining, spare, op))?;
-                    remaining = &remaining[consumed..];
-                    if !ok {
-                        return Err(CodecError::Message("brotli encode failed"));
-                    }
-                    let has_room = out.len() < cap.min(out.capacity());
-                    if remaining.is_empty() && has_room {
+                    let status =
+                        append_step(out, cap, |out| s.deflate(&mut remaining, out, flush))?
+                            .map_err(|error| zlib_error(error, "deflate failed"))?;
+                    if status != deflate::Status::NeedsOutput {
                         return Ok(Progress::Done);
                     }
                 }
             }
-            Backend::BrotliDecode(p) => {
+            Backend::Inflate(s) => {
+                if !continuing && input.is_empty() && (self.ended || !finish) {
+                    return Ok(Progress::Done);
+                }
+                let mut remaining = input;
+                loop {
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - remaining.len(),
+                        });
+                    }
+                    let budget = reserve_step(out, cap)?;
+                    let status = s
+                        .inflate_to_vec(&mut remaining, out, budget)
+                        .map_err(|error| zlib_error(error, "inflate failed"))?;
+                    match status {
+                        inflate::Status::NeedsOutput | inflate::Status::BlockEnd => {}
+                        inflate::Status::NeedsInput if finish => {
+                            return Err(CodecError::Message("unexpected end of file"));
+                        }
+                        inflate::Status::NeedsInput => return Ok(Progress::Done),
+                        inflate::Status::StreamEnd => {
+                            self.ended = true;
+                            if remaining.is_empty() {
+                                return Ok(Progress::Done);
+                            }
+                            // After a gzip member, it has to be another one (RFC 1952 §2.2).
+                            if s.container() != inflate::Container::Gzip {
+                                return Err(CodecError::TrailingJunk);
+                            }
+                            s.reset();
+                            self.ended = false;
+                        }
+                        inflate::Status::NeedsDictionary => {
+                            return Err(CodecError::Message("Missing dictionary"));
+                        }
+                    }
+                }
+            }
+            Backend::BrotliEncode(encoder) => {
+                let operation = if finish {
+                    bun_brotli::Operation::Finish
+                } else {
+                    bun_brotli::Operation::Process
+                };
+                let mut remaining = input;
+                loop {
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - remaining.len(),
+                        });
+                    }
+                    match append_step(out, cap, |spare| {
+                        encoder.compress(operation, &mut remaining, spare)
+                    })? {
+                        Ok(bun_brotli::EncodeStatus::Done) => return Ok(Progress::Done),
+                        Ok(bun_brotli::EncodeStatus::NeedsOutput) => {}
+                        Err(bun_brotli::EncodeError::OutOfMemory) => {
+                            return Err(CodecError::OutOfMemory);
+                        }
+                        Err(bun_brotli::EncodeError::InvalidOperation) => {
+                            return Err(CodecError::Message("brotli encode failed"));
+                        }
+                    }
+                }
+            }
+            Backend::BrotliDecode(decoder) => {
                 if self.ended {
                     if !input.is_empty() {
                         return Err(CodecError::TrailingJunk);
@@ -438,49 +380,39 @@ impl CompressionStreamCoder {
                 }
                 let mut remaining = input;
                 loop {
-                    let len_before = out.len();
-                    if len_before >= cap {
+                    if out.len() >= cap {
                         return Ok(Progress::More {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, result) =
-                        append_step(out, cap, |spare| p.step(remaining, spare))?;
-                    remaining = &remaining[consumed..];
-                    match result {
-                        brotli::BrotliDecoderResult::success => {
+                    match append_step(out, cap, |spare| decoder.decompress(&mut remaining, spare))?
+                    {
+                        Ok(bun_brotli::DecodeStatus::Finished) => {
                             self.ended = true;
                             if !remaining.is_empty() {
                                 return Err(CodecError::TrailingJunk);
                             }
                             return Ok(Progress::Done);
                         }
-                        brotli::BrotliDecoderResult::needs_more_input => {
-                            // Brotli reports `needs_more_input` even with output left in its ring buffer.
-                            if out.len() > len_before && p.has_more_output() {
-                                continue;
-                            }
-                            if finish {
-                                return Err(CodecError::Message("unexpected end of file"));
-                            }
-                            return Ok(Progress::Done);
+                        Ok(bun_brotli::DecodeStatus::NeedsOutput) => {}
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) if decoder.has_more_output() => {}
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) if finish => {
+                            return Err(CodecError::Message("unexpected end of file"));
                         }
-                        brotli::BrotliDecoderResult::needs_more_output => {}
-                        brotli::BrotliDecoderResult::err => {
-                            let ec = p.error_code();
-                            if ec.is_alloc_failure() {
-                                return Err(CodecError::OutOfMemory);
-                            }
-                            return Err(CodecError::Brotli(
-                                ec.name().to_str().unwrap_or("brotli decode failed"),
-                            ));
+                        Ok(bun_brotli::DecodeStatus::NeedsInput) => return Ok(Progress::Done),
+                        Err(error) if error.is_out_of_memory() => {
+                            return Err(CodecError::OutOfMemory);
                         }
+                        Err(error) => return Err(CodecError::Brotli(error)),
                     }
                 }
             }
             Backend::ZstdEncode(p) => {
-                // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
-                let end: core::ffi::c_uint = if finish { 2 } else { 0 };
+                let end = if finish {
+                    EndDirective::End
+                } else {
+                    EndDirective::Continue
+                };
                 let mut remaining = input;
                 loop {
                     if out.len() >= cap {
@@ -488,11 +420,12 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, hint) =
-                        append_step(out, cap, |spare| p.step(remaining, spare, end))?;
+                    let (consumed, status) =
+                        append_zstd_step(out, cap, "zstd encode failed", |spare| {
+                            p.step(remaining, spare, end)
+                        })?;
                     remaining = &remaining[consumed..];
-                    let hint = hint.map_err(|code| zstd_error(code, "zstd encode failed"))?;
-                    if remaining.is_empty() && (!finish || hint == 0) {
+                    if remaining.is_empty() && (!finish || status == Status::Complete) {
                         return Ok(Progress::Done);
                     }
                 }
@@ -507,7 +440,7 @@ impl CompressionStreamCoder {
                             return Ok(Progress::Done);
                         }
                         let head = &remaining[..remaining.len().min(4)];
-                        if !Self::is_zstd_frame_prefix(head) {
+                        if !bun_zstd::may_start_frame(head) {
                             return Err(CodecError::TrailingJunk);
                         }
                         if head.len() < 4 {
@@ -518,7 +451,6 @@ impl CompressionStreamCoder {
                             self.zstd_head_len = head.len() as u8;
                             return Ok(Progress::Done);
                         }
-                        p.reset();
                         self.ended = false;
                     }
                     if out.len() >= cap {
@@ -526,9 +458,12 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, hint) = append_step(out, cap, |spare| p.step(remaining, spare))?;
+                    let (consumed, status) =
+                        append_zstd_step(out, cap, "zstd decode failed", |spare| {
+                            p.step(remaining, spare)
+                        })?;
                     remaining = &remaining[consumed..];
-                    if hint.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
+                    if status == Status::Complete {
                         self.ended = true;
                         continue;
                     }
@@ -662,10 +597,11 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
             .to_js(),
         CodecError::OutOfMemory => global.create_out_of_memory_error(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
-        CodecError::Brotli(detail) => {
-            let code = format!("ERR_{detail}");
+        CodecError::Brotli(error) => {
+            let code = error.code().to_bytes();
+            let detail = bstr::BStr::new(code.strip_prefix(b"ERR_").unwrap_or(code));
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(code).to_js(global);
             err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
             cause.put(global, b"code", code_js);

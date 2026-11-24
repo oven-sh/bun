@@ -5,11 +5,11 @@
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
 use ::core::sync::atomic::{AtomicBool, Ordering};
-use std::io::Write as _;
 
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_core::strings;
 use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
@@ -18,10 +18,7 @@ use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, Vir
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, DELIMITER, Path};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd};
 use bun_which::which;
@@ -35,21 +32,6 @@ use crate::cli::shell_completions::ShellCompletions;
 bun_core::declare_scope!(RUN_LOG, visible);
 
 use bun_core::UnwrapOrOom;
-
-/// Picks the POSIX or Windows path literal at compile
-/// time. Local because `bun_paths` does not export a macro form yet.
-macro_rules! path_literal {
-    ($posix:literal, $win:literal) => {{
-        #[cfg(windows)]
-        {
-            $win
-        }
-        #[cfg(not(windows))]
-        {
-            $posix
-        }
-    }};
-}
 
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
@@ -158,44 +140,38 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
-    /// hardcoded list. Returns the length of the path in `path_buf`.
-    fn find_shell_impl(path: &[u8], cwd: &[u8], path_buf: &mut PathBuffer) -> Option<usize> {
+    /// Locates a POSIX shell on `$PATH`, falling back to a hardcoded list.
+    fn find_shell_impl(path: &[u8], cwd: &[u8]) -> Option<bun_core::ZBox> {
         #[cfg(windows)]
         {
             let _ = (path, cwd);
-            const WIN: &[u8] = b"C:\\Windows\\System32\\cmd.exe";
-            path_buf[..WIN.len()].copy_from_slice(WIN);
-            return Some(WIN.len());
+            return Some(bun_core::ZBox::from_bytes(
+                b"C:\\Windows\\System32\\cmd.exe",
+            ));
         }
 
         #[cfg(not(windows))]
         {
             for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(shell_) = which(path_buf, path, cwd, shell) {
-                    return Some(shell_.len());
+                if let Some(found) = which(path, cwd, shell) {
+                    return Some(found.to_zbox());
                 }
             }
 
-            const HARDCODED_POPULAR_ONES: &[&[u8]] = &[
-                b"/bin/bash",
-                b"/usr/bin/bash",
-                b"/usr/local/bin/bash", // don't think this is a real one
-                b"/bin/sh",
-                b"/usr/bin/sh", // don't think this is a real one
-                b"/usr/bin/zsh",
-                b"/usr/local/bin/zsh",
-                b"/system/bin/sh", // Android
+            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+                bun_core::zstr!("/bin/bash"),
+                bun_core::zstr!("/usr/bin/bash"),
+                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+                bun_core::zstr!("/bin/sh"),
+                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+                bun_core::zstr!("/usr/bin/zsh"),
+                bun_core::zstr!("/usr/local/bin/zsh"),
+                bun_core::zstr!("/system/bin/sh"), // Android
             ];
-            for shell in HARDCODED_POPULAR_ONES {
-                path_buf[..shell.len()].copy_from_slice(shell);
-                let z = ZStr::nul_terminate(path_buf, shell.len());
-                if bun_sys::is_executable_file_path(z) {
-                    return Some(shell.len());
-                }
-            }
-
-            None
+            HARDCODED_POPULAR_ONES
+                .iter()
+                .find(|shell| bun_sys::is_executable_file_path(shell))
+                .map(|shell| shell.to_zbox())
         }
     }
 
@@ -204,10 +180,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         static SHELL: bun_core::Once<Option<bun_core::ZBox>> = bun_core::Once::new();
         SHELL
             .get_or_init(|| {
-                let mut buf = bun_paths::path_buffer_pool::get();
                 let path = bun_install::lifecycle_script_runner::strip_bin_dirs(path);
-                let len = Self::find_shell_impl(&path, cwd, &mut buf)?;
-                Some(bun_core::ZBox::from_bytes(&buf[..len]))
+                Self::find_shell_impl(&path, cwd)
             })
             .as_deref()
     }
@@ -1011,11 +985,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             eval_mode: ctx.runtime_options.eval.eval_and_print,
-            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            one_shot: bun_jsc::is_one_shot_eval_invocation()
+                && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
             ..Default::default()
         });
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_jsc::expect_configuration();
+        }
         bun_ast::initialize_store();
 
         let options = VmInitOptions {
@@ -1087,13 +1065,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let cron_script: &'static [u8] = cli_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
-            eval_path.extend_from_slice(cwd_bytes);
-            eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = cli_arena().alloc_slice_copy(&eval_path);
+            let heap_entry: &'static [u8] =
+                cli_arena().alloc_slice_copy(&synthetic_entry_point(b"[eval]"));
 
             let source = bun_ast::Source::init_path_string(heap_entry, cron_script);
             let _ = vm.module_loader.eval_source.set(Box::new(source));
@@ -1409,6 +1382,15 @@ impl Run<'_> {
 
         Self::add_conditional_globals(global, ctx);
 
+        if ctx.runtime_options.eval.reads_configuration {
+            bun_removable_features::removable_body_behind_value!(Tools, {
+                crate::read_ahead::enable(vm, true);
+                let script = ctx.runtime_options.eval.script;
+                let configuration = bun_lint_driver::configuration_read_by(script);
+                crate::read_ahead::expect(configuration.into_iter());
+            });
+        }
+
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1419,16 +1401,19 @@ impl Run<'_> {
             // `--redis-preconnect` is refused at start where `--trim` removed `Bun.redis`.
             let preconnect = || -> bun_jsc::JsResult<()> {
                 bun_removable_features::removable_body!(Valkey, Abort, {
+                    use crate::valkey_jsc::js_valkey::js;
                     let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
                         return Ok(());
                     };
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
-                        return Ok(());
-                    };
-                    client.do_connect(global, (&client).into());
+                    if let Some(wrapper) = js::from_js(&redis)
+                        && let Some(client) = js::ref_from_js(redis)
+                    {
+                        // Not `connect()`: nobody could catch its promise.
+                        client.preconnect((&wrapper).into());
+                    }
                     Ok(())
                 })
             };
@@ -1559,6 +1544,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
+            && !ctx.runtime_options.eval.reads_configuration
             && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             global.vm().release_weak_refs();
@@ -1826,29 +1812,11 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut shim_dir_buffer = bun_paths::w_path_buffer_pool::get();
-            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            let Some(len) =
-                bun_install::RunCommand::windows_node_shim_dir(&mut shim_dir_buffer[..])
-            else {
-                return Err(crate::Error::FailedToGetTempPath);
-            };
-
-            let converted = strings::convert_utf16_to_utf8_in_buffer(
-                &mut target_path_buffer,
-                &shim_dir_buffer[..len],
-            );
-
-            const FILE_NAME: &str = "\\node.exe";
-            let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
-            target_path_buffer[total] = 0;
-
-            // Park the
-            // bytes in the per-process `cli_arena()` instead of leaking
-            // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
+            let shim_dir = bun_install::RunCommand::windows_node_shim_dir()
+                .ok_or(crate::Error::FailedToGetTempPath)?;
+            let mut node = Path::from(&shim_dir);
+            node.push(b"node.exe");
+            let stored: &'static [u8] = cli_arena().alloc_slice_copy(node.as_bytes_with_nul());
             Ok(ZStr::from_slice_with_nul(stored))
         }
     }
@@ -1884,9 +1852,11 @@ impl RunCommand {
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if root_dir_info.package_json.is_none() {
-                // no trailing slash
-                package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name().dir);
+                // nothing for `/`
+                package_json_dir = match paths::dirname_or_root(package_json.source.path.text) {
+                    b"/" => b"",
+                    dir => paths::without_trailing_sep(dir),
+                };
             }
         }
 
@@ -1950,18 +1920,8 @@ impl RunCommand {
             new_path_len += package_json_dir.len() + 1;
         }
 
-        {
-            let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path_len += strings::without_trailing_slash(remain).len()
-                    + b"node_modules.bin".len()
-                    + 1
-                    + 2; // +2 for path separators, +1 for path delimiter
-                remain = &remain[..i];
-            }
-            // final segment once the loop ends naturally
-            new_path_len +=
-                strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
+        for dir in paths::ancestors(cwd) {
+            new_path_len += dir.len() + b"/node_modules/.bin:".len();
         }
 
         if needs_to_force_bun {
@@ -2009,23 +1969,10 @@ impl RunCommand {
                 new_path.push(DELIMITER);
             }
 
-            let mut remain = cwd;
-            while let Some(i) = strings::last_index_of_char(remain, SEP) {
-                new_path.extend_from_slice(strings::without_trailing_slash(remain));
-                new_path.extend_from_slice(path_literal!(
-                    b"/node_modules/.bin",
-                    b"\\node_modules\\.bin"
-                ));
+            for dir in paths::ancestors(cwd) {
+                new_path.extend_from_slice(&paths::Path::from_parts(&[dir, b"node_modules/.bin"]));
                 new_path.push(DELIMITER);
-                remain = &remain[..i];
             }
-            // final segment once the loop ends naturally
-            new_path.extend_from_slice(strings::without_trailing_slash(remain));
-            new_path.extend_from_slice(path_literal!(
-                b"/node_modules/.bin",
-                b"\\node_modules\\.bin"
-            ));
-            new_path.push(DELIMITER);
 
             new_path.extend_from_slice(&path);
         }
@@ -2070,16 +2017,10 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
             debug_assert!(paths::is_absolute(executable));
 
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            let w = strings::to_nt_path(&mut buf, executable);
-            let w_len = w.len();
-            debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
-            let new_len = w_len + b".bunx".len() - b".exe".len();
-            let bunx = bun_core::w!("bunx");
-            buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
-            buf[new_len] = 0;
-
-            BunXFastPath::try_launch(ctx, &mut buf, new_len, env, passthrough);
+            let mut bunx = paths::OSPath::resolve(&[executable]);
+            bunx.strip_nt_prefix();
+            bunx.set_extension(b".bunx");
+            BunXFastPath::try_launch(ctx, &bunx, env, passthrough);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2469,13 +2410,9 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(b"\x00pre");
                         temp_script_buffer.extend_from_slice(target_name);
 
-                        let package_json_dir =
-                            paths::string_paths::without_trailing_slash_windows_path(
-                                strings::without_suffix_comptime(
-                                    package_json.source.path.text,
-                                    b"package.json",
-                                ),
-                            );
+                        let package_json_dir = paths::without_trailing_sep(paths::dirname_or_root(
+                            package_json.source.path.text,
+                        ));
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",
@@ -2646,26 +2583,16 @@ impl RunCommand {
             && !ctx.runtime_options.check
             && !crate::cli::run_compiled::is_requested(ctx)
         {
-            let mut buf = bun_paths::w_path_buffer_pool::get();
-            // NT object-manager prefix (`\??\`), NOT the Win32 long-path
-            // `\\?\` — `try_launch` hands this to NtCreateFile.
-            let root = bun_core::w!("\\??\\");
-            buf[..root.len()].copy_from_slice(root);
-            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
-                let mut ptr = root.len() + cwd_len;
-                let prefix = bun_core::w!("\\node_modules\\.bin\\");
-                buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
-                ptr += prefix.len();
-                let encoded =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
-                ptr += encoded.len();
-                let ext = bun_core::w!(".bunx");
-                buf[ptr..ptr + ext.len()].copy_from_slice(ext);
-                ptr += ext.len();
-                buf[ptr] = 0;
+            let mut cwd = bun_paths::w_path_buffer_pool::get();
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut cwd[..]) {
+                let mut bunx = paths::OSPath::from(&cwd[..cwd_len]);
+                bunx.push(b"node_modules/.bin");
+                bunx.push_trailing_sep();
+                bunx.extend_from_slice(target_name);
+                bunx.extend_from_slice(b".bunx");
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, &bunx, env_loader, &passthrough);
             }
         }
 
@@ -2687,10 +2614,7 @@ impl RunCommand {
             }
 
             if !path_for_which.is_empty() {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                if let Some(destination) =
-                    which(&mut path_buf, path_for_which, top_level_dir, target_name)
-                {
+                if let Some(destination) = which(path_for_which, top_level_dir, target_name) {
                     crate::cli::run_compiled::reject(
                         ctx,
                         crate::cli::run_compiled::NonFileTarget::Executable(destination.as_bytes()),
@@ -2707,7 +2631,7 @@ impl RunCommand {
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
-                        destination,
+                        &destination,
                         top_level_dir,
                         env_loader,
                         &passthrough,
@@ -2844,72 +2768,30 @@ impl RunCommand {
         // absolute path via `get_fd_path` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
-        let mut script_name_buf = bun_paths::path_buffer_pool::get();
 
         // Build a NUL-terminated path to open (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
-        let open_len: usize = if paths::is_absolute(target) {
-            // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
-            // letter on Windows for `/abs` paths; then, on Windows only,
-            // `normalize_string_buf` canonicalizes
-            // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
-            // input slice untouched).
-            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
-            let Ok(resolved) = win_resolver.resolve_cwd(target) else {
-                return false;
-            };
-            #[cfg(windows)]
-            let len = {
-                // Normalizing a bare `\\server\share` adds a trailing separator, and the NUL needs one more byte.
-                if resolved.len() + 1 >= MAX_PATH_BYTES {
-                    return false;
-                }
-                paths::resolve_path::normalize_string_buf::<false, paths::platform::Windows, false>(
-                    resolved,
-                    script_name_buf.as_mut_slice(),
-                )
-                .len()
-            };
-            #[cfg(not(windows))]
-            let len = {
-                if resolved.len() >= MAX_PATH_BYTES {
-                    return false;
-                }
-                script_name_buf[..resolved.len()].copy_from_slice(resolved);
-                resolved.len()
-            };
-            len
-        } else if !target.starts_with(b"..") && target[0] != b'~' {
-            // open relative to cwd as-is
-            if target.len() >= MAX_PATH_BYTES {
-                return false;
+        let to_open = if paths::is_absolute(target) {
+            let mut path = Path::from(target);
+            path.add_current_drive();
+            if cfg!(windows) {
+                path.resolve_in_place::<u8>(&[]);
             }
-            script_name_buf[..target.len()].copy_from_slice(target);
-            target.len()
+            path
+        } else if !target.starts_with(b"..") && target[0] != b'~' {
+            Path::from(target)
         } else {
-            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
                 return false;
             };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
-            let Some(joined) = paths::resolve_path::join_abs_string_buf_z_checked::<
-                paths::platform::Auto,
-            >(
-                &cwd_buf[..cwd_len + 1], &mut script_name_buf.0, &[target]
-            ) else {
-                return false;
-            };
-            if joined.is_empty() {
-                return false;
-            }
-            joined.len()
+            let mut path = Path::resolve(&[cwd.as_bytes(), target]);
+            path.copy_trailing_sep_from(target);
+            path
         };
-        let open_z = bun_core::ZStr::nul_terminate(&mut script_name_buf, open_len);
 
         let absolute_script_path: Box<[u8]> = {
-            let Ok(file) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0)
+            let Ok(file) = bun_sys::open(&to_open, bun_sys::O::RDONLY, 0)
                 .map(sys::CloseOnDrop::new)
                 .and_then(|file| file.make_lib_uv_owned_for_syscall(sys::Tag::open))
             else {
@@ -2927,6 +2809,7 @@ impl RunCommand {
             });
 
             // With symlinks resolved.
+            let mut script_name_buf = bun_paths::path_buffer_pool::get();
             let Ok(resolved) = file.get_path(&mut script_name_buf) else {
                 return false;
             };
@@ -2955,20 +2838,6 @@ impl RunCommand {
         }
         ctx.runtime_options.eval.script = list.leak();
 
-        #[cfg(windows)]
-        const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
-        #[cfg(not(windows))]
-        const STDIN_TRIGGER: &[u8] = b"/[stdin]";
-
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
-        let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
-
         // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
         // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
@@ -2981,8 +2850,7 @@ impl RunCommand {
         // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
-        let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, synthetic_entry_point(b"[stdin]"), None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -3021,17 +2889,7 @@ impl RunCommand {
             ctx.passthrough = merged;
         }
 
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-        let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-            .to_vec()
-            .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, synthetic_entry_point(b"[eval]"), None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -3055,18 +2913,7 @@ impl RunCommand {
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // synthetic `[eval]` path under cwd
-            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let cwd_len = cwd_bytes.len();
-            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-            let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, synthetic_entry_point(b"[eval]"), None);
         }
 
         if ctx.positionals.is_empty() {
@@ -3087,19 +2934,11 @@ impl RunCommand {
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
-            // Note: write
-            // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
-            // platform separator) and then run the result through
-            // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = b'/';
-            let joined = paths::resolve_path::join_abs_string::<paths::platform::Loose>(
-                &cwd_buf[..cwd_len + 1],
-                &[&filename],
-            );
-            joined.to_vec().into_boxed_slice()
+            let cwd = crate::cli::getcwd_or_exe_dir(&mut cwd_buf);
+            let mut joined = Path::resolve(&[cwd, &filename]);
+            joined.copy_trailing_sep_from(&filename);
+            joined.as_bytes().into()
         };
 
         // This arm calls `Run::boot`
@@ -3147,11 +2986,12 @@ impl RunCommand {
     }
 }
 
-// Only the leading separator matters here.
-#[cfg(windows)]
-const EVAL_TRIGGER: &[u8] = b"\\[eval]";
-#[cfg(not(windows))]
-const EVAL_TRIGGER: &[u8] = b"/[eval]";
+/// `name` in the working directory. In `/` that is `//[eval]`, whose `__dirname` is `/`.
+fn synthetic_entry_point(name: &[u8]) -> Box<[u8]> {
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd = crate::cli::getcwd_or_exe_dir(&mut cwd_buf);
+    strings::concat(&[cwd, paths::SEP_STR.as_bytes(), name])
+}
 
 /// Escape `\ " \n \r \t` for
 /// embedding in a double-quoted JS string literal. Used by the cron-execution
@@ -3186,16 +3026,6 @@ pub(crate) enum Filter {
 }
 
 impl RunCommand {
-    fn unlink_staged_path(path: &[u8]) {
-        let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
-        if path.len() >= zbuf.len() {
-            return;
-        }
-        zbuf[..path.len()].copy_from_slice(path);
-        let z = ZStr::nul_terminate(&mut zbuf, path.len());
-        let _ = sys::unlink(z);
-    }
-
     /// Parse `contents` once with an ImageUrlCollector, download every
     /// http(s) image URL it finds to a temp file, and populate `out_map`
     /// with url → temp-path entries. Failures are silent — an image that
@@ -3278,58 +3108,22 @@ impl RunCommand {
             } else {
                 b".bin"
             };
-            let mut name_buf = [0u8; 64];
-            let name = {
-                let mut cursor = &mut name_buf[..];
-                if write!(
-                    cursor,
-                    "bun-md-{:x}{}",
-                    bun_core::fast_random(),
-                    bstr::BStr::new(ext)
-                )
-                .is_err()
-                {
-                    continue;
-                }
-                let written = 64 - cursor.len();
-                &name_buf[..written]
-            };
-            let mut path: Vec<u8> = Vec::new();
-            if write!(
-                &mut path,
-                "{}/{}",
-                bstr::BStr::new(tmpdir),
-                bstr::BStr::new(name)
-            )
-            .is_err()
-            {
-                continue;
-            }
+            let mut path = Path::from(tmpdir);
+            path.push_fmt(format_args!("bun-md-{:x}", bun_core::fast_random()));
+            path.extend_from_slice(ext);
 
-            let fd = match sys::open_a(
-                &path,
+            let Ok(image) = sys::Tmpfile::open(
+                Fd::cwd(),
+                path,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
                 0o600,
-            ) {
-                Ok(f) => f,
-                Err(_) => continue,
+            ) else {
+                continue;
             };
-            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
-            if !ok {
-                // openA + CREAT leaves an orphan even on zero-byte
-                // write failure. Unlink via stack buffer so cleanup
-                // can't fail for OOM reasons.
-                Self::unlink_staged_path(&path);
+            if image.file.write_all(bytes).is_err() || out_map.try_reserve(1).is_err() {
                 continue;
             }
-            // Dupe url for the map key — `collector.urls` owns the backing
-            // bytes. Check capacity first while `path` is still
-            // borrowable for `unlink_staged_path`.
-            if out_map.try_reserve(1).is_err() {
-                Self::unlink_staged_path(&path);
-                continue;
-            }
-            out_map.put_assume_capacity(url, path.into_boxed_slice());
+            out_map.put_assume_capacity(url, image.keep().as_bytes().into());
         }
     }
 
@@ -3388,30 +3182,13 @@ impl RunCommand {
         // Relative image paths in the markdown should resolve against
         // the document's directory, not the process cwd — otherwise
         // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
-        // that sits next to README.md. Resolve to an absolute dir first
-        // so joinAbsString downstream doesn't double-apply cwd.
-        let mut base_buf = bun_paths::path_buffer_pool::get();
+        // that sits next to README.md.
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let abs_md_path: &[u8] = 'blk: {
-            if paths::is_absolute(path) {
-                break 'blk path;
-            }
-            let cwd: &[u8] = match sys::getcwd(&mut cwd_buf.0[..]) {
-                Ok(n) => &cwd_buf[..n],
-                Err(_) => break 'blk path,
-            };
-            // If the absolute path is too long, the relative path can still be opened.
-            paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
-                cwd,
-                &mut base_buf.0,
-                &[path],
-            )
-            .unwrap_or(path)
-        };
-        let dir = paths::resolve_path::dirname::<paths::platform::Auto>(abs_md_path);
-        // When dirname returns empty (bare filename + getcwd failed), fall
-        // back to "." instead of abs_md_path — otherwise joinAbsString
-        // downstream would treat the file path itself as a directory.
+        let resolved = (sys::getcwd_z(&mut cwd_buf).ok())
+            .and_then(|cwd| Path::resolve(&[cwd, path]).check_len().ok());
+        // If the absolute path is too long, the relative path can still be opened.
+        let abs_md_path: &[u8] = resolved.as_deref().map_or(path, ZStr::as_bytes);
+        let dir = paths::dirname_or_root(abs_md_path);
         let image_base_dir: &[u8] = if !dir.is_empty() { dir } else { b"." };
 
         let theme = md::AnsiTheme {
@@ -3542,10 +3319,7 @@ impl RunCommand {
                             .fs
                             .entries_mutex
                             .lock_guard();
-                        let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
-                        let mut has_copied = false;
-                        let mut dir_slice_len: usize = 0;
                         while let Some(entry) = iter.next() {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
@@ -3553,21 +3327,9 @@ impl RunCommand {
                             if value.kind(&bun_resolver::fs::FileSystem::get().fs, true)
                                 == bun_resolver::fs::EntryKind::File
                             {
-                                if !has_copied {
-                                    path_buf[..value.dir.len()].copy_from_slice(value.dir);
-                                    dir_slice_len = value.dir.len();
-                                    if !strings::ends_with_char_or_is_zero_length(value.dir, SEP) {
-                                        dir_slice_len = value.dir.len() + 1;
-                                    }
-                                    has_copied = true;
-                                }
-
                                 let base = value.base();
-                                path_buf[dir_slice_len..dir_slice_len + base.len()]
-                                    .copy_from_slice(base);
-                                let slice =
-                                    ZStr::nul_terminate(&mut path_buf, dir_slice_len + base.len());
-                                if !sys::is_executable_file_path(slice) {
+                                let path = paths::Path::from_parts(&[value.dir, base]);
+                                if !sys::is_executable_file_path(&path) {
                                     continue;
                                 }
                                 // we need to dupe because the string may point to a pointer that only exists in the current scope
@@ -3779,7 +3541,7 @@ impl BunXFastPath {
     /// per the canonical "Everyone quotes command line arguments the wrong way"
     /// rules. Writes into `buffer` and returns the number of u16s written.
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
-        let mut wbuf = [0u16; bun_paths::MAX_WPATH];
+        let mut wbuf = [0u16; bun_paths::PATH_MAX_WIDE];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
 
         if warg.is_empty() {
@@ -3847,8 +3609,7 @@ impl BunXFastPath {
     /// If this returns, it implies the fast path cannot be taken.
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
-        path_then_command_line: &mut WPathBuffer,
-        path_len: usize,
+        path_to_use: &[u16],
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
@@ -3858,14 +3619,12 @@ impl BunXFastPath {
             return;
         }
 
-        let (path_to_use, command_line) = path_then_command_line.split_at_mut(path_len);
-
         bun_core::scoped_log!(
             BUNX_FAST_PATH_LOG,
             "Attempting to find and load bunx file: '{}'",
             bun_core::fmt::utf16(path_to_use)
         );
-        debug_assert!(paths::is_absolute_windows_wtf16(path_to_use));
+        debug_assert!(paths::is_absolute(path_to_use));
 
         let metadata_file = match bun_shim_impl::MetadataFile::open(path_to_use) {
             Ok(file) => file,
@@ -3875,6 +3634,7 @@ impl BunXFastPath {
             }
         };
 
+        let mut command_line = bun_paths::w_path_buffer_pool::get();
         let mut i: usize = 0;
         for arg in passthrough {
             // Add space separator before each argument
@@ -3893,7 +3653,7 @@ impl BunXFastPath {
 
         let run_ctx = bun_shim_impl::FromBunRunContext {
             metadata_file,
-            base_path: &path_to_use[4..],
+            base_path: path_to_use,
             arguments: &command_line[..i],
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
@@ -3920,7 +3680,7 @@ impl BunXFastPath {
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",
-                (bun_core::fmt::utf16(paths::basename_windows(wpath)),),
+                (bun_core::fmt::utf16(paths::basename(wpath)),),
             );
             Global::exit(1);
         }

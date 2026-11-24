@@ -51,21 +51,27 @@ impl Line {
 /// An import, and how oxc reads its output: it goes by the text in the document, where a comment is text like any
 /// other.
 #[derive(Copy, Clone)]
-struct PrintedImport<'a> {
-    import: Import<'a>,
+pub(crate) struct PrintedImport<'a> {
     /// The first text after the `from`, or after the `import` if there's no `from`.
-    source: &'a [u8],
-    /// There's text before the `*`.
-    has_comment_for_default: bool,
+    pub(crate) source: &'a [u8],
+    pub(crate) is_side_effect: bool,
+    pub(crate) is_type_only: bool,
+    /// Also if there's a comment before the `*`.
+    pub(crate) has_default: bool,
+    pub(crate) has_namespace: bool,
+    pub(crate) has_named: bool,
 }
 
 impl<'a> PrintedImport<'a> {
     fn new(statement: Stmt<'a>, import: Import<'a>, f: &Formatter<'a>) -> Self {
         let source = import.spec_span().unwrap_or_default();
         let mut printed = PrintedImport {
-            import,
             source: f.file().slice(source),
-            has_comment_for_default: false,
+            is_side_effect: import.is_side_effect(),
+            is_type_only: import.is_type_only(),
+            has_default: import.default().is_some(),
+            has_namespace: import.namespace().is_some(),
+            has_named: !import.named().is_empty(),
         };
         let before_source = Span::new(statement.span().start, source.start);
         if f.comments().has_comment_in_span(before_source) {
@@ -97,7 +103,7 @@ impl<'a> PrintedImport<'a> {
             let star = import
                 .namespace_span()
                 .filter(|_| import.default().is_none());
-            printed.has_comment_for_default = star.is_some_and(|star| {
+            printed.has_default |= star.is_some_and(|star| {
                 !f.comments()
                     .comments_in_span(Span::before(keyword_end, star))
                     .is_empty()
@@ -167,16 +173,15 @@ fn is_style(source: &[u8]) -> bool {
 }
 
 /// `compute_import_metadata`: the group, and true if the import stays in place.
-fn classify(printed: PrintedImport, source: &[u8], options: &Options) -> (usize, bool) {
-    let import = printed.import;
-    let (is_side_effect, is_style) = (import.is_side_effect(), is_style(source));
+fn classify(import: PrintedImport, source: &[u8], options: &Options) -> (usize, bool) {
+    let (is_side_effect, is_style) = (import.is_side_effect, is_style(source));
     let mut selectors = Selector::Import.bit();
     let mut add =
         |selector: Selector, applies: bool| selectors |= if applies { selector.bit() } else { 0 };
     add(Selector::SideEffectStyle, is_side_effect && is_style);
     add(Selector::SideEffect, is_side_effect);
     add(Selector::Style, is_style);
-    add(Selector::Type, import.is_type_only());
+    add(Selector::Type, import.is_type_only);
     add(Selector::Subpath, source.starts_with(b"#"));
     // `to_path_kind`
     add(
@@ -211,7 +216,7 @@ fn classify(printed: PrintedImport, source: &[u8], options: &Options) -> (usize,
         true,
     );
 
-    let mut modifiers = if import.is_type_only() {
+    let mut modifiers = if import.is_type_only {
         Modifier::Type.bit()
     } else {
         Modifier::Value.bit()
@@ -219,12 +224,9 @@ fn classify(printed: PrintedImport, source: &[u8], options: &Options) -> (usize,
     let mut add =
         |modifier: Modifier, applies: bool| modifiers |= if applies { modifier.bit() } else { 0 };
     add(Modifier::SideEffect, is_side_effect);
-    add(
-        Modifier::Default,
-        import.default().is_some() || printed.has_comment_for_default,
-    );
-    add(Modifier::Wildcard, import.namespace().is_some());
-    add(Modifier::Named, !import.named().is_empty());
+    add(Modifier::Default, import.has_default);
+    add(Modifier::Wildcard, import.has_namespace);
+    add(Modifier::Named, import.has_named);
 
     let is_ignored = !options.sort_side_effects
         && is_side_effect
@@ -350,14 +352,14 @@ fn write_sorted<'a>(
                 let Some(&printed) = imports.get(index as usize) else {
                     continue;
                 };
-                let (import, source) = (printed.import, source_path(printed.source));
+                let source = source_path(printed.source);
                 let (group, is_ignored) = classify(printed, source, options);
                 units.push(Unit {
                     leading: current_pending..at,
                     line,
                     group,
                     source,
-                    is_side_effect: import.is_side_effect(),
+                    is_side_effect: printed.is_side_effect,
                     is_ignored,
                 });
                 current_pending = at + 1;
@@ -420,7 +422,7 @@ fn transform<'a>(
     let is_boundary = |line: &Line| match line {
         Line::Import { index, .. } => {
             options.stops_at_side_effects
-                && (imports.get(*index as usize)).is_some_and(|it| it.import.is_side_effect())
+                && (imports.get(*index as usize)).is_some_and(|it| it.is_side_effect)
         }
         Line::Empty => options.partition_by_newline,
         Line::Comment(_) => options.partition_by_comment,
@@ -442,6 +444,57 @@ fn transform<'a>(
     }
     // Every line is written with a line break after it. Whatever follows the run writes its own.
     out.pop();
+}
+
+/// A run of imports that are printed as they are. What's before the first one doesn't matter if that stays first.
+#[derive(Default)]
+pub(crate) struct UnchangedImports<'a> {
+    lines: Vec<Line>,
+    imports: Vec<PrintedImport<'a>>,
+}
+
+impl<'a> UnchangedImports<'a> {
+    fn next_range(&self) -> Interned {
+        Interned {
+            start: self.lines.len() as u32,
+            len: 0,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.imports.is_empty()
+    }
+
+    pub(crate) fn empty_line(&mut self) {
+        self.lines.push(Line::Empty);
+    }
+
+    pub(crate) fn comment(&mut self) {
+        self.lines.push(Line::Comment(self.next_range()));
+    }
+
+    pub(crate) fn import(&mut self, import: PrintedImport<'a>) {
+        self.lines.push(Line::Import {
+            range: self.next_range(),
+            index: self.imports.len() as u32,
+        });
+        self.imports.push(import);
+    }
+
+    /// Ends the run. Returns true if sorting leaves it as it is.
+    pub(crate) fn finish(&mut self, how: &SortImports) -> bool {
+        let is_sorted = self.imports.len() < 2
+            || how.as_oxfmt().is_some_and(|options| {
+                let (mut before, mut after) = (Vec::new(), Vec::new());
+                (self.lines.iter()).for_each(|line| line.write(&mut before, true));
+                before.pop();
+                transform(&self.lines, &self.imports, options, &mut after);
+                before == after
+            });
+        self.lines.clear();
+        self.imports.clear();
+        is_sorted
+    }
 }
 
 /// Wraps [`is_file_level_comment`]. `// eslint-disable-next-line`, `// @ts-ignore` and `// @ts-expect-error` apply

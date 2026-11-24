@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e4b8dcbaf1c5f417b364123f622fca1dc49854b6315f6d837dae2b57bdd08251.
+// Written against that file with the SHA-256 41c21ef70f06121b91402db887ed060293ce3fa0ac17281efbd45af1ed670026.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
@@ -8,6 +8,10 @@
 const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { builtinChannel } = require("internal/shared");
+
+const onRequestStartChannel = builtinChannel("http.server.request.start");
+const onResponseFinishChannel = builtinChannel("http.server.response.finish");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
@@ -46,6 +50,7 @@ declare global {
 
     /** The stand-in for a `NodeHTTPResponse` on a connection that is parsed here. */
     interface Http1ResponseHandle extends HttpResponseHandle {
+      hasNoResponse: boolean;
       ended: boolean;
       finished: boolean;
       aborted: boolean;
@@ -244,10 +249,11 @@ function createHttp1FallbackResponseHandle(
   }
 
   const handle: $Node.Http1ResponseHandle = {
-    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it.
+    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it. And dispatch_threw_while_queued.
     get flags() {
-      return this.aborted || socket.destroyed ? 1 : 0;
+      return (this.aborted || socket.destroyed ? 1 : 0) | (this.hasNoResponse ? 1 << 9 : 0);
     },
+    hasNoResponse: false,
     ended: false,
     // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,
@@ -418,6 +424,7 @@ function connectionListenerHTTP1(
   } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
   const {
+    holdPipelinedTurn,
     queuePipelinedResponse,
     advanceResponsePipeline,
     abortQueuedPipelinedResponses,
@@ -488,6 +495,24 @@ function connectionListenerHTTP1(
     upgrade: boolean,
     shouldKeepAlive: boolean,
   ) {
+    // The async context that one request enters ends before the next request of the chunk.
+    const frame = AsyncContextFrame.current();
+    try {
+      return dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive);
+    } finally {
+      AsyncContextFrame.exchange(frame);
+    }
+  };
+
+  function dispatchHttp1Request(
+    versionMajor: number,
+    versionMinor: number,
+    rawHeaders: string[] | undefined,
+    methodNum: number | undefined,
+    url: string | undefined,
+    upgrade: boolean,
+    shouldKeepAlive: boolean,
+  ) {
     if (rawHeaders === undefined) {
       rawHeaders = flushedHeaders;
       flushedHeaders = [];
@@ -537,13 +562,6 @@ function connectionListenerHTTP1(
       if (!socket._paused && socket.readable) socket.resume();
     };
 
-    const res: $Node.ServerResponse = new ServerResponseClass(req!);
-    // The native dispatcher seeds these from the server; renderNativeHeaders
-    // reads them to decide the Keep-Alive auto-header bits, so the fallback
-    // path must carry them too or keep-alive responses lose their timeout line.
-    res._keepAliveTimeout = keepAliveTimeout;
-    const { maxRequestsPerSocket } = server;
-    res._maxRequestsPerSocket = maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -551,19 +569,35 @@ function connectionListenerHTTP1(
         socket.end();
       }
     };
-    handle.onflushed = function () {
-      finishDrainedResponse!(res);
-    };
-    res[kHttp1ResponseHandle] = handle;
     // Node's parserOnIncoming outgoing queue: pipelined requests parse while
     // the previous response is still assigned (its 'finish' detach is a tick
     // away), so queue this response instead of letting assignSocket throw
     // ERR_HTTP_SOCKET_ASSIGNED.
-    if (socket._httpMessage) {
-      queuePipelinedResponse!(socket, res, versionMajor < 1 || versionMinor < 1);
-    } else {
-      res.assignSocket(socket);
+    const isPipelined = !!socket._httpMessage;
+    if (isPipelined) holdPipelinedTurn!(socket, handle);
+    let res: $Node.ServerResponse;
+    try {
+      res = new ServerResponseClass(req!, { [kHttp1ResponseHandle]: handle });
+    } catch (error) {
+      handle.hasNoResponse = true;
+      throw error;
     }
+    // The native dispatcher seeds these from the server; renderNativeHeaders
+    // reads them to decide the Keep-Alive auto-header bits, so the fallback
+    // path must carry them too or keep-alive responses lose their timeout line.
+    res._keepAliveTimeout = keepAliveTimeout;
+    const { maxRequestsPerSocket } = server;
+    res._maxRequestsPerSocket = maxRequestsPerSocket;
+    handle.onflushed = function () {
+      finishDrainedResponse!(res);
+    };
+    // A subclass may not hand its options on.
+    res[kHttp1ResponseHandle] = handle;
+    if (isPipelined) queuePipelinedResponse!(socket, res, versionMajor < 1 || versionMinor < 1);
+    if (onRequestStartChannel.hasSubscribers) {
+      onRequestStartChannel.publish({ request: req, response: res, socket, server });
+    }
+    if (!isPipelined) res.assignSocket(socket);
     // node's resOnFinish: release the socket once the response completes,
     // then either end the connection (a response that advertised Connection:
     // close must not be followed by another one - the close path aborts the
@@ -571,6 +605,9 @@ function connectionListenerHTTP1(
     // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish(this: $Node.ServerResponse) {
       const finishedReq = this.req;
+      if (onResponseFinishChannel.hasSubscribers) {
+        onResponseFinishChannel.publish({ request: finishedReq, response: this, socket, server });
+      }
       if (!finishedReq._consuming && !finishedReq._readableState.resumeScheduled) finishedReq._dump();
       this.detachSocket(socket);
       // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
@@ -588,6 +625,12 @@ function connectionListenerHTTP1(
     // Node's parserOnIncoming read gate: stop reading once the connection's
     // outgoing side is backed up, so pipelined requests cannot flood it.
     maybePauseFallbackReads!(socket);
+
+    if (versionMajor === 1 && versionMinor === 1 && server.requireHostHeader && req!.headers.host === undefined) {
+      res.writeHead(400, { Connection: "close" });
+      res.end();
+      return 0;
+    }
 
     // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
     if (
@@ -627,7 +670,7 @@ function connectionListenerHTTP1(
     }
     server.emit("request", req, res);
     return 0;
-  };
+  }
   parser[kOnBody] = function onHttp1Body(chunk: Buffer) {
     if (req && !req._dumped) req.push(chunk);
   };

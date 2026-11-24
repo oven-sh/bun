@@ -2493,10 +2493,52 @@ describe.concurrent("test file discovery (scanner)", () => {
     },
   );
 
+  test.skipIf(isWindows)("scans a\\b and a/b", async () => {
+    using dir = tempDir("scanner-backslash", {
+      "a\\b": { "exists.test.ts": existsTest },
+      "a": { "b": { "exists.test.ts": existsTest } },
+      "c\\d.test.ts": existsTest,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.match(/^.*\.test\.ts:$/gm)!.sort()).toEqual([
+      "a/b/exists.test.ts:",
+      "a\\b/exists.test.ts:",
+      "c\\d.test.ts:",
+    ]);
+    expect(stderr).toContain(" 3 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("does not look below a/b for a root that a\\b lacks", async () => {
+    using dir = tempDir("scanner-backslash-root", {
+      "a\\b": { "bunfig.toml": `[test]\nroot = "tests"\n` },
+      "a": { "b": { "tests": { "exists.test.ts": existsTest } } },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: join(String(dir), "a\\b"),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Failed to scan non-existent root directory");
+    expect(exitCode).toBe(1);
+  });
+
   // The directory walk joins parent + entry name for every directory it
-  // descends into and every candidate test file. With pathIgnorePatterns
-  // configured it additionally joins each directory before queueing it, so the
-  // same tree is scanned once per configuration to reach both code paths.
+  // descends into and every candidate test file.
   for (const [config, files] of [
     ["no bunfig", {}],
     ["pathIgnorePatterns configured", { "bunfig.toml": `[test]\npathIgnorePatterns = ["unrelated/**"]\n` }],

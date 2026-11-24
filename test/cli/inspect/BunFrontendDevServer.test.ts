@@ -469,6 +469,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 3,
                 "lineText": "      export function brokenFunction(name: string {",
+                "lineTextColumnOffset": 0,
               },
               "message": "Expected ")" but found "{"",
               "notes": [],
@@ -481,6 +482,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 5,
                 "lineText": "      }",
+                "lineTextColumnOffset": 0,
               },
               "message": "Unexpected }",
               "notes": [],
@@ -492,8 +494,8 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     `);
   });
 
-  test("bundleFailed carries the whole line when more than 80 bytes follow the error", async () => {
-    // `column` indexes `lineText`, because a line of at most 1,000 bytes is not cut.
+  test("bundleFailed says where the excerpt of a long line starts", async () => {
+    // `lineText` is the 40 bytes before the error and the 80 from it. `column` counts from the start of the line.
     const line =
       "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it";
     const errors = await bundleFailedErrors(`
@@ -503,8 +505,15 @@ ${line}
       }
     `);
 
-    expect(errors[0].messages[0].location).toEqual({ column: 51, length: 1, line: 3, lineText: line });
-    expect(line[51 - 1]).toBe("{");
+    const { location } = errors[0].messages[0];
+    expect(location).toEqual({
+      column: 51,
+      length: 1,
+      line: 3,
+      lineTextColumnOffset: 10,
+      lineText: line.slice(10, 130),
+    });
+    expect(location.lineText[location.column - 1 - location.lineTextColumnOffset]).toBe("{");
   });
 
   test("should notify on clientNavigated events", async () => {

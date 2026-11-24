@@ -1131,29 +1131,66 @@ devTest("importing bun on the client", {
     });
   },
 });
-devTest("error overlay shows the excerpt around an error deep inside a long line, and underlines the token", {
+// A line of 201 bytes is cut when it is shown, and a line of 1,201 bytes when it is stored.
+for (const half of [100, 600]) {
+  devTest(`error overlay underlines the token in the excerpt of a line of ${2 * half + 1} bytes`, {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: [],
+        scripts: ["index.ts"],
+      }),
+      "index.ts": `let ok = 1;\n${Buffer.alloc(half, "a")}]${Buffer.alloc(half, "b")}`,
+    },
+    async test(dev) {
+      // The overlay shows the 40 bytes before the `]` and the 80 from it. The harness reads the column of an
+      // error from where its underline starts in what is shown: 41.
+      await using c = await dev.client("/", {
+        errors: ['index.ts:2:41: error: Expected ";" but found "]"'],
+      });
+      const shown = await c.js<{ excerpt: string; underlineStart: number }>`(() => {
+        const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
+        return {
+          excerpt: msg.querySelector(".view > pre").textContent,
+          underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
+        };
+      })()`;
+      expect(shown).toEqual({ excerpt: `${Buffer.alloc(40, "a")}]${Buffer.alloc(79, "b")}`, underlineStart: 40 });
+    },
+  });
+}
+devTest("error overlay lists the error that a plugin throws, which has no position, among other errors", {
   files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "thrower",
+        setup(build) {
+          build.onLoad({ filter: /thrower/ }, () => {
+            throw new Error("the plugin threw");
+          });
+        },
+      };
+    `,
     "index.html": emptyHtmlFile({
       styles: [],
       scripts: ["index.ts"],
     }),
-    "index.ts": `let ok = 1;\n${Buffer.alloc(100, "a")}]${Buffer.alloc(100, "b")}`,
+    "index.ts": `import "./a-thrower.ts";\nimport "./b-syntax.ts";\nimport "./c-thrower.ts";`,
+    "a-thrower.ts": `export {};`,
+    "b-syntax.ts": `let ok = 1;\nlet x = ;`,
+    "c-thrower.ts": `export {};`,
   },
   async test(dev) {
-    // The `]` is at column 101 of a 201-character line. The overlay shows the 40
-    // characters before it and the 80 from it. The harness reads the column of
-    // an error from where its underline starts in what is shown: 41.
     await using c = await dev.client("/", {
-      errors: ['index.ts:2:41: error: Expected ";" but found "]"'],
+      errors: [
+        "a-thrower.ts: error: the plugin threw",
+        "b-syntax.ts:2:9: error: Unexpected ;",
+        "c-thrower.ts: error: the plugin threw",
+      ],
     });
-    const shown = await c.js<{ excerpt: string; underlineStart: number }>`(() => {
-      const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
-      return {
-        excerpt: msg.querySelector(".view > pre").textContent,
-        underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
-      };
-    })()`;
-    expect(shown).toEqual({ excerpt: `${Buffer.alloc(40, "a")}]${Buffer.alloc(79, "b")}`, underlineStart: 40 });
   },
 });
 devTest("import.meta.main", {

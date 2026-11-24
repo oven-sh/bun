@@ -1725,7 +1725,7 @@ pub mod parse_worker {
                 length,
                 line_text: (!source_line_text.is_empty()).then(|| Box::from(source_line_text)),
                 offset: length as usize,
-                line_text_column: None,
+                cut_around: None,
             };
             let mut msg = Msg {
                 data: bun_ast::Data {

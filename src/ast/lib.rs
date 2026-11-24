@@ -533,8 +533,8 @@ pub struct Location {
     pub length: u32,
     // TODO: document or remove
     pub offset: usize,
-    /// 1-based column of the line at which `line_text` starts. `None` unless [`Location::init_or_null`] made the location.
-    pub line_text_column: Option<core::num::NonZeroU32>,
+    /// Set by [`Location::init_or_null`] when a display cuts `line_text`: the byte offset of the error in it, plus one.
+    pub cut_around: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
@@ -545,7 +545,7 @@ pub struct Location {
     pub column: i32,
 }
 
-// `length` and `line_text_column` share one word, so the start column adds no bytes.
+// `length` and `cut_around` share one word, so the new field adds no bytes.
 const _: () = assert!(core::mem::size_of::<Location>() == 72);
 
 impl Default for Location {
@@ -556,15 +556,15 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
-            line_text_column: None,
+            cut_around: None,
             line: 0,
             column: 0,
         }
     }
 }
 
-/// The bounds of the excerpt of `line` around the byte at `offset`: 40 bytes before it and 80 after, on UTF-8 boundaries.
-fn excerpt_bounds(line: &[u8], offset: usize) -> (usize, usize) {
+/// The excerpt of `line` around the byte at `offset`: 40 bytes before it and 80 from it, on UTF-8 boundaries.
+fn excerpt_range(line: &[u8], offset: usize) -> core::ops::Range<usize> {
     let mut lo = offset.saturating_sub(40);
     let mut hi = (offset + 80).min(line.len());
     while lo > 0 && !bun_core::strings::is_utf8_char_boundary(line[lo]) {
@@ -573,27 +573,23 @@ fn excerpt_bounds(line: &[u8], offset: usize) -> (usize, usize) {
     while hi < line.len() && !bun_core::strings::is_utf8_char_boundary(line[hi]) {
         hi += 1;
     }
-    (lo, hi)
+    lo..hi
 }
 
 impl Location {
-    /// What a display shows of `line_text`, cut around the error if `init_or_null` stored it, and the UTF-16 units in front.
+    /// What a display shows of `line_text`, and the UTF-16 code units of the line that are in front of that part.
     pub fn excerpt(&self) -> (&[u8], usize) {
         let text = self.line_text.as_deref().unwrap_or_default();
-        let Some(start) = self.line_text_column else {
+        let Some(around) = self.cut_around else {
             return (text, 0);
         };
-        let in_front = (start.get() - 1) as usize;
-        let units = usize::try_from(self.column.saturating_sub(1))
-            .unwrap_or(0)
-            .saturating_sub(in_front);
-        let offset = bun_core::strings::wtf8_offset_of_utf16_index(text, units as u32);
-        if text.len() <= 80 + offset {
-            return (text, in_front);
-        }
-        let (lo, hi) = excerpt_bounds(text, offset);
-        let cut = bun_core::strings::wtf8_len_utf16(&text[..lo]) as usize;
-        (&text[lo..hi], in_front + cut)
+        let offset = (around.get() as usize - 1).min(text.len());
+        let kept = excerpt_range(text, offset);
+        // Same counter as `column`, over the bytes that are shown in front of the error.
+        let mut shown = ErrorPositionState::default();
+        shown.advance(text, kept.start, offset);
+        let column = usize::try_from(self.column).unwrap_or(0);
+        (&text[kept], column.saturating_sub(shown.column_number))
     }
 
     /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
@@ -669,7 +665,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Box::default()),
                     offset: 0,
-                    line_text_column: None,
+                    cut_around: None,
                 });
             }
             let data = match tracker {
@@ -677,22 +673,19 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
+            let mut offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            let mut line_text_column = core::num::NonZeroU32::MIN;
-            // A longer line is stored as its excerpt: a one-line bundle can have thousands of diagnostics.
-            if full_line.len() > MAX_WHOLE_LINE_LEN && full_line.len() > 80 + offset_in_line {
-                let (lo, hi) = excerpt_bounds(full_line, offset_in_line);
-                if lo > 0 {
-                    // Same counter as `column_count`, over the kept bytes only.
-                    let mut kept = ErrorPositionState::default();
-                    kept.advance(full_line, lo, offset_in_line);
-                    let cut = data.column_count.saturating_sub(kept.column_number);
-                    line_text_column =
-                        line_text_column.saturating_add(u32::try_from(cut).expect("int cast"));
+            let mut cut_around = None;
+            if full_line.len() > 80 + offset_in_line {
+                // A longer line is stored as its excerpt: a one-line bundle can have thousands of diagnostics.
+                if full_line.len() > MAX_WHOLE_LINE_LEN {
+                    let kept = excerpt_range(full_line, offset_in_line);
+                    offset_in_line -= kept.start;
+                    full_line = &full_line[kept];
                 }
-                full_line = &full_line[lo..hi];
+                let around = u32::try_from(offset_in_line + 1).expect("int cast");
+                cut_around = core::num::NonZeroU32::new(around);
             }
 
             return Some(Location {
@@ -707,7 +700,7 @@ impl Location {
                 },
                 line_text: Some(Box::from(full_line)),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
-                line_text_column: Some(line_text_column),
+                cut_around,
             });
         }
         None
@@ -3081,6 +3074,46 @@ mod location_tests {
             })
             .collect();
         assert_eq!(lines, [1, -1, -1]);
+    }
+
+    #[test]
+    fn the_excerpt_is_cut_around_the_byte_of_the_error() {
+        let mixed = "a\u{e9}\u{540d}\u{1f600}";
+        let long = format!("{}{mixed}", "\u{1f600}".repeat(251));
+        let long_offsets = (0..=long.len()).filter(|at| at % 97 == 0 || long.len() - at < 84);
+        let short = mixed.repeat(13);
+        for (line, offsets) in [
+            (short.as_bytes(), (0..=short.len()).collect::<Vec<_>>()),
+            (long.as_bytes(), long_offsets.collect()),
+        ] {
+            let contents = [b"first\n", line, b"\nlast"].concat();
+            let source = Source::init_path_string(b"excerpt.js" as &[u8], contents.as_slice());
+            let mut tracker = LineColumnTracker::default();
+            for offset in offsets {
+                let range = Range {
+                    loc: usize2loc(b"first\n".len() + offset),
+                    len: 1,
+                };
+                let location =
+                    Location::init_or_null_tracked(Some(&source), range, &mut tracker).unwrap();
+                let mut shown = line;
+                if line.len() > 80 + offset {
+                    let mut lo = offset.saturating_sub(40);
+                    let mut hi = offset + 80;
+                    while line[lo] & 0xC0 == 0x80 {
+                        lo -= 1;
+                    }
+                    while hi < line.len() && line[hi] & 0xC0 == 0x80 {
+                        hi += 1;
+                    }
+                    shown = &line[lo..hi];
+                }
+                assert_eq!(location.excerpt().0, shown, "offset {offset}");
+                let stored = location.line_text.as_deref().unwrap();
+                let whole = line.len() <= MAX_WHOLE_LINE_LEN;
+                assert_eq!(stored, if whole { line } else { shown }, "offset {offset}");
+            }
+        }
     }
 }
 

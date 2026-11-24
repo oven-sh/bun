@@ -130,22 +130,57 @@ test.concurrent("long non-ASCII line's lineText window covers the error token", 
   });
 });
 
-test.concurrent.each([
-  // `]` at byte 160 of a 321-byte line: `lineText` is the whole line.
-  [160, 81],
-  // `]` at byte 600 of a 1,201-byte line: `lineText` is an excerpt, and its
-  // bounds are snapped to UTF-8 char boundaries.
-  [600, 301],
-])("long non-ASCII line's lineText does not split a UTF-8 sequence: `]` at byte %i", async (bytes, column) => {
-  const half = Buffer.alloc(bytes, "\u00E9").toString();
+test.concurrent("long non-ASCII line's lineText window does not split a UTF-8 sequence", async () => {
+  // `]` at byte 160 of a 321-byte line, which is stored whole.
+  const half = Buffer.alloc(160, "\u00E9").toString();
   expect(await lineTextWindow(half + "]" + half)).toEqual({
-    stdout: `{"column":${column},"hasToken":true,"chars":["]","\u00E9"]}`,
+    stdout: `{"column":81,"hasToken":true,"chars":["]","\u00E9"]}`,
     stderr: "",
     exitCode: 0,
   });
 });
 
 const fill = (count: number, char: string) => Buffer.alloc(count, char).toString();
+
+// `fill` counts bytes: 160 bytes of U+00E9 are 80 characters.
+test.concurrent.each([
+  {
+    title: "the whole line of 321 bytes",
+    line: fill(160, "\u00E9") + "]" + fill(160, "\u00E9"),
+    lineText: fill(160, "\u00E9") + "]" + fill(160, "\u00E9"),
+  },
+  {
+    title: "the whole line of 1,000 bytes",
+    line: fill(100, "a") + "]" + fill(899, "b"),
+    lineText: fill(100, "a") + "]" + fill(899, "b"),
+  },
+  {
+    title: "the excerpt of a line of 1,001 bytes",
+    line: fill(100, "a") + "]" + fill(900, "b"),
+    lineText: fill(40, "a") + "]" + fill(79, "b"),
+  },
+  {
+    // Byte 680, 80 bytes from `]`, is inside a character, so the excerpt ends one byte later.
+    title: "the excerpt of a line of 1,201 bytes, cut on character boundaries",
+    line: fill(600, "\u00E9") + "]" + fill(600, "\u00E9"),
+    lineText: fill(40, "\u00E9") + "]" + fill(80, "\u00E9"),
+  },
+])("position.lineText is $title", async ({ line, lineText }) => {
+  using dir = tempDir("parse-col-line-text", { "long.js": line });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "long.js"))}], throw: false });
+       console.log(JSON.stringify(r.logs[0].position.lineText));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lineText: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({ lineText, stderr: "", exitCode: 0 });
+});
 
 /**
  * Runs `bun <args>` in a directory holding `files` and returns every source
@@ -235,6 +270,38 @@ test.concurrent("CLI caret counts a left-trimmed astral prefix in UTF-16 units, 
   expect(excerpts).toEqual([{ excerpt: "1 | " + fill(40, "\u{10400}") + "]" + fill(79, "b"), caret: 4 + 10 }]);
 });
 
+// U+540D is 3 UTF-8 bytes and 2 terminal columns. The byte 40 bytes before `]` is inside a character, so the
+// excerpt starts at the 14th character before `]`. The first line is cut when it is stored, the second when it
+// is printed.
+test.concurrent.each([[1200], [300]])(
+  "CLI excerpt starts on a character boundary, with %i bytes after the error",
+  async after => {
+    const { excerpts } = await printedExcerpts(["build", "long.js"], {
+      "long.js": fill(210, "\u540D") + "]" + fill(after, "\u540D"),
+    });
+    expect(excerpts).toEqual([{ excerpt: "1 | " + fill(42, "\u540D") + "]" + fill(81, "\u540D"), caret: 4 + 14 * 2 }]);
+  },
+);
+
+// A literal U+FFFD gets two diagnostics. The second is at a byte inside the character, where the column is one
+// too large. Each excerpt is cut around the byte of its error, not around its column: 40 bytes before, 80 from it.
+test.concurrent.each([[79], [80]])("CLI excerpt around a literal U+FFFD with %i bytes after it", async after => {
+  const { excerpts } = await printedExcerpts(["build", "long.js"], {
+    "long.js": fill(796, "a") + "\uFFFD" + fill(after, "b"),
+  });
+  expect(excerpts).toEqual([
+    { excerpt: "1 | " + fill(40, "a") + "\uFFFD" + fill(77, "b"), caret: 4 + 40 },
+    { excerpt: "1 | " + fill(39, "a") + "\uFFFD" + fill(78, "b"), caret: 4 + 40 },
+  ]);
+});
+
+test.concurrent("a line with 80 bytes from the error to its end is printed whole after a lone CR too", async () => {
+  const { excerpts } = await printedExcerpts(["build", "cr.js"], {
+    "cr.js": "let ok = 1;\r" + fill(120, "a") + "]" + fill(79, "b") + "\r",
+  });
+  expect(excerpts.map(it => it.excerpt)).toEqual(["2 | " + fill(120, "a") + "]" + fill(79, "b")]);
+});
+
 test.concurrent("CLI caret is aligned for both the error and its note on a long line", async () => {
   // The redeclaration at byte 176 is left-trimmed; the note pointing at the
   // original declaration (byte 6) is windowed without a left trim.
@@ -312,19 +379,47 @@ test.concurrent.each([
   },
 );
 
-test.concurrent(
-  "excerpt of a line following a U+2028 line separator starts at the line's first character",
-  async () => {
-    // The logger used to slice the line from one byte before its start to pick
-    // up (and later trim) a preceding `\n`; after a three-byte U+2028 that byte
-    // is a stray UTF-8 continuation byte, which was printed before the text and
-    // pushed it one cell to the right of the caret.
-    const { excerpts } = await printedExcerpts(["build", "ls.js"], {
-      "ls.js": "let a = 1;\u2028let b = 2; ]",
-    });
-    expect(excerpts).toEqual([{ excerpt: "2 | let b = 2; ]", caret: 4 + "let b = 2; ".length }]);
-  },
-);
+// The logger used to slice the line from one byte before its start to pick
+// up (and later trim) a preceding `\n`; after a three-byte U+2028 or U+2029
+// that byte is a stray UTF-8 continuation byte. It was printed before the text
+// and pushed it one cell to the right of the caret, and it was the first
+// character of `position.lineText`.
+test.concurrent.each([
+  ["U+2028", "\u2028"],
+  ["U+2029", "\u2029"],
+])("the line that follows a %s line separator starts at its first character", async (_, separator) => {
+  using dir = tempDir("parse-col-separator", { "ls.js": `let a = 1;${separator}let b = 2; ]` });
+  const file = join(String(dir), "ls.js");
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", file],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await using script = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const p = (await Bun.build({ entrypoints: [${JSON.stringify(file)}], throw: false })).logs[0].position;
+       console.log(JSON.stringify({ lineText: p.lineText, pointsAt: p.lineText[p.column - 1] }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [printed, position] = await Promise.all([
+    build.stderr.text(),
+    script.stdout.text(),
+    build.exited,
+    script.exited,
+  ]);
+  const lines = printed.split(/\r?\n/);
+  const at = lines.indexOf("2 | let b = 2; ]");
+  expect({ caretLine: lines[at + 1], position: position && JSON.parse(position) }).toEqual({
+    caretLine: fill(4 + "let b = 2; ".length, " ") + "^",
+    position: { lineText: "let b = 2; ]", pointsAt: "]" },
+  });
+});
 
 test.concurrent("CLI caret counts a tab the same with and without non-ASCII text on the line", async () => {
   using dir = tempDir("parse-col-caret-tabs", {
@@ -420,6 +515,69 @@ test.concurrent("position.lineText is the whole line for a ResolveMessage from B
     positions: { log: position, logJSON: position },
     stderr: "",
     exitCode: 0,
+  });
+});
+
+test.concurrent("position.lineText is the whole line of a module that a plugin made", async () => {
+  // No file holds this line, so a script cannot read it anywhere else.
+  const line = `export const a = "${fill(60, "x")}"; const b = (;${fill(100, "y")}`;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { logs } = await Bun.build({
+         entrypoints: ["made:entry"],
+         throw: false,
+         plugins: [
+           {
+             name: "made",
+             setup(build) {
+               build.onResolve({ filter: /^made:/ }, args => ({ path: args.path, namespace: "made" }));
+               build.onLoad({ filter: /.*/, namespace: "made" }, () => ({ contents: ${JSON.stringify(line + "\n")}, loader: "ts" }));
+             },
+           },
+         ],
+       });
+       const p = logs[0].position;
+       console.log(JSON.stringify({ namespace: p.namespace, lineText: p.lineText, pointsAt: p.lineText[p.column - 1] }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ position: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    position: { namespace: "made", lineText: line, pointsAt: ";" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("an imported .xml file gets the same: the whole line in lineText, the excerpt in the CLI", async () => {
+  const line = `<root><a>${fill(150, "x")}</a><b attr=></b><c>${fill(150, "y")}</c></root>`;
+  const at = line.indexOf("></b>");
+  const files = { "entry.ts": `import root from "./data.xml";\nconsole.log(root);\n`, "data.xml": line + "\n" };
+  using dir = tempDir("parse-col-xml", files);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { logs } = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "entry.ts"))}], throw: false });
+       const p = logs[0].position;
+       console.log(JSON.stringify({ lineText: p.lineText, pointsAt: p.lineText[p.column - 1] }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [{ excerpts }, stdout] = await Promise.all([
+    printedExcerpts(["build", "entry.ts"], files),
+    proc.stdout.text(),
+    proc.exited,
+  ]);
+  expect({ excerpts, position: stdout && JSON.parse(stdout) }).toEqual({
+    excerpts: [{ excerpt: "1 | " + line.slice(at - 40, at + 80), caret: 4 + 40 }],
+    position: { lineText: line, pointsAt: ">" },
   });
 });
 

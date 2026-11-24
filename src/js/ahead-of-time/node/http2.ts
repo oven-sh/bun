@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f98ae67b783dd3f83cfe31dddef830ebfb44a639072ab69cd49e72bff22f8c52.
+// Written against that file with the SHA-256 e000630baf57d3c10373bb51677448765945c900d00f119644ff65d3b144226e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -394,8 +394,6 @@ const kSetStreamId = Symbol("setStreamId");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
-// What the listener of connect() threw. destroy() still emits it in the call: 'connect' can take a listener away.
-const kConnectListenerError = Symbol("connectListenerError");
 // Set on a ServerHttp2Stream by respondWithFile(): the stream opened the descriptor itself and is
 // responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
 const kOwnsFd = Symbol("ownsFd");
@@ -5258,6 +5256,8 @@ class ClientHttp2Session extends Http2Session {
   #closed: boolean = false;
   // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
   #destroying: boolean = false;
+  // What the listener of connect() threw. destroy() still emits it in the call: 'connect' can take a listener away.
+  #connectListenerError: unknown = undefined;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -6010,7 +6010,7 @@ class ClientHttp2Session extends Http2Session {
         this.#onConnect(arguments);
         listener?.$call(this, this);
       } catch (e) {
-        this[kConnectListenerError] = e;
+        this.#connectListenerError = e;
         this.destroy(e as Error);
       }
     }
@@ -6240,7 +6240,7 @@ class ClientHttp2Session extends Http2Session {
     // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error && (error === this[kConnectListenerError] || this.listenerCount("error") === 0)) {
+    if (error && (error === this.#connectListenerError || this.listenerCount("error") === 0)) {
       // Not node's: with no 'error' listener this throws to the caller of destroy(). node throws later, in emitClose.
       runInFrame(asyncFrame, this.emit, this, "error", error);
       // The emit returned: a listener has the error, or an emit() that a program replaced.

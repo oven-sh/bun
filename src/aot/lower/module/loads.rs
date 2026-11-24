@@ -352,6 +352,13 @@ fn lower_written_import(
             let options = options.map(|options| lowering.lower_expression(options));
             lowering.lower_arguments_for_effect(args, 1 + usize::from(options.is_some()));
             lowering.set_position(position);
+            let has_unread_type = options.is_some() && {
+                let analysis = &lowering.file.compiled.analysis;
+                let site = analysis.import_site_index(ImportSiteKind::ImportCall(call));
+                let attributes =
+                    site.map_or(ExprId::NONE, |site| analysis.import_sites[site].attributes);
+                !hir.is_import_attribute_settled(attributes, known::r#type)
+            };
             if let (Some(text), Some(node)) = (specifier, first)
                 && (lowering.file).is_whole_path_for_loader(SiteAnswer::Module(module), node)
             {
@@ -365,12 +372,12 @@ fn lower_written_import(
                 lowering.branch_on_path_made_by_call(written, node, text)
             });
             let Some(test) = test else {
-                return lowering.emit_import_of_module(args, module, options);
+                return lowering.emit_import_of_module(args, module, options, has_unread_type);
             };
             let result = lowering.builder.create_variable(None);
             let done = lowering.create_block();
             lowering.continue_in(test.as_written);
-            let loaded = lowering.emit_import_of_module(args, module, options);
+            let loaded = lowering.emit_import_of_module(args, module, options, has_unread_type);
             lowering.builder.write_variable(result, loaded);
             lowering.jump(done);
 
@@ -459,6 +466,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: IdList<ExprId>,
         module: ModuleRef,
         options: Option<ValueId>,
+        has_unread_type: bool,
     ) -> ValueId {
         let decisions = self.file.decisions();
         if let Some(object) =
@@ -477,13 +485,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .builder
                 .import_dynamic(specifier, options, referrer, false, false);
         }
-        self.emit_import_through_facade(module, options)
+        self.emit_import_through_facade(module, options, has_unread_type)
     }
 
     fn emit_import_through_facade(
         &mut self,
         module: ModuleRef,
         options: Option<ValueId>,
+        has_unread_type: bool,
     ) -> ValueId {
         let modules = self.file.inputs.modules;
         // Nothing is known of the namespace that a call with options gives.
@@ -494,7 +503,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let module = modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
-        self.builder.import_module(module, options, referrer)
+        self.builder
+            .import_module(module, options, referrer, has_unread_type)
     }
 
     #[inline]
@@ -2550,7 +2560,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let spelling = self.file.intern_atom(written);
                 self.emit_require_of_candidate(module, spelling)
             }
-            ComputedLoad::Import => self.emit_import_through_facade(spelled.module, None),
+            ComputedLoad::Import => self.emit_import_through_facade(spelled.module, None, false),
             ComputedLoad::Resolve => {
                 self.emit_resolve_of_name(spelled.spelling, None, spelled.module, false)
             }

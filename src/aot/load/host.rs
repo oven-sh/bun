@@ -1766,6 +1766,7 @@ impl CodeHost for LoadHost<'_> {
                         host_values: &[],
                         payload: Some(Box::new(ParsedSource {
                             plugin_module: source.plugin_module.take(),
+                            file_with_query: source.file_with_query.take(),
                             parse_failure: Some(failure),
                             refused_at: (source.refused_at.take())
                                 .filter(|_| is_read_by_nobody_later),
@@ -1801,6 +1802,7 @@ impl CodeHost for LoadHost<'_> {
                 host_values: &[],
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
+                    file_with_query: self.file_with_query(path),
                     parse_failure: is_refused_by_json_parse.then(|| failure.to_vec()),
                     refused_at: is_blank_json_of_executable
                         .then(|| (Loader::Json, bun_ast::Location::default())),

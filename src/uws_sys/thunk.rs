@@ -5,7 +5,7 @@
 //! owner from the user-data, (b) re-type the opaque handle, (c) lift any
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
-//! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
+//! and `uws_handlers::*Handler` open-coded those
 //! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:
@@ -84,7 +84,7 @@ pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
+/// Re-type a raw uWS handle (`uws_res`, `H3Response`, …) as a
 /// mutable Rust reference. These are zero-sized opaque markers, so the borrow
 /// covers no Rust-owned bytes — it exists purely to hang methods off.
 ///

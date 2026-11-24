@@ -303,7 +303,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return Some(lowered);
         }
         let callee = resolve_callee(&resolve_input(self.file), self.file.file, site.callee)?;
-        if !is_lowered(self.file, callee.file) {
+        if !is_lowered(self.file, callee.file) || self.may_be_never_made(&callee) {
             return None;
         }
         let helper = callee.helper(helpers)?;
@@ -473,6 +473,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.lower_expression(path);
         self.guard_builtin(value, builtin, slow_path);
         value
+    }
+
+    /// What holds from the start may be left out where every call of it is lowered in place.
+    fn may_be_never_made(&self, callee: &KnownCallee) -> bool {
+        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+        let (file, mut functions) = (&*self.file, callee.functions.iter());
+        !is_certain && functions.any(|held| is_left_out(file, callee.file, held.closure))
     }
 
     fn guard_callee(&mut self, lowered: &LoweredCall, callee: &KnownCallee, held: HeldFunction) {
@@ -1254,7 +1261,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let kind = helper_call.access(state.kind);
         let kind = kind.expect("a supported helper call has an access kind");
         let callee = &helper_call.callee;
-        if !is_lowered(self.file, callee.file) {
+        if !is_lowered(self.file, callee.file) || self.may_be_never_made(callee) {
             return None;
         }
         let lowered = self.lower_call_operands(call, site);

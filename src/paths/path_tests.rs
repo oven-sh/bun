@@ -1832,9 +1832,11 @@ fn tmpname_differs_between_processes() {
     let name = crate::fs::FileSystem::tmpname(b"tmp", &mut buf).unwrap();
     let here = u64::from_str_radix(text(&name.as_bytes()[1..17]), 16).unwrap();
     let Ok(there) = std::env::var(OTHER) else {
+        // `BUN_DEBUG_HASH_RANDOM_SEED` makes the seed equal in both processes, which is what it is for.
         let again = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "path_tests::tmpname_differs_between_processes"])
             .env(OTHER, here.to_string())
+            .env_remove("BUN_DEBUG_HASH_RANDOM_SEED")
             .stdout(std::process::Stdio::null())
             .status();
         return assert!(again.unwrap().success());

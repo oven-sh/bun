@@ -1956,9 +1956,11 @@ mod tests {
         let here = core::str::from_utf8(&name.as_bytes()[1..=digits]).unwrap();
         let here = u64::from_str_radix(here, 16).unwrap();
         let Ok(there) = std::env::var(OTHER) else {
+            // `BUN_DEBUG_HASH_RANDOM_SEED` makes the seed equal in both processes, which is what it is for.
             let again = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "tests::tmpname_differs_between_processes"])
                 .env(OTHER, here.to_string())
+                .env_remove("BUN_DEBUG_HASH_RANDOM_SEED")
                 .stdout(std::process::Stdio::null())
                 .status();
             return assert!(again.unwrap().success());

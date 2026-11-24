@@ -568,6 +568,57 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(exitCode).toBe(0);
 });
 
+// Nothing can close a channel that was never opened, so nothing may stay alive for it.
+it.each([
+  `process.on("message", () => {});`,
+  `process.channel.ref(); process.on("message", () => {});`,
+  `process.channel.ref(); process.on("message", () => {}); process.channel.unref();`,
+  `process.channel.refCounted(); process.on("message", () => {});`,
+])("a child with an unusable NODE_CHANNEL_FD does not stay alive for its channel: %s", async script => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `${script} console.log("ok");`],
+    env: {
+      ...bunEnv,
+      NODE_CHANNEL_FD: "921",
+      NODE_CHANNEL_SERIALIZATION_MODE: "json",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Unable to start IPC");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+// node:child_process gives the channel of its child a reference on the event loop, as Node.js does. Bun.spawn() does not.
+it("the open channel of Bun.spawn({ ipc }) does not keep the parent alive after unref()", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const kid = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.on('message', () => {});"],
+          stdio: ["ignore", "ignore", "ignore"],
+          ipc() {},
+        });
+        kid.send("a message");
+        kid.unref();
+        process.on("exit", () => console.log(JSON.stringify({ connected: kid.connected, exitCode: kid.exitCode })));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The parent left with the channel open and the kid running.
+  expect(JSON.parse(stdout)).toEqual({ connected: true, exitCode: null });
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
   // The version packet is the first frame on the channel:
   // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the

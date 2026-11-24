@@ -485,6 +485,7 @@ pub(crate) fn get_ipc_instance(
             true,
         ) else {
             bun_core::warn!("Unable to start IPC socket");
+            vm.channel_ref.disable();
             return None;
         };
         socket.set_timeout(0);
@@ -509,6 +510,7 @@ pub(crate) fn get_ipc_instance(
         // SAFETY: `send_queue` is the live SendQueue owned by `data`.
         if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            vm.channel_ref.disable();
             return None;
         }
 

@@ -1482,6 +1482,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = () => false;
         this.disconnect = () => {};
+        this.channel = new (require("internal/process/channel_control"))();
       }
       return;
     }
@@ -1544,7 +1545,7 @@ class ChildProcess extends EventEmitter {
       if (has_ipc) {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
-        this.channel = new Control();
+        this.channel = new (require("internal/process/channel_control"))(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1654,6 +1655,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.channel = null;
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
   }
@@ -1958,12 +1960,6 @@ function abortChildProcess(child: ChildProcess, killSignal: string | number | un
     }
   } catch (err) {
     child.emit("error", err);
-  }
-}
-
-class Control extends EventEmitter {
-  constructor() {
-    super();
   }
 }
 

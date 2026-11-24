@@ -6,12 +6,13 @@
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
+use bun_jsc::channel_ref::ChannelRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::{
-    BindAddress, BindAddressType, BindResult, BoundHandle,
+    BindAddress, BindAddressType, BindResult, BoundHandle, ChannelRefOp,
 };
 
 // Struct lives in `crate::ipc` —
@@ -291,30 +292,46 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get();
-    vm.channel_ref_overridden.set(true);
-    if enabled {
-        vm.channel_ref.ref_(vm.loop_ctx());
-    } else {
-        vm.channel_ref.unref(vm.loop_ctx());
+/// The reference of this process's own channel. A process that was started without a channel has none to take: nothing
+/// would end it.
+fn own_channel_ref(vm: &VirtualMachine) -> Option<&ChannelRef> {
+    crate::ipc_host::global_object_has_ipc(vm.global()).then_some(&vm.channel_ref)
+}
+
+/// What `Control` asks for: of the channel of `process_handle` as `subprocess.channel`, of this process's own as `process.channel`.
+/// It does not open a child's own channel, which Node has open from the start: a child that nothing but `ref()` or
+/// `refCounted()` holds does not see its parent disconnect.
+pub(crate) fn channel_ref(op: ChannelRefOp, process_handle: Option<&bun_ptr::RefPtr<Subprocess>>) {
+    let channel_ref = match process_handle {
+        Some(subprocess) => subprocess.ipc().and_then(|ipc| ipc.channel_ref()),
+        None => own_channel_ref(VirtualMachine::get()),
+    };
+    let Some(channel_ref) = channel_ref else {
+        return;
+    };
+    match op {
+        ChannelRefOp::Ref => channel_ref.set(true),
+        ChannelRefOp::Unref => channel_ref.set(false),
+        ChannelRefOp::RefCounted => channel_ref.add_counted(1),
+        ChannelRefOp::UnrefCounted => channel_ref.add_counted(-1),
     }
 }
 
-// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm();
-    if !vm.channel_ref_overridden.get() {
-        vm.channel_ref.ref_(vm.loop_ctx());
+pub(crate) fn start_channel_ref(process_handle: Option<&bun_ptr::RefPtr<Subprocess>>) {
+    if let Some(ipc) = process_handle.and_then(|subprocess| subprocess.ipc()) {
+        ipc.start_channel_ref();
     }
 }
 
-// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+/// `count` is how many 'message' and 'disconnect' listeners `process` has. Each is one `refCounted()`, as in Node's `_forkChild`.
+// HOST_EXPORT(Bun__setChannelListenerCount, c)
+pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {
     let vm = global.bun_vm();
-    if !vm.channel_ref_overridden.get() {
-        vm.channel_ref.unref(vm.loop_ctx());
-    }
+    let Some(channel_ref) = own_channel_ref(vm) else {
+        return;
+    };
+    let before = vm.channel_ref_listeners.replace(count);
+    channel_ref.add_counted(count.wrapping_sub(before).cast_signed());
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {

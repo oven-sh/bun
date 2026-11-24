@@ -99,7 +99,6 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   ($bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener") as () => void)();
   process.once("disconnect", () => {
-    (process as { channel: unknown }).channel = null;
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 cafb95414af99fdb168abad8de39c9804a6354f34149cf895b8e2bd2ad9e5ec5.
+// Written against that file with the SHA-256 d529b64eed4e04a0bd10c7ae32a705284c9fc375239b7768edd83acae60fdfb7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -668,21 +668,7 @@ export function windowsEnv(
 }
 
 export function getChannel() {
-  const EventEmitter = require("node:events");
-  const setRef: (enabled: boolean) => void = $bindgen("node_cluster_binding.bind.ts", "setRef");
-  return new (class Control extends EventEmitter {
-    constructor() {
-      super();
-    }
-
-    ref() {
-      setRef(true);
-    }
-
-    unref() {
-      setRef(false);
-    }
-  })();
+  return new (require("internal/process/channel_control"))(null);
 }
 
 export function rawDebug() {

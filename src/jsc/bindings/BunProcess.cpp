@@ -1593,8 +1593,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     return false;
 }
 
-extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
-extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__setChannelListenerCount(JSC::JSGlobalObject* globalObject, uint32_t count);
 extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
@@ -1699,17 +1698,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 disconnectListenerCount--;
             }
             auto totalListenerCount = messageListenerCount + disconnectListenerCount;
-            if (isAdded) {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 1) {
+            if (Bun__GlobalObject__hasIPC(global)) {
+                if (isAdded && totalListenerCount == 1)
                     JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__ensureProcessIPCInitialized>(global);
-                    Bun__refChannelUnlessOverridden(global);
-                }
-            } else {
-                if (Bun__GlobalObject__hasIPC(global)
-                    && totalListenerCount == 0) {
-                    Bun__unrefChannelUnlessOverridden(global);
-                }
+                Bun__setChannelListenerCount(global, static_cast<uint32_t>(totalListenerCount));
             }
             return;
         }
@@ -4288,6 +4280,9 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     }
 
     Bun__closeChildIPC(globalObject);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L928
+    auto& vm = JSC::getVM(globalObject);
+    global->processObject()->putDirect(vm, Identifier::fromString(vm, "channel"_s), jsNull(), 0);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -6225,6 +6220,8 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L928
+    process->putDirect(vm, Identifier::fromString(vm, "channel"_s), jsNull(), 0);
     auto ident = Identifier::fromString(vm, "disconnect"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;

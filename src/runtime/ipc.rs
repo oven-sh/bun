@@ -16,6 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::channel_ref::ChannelRef;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -860,6 +861,11 @@ pub(crate) struct SendQueue {
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: KeepAlive,
+    /// Of `subprocess.channel`, for `node:child_process`, which starts it. `Bun.spawn({ ipc })` never does, and the
+    /// reference of a child's own channel is the VM's.
+    channel_ref: ChannelRef,
+    /// `channel_ref` counts the write or the ack that `keep_alive` waits for.
+    counts_send: Cell<bool>,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -999,6 +1005,8 @@ impl SendQueue {
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
             keep_alive: KeepAlive::default(),
+            channel_ref: ChannelRef::default(),
+            counts_send: Cell::new(false),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1093,6 +1101,7 @@ impl SendQueue {
             self.windows.with_mut(|w| w.windows_write = None);
         }
         self.keep_alive.disable();
+        self.channel_ref.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1380,6 +1389,36 @@ impl SendQueue {
         } else {
             self.keep_alive.unref(ctx);
         }
+        // Node counts each write that does not finish at once as a `refCounted()` until it has finished:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874
+        // Here all that `keep_alive` waits for is one count: writes that wait together, and a handle until its ack.
+        if self.channel_ref.is_started() && self.counts_send.replace(should_ref) != should_ref {
+            let step = if should_ref { 1 } else { -1 };
+            self.channel_ref.add_counted(step);
+        }
+    }
+
+    /// For `Control` of `subprocess.channel`. A channel that is closed, closing or was never opened has no reference to take.
+    pub(crate) fn channel_ref(&self) -> Option<&ChannelRef> {
+        self.is_connected().then_some(&self.channel_ref)
+    }
+
+    pub(crate) fn start_channel_ref(&self) {
+        let Some(channel_ref) = self.channel_ref() else {
+            return;
+        };
+        // libuv gives the channel 64 KiB, which is what a write can take at once: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/process.c#L196-L212
+        // These two give 8 KiB. Linux gives more, and that is left alone: a send between the two sizes is counted in Node and not here.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        if let Some(socket) = self.get_socket() {
+            let _ = bun_sys::net::setsockopt_int(
+                socket.fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                64 * 1024,
+            );
+        }
+        channel_ref.start();
     }
 
     fn continue_send(&self, global: &JSGlobalObject, mut reason: ContinueSendReason) {

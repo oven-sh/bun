@@ -1100,6 +1100,7 @@ const dir = String(
         childProcess.spawn("/does/not/exist/" + import.meta.file);
         // fork() always gives a channel.
         childProcess.fork(import.meta.path).send({ hello: 1 });
+        childProcess.fork(import.meta.path).channel.unref();
       });
     `,
     "spawns-after-it-was-disposed.mjs": `

@@ -644,21 +644,7 @@ export function windowsEnv(
 }
 
 export function getChannel() {
-  const EventEmitter = require("node:events");
-  const setRef = $bindgen("node_cluster_binding.bind.ts", "setRef");
-  return new (class Control extends EventEmitter {
-    constructor() {
-      super();
-    }
-
-    ref() {
-      setRef(true);
-    }
-
-    unref() {
-      setRef(false);
-    }
-  })();
+  return new (require("internal/process/channel_control"))(null);
 }
 
 export function rawDebug() {

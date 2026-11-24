@@ -70,7 +70,7 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
   "node:worker_threads": evaluates("internal/worker/stdio"),
-  "process.channel": evaluates("node:events"),
+  "process.channel": evaluates("internal/process/channel_control", "node:events"),
   "process.nextTick": [
     {
       module: "internal/process/next_tick_queue",
@@ -139,7 +139,7 @@ const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
 }));
 
 // Not process.connected: its getter answers a flag of native code and its setter does nothing (BunProcess.cpp processConnected, setProcessConnected): neither opens the channel.
-// Not process.channel: its ref() and unref() say whether the channel keeps the process alive (node_cluster_binding.rs set_ref), open or not.
+// Not process.channel: its methods say whether the channel keeps the process alive (node_cluster_binding.rs channel_ref), open or not.
 // Not node:child_process: its code is compiled with the program, and the one channel it opens is that of its own Bun.spawn with `ipc`.
 const channelUsers: readonly b.CallingEntrySpec[] = [
   ...spawnsWithChannel,

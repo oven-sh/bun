@@ -380,8 +380,10 @@ pub struct VirtualMachine {
     /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
     pub has_pending_test_step: core::cell::Cell<bool>,
 
-    pub channel_ref: Async::KeepAlive,
-    pub channel_ref_overridden: Cell<bool>,
+    /// Of this process's own channel, which `process.channel` controls.
+    pub channel_ref: crate::channel_ref::ChannelRef,
+    /// How many of `channel_ref`'s counted references stand for 'message' and 'disconnect' listeners of `process`.
+    pub channel_ref_listeners: Cell<u32>,
     pub channel_ref_should_ignore_one_disconnect_event_listener: Cell<bool>,
 
     /// A set of extensions that exist in the require.extensions map.
@@ -3116,7 +3118,7 @@ impl VirtualMachine {
             suppress_microtask_drain: Cell::new(false),
             has_pending_test_step: Cell::new(false),
             channel_ref: Default::default(),
-            channel_ref_overridden: Cell::new(false),
+            channel_ref_listeners: Cell::new(0),
             channel_ref_should_ignore_one_disconnect_event_listener: Cell::new(false),
             commonjs_custom_extensions: JsCell::default(),
             has_mutated_built_in_extensions: Cell::new(0),

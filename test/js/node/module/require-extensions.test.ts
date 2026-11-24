@@ -350,3 +350,72 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     });
   });
 });
+
+// Node's Module.prototype.load calls `Module._extensions[extension](this, filename)`.
+test.concurrent("a handler is called with Module._extensions as `this`", async () => {
+  const files = ["require.zzx", "module-require.zzx", "create-require.zzx", "define-property.zzd", "replaced.js"];
+  using dir = tempDir("require-extensions-this", {
+    ...Object.fromEntries(files.map(file => [file, `module.exports = ${JSON.stringify(file)};`])),
+    "this-fixture.cjs": `
+      "use strict";
+      const Module = require("node:module");
+      const path = require("node:path");
+      const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+
+      const receivers = {};
+      function record(receiver, module, filename) {
+        receivers[path.basename(filename)] =
+          receiver === Module._extensions && receiver === require.extensions
+            ? "Module._extensions"
+            : receiver === module
+              ? "module"
+              : typeof receiver;
+      }
+      function handler(module, filename) {
+        record(this, module, filename);
+        // The default handlers are properties of the same object.
+        this[".js"](module, filename);
+      }
+
+      require.extensions[".zzx"] = handler;
+      Object.defineProperty(Module._extensions, ".zzd", {
+        value: handler,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      const exported = [
+        require("./require.zzx"),
+        module.require("./module-require.zzx"),
+        Module.createRequire(__filename)("./create-require.zzx"),
+        require("./define-property.zzd"),
+      ];
+
+      const original = require.extensions[".js"];
+      require.extensions[".js"] = function (module, filename) {
+        record(this, module, filename);
+        original(module, filename);
+      };
+      exported.push(require("./replaced.js"));
+      require.extensions[".js"] = original;
+
+      const result = { receivers, exported };
+      if (isMainThread) {
+        new Worker(__filename).once("message", worker => console.log(JSON.stringify({ main: result, worker })));
+      } else {
+        parentPort.postMessage(result);
+      }
+    `,
+  });
+
+  const expected = {
+    receivers: Object.fromEntries(files.map(file => [file, "Module._extensions"])),
+    exported: files,
+  };
+  expect(await bunRun(path.join(String(dir), "this-fixture.cjs"))).toEqual({
+    stdout: JSON.stringify({ main: expected, worker: expected }),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

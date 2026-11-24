@@ -194,12 +194,7 @@ pub fn create_instance(name: &WStr, is_first: bool) -> Result<OwnedHandle, Win32
 
 /// Opens an overlapped client end: duplex, else read-only, else write-only. `PIPE_BUSY` if every instance has a client.
 pub fn connect(name: &WStr) -> Result<OwnedHandle, Win32Error> {
-    const SECURITY_SQOS_PRESENT: DWORD = 0x0010_0000;
-    const SECURITY_IDENTIFICATION: DWORD = 0x0001_0000;
-    let open = |access| {
-        let flags = FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION;
-        super::CreateFileW(name, access, 0, OPEN_EXISTING, flags)
-    };
+    let open = |access| super::CreateFileW(name, access, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED);
     let mut result = open(GENERIC_READ | GENERIC_WRITE);
     for access in [
         GENERIC_READ | FILE_WRITE_ATTRIBUTES,

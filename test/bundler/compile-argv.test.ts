@@ -83,6 +83,9 @@ describe("bundler", () => {
         `,
         "/imported.ts": /* js */ `export default 2;`,
       },
+      bundleWarnings: {
+        "/see.ts": ["Using direct eval with a bundler is not recommended and may cause problems"],
+      },
       entryPointsRaw: ["./entry.ts", "./worker.ts"],
       outfile: "dist/out",
       run: {

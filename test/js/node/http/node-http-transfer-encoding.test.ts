@@ -683,9 +683,7 @@ test.each(["Connection", "Proxy-Connection"])("%s: close ends the connection aft
   }
 });
 
-// Value lengths landing parseTrailerFields' 8-byte field-value scan on the
-// alignments where its last load reaches past the terminating CRLF CRLF: that
-// read leaves the heap allocation without the section's post-padding (ASAN).
+// The scan of a field value loads several bytes at a time, and must not read past the section (ASAN).
 test("chunked request trailers parse at every field-value scan boundary", async () => {
   const seen: { trailers: Record<string, string | string[] | undefined>; raw: string[] }[] = [];
   await using server = createServer((req, res) => {

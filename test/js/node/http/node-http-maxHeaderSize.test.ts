@@ -171,6 +171,24 @@ test("server.maxHeaderSize assigned after construction is not narrowed to a smal
   });
 });
 
+test.each([
+  ["", "HPE_HEADER_OVERFLOW"],
+  ["\x01", "HPE_INVALID_URL"],
+  ["\xff", "HPE_INVALID_URL"],
+])("a target over maxHeaderSize that ends in %j is %s", async (end, expected) => {
+  await using server = http.createServer({ maxHeaderSize: 40 });
+  const codes: string[] = [];
+  server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+    codes.push(error.code!);
+    socket.end();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  socket.end(`GET /${Buffer.alloc(100, "a")}${end} HTTP/1.1\r\nHost: a\r\n\r\n`, "latin1");
+  await once(socket.resume(), "close");
+  expect(codes).toEqual([expected]);
+});
+
 test.concurrent("--max-http-header-size=1024", async () => {
   const size = 1024;
   expect(

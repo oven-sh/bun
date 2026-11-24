@@ -856,10 +856,9 @@ fn run_pending_test_step(global: &JSGlobalObject) {
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
-/// `on_before_exit` drain loops where blocking when the loop is idle would
-/// hang shutdown.
+/// [`auto_tick`] but: no `runImminentGCTimer` and no debug sleep-timer
+/// logging. Used by `bun_main` / `on_before_exit` drain loops where blocking
+/// when the loop is idle would hang shutdown.
 fn auto_tick_active(vm: &VirtualMachine) {
     let el = vm.event_loop();
     let loop_ = el.usockets_loop();
@@ -932,6 +931,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     }
 
     vm.on_after_event_loop();
+    let _ = vm.global().handle_rejected_promises();
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via

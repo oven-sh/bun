@@ -843,9 +843,12 @@ impl ExitHandler {
         }
         let exit_code = vm.exit_handler.exit_code.get();
         let global = vm.global();
-        let _ = jsc::from_js_host_call_generic(global, || {
+        let dispatched = jsc::from_js_host_call_generic(global, || {
             Process__dispatchOnBeforeExit(global, exit_code)
         });
+        if dispatched.is_ok() {
+            let _ = global.handle_rejected_promises();
+        }
     }
 }
 
@@ -2671,9 +2674,9 @@ pub struct RuntimeHooks {
     pub auto_tick: fn(vm: &VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// Separate slot because the body skips `runImminentGCTimer` and falls
+    /// through to `tickWithoutIdle` when idle — folding it into `auto_tick`
+    /// would change shutdown semantics.
     pub auto_tick_active: fn(vm: &VirtualMachine),
     /// Runs the next `bun test` test or hook. See [`VirtualMachine::has_pending_test_step`].
     pub run_pending_test_step: fn(global: &JSGlobalObject),

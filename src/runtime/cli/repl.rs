@@ -2095,9 +2095,15 @@ impl<'a> Repl<'a> {
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
+        let options = &vm.transpiler.get().options;
+        opts.use_define_for_class_fields = options.use_define_for_class_fields;
+        opts.features.emit_decorator_metadata = options.emit_decorator_metadata;
+        // As in `Transpiler::parse`: emitDecoratorMetadata implies the legacy decorators.
+        opts.features.standard_decorators =
+            !(options.experimental_decorators || options.emit_decorator_metadata);
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
-        // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
+        // `js_parser/repl_transforms.rs` rewrites a top-level `s_local` of the input into a
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first,

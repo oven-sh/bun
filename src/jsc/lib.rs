@@ -429,6 +429,7 @@ pub mod any_promise;
 pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
+pub mod channel_ref;
 pub mod compiled_program;
 #[path = "DOMFormData.rs"]
 pub mod dom_form_data;

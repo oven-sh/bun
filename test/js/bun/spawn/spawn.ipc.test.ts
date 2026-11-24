@@ -568,6 +568,29 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(exitCode).toBe(0);
 });
 
+// Nothing can close a channel that was never opened, so nothing may stay alive for it.
+it.each([
+  `process.on("message", () => {});`,
+  `process.channel.ref(); process.on("message", () => {});`,
+  `process.channel.ref(); process.on("message", () => {}); process.channel.unref();`,
+  `process.channel.refCounted(); process.on("message", () => {});`,
+])("a child with an unusable NODE_CHANNEL_FD does not stay alive for its channel: %s", async script => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `${script} console.log("ok");`],
+    env: {
+      ...bunEnv,
+      NODE_CHANNEL_FD: "921",
+      NODE_CHANNEL_SERIALIZATION_MODE: "json",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Unable to start IPC");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
   // The version packet is the first frame on the channel:
   // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the

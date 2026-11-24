@@ -16,6 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::channel_ref::ChannelRef;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -860,6 +861,8 @@ pub(crate) struct SendQueue {
 
     pub(crate) retry_count: Cell<u32>,
     pub(crate) keep_alive: KeepAlive,
+    /// Of `subprocess.channel`, for `node:child_process`. The reference of a child's own channel is the VM's.
+    channel_ref: ChannelRef,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -999,6 +1002,7 @@ impl SendQueue {
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
             keep_alive: KeepAlive::default(),
+            channel_ref: ChannelRef::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1093,6 +1097,7 @@ impl SendQueue {
             self.windows.with_mut(|w| w.windows_write = None);
         }
         self.keep_alive.disable();
+        self.channel_ref.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1380,6 +1385,11 @@ impl SendQueue {
         } else {
             self.keep_alive.unref(ctx);
         }
+    }
+
+    /// For `Control` of `subprocess.channel`. A channel that is closed, closing or was never opened has no reference to take.
+    pub(crate) fn channel_ref(&self) -> Option<&ChannelRef> {
+        self.is_connected().then_some(&self.channel_ref)
     }
 
     fn continue_send(&self, global: &JSGlobalObject, mut reason: ContinueSendReason) {

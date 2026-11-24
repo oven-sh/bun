@@ -1598,6 +1598,8 @@ describe.concurrent("bundled headers", () => {
       ...(isWindows || isMacOS ? ["STDBOOL.H", "Node/Node_Api.h"] : []),
       ...(isWindows ? ["node\\node_api.h", "node\\..\\stdbool.h"] : []),
     ]),
+    // On Windows the name of the directory itself has no case and both separators.
+    ...(isWindows ? ["\\$bun-cc\\stdbool.h", "/$BUN-CC/stddef.h"] : []),
     // Both bundled directories are on the include path.
     "varargs.h",
     "node_api.h",

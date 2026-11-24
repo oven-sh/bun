@@ -2526,11 +2526,10 @@ impl CompilerRT {
 
 impl TCC::OpenFiles for CompilerRT {
     fn open(filename: &[u8]) -> TCC::Opened {
-        let below = match filename.strip_prefix(Self::DIR.as_bytes()) {
-            Some([sep, below @ ..]) if bun_paths::is_sep(*sep) => below,
-            _ => return TCC::Opened::FileSystem,
+        let Some(below) = bun_paths::strip_prefix(filename, Self::DIR.as_bytes()) else {
+            return TCC::Opened::FileSystem;
         };
-        match Self::bundled_header(bun_paths::without_leading_sep(below)) {
+        match Self::bundled_header(below) {
             Some(contents) => TCC::Opened::Contents(contents),
             None => TCC::Opened::NotFound,
         }

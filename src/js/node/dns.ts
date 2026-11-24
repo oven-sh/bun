@@ -2,7 +2,7 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
-const { guardCallback } = require("internal/shared");
+const { ErrnoException, guardCallback } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
@@ -10,6 +10,7 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateUint32,
   validatePort,
 } = require("internal/validators");
 
@@ -60,7 +61,12 @@ interface LookupOptions {
   backend?: string;
 }
 type LookupCallback = (err: Error | null, address?: string | LookupAddress[] | null, family?: number) => void;
-type NewNativeResolver = (options: { timeout: number; tries: number }) => NativeResolver;
+interface ResolverOptions {
+  timeout: number;
+  tries: number;
+  maxTimeout: number;
+}
+type NewNativeResolver = (options: ResolverOptions) => NativeResolver;
 
 interface DNSException extends Error {
   errno?: number;
@@ -104,7 +110,7 @@ const getRuntimeDefaultResultOrderOption: () => string = $bindgen(
 );
 const setConnectResultOrder: (order: string) => void = $bindgen("dns_internals.bind.ts", "setConnectResultOrder");
 
-function newResolver(options: { timeout: number; tries: number }) {
+function newResolver(options: ResolverOptions) {
   if (!newResolver.native) {
     newResolver.native = $bindgen("dns_internals.bind.ts", "newResolver") as NewNativeResolver;
   }
@@ -136,7 +142,7 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
-// ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
+// The native side rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
 function stripZoneId(host: string) {
   const pct = host.indexOf("%");
   return pct === -1 ? host : host.slice(0, pct);
@@ -268,6 +274,30 @@ function validateResolve(hostname: unknown, callback: ResolveCallback | undefine
   return validateCallback(callback);
 }
 
+function validateStringWithoutNullBytes(value: string, name: string) {
+  validateString(value, name);
+  if (value.includes("\0")) {
+    throw $ERR_INVALID_ARG_VALUE(name, value, "must be a string without null bytes");
+  }
+}
+
+const canonicalizeIP = $bindgen("answer_jsc.bind.ts", "canonicalizeIP");
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+
+// Returns what the callback API throws and the promise API rejects with.
+function validateReverse(ip: string) {
+  validateStringWithoutNullBytes(ip, "name");
+  if (canonicalizeIP(ip) !== undefined) return;
+  const error: DNSException = new ErrnoException(UV_EINVAL, "getHostByAddr", ip);
+  if (ip) error.hostname = ip;
+  return error;
+}
+
+function reversePromise(resolver: ResolverMethods, ip: string) {
+  const error = validateReverse(ip);
+  return error ? Promise.$reject(error) : translateErrorCode(resolver.reverse(ip));
+}
+
 function deliver(promise: Promise<unknown>, callback: ResolveCallback) {
   promise.then(
     results => {
@@ -304,9 +334,9 @@ function sortByOrder(res: LookupAddress[], order: string | undefined) {
 }
 
 function validateLocalAddresses(first: string, second?: string) {
-  validateString(first, "ipv4");
+  validateStringWithoutNullBytes(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second, "ipv6");
+    validateStringWithoutNullBytes(second, "ipv6");
   }
 }
 
@@ -345,7 +375,7 @@ function translateLookupOptions(options: LookupOptions | number | null | undefin
     all,
     order,
     verbatim,
-    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not c-ares.
+    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver.
     backend: "system",
   };
 }
@@ -456,18 +486,19 @@ function lookupService(
   );
 }
 
-function validateResolverOptions(options?: { timeout?: number; tries?: number }) {
-  const { timeout = -1, tries = 4 } = { ...options };
+function validateResolverOptions(options?: Partial<ResolverOptions>) {
+  const { timeout = -1, tries = 4, maxTimeout = 0 } = { ...options };
   validateInt32(timeout, "options.timeout", -1);
   validateInt32(tries, "options.tries", 1);
-  return { timeout, tries };
+  validateUint32(maxTimeout, "options.maxTimeout");
+  return { timeout, tries, maxTimeout };
 }
 
 class Resolver {
   declare _handle: NativeResolver;
   #resolver: NativeResolver;
 
-  constructor(options?: { timeout?: number; tries?: number }) {
+  constructor(options?: Partial<ResolverOptions>) {
     this.#resolver = this._handle = newResolver(validateResolverOptions(options));
   }
 
@@ -572,7 +603,9 @@ class Resolver {
   }
 
   reverse(this: object | undefined, ip: string, callback: ResolveCallback) {
+    const error = validateReverse(ip);
     callback = validateCallback(arguments.length > 2 ? arguments[2] : callback);
+    if (error) throw error;
     deliver(Resolver.#getResolver(this).reverse(ip), callback);
   }
 
@@ -771,14 +804,14 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip: string) {
-    return translateErrorCode(dns.reverse(ip));
+    return reversePromise(dns, ip);
   },
 
   Resolver: class Resolver {
     declare _handle: NativeResolver;
     #resolver: NativeResolver;
 
-    constructor(options?: { timeout?: number; tries?: number }) {
+    constructor(options?: Partial<ResolverOptions>) {
       this.#resolver = this._handle = newResolver(validateResolverOptions(options));
     }
 
@@ -857,7 +890,7 @@ const promises = {
     }
 
     reverse(this: object | undefined, ip: string) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return reversePromise(Resolver.#getResolver(this), ip);
     }
 
     setLocalAddress(first: string, second?: string) {

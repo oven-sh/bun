@@ -30,7 +30,6 @@ use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::SSLConfig;
 use crate::socket::ssl_config::ParsedTls;
 use bun_boringssl_sys as boringssl_sys;
-use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
@@ -1230,13 +1229,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // A failed name lookup is reported as the resolver error
         // (`getaddrinfo ENOTFOUND <hostname>`, `syscall`/`hostname` set),
         // matching `node:dns`.
-        let dns_err = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0);
+        let dns_err = bun_dns::getaddrinfo_error(dns_error).filter(|_| dns_error != 0);
         let err = if let Some(dns_err) = dns_err {
             let hostname: &[u8] = match self.connection.get() {
                 Some(super::listener::UnixOrHost::Host { host, .. }) => host,
                 _ => b"",
             };
-            crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+            crate::dns_jsc::answer_jsc::system_error_with_syscall_and_hostname(
                 dns_err,
                 b"getaddrinfo",
                 hostname,

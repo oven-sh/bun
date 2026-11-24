@@ -72,7 +72,7 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: SSLContextCache,
-    /// Per-VM resolver + c-ares channel.
+    /// Per-VM resolver.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; released when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) dns_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
@@ -1368,17 +1368,14 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
     }
 }
 
-/// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
-/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
-/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
-/// are all still live.
+/// `RuntimeHooks::stop_dns_for_vm_teardown`
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
     if let Some(resolver) = state.dns_resolver.get() {
-        result = result.and(resolver.close_channel_for_terminate());
+        result = result.and(resolver.close_client_for_terminate());
         #[cfg(windows)]
         resolver.cancel_pending_uv_requests_for_teardown();
     }

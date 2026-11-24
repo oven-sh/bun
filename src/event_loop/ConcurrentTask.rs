@@ -139,7 +139,7 @@ pub mod task_tag {
         TLSSocketWriteCompletion, // bun_runtime::socket::DeferredWriteCompletion<true>
         ThreadSafeFunction,
         ThreadSafeFunctionRefRequest,
-        UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
+        UvDnsPollFree,            // a closed uv_poll_t of a DNS socket (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
         UvWorkDone,               // work that an addon thread queued (posix)

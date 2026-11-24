@@ -46,7 +46,7 @@ const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertifi
 const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const getOpenSSLDefaultCertificates = $newCppFunction("NodeTLS.cpp", "getOpenSSLDefaultCertificates", 0);
-const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+const canonicalizeIP = $bindgen("answer_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
 const getTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "getTLSDefaultCiphers");

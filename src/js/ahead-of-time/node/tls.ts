@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6e9c3c66c164c112c3f007569fbdc9a5fe3d3a926423286f163d50d8ed2024a9.
+// Written against that file with the SHA-256 499fd0c756eb9bd67f1ff636aa2fc38beb06b67683ecdda5565b6a7ce8ba56d0.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -171,7 +171,7 @@ const getOpenSSLDefaultCertificates: () => string[] = $newCppFunction(
   "getOpenSSLDefaultCertificates",
   0,
 );
-const canonicalizeIP: (ip: string) => string | undefined = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+const canonicalizeIP: (ip: string) => string | undefined = $bindgen("answer_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates: (certs: CACertInput[]) => string[] = $newCppFunction(
   "NodeTLS.cpp",
   "parseCACertificates",

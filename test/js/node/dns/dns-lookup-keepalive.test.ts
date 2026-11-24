@@ -39,7 +39,7 @@ describe("dns.Resolver does not keep the event loop alive after the last query t
   for (const [name, stmt, expected] of [
     ["resolveCaa", `r.resolveCaa("x.invalid", done);`, "ETIMEOUT"],
     ["resolve4", `r.resolve4("x.invalid", done);`, "ETIMEOUT"],
-    // ares_gethostbyaddr swallows the PTR query status and reports ENOTFOUND
+    // A reverse lookup swallows the PTR query status and reports ENOTFOUND
     // after the file-lookup fallback; the PTR query itself still completes
     // via the retransmit timer.
     ["reverse", `r.reverse("192.0.2.1", done);`, "ENOTFOUND"],
@@ -77,7 +77,7 @@ describe("a settled query does not keep the event loop alive", () => {
       resolver.setServers(dns.getServers());
 
       const outcome = await (async () => { ${query} })().catch(e => e.code);
-      // libuv needs some turns to close the sockets of c-ares. The resolver's timer runs for 1000 ms.
+      // libuv needs some turns to close the resolver's sockets. The resolver's timer runs for 1000 ms.
       const deadline = performance.now() + 500;
       do await new Promise(resolve => setImmediate(resolve));
       while (getEventLoopStats().loopActive && performance.now() < deadline);
@@ -108,12 +108,12 @@ describe("a settled query does not keep the event loop alive", () => {
       "DNS_ETIMEOUT",
     ],
     [
-      "c-ares answers from its cache",
+      "the resolver answers from its cache",
       `return [await resolver.resolve4("answered.test"), await resolver.resolve4("answered.test")]`,
       [["10.0.0.1"], ["10.0.0.1"]],
     ],
     [
-      "c-ares answers without asking a server",
+      "the resolver answers without asking a server",
       `dns.setServers([]);
        const queries = [
          Bun.dns.lookup("127.0.0.1", { backend: "c-ares" }),
@@ -146,7 +146,7 @@ describe("a settled query does not keep the event loop alive", () => {
   });
 });
 
-test.concurrent("a query that c-ares answers without asking a server takes a turn of the event loop", async () => {
+test.concurrent("a query that is answered without asking a server takes a turn of the event loop", async () => {
   const script = `
     const resolver = new (require("node:dns").Resolver)();
     resolver.setServers([]);
@@ -160,7 +160,7 @@ test.concurrent("a query that c-ares answers without asking a server takes a tur
   expect(await bunRun(["-e", script])).toSpawn("beforeExit 1\n127.0.0.1\nbeforeExit 2\nENOSERVER\nbeforeExit 3");
 });
 
-describe("script does not run inside c-ares", () => {
+describe("script does not run inside the resolver's client", () => {
   const script = (body: string) => `
     const dns = require("node:dns");
     // Answers A with 10.0.0.1 and drops AAAA.
@@ -188,7 +188,7 @@ describe("script does not run inside c-ares", () => {
     const lookup = (continuation: string) =>
       script(`
         dns.setServers(servers);
-        // After three fast answers c-ares waits 250 ms for this server, not 2 s.
+        // After three fast answers the resolver waits 250 ms for this server, not 2 s.
         for (const name of ["a.test", "b.test", "c.test"]) await dns.promises.resolve4(name);
         const first = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
         const joined = Bun.dns.lookup("v4.test.", { backend: "c-ares" });
@@ -232,7 +232,7 @@ describe("script does not run inside c-ares", () => {
 
     test.concurrent.each([
       { source: "a socket event", before: "" },
-      { source: "the cache of c-ares", before: `await resolver.resolve4("a.test");` },
+      { source: "the resolver's cache", before: `await resolver.resolve4("a.test");` },
     ])("by a `then` getter of an answer from $source", async ({ before }) => {
       const body = `
         ${before}
@@ -270,7 +270,7 @@ describe("script does not run inside c-ares", () => {
 });
 
 test.concurrent.each(["beforeExit", "exit"])(
-  "a query that c-ares answers inside the call runs no microtask of the %s listener that made it",
+  "a query that the resolver answers inside the call runs no microtask of the %s listener that made it",
   async event => {
     const script = `
       process.once("${event}", () => {
@@ -285,7 +285,7 @@ test.concurrent.each(["beforeExit", "exit"])(
   },
 );
 
-test.concurrent("a query that c-ares answers inside the call runs no microtask of a test body", async () => {
+test.concurrent("a query that the resolver answers inside the call runs no microtask of a test body", async () => {
   using dir = tempDir("dns-test-body", {
     "body.test.js": `
       test("queries after an await", async () => {

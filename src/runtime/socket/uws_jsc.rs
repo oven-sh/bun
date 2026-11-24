@@ -42,7 +42,7 @@ pub(crate) fn throw_listen_error(
 ) -> JsError {
     use bun_sys::SystemErrno;
 
-    if let Some(err) = crate::dns_jsc::cares_jsc::getaddrinfo_error(
+    if let Some(err) = crate::dns_jsc::answer_jsc::getaddrinfo_error(
         failure.dns_error,
         target.address().unwrap_or(b""),
     ) {

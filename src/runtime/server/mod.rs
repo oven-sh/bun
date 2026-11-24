@@ -1870,7 +1870,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let hostname = hostname.as_bytes();
                 if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname))
                 {
-                    let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    let _ = global.throw_value(crate::dns_jsc::answer_jsc::not_a_hostname_error(
                         global, hostname,
                     ));
                     return None;

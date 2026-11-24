@@ -227,7 +227,7 @@ const openFrameParser: Open = realm => {
 };
 
 const openResolver: Open = realm => {
-  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({ timeout: -1, tries: 4 });
+  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({ timeout: -1, tries: 4, maxTimeout: 0 });
   resolver.setServers([[4, "127.0.0.1", 1]]);
   return { value: resolver, close: () => resolver.cancel() };
 };

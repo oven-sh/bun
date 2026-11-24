@@ -49,7 +49,7 @@ void CollectionEndWake::didGarbageCollect(JSC::CollectionScope)
 {
     // The JS thread ends a collection that it handed over when the collector thread could not stop it: that thread
     // leaves the phase to the JS thread's next poll. The poll may be the loop's, where the wait's timeout is already
-    // chosen and does not have the timer that the epilogue arms for the sweeper.
+    // chosen and does not have the timer that this phase arms for the sweeper.
     if (m_clientData.handedOverCollection.exchange(false) || !m_heap.vm().currentThreadIsHoldingAPILock())
         Bun__VmHandle__wake(m_clientData.vmHandle.get());
 }

@@ -504,9 +504,9 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
     expect(await exitCode([bunExe(), "main.js"], { ...timerOff, ...oneMarker }, String(dir))).toBe(0);
   });
 
-  // The epilogue of a collection sweeps what it freed, and only the JS thread runs it. The collector thread wakes the JS
-  // thread for it: nothing else in this child does. The request comes a second in, when the sweeper that start-up's own
-  // collection left on a 100 ms timer has finished. `C` is the collector thread in JSC's GC log.
+  // Only the JS thread runs the epilogue of a collection. The collector thread wakes the JS thread for it: nothing else
+  // in this child does. The request comes a second in, when the sweeper that start-up's own collection left on a
+  // 100 ms timer has finished. `C` is the collector thread in JSC's GC log.
   test.concurrent("and the JS thread is woken for its epilogue", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", keep + stay + `setTimeout(() => Bun.gc(false), 1000);`],
@@ -601,13 +601,15 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
       await proc.stdout.getReader().read();
       const full = resident();
       expect(full).toBeGreaterThan(250);
+      const deadline = performance.now() + 6000;
       let now = full;
-      while (now >= full - 150) {
+      while (now >= full - 150 && performance.now() < deadline) {
         await Bun.sleep(50);
         now = resident();
       }
       expect(now).toBeLessThan(full - 150);
     },
+    15_000, // It fills 360 MB, drops them a second and a half in, and waits for the sweep.
   );
 
   // Where the collector thread does not take over, the collection stays with the JS thread. Nothing tells that it will

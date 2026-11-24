@@ -57,10 +57,8 @@ extern "C" int Bun__JSC_onQuietWait(JSC::VM* _Nonnull vm)
     auto* clientData = WebCore::clientData(*vm);
     if (!hasUnfinishedCollectionToHandOver(*vm, *clientData))
         return 0;
-    // As in Bun__JSC_onBeforeWait. That phase can be the last one.
-    vm->heap.stopIfNecessary();
-    if (!vm->heap.collectionScope())
-        return 0;
+    // No stopIfNecessary() first: a phase that is due goes to the collector thread with the conn. Run here, it could be
+    // the last one, and the rest of the wait would not have the timer that it arms for the sweeper.
     clientData->handedOverCollection.store(true);
     vm->heap.releaseAccess();
     return 1;

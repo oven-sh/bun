@@ -136,8 +136,8 @@ private:
 };
 
 // Turns the JS thread's loop when a collection of its heap ends on another thread, or was handed over and ends on the JS
-// thread: only that thread runs the epilogue, which sweeps what the collection freed, and the loop has to see the timer
-// that the epilogue arms. Attached where JSVMClientData::handsOverUnfinishedCollections.
+// thread: only that thread runs the epilogue, and its loop has to see the timer that the end phase arms for the sweeper.
+// Attached where JSVMClientData::handsOverUnfinishedCollections.
 class CollectionEndWake final : public JSC::HeapObserver {
     WTF_MAKE_NONCOPYABLE(CollectionEndWake);
 

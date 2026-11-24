@@ -6221,12 +6221,16 @@ declare module "bun" {
      * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
      * is converted first.
      *
-     * @param patch A unified diff, or hunks from {@link hunks} or {@link parsePatch}
-     * @returns The patched text, or `undefined` if a hunk does not match
-     * @throws SyntaxError if `patch` is a malformed unified diff
+     * @param patch A unified diff, a file from {@link parsePatch}, or hunks
+     * @returns The patched text
+     * @throws Error with the code `ERR_PATCH_DOES_NOT_APPLY` if a hunk does not match
+     * @throws SyntaxError if `patch` is not a unified diff, or is malformed
      * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
      */
-    function applyPatch(source: string, patch: string | Pick<Hunk, "oldStart" | "lines">[]): string | undefined;
+    function applyPatch(
+      source: string,
+      patch: string | Pick<FilePatch, "hunks" | "isBinary"> | Pick<Hunk, "oldStart" | "lines">[],
+    ): string;
   }
 
   namespace unsafe {

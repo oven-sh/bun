@@ -57,7 +57,11 @@ export const FilePatch = b.dictionary({
 });
 
 export const HunkToApply = b.dictionary({ oldStart: b.u32, lines: b.array(b.string) }, { reportedAs: "hunk" });
-export const PatchToApply = b.union({ text: b.string, hunks: b.array(HunkToApply) });
+export const FileToApply = b.dictionary(
+  { hunks: b.array(HunkToApply), isBinary: b.bool.default(false) },
+  { reportedAs: "patch" },
+);
+export const PatchToApply = b.union({ text: b.string, hunks: b.array(HunkToApply), file: FileToApply });
 
 const texts = { oldText: b.string, newText: b.string } as const;
 const throws = { capability: "heap", throws: true } as const;
@@ -83,8 +87,8 @@ export const diff = b.namespace({
   parsePatch: { args: { patch: b.string }, returns: b.array(FilePatch), ...throws },
   applyPatch: {
     args: { source: b.string, patch: PatchToApply },
-    expected: { patch: "patch must be a string or an array of hunks" },
-    returns: b.string.optional,
+    expected: { patch: "patch must be a string, a file from parsePatch() or an array of hunks" },
+    returns: b.string,
     ...throws,
   },
 });

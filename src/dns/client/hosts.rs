@@ -75,12 +75,16 @@ pub(crate) struct Hosts {
 
 impl Hosts {
     pub(crate) fn current(&mut self, path: &ZStr, system: &impl System) -> &Table {
-        let stamp = system.stamp(path);
-        if stamp.is_none() || stamp != self.stamp {
+        // It may be there all the same. It counts as changed once a minute then.
+        let stamp = system.stamp(path).unwrap_or_else(|| FileStamp {
+            modified: system.wall_clock() / 60,
+            ..FileStamp::default()
+        });
+        if Some(stamp) != self.stamp {
             let now = system.wall_clock();
-            let text = stamp.and_then(|_| system.read_file(path));
+            let text = system.read_file(path);
             // It can change again within the second.
-            self.stamp = stamp.filter(|stamp| stamp.modified != now && text.is_some());
+            self.stamp = (stamp.modified != now && text.is_some()).then_some(stamp);
             self.table = Table::parse(&text.unwrap_or_default());
         }
         &self.table

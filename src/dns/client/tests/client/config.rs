@@ -198,10 +198,9 @@ fn timeout() {
         ("timeout:0", 2000),
         ("timeout", 2000),
     ] {
-        assert_eq!(
-            first_timeout(resolv_conf(format!("options {option}"))),
-            expected
-        );
+        let mut test = resolv_conf(format!("options {option}")).tries(1).start();
+        test.ask("a.test");
+        assert_eq!((1..).find(|_| !test.wait(1).is_empty()), Some(expected));
     }
 }
 

@@ -24,6 +24,7 @@ pub(crate) const CHAOS: u16 = 3;
 pub(crate) const FORMERR: u16 = 1;
 pub(crate) const SERVFAIL: u16 = 2;
 pub(crate) const NXDOMAIN: u16 = 3;
+pub(crate) const NOTIMP: u16 = 4;
 pub(crate) const REFUSED: u16 = 5;
 pub(crate) const TRUNCATED: u16 = 0x0200;
 const RESPONSE: u16 = 0x8180;

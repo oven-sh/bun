@@ -1062,6 +1062,7 @@ pub mod ws2_32 {
     pub const IPPROTO_UDP: c_int = 17;
     pub const IPPROTO_IPV6: c_int = 41;
     pub const SOL_SOCKET: c_int = 0xffff;
+    pub const SO_RCVBUF: c_int = 0x1002;
     pub const SO_RANDOMIZE_PORT: c_int = 0x3005;
     pub const TCP_NODELAY: c_int = 1;
     pub const IPV6_V6ONLY: c_int = 27;

@@ -15,7 +15,7 @@ use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    /// Of the first try at each server. `None`: what the system says.
+    /// Of the first try at a server that has yet to show how long it takes. `None`: what the system says.
     pub timeout: Option<Duration>,
     /// Of any try.
     pub max_timeout: Option<Duration>,
@@ -63,7 +63,7 @@ pub(crate) enum Step<R> {
 pub struct Client<S: System, R> {
     pub(crate) system: S,
     pub(crate) config: Config,
-    pub(crate) max_timeout: Duration,
+    pub(crate) max_timeout: Option<Duration>,
     pub(crate) tries: usize,
     pub(crate) servers: Servers,
     pub(crate) local_v4: Option<Ipv4Addr>,
@@ -92,7 +92,7 @@ impl<S: System, R> Client<S, R> {
         Self {
             system,
             config,
-            max_timeout: options.max_timeout.unwrap_or(Duration::MAX),
+            max_timeout: options.max_timeout,
             tries: options.tries as usize,
             servers,
             local_v4: None,
@@ -126,6 +126,7 @@ impl<S: System, R> Client<S, R> {
             this.servers.replace(servers.iter().map(address));
             this.cache = Cache::default();
             this.leave_removed_servers();
+            this.send_held_back();
         })
     }
 
@@ -148,12 +149,17 @@ impl<S: System, R> Client<S, R> {
         self.call(|this| {
             this.read_and_write(socket, events);
             this.time_out();
+            this.send_held_back();
         })
     }
 
     #[must_use]
     pub fn process_timeouts(&mut self) -> Answers<R> {
-        self.call(Self::time_out)
+        self.call(|this| {
+            this.make_room();
+            this.time_out_if_due();
+            this.send_held_back();
+        })
     }
 
     #[must_use]
@@ -174,7 +180,7 @@ impl<S: System, R> Client<S, R> {
         core::mem::take(&mut self.answers)
     }
 
-    fn take_steps(&mut self) {
+    pub(crate) fn take_steps(&mut self) {
         while let Some(step) = self.steps.pop_front() {
             match step {
                 Step::Send(question, probed) => self.send(question, probed),

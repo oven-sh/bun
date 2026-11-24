@@ -314,9 +314,15 @@ fn targets_are_hosts() {
     ];
     for (kind, make, before) in make {
         for odd in [&odd, &name("-a.test"), &labels(&[b"a.b"])] {
-            assert_eq!(answered(kind, &[make(odd)]), "ENODATA");
-            let both = answered(kind, &[make(odd), make(&good)]);
-            assert_eq!(both, format!("{before}_a-1.b-.test"));
+            assert_eq!(answered(kind, &[make(odd)]), "EBADRESP");
+            let left = format!("{before}_a-1.b-.test");
+            assert_eq!(answered(kind, &[make(&good), make(odd)]), left);
+            let left = if kind == RecordType::CNAME {
+                "EBADRESP"
+            } else {
+                &left
+            };
+            assert_eq!(answered(kind, &[make(odd), make(&good)]), left);
         }
         assert_eq!(
             answered(kind, &[make(&name("a.-b"))]),
@@ -327,7 +333,7 @@ fn targets_are_hosts() {
             let expected = if kind == RecordType::CNAME {
                 text
             } else {
-                "ENODATA"
+                "EBADRESP"
             };
             assert_eq!(answered(kind, &[make(&name(text))]), expected);
         }

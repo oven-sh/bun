@@ -65,6 +65,7 @@ pub(crate) struct World {
     pub(crate) randoms: VecDeque<u16>,
     last_random: u16,
     pub(crate) files: BTreeMap<Vec<u8>, (Option<Vec<u8>>, FileStamp)>,
+    pub(crate) has_no_stamps: bool,
     pub(crate) hosts_reads: usize,
     pub(crate) hostname: Option<&'static str>,
     /// An address that is not listed is unreachable.
@@ -72,12 +73,14 @@ pub(crate) struct World {
     pub(crate) route_calls: usize,
     /// `connect` fails for these.
     pub(crate) unreachable: Vec<SocketAddr>,
+    pub(crate) socket_limit: Option<usize>,
     pub(crate) connect_calls: usize,
     pub(crate) streams_take_time: bool,
     /// What the next calls of `send` return. `Ok` has the most that a stream takes.
     pub(crate) send_results: VecDeque<Result<usize, SocketError>>,
     pub(crate) send_calls: usize,
     pub(crate) opened: Vec<Opened>,
+    closed: usize,
     free_ids: BTreeSet<SocketId>,
     sent: Vec<Sent>,
 }
@@ -161,6 +164,7 @@ impl Drop for Handle {
     fn drop(&mut self) {
         let world = &mut *self.world.borrow_mut();
         world.opened[self.index].is_open = false;
+        world.closed += 1;
         world.free_ids.insert(world.opened[self.index].id);
     }
 }
@@ -192,7 +196,8 @@ impl System for Machine {
     ) -> Option<Handle> {
         let world = &mut *self.world.borrow_mut();
         world.connect_calls += 1;
-        if world.unreachable.contains(&server) {
+        let open = world.opened.len() - world.closed;
+        if world.unreachable.contains(&server) || world.socket_limit == Some(open) {
             return None;
         }
         let id = world.free_ids.pop_first().unwrap_or(3 + world.opened.len());
@@ -230,7 +235,9 @@ impl System for Machine {
     }
 
     fn stamp(&self, path: &ZStr) -> Option<FileStamp> {
-        Some(self.world.borrow().files.get(path.as_bytes())?.1)
+        let world = self.world.borrow();
+        let (_, stamp) = world.files.get(path.as_bytes())?;
+        (!world.has_no_stamps).then_some(*stamp)
     }
 
     fn variable(&self, variable: Variable) -> Option<&[u8]> {
@@ -354,6 +361,11 @@ impl Setup {
         self
     }
 
+    pub(crate) fn timeout(mut self, ms: u64) -> Self {
+        self.timeout_ms = Some(ms);
+        self
+    }
+
     pub(crate) fn start(mut self) -> Test {
         self.world.now = Duration::from_secs(1_000_000);
         self.world.wall_clock += 10;
@@ -466,6 +478,29 @@ impl Test {
         self.sent_one()
     }
 
+    /// Asks for the addresses of `count` names, and waits until all queries are out.
+    pub(crate) fn ask_many(&mut self, domain: &str, count: usize) -> Vec<Sent> {
+        for index in 0..count {
+            let answers = self.resolve(RecordType::A, format!("{index}.{domain}"));
+            assert_eq!(answers, NOTHING);
+        }
+        let mut sent = self.sent();
+        while sent.len() < count {
+            assert_eq!(self.wait(2), NOTHING);
+            sent.extend(self.sent());
+        }
+        sent
+    }
+
+    /// Three answers, each after `ms`.
+    pub(crate) fn warm_up(&mut self, ms: u64) {
+        for _ in 0..3 {
+            let query = self.ask("warm.test");
+            self.world().now += Duration::from_millis(ms);
+            assert_eq!(self.decline(&query, 0).len(), 1);
+        }
+    }
+
     pub(crate) fn server_of(&self, sent: &Sent) -> String {
         self.world().opened[sent.socket].server.to_string()
     }
@@ -532,8 +567,22 @@ impl Test {
     }
 
     pub(crate) fn wait(&mut self, ms: u64) -> Vec<String> {
+        let mut answers = self.tick(ms);
+        // Any event ends what has timed out.
+        answers.extend(shown(
+            &self.client.process(SocketId::MAX, Events::default()),
+        ));
+        answers
+    }
+
+    /// The timer fires.
+    pub(crate) fn tick(&mut self, ms: u64) -> Vec<String> {
         self.world().now += Duration::from_millis(ms);
         shown(&self.client.process_timeouts())
+    }
+
+    pub(crate) fn ms_to_next_check(&self) -> u128 {
+        (self.client.next_check().unwrap() - self.world().now).as_millis()
     }
 
     /// Returns how long it took for the next message or answer to come out.

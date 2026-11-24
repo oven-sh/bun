@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 strum.workspace = true
 libc.workspace = true
-bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_dns_client.workspace = true
 bun_sys.workspace = true

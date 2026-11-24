@@ -55,7 +55,7 @@ pub enum Route {
     Unknown,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct FileStamp {
     /// In the seconds of [`System::wall_clock`].
     pub modified: i64,
@@ -73,6 +73,9 @@ pub enum Variable {
 
 pub trait System: Sized {
     type Socket: Socket;
+
+    /// How many the receive buffer of a socket is sure to hold.
+    const DATAGRAMS_HELD: usize = 64;
 
     /// Monotonic.
     fn now(&self) -> Duration;

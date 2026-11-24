@@ -89,21 +89,60 @@ fn one_family_is_enough() {
 
 #[test]
 fn both_families_fail() {
-    for (a, aaaa, expected) in [
-        (NXDOMAIN, NXDOMAIN, "ENOTFOUND"),
-        (NXDOMAIN, SERVFAIL, "ENOTFOUND"),
-        (NXDOMAIN, 0, "ENODATA"),
-        (0, NXDOMAIN, "ENODATA"),
-        (0, 0, "ENODATA"),
-        (0, REFUSED, "EREFUSED"),
-        (SERVFAIL, NXDOMAIN, "ESERVFAIL"),
-        (FORMERR, 0, "EFORMERR"),
+    for (a, aaaa, goes_on, expected) in [
+        (NXDOMAIN, NXDOMAIN, true, "ENOTFOUND"),
+        (NXDOMAIN, SERVFAIL, true, "ENOTFOUND"),
+        (NXDOMAIN, 0, true, "ENODATA"),
+        (0, NXDOMAIN, true, "ENODATA"),
+        (0, 0, true, "ENODATA"),
+        (0, REFUSED, true, "EREFUSED"),
+        (0, NOTIMP, true, "ENOTIMP"),
+        (SERVFAIL, NXDOMAIN, true, "ESERVFAIL"),
+        (FORMERR, 0, true, "EFORMERR"),
+        (SERVFAIL, REFUSED, false, "ESERVFAIL"),
     ] {
         for order in [[0, 1], [1, 0]] {
-            let (mut test, sent) = both(one_server(), "a.test");
-            let answers = order.map(|index| test.decline(&sent[index], [a, aaaa][index]));
+            let (mut test, sent) = both(resolv_conf("search s"), "a.test");
+            let mut answers = order.map(|index| test.decline(&sent[index], [a, aaaa][index]));
+            let next = test.sent();
+            assert_eq!(next.len(), 2 * usize::from(goes_on));
+            for query in next {
+                answers[1] = test.decline(&query, NXDOMAIN);
+            }
             assert_eq!(answers.concat(), [expected]);
         }
+    }
+
+    let (mut test, [a, aaaa]) = both(resolv_conf("search s"), "a.test");
+    test.decline(&a, SERVFAIL);
+    test.decline(&aaaa, 0);
+    let [a, aaaa] = test.sent_exactly();
+    test.decline(&a, REFUSED);
+    assert_eq!(test.decline(&aaaa, 0), ["ESERVFAIL"]);
+}
+
+#[test]
+fn one_family_gets_no_reply() {
+    for answered in [0, 1] {
+        let (mut test, sent) = both(one_server(), "a.test");
+        assert_eq!(test.decline(&sent[answered], 0), NOTHING);
+        assert_eq!(test.wait(2000), ["ETIMEOUT"]);
+    }
+}
+
+#[test]
+fn ipv6_is_not_asked_for_again_if_there_is_no_such_name() {
+    for (answered, flags, left) in [
+        (0, NXDOMAIN, None),
+        (0, 0, Some("a.test AAAA")),
+        (1, NXDOMAIN, Some("a.test A")),
+    ] {
+        let mut test = one_server().start();
+        test.lookup("a.test", Family::Unspecified);
+        test.decline(&test.sent()[answered], flags);
+        assert_eq!(test.wait(2000).is_empty(), left.is_some());
+        let again = test.sent().pop().map(|it| it.question());
+        assert_eq!(again.as_deref(), left);
     }
 }
 

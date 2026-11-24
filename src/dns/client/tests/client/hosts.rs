@@ -126,3 +126,16 @@ fn file_that_comes_and_goes() {
     test.world().files.remove(HOSTS.as_bytes());
     assert_eq!(test.lookup("a", Family::Inet), ["6: ENOTFOUND"]);
 }
+
+#[test]
+fn file_without_a_stamp() {
+    let mut test = hosts("1.1.1.1 a");
+    test.world().has_no_stamps = true;
+    test.world().wall_clock = 600;
+    for (seconds, reads) in [(0, 1), (59, 1), (1, 2)] {
+        test.world().wall_clock += seconds;
+        assert_eq!(test.lookup("a", Family::Inet).len(), 1);
+        assert!(test.sent().is_empty());
+        assert_eq!(test.world().hosts_reads, reads);
+    }
+}

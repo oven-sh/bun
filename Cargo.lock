@@ -593,7 +593,6 @@ dependencies = [
 name = "bun_dns"
 version = "0.0.0"
 dependencies = [
- "bun_boringssl_sys",
  "bun_collections",
  "bun_core",
  "bun_dns_client",

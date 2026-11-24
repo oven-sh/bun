@@ -143,7 +143,7 @@ fn new_servers_start_over() {
 }
 
 #[test]
-fn what_expires_next_goes_when_it_is_full() {
+fn starts_over_when_it_is_full() {
     for len in [64_935, 65_125] {
         let mut test = one_server().start();
         let padding = record(HINFO, 3600, &vec![0; len]);
@@ -152,7 +152,7 @@ fn what_expires_next_goes_when_it_is_full() {
             test.answer(&query, &[address("1.1.1.1", 999 - index), padding.clone()]);
         }
         let cached = (0..300).filter(|index| is_cached(&mut test, &format!("{index}.test")));
-        assert!(cached.eq(0..257));
+        assert!(cached.eq(257..300));
     }
 }
 

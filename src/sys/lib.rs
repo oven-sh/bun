@@ -7598,7 +7598,10 @@ pub mod net {
 
     impl Drop for Socket {
         fn drop(&mut self) {
-            #[cfg(unix)]
+            // SAFETY: `self` owns it. A preloaded library that saw `socket` has to see this too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let _ = unsafe { libc::close(self.0.native()) };
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             let _ = crate::close(self.0);
             // SAFETY: `self` owns it.
             #[cfg(windows)]

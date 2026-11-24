@@ -40,6 +40,8 @@ pub(crate) struct AddressLookup<R> {
     /// The names to ask for, last first.
     candidates: Vec<Box<[u8]>>,
     had_no_data: bool,
+    /// The first that was passed over. It leaves open whether there is an address.
+    refusal: Option<Error>,
     found: Cell<Vec<Address>>,
     has_ipv4: Cell<bool>,
     /// Of the query that finished first.
@@ -47,9 +49,9 @@ pub(crate) struct AddressLookup<R> {
 }
 
 impl<R> AddressLookup<R> {
-    /// An address of the other family is not worth waiting for then.
-    pub(crate) fn has_ipv4(&self) -> bool {
-        self.has_ipv4.get()
+    /// While AAAA is being asked for. It is not worth waiting for then.
+    pub(crate) fn can_do_without_ipv6(&self) -> bool {
+        self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND)
     }
 
     fn candidate(&self) -> &[u8] {
@@ -63,6 +65,12 @@ pub(crate) struct NameLookup<R> {
     /// `Some` if the name of the service is asked for too.
     port: Option<u16>,
     sources: &'static [Source],
+}
+
+/// The server was there, and says nothing about the name.
+fn is_refusal(error: Error) -> bool {
+    use Error::*;
+    matches!(error, ESERVFAIL | EREFUSED | ENOTIMP | EFORMERR)
 }
 
 /// hostname(7)
@@ -147,6 +155,7 @@ impl<S: System, R> Client<S, R> {
                 sources: this.config.sources,
                 candidates: alias.map_or_else(|| search_list(host, &this.config), |it| vec![it]),
                 had_no_data: false,
+                refusal: None,
                 found: Cell::default(),
                 has_ipv4: Cell::default(),
                 other_error: Cell::default(),
@@ -222,7 +231,16 @@ impl<S: System, R> Client<S, R> {
         let error = match (kind, error, other_error.unwrap_or(error)) {
             (RecordType::A, a, aaaa) | (_, aaaa, a) => {
                 lookup.had_no_data |= a == Error::ENODATA || aaaa == Error::ENODATA;
-                if a == Error::ENODATA { aaaa } else { a }
+                match (a, aaaa) {
+                    (none @ Error::ENODATA, refusal)
+                    | (refusal, none @ (Error::ENOTFOUND | Error::ENODATA))
+                        if is_refusal(refusal) =>
+                    {
+                        lookup.refusal.get_or_insert(refusal);
+                        none
+                    }
+                    (Error::ENODATA, error) | (error, _) => error,
+                }
             }
         };
         let goes_on = match error {
@@ -236,11 +254,8 @@ impl<S: System, R> Client<S, R> {
         }
         lookup.candidates.pop();
         lookup.other_error.set(None);
-        let error = if lookup.had_no_data {
-            Error::ENODATA
-        } else {
-            error
-        };
+        let no_data = lookup.had_no_data.then_some(Error::ENODATA);
+        let error = lookup.refusal.or(no_data).unwrap_or(error);
         self.look_for_addresses(lookup, error);
     }
 

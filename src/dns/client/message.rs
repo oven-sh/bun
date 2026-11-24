@@ -48,6 +48,7 @@ const OPCODE_MASK: u16 = 0x7800;
 const RCODE_MASK: u16 = 0x000f;
 const NOERROR: u16 = 0;
 const NXDOMAIN: u16 = 3;
+const REFUSED: u16 = 5;
 
 /// The name, the type and the class, as on the wire.
 #[derive(Clone)]
@@ -412,7 +413,8 @@ impl Message {
             if let Some(kind) = kind.filter(|&kind| resource.is(kind)) {
                 let record = Record::read(kind, resource.ttl, resource.data)
                     .filter(Record::has_valid_names)?;
-                if record.is_usable(kind) {
+                // The next alias is not that of the name that was asked for.
+                if record.is_usable(kind) && !(has_unusable && kind == RecordType::CNAME) {
                     answer_types |= kind.bit();
                 } else {
                     has_unusable = true;
@@ -454,6 +456,10 @@ impl Message {
         matches!(self.rcode, NOERROR | NXDOMAIN)
     }
 
+    pub(crate) fn is_refusal(&self) -> bool {
+        self.rcode == REFUSED
+    }
+
     /// As in Node.js, it depends on the type whether an empty list is an error.
     pub(crate) fn into_records(self) -> Result<Records, Error> {
         use RecordType::*;
@@ -461,14 +467,15 @@ impl Message {
             (NOERROR, _) if self.answer_count == 0 => Error::ENODATA,
             (NOERROR, _) if self.answer_types != 0 => return Ok(Records(self)),
             (NOERROR, A | AAAA) if self.cname_ttl != u32::MAX => return Ok(Records(self)),
-            (NOERROR, MX | SRV) if self.has_unusable => Error::ENODATA,
+            // RFC 5321 §5.1
+            (NOERROR, MX | SRV | NS | CNAME) if self.has_unusable => Error::EBADRESP,
             (NOERROR, MX | TXT | SRV | NAPTR | ANY | CAA) => return Ok(Records(self)),
             (NOERROR, SOA) => Error::EBADRESP,
             (NOERROR, _) => Error::ENODATA,
             (1, _) => Error::EFORMERR,
             (NXDOMAIN, _) => Error::ENOTFOUND,
             (4, _) => Error::ENOTIMP,
-            (5, _) => Error::EREFUSED,
+            (REFUSED, _) => Error::EREFUSED,
             _ => Error::ESERVFAIL,
         })
     }

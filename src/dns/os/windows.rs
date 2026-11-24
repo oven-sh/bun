@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 use core::mem::offset_of;
-use core::net::{IpAddr, Ipv4Addr};
+use core::net::{Ipv4Addr, SocketAddr};
 use core::ptr;
 
 use bun_collections::index_sort;
@@ -187,6 +187,33 @@ fn route_metric(adapter: &Adapter, server: &Address) -> Option<u32> {
     (status == ERROR_SUCCESS).then_some(route.metric)
 }
 
+fn default_database_path() -> Option<Vec<u8>> {
+    let mut buffer = bun_paths::w_path_buffer_pool::get();
+    let len = bun_sys::windows::GetSystemDirectoryW(&mut buffer.0).ok()?;
+    let system = strings::to_utf8_alloc(&buffer.0[..len]);
+    Some([&system[..], br"\drivers\etc"].concat())
+}
+
+/// The metric of a route to a neighbor.
+const ON_LINK: u32 = 256;
+
+/// No adapter has a route to a loopback address. It stays next to the other servers of its adapter.
+fn lend_routes_to_loopback(servers: &mut [(SocketAddr, Option<u32>)]) {
+    let first = |is_it: &dyn Fn(&SocketAddr) -> bool| {
+        let mut servers = servers.iter().filter(|(server, _)| is_it(server));
+        servers.find_map(|&(_, route)| route)
+    };
+    let any = first(&|_| true).unwrap_or(ON_LINK);
+    let mut last = [SocketAddr::is_ipv4, SocketAddr::is_ipv6].map(|it| first(&it).unwrap_or(any));
+    for (server, route) in servers {
+        let last = &mut last[usize::from(server.is_ipv6())];
+        if server.ip().is_loopback() {
+            *route = Some(*last);
+        }
+        *last = route.unwrap_or(*last);
+    }
+}
+
 const TCPIP: &[u8] = br"System\CurrentControlSet\Services\Tcpip\Parameters";
 const NT_POLICY: &[u8] = br"Software\Policies\Microsoft\Windows NT\DNSClient";
 const SYSTEM_POLICY: &[u8] = br"Software\Policies\Microsoft\System\DNSClient";
@@ -194,6 +221,7 @@ const SYSTEM_POLICY: &[u8] = br"Software\Policies\Microsoft\System\DNSClient";
 pub(super) fn configure(config: &mut Config) {
     let directory = registry_string(TCPIP, b"DatabasePath");
     let directory = directory.filter(|it| bun_paths::is_fully_qualified(it));
+    let directory = directory.or_else(default_database_path);
     let hosts = directory.map(|it| Path::from_parts(&[&it[..], b"hosts"]));
     config.hosts_path = hosts.unwrap_or_default().to_zbox();
     let mut add_domains = |key: &[u8], values: &[&[u8]]| {
@@ -214,23 +242,24 @@ pub(super) fn configure(config: &mut Config) {
             let key = [TCPIP, br"\Interfaces\", bun_core::slice_to_nul(name)].concat();
             add_domains(&key, &[b"SearchList", b"Domain", b"DhcpDomain"]);
         }
-        let (mut last_ipv4_route, mut last_ipv6_route) = (0, 0);
+        let mut of_adapter = Vec::new();
         for address in adapters.servers(&adapter) {
             if let Some(server) = address.to_socket_addr()
                 && !server.ip().is_unspecified()
                 && server.ip() != Ipv4Addr::BROADCAST
             {
-                let (interface, last_route) = match server.ip() {
-                    IpAddr::V4(_) => (adapter.ipv4_metric, &mut last_ipv4_route),
-                    IpAddr::V6(_) => (adapter.ipv6_metric, &mut last_ipv6_route),
-                };
-                // No adapter has a route to a loopback address. It follows the server before it.
-                let route = (server.ip().is_loopback().then_some(*last_route))
-                    .or_else(|| route_metric(&adapter, &address));
-                *last_route = route.unwrap_or(*last_route);
-                let metric = route.map_or(u32::MAX, |route| route.saturating_add(interface));
-                servers.push((metric, server, adapter.ipv6_index));
+                let route = (!server.ip().is_loopback()).then(|| route_metric(&adapter, &address));
+                of_adapter.push((server, route.flatten()));
             }
+        }
+        lend_routes_to_loopback(&mut of_adapter);
+        for (server, route) in of_adapter {
+            let interface = match server {
+                SocketAddr::V4(_) => adapter.ipv4_metric,
+                SocketAddr::V6(_) => adapter.ipv6_metric,
+            };
+            let metric = route.map_or(u32::MAX, |route| route.saturating_add(interface));
+            servers.push((metric, server, adapter.ipv6_index));
         }
     }
     index_sort::sort_slice_by_key(&mut servers, |&(metric, ..)| metric);

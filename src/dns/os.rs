@@ -9,7 +9,7 @@ use bun_dns_client::{
     DEFAULT_PORT, FileStamp, Route, SocketError, SocketId, System, Transport, Variable,
 };
 use bun_sys::net::{self, Address};
-use bun_sys::{E, File, FileKind, Maybe, O, PosixStat};
+use bun_sys::{E, Maybe, PosixStat};
 
 use crate::sock;
 
@@ -114,6 +114,10 @@ impl<P: Poll> Os<P> {
 impl<P: Poll> System for Os<P> {
     type Socket = Socket<P>;
 
+    /// Timers are too coarse there to send few at a time.
+    #[cfg(windows)]
+    const DATAGRAMS_HELD: usize = 512;
+
     fn now(&self) -> Duration {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         Duration::new(now.sec as u64, now.nsec as u32)
@@ -129,7 +133,7 @@ impl<P: Poll> System for Os<P> {
                 return u16::from_ne_bytes(random);
             }
             let mut randoms = [[0; 2]; _];
-            bun_boringssl_sys::rand_bytes(randoms.as_flattened_mut());
+            bun_core::util::os_entropy(randoms.as_flattened_mut());
             self.randoms = randoms.into_iter();
         }
     }
@@ -151,9 +155,10 @@ impl<P: Poll> System for Os<P> {
         };
         let socket = open(&address, kind).ok()?;
         let fd = socket.fd();
-        #[cfg(windows)]
         if transport == Transport::Udp {
+            #[cfg(windows)]
             let _ = net::setsockopt_int(fd, sock::SOL_SOCKET, sock::SO_RANDOMIZE_PORT, 1);
+            let _ = net::setsockopt_int(fd, sock::SOL_SOCKET, sock::SO_RCVBUF, 1 << 20);
         }
         if transport == Transport::Tcp {
             net::setsockopt_int(fd, sock::IPPROTO_TCP, sock::TCP_NODELAY, 1).ok()?;
@@ -222,7 +227,40 @@ impl<P: Poll> System for Os<P> {
         }
     }
 
+    /// Termux has none of these files. What runs Bun there preloads an `fopen` that finds them elsewhere.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn read_file(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let path = bun_core::ZBox::from_bytes(path);
+        let stat = bun_sys::stat(&path).ok();
+        // Opening a FIFO waits for a writer.
+        if stat.is_some_and(|it| !bun_sys::is_regular_file(it.st_mode)) {
+            return None;
+        }
+        let room = 4096 + stat.map_or(0, |it| it.st_size as usize);
+        let mut text = Vec::new();
+        // SAFETY: both strings are NUL-terminated, `file` is open until `fclose`, and `fread` returns how much it filled.
+        unsafe {
+            let file = libc::fopen(path.as_ptr(), c"re".as_ptr());
+            if file.is_null() {
+                return None;
+            }
+            while libc::feof(file) == 0 && libc::ferror(file) == 0 {
+                bun_core::vec::fill_spare(&mut text, room, |spare| {
+                    (
+                        libc::fread(spare.as_mut_ptr().cast(), 1, spare.len(), file),
+                        (),
+                    )
+                });
+            }
+            let is_whole = libc::ferror(file) == 0;
+            libc::fclose(file);
+            is_whole.then_some(text)
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    fn read_file(&self, path: &[u8]) -> Option<Vec<u8>> {
+        use bun_sys::{File, FileKind, O};
         // Opening a FIFO waits for a writer.
         let flags = O::RDONLY | if cfg!(unix) { O::NONBLOCK } else { 0 };
         let file = File::openat(Fd::cwd(), path, flags, 0).ok()?;

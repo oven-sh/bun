@@ -1387,9 +1387,9 @@ pub(crate) unsafe fn fire_timer(
             }
         }
         EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
+            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, _now, vm| {
                 if let Some(resolver) = (*c).timer_ref.take() {
-                    resolver.check_timeouts(now, vm)
+                    resolver.check_timeouts(vm)
                 }
             })
         }

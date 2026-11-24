@@ -18,8 +18,8 @@ use bun_wyhash::Wyhash11 as Wyhash;
 mod sock {
     pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, TCP_NODELAY,
-        freeaddrinfo, getaddrinfo, getnameinfo,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SO_RCVBUF, SOCK_DGRAM, SOCK_STREAM,
+        SOL_SOCKET, TCP_NODELAY, freeaddrinfo, getaddrinfo, getnameinfo,
     };
     #[cfg(target_os = "freebsd")]
     pub(crate) use libc::{IPPROTO_IPV6, IPV6_V6ONLY};
@@ -29,7 +29,8 @@ mod sock {
     pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, IPPROTO_IPV6, IPPROTO_TCP, IPPROTO_UDP, IPV6_V6ONLY, SO_RANDOMIZE_PORT,
-        SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, TCP_NODELAY, freeaddrinfo, getaddrinfo, getnameinfo,
+        SO_RCVBUF, SOCK_DGRAM, SOCK_STREAM, SOL_SOCKET, TCP_NODELAY, freeaddrinfo, getaddrinfo,
+        getnameinfo,
     };
 }
 

@@ -345,6 +345,8 @@ pub(crate) struct Waiters {
     name: Box<[u8]>,
     first: DNSLookup,
     joined: Vec<DNSLookup>,
+    /// Of the event loop, in which it was asked.
+    turn: u64,
 }
 
 /// Selects one of the resolver's pending caches.
@@ -400,15 +402,21 @@ impl Default for PendingCache {
 }
 
 impl PendingCache {
-    /// Gives `lookup` back if no query for `name` is in flight.
-    fn join(&self, hash: u64, name: &[u8], lookup: DNSLookup) -> Result<(), DNSLookup> {
+    /// Gives `lookup` back if no query for `name` is in flight that was asked in `first_turn` or later.
+    fn join(
+        &self,
+        hash: u64,
+        name: &[u8],
+        first_turn: u64,
+        lookup: DNSLookup,
+    ) -> Result<(), DNSLookup> {
         let mut used = self.used.get().iter_set();
         while let Some(slot) = used.next() {
             if self.hashes[slot].get() != hash {
                 continue;
             }
             let mut waiters = self.entries[slot].take().expect("pending DNS slot");
-            if *waiters.name == *name {
+            if *waiters.name == *name && waiters.turn >= first_turn {
                 waiters.joined.push(lookup);
                 self.entries[slot].set(Some(waiters));
                 return Ok(());
@@ -467,13 +475,20 @@ impl PendingQuery {
         let lookup = DNSLookup::init(global_this, context);
         let promise = lookup.promise.value();
         let cache = &resolver.pending[kind];
-        let Err(first) = cache.join(hash, name, lookup) else {
+        let turn = resolver.vm().uws_loop().iteration_number();
+        let first_turn = match kind {
+            QueryKind::HostNative => 0,
+            // The client joins later ones, and can ask again for them.
+            _ => turn,
+        };
+        let Err(first) = cache.join(hash, name, first_turn, lookup) else {
             return (promise, None);
         };
         let waiters = Box::new(Waiters {
             name: name.into(),
             first,
             joined: Vec::new(),
+            turn,
         });
         let query = Self {
             resolver: resolver.clone(),
@@ -546,6 +561,7 @@ impl PendingQuery {
             name,
             first,
             joined,
+            ..
         } = *self.into_waiters();
         for lookup in core::iter::once(first).chain(joined) {
             answer_jsc::reject_later(
@@ -1821,18 +1837,16 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub(crate) fn check_timeouts(self: RefPtr<Self>, now: &bun::timespec, vm: &VirtualMachine) {
+    pub(crate) fn check_timeouts(self: RefPtr<Self>, vm: &VirtualMachine) {
         self.event_loop_timer
             .state
             .set(EventLoopTimerState::PENDING);
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, vm.uws_loop());
 
-        if self.next_check_ms().is_some() {
+        if self.next_check().is_some() {
             let _exit = vm.enter_event_loop_scope();
             let answers = self.with_client(Client::process_timeouts);
-            if let Some(delay_ms) = self.next_check_ms() {
-                self.add_timer(Some(now), delay_ms);
-            }
+            self.update_timer();
             answers.into_iter().for_each(PendingQuery::complete);
         }
     }
@@ -1856,13 +1870,9 @@ impl Resolver {
     }
 
     fn request_sent(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
-        if let Some(delay_ms) = self.next_check_ms() {
-            self.add_timer(None, delay_ms);
-        } else {
-            // It was answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
-            self.remove_timer();
-            self.add_timer(None, 0);
-        }
+        // If it was answered inside the call (cache, hosts file, error), that takes a turn of the loop as in Node.
+        let now = || bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
+        self.add_timer(self.next_check().unwrap_or_else(now));
         answers.into_iter().for_each(PendingQuery::complete);
     }
 
@@ -1872,23 +1882,22 @@ impl Resolver {
     }
 
     fn update_timer(self: &RefPtr<Self>) {
-        if let Some(delay_ms) = self.next_check_ms() {
-            self.add_timer(None, delay_ms);
+        if let Some(next) = self.next_check() {
+            self.add_timer(next);
         } else {
             self.remove_timer();
         }
     }
 
-    fn add_timer(self: &RefPtr<Self>, now: Option<&bun::timespec>, delay_ms: i64) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+    fn add_timer(self: &RefPtr<Self>, next: bun::timespec) {
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE
+            && !self.event_loop_timer.next.get().greater(&next)
+        {
             return;
         }
 
+        self.remove_timer();
         self.timer_ref.set(Some(self.clone()));
-        let now_ts = now
-            .copied()
-            .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
-        let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
@@ -1908,9 +1917,12 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
-    fn next_check_ms(&self) -> Option<i64> {
-        let delay = self.client.get().as_ref()?.next_check()?;
-        Some(delay.as_nanos().div_ceil(1_000_000) as i64)
+    fn next_check(&self) -> Option<bun::timespec> {
+        let next = self.client.get().as_ref()?.next_check()?;
+        Some(bun::timespec {
+            sec: next.as_secs() as i64,
+            nsec: next.subsec_nanos().into(),
+        })
     }
 
     /// Opens it if it is closed.

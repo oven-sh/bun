@@ -1015,8 +1015,8 @@ function encodeName(name) {
 }
 
 // A resolver keeps a 32-slot pending cache per query kind. The first in-flight
-// query for a name owns a slot; identical queries issued while it is in flight
-// are chained onto it and settled together when it completes, so the server
+// query for a name owns a slot; identical queries issued in the same turn of the
+// loop are chained onto it and settled together when it completes, so the server
 // sees one query per distinct name. Queries issued while all 32 slots are taken
 // get no slot and settle on their own. The fake server below records every
 // query it receives and answers an A query for "a<n>.pending.test" with
@@ -1298,7 +1298,12 @@ describe("resolve record types", () => {
   async function startFakeServer(answersFor) {
     const socket = dgram.createSocket("udp4");
     const queries = [];
-    socket.on("message", (query, rinfo) => socket.send(respond(query, queries, answersFor), rinfo.port, rinfo.address));
+    const seen = new Set();
+    socket.on("message", (query, rinfo) => {
+      // A datagram that is repeated keeps its id.
+      const isRepeated = seen.size === seen.add(query.toString("hex")).size;
+      socket.send(respond(query, isRepeated ? [] : queries, answersFor), rinfo.port, rinfo.address);
+    });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
     const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
@@ -1602,6 +1607,176 @@ describe("resolve record types", () => {
       await resolver.resolve4("d.test");
       answer(...query);
       expect(await slow).toEqual(byType.A.expected);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("a lost query is asked again long before a timeout of a minute", async () => {
+    const { socket, resolver: other } = await startFakeServer();
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 60_000 });
+      resolver.setServers(other.getServers());
+      for (const name of ["a.test", "b.test", "c.test"]) await resolver.resolve4(name);
+      const [answer] = socket.listeners("message");
+      socket.off("message", answer);
+      socket.once("message", () => socket.on("message", answer));
+      expect(await resolver.resolve4(NAME)).toEqual(byType.A.expected);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("a lost query is asked again for those that come later", async () => {
+    const { socket, resolver: other } = await startFakeServer();
+    const calls = [];
+    let timer;
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 60_000, tries: 1 });
+      resolver.setServers(other.getServers());
+      const [answer] = socket.listeners("message");
+      socket.off("message", answer);
+      socket.once("message", () => socket.on("message", answer));
+      const call = () => calls.push(resolver.resolve4(NAME).catch(err => err.code));
+      call();
+      timer = setInterval(call, 20);
+      await calls[0];
+      clearInterval(timer);
+      expect(await Promise.all(calls)).toEqual(calls.map(() => byType.A.expected));
+    } finally {
+      clearInterval(timer);
+      socket.close();
+    }
+  });
+
+  test.concurrent("queries that overlap share a socket", async () => {
+    // SERVFAIL does not make the timeout any shorter.
+    const { socket, resolver } = await startFakeServer(() => 2);
+    const ask = name => resolver.resolve4(name).catch(err => err.code);
+    const ports = new Set();
+    try {
+      const [answer] = socket.listeners("message");
+      socket.off("message", answer);
+      let last;
+      // Each is answered once the next has come.
+      socket.on("message", (...query) => {
+        ports.add(query[1].port);
+        if (last) answer(...last);
+        last = query;
+      });
+      let pending = ask("first.test");
+      for (let i = 0; i < 150; i++) {
+        const next = ask(`${i}.test`);
+        expect(await pending).toBe("ESERVFAIL");
+        pending = next;
+      }
+      answer(...last);
+      expect(await pending).toBe("ESERVFAIL");
+      expect(ports.size).toBe(1);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("all of 150 queries get to a server that has yet to answer", async () => {
+    const { socket, resolver: other } = await startFakeServer();
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers(other.getServers());
+      const [answer] = socket.listeners("message");
+      socket.off("message", answer);
+      const names = Array.from({ length: 150 }, (_, i) => `${i}.test`);
+      const queries = [];
+      socket.on("message", (...query) => {
+        if (queries.push(query) === names.length) for (const it of queries) answer(...it);
+      });
+      expect(await Promise.all(names.map(name => resolver.resolve4(name).catch(err => err.code)))).toEqual(
+        names.map(() => byType.A.expected),
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("an answer over TCP counts after the query was asked again", async () => {
+    let answerFirst;
+    await using server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        if (answerFirst) return answerFirst();
+        const reply = respond(chunk.subarray(2), []);
+        answerFirst = () => socket.write(Buffer.concat([u16(reply.length), reply]));
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const script = `
+      const resolver = new dns.promises.Resolver({ timeout: 250, tries: 6 });
+      resolver.setServers(["127.0.0.1:${server.address().port}"]);
+      console.log(await resolver.resolve4("${NAME}").then(String, err => err.code));
+    `;
+    expect(await bunRun(["-e", script], { RES_OPTIONS: "use-vc" })).toSpawn(String(byType.A.expected));
+  });
+
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  test.concurrent.skipIf(!isLinux || !cc)("a preloaded fopen() can supply the configuration", async () => {
+    using dir = tempDir("dns-fopen", {
+      "etc/resolv.conf": "nameserver 192.0.2.53\n",
+      "etc/hosts": "192.0.2.80 from-the-file.test\n",
+      "etc/nsswitch.conf": "hosts: files\n",
+      "shim.c": `
+        #define _GNU_SOURCE
+        #include <dlfcn.h>
+        #include <string.h>
+        void *fopen(const char *path, const char *mode) {
+          void *(*next)(const char *, const char *) = dlsym(RTLD_NEXT, "fopen");
+          return next(strncmp(path, "/etc/", 5) ? path : path + 1, mode);
+        }
+      `,
+    });
+    const shim = path.join(String(dir), "shim.so");
+    await Bun.$`${cc} -shared -fPIC -o ${shim} ${path.join(String(dir), "shim.c")} -ldl`.env(bunEnv).quiet();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(...dns.getServers(), ...(await dns.promises.reverse("192.0.2.80")))`],
+      env: { ...bunEnv, LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "192.0.2.53 from-the-file.test\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.skipIf(!isLinux || !cc)("the last descriptor is enough on a system without getrandom()", async () => {
+    using dir = tempDir("dns-getrandom", {
+      "shim.c": `
+        #include <errno.h>
+        long getrandom(void) { errno = ENOSYS; return -1; }
+      `,
+    });
+    const shim = path.join(String(dir), "shim.so");
+    await Bun.$`${cc} -shared -fPIC -o ${shim} ${path.join(String(dir), "shim.c")}`.env(bunEnv).quiet();
+    const { socket, resolver } = await startFakeServer();
+    try {
+      const script = `
+        const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
+        resolver.setServers(${JSON.stringify(resolver.getServers())});
+        const taken = [];
+        try {
+          for (;;) taken.push(fs.openSync("/dev/null"));
+        } catch {}
+        fs.closeSync(taken.pop());
+        console.log(String(await resolver.resolve4("${NAME}")));
+      `;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `ulimit -n 128 && exec "$@"`, "sh", bunExe(), "-e", script],
+        env: { ...bunEnv, LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${byType.A.expected}\n`, stderr: "", exitCode: 0 });
     } finally {
       socket.close();
     }

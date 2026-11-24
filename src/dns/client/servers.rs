@@ -47,6 +47,11 @@ pub(crate) struct Server {
     probe_at: Duration,
     udp: Option<SocketId>,
     tcp: Option<SocketId>,
+    /// The last one that is kept for late replies.
+    pub(crate) retired_tcp: Option<SocketId>,
+    pub(crate) retired_tcp_at: Duration,
+    /// Until then, a refusal says nothing about its load.
+    pub(crate) refuses_until: Duration,
     pub(crate) latency: Latency,
 }
 
@@ -114,6 +119,9 @@ impl Servers {
                     probe_at: Duration::ZERO,
                     udp: None,
                     tcp: None,
+                    retired_tcp: None,
+                    retired_tcp_at: Duration::ZERO,
+                    refuses_until: Duration::ZERO,
                     latency: Latency::default(),
                 }
             });
@@ -194,14 +202,13 @@ impl Servers {
             server.last_failure = 0;
             server.last_error = None;
             server.outage = Duration::ZERO;
-            server.retry_at = Duration::ZERO;
             if let Some(took) = took {
                 server.latency.record(took, now);
             }
         });
     }
 
-    fn change(&mut self, id: ServerId, change: impl FnOnce(&mut Server)) {
+    pub(crate) fn change(&mut self, id: ServerId, change: impl FnOnce(&mut Server)) {
         let found = self.list.iter_mut().enumerate().find(|(_, it)| it.id == id);
         let misplaced = found.and_then(|(index, server)| {
             let rank = server.rank();
@@ -250,12 +257,13 @@ impl Latency {
     }
 
     /// Over the shortest period that has enough samples.
-    pub(crate) fn average_ms(&self, now: Duration) -> Option<u64> {
+    pub(crate) fn average(&self, now: Duration) -> Option<Duration> {
         let mut periods = self.0.iter().zip(PERIODS);
-        periods.find_map(|((current, previous), len)| {
+        let average_ms = periods.find_map(|((current, previous), len)| {
             let period = now.as_secs() / len;
             let average = current.average_ms(period);
             average.or_else(|| previous.average_ms(period.saturating_sub(1)))
-        })
+        });
+        average_ms.map(Duration::from_millis)
     }
 }

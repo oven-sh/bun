@@ -604,6 +604,7 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
       await proc.stdout.getReader().read();
       const full = resident();
       expect(full).toBeGreaterThan(250);
+      // The sweep comes 2.2 s in, and later on a loaded machine. Outside CI the default timeout ends the wait first.
       const deadline = performance.now() + 6000;
       let now = full;
       while (now >= full - 150 && performance.now() < deadline) {
@@ -612,7 +613,6 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
       }
       expect(now).toBeLessThan(full - 150);
     },
-    15_000, // It fills 360 MB, drops them a second and a half in, and waits for the sweep.
   );
 
   // Where the collector thread does not take over, the collection stays with the JS thread. Nothing tells that it will

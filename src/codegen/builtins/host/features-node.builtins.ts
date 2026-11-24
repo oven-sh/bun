@@ -214,6 +214,7 @@ export default b.declarations(
       "Bindgen",
       "node_util_binding.bind.ts",
       "assertEncodingValid",
+      "diffNumbers",
       "ecanceledErrorCode",
       "enobufsErrorCode",
       "etimedoutErrorCode",

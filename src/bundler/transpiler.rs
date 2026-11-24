@@ -57,7 +57,8 @@ pub struct Transpiler<'a> {
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
-    /// What `load_defines` allocates after a [`Self::reset_transform_options`], which frees the one before.
+    /// What `load_defines` allocates after a [`Self::reset_transform_options`], which frees the one
+    /// before. The lists of an object or array value are not in it: `Expr::deep_clone` keeps them.
     define_arena: Option<Arena>,
 }
 

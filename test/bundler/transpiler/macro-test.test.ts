@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, withoutAsanQuarantine } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -702,6 +702,15 @@ describe("a macro VM that a pool thread keeps", () => {
       return [...new Set(out.match(/^var v\\d = (.*);$/gm)?.map(line => line.slice(line.indexOf("=") + 2, -1)))].join("|");
     }
   `;
+  // Code for `Bun.Transpiler` that calls `tag()` of `macro.ts`.
+  const transformed = `'import { tag } from ' + JSON.stringify(import.meta.dir + "/macro.ts") + ' with { type: "macro" };\\nexport const v = tag();\\n'`;
+  // Counts its evaluations in a file.
+  const countsEvaluations = `import { appendFileSync } from "node:fs";\nappendFileSync(import.meta.dir + "/evaluated", "x");\n`;
+  // Prints what `seen` is, and whether each of the two VMs evaluated `macro.ts` once.
+  const printEvaluations = `
+    const evaluated = (await Bun.file(import.meta.dir + "/evaluated").text()).length;
+    console.log(JSON.stringify({ seen, evaluated: evaluated >= 1 && evaluated <= 2 ? "once in each VM" : evaluated }));
+  `;
 
   // `tag.ts` is a module the macro imports: the VM has it from the build before, with that build's define.
   test.concurrent("runs the macros of each Bun.build() with the define of that build", async () => {
@@ -764,9 +773,8 @@ describe("a macro VM that a pool thread keeps", () => {
         "macro.ts": `declare const BUILD_TAG: string;\nexport function tag() {\n  return BUILD_TAG;\n}\n`,
         "index.ts": `${build}
           const transpiler = new Bun.Transpiler({ loader: "ts", define: { BUILD_TAG: '"transpiler"' } });
-          const code = 'import { tag } from "' + import.meta.dir + '/macro.ts" with { type: "macro" };\\nexport const v = tag();\\n';
           async function transform() {
-            const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(code)));
+            const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(${transformed})));
             return [...new Set(outputs.map(out => out.match(/v = (.*);/)?.[1]))].join("|");
           }
           const seen = [await transform()];
@@ -785,15 +793,28 @@ describe("a macro VM that a pool thread keeps", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The transforms move the VMs of both threads while the build still has macros to call. `late.ts` is
-  // parsed after them, on a thread that has loaded the macro for the build before.
+  // A call of the macro returns once both VMs have called it for the same caller. So both threads
+  // load the macro for the build, then both VMs move to the transpiler while `late.ts` loads, and the
+  // thread that parses `late.ts` has a table that says the macro is loaded.
   test.concurrent(
     "runs the macros of a Bun.build() with its define after a transform ran during the build",
     async () => {
       const { lines, stderr, exitCode } = await run(
         {
           ...callers("tag"),
-          "macro.ts": `declare const BUILD_TAG: string;\nexport function tag() {\n  return BUILD_TAG;\n}\n`,
+          "macro.ts": [
+            `import { appendFileSync, readFileSync } from "node:fs";`,
+            `declare const BUILD_TAG: string;`,
+            `const vm = (globalThis.vmId ??= crypto.randomUUID());`,
+            `const calls = import.meta.dir + "/calls";`,
+            `export function tag() {`,
+            `  appendFileSync(calls, vm + " " + BUILD_TAG + "\\n");`,
+            `  const vms = () => readFileSync(calls, "utf8").split("\\n").filter(line => line.endsWith(" " + BUILD_TAG));`,
+            `  while (new Set(vms()).size < 2) Bun.sleepSync(1);`,
+            `  return BUILD_TAG;`,
+            `}`,
+            ``,
+          ].join("\n"),
           "lib3.ts": [
             `import { tag } from "./macro.ts" with { type: "macro" };`,
             `import { vLate } from "./late.ts";`,
@@ -803,7 +824,6 @@ describe("a macro VM that a pool thread keeps", () => {
           "late.ts": `import { tag } from "./macro.ts" with { type: "macro" };\nexport const vLate = tag();\n`,
           "index.ts": `
           const transpiler = new Bun.Transpiler({ loader: "ts", define: { BUILD_TAG: '"transpiler"' } });
-          const code = 'import { tag } from "' + import.meta.dir + '/macro.ts" with { type: "macro" };\\nexport const v = tag();\\n';
           let transformed: string[] = [];
           const result = await Bun.build({
             entrypoints: ["./entry.ts"],
@@ -814,7 +834,7 @@ describe("a macro VM that a pool thread keeps", () => {
                 name: "transform before late.ts",
                 setup(build) {
                   build.onLoad({ filter: /late\\.ts$/ }, async ({ path }) => {
-                    const outputs = await Promise.all(Array.from({ length: 16 }, () => transpiler.transform(code)));
+                    const outputs = await Promise.all(Array.from({ length: 16 }, () => transpiler.transform(${transformed})));
                     transformed = [...new Set(outputs.map(out => out.match(/v = (.*);/)?.[1]!))];
                     return { contents: await Bun.file(path).text(), loader: "ts" };
                   });
@@ -838,15 +858,16 @@ describe("a macro VM that a pool thread keeps", () => {
   );
 
   test.concurrent(
-    "resolves and loads what a macro imports with the conditions and loaders of each Bun.build()",
+    "transpiles what a macro imports with the conditions, loaders and drop of each Bun.build()",
     async () => {
       const { lines, stderr, exitCode } = await run(
         {
-          ...callers("both"),
+          ...callers("all"),
           "macro.ts": [
             `import flavor from "flavor";`,
             `import data from "./data.dat";`,
-            `export function both() {\n  return flavor + ":" + typeof data;\n}`,
+            `const debuggerStatement = (() => {\n  debugger;\n}).toString().includes("debugger") ? "kept" : "dropped";`,
+            `export function all() {\n  return [flavor, typeof data, debuggerStatement].join(":");\n}`,
             ``,
           ].join("\n"),
           "data.dat": `{ "a": 1 }`,
@@ -860,8 +881,8 @@ describe("a macro VM that a pool thread keeps", () => {
           "node_modules/flavor/plain.js": `export default "plain";\n`,
           "index.ts": `${build}
           const seen: string[] = [];
-          for (const [condition, loader] of [["sweet", "text"], ["sour", "json"], ["sweet", "json"], ["sour", "text"]]) {
-            seen.push(await build({ conditions: [condition], loader: { ".dat": loader } }));
+          for (const [condition, loader, drop] of [["sweet", "text", []], ["sour", "json", ["debugger"]], ["sweet", "json", []], ["sour", "text", ["debugger"]]]) {
+            seen.push(await build({ conditions: [condition], loader: { ".dat": loader }, drop }));
           }
           console.log(JSON.stringify(seen));
         `,
@@ -869,39 +890,194 @@ describe("a macro VM that a pool thread keeps", () => {
         poolOfTwo,
       );
       expect({ seen: JSON.parse(lines.at(-1)!), stderr }).toEqual({
-        seen: [`"sweet:string"`, `"sour:object"`, `"sweet:object"`, `"sour:string"`],
+        seen: [`"sweet:string:kept"`, `"sour:object:dropped"`, `"sweet:object:kept"`, `"sour:string:dropped"`],
         stderr: "",
       });
       expect(exitCode).toBe(0);
     },
   );
 
-  // Builds with the same options share the VM as it is: the macro module runs once in each VM.
-  test.concurrent("evaluates a macro module once for Bun.build() calls with the same options", async () => {
+  // A parse that a macro starts is not another caller: its macros run in the VM as it is, with the
+  // define of the build, not with the define of the transpiler the macro made.
+  test.concurrent("runs the macros of a transformSync that a macro calls with the define of the build", async () => {
+    const tags = Array.from({ length: 4 }, (_, i) => `tag-${i}`);
     const { lines, stderr, exitCode } = await run(
       {
-        ...callers("one"),
+        ...callers("nested"),
+        "inner.ts": `declare const BUILD_TAG: string;\nexport function tag() {\n  return BUILD_TAG;\n}\n`,
         "macro.ts": [
-          `import { appendFileSync } from "node:fs";`,
-          `appendFileSync(import.meta.dir + "/evaluated", "x");`,
-          `export function one() {\n  return 1;\n}`,
+          `declare const BUILD_TAG: string;`,
+          `const transpiler = new Bun.Transpiler({ loader: "ts", define: { BUILD_TAG: '"transpiler"' } });`,
+          `const code = 'import { tag } from ' + JSON.stringify(import.meta.dir + "/inner.ts") + ' with { type: "macro" };\\nexport const v = tag();\\n';`,
+          `export function nested() {\n  return BUILD_TAG + "/" + transpiler.transformSync(code).match(/v = "(.*)";/)?.[1];\n}`,
           ``,
         ].join("\n"),
         "index.ts": `${build}
-          const seen = new Set<string>();
-          for (let i = 0; i < 8; i++) seen.add(await build({ define: { UNUSED: '"same"' } }));
-          const evaluated = (await Bun.file("./evaluated").text()).length;
-          console.log(JSON.stringify({ seen: [...seen], evaluated: evaluated >= 1 && evaluated <= 2 ? "once in each VM" : evaluated }));
+          const seen: string[] = [];
+          for (const tag of ${JSON.stringify(tags)}) seen.push(await build({ define: { BUILD_TAG: JSON.stringify(tag) } }));
+          console.log(JSON.stringify(seen));
         `,
       },
       poolOfTwo,
     );
-    expect({ ...JSON.parse(lines.at(-1)!), stderr }).toEqual({ seen: ["1"], evaluated: "once in each VM", stderr: "" });
+    expect({ seen: JSON.parse(lines.at(-1)!), stderr }).toEqual({
+      seen: tags.map(tag => `"${tag}/${tag}"`),
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 
-  // What each build frees would sit in ASAN's quarantine and count as growth.
-  const noQuarantine = { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":") };
+  // Callers with the same options share the VM as it is. This bounds what a build costs. It is not
+  // a promise that a VM keeps a macro file that was edited.
+  test.concurrent("does not evaluate a macro module again for Bun.build() calls with the same options", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        ...callers("one"),
+        "macro.ts": `${countsEvaluations}export function one() {\n  return 1;\n}\n`,
+        "index.ts": `${build}
+          const seen: string[] = [];
+          for (let i = 0; i < 8; i++) seen.push(await build({ define: { UNUSED: '"same"' } }));
+          ${printEvaluations}
+        `,
+      },
+      poolOfTwo,
+    );
+    expect({ ...JSON.parse(lines.at(-1)!), stderr }).toEqual({
+      seen: ["1", "1", "1", "1", "1", "1", "1", "1"],
+      evaluated: "once in each VM",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The entry points, the target and the externals of a build say nothing to the VM of a macro.
+  test.concurrent(
+    "does not evaluate a macro module again for Bun.build() calls that differ in what a macro VM does not use",
+    async () => {
+      const { lines, stderr, exitCode } = await run(
+        {
+          ...callers("one"),
+          "other.ts": `export * from "./entry.ts";\n`,
+          "macro.ts": `${countsEvaluations}export function one() {\n  return 1;\n}\n`,
+          "index.ts": `${build}
+          const seen: string[] = [];
+          for (const options of [{}, { target: "browser" }, { target: "node" }, { entrypoints: ["./other.ts"] }, { external: ["left-pad"] }, {}]) {
+            seen.push(await build(options));
+          }
+          ${printEvaluations}
+        `,
+        },
+        poolOfTwo,
+      );
+      expect({ ...JSON.parse(lines.at(-1)!), stderr }).toEqual({
+        seen: ["1", "1", "1", "1", "1", "1"],
+        evaluated: "once in each VM",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The program, a Worker with `execArgv` and a `Bun.Transpiler` without options give a macro VM the same options.
+  test.concurrent(
+    "does not evaluate a macro module again for the program, a Worker and a Bun.Transpiler without options",
+    async () => {
+      const imports = [0, 1, 2, 3, 4, 5, 6, 7];
+      const { lines, stderr, exitCode } = await run(
+        {
+          "macro.ts": `${countsEvaluations}export function tag() {\n  return 1;\n}\n`,
+          ...Object.fromEntries(
+            imports.map(i => [
+              `runtime${i}.ts`,
+              `import { tag } from "./macro.ts" with { type: "macro" };\nexport const atRuntime = tag();\n`,
+            ]),
+          ),
+          "worker.ts": `
+          self.onmessage = async ({ data }) => postMessage((await import("./runtime" + data + ".ts")).atRuntime);
+        `,
+          "index.ts": `
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href, { execArgv: [] });
+          const inWorker = (i: number) => {
+            const { promise, resolve } = Promise.withResolvers();
+            worker.onmessage = ({ data }) => resolve(data);
+            worker.postMessage(i);
+            return promise;
+          };
+          const transpiler = new Bun.Transpiler({ loader: "ts" });
+          const seen: unknown[] = [];
+          for (let i = 0; i < ${imports.length}; i += 2) {
+            seen.push((await import("./runtime" + i + ".ts")).atRuntime);
+            seen.push(await inWorker(i + 1));
+            seen.push((await transpiler.transform(${transformed})).match(/v = (.*);/)?.[1]);
+          }
+          worker.terminate();
+          ${printEvaluations}
+        `,
+        },
+        poolOfTwo,
+      );
+      expect({ ...JSON.parse(lines.at(-1)!), stderr }).toEqual({
+        seen: imports.slice(0, imports.length / 2).flatMap(() => [1, 1, "1"]),
+        evaluated: "once in each VM",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The VM keeps the env of the caller that made it, here the program without `.env`. It does not
+  // load the `.env` of a build that it moves to. The first calls of the macro return once two VMs
+  // have called it, so the program makes both.
+  test.concurrent("does not load .env files for a caller it moves to", async () => {
+    const imports = [0, 1, 2, 3, 4, 5, 6, 7];
+    using dir = tempDir("macro-vm-env", {
+      ...callers("fromDotEnv"),
+      ".env": "BUN_FROM_DOTENV=dotenv\n",
+      "macro.ts": [
+        `import { appendFileSync, readFileSync } from "node:fs";`,
+        `const vm = (globalThis.vmId ??= crypto.randomUUID());`,
+        `const calls = import.meta.dir + "/calls";`,
+        `export function fromDotEnv() {`,
+        `  appendFileSync(calls, vm + "\\n");`,
+        `  while (new Set(readFileSync(calls, "utf8").split("\\n").filter(Boolean)).size < 2) Bun.sleepSync(1);`,
+        `  return process.env.BUN_FROM_DOTENV ?? "unset";`,
+        `}`,
+        ``,
+      ].join("\n"),
+      ...Object.fromEntries(
+        imports.map(i => [
+          `runtime${i}.ts`,
+          `import { fromDotEnv } from "./macro.ts" with { type: "macro" };\nexport const atRuntime = fromDotEnv();\n`,
+        ]),
+      ),
+      "index.ts": `${build}
+        const atRuntime = async (from: number) => {
+          const modules = await Promise.all([0, 1, 2, 3].map(i => import("./runtime" + (from + i) + ".ts")));
+          return [...new Set(modules.map(module => module.atRuntime))].join("|");
+        };
+        const before = await atRuntime(0);
+        const built = await build({ define: { UNUSED: "1" } });
+        const after = await atRuntime(4);
+        console.log(JSON.stringify({ before, built, after }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-env-file", "index.ts"],
+      env: { ...bunEnv, ...poolOfTwo },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...JSON.parse(stdout.trim().split("\n").at(-1)!), stderr }).toEqual({
+      before: "unset",
+      built: `"unset"`,
+      after: "unset",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // Prints by how many MiB the process grew over the last builds. Each build has another define.
   const growth = (warmUp: number, measured: number, define: string) => `${build}
     let n = 0;
@@ -916,30 +1092,35 @@ describe("a macro VM that a pool thread keeps", () => {
   `;
 
   // A VM loads the defines again for each caller it moves to. Kept, 32 builds on two threads with a
-  // define of 1 MiB are 64 MiB.
-  test.concurrent("frees the defines of the caller before", async () => {
-    const { lines, stderr, exitCode } = await run(
-      {
-        ...callers("one"),
-        "macro.ts": `export function one() {\n  return 1;\n}\n`,
-        "index.ts": `
-          const big = Buffer.alloc(1024 * 1024, "d").toString();
-          ${growth(8, 32, `{ BIG: JSON.stringify(n + big) }`)}
-        `,
-      },
-      { ...poolOfTwo, ...noQuarantine },
-    );
-    const grew = Number(lines.at(-1) || NaN) < (isASAN || isDebug ? 32 : 16) ? "below the limit" : lines.at(-1);
-    expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
-    expect(exitCode).toBe(0);
-  });
+  // define of 1 MiB are 64 MiB and more. A debug or ASAN build grows by 14 to 20 MiB while it warms
+  // up. Not for a release build: there the noise of the RSS is as large as the bound.
+  test.skipIf(!isDebug && !isASAN).concurrent(
+    "frees the defines of the caller before",
+    async () => {
+      const { lines, stderr, exitCode } = await run(
+        {
+          ...callers("one"),
+          "macro.ts": `export function one() {\n  return 1;\n}\n`,
+          "index.ts": `
+            const big = Buffer.alloc(1024 * 1024, "d").toString();
+            ${growth(8, 32, `{ BIG: JSON.stringify(n + big) }`)}
+          `,
+        },
+        { ...poolOfTwo, ...withoutAsanQuarantine({}) },
+      );
+      const grew = Number(lines.at(-1) || NaN) < 40 ? "below the limit" : lines.at(-1);
+      expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   // A VM transpiles what a macro imports again for each caller it moves to. Kept, the AST of
-  // `big.ts` is about 2 MiB for each of the 24 builds on each of the two threads. Not for a debug
-  // or ASAN build: the module takes long to parse there, and a smaller one is within the noise.
-  test
-    .skipIf(isDebug || isASAN)
-    .concurrent("frees the AST of the modules it loaded for the caller before", async () => {
+  // `big.ts` is about 3 MiB for each of the 72 builds. Not for a debug or ASAN build: the module
+  // takes long to parse there, and what a smaller one leaves is within the noise of the RSS.
+  test.skipIf(isDebug || isASAN).concurrent(
+    "frees the AST of the modules it loaded for the caller before",
+    async () => {
       const functions = Array.from(
         { length: 3000 },
         (_, i) =>
@@ -955,14 +1136,16 @@ describe("a macro VM that a pool thread keeps", () => {
             `export function tag() {\n  return BUILD_TAG + f7(1, "x");\n}`,
             ``,
           ].join("\n"),
-          "index.ts": growth(8, 24, `{ BUILD_TAG: JSON.stringify("tag" + n) }`),
+          "index.ts": growth(8, 72, `{ BUILD_TAG: JSON.stringify("tag" + n) }`),
         },
         poolOfTwo,
       );
-      const grew = Number(lines.at(-1) || NaN) < 32 ? "below the limit" : lines.at(-1);
+      const grew = Number(lines.at(-1) || NaN) < 100 ? "below the limit" : lines.at(-1);
       expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
       expect(exitCode).toBe(0);
-    });
+    },
+    30_000,
+  );
 });
 
 describe("--no-macros", () => {

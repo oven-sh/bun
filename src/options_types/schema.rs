@@ -140,6 +140,9 @@ pub mod api {
     impl TransformOptions {
         /// Whether a macro VM made from `self` is the one a caller with `other` would get. It has
         /// no `..`, so a new field does not compile until it is compared or ignored here.
+        ///
+        /// What a caller sets outside this struct does not reach a macro VM and is not compared:
+        /// `features` of `Bun.build`, and the defines and conditions of a dev server's graphs.
         pub fn eq_for_macro_vm(&self, other: &Self) -> bool {
             let Self {
                 jsx,
@@ -163,11 +166,13 @@ pub mod api {
                 main_fields,
                 target: _,
                 serve,
-                env_files,
-                disable_default_env_files,
+                // The VM keeps the env of the caller that made it: `serve_macro_caller` loads no file.
+                env_files: _,
+                disable_default_env_files: _,
                 extension_order,
-                no_summary,
-                disable_hmr,
+                // Nothing reads `no_summary` and `disable_hmr`.
+                no_summary: _,
+                disable_hmr: _,
                 port,
                 log_level,
                 source_map,
@@ -190,6 +195,7 @@ pub mod api {
                 unhandled_rejections,
                 bunfig_path,
             } = self;
+            // `None` is not `Some` of the default here: only `None` takes the JSX of the root tsconfig.json.
             *jsx == other.jsx
                 && *tsconfig_override == other.tsconfig_override
                 && *origin == other.origin
@@ -202,11 +208,7 @@ pub mod api {
                 && *loaders == other.loaders
                 && *main_fields == other.main_fields
                 && *serve == other.serve
-                && *env_files == other.env_files
-                && *disable_default_env_files == other.disable_default_env_files
                 && *extension_order == other.extension_order
-                && *no_summary == other.no_summary
-                && *disable_hmr == other.disable_hmr
                 && *port == other.port
                 && *log_level == other.log_level
                 && *source_map == other.source_map
@@ -223,8 +225,9 @@ pub mod api {
                 && *serve_hmr == other.serve_hmr
                 && *serve_define == other.serve_define
                 && *serve_sourcemap == other.serve_sourcemap
-                && *allow_addons == other.allow_addons
-                && *allow_ffi_cc == other.allow_ffi_cc
+                // A Worker with `execArgv` has `Some(true)` where its parent has `None`.
+                && allow_addons.unwrap_or(true) == other.allow_addons.unwrap_or(true)
+                && allow_ffi_cc.unwrap_or(true) == other.allow_ffi_cc.unwrap_or(true)
                 && *unhandled_rejections == other.unhandled_rejections
                 && *bunfig_path == other.bunfig_path
         }

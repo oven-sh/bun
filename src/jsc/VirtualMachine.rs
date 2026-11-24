@@ -281,6 +281,8 @@ pub struct VirtualMachine {
     pub(crate) macro_guard_depth: Cell<u32>,
     /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call
     /// made, on a thread that had none. [`Self::serve_macro_caller`] rebuilds it for another caller.
+    /// The VM keeps the first caller's env, what scripts left on `globalThis`, and their timers and
+    /// handles. Callers with equal options share its modules, so an edit of a macro file is not seen.
     macro_owner: JsCell<Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>>,
     /// Counts those rebuilds. A `MacroLoadStates` from before one names macros the VM no longer has.
     macro_epoch: Cell<u32>,
@@ -1944,6 +1946,7 @@ impl VirtualMachine {
     pub fn take_macro_vm_log(&self, log: &mut bun_ast::Log) {
         if self.macro_owner.get().is_some()
             && let Some(vm_log) = self.log_mut()
+            && !vm_log.msgs.is_empty()
         {
             vm_log.append_to(log);
         }
@@ -1974,9 +1977,6 @@ impl VirtualMachine {
 
         // The modules go first: if the options then fail, the VM is still the owner's, only empty.
         self.macro_epoch.update(|epoch| epoch.wrapping_add(1));
-        self.module_loader
-            .macro_load_states
-            .set_epoch(self.macro_epoch.get());
         {
             // `reload` runs the microtasks that are left. Every script of this VM runs in macro mode.
             let _mode_guard = MacroModeGuard::new(self);
@@ -1991,12 +1991,26 @@ impl VirtualMachine {
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
+        // The env loader is the copy `init_macro_vm` made, with the files of that caller.
+        args.env_files.clear();
+        args.disable_default_env_files = true;
         self.transpiler.with_mut(|t| -> crate::CrateResult<()> {
+            // What this VM wrote to the options after `init`.
             let global_cache = t.options.global_cache;
+            let debugger = t.options.debugger;
+            let extra_cjs_extensions = core::mem::take(&mut t.resolver.opts.extra_cjs_extensions);
             t.reset_transform_options(args)?;
             Self::configure_transpiler(t, global_cache, preserve_symlinks);
+            t.resolver.opts.extra_cjs_extensions = extra_cjs_extensions;
             // As `init_runtime_state` does for a VM without a module graph.
             t.configure_linker();
+            if debugger {
+                // As `configure_debugger` does.
+                t.options.minify_identifiers = false;
+                t.options.minify_syntax = false;
+                t.options.minify_whitespace = false;
+                t.options.debugger = true;
+            }
             Ok(())
         })?;
         self.macro_owner.set(Some(Arc::clone(caller)));

@@ -201,6 +201,7 @@ fn call_macro(
             JSValue::from_encoded(ctx.javascript_object.0 as usize),
         )
     });
+    vm.take_macro_vm_log(log);
     Ok(ret?)
 }
 

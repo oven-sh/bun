@@ -1,6 +1,6 @@
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, shellExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, shellExe, tempDir } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -241,6 +241,50 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
       expect({ exited, signalCode: proc.signalCode }).toEqual({ exited: 1, signalCode: null });
     },
   );
+
+  test.each([
+    ["SIGQUIT", "REG_SZ", ["ping.exe.PID.dmp"]],
+    ["SIGQUIT", "REG_EXPAND_SZ", ["ping.exe.PID.dmp"]],
+    ["SIGTERM", "REG_SZ", []],
+  ])("dumps after %s with LocalDumps enabled and a DumpFolder of type %s: %j", async (signal, type, expected) => {
+    using dir = tempDir("local-dumps", {
+      "main.js": `
+        const advapi32 = require("bun:ffi").dlopen("advapi32.dll", {
+          RegLoadAppKeyW: { args: ["ptr", "ptr", "u32", "u32", "u32"], returns: "i32" },
+          RegSetKeyValueW: { args: ["i64", "ptr", "ptr", "u32", "ptr", "u32"], returns: "i32" },
+          RegOverridePredefKey: { args: ["i64", "i64"], returns: "i32" },
+        }).symbols;
+        const wide = text => Buffer.from(text + "\\0", "utf16le");
+        const HKEY_LOCAL_MACHINE = -0x7ffffffe;
+        const KEY_ALL_ACCESS = 0xf003f;
+        const [type, folder] = { REG_SZ: [1, process.cwd()], REG_EXPAND_SZ: [2, "%DUMP_PARENT%"] }.${type};
+        const value = wide(folder + "\\\\dumps");
+        // A private hive stands in for HKEY_LOCAL_MACHINE in this process only.
+        const hive = new BigInt64Array(1);
+        advapi32.RegLoadAppKeyW(wide(process.cwd() + "\\\\hive"), hive, KEY_ALL_ACCESS, 0, 0);
+        const key = wide("SOFTWARE\\\\Microsoft\\\\Windows\\\\Windows Error Reporting\\\\LocalDumps");
+        advapi32.RegSetKeyValueW(hive[0], key, wide("DumpFolder"), type, value, value.length);
+        advapi32.RegOverridePredefKey(HKEY_LOCAL_MACHINE, hive[0]);
+
+        const child = Bun.spawn(["ping.exe", "-t", "127.0.0.1"], { stdout: "pipe" });
+        await child.stdout.getReader().read();
+        child.kill("${signal}");
+        await child.exited;
+        const fs = require("fs");
+        const names = fs.existsSync("dumps") ? fs.readdirSync("dumps") : [];
+        const dumps = names.filter(name => fs.readFileSync("dumps/" + name, "latin1").startsWith("MDMP"));
+        console.log(JSON.stringify(dumps.map(name => name.toLowerCase().replace(child.pid, "PID"))), child.signalCode);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, DUMP_PARENT: String(dir) },
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(`${JSON.stringify(expected)} ${signal}\n`);
+    expect(await proc.exited).toBe(0);
+  });
 
   test("signalCode reports the first signal sent", async () => {
     await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });

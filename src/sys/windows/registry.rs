@@ -76,10 +76,16 @@ impl Key {
         self.query_value(name, RRF_RT_DWORD)
     }
 
+    /// Expands a `REG_EXPAND_SZ`.
+    pub(super) fn query_wide_string(&self, name: &WStr) -> Option<Vec<u16>> {
+        let value: [u16; 260] = self.query_value(name, RRF_RT_REG_SZ)?;
+        Some(value.into_iter().take_while(|&unit| unit != 0).collect())
+    }
+
     /// WTF-8.
     pub(super) fn query_string(&self, name: &WStr) -> Option<Vec<u8>> {
-        let value: [u16; 256] = self.query_value(name, RRF_RT_REG_SZ)?;
-        Some(wtf16::decode_until_nul(value.iter().copied()))
+        let value = self.query_wide_string(name)?;
+        Some(wtf16::decode_until_nul(value.into_iter()))
     }
 }
 

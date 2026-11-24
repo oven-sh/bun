@@ -129,7 +129,6 @@ pub fn run_resize_message_loop(on_layout_event: impl Fn()) {
         extern "system" fn(u32, u32, HANDLE, WINEVENTPROC, u32, u32, u32) -> HANDLE;
     type WaitMessage = extern "system" fn() -> BOOL;
     type PeekMessageW = extern "system" fn(&mut [usize; 6], HANDLE, u32, u32, u32) -> BOOL;
-    const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x800;
     const EVENT_CONSOLE_LAYOUT: u32 = 0x4005;
     const WINEVENT_OUTOFCONTEXT: u32 = 0;
     const PM_REMOVE: u32 = 1;
@@ -138,13 +137,12 @@ pub fn run_resize_message_loop(on_layout_event: impl Fn()) {
 
     let user32 = bun_core::wstr!("user32.dll");
     let null = core::ptr::null_mut();
-    // SAFETY: `user32` is NUL-terminated, the signatures match `winuser.h`, and `MSG` is six words long.
+    // SAFETY: the signatures match `winuser.h`, and `MSG` is six words long.
     let exports = unsafe {
-        kernel32::LoadLibraryExW(user32.as_ptr(), null, LOAD_LIBRARY_SEARCH_SYSTEM32);
         (
-            super::find_export::<SetWinEventHook>(user32, c"SetWinEventHook"),
-            super::find_export::<WaitMessage>(user32, c"WaitMessage"),
-            super::find_export::<PeekMessageW>(user32, c"PeekMessageW"),
+            super::load_export::<SetWinEventHook>(user32, c"SetWinEventHook"),
+            super::load_export::<WaitMessage>(user32, c"WaitMessage"),
+            super::load_export::<PeekMessageW>(user32, c"PeekMessageW"),
         )
     };
     // Some Windows editions lack these exports, and some processes cannot load user32.

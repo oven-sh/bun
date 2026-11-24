@@ -449,6 +449,9 @@ pub fn kill(process: HANDLE, signal: c_int) -> Result<(), E> {
     const SIGKILL: c_int = SignalCode::SIGKILL as c_int;
     const SIGTERM: c_int = SignalCode::SIGTERM as c_int;
     const MAX_SIGNAL: c_int = SignalCode::SIGWINCH as c_int;
+    if signal == SIGQUIT {
+        let _ = super::crash_dump::write_if_enabled(process);
+    }
     match signal {
         0 if has_exited(process).map_err(Win32Error::to_e)? => Err(E::ESRCH),
         0 => Ok(()),

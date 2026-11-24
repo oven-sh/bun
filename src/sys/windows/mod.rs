@@ -602,6 +602,23 @@ pub unsafe fn find_export<F>(module: &WStr, name: &core::ffi::CStr) -> Option<F>
     }
 }
 
+/// SAFETY: `F` is the type of the export `name` of the system library `module`.
+unsafe fn load_export<F>(module: &WStr, name: &core::ffi::CStr) -> Option<F> {
+    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x800;
+    // SAFETY: `module` is NUL-terminated, and the reference that this adds is never released; fn contract.
+    unsafe {
+        let module = kernel32::LoadLibraryExW(
+            module.as_ptr(),
+            ptr::null_mut(),
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        );
+        let address =
+            (!module.is_null()).then(|| externs::GetProcAddress(module, name.as_ptr()))?;
+        (!address.is_null()).then(|| core::mem::transmute_copy(&address))
+    }
+}
+
 /// `root_directory` is `None` if `object_name` is a full NT object name.
 pub fn NtCreateFile(
     root_directory: Option<HANDLE>,
@@ -2326,6 +2343,7 @@ pub use sync_io::{StatusBlock, with_interrupt_event};
 
 pub mod console_title;
 pub mod cpu;
+mod crash_dump;
 mod network_interfaces;
 pub use network_interfaces::network_interfaces;
 pub mod process_info;

@@ -412,6 +412,22 @@ describe("web worker", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "loaded\nerror\nclose 1 false\n", exitCode: 0 });
   });
 
+  test.each([
+    ["an uncaught exception", `setImmediate(() => { throw new Error("boom"); });`],
+    ["an unhandled rejection", `setImmediate(() => { Promise.reject(new Error("boom")); });`],
+  ])("'close' has code 1 after %s in a later turn, inside `bun test` too", async (_, fail) => {
+    const body = `setInterval(() => {}, 100000); postMessage("loaded"); ${fail}`;
+    const worker = new Worker(URL.createObjectURL(new Blob([body], { type: "application/javascript" })));
+    const events: string[] = [];
+    worker.addEventListener("message", e => events.push(e.data));
+    worker.addEventListener("error", e => {
+      e.preventDefault();
+      events.push("error");
+    });
+    const { code, wasClean } = await new Promise<CloseEvent>(resolve => worker.addEventListener("close", resolve));
+    expect({ events, code, wasClean }).toEqual({ events: ["loaded", "error"], code: 1, wasClean: false });
+  });
+
   test.concurrent.each([
     ["while the entry is evaluating", `postMessage(1); for (;;) {}`],
     ["after the entry has loaded", `setInterval(() => {}, 100000); setTimeout(() => postMessage(1));`],

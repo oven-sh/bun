@@ -952,41 +952,6 @@ describe("process.exitCode", () => {
     expect(exitCode).toBe(42);
     expect(stdout.toString().trim()).toBe("PASS");
   });
-
-  const fatal = [
-    ["an unhandled rejection", `Promise.reject(new Error("boom"));`],
-    ["an unhandled rejection in a later turn", `setImmediate(() => Promise.reject(new Error("boom")));`],
-    ["an unhandled rejection in 'beforeExit'", `process.once("beforeExit", () => Promise.reject(new Error("boom")));`],
-    ["an uncaught exception in a later turn", `setImmediate(() => { throw new Error("boom"); });`],
-  ];
-
-  it.concurrent.each(fatal)("is 1 in an 'exit' listener after %s", async (_, script) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `process.exitCode = 5; process.on("exit", code => console.log(code, process.exitCode)); ${script}`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toInclude("error: boom");
-    expect({ stdout, exitCode }).toEqual({ stdout: "1 1\n", exitCode: 1 });
-  });
-
-  it.concurrent.each(fatal)("set in an 'exit' listener wins after %s", async (_, script) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `process.on("exit", () => { process.exitCode = 9; }); ${script}`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toInclude("error: boom");
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 9 });
-  });
 });
 
 it("process exitCode range (#6284)", () => {
@@ -2724,6 +2689,60 @@ describe("process.exitCode", () => {
       "exit 1 1\n",
       1,
     );
+  });
+
+  // After an error that nothing handled. Each row gives the same on Node 26.3.0.
+  describe.concurrent("after a fatal error", () => {
+    const fatal = [
+      ["an unhandled rejection", `Promise.reject(new Error("boom"));`],
+      ["an unhandled rejection in a later turn", `setImmediate(() => Promise.reject(new Error("boom")));`],
+      [
+        "an unhandled rejection in 'beforeExit'",
+        `process.once("beforeExit", () => Promise.reject(new Error("boom")));`,
+      ],
+      ["an uncaught exception in a later turn", `setImmediate(() => { throw new Error("boom"); });`],
+    ];
+    const logExit = `process.on("exit", code => console.log(code, process.exitCode));`;
+
+    async function run(script) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toInclude("error: boom");
+      return { stdout, exitCode };
+    }
+
+    it.each(fatal)("is 1 in an 'exit' listener after %s", async (_, script) => {
+      expect(await run(`process.exitCode = 5; ${logExit} ${script}`)).toEqual({ stdout: "1 1\n", exitCode: 1 });
+    });
+
+    it.each([fatal[0], fatal[3]])(
+      "is 1 in an 'exit' listener when process.exitCode = 0 came after %s",
+      async (_, script) => {
+        expect(await run(`${logExit} ${script} setImmediate(() => { process.exitCode = 0; });`)).toEqual({
+          stdout: "1 1\n",
+          exitCode: 1,
+        });
+      },
+    );
+
+    // The listener ends the process itself. tape's listener is the third.
+    const endings = [
+      ["process.exit()", `process.exit();`],
+      ["process.exit(code)", `process.exit(code);`],
+      ["process.exit(code || 0) when it was told 0", `if (code !== 0) return; process.exit(code || 0);`],
+    ];
+    it.each(
+      fatal.slice(0, 3).flatMap(([after, script]) => endings.map(([name, ending]) => [name, after, ending, script])),
+    )("an 'exit' listener that ends with %s exits 1 after %s", async (_, __, ending, script) => {
+      expect(await run(`process.on("exit", code => { ${ending} }); ${script}`)).toEqual({ stdout: "", exitCode: 1 });
+    });
+
+    it.each([98, 0])("process.exit(%d) in an 'exit' listener decides the exit status", async code => {
+      expect(await run(`process.on("exit", () => { process.exit(${code}); }); ${fatal[0][1]}`)).toEqual({
+        stdout: "",
+        exitCode: code,
+      });
+    });
   });
 
   it("exitsOnExitCodeSet", async () => {

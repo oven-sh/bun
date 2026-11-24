@@ -764,11 +764,6 @@ impl EventLoop {
             || self.has_concurrent_tasks()
     }
 
-    /// Nothing is queued for the next turn of the loop, so the poll before it may block.
-    pub fn is_idle(&self) -> bool {
-        self.is_drained() && !self.has_yield_tasks()
-    }
-
     fn queued_task_count(&self) -> usize {
         // SAFETY: a read of the length.
         unsafe { &*self.tasks.get() }.readable_length()

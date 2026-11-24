@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { timerInternals } from "bun:internal-for-testing";
+import { getEventLoopStats, timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles, withoutAsanQuarantine } from "harness";
@@ -882,7 +882,7 @@ describe("a delay of 0", () => {
       async () => {
         const server = createServer().listen(0, "127.0.0.1");
         await once(server, "listening");
-        return () => server.close();
+        return () => once(server.close(), "close");
       },
     ],
     [
@@ -902,7 +902,7 @@ describe("a delay of 0", () => {
           stdio: ["pipe", "ignore", "ignore"],
         });
         await once(child, "spawn");
-        return () => child.kill();
+        return () => (child.kill(), once(child, "exit"));
       },
     ],
   ])("waits for Node's minimum of 1 ms while %s keeps the event loop alive", async (_, start) => {
@@ -1013,6 +1013,29 @@ describe("a delay of 0", () => {
     setTimeout(() => seen.push("third"), 0);
     await promise;
     expect(seen).toEqual(["first", "second", "third", "immediate", "set by the first"]);
+  });
+
+  it("sleeps until the deadline that _idleStart has moved", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const begin = performance.now();
+    const before = getEventLoopStats().iteration;
+    setTimeout(resolve, 0)._idleStart += 20;
+    await promise;
+    // `_idleStart` is in whole milliseconds. A loop that polls for the deadline turns thousands of times.
+    expect(performance.now() - begin).toBeGreaterThanOrEqual(19);
+    expect(getEventLoopStats().iteration - before).toBeLessThan(50);
+  });
+
+  it("runs with the timer whose _idleStart it was given, as Next.js groups timers", async () => {
+    const seen = [];
+    const { promise, resolve } = Promise.withResolvers();
+    const first = setTimeout(() => {
+      seen.push("first");
+      setImmediate(() => (seen.push("immediate"), resolve()));
+    }, 0);
+    setTimeout(() => seen.push("second"), 0)._idleStart = first._idleStart;
+    await promise;
+    expect(seen).toEqual(["first", "second", "immediate"]);
   });
 
   it("keeps its place among the timers, as in Node", async () => {

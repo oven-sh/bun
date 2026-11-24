@@ -1608,6 +1608,11 @@ impl VirtualMachine {
         self.event_loop().immediate_task_count() > 0
     }
 
+    /// What keeps the event loop alive beside the handles of the platform's loop.
+    pub fn has_queued_work(&self) -> bool {
+        self.has_queued_work_excluding_immediates() || self.has_immediates()
+    }
+
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         self.unhandled_error_counter.get() == 0
             && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
@@ -1619,9 +1624,7 @@ impl VirtualMachine {
 
     /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
     pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
-        self.is_platform_loop_active()
-            || self.has_queued_work_excluding_immediates()
-            || self.has_immediates()
+        self.is_platform_loop_active() || self.has_queued_work()
     }
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
@@ -1631,7 +1634,7 @@ impl VirtualMachine {
         if bun_spawn::process::WaiterThread::is_watching() {
             return true;
         }
-        if self.has_queued_work_excluding_immediates() || self.has_immediates() {
+        if self.has_queued_work() {
             return true;
         }
         let timers =

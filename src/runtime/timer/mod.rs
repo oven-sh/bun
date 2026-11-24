@@ -649,7 +649,7 @@ impl All {
             u32::from(self.active_timer_count.get() > 0 && uv_timer.is_active())
                 + u32::from(uv_idle.is_active())
         };
-        vm.event_loop().is_idle() && vm.uws_loop().active_count() <= own
+        !vm.has_queued_work() && vm.uws_loop().active_count() <= own
     }
 
     /// Whether the first timer does not wait for its deadline. See `EventLoopTimer::is_due_when_idle`.
@@ -692,7 +692,7 @@ impl All {
         let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
 
         // An immediate or a task that the poll's callbacks queued runs before a timer that still has 1 ms to wait, as in Node.
-        let is_idle = self.is_idle(vm);
+        let is_idle = self.zero_delay_is_due_when_idle.get() && self.is_idle(vm);
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut started = None;
         while let Some(t) = self.next(is_idle, &mut started, &mut now) {

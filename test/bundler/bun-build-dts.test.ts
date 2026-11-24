@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -204,6 +204,170 @@ export function join(first: string, second: string): string {
       'function join(first, second) {\n  return first + " " + second;\n}',
     );
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
+  });
+
+  test("two entry points of two projects keep the types of both in their .aot.ts files", async () => {
+    using dir = tempDir("build-dts-two-projects", {
+      "x/tsconfig.json": project["tsconfig.json"],
+      "x/src/index.ts": `export enum Kind { One, Two }\nexport const name = Kind[Kind.One];\n`,
+      "y/tsconfig.json": project["tsconfig.json"],
+      "y/src/index.ts": `export const y: number = 1;\n`,
+    });
+    const entries = ["./x/src/index.ts", "./y/src/index.ts"];
+    const built = await bun(String(dir), "build", ...entries, "--root", ".", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const read = (name: string) => readFileSync(join(String(dir), "out", name), "utf8");
+    expect(read("x/src/index.aot.ts")).toContain("enum Kind");
+    expect(read("y/src/index.aot.ts")).toContain("const y: number = 1;");
+  });
+
+  describe("a project that tsconfig.json references", () => {
+    const options = {
+      ...JSON.parse(project["tsconfig.json"]).compilerOptions,
+      composite: true,
+      rootDir: "src",
+      skipLibCheck: true,
+    };
+    const projects = {
+      "a/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
+      "a/src/index.ts": `export const x = 1;\n`,
+      "b/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"], references: [{ path: "../a" }] }),
+      "b/src/index.ts": `export const z = 2;\n`,
+    };
+    const filesIn = (folder: string) =>
+      readdirSync(folder, { recursive: true, withFileTypes: true })
+        .filter(entry => entry.isFile())
+        .map(entry =>
+          join(entry.parentPath, entry.name)
+            .slice(folder.length + 1)
+            .replaceAll("\\", "/"),
+        )
+        .sort();
+    const build = async (dir: string, ...flags: string[]) => {
+      const b = join(dir, "b");
+      const built = await bun(b, "build", "./src/index.ts", "--outdir", "out", "--dts", ...flags);
+      return { stderr: built.stderr, exitCode: built.exitCode, files: built.exitCode ? [] : filesIn(join(b, "out")) };
+    };
+
+    test.each([
+      { flags: [], files: ["index.aot.ts", "index.d.ts", "index.js"] },
+      { flags: ["--root", "./src"], files: ["index.aot.ts", "index.d.ts", "index.js"] },
+      { flags: ["--root", ".."], files: ["b/src/index.aot.ts", "b/src/index.d.ts", "b/src/index.js"] },
+    ])("gets none for a file that no entry point imports: $flags", async ({ flags, files }) => {
+      using dir = tempDir("build-dts-references", projects);
+      expect(await build(String(dir), ...flags)).toEqual({ stderr: "", exitCode: 0, files });
+      expect(readFileSync(join(String(dir), "b/out", files[1]), "utf8")).toBe("export declare const z = 2;\n");
+    });
+
+    const imported = {
+      ...projects,
+      "a/src/index.ts": `export enum Kind { One, Two }\nexport const x = Kind.One;\n`,
+      "a/src/unused.ts": `export const unused = 1;\n`,
+      "b/src/index.ts": `import { Kind, x } from "../../a/src/index";\nexport { x };\nexport const name = Kind[x];\n`,
+    };
+
+    test("gets one for each file that an entry point imports by a relative path", async () => {
+      using dir = tempDir("build-dts-references-import", imported);
+      const files = ["a/src/index.d.ts", "b/src/index.aot.ts", "b/src/index.d.ts", "b/src/index.js"];
+      expect(await build(String(dir), "--root", "..")).toEqual({ stderr: "", exitCode: 0, files });
+      const read = (name: string) => readFileSync(join(String(dir), "b/out", name), "utf8");
+      expect(read("b/src/index.d.ts")).toBe(
+        `import { x } from "../../a/src/index.js";\nexport { x };\nexport declare const name: string;\n`,
+      );
+      expect(read("b/src/index.aot.ts")).toContain("enum Kind");
+    });
+
+    // A declaration file that an earlier `tsc -b` left on disk is not read to find what an entry point reaches.
+    test.each([
+      { left: "nothing", dist: {} },
+      { left: "stale files", dist: { "a/dist/star.d.ts": `export * from "./unused";\n`, "a/dist/unused.d.ts": "" } },
+    ])("gets one for a file that is reached in any way, with $left in its outDir", async ({ dist }) => {
+      const inOutDir = { ...options, outDir: "dist" };
+      using dir = tempDir("build-dts-references-reach", {
+        "a/tsconfig.json": JSON.stringify({ compilerOptions: inOutDir, include: ["src"] }),
+        "a/src/type.ts": `export interface T { t: number }\n`,
+        "a/src/effect.ts": `export const effect = 1;\n`,
+        "a/src/star.ts": `export const star = 1;\n`,
+        "a/src/dynamic.ts": `export const dynamic = 1;\n`,
+        "a/src/query.ts": `export const query = 1;\n`,
+        "a/src/global.ts": `var GLOBAL: number = 1;\n`,
+        "a/src/unused.ts": `export const unused = 1;\n`,
+        "b/tsconfig.json": JSON.stringify({
+          compilerOptions: inOutDir,
+          include: ["src"],
+          references: [{ path: "../a" }],
+        }),
+        "b/src/index.ts": `/// <reference path="../../a/src/global.ts" />
+import type { T } from "../../a/src/type";
+import "../../a/src/effect";
+export * from "../../a/src/star";
+export const loaded = import("../../a/src/dynamic");
+export declare const query: typeof import("../../a/src/query");
+export const t: T = { t: GLOBAL };
+`,
+        ...dist,
+      });
+      const reached = ["dynamic", "effect", "global", "query", "star", "type"].map(name => `a/src/${name}.d.ts`);
+      const files = [...reached, "b/src/index.aot.ts", "b/src/index.d.ts", "b/src/index.js"];
+      expect(await build(String(dir), "--root", "..")).toEqual({ stderr: "", exitCode: 0, files });
+    });
+
+    test("has no place for that file outside the root directory, like any other project", async () => {
+      using dir = tempDir("build-dts-references-outside", imported);
+      expect(await build(String(dir))).toEqual({
+        stderr: `error: cannot write a declaration file for ${join(String(dir), "a/src/index.ts")} because it is outside the root directory ${join(String(dir), "b/src")}. Pass --root to change it\n`,
+        exitCode: 1,
+        files: [],
+      });
+    });
+
+    test("gets none when an entry point imports it as a package", async () => {
+      using dir = tempDir("build-dts-references-package", {
+        ...projects,
+        "a/package.json": JSON.stringify({ name: "@org/a", version: "1.0.0", main: "src/index.ts" }),
+        "a/src/index.ts": `export interface T { a: number }\nexport function make(): T { return { a: 1 }; }\n`,
+        "b/src/index.ts": `import { make } from "@org/a";\nexport const value = make();\n`,
+      });
+      mkdirSync(join(String(dir), "node_modules/@org"), { recursive: true });
+      symlinkSync(join(String(dir), "a"), join(String(dir), "node_modules/@org/a"), "junction");
+      const files = ["index.aot.ts", "index.d.ts", "index.js"];
+      expect(await build(String(dir))).toEqual({ stderr: "", exitCode: 0, files });
+      expect(readFileSync(join(String(dir), "b/out/index.d.ts"), "utf8")).toBe(
+        `export declare const value: import("@org/a").T;\n`,
+      );
+    });
+
+    const split = {
+      "b/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, composite: false, rootDir: undefined, noEmit: true },
+        include: ["src", "test"],
+        references: [{ path: "./tsconfig.build.json" }],
+      }),
+      "b/tsconfig.build.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
+      "b/src/index.ts": `import { helper } from "./helper";\nexport const z = helper + 1;\n`,
+      "b/src/helper.ts": `export const helper = 1;\n`,
+      "b/src/unused.ts": `export const unused = 1;\n`,
+      "b/test/index.test.ts": `export const test = 1;\n`,
+    };
+
+    test("gets one for an entry point that it has, and for what that imports", async () => {
+      using dir = tempDir("build-dts-references-split", split);
+      const files = ["helper.d.ts", "index.aot.ts", "index.d.ts", "index.js"];
+      expect(await build(String(dir))).toEqual({ stderr: "", exitCode: 0, files });
+    });
+
+    test("gets one for that entry point when it emits nothing for the others to read", async () => {
+      using dir = tempDir("build-dts-references-split-no-emit", {
+        ...split,
+        "b/tsconfig.build.json": JSON.stringify({
+          compilerOptions: { ...options, noEmitOnError: true },
+          include: ["src"],
+        }),
+        "b/src/unused.ts": `export const unused: number = "1";\n`,
+      });
+      const files = ["helper.d.ts", "index.aot.ts", "index.d.ts", "index.js"];
+      expect(await build(String(dir))).toEqual({ stderr: "", exitCode: 0, files });
+    });
   });
 
   test("a build without it writes what it always did", async () => {

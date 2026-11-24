@@ -27,6 +27,7 @@ pub(super) fn run_queue<'s>(
         threads: request.threads.get(),
         in_room: None,
         is_reached: None,
+        is_owed: None,
         explains_files: false,
         explain_files: &|_| Vec::new(),
         lists_files_only: false,

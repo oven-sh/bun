@@ -240,9 +240,12 @@ pub struct Module<'s> {
     /// The `imports` that resolve to a referenced project's declaration file, for which the source is loaded instead.
     pub project_reference_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
     /// The specifiers that resolve to a source of a referenced project whose declaration file
-    /// isn't in the program, with `OutputDts` and `ResolvedFileName`. They resolve to no file
-    /// (6305).
-    pub unbuilt_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom, Atom)>,
+    /// isn't in the program, with `OutputDts`, `ResolvedFileName` and
+    /// `ResolvedModule::is_external_library_import`. They resolve to no file (6305).
+    pub unbuilt_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom, Atom, bool)>,
+    /// The sources of referenced projects that its `/// <reference path>`s name and whose declaration file doesn't
+    /// exist. Nothing is read for them.
+    pub unbuilt_references: ArenaFew<'s, Atom>,
     /// `outputFileToProjectReferenceSource`: a name of the source of a referenced project whose
     /// task was redirected to it. `NONE`: the program has no task for its source.
     pub project_reference_source: Atom,
@@ -8165,7 +8168,8 @@ impl<'s> Files<'s> {
             let redirect = program_options.parse_file_redirect(found);
             if let Some(output) = redirect {
                 let source = atoms.intern(found);
-                unbuilt_imports.push((spec, mode, atoms.intern(output), source));
+                let is_external = resolved.is_external_library_import;
+                unbuilt_imports.push((spec, mode, atoms.intern(output), source, is_external));
             }
             let unsupported_extension = if should_add_file && redirect.is_none() {
                 unsupported_extension_error(program_options, found, host.is_case_sensitive())
@@ -8204,6 +8208,7 @@ impl<'s> Files<'s> {
         }
         // They are processed by kind: paths, then types, then libraries.
         let (mut references, mut types, mut libs) = (Vec::new(), Vec::new(), Vec::new());
+        let mut unbuilt_references = Vec::new();
         let (mut missing_references, mut unsupported_libs) = (Vec::new(), Vec::new());
         for &(kind, value, pos, mode) in hir.references.iter().filter(|_| !answers_from_code) {
             // `noResolve`: only library references are still processed.
@@ -8221,7 +8226,7 @@ impl<'s> Files<'s> {
                             Some(output) if host.is_file(output) => {
                                 references.push((resolver.keep(output), false, false, None));
                             }
-                            Some(_) => {}
+                            Some(_) => unbuilt_references.push(atoms.intern(&found)),
                             None => references.push((resolver.keep(&found), false, false, None)),
                         },
                         Err(code) => missing_references.push((pos, code)),
@@ -8323,6 +8328,7 @@ impl<'s> Files<'s> {
             redirected_imports: few_in(redirected_imports, arena),
             project_reference_imports: few_in(project_reference_imports, arena),
             unbuilt_imports: few_in(unbuilt_imports, arena),
+            unbuilt_references: few_in(unbuilt_references, arena),
             project_reference_source: Atom::NONE,
             redirect_for_resolution,
             is_from_external_library: false,

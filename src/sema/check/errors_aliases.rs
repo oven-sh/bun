@@ -1266,7 +1266,7 @@ impl Checker<'_, '_> {
         }
         // "See if this was possibly a projectReference redirect"
         let mut unbuilt = importing.unbuilt_imports.iter();
-        if let Some(&(.., output, source)) = unbuilt.find(|u| (u.0, u.1) == key) {
+        if let Some(&(.., output, source, _)) = unbuilt.find(|u| (u.0, u.1) == key) {
             let (output, source) = (self.atoms().bytes(output), self.atoms().bytes(source));
             self.error_at(at, 6305, &[Arg::Path(output), Arg::Path(source)]);
             return false;

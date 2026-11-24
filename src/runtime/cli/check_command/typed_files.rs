@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
 use bun_sema::check::Checker;
@@ -62,15 +64,12 @@ pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Lo
     );
 }
 
-/// What the checker knows about each module, by file. A task of the checker can run again: the last time counts.
+/// What the checker knows about each module, by path: the `FileId` of a file of one program is also that of a file of
+/// another. A task of the checker can run again, and two programs can check the same file: the last time counts.
 #[derive(Default)]
-pub(super) struct NotedModuleTypes(Guarded<Vec<(u32, ModuleTypes)>>);
+struct NotedModuleTypes(Guarded<BTreeMap<Box<[u8]>, (u32, ModuleTypes)>>);
 
 impl NotedModuleTypes {
-    pub(super) fn note(&self, checker: &mut Checker<'_, '_>, file: FileId) {
-        self.note_if(checker, file, |_| true);
-    }
-
     fn note_if(
         &self,
         checker: &mut Checker<'_, '_>,
@@ -78,18 +77,14 @@ impl NotedModuleTypes {
         is_wanted: impl Fn(&ModuleTypes) -> bool,
     ) {
         if let Some(found) = module_types(checker, file).filter(is_wanted) {
-            self.replace(file, found);
+            (self.0.lock()).insert(found.path.clone(), (file.0, found));
         }
     }
 
-    fn replace(&self, file: FileId, found: ModuleTypes) {
-        let mut noted = self.0.lock();
-        noted.retain(|known| known.0 != file.0);
-        noted.push((file.0, found));
-    }
-
-    pub(super) fn take(&self) -> Vec<ModuleTypes> {
-        let mut noted = std::mem::take(&mut *self.0.lock());
+    /// In the order of their program, and those of several programs with the same `FileId` in the order of their paths.
+    fn take(&self) -> Vec<ModuleTypes> {
+        let noted = std::mem::take(&mut *self.0.lock());
+        let mut noted: Vec<(u32, ModuleTypes)> = noted.into_values().collect();
         noted.shared_sort_by_key(|module| module.0);
         noted.into_iter().map(|module| module.1).collect()
     }

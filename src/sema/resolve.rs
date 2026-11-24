@@ -417,6 +417,11 @@ impl Options {
         self.referenced_source(path).is_some()
     }
 
+    /// `ProjectFile::project` of `GetProjectReferenceFromSource(path)`
+    pub fn project_of_referenced_source(&self, path: &[u8]) -> Option<u32> {
+        Some(self.referenced_source(path)?.project)
+    }
+
     /// `GetProjectReferenceFromOutputDts(path).Resolved.CompilerOptions()`
     pub fn project_reference_from_output_dts(&self, path: &[u8]) -> Option<&Options> {
         let project = self.referenced_projects[&self.referenced_output_dts(path)?.project];

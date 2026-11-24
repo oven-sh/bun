@@ -173,6 +173,31 @@ export { join };
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
   });
 
+  test("a project that tsconfig.json references gets no declaration file when nothing imports it", async () => {
+    const options = {
+      ...JSON.parse(project["tsconfig.json"]).compilerOptions,
+      composite: true,
+      rootDir: "src",
+      skipLibCheck: true,
+    };
+    using dir = tempDir("build-api-dts-references", {
+      "a/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"] }),
+      "a/src/index.ts": `export const x = 1;\n`,
+      "b/tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["src"], references: [{ path: "../a" }] }),
+      "b/src/index.ts": `export const z = 2;\n`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "b/src/index.ts")],
+      outdir: join(root, "b/out"),
+      tsconfig: join(root, "b/tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(filesIn(join(root, "b/out"))).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
+    expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const z = 2;\n");
+  });
+
   test("cannot be used with compile", () => {
     expect(() => Bun.build({ entrypoints: ["./index.ts"], compile: true, dts: true })).toThrow(
       "dts cannot be used with compile",

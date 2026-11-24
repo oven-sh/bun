@@ -32,8 +32,8 @@ pub enum Opened {
 }
 
 /// Serves C sources and `#include`s from memory: see [`State::set_open_func`].
-/// `open` runs under the libtcc lock and must not call into libtcc.
 pub trait OpenFiles {
+    /// Runs under the libtcc lock: it must not call into libtcc.
     fn open(filename: &[u8]) -> Opened;
 }
 

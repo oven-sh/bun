@@ -2620,4 +2620,228 @@ describe("bundler", () => {
       stdout: "var\nmain",
     },
   });
+  // A top-level `var exports` / `var module` merges with the CommonJS wrapper
+  // parameter in Node. When it has a value of its own, the file must keep its
+  // wrapper, keep the declaration, and leave `exports.x` / `module.exports.x` as
+  // plain property accesses. `var exports;` and `var exports = module.exports;`
+  // keep the wrapper value and still lift to ESM. A default import used as a
+  // whole value keeps the wrapper of any CommonJS file, so the files that are
+  // read through named imports are the ones that show which file is lifted.
+  itBundled("cjs2esm/VarWithTheNameOfModuleOrExportsKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        import fake from "./fake-module.cjs";
+        import reassigned from "./reassigned.cjs";
+        import { foo as uninitFoo, bar as uninitBar } from "./uninit.cjs";
+        import nested from "./nested.cjs";
+        import { a as aliasedA } from "./aliased.cjs";
+        import { b as chainedB } from "./chained.cjs";
+        import destructured from "./destructured.cjs";
+        import forHeader from "./for-header.cjs";
+        import forOf from "./for-of.cjs";
+        import moduleRequire from "./module-require.cjs";
+        import { ok as ambientOk } from "./ambient.cts";
+        import { lost as namedExportsLost, kept as namedExportsKept } from "./named-exports.cjs";
+        import { leak as namedModuleLeak, real as namedModuleReal } from "./named-module.cjs";
+        import { kind as forInModuleKind } from "./for-in-module.cjs";
+        import { foo as blockShadowFoo } from "./block-shadow.cjs";
+        import { foo as functionModuleFoo } from "./function-module.cjs";
+        import { leak as bareModuleLeak, real as bareModuleReal } from "./bare-module.cjs";
+        console.log(
+          JSON.stringify({
+            lib,
+            fake,
+            reassigned,
+            uninit: { foo: uninitFoo, bar: uninitBar },
+            nested,
+            aliasedA,
+            chainedB,
+            destructured,
+            forHeader,
+            forOf,
+            moduleRequire,
+            ambientOk,
+            namedExports: [typeof namedExportsLost, namedExportsKept],
+            namedModule: [typeof namedModuleLeak, namedModuleReal],
+            forInModuleKind,
+            blockShadowFoo: typeof blockShadowFoo,
+            functionModuleFoo: typeof functionModuleFoo,
+            bareModule: [typeof bareModuleLeak, bareModuleReal],
+          }),
+        );
+      `,
+      "/named-exports.cjs": /* js */ `
+        var exports = {};
+        exports.lost = 1;
+        module.exports.kept = 2;
+      `,
+      "/named-module.cjs": /* js */ `
+        var module = { exports: {} };
+        module.exports.leak = 1;
+        exports.real = 2;
+      `,
+      "/for-in-module.cjs": /* js */ `
+        for (var [module] in { m: 1 }) {}
+        exports.kind = typeof module.exports;
+      `,
+      "/block-shadow.cjs": /* js */ `
+        {
+          let module = { exports: { fake: true } };
+          var exports = module.exports;
+        }
+        exports.foo = 1;
+      `,
+      "/function-module.cjs": /* js */ `
+        function module() {}
+        module.exports = { fake: true };
+        var exports = module.exports;
+        exports.foo = 1;
+      `,
+      "/bare-module.cjs": /* js */ `
+        module = { exports: { fake: true } };
+        module.exports.leak = 1;
+        exports.real = 2;
+      `,
+      "/destructured.cjs": /* js */ `
+        var { exports } = { exports: { local: true } };
+        module.exports.kind = typeof exports.local;
+      `,
+      "/for-header.cjs": /* js */ `
+        for (var exports = { local: true }; false; ) {}
+        module.exports.kind = typeof exports.local;
+      `,
+      "/for-of.cjs": /* js */ `
+        for (var exports of [{ local: true }]) {}
+        for (var [module] in { m: 1 }) {}
+        exports.kind = typeof exports.local + module;
+      `,
+      "/module-require.cjs": /* js */ `
+        var exports = { local: true };
+        module.exports.dep = module.require("./dep.cjs").value;
+        module.exports.kind = typeof exports.local;
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "dep";
+      `,
+      "/ambient.cts": /* ts */ `
+        declare var exports = {};
+        module.exports.ok = 1;
+      `,
+      "/aliased.cjs": /* js */ `
+        var exports = module.exports;
+        exports.a = "aliased";
+      `,
+      "/chained.cjs": /* js */ `
+        var exports = module.exports = {};
+        exports.b = "chained";
+      `,
+      "/lib.cjs": /* js */ `
+        var exports = { local: true };
+        module.exports.answer = 42;
+        module.exports.kind = typeof exports.local;
+      `,
+      "/fake-module.cjs": /* js */ `
+        var module = { exports: { fake: true } };
+        module.exports.x = 1;
+        exports.viaParam = typeof module.exports.fake;
+      `,
+      "/reassigned.cjs": /* js */ `
+        exports.before = 1;
+        var exports = "shadow";
+        module.exports.after = typeof exports;
+      `,
+      "/uninit.cjs": /* js */ `
+        var exports;
+        module.exports.foo = 123;
+        exports.bar = exports.foo + 1;
+      `,
+      "/nested.cjs": /* js */ `
+        if (true) {
+          var module = { exports: { nested: true } };
+        }
+        module.exports.x = 1;
+        exports.viaParam = typeof module.exports.nested;
+      `,
+    },
+    cjs2esm: {
+      // chained.cjs keeps its wrapper because of the `module.exports = {}` assignment, as before.
+      unhandled: [
+        "/lib.cjs",
+        "/fake-module.cjs",
+        "/reassigned.cjs",
+        "/nested.cjs",
+        "/chained.cjs",
+        "/destructured.cjs",
+        "/for-header.cjs",
+        "/for-of.cjs",
+        "/module-require.cjs",
+        // dep.cjs is loaded through require(), which always keeps the wrapper.
+        "/dep.cjs",
+        "/named-exports.cjs",
+        "/named-module.cjs",
+        "/for-in-module.cjs",
+        "/block-shadow.cjs",
+        "/function-module.cjs",
+        "/bare-module.cjs",
+      ],
+    },
+    run: {
+      stdout:
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1,"namedExports":["undefined",2],"namedModule":["undefined",2],"forInModuleKind":"undefined","blockShadowFoo":"undefined","functionModuleFoo":"undefined","bareModule":["undefined",2]}',
+    },
+  });
+  // In an unwrapped package `module.exports = require()` becomes `export * from`.
+  // Not beside a `module` of its own: react assigns to that object and exports
+  // nothing. Not beside an `exports` of its own either: in a lifted file that
+  // `var` is the namespace object, and its initializer would replace it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingWithOwnVarModuleOrExportsKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value as ownModule } from "react";
+        import * as ownExports from "react-is";
+        const key = "value";
+        console.log(typeof ownModule, ownExports[key]);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        var module = { exports: {} };
+        module.exports = require('./main');
+      `,
+      "/node_modules/react/main.js": /* js */ `
+        exports.value = "react";
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        var exports = { local: true };
+        module.exports = require('./main');
+      `,
+      "/node_modules/react-is/main.js": /* js */ `
+        exports.value = "react-is";
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js", "/node_modules/react-is/index.js"] },
+    run: {
+      stdout: "undefined react-is",
+    },
+  });
+  // After `var module = module || {}` or a conditional `var module`, `module` is
+  // still the wrapper's object at run time. In a bundle that object has no
+  // `require`, so these rewrites stay beside any `var module`.
+  itBundled("cjs2esm/VarModuleShimKeepsModuleRequireAndRequireMain", {
+    files: {
+      "/entry.cjs": /* js */ `
+        var module = module || {};
+        console.log(require.main === module, module.require("./conditional.cjs").value);
+      `,
+      "/conditional.cjs": /* js */ `
+        if (typeof module === "undefined") {
+          var module = { exports: {} };
+        }
+        module.exports.value = module.require("./dep.cjs").value;
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "dep";
+      `,
+    },
+    run: { stdout: "true dep" },
+  });
 });

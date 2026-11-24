@@ -3766,7 +3766,7 @@ impl<'a> HTTPClient<'a> {
     /// For an HTTP/1 connection that closes.
     pub(crate) fn finalize_body_on_close(&mut self, end: TransportEnd) -> crate::Result<()> {
         // A reset that `send()` reported first reads as a FIN.
-        if self.has_unsent_request_body() {
+        if !self.is_request_fully_sent() {
             return self.finalize_body_on_eof(TransportEnd::Failed);
         }
         self.finalize_body_on_eof(end)

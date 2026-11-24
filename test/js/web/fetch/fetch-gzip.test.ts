@@ -1,7 +1,8 @@
 import { Socket } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, tls } from "harness";
+import { bunEnv, bunExe, gcTick, tempDir, tls } from "harness";
 import { once } from "node:events";
+import { truncateSync } from "node:fs";
 import { createServer } from "node:http";
 import {
   connect,
@@ -1263,6 +1264,23 @@ describe("a compressed stream that is unfinished when the body ends", () => {
       }
       expect({ results, connections: ports.size }).toEqual({ results: ["ok", "ok", "ok"], connections: 1 });
     });
+  });
+
+  it.each(["file", "bytes"])("rejects if the close comes before a request body of %s is sent", async kind => {
+    using dir = tempDir("fetch-gzip-upload", { upload: "" });
+    const upload = path.join(String(dir), "upload");
+    // More than the socket buffers hold.
+    const size = 64 * 1024 * 1024;
+    truncateSync(upload, size);
+    const { head, framed } = frame("gzip", "close", codings.gzip.flushed(small));
+    const key = `/${requests++}`;
+    waiting.set(key, ({ origin, wire }) => {
+      wire.unpipe().pause();
+      origin.end(Buffer.concat([head, framed]));
+    });
+    const body = kind === "file" ? Bun.file(upload) : new Uint8Array(size);
+    const response = await fetch(targets.http.url + key, { method: "POST", body, proxy: false });
+    expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
   });
 
   it("rejects if a reset comes right behind more than the reader takes at once", async () => {

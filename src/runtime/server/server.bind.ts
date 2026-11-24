@@ -8,7 +8,9 @@ function server(name: string) {
     rustPath: `crate::server::${name}`,
     refCounted: true,
     finalize: true,
+    thisValue: "js_value",
     memoryCost: true,
+    lockedMembers: ["prototype"],
     /** GC roots for the handlers (the struct keeps raw copies for the request path) and for the C++ route list. */
     internalFields: [
       "routeList",
@@ -130,6 +132,7 @@ const topic = { args: { topic: b.any }, returns: b.bool, capability: "js", throw
 /** The first argument of the `websocket` handlers of `Bun.serve`. */
 export const ServerWebSocket = b.class({
   rustPath: "crate::server::ServerWebSocket",
+  thisValue: "this_value",
   memoryCost: true,
   construct: { capability: "heap", throws: true },
   /** `server` keeps the handlers the struct points at alive. */

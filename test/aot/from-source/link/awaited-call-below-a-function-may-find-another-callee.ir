@@ -13,7 +13,6 @@
 # use(new Sub());
 # -- end of source
 # RUN(LINK): link functions mechanisms=all
-# REQUIRES(LINK): entries-of-bun
 # LINK: function f1
 # LINK-NOT: proven=i32
 # LINK: function f2

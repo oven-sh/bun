@@ -98,7 +98,7 @@
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
-/* 32 byte padding of receive buffer ends */
+/* Without it mimalloc commits a page of 4 MiB for a receive buffer (MI_LARGE_MAX_OBJ_SIZE) */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
@@ -427,8 +427,8 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
  * connections keep the previous context alive through their own SSL refs. */
 void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
-/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
- * returns 0 with a static *err_reason tag on failure. */
+/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees,
+ * whatever the result); returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
@@ -546,9 +546,7 @@ enum create_bun_socket_error_t {
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
  * one reference and releases with SSL_CTX_free() (no wrapper struct — the
- * SSL_CTX's own refcount is the refcount). The strdup'd passphrase is freed
- * inside this call once private-key load completes, so a plain SSL_CTX_free()
- * is sufficient on every path.
+ * SSL_CTX's own refcount is the refcount).
  *
  * Mode-neutral: the same SSL_CTX may back client connects and server accepts
  * (Node's createSecureContext semantics). CTX-level verify mode is derived
@@ -768,6 +766,9 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+#ifndef WIN32
+void us_socket_read_now(us_socket_r s);
+#endif
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,32 @@
+# Bun's own code stores under the name of a method on a value that nobody knows, as it does where it lays a method on the prototype object of a class that native code hands it
+# an executable locks Headers.prototype.get whatever the program does, so the library writes it nowhere: it would be turned away there. The test run locks it too
+# in the library: given.get = 1      a.test.js: Headers.prototype.get.call(given, given)
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: locks open
+# CHECK: locked HeadersPrototypeGet constant
+# RUN(REPLACED): test-run
+# REPLACED-NOT: replaces HeadersPrototypeGet
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = PropGet v0 key="Headers" [isFreeName]
+    v3 = PropGet v2 key="prototype"
+    v4 = PropGet v3 key="get"
+    v5 = Call v4, v1, v1 calleeKey="get"
+    v6 = NewClosure function=f1
+    v7 = Call v6
+    Return v5
+}
+function f1 module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given"
+    v2 = Integer integer=1
+    PropSet v1, v2 key="get"
+    Return v2
+}

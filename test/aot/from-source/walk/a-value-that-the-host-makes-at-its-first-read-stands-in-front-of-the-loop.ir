@@ -1,0 +1,20 @@
+# -- source: main.js
+# function counted(t) { let s = 0; for (let i = 0; i < 60; i++) s += process.argv.length; return s + t % 2; }
+# function inSomeTurns(t) { let s = 0; for (let i = 0; i < 60; i++) if (i & 1) s += process.argv.length; return s + t % 2; }
+# console.log(counted(0) % 60, inSomeTurns(1) % 30);
+# -- end of source
+# process.argv is made by the host at its first read and kept; nobody in this program replaces it. The read was declared to run unknown code and stood in every turn.
+# It bears what its row of the table says (the heap, a throw, no code of the program). Under no handler it counts as a read of what is seen: it stands in front of a loop whose every turn asks for it and whose turns run no other code and write nothing, and the length of the list behind it.
+# Where only some turns ask, it stays in the turn: the host is not made to build what may never be read.
+# f1 = counted, f2 = inSomeTurns
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetBuiltinValue builtin=ProcessArgv
+# CHECK-NOT: mayCallUnknownCode
+# CHECK: = GetArrayLength
+# CHECK: isLoopHead=true
+# CHECK-NOT: = GetBuiltinValue
+# CHECK-NOT: = GetArrayLength
+# CHECK: Return
+# RUN(SOME): walk f2:Body mechanisms=all
+# SOME: isLoopHead=true
+# SOME: = GetBuiltinValue builtin=ProcessArgv

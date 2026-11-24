@@ -12,7 +12,6 @@
 # console.log(count(n), countSome(n, [true, false, true]), sumAt(n, [1, 2, 3, 4, 5, 6]), seen.join());
 # -- end of source
 # RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: IntegerBound
 # CHECK: ([[s1]]: int[0, 9007199254740992] @Double, [[i1]]: int[0, 9007199254740992] @Double) {{*}}isLoopHead=true
@@ -36,7 +35,6 @@
 # CHECK: int[0, 9007199254740992] @Int64) {{*}}isLoopHead=true
 # CHECK: form=CheckedIntegers
 # RUN(BOXED): walk f1 mechanisms=all-Inlining-UnboxedNumbers
-# REQUIRES(BOXED): entries-of-bun
 # BOXED-LABEL: code f1:Body
 # BOXED-NOT: @Double) {{*}}isLoopHead=true
 # BOXED: isLoopHead=true

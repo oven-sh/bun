@@ -4,16 +4,31 @@
 // # the whole sum lives on beside it, into the arm that overflows.
 // # Every pair is run that fits, that overflows upward and downward, and that comes out negative: the upper half of a boxed int32 is the tag and nothing of the sign.
 // # f1 = keepSum, f2 = keepDifference
+// # REQUIRES(SUM): x86_64
 // # RUN(SUM): allocate f1 mechanisms=all
 // # SUM-LABEL: unit f1:Body
 // # SUM: 32 bits, sets flags
 // # SUM-NEXT: Branch no overflow
 // # SUM: = ZExt32 Trunc(
+// # REQUIRES(DIFFERENCE): x86_64
 // # RUN(DIFFERENCE): allocate f2 mechanisms=all
 // # DIFFERENCE-LABEL: unit f2:Body
 // # DIFFERENCE: 32 bits, sets flags
 // # DIFFERENCE-NEXT: Branch no overflow
 // # DIFFERENCE: = ZExt32 Trunc(
+// # On arm64 the add of the tag extends the low half itself.
+// # REQUIRES(ARMSUM): arm64
+// # RUN(ARMSUM): allocate f1 mechanisms=all
+// # ARMSUM-LABEL: unit f1:Body
+// # ARMSUM: 32 bits, sets flags
+// # ARMSUM-NEXT: Branch no overflow
+// # ARMSUM: = Add ZExt32(Trunc(
+// # REQUIRES(ARMDIFFERENCE): arm64
+// # RUN(ARMDIFFERENCE): allocate f2 mechanisms=all
+// # ARMDIFFERENCE-LABEL: unit f2:Body
+// # ARMDIFFERENCE: 32 bits, sets flags
+// # ARMDIFFERENCE-NEXT: Branch no overflow
+// # ARMDIFFERENCE: = Add ZExt32(Trunc(
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 25 of 25 of 25

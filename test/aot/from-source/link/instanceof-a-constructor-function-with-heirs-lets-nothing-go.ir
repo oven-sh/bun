@@ -1,0 +1,17 @@
+# The right operand is a constructor function that has an heir. The left operand is an heir's object, its own object, a stranger's object, a text, null.
+# -- source: main.js
+# function Stream() { this.open = true; }
+# function Readable() { Stream.call(this); this.size = 1; }
+# Object.setPrototypeOf(Readable.prototype, Stream.prototype);
+# function Other() { this.n = 2; }
+# function isStream(val) { return val instanceof Stream; }
+# print(isStream(new Readable()), isStream(new Stream()), isStream(new Other()), isStream("text"), isStream(null));
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true false false false
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true false false false

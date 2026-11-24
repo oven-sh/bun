@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# "use strict";
+# function behindACall(o, between) { let text = ""; for (const k in o) { between(o, k); text += k + (o[k] === undefined ? "_" : o[k]); } return text; }
+# const byName = { behindACall }, key = JSON.parse('"behindACall"');
+# const make = () => JSON.parse('{"ash":1,"birch":2,"cedar":3,"date":4,"elm":5,"fir":6,"gum":7,"hazel":8}');
+# print(byName[key](make(), (o, k) => { if (k === "cedar") delete o.cedar; }));
+# -- end of source
+# A read at the key of a for-in uses the enumerator's index, after a check.
+# Where nothing has run since the enumerator's step, the check relies on the step: the index of the name is below the count of names that the step found to be current.
+# Here a call comes between the step and the read, and it deletes that very name. So the check tests the object itself and fails, and the read is done as written: it returns undefined.
+# Fault injection, testing=AssumeEnumeratorCurrent: the check relies on the step even though other code has run.
+# No run with the fault alone is stored, because the read would take the cleared slot of the deleted name for a value.
+# With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the read checks the object's structure and order word against the enumerator's.
+# If they differ, the process crashes with a named error.
+# RUN(TAKEN): walk f1:Body mechanisms=all
+# TAKEN-NOT: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, {{*}} traits
+# TAKEN: EnumeratorGetByVal
+# RUN(LIED): walk f1:Body mechanisms=all testing=AssumeEnumeratorCurrent
+# LIED: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, {{*}} traits
+# LIED: EnumeratorGetByVal
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: ash1birch2cedar_date4elm5fir6gum7hazel8
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=AssumeEnumeratorCurrent,CheckBoundsAtRunTime
+# HELD: bun: internal AOT error:
+# HELD: crashed with SIGABRT

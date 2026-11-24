@@ -1,0 +1,48 @@
+# -- source: main.js
+# class A { constructor(x) { this.x = x; } }
+# class B { constructor(x) { this.x = x; this.y = 1; } }
+# const rows = [A, B], byName = new Map([["a", A], ["b", B]]), handlers = Object.create(null), names = ["row", "name", "both", "held"];
+# let held = A;
+# function change() { held = B; }
+# handlers[names[0]] = function (i) { return new rows[i & 1](i); };
+# handlers[names[1]] = function (i) { return new (byName.get(i & 1 ? "a" : "b"))(i); };
+# handlers[names[2]] = function (i) { return new (i & 1 ? A : B)(i); };
+# handlers[names[3]] = function (i) { return new held(i); };
+# for (let i = 0; i < 4; i++) { const line = []; for (const name of names) { const made = handlers[name](i); line.push(made.constructor.name + made.x + (made.y ? "y" : "")); } if (i === 1) change(); print(line.join()); }
+# -- end of source
+# Nobody sees who calls the handlers. Each makes an object of A or B: the class is asked for in full, and what is neither goes through the construction of any value.
+# f4 = row, f5 = name, f6 = both, f7 = held, f2 = A, f3 = B, L0 = A, L1 = B
+# RUN(ROW): walk f4 mechanisms=all
+# ROW-LABEL: code f4:Body
+# ROW: = TypeTest {{*}}testedType=f2
+# ROW: = TypeTest {{*}}testedType=f3
+# ROW: = NewObject {{*}}layout=L0
+# ROW: = Construct
+# ROW: = NewObject {{*}}layout=L1
+# RUN(NAME): walk f5 mechanisms=all
+# NAME-LABEL: code f5:Body
+# NAME: = TypeTest {{*}}testedType=f2
+# NAME: = TypeTest {{*}}testedType=f3
+# NAME: = NewObject {{*}}layout=L0
+# NAME: = Construct
+# NAME: = NewObject {{*}}layout=L1
+# Both arms are proven, so the second class is asked for nothing.
+# RUN(BOTH): walk f6 mechanisms=all
+# BOTH-LABEL: code f6:Body
+# BOTH: = TypeTest {{*}}testedType=f2
+# BOTH: = NewObject {{*}}layout=L0
+# BOTH: = NewObject {{*}}layout=L1
+# BOTH-NOT: = Construct
+# RUN(HELD): walk f7 mechanisms=all
+# HELD-LABEL: code f7:Body
+# HELD: = TypeTest {{*}}testedType=f2
+# HELD: = TypeTest {{*}}testedType=f3
+# HELD: = NewObject {{*}}layout=L0
+# HELD: = Construct
+# HELD: = NewObject {{*}}layout=L1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: A0,B0y,B0y,A0
+# ANSWERS-NEXT: B1y,A1,A1,A1
+# ANSWERS-NEXT: A2,B2y,B2y,B2y
+# ANSWERS-NEXT: B3y,A3,A3,B3y
+# ANSWERS-NEXT: exited with 0

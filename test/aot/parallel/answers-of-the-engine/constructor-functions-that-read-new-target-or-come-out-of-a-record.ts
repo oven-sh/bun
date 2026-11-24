@@ -1,5 +1,5 @@
 // A constructor function whose callee is known, or held to be known, is constructed in the place of the call: the object is made there under the layout of the class.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function Point(this: any, x: number): any { if (!new.target) return new (Point as any)(x + 100); this.x = x; this.y = new.target === Point ? 0 : 1; } // @ts-expect-error

@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
@@ -200,17 +199,10 @@ impl Ref {
     /// Represents a null state without using an extra bit.
     pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
 
-    /// Raw 64-bit representation **including** user bits. For round-tripping
-    /// through external pointer-packed storage (e.g. css `IdentOrRef`). Differs
-    /// from [`Self::as_u64`], which masks user bits for hashing/equality.
+    /// Raw 64-bit representation **including** user bits, which [`Self::as_u64`] masks.
     #[inline]
     pub const fn to_raw_bits(self) -> u64 {
         self.0
-    }
-    /// Reconstruct from a value previously returned by [`Self::to_raw_bits`].
-    #[inline]
-    pub const fn from_raw_bits(bits: u64) -> Ref {
-        Ref(bits)
     }
 
     /// General constructor exposing all three packed fields. Prefer `init` for
@@ -390,18 +382,6 @@ impl fmt::Debug for Ref {
     }
 }
 
-// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
-// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
-// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file`.
-/// A [`Source`]'s path paired with its raw bytes (used by virtual-module
-/// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
-#[derive(Clone, Copy)]
-pub struct PathContentsPair<'a> {
-    pub path: bun_paths::fs::Path<'a>,
-    pub contents: &'a [u8],
-}
-
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
@@ -450,44 +430,6 @@ impl IntoText for Box<[u8]> {
         Cow::Owned(self.into_vec())
     }
 }
-
-/// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
-/// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
-/// `Output::error_writer()` (the dominant call shape across the tree).
-pub trait IntoLogWrite {
-    type W: fmt::Write;
-    fn into_log_write(self) -> Self::W;
-}
-impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
-    type W = &'a mut W;
-    #[inline]
-    fn into_log_write(self) -> &'a mut W {
-        self
-    }
-}
-/// `fmt::Write` view over a `*mut bun_core::io::Writer`.
-pub struct IoWriterAdapter(*mut bun_core::io::Writer);
-impl fmt::Write for IoWriterAdapter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        if self.0.is_null() {
-            return Ok(());
-        }
-        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
-        // adapter header (see bun_core::io::Writer); callers hold it only for
-        // the duration of this `print` call.
-        unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
-    }
-}
-impl IntoLogWrite for *mut bun_core::io::Writer {
-    type W = IoWriterAdapter;
-    #[inline]
-    fn into_log_write(self) -> IoWriterAdapter {
-        IoWriterAdapter(self)
-    }
-}
-// NOTE: a `&mut *mut Writer` blanket can't coexist with the generic
-// `&mut W: fmt::Write` impl above (coherence reservation). Callers holding a
-// `&mut *mut Writer` deref to `*mut Writer` and hit the impl above.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Kind
@@ -575,6 +517,9 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
+/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
+pub const MAX_WHOLE_LINE_LEN: usize = 1000;
+
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
 #[derive(Clone)]
 pub struct Location {
@@ -588,18 +533,20 @@ pub struct Location {
     pub length: u32,
     // TODO: document or remove
     pub offset: usize,
-    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
-    pub line_text_start_column: u32,
+    /// Set by [`Location::init_or_null`] when a display cuts `line_text`: the byte offset of the error in it, plus one.
+    pub cut_around: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
     pub line: i32,
     // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
-    // original docs: 0-based, in bytes.
-    // but there is a place where this is emitted in output, implying one based character offset
+    // 1-based, in UTF-16 code units, from `init_or_null`.
     pub column: i32,
 }
+
+// `length` and `cut_around` share one word, so the new field adds no bytes.
+const _: () = assert!(core::mem::size_of::<Location>() == 72);
 
 impl Default for Location {
     fn default() -> Self {
@@ -609,14 +556,42 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
-            line_text_start_column: 0,
+            cut_around: None,
             line: 0,
             column: 0,
         }
     }
 }
 
+/// The excerpt of `line` around the byte at `offset`: 40 bytes before it and 80 from it, on UTF-8 boundaries.
+fn excerpt_range(line: &[u8], offset: usize) -> core::ops::Range<usize> {
+    let mut lo = offset.saturating_sub(40);
+    let mut hi = (offset + 80).min(line.len());
+    while lo > 0 && !bun_core::strings::is_utf8_char_boundary(line[lo]) {
+        lo -= 1;
+    }
+    while hi < line.len() && !bun_core::strings::is_utf8_char_boundary(line[hi]) {
+        hi += 1;
+    }
+    lo..hi
+}
+
 impl Location {
+    /// What a display shows of `line_text`, and the UTF-16 code units of the line that are in front of that part.
+    pub fn excerpt(&self) -> (&[u8], usize) {
+        let text = self.line_text.as_deref().unwrap_or_default();
+        let Some(around) = self.cut_around else {
+            return (text, 0);
+        };
+        let offset = (around.get() as usize - 1).min(text.len());
+        let kept = excerpt_range(text, offset);
+        // Same counter as `column`, over the bytes that are shown in front of the error.
+        let mut shown = ErrorPositionState::default();
+        shown.advance(text, kept.start, offset);
+        let column = usize::try_from(self.column).unwrap_or(0);
+        (&text[kept], column.saturating_sub(shown.column_number))
+    }
+
     /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
     pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -659,7 +634,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None, false)
+        Self::init_or_null_impl(_source, r, None)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -669,16 +644,14 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
-        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
+        Self::init_or_null_impl(_source, r, Some(tracker))
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
-        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             let file = Box::from(source.path.text);
@@ -692,7 +665,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Box::default()),
                     offset: 0,
-                    line_text_start_column: 0,
+                    cut_around: None,
                 });
             }
             let data = match tracker {
@@ -700,25 +673,19 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
+            let mut offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            let mut line_text_start_column = 0;
-            let is_too_long = full_line.len() > MAX_WHOLE_LINE_LEN;
-            // An error in the last 80 bytes of a shorter line keeps the whole line: bake's overlay pads by `column`.
-            let has_more_after = full_line.len() > EXCERPT_LEN_AFTER + offset_in_line;
-            // The key that marks a secret can be far from the error, so a redacted line is never cut.
-            if !redact_sensitive_information && (is_too_long || has_more_after) {
-                let kept = excerpt_range(full_line, offset_in_line);
-                if kept.start > 0 {
-                    // Same counter as `column_count`, over the kept bytes only.
-                    let mut before = ErrorPositionState::default();
-                    before.advance(full_line, kept.start, offset_in_line);
-                    line_text_start_column =
-                        u32::try_from(data.column_count.saturating_sub(before.column_number))
-                            .expect("int cast");
+            let mut cut_around = None;
+            if full_line.len() > 80 + offset_in_line {
+                // A longer line is stored as its excerpt: a one-line bundle can have thousands of diagnostics.
+                if full_line.len() > MAX_WHOLE_LINE_LEN {
+                    let kept = excerpt_range(full_line, offset_in_line);
+                    offset_in_line -= kept.start;
+                    full_line = &full_line[kept];
                 }
-                full_line = &full_line[kept];
+                let around = u32::try_from(offset_in_line + 1).expect("int cast");
+                cut_around = core::num::NonZeroU32::new(around);
             }
 
             return Some(Location {
@@ -733,53 +700,11 @@ impl Location {
                 },
                 line_text: Some(Box::from(full_line)),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
-                line_text_start_column,
+                cut_around,
             });
         }
         None
     }
-
-    /// What a `Location` keeps of `line_text` for an error at the 1-based `column` of its last line, and the `line_text_start_column` of it.
-    pub fn line_excerpt(line_text: &[u8], column: i32) -> (&[u8], u32) {
-        use bun_core::strings;
-        // As `Data::write_format` reads it: without the line breaks around it, `column` counts in what follows the last one.
-        let line = bun_core::trim_left(bun_core::trim_right(line_text, b"\r\n"), b"\n\r");
-        let line = &line[strings::last_index_of_char(line, b'\n').map_or(0, |at| at + 1)..];
-        if line.len() <= MAX_WHOLE_LINE_LEN {
-            return (line_text, 0);
-        }
-        let column = u32::try_from(column.saturating_sub(1)).unwrap_or(0);
-        let at = strings::wtf8_offset_of_utf16_index(line, column);
-        let kept = excerpt_range(line, at);
-        let before: u32 = strings::wtf8_codepoints(&line[kept.start..at])
-            .map(|(_, codepoint)| strings::codepoint_len_utf16(codepoint))
-            .sum();
-        (&line[kept], column.saturating_sub(before))
-    }
-}
-
-/// `bun check` and `bun lint` hide a longer line as not hand-written. A `Location` keeps an excerpt of it wherever the error is.
-pub const MAX_WHOLE_LINE_LEN: usize = 1000;
-const EXCERPT_LEN_BEFORE: usize = 40;
-const EXCERPT_LEN_AFTER: usize = 80;
-
-/// The bytes of `line` in the excerpt for an error at byte `at`: those around it, or the last ones when the line ends first.
-fn excerpt_range(line: &[u8], at: usize) -> core::ops::Range<usize> {
-    use bun_core::strings;
-    let mut hi = (at + EXCERPT_LEN_AFTER).min(line.len());
-    let mut lo = at
-        .saturating_sub(EXCERPT_LEN_BEFORE)
-        .min(hi.saturating_sub(EXCERPT_LEN_BEFORE + EXCERPT_LEN_AFTER));
-    // A UTF-8 sequence has at most 3 continuation bytes.
-    for _ in 0..3 {
-        if !strings::is_on_char_boundary(line, lo) {
-            lo -= 1;
-        }
-        if !strings::is_on_char_boundary(line, hi) {
-            hi += 1;
-        }
-    }
-    lo..hi
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -851,7 +776,8 @@ impl Data {
         };
 
         if let Some(location) = &self.location {
-            if let Some(line_text_) = location.line_text.as_deref() {
+            if location.line_text.is_some() {
+                let (line_text_, units_in_front) = location.excerpt();
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 // The creator of the location may have included the lines preceding its own line.
@@ -863,7 +789,7 @@ impl Data {
                         line_text,
                         usize::try_from(location.column - 1)
                             .expect("int cast")
-                            .saturating_sub(location.line_text_start_column as usize),
+                            .saturating_sub(units_in_front),
                     );
                     let gutter = bun_core::fmt::digit_count(location.line);
                     for (line, text) in
@@ -1323,22 +1249,11 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
-        self.tracked_range_data_with(source, r, text, false)
-    }
-
-    fn tracked_range_data_with(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: impl IntoText,
-        redact_sensitive_information: bool,
-    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
-                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1457,7 +1372,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let data = self.tracked_range_data_with(source, r, text, redact_sensitive_information);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind,
             data,
@@ -1921,14 +1836,13 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data_with(
+        let data = self.tracked_range_data(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
-            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -1963,12 +1877,11 @@ impl Log {
         )
     }
 
-    pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
-        let mut w = to.into_log_write();
+    pub fn print(&self, mut to: impl fmt::Write) -> fmt::Result {
         if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-            self.print_with_enable_ansi_colors::<true>(&mut w)
+            self.print_with_enable_ansi_colors::<true>(&mut to)
         } else {
-            self.print_with_enable_ansi_colors::<false>(&mut w)
+            self.print_with_enable_ansi_colors::<false>(&mut to)
         }
     }
 
@@ -2146,7 +2059,6 @@ pub struct Source<'a> {
 
     /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
     pub contents: Cow<'a, [u8]>,
-    pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
@@ -2161,7 +2073,6 @@ impl Default for Source<'_> {
         Source {
             path: bun_paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
-            contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
@@ -2433,17 +2344,6 @@ impl<'a> Source<'a> {
         }
     }
 
-    pub fn init_recycled_file(file: &PathContentsPair<'a>) -> crate::Result<Source<'a>> {
-        let mut source = Source {
-            path: file.path,
-            contents: Cow::Borrowed(file.contents),
-            contents_is_recycled: true,
-            ..Default::default()
-        };
-        source.path.namespace = b"file";
-        Ok(source)
-    }
-
     pub fn init_path_string(
         path_string: &'a (impl AsRef<[u8]> + ?Sized),
         contents: &'a (impl AsRef<[u8]> + ?Sized),
@@ -2467,6 +2367,19 @@ impl<'a> Source<'a> {
             path,
             contents: Cow::Owned(contents),
             ..Default::default()
+        }
+    }
+
+    /// A copy that owns nothing, to be put in `arena`, which drops nothing.
+    pub fn clone_in(&self, arena: &'a bun_alloc::Arena) -> Source<'a> {
+        let clone_in = |bytes: &Cow<'a, [u8]>| match bytes {
+            Cow::Borrowed(bytes) => Cow::Borrowed(*bytes),
+            Cow::Owned(bytes) => Cow::Borrowed(&*arena.alloc_slice_copy(bytes)),
+        };
+        Source {
+            contents: clone_in(&self.contents),
+            identifier_name: clone_in(&self.identifier_name),
+            ..*self
         }
     }
 
@@ -2692,11 +2605,6 @@ pub use ast_result::{
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
 pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
-pub mod transpiler_cache;
-// Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that
-// the `link_impl_*!` macro addresses as `$crate::__TranspilerCacheImpl__*`.
-// `$crate` resolves to this crate root, so the aliases must be reachable here.
-pub use transpiler_cache::*;
 
 pub use ast_memory_allocator::ASTMemoryAllocator;
 pub use b as B;
@@ -2747,6 +2655,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The value is a function that returns the value. See `defer_requires.rs` in the parser.
+        IsDeferredRequire,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();
@@ -3165,6 +3075,46 @@ mod location_tests {
             .collect();
         assert_eq!(lines, [1, -1, -1]);
     }
+
+    #[test]
+    fn the_excerpt_is_cut_around_the_byte_of_the_error() {
+        let mixed = "a\u{e9}\u{540d}\u{1f600}";
+        let long = format!("{}{mixed}", "\u{1f600}".repeat(251));
+        let long_offsets = (0..=long.len()).filter(|at| at % 97 == 0 || long.len() - at < 84);
+        let short = mixed.repeat(13);
+        for (line, offsets) in [
+            (short.as_bytes(), (0..=short.len()).collect::<Vec<_>>()),
+            (long.as_bytes(), long_offsets.collect()),
+        ] {
+            let contents = [b"first\n", line, b"\nlast"].concat();
+            let source = Source::init_path_string(b"excerpt.js" as &[u8], contents.as_slice());
+            let mut tracker = LineColumnTracker::default();
+            for offset in offsets {
+                let range = Range {
+                    loc: usize2loc(b"first\n".len() + offset),
+                    len: 1,
+                };
+                let location =
+                    Location::init_or_null_tracked(Some(&source), range, &mut tracker).unwrap();
+                let mut shown = line;
+                if line.len() > 80 + offset {
+                    let mut lo = offset.saturating_sub(40);
+                    let mut hi = offset + 80;
+                    while line[lo] & 0xC0 == 0x80 {
+                        lo -= 1;
+                    }
+                    while hi < line.len() && line[hi] & 0xC0 == 0x80 {
+                        hi += 1;
+                    }
+                    shown = &line[lo..hi];
+                }
+                assert_eq!(location.excerpt().0, shown, "offset {offset}");
+                let stored = location.line_text.as_deref().unwrap();
+                let whole = line.len() <= MAX_WHOLE_LINE_LEN;
+                assert_eq!(stored, if whole { line } else { shown }, "offset {offset}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3348,170 +3298,5 @@ mod line_column_tracker_tests {
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
         let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
         assert_eq!(bmp_pos.column_count, 19);
-    }
-}
-
-#[cfg(test)]
-mod excerpt_tests {
-    use super::*;
-
-    fn located(contents: &[u8], offset: usize, redact_sensitive_information: bool) -> Location {
-        let source = Source::init_path_string(b"excerpt-test.js" as &[u8], contents);
-        let range = Range {
-            loc: usize2loc(offset),
-            len: 1,
-        };
-        Location::init_or_null_impl(Some(&source), range, None, redact_sensitive_information)
-            .unwrap()
-    }
-
-    fn kept(location: &Location) -> (&[u8], u32) {
-        (
-            location.line_text.as_deref().unwrap(),
-            location.line_text_start_column,
-        )
-    }
-
-    #[test]
-    fn excerpt_range_is_40_bytes_before_and_80_after_or_the_last_120() {
-        let ascii = [b'a'; 300];
-        assert_eq!(excerpt_range(&ascii, 0), 0..80);
-        assert_eq!(excerpt_range(&ascii, 39), 0..119);
-        assert_eq!(excerpt_range(&ascii, 100), 60..180);
-        assert_eq!(excerpt_range(&ascii, 220), 180..300);
-        assert_eq!(excerpt_range(&ascii, 299), 180..300);
-        assert_eq!(excerpt_range(&ascii, 300), 180..300);
-        assert_eq!(excerpt_range(b"", 0), 0..0);
-        assert_eq!(excerpt_range(b"short", 2), 0..5);
-    }
-
-    #[test]
-    fn excerpt_range_ends_on_characters() {
-        // Byte 110 is the third byte of a `€` and byte 230 is its third byte too.
-        let euros = "\u{20AC}".repeat(100);
-        assert_eq!(excerpt_range(euros.as_bytes(), 150), 108..231);
-        // Bytes 163 and 283 are each the third byte of a 4-byte character.
-        let astral = format!("a{}", "\u{10400}".repeat(100));
-        assert_eq!(excerpt_range(astral.as_bytes(), 203), 161..285);
-        // Each end moves 3 bytes at most through bytes that start no character.
-        assert_eq!(excerpt_range(&[0x80; 300], 150), 107..233);
-    }
-
-    #[test]
-    fn a_line_of_up_to_1000_bytes_is_kept_whole_for_an_error_at_its_end() {
-        let mut line = vec![b'a'; 999];
-        line.push(b']');
-        assert_eq!(kept(&located(&line, 999, false)), (&line[..], 0));
-
-        // The same line after another line, with either kind of line break.
-        for first in [&b"let ok;\n"[..], b"let ok;\r\n"] {
-            let contents = [first, &line[..], b"\n"].concat();
-            let location = located(&contents, first.len() + 999, false);
-            assert_eq!(kept(&location), (&line[..], 0));
-            assert_eq!((location.line, location.column), (2, 1000));
-        }
-    }
-
-    #[test]
-    fn a_longer_line_keeps_its_last_120_bytes_for_an_error_at_its_end() {
-        let mut line = vec![b'a'; 1000];
-        line.push(b']');
-        assert_eq!(kept(&located(&line, 1000, false)), (&line[881..], 881));
-
-        for first in [&b"let ok;\n"[..], b"let ok;\r\n"] {
-            let contents = [first, &line[..], b"\n"].concat();
-            let location = located(&contents, first.len() + 1000, false);
-            assert_eq!(kept(&location), (&line[881..], 881));
-            assert_eq!((location.line, location.column), (2, 1001));
-        }
-
-        // 600 `é` are 1,200 bytes and 600 columns. The last 120 bytes start inside one.
-        let accents = format!("{}]", "\u{E9}".repeat(600));
-        let location = located(accents.as_bytes(), 1200, false);
-        assert_eq!(kept(&location), (&accents.as_bytes()[1080..], 540));
-    }
-
-    #[test]
-    fn a_mid_line_error_keeps_40_bytes_before_it_and_80_after() {
-        let line = [&[b'a'; 150][..], b"]", &[b'b'; 150]].concat();
-        assert_eq!(kept(&located(&line, 150, false)), (&line[110..230], 110));
-    }
-
-    #[test]
-    fn a_redacted_line_is_not_cut_at_its_end() {
-        let mut line = vec![b'a'; 1000];
-        line.push(b']');
-        assert_eq!(kept(&located(&line, 1000, true)), (&line[..], 0));
-    }
-
-    #[test]
-    fn a_redacted_line_is_not_cut_around_a_mid_line_error() {
-        let line = [&[b'a'; 150][..], b"]", &[b'b'; 150]].concat();
-        assert_eq!(kept(&located(&line, 150, true)), (&line[..], 0));
-        // The same error at the start of a line of more than 1,000 bytes.
-        let long = [&b"]"[..], &[b'b'; 1200]].concat();
-        assert_eq!(kept(&located(&long, 0, true)), (&long[..], 0));
-    }
-
-    #[test]
-    fn line_excerpt_keeps_a_line_of_up_to_1000_bytes_as_given() {
-        let line = vec![b'a'; 1000];
-        assert_eq!(Location::line_excerpt(&line, 1000), (&line[..], 0));
-        let with_breaks = [b"\n", &line[..], b"\r\n"].concat();
-        assert_eq!(
-            Location::line_excerpt(&with_breaks, 1000),
-            (&with_breaks[..], 0)
-        );
-    }
-
-    #[test]
-    fn line_excerpt_cuts_a_longer_line_around_the_column() {
-        let mut line = vec![b'a'; 1000];
-        line.push(b']');
-        let end = (&line[881..], 881);
-        assert_eq!(Location::line_excerpt(&line, 1001), end);
-        assert_eq!(Location::line_excerpt(&line, 501), (&line[460..580], 460));
-        assert_eq!(Location::line_excerpt(&line, 1), (&line[..80], 0));
-        // No column.
-        assert_eq!(Location::line_excerpt(&line, 0), (&line[..80], 0));
-        assert_eq!(Location::line_excerpt(&line, -1), (&line[..80], 0));
-        assert_eq!(Location::line_excerpt(&line, i32::MIN), (&line[..80], 0));
-        // A column past the end puts the caret right after the excerpt.
-        assert_eq!(Location::line_excerpt(&line, 1002), (&line[881..], 881));
-        assert_eq!(Location::line_excerpt(&line, 5000), (&line[881..], 4879));
-    }
-
-    #[test]
-    fn line_excerpt_counts_the_column_in_the_last_line_without_its_line_breaks() {
-        let mut line = vec![b'a'; 1000];
-        line.push(b']');
-        let end = (&line[881..], 881);
-        // The shapes that `get_lines_in_text` gives for a CSS line after the first one.
-        for text in [
-            [b"\n", &line[..], b"\n"].concat(),
-            [b"\n", &line[..]].concat(),
-            [&line[..], b"\r"].concat(),
-            [b"\n", &line[..], b"\r\n"].concat(),
-            [b"a line before\n", &line[..]].concat(),
-        ] {
-            assert_eq!(Location::line_excerpt(&text, 1001), end);
-        }
-    }
-
-    #[test]
-    fn line_excerpt_counts_utf16_columns() {
-        // 600 `é`: 1,200 bytes, 600 columns.
-        let accents = format!("{}]", "\u{E9}".repeat(600));
-        let accents = accents.as_bytes();
-        assert_eq!(
-            Location::line_excerpt(accents, 601),
-            (&accents[1080..], 540)
-        );
-        // 300 U+10400: 1,200 bytes, 600 columns.
-        let astral = format!("{}]", "\u{10400}".repeat(300));
-        let astral = astral.as_bytes();
-        assert_eq!(Location::line_excerpt(astral, 601), (&astral[1080..], 540));
-        // Column 600 is the second half of the last pair. The caret, 600 - 1 - 541 columns in, is at the pair.
-        assert_eq!(Location::line_excerpt(astral, 600), (&astral[1080..], 541));
     }
 }

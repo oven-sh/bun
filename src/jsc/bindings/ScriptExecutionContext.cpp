@@ -50,7 +50,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
-    , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
+    , m_vmHandle(WebCore::clientData(*vm)->vmHandle.get())
     , m_identifier(initialIdentifier())
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
@@ -62,7 +62,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
-    , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
+    , m_vmHandle(WebCore::clientData(*vm)->vmHandle.get())
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
@@ -186,18 +186,6 @@ JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 }
 
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
-extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
-
-// JS thread (this context's thread): MessagePort / BroadcastChannel / worker global scope
-// keep-alives. Direct, so a ref taken before teardown is still released during it.
-void ScriptExecutionContext::refEventLoop()
-{
-    Bun__eventLoop__refKeepAlive(m_bunVM, 1);
-}
-void ScriptExecutionContext::unrefEventLoop()
-{
-    Bun__eventLoop__refKeepAlive(m_bunVM, -1);
-}
 
 ScriptExecutionContext::~ScriptExecutionContext()
 {
@@ -253,6 +241,7 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         activeDOMObject.stop();
         return ShouldContinue::Yes;
     });
+    m_keepAliveOfCollectedObjects.setActive(false);
 
     if (isForModuleGraph()) {
         if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
@@ -283,6 +272,13 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
+static void postThroughHandle(const BunVmHandleRef* handle, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto task = makeUnique<EventLoopTask>(WTF::move(lambda));
+    if (Bun__VmHandle__post(handle, task.get(), loopKind))
+        task.release();
+}
+
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
@@ -291,15 +287,15 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     // deleted unrun once it does not (and anything queued during its teardown is
     // released unrun by that teardown). Posting inside the critical section would make
     // every other context's lookup wait on this VM's queue.
-    const BunVmHandleRef* retained = nullptr;
+    RefPtr<const BunVmHandleRef> retained;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         auto* context = allScriptExecutionContextsMap().get(identifier);
         if (!context || context->isTerminating())
             return false;
-        retained = Bun__VmHandle__retainRef(context->m_vmHandle);
+        retained = context->m_vmHandle;
     }
-    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
+    postThroughHandle(retained.get(), loopKind, WTF::move(task));
     return true;
 }
 
@@ -369,18 +365,18 @@ bool ScriptExecutionContext::isContextThread()
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     ScriptExecutionContext* context = nullptr;
-    const BunVmHandleRef* retained = nullptr;
+    RefPtr<const BunVmHandleRef> retained;
     {
         Locker locker { allScriptExecutionContextsMapLock };
         context = allScriptExecutionContextsMap().get(identifier);
         if (!context)
             return false;
         if (!context->isContextThread())
-            retained = Bun__VmHandle__retainRef(context->m_vmHandle);
+            retained = context->m_vmHandle;
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular);
+        postThroughHandle(retained.get(), BunLoopKind::Regular, WTF::move(task));
         return true;
     }
     // On its own thread the context cannot be destroyed under us.
@@ -453,17 +449,12 @@ void ScriptExecutionContext::markTerminating()
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    Bun__VmHandle__queueTaskConcurrently(m_vmHandle, new EventLoopTask(WTF::move(lambda)));
+    postThroughHandle(m_vmHandle, BunLoopKind::Regular, WTF::move(lambda));
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     Bun__VM__queueTask(m_bunVM, new EventLoopTask(WTF::move(lambda)));
-}
-// Executes the task on context's thread asynchronously.
-void ScriptExecutionContext::postTask(EventLoopTask* task)
-{
-    Bun__VM__queueTask(m_bunVM, task);
 }
 // Same thread; runs on the next loop iteration, after I/O and timers have had a turn.
 void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda)

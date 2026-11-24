@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# 'use strict';
+# class Leaf { constructor(n) { this.tag = n; } }
+# const kept = [];
+# let last = 0;
+# function inFront(v) { const tag = v.tag; if (v !== true) kept.push(tag); last = tag; }
+# function behind(v) { if (v === true) return 0; const tag = v.tag; kept.push(tag); return tag; }
+# let said = '';
+# for (let r = 0; r < 4; r++) { inFront(r & 1 ? new Leaf(r) : true); said += typeof last + behind(r & 1 ? new Leaf(r) : true); }
+# print(said + kept.length);
+# -- end of source
+# A read under a written name is scanned when its list is first asked for. `tag` is written in front of the comparison and first asked for where `v` is not `true`; behind the rejoin it is what
+# `true.tag` gave as well. Scanned off `v` without `true` it was proven a number, and eight programs of this form stopped. It reads its object as the object lay where the read is written.
+# f1 = inFront, f2 = behind
+# RUN(INFRONT): summary f1
+# INFRONT: Read Parameter 0 "tag"
+# RUN(BEHIND): summary f2
+# BEHIND: Read [[join]] "tag"
+# BEHIND: edge Parameter 0 -> [[join]] passes=undefined|null|false|number|string|symbol|bigint
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: undefined0number1undefined0number34

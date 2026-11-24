@@ -16,12 +16,10 @@
 # -- end of source
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(MADE): walk f1 mechanisms=all-Inlining
-# REQUIRES(MADE): entries-of-bun
 # MADE-LABEL: code f1:Body
 # MADE: CheckProof {{*}} checkedType=undefined|null|L{{*}} typeWithoutProof=absent|anything source=Field
 # MADE: = PutSlot{{*}} key="inner"
 # RUN(STORED): walk f2 mechanisms=all-Inlining
-# REQUIRES(STORED): entries-of-bun
 # STORED-LABEL: code f2:Body
 # STORED: CheckProof {{*}} checkedType=L{{*}} typeWithoutProof=absent|anything source=Field
 # STORED: = PutSlot{{*}} key="inner"

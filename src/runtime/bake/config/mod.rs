@@ -18,18 +18,12 @@ const API_NAME: &str = "app";
 
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub(crate) struct UserOptions {
+    pub(crate) bundler_options: SplitBundlerOptions,
     /// Backs the transpilers set up from these options.
     pub(crate) arena: Arena,
 
     pub(crate) root: ZBox,
     pub(crate) framework: Framework,
-    pub(crate) bundler_options: SplitBundlerOptions,
-}
-
-impl Drop for UserOptions {
-    fn drop(&mut self) {
-        self.bundler_options.destroy_plugin();
-    }
 }
 
 impl UserOptions {
@@ -80,26 +74,6 @@ impl UserOptions {
             }
         }
 
-        match Self::parse_framework_root_and_plugins(config, global, &mut bundler_options) {
-            Ok((framework, root)) => Ok(UserOptions {
-                root,
-                framework,
-                bundler_options,
-                arena,
-            }),
-            Err(err) => {
-                // `UserOptions` was never built, so its `Drop` will not free the plugin.
-                bundler_options.destroy_plugin();
-                Err(err)
-            }
-        }
-    }
-
-    fn parse_framework_root_and_plugins(
-        config: JSValue,
-        global: &JSGlobalObject,
-        bundler_options: &mut SplitBundlerOptions,
-    ) -> JsResult<(Framework, ZBox)> {
         let framework = Framework::from_js(
             match config.get(global, "framework")? {
                 Some(v) => v,
@@ -111,7 +85,7 @@ impl UserOptions {
                 }
             },
             global,
-            bundler_options,
+            &mut bundler_options,
         )?;
 
         let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
@@ -137,6 +111,11 @@ impl UserOptions {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        Ok((framework, root))
+        Ok(UserOptions {
+            root,
+            framework,
+            bundler_options,
+            arena,
+        })
     }
 }

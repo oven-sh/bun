@@ -20,8 +20,9 @@
 # RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
 # NET: 25
 # NET-NEXT: went on
-# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:RuntimeOperation/NewClass/MemberGuards mechanisms=all
-# LIE: AOT: f{{*}} at {{*}}: the rows of effects of operation:NewClass and of runtime:operationAOTNewClass say that the call will not write MemberGuards, and under it guards that held have ended, guards were armed or have begun. This is a bug in Bun.
+# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RuntimeOperation/NewClass/MemberGuards mechanisms=all
+# LIE: bun: internal AOT error: effects check failed
+# LIE-NEXT: the declared effects of operation:NewClass and of runtime:operationAOTNewClass say that the call does not write MemberGuards, but guards were invalidated, guards were armed or started
 # LIE-NOT: went on
 # LIE: crashed
 # LIE: with

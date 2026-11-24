@@ -2,7 +2,9 @@ use core::ptr::NonNull;
 
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
+use bun_core::vec::BorrowedBuf;
 use bun_options_types::Format;
+use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
@@ -198,36 +200,74 @@ unsafe extern "C" {
 /// `input` (WTF-8, non-ASCII from `first_non_ascii`) as a UTF-16 string JSC owns, written in place.
 fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
     use bun_core::strings;
-    let tail = &input[first_non_ascii..];
+    let (ascii, tail) = input.split_at(first_non_ascii);
     if strings::is_valid_utf8(tail) {
-        let len = first_non_ascii + strings::element_length_utf8_into_utf16(tail);
-        let (string, units) = BunString::create_uninitialized_utf16(len);
+        let tail = WithUtf16Len::utf8(tail);
+        let (string, units) = BunString::create_uninitialized_utf16(ascii.len() + tail.utf16_len());
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        // SAFETY: valid UTF-8 converts to exactly `len` units; `units` is `len` u16s, 2-byte aligned.
-        let written = unsafe {
-            strings::write_wtf8_as_utf16le(input, first_non_ascii, units.as_mut_ptr().cast::<u8>())
-        };
-        debug_assert_eq!(written, 2 * len);
+        let (ascii_units, tail_units) = units.split_at_mut(ascii.len());
+        strings::copy_u8_into_u16(ascii_units, ascii);
+        let mut tail_units = BorrowedBuf::from(tail_units);
+        let result =
+            simdutf::convert::utf8::to::utf16::with_errors::le(tail, tail_units.unfilled());
+        debug_assert!(result.is_successful());
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.
     BunString::clone_utf16(&strings::wtf8_to_utf16_alloc(input).expect("non-ASCII input"))
 }
 
-impl CachedBytecode {
-    // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
-    // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
-    // the handle and must call `deref()` (or drop via `allocator()`) to free.
-    pub(crate) fn generate(
+/// The payload of a `JSC::CachedBytecode`, and a reference to it.
+struct Generated {
+    bytes: NonNull<u8>,
+    size: usize,
+    handle: NonNull<CachedBytecode>,
+}
+
+impl core::ops::Deref for Generated {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `handle` keeps its payload alive.
+        unsafe { core::slice::from_raw_parts(self.bytes.as_ptr(), self.size) }
+    }
+}
+
+impl Drop for Generated {
+    fn drop(&mut self) {
+        CachedBytecode__deref(CachedBytecode::opaque_mut(self.handle.as_ptr()));
+    }
+}
+
+impl Generated {
+    /// `generate` passes the out-params on to C++, which fills them in if it returns true.
+    fn new(
+        generate: impl FnOnce(
+            &mut Option<NonNull<u8>>,
+            &mut usize,
+            &mut Option<NonNull<CachedBytecode>>,
+        ) -> bool,
+    ) -> Option<Self> {
+        let (mut bytes, mut size, mut handle) = (None, 0, None);
+        if !generate(&mut bytes, &mut size, &mut handle) {
+            return None;
+        }
+        Some(Self {
+            bytes: bytes?,
+            size,
+            handle: handle?,
+        })
+    }
+
+    fn from_source(
         format: Format,
         input: &[u8],
         source_provider_url: &BunString,
         depth: u32,
         optimize: bool,
         external_strings: Option<NonNull<EncoderStringTable>>,
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
+    ) -> Option<Self> {
         let f = match format {
             Format::Esm => generateCachedModuleByteCodeFromSourceCode,
             Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
@@ -240,40 +280,21 @@ impl CachedBytecode {
             Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
             None => BunString::clone_latin1(input),
         };
-        let mut this: Option<NonNull<CachedBytecode>> = None;
-        let mut out_size: usize = 0;
-        let mut out_ptr: Option<NonNull<u8>> = None;
-        // SAFETY: out-params are valid for write; `source` is live for the call.
-        let ok = unsafe {
+        // SAFETY: `source` is live for the call.
+        Self::new(|bytes, size, handle| unsafe {
             f(
                 source_provider_url,
                 &source,
                 depth,
                 optimize,
-                &raw mut out_ptr,
-                &raw mut out_size,
-                &raw mut this,
+                bytes,
+                size,
+                handle,
                 external_strings,
             )
-        };
-        if !ok {
-            return None;
-        }
-        // SAFETY: on success both out-params are non-null and the slice lives until `deref()`.
-        let slice = unsafe { bun_core::ffi::slice(out_ptr.unwrap().as_ptr(), out_size) };
-        Some((slice, this.unwrap()))
+        })
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// The `bun_alloc::Allocator` marker trait has no
-// `alloc`/`free` methods to dispatch through — so "free → deref" semantics
-// cannot ride the trait object. Call sites that would have freed through this
-// allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly.
-// ──────────────────────────────────────────────────────────────────────────
-
-impl bun_alloc::Allocator for CachedBytecode {}
 
 /// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
 /// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
@@ -294,7 +315,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
-    let (bytes, handle) = CachedBytecode::generate(
+    let bytecode = Generated::from_source(
         format,
         source,
         source_provider_url,
@@ -302,12 +323,12 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
         optimize,
         external_strings,
     )?;
-    let owned = Box::<[u8]>::from(bytes);
-    // `handle` was just produced by C++ and is valid until deref;
-    // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the
-    // centralised zero-byte deref proof.
-    CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
-    Some(owned)
+    Some(Box::from(&*bytecode))
+}
+
+/// For a VM of this process. `depth`: of the functions that are compiled.
+pub fn generate(format: Format, source: &[u8], url: &BunString, depth: u32) -> Option<Box<[u8]>> {
+    __bun_jsc_generate_cached_bytecode(format, source, url, depth, false, None)
 }
 
 /// A `JSC::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.
@@ -342,7 +363,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_destroy(encoder: NonNull<BytecodeL
     unsafe { Bun__BytecodeLinkEncoder__destroy(encoder.as_ptr()) }
 }
 
-/// Parses `source` and adds it to the link's payload; false on a parse error. The source text is what `generate` would
+/// Parses `source` and adds it to the link's payload; false on a parse error. The source text is what `from_source` would
 /// encode; `names` is what an order file calls its code.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
@@ -426,21 +447,18 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     encoder: NonNull<BytecodeLinkEncoder>,
     module_count: usize,
 ) -> Option<bun_bundler::bytecode_order::LinkedPayload> {
-    let mut bytes: Option<NonNull<u8>> = None;
-    let mut size: usize = 0;
-    let mut handle: Option<NonNull<CachedBytecode>> = None;
     let mut entry_offsets = vec![0u32; module_count];
     let mut region_ends = [0u32; bun_resolver::LINKED_BYTECODE_REGION_COUNT];
     let mut named_hot_functions = 0u32;
     let mut placed_hot_functions = 0u32;
     let mut functions_without_name = 0u32;
     // SAFETY: out-params are initialized locals of the sizes C++ expects.
-    let ok = unsafe {
+    let bytecode = Generated::new(|bytes, size, handle| unsafe {
         Bun__BytecodeLinkEncoder__finish(
             encoder.as_ptr(),
-            &raw mut bytes,
-            &raw mut size,
-            &raw mut handle,
+            bytes,
+            size,
+            handle,
             entry_offsets.as_mut_ptr(),
             entry_offsets.len(),
             region_ends.as_mut_ptr(),
@@ -448,16 +466,11 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
             &raw mut placed_hot_functions,
             &raw mut functions_without_name,
         )
-    };
-    let (true, Some(bytes), Some(handle)) = (ok, bytes, handle) else {
-        return None;
-    };
+    })?;
     // Room for the region ends the bundler appends (`bun_bundler::bytecode_order::payload_file`), so that the payload
     // is copied once.
-    let mut payload = Vec::with_capacity(size + size_of_val(&region_ends));
-    // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
-    payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
-    CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
+    let mut payload = Vec::with_capacity(bytecode.len() + size_of_val(&region_ends));
+    payload.extend_from_slice(&bytecode);
     Some(bun_bundler::bytecode_order::LinkedPayload {
         payload,
         entry_offsets,
@@ -469,8 +482,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_destroy_bytecode_cache_vm() {
+pub fn destroy_bytecode_cache_vm() {
     unsafe extern "C" {
         safe fn Bun__destroyBytecodeCacheVM();
     }
@@ -528,21 +540,6 @@ pub(crate) fn __bun_jsc_host_builtins() -> &'static [u8] {
     }
 }
 
-fn take_bytecode(
-    ok: bool,
-    bytes: Option<NonNull<u8>>,
-    size: usize,
-    handle: Option<NonNull<CachedBytecode>>,
-) -> Option<Box<[u8]>> {
-    let (true, Some(bytes), Some(handle)) = (ok, bytes, handle) else {
-        return None;
-    };
-    // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
-    let owned = Box::<[u8]>::from(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
-    CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
-    Some(owned)
-}
-
 /// `bun build --compile --bytecode`: bytecode for this executable's internal module `id` (an InternalModuleRegistry
 /// field index), generated the way InternalModuleRegistry consumes it. `depth` bounds nested-function code blocks
 /// (`u32::MAX` = all of them; 0 = just the module wrapper's own).
@@ -553,21 +550,11 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
-    let mut bytes: Option<NonNull<u8>> = None;
-    let mut size: usize = 0;
-    let mut handle: Option<NonNull<CachedBytecode>> = None;
-    // SAFETY: out-params are initialized locals; C++ fills them on success.
-    let ok = unsafe {
-        Bun__generateInternalModuleBytecode(
-            id,
-            depth,
-            &raw mut bytes,
-            &raw mut size,
-            &raw mut handle,
-            external_strings,
-        )
-    };
-    take_bytecode(ok, bytes, size, handle)
+    // SAFETY: `external_strings` is a live table, if any.
+    let bytecode = Generated::new(|bytes, size, handle| unsafe {
+        Bun__generateInternalModuleBytecode(id, depth, bytes, size, handle, external_strings)
+    })?;
+    Some(Box::from(&*bytecode))
 }
 
 /// Same, for an internal module of another bun executable (cross-compiling): `source`, `name` and `url` are that
@@ -582,11 +569,8 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode_from_source(
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
-    let mut bytes: Option<NonNull<u8>> = None;
-    let mut size: usize = 0;
-    let mut handle: Option<NonNull<CachedBytecode>> = None;
-    // SAFETY: the three slices are valid for their lengths for the duration of the call; out-params as above.
-    let ok = unsafe {
+    // SAFETY: the three slices are valid for their lengths for the duration of the call.
+    let bytecode = Generated::new(|bytes, size, handle| unsafe {
         Bun__generateInternalModuleBytecodeFromSource(
             source.as_ptr(),
             source.len(),
@@ -596,11 +580,11 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode_from_source(
             url.len(),
             source_stamp,
             depth,
-            &raw mut bytes,
-            &raw mut size,
-            &raw mut handle,
+            bytes,
+            size,
+            handle,
             external_strings,
         )
-    };
-    take_bytecode(ok, bytes, size, handle)
+    })?;
+    Some(Box::from(&*bytecode))
 }

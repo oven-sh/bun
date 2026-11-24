@@ -1,4 +1,4 @@
-// STATISTIC: LiteralArgumentsTakenApart = 0
+// STATISTIC: LiteralArgumentsScalarized = 0
 const told = [];
 const spy = name => ({ toString() { told.push(name); return "GET"; } });
 function withMethod(status) { return new Response("b", { status, method: spy("method") }); }

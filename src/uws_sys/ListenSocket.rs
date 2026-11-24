@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_core::ZStr;
 
 use crate::{SslCtx, us_socket_t};
 
@@ -9,8 +10,24 @@ bun_opaque::opaque_ffi! {
     pub struct ListenSocket;
 }
 
+/// Closed on drop.
+#[repr(transparent)]
+pub struct OwnedListenSocket(pub(crate) core::ptr::NonNull<ListenSocket>);
+
+impl OwnedListenSocket {
+    pub fn as_ptr(&self) -> *mut ListenSocket {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedListenSocket {
+    fn drop(&mut self) {
+        ListenSocket::opaque_mut(self.as_ptr()).close()
+    }
+}
+
 impl ListenSocket {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         us_listen_socket_close(self)
     }
 
@@ -43,7 +60,7 @@ impl ListenSocket {
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
     /// stores the pointer past this call, so the caller cannot legitimately
     /// hold exclusive `&mut` access.
-    pub fn add_server_name(&mut self, hostname: &core::ffi::CStr, ssl_ctx: *mut SslCtx) {
+    pub fn add_server_name(&mut self, hostname: &ZStr, ssl_ctx: *mut SslCtx) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it).

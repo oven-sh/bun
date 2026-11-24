@@ -33,9 +33,7 @@
 # print(firstWanted(0, { x: 1, y: 2 }), firstWanted(1, { x: 1, y: 2 }), firstWanted(2, { x: 1, y: 2 }));
 # -- end of source
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# REQUIRES(ANSWERS): entries-of-bun
 # ANSWERS: x=1! y=2! 1 x=1! y=2! 1 x=3. y=4. 1
 # ANSWERS: x=1 y=2 x=1 y=2 none
 # RUN(NEVER): walk f2 f3 mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: OwnEntriesFlat

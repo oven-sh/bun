@@ -6,8 +6,9 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
+use bun_core::strings;
+use bun_paths::Path;
 use bun_paths::fs::Path as FsPath;
-use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
 
 /// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
@@ -18,21 +19,44 @@ pub enum OutputSink<'a> {
     /// buffer (statically dispatched — this is the throughput-sensitive user).
     /// The pipe owns the rewriter that owns this sink, so the back-reference
     /// invariant holds structurally.
-    Buffer(bun_ptr::BackRef<bun_ptr::JsCell<Vec<u8>>>),
+    Buffer(bun_ptr::BackRef<OutputBuffer>),
     /// The bundler's HTML scanner.
     Callback(Box<dyn FnMut(&[u8]) + 'a>),
+}
+
+#[derive(Default)]
+pub struct OutputBuffer {
+    pub bytes: bun_ptr::JsCell<Vec<u8>>,
+    /// There was no memory for a chunk. What was held and what follows is dropped.
+    pub is_incomplete: core::cell::Cell<bool>,
+}
+
+impl OutputBuffer {
+    #[inline]
+    fn append(&self, chunk: &[u8]) {
+        self.bytes.with_mut(|bytes| {
+            if chunk.len() <= bytes.capacity() - bytes.len() || self.grow(bytes, chunk.len()) {
+                bytes.extend_from_slice(chunk);
+            }
+        });
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&self, bytes: &mut Vec<u8>, additional: usize) -> bool {
+        if self.is_incomplete.get() || bytes.try_reserve(additional).is_err() {
+            *bytes = Vec::new();
+            self.is_incomplete.set(true);
+        }
+        !self.is_incomplete.get()
+    }
 }
 
 impl lol_html::OutputSink for OutputSink<'_> {
     #[inline]
     fn handle_chunk(&mut self, chunk: &[u8]) {
         match self {
-            // lol-html signals end-of-document with one zero-length chunk.
-            OutputSink::Buffer(buffer) => {
-                if !chunk.is_empty() {
-                    buffer.with_mut(|buffer| buffer.extend_from_slice(chunk));
-                }
-            }
+            OutputSink::Buffer(buffer) => buffer.append(chunk),
             OutputSink::Callback(callback) => Self::call(callback, chunk),
         }
     }
@@ -68,17 +92,29 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(&mut self, written: &[u8], kind: ImportKind) -> Result<(), Error> {
+        // In the path of a URL `\` is a separator.
+        let end = strings::index_of_any(written, b"?#").unwrap_or(written.len());
+        let (url_path, rest) = written.split_at(end);
+        let has_scheme =
+            strings::index_of_any(url_path, b":/\\").is_some_and(|at| url_path[at] == b':');
+        let with_slashes = match strings::replace_char(url_path, b'\\', b'/') {
+            Cow::Owned(converted) if !has_scheme && bun_paths::volume(written).is_empty() => {
+                Cow::Owned([&converted, rest].concat())
+            }
+            _ => Cow::Borrowed(written),
+        };
+        let input_path: &[u8] = &with_slashes;
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
+        let mut resolved;
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::get().top_level_dir(),
-                &[&input_path[1..]],
-            )
+            resolved = Path::resolve(&[fs::FileSystem::get().top_level_dir(), &input_path[1..]]);
+            resolved.copy_trailing_sep_from(input_path);
+            &resolved
         }
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+        else if written.len() > 2 && written[0] != b'.' && written[1] != b'/' {
             'blk: {
                 let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
                 else {
@@ -89,13 +125,13 @@ impl<'a> HTMLScanner<'a> {
                     break 'blk input_path;
                 }
                 // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
+                let dirname = bun_paths::dirname_or_root(self.source.path.text());
+                if !bun_paths::is_absolute(dirname) {
                     break 'blk input_path;
                 }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
+                resolved = Path::resolve(&[dirname, input_path]);
+                resolved.copy_trailing_sep_from(input_path);
+                if sys::exists_z(&resolved) {
                     resolved.as_bytes()
                 } else {
                     input_path

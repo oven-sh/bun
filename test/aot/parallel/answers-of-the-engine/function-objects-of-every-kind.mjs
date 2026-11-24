@@ -1,5 +1,5 @@
 // function objects of every kind: name, length, prototype, added properties, new, bind, toString, caller, keys of maps
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function show(value) { return typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? "object" : String(value); }
 function describe(f, key) { const d = Object.getOwnPropertyDescriptor(f, key); return d === undefined ? "none" : (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-") + " " + show(d.value); }

@@ -37,7 +37,8 @@ if (process.argv.length > 9) name();
   const rows = (stdout + stderr).split("\n").filter(line => line.startsWith("aot: forms: "));
   expect(rows.filter(row => row.includes("not named in the schema"))).toEqual([]);
   // The context of node:util's inspect() lists `circular?` and `seenRefs?`, which no maker gives: they are read in line, outside of loops too.
-  expect(rows.filter(row => row.startsWith("aot: forms: GetSlotOrUndefined FieldLeftOutByMakers open: "))).toHaveLength(
-    1,
-  );
+  // The code of some of them is longer than a call would be, which the row says in parentheses.
+  expect(
+    rows.filter(row => /^aot: forms: GetSlotOrUndefined FieldLeftOutByMakers (?:\(.*\) )?open: /.test(row)),
+  ).toHaveLength(1);
 });

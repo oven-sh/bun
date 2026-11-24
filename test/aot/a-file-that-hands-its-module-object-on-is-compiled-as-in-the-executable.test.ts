@@ -36,7 +36,7 @@ const handsOn = {
 // Not met yet: how many forms of the functions of the product the executable and the test run hold today. The case runs all the same, and fails once the two builds hold the same;
 // a case beside it holds the two numbers.
 const notYet: Record<string, readonly [executable: number, testRun: number]> = {
-  "its module object": [8, 16],
+  "its module object": [8, 10],
 };
 
 const files = [...Object.keys(product), "product/view.cjs"].flatMap(name =>

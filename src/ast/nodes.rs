@@ -957,7 +957,7 @@ impl DeclaredSymbol {
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {
-        let entries = decls.entries.slice();
+        let entries = &decls.entries;
         let is_top_level: &[bool] = entries.items::<"is_top_level", bool>();
         let refs: &[Ref] = entries.items::<"ref_", Ref>();
 

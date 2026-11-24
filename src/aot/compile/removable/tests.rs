@@ -330,6 +330,34 @@ fn a_member_at_the_end_of_a_long_chain_of_enum_members_is_a_constant() {
 }
 
 #[test]
+fn long_chains_are_removable() {
+    let head = "function f(): any {} let a = f(); const MARK = ";
+    let forms = [
+        ("(a", ", a", ");", true),
+        ("(f()", ", a", ");", false),
+        ("(a", ", a", ", f());", false),
+        ("a", " && a", ";", true),
+        ("a", " || a", " || f();", false),
+        ("a", " ?? a", ";", true),
+        ("a", " === a", ";", true),
+        ("(a", " + a", ") === \"\";", false),
+        ("(\"\" + typeof a", " + typeof a", ") == \"t\";", false),
+    ];
+    let sources =
+        forms.map(|(first, link, tail, _)| [head, first, &link.repeat(100_000), tail].concat());
+    let programs: Vec<(String, &str)> = (1..)
+        .zip(&sources)
+        .map(|(number, source)| (format!("form{number}.ts"), &source[..]))
+        .collect();
+    with_programs(&programs, &default_settings(), |files, ids| {
+        for ((first, link, tail, is_removable), &file) in forms.iter().zip(ids) {
+            let answers = ask(files, file, RemovableOptions::default());
+            assert_eq!(answers, [*is_removable], "{first}{link}{tail}");
+        }
+    });
+}
+
+#[test]
 fn names_of_a_long_chain_of_operators_are_initialized() {
     let forms = [
         ("let a = 1; const MARK = (a", ", a", ");"),

@@ -3,6 +3,8 @@ pub struct ModuleList {
     pub inputs: Vec<ModuleInput>,
     pub entry_point: Option<u32>,
     pub exports: Vec<Vec<u8>>,
+    /// The strings whose characters are in the machine code alone, as WTF-8.
+    pub inlined_strings: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -1,0 +1,14 @@
+# The records of a union that a number tells apart hold their fields in four bytes where that makes the cell a size smaller. One of them lies beside the hidden word.
+# -- source: mappers.ts
+# class Peg { id: number; constructor(id: number) { this.id = id; } }
+# enum Knot { Loop, Splice }
+# type Rope = { kind: Knot.Loop; peg: Peg; ring: Peg } | { kind: Knot.Splice; left: Rope; right: Rope };
+# declare function sink(...values: unknown[]): void;
+# function loop(peg: Peg, ring: Peg): Rope { return { kind: Knot.Loop, peg, ring }; }
+# function splice(left: Rope, right: Rope): Rope { return { kind: Knot.Splice, left, right }; }
+# function holds(rope: Rope): number { return rope.kind === Knot.Splice ? Math.min(holds(rope.left), holds(rope.right)) - 1 : rope.peg.id * 2 + rope.ring.id; }
+# sink(loop, splice, holds, Peg);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "kind" OptionalInt32 Inline offset=20
+# CHECK: "kind" OptionalInt32 Inline offset=20

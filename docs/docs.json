@@ -168,6 +168,7 @@
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
+              "/runtime/diff",
               "/runtime/color",
               "/runtime/utils"
             ]
@@ -299,8 +300,7 @@
               "/compiler/debugging",
               "/compiler/size",
               "/compiler/libraries",
-              "/compiler/troubleshooting",
-              "/compiler/internals"
+              "/compiler/troubleshooting"
             ]
           },
           {
@@ -734,6 +734,10 @@
     {
       "source": "/bundler/aot-compatibility",
       "destination": "/compiler/compatibility"
+    },
+    {
+      "source": "/compiler/internals",
+      "destination": "/compiler/aot"
     }
   ],
   "footer": {

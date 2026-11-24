@@ -1,0 +1,16 @@
+# -- source: main.ts
+# type Pair = { x: any; y: any };
+# const unknownKey: string = JSON.parse('"x"');
+# function read(pair: Pair) { return new Map([[1, pair.x]]).get(1); }
+# function empty(pair: Pair) { delete (pair as any)[unknownKey]; }
+# const pair: Pair = { x: undefined, y: undefined };
+# console.log(read(pair));
+# empty(pair);
+# console.log(read(pair));
+# -- end of source
+# A deletion under an unknown key may empty any field. A read of an empty field gives undefined, never `absent`, so what the Map is proven to hold has no `absent` either.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: undefined|absent
+# CHECK: : undefined @JSValue = CallInline {{*}} inlineBuiltin=MapGet
+# CHECK-NEXT: kind=ProvenContents subjectKind=Operation type=undefined
+# CHECK-NOT: undefined|absent

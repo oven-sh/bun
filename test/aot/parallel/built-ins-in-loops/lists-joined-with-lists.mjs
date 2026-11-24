@@ -1,0 +1,13 @@
+// join() of primitives, ropes and lists among them, of holes, cycles, lists of lists, own and changed toString() and join().
+const show = v => typeof v === "string" ? JSON.stringify(v) : String(v);
+const join = (list, ...rest) => { try { return show(list.join(...rest)); } catch (error) { return error.name + " " + error.message; } };
+function parts(k) { return ["name" + k, k % 2 === 0, k, k / 3, null, undefined, "a" + k + "b" + k, [k, "x" + k], [], [k / 2, , "z"], Object.keys({ a: 1, b: 2 }), ["s"], [1.5, 2.5], [[1, 2], [3]], [null, undefined]]; }
+for (let k = 0; k < 4; k++) { const all = parts(k); for (let n = 0; n <= all.length; n++) console.log(join(all.slice(0, n)), join(all.slice(n), "-"), join(all.slice(n), ""), join(all.slice(n, n + 2), "ab")); }
+const cycle = [1, "two"]; cycle.push(cycle, [3]); console.log(join(cycle)); const a = [1], b = [a, 2]; a.push(b); console.log(join(a), join(b), join([a, b]));
+const own = [1, 2]; own.toString = () => "own"; const joined = [3, 4]; joined.join = () => "joined"; console.log(join([own, joined, "x"]), join([[1], own]));
+class Sub extends Array { toString() { return "sub" + this.length; } } console.log(join([Sub.of(1, 2), 5]), join([new Sub(), [1]])); console.log(join([Object.freeze([1, 2]), "f"]), join([Object.assign([1, 2], { extra: 1 }), "e"]), join([new Array(3), 1]), join([[,], [, ,], 1]));
+console.log(join([{ a: 1 }, [2]]), join([() => 1, [2]]), join([{ toString() { return "t"; } }, [2], "x" + cycle.length]), join([new Date(0) && 1, [2]]), join([Symbol("s")]), join([[Symbol("s")], 1]), join([1n, [2n], "n"]), join([new String("wrapped"), [1]]), join([/re/g, ["x"]]));
+console.log(join([["中", "eé"], "latin", "é"]), join([["wide" + "中".repeat(3)], 1]), join(["x".repeat(300), [1]]), join([["x".repeat(250)], ["y".repeat(20)]]), join(Array.from({ length: 40 }, (_, i) => [i])), join(Array.from({ length: 31 }, (_, i) => i % 2 ? [i, i + 0.5] : i)), join([Array.from({ length: 40 }, (_, i) => i), 1]));
+console.log(join([["only"]]), join([[]]), join([[[]]]), join([["rope" + own.length]]), join(["rope" + own.length]), join([-0, [-0], NaN, [NaN], Infinity, [1e21, 1e-7, 123456789.125]]), join([true, [false, true]]), String([1, [2, [3, [4]]]]), `${[["k", 1], ["l", 2]]}`, [] + [[]] + [[1], 2]);
+function turns(n) { let length = 0, last = ""; for (let k = 0; k < n; k++) { const one = { name: "n" + k % 7, depth: k % 5 }; last = [one.name + " walks " + k, k % 3 === 0, one.depth > 2, one.depth, Object.keys(one)].join(); length += last.length; last += [k, [last.length, "q"], [k % 2 ? "odd" : "even" + k]].join(";"); } return length + last; }
+console.log(turns(1), turns(9), turns(700));

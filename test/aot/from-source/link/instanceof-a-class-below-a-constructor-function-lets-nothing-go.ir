@@ -1,0 +1,17 @@
+# `b instanceof A` is a call under Symbol.hasInstance on A. The lookup passes A, then Base, a constructor function, then Function.prototype. What lies on a function object is followed, so the row is not given up: nothing lies there under the symbol, the built-in answers, and it reads `prototype`, which A has of its own.
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base(v) { this.held = v; }
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# const a = new A(o), b = new Base(o);
+# print(a.y, o.m(), b instanceof A, a instanceof A, a instanceof Base);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2 1 false true true
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2 1 false true true

@@ -1,8 +1,8 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
@@ -11,6 +11,7 @@ pub(crate) struct If {
     pub node: bun_ptr::BackRef<ast::If>,
     pub(crate) io: IO,
     pub(crate) state: IfState,
+    shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -22,22 +23,22 @@ pub enum IfState {
 
 pub struct Exec {
     pub(crate) state: ExecBranch,
-    /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
+    /// Back-reference to the current `SmolList<ast::Stmt>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire
     /// lifetime — it outlives every state node.
-    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
+    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt>>,
     pub(crate) stmt_idx: u32,
     pub(crate) last_exit_code: ExitCode,
 }
 
 impl Exec {
-    /// Borrow the current `SmolList<Stmt, 1>` being walked.
+    /// Borrow the current `SmolList<Stmt>` being walked.
     ///
     /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
     /// the interpreter holds for its entire lifetime — it outlives every state
     /// node (BackRef invariant).
     #[inline]
-    fn stmts(&self) -> &ast::SmolList<ast::Stmt, 1> {
+    fn stmts(&self) -> &ast::SmolList<ast::Stmt> {
         self.stmts.get()
     }
 
@@ -57,13 +58,14 @@ pub(crate) enum ExecBranch {
 impl If {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::If,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::If(If {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: IfState::Idle,
@@ -168,7 +170,7 @@ impl If {
                 Action::SpawnStmt(stmt_node) => {
                     let (shell, io) = {
                         let me = interp.as_if(this);
-                        (me.base.shell, me.io.clone())
+                        (me.shell.as_ptr(), me.io.clone())
                     };
                     let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
                     Stmt::start(interp, new_stmt)
@@ -196,10 +198,6 @@ impl If {
         };
         exec.last_exit_code = exit_code;
         Yield::Next(this)
-    }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("If {} deinit", this);
     }
 }
 

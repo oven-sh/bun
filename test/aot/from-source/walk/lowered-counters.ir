@@ -1,0 +1,28 @@
+# -- source: main.ts
+# function list(a: number[]): number { let r = 0; for (let k = a.length - 1; k >= 0; k--) r = (r * 3 + a[k]!) & 0xfffff; return r; }
+# function raised(a: Uint8Array): number { let r = 0, n = 0; for (let k = a.length - 1; k >= 0; k--) { r = (r * 3 + a[k]!) & 0xfffff; if (n++ === 1) k += 2; } return r; }
+# function text(s: string): number { let r = 0; for (let k = s.length - 1; k >= 0; k--) r = (r * 3 + s.charCodeAt(k)) & 0xfffff; return r; }
+# function view(a: Uint8Array): number { let r = 0; for (let k = a.length - 1; k >= 0; k--) r = (r * 3 + a[k]!) & 0xfffff; return r; }
+# const bytes = new Uint8Array([1, 2, 3]);
+# print(list([1, 2, 3]), raised(bytes), text(`${bytes[0]}bc`), view(bytes));
+# -- end of source
+# f1 = list, f2 = raised, f3 = text, f4 = view
+# A counter that its loop only lowers never lies above what it enters with: the last index. A loop that raises it asks for the length.
+# RUN(LIST): walk f1 mechanisms=all
+# LIST: = GetArrayElement {{*}} isInBounds
+# RUN(RAISED): walk f2 mechanisms=all
+# RAISED: isLoopHead=true
+# RAISED-NOT: isInsideView
+# RUN(TEXT): walk f3 mechanisms=all
+# TEXT: = FlattenString
+# TEXT: isLoopHead=true
+# TEXT-NOT: = Less
+# TEXT: = GetStringCodeUnit
+# RUN(VIEW): walk f4 mechanisms=all
+# VIEW: = GetTypedArrayElement {{*}} isInsideView
+# RUN(ANSWER): run-in-shell
+# ANSWER: 34 331 1234 34
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 34 331 1234 34
+# CHECKED-NEXT: exited with 0

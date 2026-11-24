@@ -1,0 +1,13 @@
+# -- source: the-step-of-a-for-of-in-a-try-goes-on-ways-apart.ts
+# declare function sink(value: unknown): void;
+# function sum(list: number[]): number { let s = 0; try { for (const v of list) { if (v < 0) throw new Error("below"); s += v; } } catch { return -1; } return s; }
+# sink(sum([1, 2, 3]));
+# -- end of source
+# The same under a handler that is written: the head of the loop lies in the try block, and the two ways of its step each take the branch behind it.
+# f1 = sum
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: : boolean @Boolean @
+# RUN(COUNT): compile IteratorStepsThreadedUnderHandlers mechanisms=all
+# COUNT: statistic IteratorStepsThreadedUnderHandlers 2

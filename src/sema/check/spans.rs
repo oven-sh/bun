@@ -78,6 +78,13 @@ fn index_of_line_break_byte(text: &[u8], mut at: usize) -> Option<usize> {
 
 /// `ComputeECMALineStarts`: the start of each line of `text`.
 pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
+    if bun_core::strings::index_of_char(text, b'\r').is_none()
+        && (bun_core::strings::index_of_char(text, 0xE2).is_none()
+            || !bun_core::strings::contains(text, "\u{2028}".as_bytes())
+                && !bun_core::strings::contains(text, "\u{2029}".as_bytes()))
+    {
+        return bun_core::strings::line_starts(text);
+    }
     let mut starts = vec![0u32];
     let (words, rest) = text.as_chunks::<8>();
     for (index, &bytes) in words.iter().enumerate() {

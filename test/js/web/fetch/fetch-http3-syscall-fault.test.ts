@@ -327,7 +327,7 @@ test.skipIf(skip)(
  * above the egress MTU pauses the engine and re-arms a writable poll, which
  * stalls the transfer that is in progress.
  *
- * An egress MTU below 1500 is the trigger. `IP_PMTUDISC_PROBE` (quic.c,
+ * An egress MTU below 1500 is the trigger. `IP_PMTUDISC_PROBE` (quic.cpp,
  * us_quic_set_dontfrag) only makes the kernel ignore its cached path MTU. The
  * device MTU still bounds the datagram.
  */

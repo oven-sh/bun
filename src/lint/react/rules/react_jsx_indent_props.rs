@@ -114,7 +114,7 @@ impl JsxIndentProps {
             line.is_using_operator = false;
         }
         strings::index_of_not_char(src, self.indent.character())
-            .map_or_else(|| src.len() as i64, i64::from)
+            .map_or(src.len() as i64, i64::from)
     }
 
     fn check_nodes_indent<'a>(

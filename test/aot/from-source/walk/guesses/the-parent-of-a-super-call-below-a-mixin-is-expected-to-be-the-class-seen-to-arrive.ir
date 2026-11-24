@@ -1,0 +1,22 @@
+# `const A = B => class extends B { .. }`, `class M extends A(R) {}`: the parent of the class in the arrow is a value. Of the callee of `super(..)` the constructor of the WRITTEN base alone was expected, so the call in
+# the arrow's class stayed a construction of an unknown value, and with it the object, its fields and the method called on it.
+# Link has seen which class arrives as the parent. Its constructor is expected there, and the constructor below names it among the functions that it leads to, so that a unit may mention it.
+# A guess: the parent is read and tested at every call. Where another class has been laid above the class in the arrow since, the test fails and the call goes the closed way to that class.
+# f1 = f . f2 = the constructor of R . L0 = the class in A, L1 = R, L3 = M
+# -- source: the-parent-of-a-super-call-below-a-mixin-is-expected-to-be-the-class-seen-to-arrive.cjs
+# "use strict";
+# const D = JSON.parse('[{"b":1},{"b":2},{"b":3}]');
+# const A = B => class extends B { a() { return this.v + 1; } };
+# class R { constructor(r) { this.v = r.b; } }
+# class Q { constructor(r) { this.v = r.b * 10; } }
+# class M extends A(R) {}
+# function f(list) { let s = 0; for (const r of list) s += new M(r).a(); return s; }
+# print(f(D), f(D));
+# Object.setPrototypeOf(Object.getPrototypeOf(M), Q);
+# print(f(D), new M(D[2]) instanceof R, new M(D[2]) instanceof Q);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=f2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9 9
+# ANSWERS: 63 true false

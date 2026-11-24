@@ -5,7 +5,7 @@ use core::ffi::c_int;
 use bun_core::zstr;
 use bun_core::{Environment, Global};
 #[cfg(unix)]
-use bun_sys::{self as sys, Fd, FdExt, O};
+use bun_sys::{self as sys, Fd, File, O};
 
 #[cfg(unix)]
 use super::run_command::RunCommand;
@@ -55,8 +55,8 @@ impl FuzzilliCommand {
             let reprl_script: &'static [u8] = include_bytes!("../../js/eval/fuzzilli-reprl.ts");
 
             // Open /tmp directory
-            let temp_dir_fd: Fd = match sys::open(zstr!("/tmp"), O::DIRECTORY | O::RDONLY, 0) {
-                Ok(fd) => fd,
+            let temp_dir = match File::open(zstr!("/tmp"), O::DIRECTORY | O::RDONLY, 0) {
+                Ok(dir) => dir,
                 Err(_) => {
                     bun_core::pretty_errorln!("<r><red>error<r>: Could not access /tmp directory");
                     Global::exit(1);
@@ -64,13 +64,13 @@ impl FuzzilliCommand {
             };
 
             // Create temp file for the script
-            let temp_file_fd: Fd = match sys::openat(
-                temp_dir_fd,
+            let temp_file = match sys::openat(
+                &temp_dir,
                 zstr!("bun-fuzzilli-reprl.js"),
                 O::CREAT | O::WRONLY | O::TRUNC,
                 0o644,
             ) {
-                Ok(fd) => fd,
+                Ok(fd) => File::from_fd(fd),
                 Err(_) => {
                     bun_core::pretty_errorln!("<r><red>error<r>: Could not create temp file");
                     Global::exit(1);
@@ -78,7 +78,7 @@ impl FuzzilliCommand {
             };
 
             // Write the script to the temp file
-            match sys::write(temp_file_fd, reprl_script) {
+            match sys::write(temp_file.fd(), reprl_script) {
                 Err(_) => {
                     bun_core::pretty_errorln!("<r><red>error<r>: Could not write temp file");
                     Global::exit(1);
@@ -92,13 +92,7 @@ impl FuzzilliCommand {
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
             // higher-tier crate cycle (see run_command.rs §`Run`).
-            let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None);
-
-            // `defer fd.close()` — Fd is Copy and has no Drop; close explicitly.
-            temp_file_fd.close();
-            temp_dir_fd.close();
-
-            result
+            RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None)
         }
     }
 

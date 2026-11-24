@@ -1,0 +1,21 @@
+# f2 = deposit
+# -- source: read-a-field-of-this-right-behind-the-store-to-it.ts
+# class Account {
+#   balance: number;
+#   constructor(balance: number) {
+#     this.balance = balance;
+#   }
+#   deposit(amount: number): number {
+#     this.balance = this.balance + amount;
+#     return this.balance;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = new Account(+input).deposit(+input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:5 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 5

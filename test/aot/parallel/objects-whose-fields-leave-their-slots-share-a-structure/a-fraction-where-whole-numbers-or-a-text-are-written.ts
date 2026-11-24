@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // The slot is held to the whole numbers of 32 bits and to texts. Every second store brings a fraction.
 class Step { level: 0 | 1 | 2 | "top"; turn: number; constructor(level: any, turn: number) { this.level = level; this.turn = turn; } }

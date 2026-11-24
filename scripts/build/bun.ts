@@ -12,7 +12,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -22,7 +22,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
+import { jscPrograms, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -32,11 +32,12 @@ import {
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
+  usesIcuOfLinuxSystem,
   versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
-import { emitRust, windowsShimPath } from "./rust.ts";
+import { emitRust, windowsShimPath, type RustOutputs } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
@@ -77,7 +78,7 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
+    if (usesIcuOfLinuxSystem(cfg)) {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -109,6 +110,8 @@ function systemLibs(cfg: Config): string[] {
       "userenv.lib",
       "dbghelp.lib",
       "crypt32.lib",
+      "advapi32.lib",
+      "iphlpapi.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
@@ -179,7 +182,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
   depsByName.set(rustArgon2.name, rustArgon2Dep);
-  const rustObjects = emitRust(n, cfg, {
+  const rust = emitRust(n, cfg, {
     codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
@@ -198,9 +201,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
   }
 
-  // Collect all dep lib paths, include dirs, output stamps, and directly-
-  // compiled source files (deps like picohttpparser that provide .c files
-  // instead of a .a — we compile those alongside bun's own sources).
+  // Collect all dep lib paths, include dirs and output stamps.
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
@@ -298,6 +299,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // force-include would lock those in before the source can speak.
   const noPchSources = new Set<string>();
 
+  // bsd.cpp defines __APPLE_USE_RFC_3542 before <netinet/in.h>. None of these use WTF.
+  for (const src of cxxSources) {
+    if (dirname(src) === resolve(cfg.cwd, "packages/bun-usockets/src")) noPchSources.add(src);
+  }
+
   // highway_json.cpp is compiled -O2 even in debug profiles (see its
   // fileOverrides entry in flags.ts); a TU at a different -O level than the
   // PCH cannot use the PCH ("__OPTIMIZE__ ... was disabled in precompiled
@@ -306,7 +312,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_json.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_xml.cpp"));
     noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_png.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_byte_set.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_jpeg.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_decoder.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_webp_encoder.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_checksums.cpp"));
+    noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zlib.cpp"));
   }
+  // Nor can one with other CPU features, which this one has in some release builds.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_brotli.cpp"));
+  // Nor one with SafeStack, which this one has in hardened builds.
+  noPchSources.add(resolve(cfg.cwd, "src/jsc/bindings/highway_zstd.cpp"));
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
@@ -318,9 +334,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(rescle);
     noPchSources.add(rescleBinding);
   }
-
-  // Deps with provides.sources compiled in the loop below so each dep's
-  // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
@@ -376,19 +389,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     cxxObjects.push(object);
     if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
+  const aotNativeTestObjects = sources.aotNativeTests.map(src =>
+    cxx(n, cfg, src, { flags: cxxFlagsFull, pch: pchOut.pch, pchHeader: pchOut.wrapperHeader }),
+  );
 
   // Compile all .c files. No PCH — dep signal applied directly.
-  const cObjects: string[] = [];
-  const compileC = (src: string): string => {
-    const obj = cc(n, cfg, src, {
-      flags: cFlagsFull,
-      implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegenOrderOnly,
-    });
-    cObjects.push(obj);
-    return obj;
-  };
-  for (const src of cSources) compileC(src);
+  const cObjects = cSources.map(src =>
+    cc(n, cfg, src, { flags: cFlagsFull, implicitInputs: depHeaderSignal, orderOnlyInputs: codegenOrderOnly }),
+  );
 
   // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
   // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
@@ -409,16 +417,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
         implicitInputs: [codegen.builtinSourcesArchive],
       }),
     );
-  }
-
-  // Deps that contribute source files for bun to compile directly (via
-  // provides.sources) instead of building a lib. Compile them here with
-  // bun's full flag set and give each a phony so `--target <name>` builds
-  // its .o files. libs.length === 0 guard: deps with a build step already
-  // got a phony in resolveDep — don't emit a duplicate.
-  for (const d of deps) {
-    if (d.sources.length === 0 || d.libs.length > 0) continue;
-    n.phony(d.name, d.sources.map(compileC));
   }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
@@ -442,7 +440,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // export the C++ side touches is reached from those roots.
   const shimInputs = emitShims(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
-  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
+  const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rust.rlibs, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
@@ -458,7 +456,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
-  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
+  emitJscPrograms(n, cfg, depsByName, rust, codegenReady, builtinTableObjects, aotNativeTestObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -475,21 +473,25 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * and how JSC compiles them): their sources, or with the prebuilt WebKit their
  * objects out of the tarball, linked with the WebKit and mimalloc bun links and
  * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
- * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
- * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
- * bun. With a tarball that has only the linked programs it is the fetch.
+ * it; `testaot` also with the native tests that ask that table
+ * (test/aot/native). On request (`--target=jsc`). `engine-test-programs` is
+ * what test/aot runs, `jsc` and `testaot`: a default target in CI, which packs
+ * them beside bun. With a tarball that has only the linked programs it is the
+ * fetch.
  */
 function emitJscPrograms(
   n: Ninja,
   cfg: Config,
   deps: ReadonlyMap<DepName, ResolvedDep>,
+  rust: RustOutputs,
   headersReady: string,
   builtinTableObjects: readonly string[],
+  aotNativeTestObjects: readonly string[],
 ): void {
   const testPrograms: string[] = [];
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
-    const orderOnlyInputs = [headersReady, ...(program.sourcesFrom ?? []).flatMap(name => deps.get(name)!.outputs)];
+    const orderOnlyInputs = [headersReady];
     const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
     for (const { header, files } of program.pch ?? []) {
       const base = prefixes[0]?.prefix;
@@ -508,17 +510,17 @@ function emitJscPrograms(
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    objects.push(
-      ...(program.cSources ?? []).map(src => cc(n, cfg, src, { flags: program.cflags ?? [], orderOnlyInputs })),
-    );
     const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),
     );
+    if (program.name === "testaot") objects.push(...aotNativeTestObjects);
+    // What -moutline-atomics calls is in no library of MSVC's.
+    const rustCrates = [...(program.rustCrates ?? []), ...(cfg.windows && cfg.arm64 ? ["compiler_builtins"] : [])];
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
-      libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
+      libs: [...(program.libs ?? []), ...rust.rlibsFor(rustCrates), ...from.flatMap(d => d.libs)],
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
     });
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
@@ -793,7 +795,7 @@ function emitDuplicateSymbolCheck(
   const objdump = cfg.windows ? cfg.objdump! : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)} ${cfg.arch}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -1142,12 +1144,11 @@ export function validateBunConfig(cfg: Config): void {
       `--local-deps: ${name} is disabled for ${cfg.os}-${cfg.arch}${cfg.abi ? `-${cfg.abi}` : ""} in this configuration, so the checkout at ${path} would never be built`,
       { hint: `Drop ${name} from --local-deps, or build a target/config where its \`enabled\` predicate holds` },
     );
-    // A dep the graph fetches but never reads (no build step, no sources, no
-    // includes — lolhtml, which cargo consumes through the workspace
-    // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
-    const provides = dep.provides(cfg);
+    // A dep the graph fetches but never reads (no build step, no includes —
+    // lolhtml, which cargo consumes through the workspace Cargo.toml's
+    // `path = "vendor/lolhtml"`) can't be redirected from here.
     assert(
-      (provides.sources ?? []).length > 0 || provides.includes.length > 0 || dep.build(cfg).kind !== "none",
+      dep.provides(cfg).includes.length > 0 || dep.build(cfg).kind !== "none",
       `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
       {
         hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,

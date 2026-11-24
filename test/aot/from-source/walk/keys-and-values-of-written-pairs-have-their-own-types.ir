@@ -1,0 +1,16 @@
+# -- source: main.mjs
+# const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+# function repeat(turns) {
+#   let n = 0;
+#   for (let k = 0; k < turns; k++) { for (const x of m.keys()) n += x.length; for (const v of m.values()) n += v; }
+#   return n;
+# }
+# console.log(repeat(process.argv.length * 9));
+# -- end of source
+# The keys of written pairs are strings and the values numbers, each by itself.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = MapNext
+# CHECK: string @JSValue = ResultAt {{*}} index=2
+# CHECK: = MapNext
+# CHECK: i32 @JSValue = ResultAt {{*}} index=3

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9161c607d9c8f981ce072e148aa617473a8be3f076599f05727c3c23a97b8aff.
+// Written against that file with the SHA-256 39e53369ca88ec763c8574bc1267100ae9c1483b8ec809e4d91e06323f75f5a5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -12,7 +12,7 @@ const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
 const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
 const shared = require("internal/shared");
-const { kEmptyObject, once } = shared;
+const { kEmptyObject, once, builtinChannel } = shared;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
@@ -291,8 +291,23 @@ Agent.prototype.createConnection = function createConnection(this: $Node.Agent, 
   $assert(false, `Unexpected proxy protocol ${proxyProtocol}`);
 };
 
+// The name that getName() made last. Every request asks for it several times and looks sockets up under it.
+const cachedName: { host: string | undefined; port: unknown; name: string } = {
+  host: undefined,
+  port: undefined,
+  name: "",
+};
 Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.ClientRequestOptions = kEmptyObject) {
   const { host, port, localAddress, family, socketPath } = options;
+  const isCacheable =
+    typeof host === "string" &&
+    (typeof port === "number" || typeof port === "string" || port === undefined) &&
+    !localAddress &&
+    family !== 4 &&
+    family !== 6 &&
+    !socketPath;
+  if (isCacheable && host === cachedName.host && port === cachedName.port) return cachedName.name;
+
   let name = host || "localhost";
 
   name += ":";
@@ -306,13 +321,24 @@ Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.Cli
 
   if (socketPath) name += `:${socketPath}`;
 
+  if (isCacheable) {
+    cachedName.host = host;
+    cachedName.port = port;
+    cachedName.name = name;
+  }
   return name;
 };
+
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
 
 function handleSocketAfterProxy(err: Error & { proxyTunnelTimeout?: boolean }, req: $Node.ClientRequest) {
   if (err.code === "ERR_PROXY_TUNNEL") {
     if (err.proxyTunnelTimeout) {
       req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
+    }
+    // Node does not publish this one.
+    if (onClientRequestErrorChannel.hasSubscribers) {
+      onClientRequestErrorChannel.publish({ request: req, error: err });
     }
     req.emit("error", err);
   }

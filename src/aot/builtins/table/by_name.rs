@@ -9,6 +9,7 @@ struct Found {
     test_runner: Option<RuntimeModule>,
     jest: Option<BuiltinId>,
     plugin: Option<BuiltinId>,
+    path_resolvers: [Option<BuiltinId>; 2],
     expect: Option<BuiltinId>,
 }
 
@@ -28,6 +29,7 @@ fn found() -> &'static Found {
             test_runner,
             jest: member_of_bun(b"jest"),
             plugin: member_of_bun(b"plugin"),
+            path_resolvers: [member_of_bun(b"resolveSync"), member_of_bun(b"resolve")],
             expect: export_of_runner(b"expect"),
         }
     })
@@ -58,6 +60,11 @@ pub fn is_of_expect(id: BuiltinId) -> bool {
         holder = entry(held).holder;
     }
     false
+}
+
+/// `Bun.resolveSync` or `Bun.resolve`
+pub fn is_path_resolver(id: BuiltinId) -> bool {
+    found().path_resolvers.contains(&Some(canonical_id(id)))
 }
 
 pub fn is_plugin(id: BuiltinId) -> bool {

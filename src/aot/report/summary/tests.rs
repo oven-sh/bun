@@ -2,9 +2,12 @@ use bstr::BString;
 use bun_trim::{UnseenCode, UnseenCodeCause, WitnessIndex};
 
 use super::*;
+use crate::builtins::BuiltinId;
 use crate::engine::testing::ResultRecords;
-use crate::engine::{SourceLocation, UnseenCodeRecord};
-use crate::ir::generated::{UnseenCodeCause as EngineCause, Witness};
+use crate::engine::{SourceLocation, TextRange, UnseenCodeRecord, UserDiagnosticRecord};
+use crate::ir::generated::{
+    LimitId, TypeSiteKind, UnseenCodeCause as EngineCause, UserDiagnosticKind, Witness,
+};
 use crate::ir::ids::{ABSENT_WORD, Id};
 use crate::report::source_texts::ModuleOrigin;
 use crate::report::testing::{self, LINE_2_COLUMN_14, ReportFixture};
@@ -94,13 +97,7 @@ fn access_lines(files: &[File<'_>]) -> BString {
 }
 
 fn summary(fixture: &ReportFixture<'_>) -> BString {
-    fixture.with_input(|input| written(|out| write_summary(input, out)))
-}
-
-fn untyped_note(demoted_files: u64) -> BString {
-    let mut statistics = Statistics::default();
-    statistics.count(StatisticId::SourceFilesDemoted, demoted_files);
-    written(|out| write_untyped_note(&statistics, out))
+    fixture.with_input(|input| written(|out| write_summary(input, false, out)))
 }
 
 fn joined(lines: &[&str]) -> Option<BString> {
@@ -129,7 +126,7 @@ fn unseen(cause: UnseenCodeCause, witness: Option<u32>) -> UnseenCode {
 }
 
 fn trim_causes(fixture: &ReportFixture<'_>) -> BString {
-    fixture.with_input(|input| written(|out| write_trim_causes(input, out)))
+    fixture.with_input(|input| written(|out| write_trim_causes(input, false, out)))
 }
 
 #[test]
@@ -242,6 +239,74 @@ fn developer_options_come_first() {
     assert_eq!(summary(&fixture), format!("{options}{line}"));
 }
 
+fn slow_regexp_in(module: u32) -> UserDiagnosticRecord {
+    UserDiagnosticRecord {
+        kind: UserDiagnosticKind::RegExpPatternNotConstant,
+        function: ABSENT_WORD,
+        block: ABSENT_WORD,
+        value: ABSENT_WORD,
+        layout: ABSENT_WORD,
+        limit: LimitId::None,
+        count: 0,
+        location: location(module, 0),
+        message: TextRange {
+            offset: 0,
+            length: 0,
+        },
+        origin: NO_LOCATION,
+        site_kind: TypeSiteKind::Unknown,
+        minimum: 0.0,
+        maximum: 0.0,
+    }
+}
+
+#[test]
+fn slow_regexps_in_packages_are_counted() {
+    let records = [testing::DEPENDENCY, testing::PROGRAM, testing::DEPENDENCY].map(slow_regexp_in);
+    let mut fixture = ReportFixture::new(ResultRecords {
+        user_diagnostics: &records,
+        ..ResultRecords::default()
+    });
+    assert_eq!(
+        summary(&fixture),
+        "             note  2 regular expressions in b are compiled at run time (--explain lists them)\n"
+    );
+    fixture.options.explain = ExplainSet::TEXT;
+    assert_eq!(summary(&fixture), "");
+    let fixture = ReportFixture::new(ResultRecords {
+        user_diagnostics: &records[..1],
+        ..ResultRecords::default()
+    });
+    assert_eq!(
+        summary(&fixture),
+        "             note  1 regular expression in b is compiled at run time (--explain lists them)\n"
+    );
+}
+
+#[test]
+fn hardening_is_named_by_its_public_names() {
+    let boxed = |words: &[&str]| -> Vec<Box<[u8]>> {
+        words.iter().map(|word| word.as_bytes().into()).collect()
+    };
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.options.hardening_names = boxed(&["proof-checks", "ignore-told-ranges"]);
+    fixture.options.hardening_words = boxed(&["testing=A", "testing=B"]);
+    fixture.options.option_words = boxed(&["testing=A", "testing=B"]);
+    let row = "           harden  proof-checks, ignore-told-ranges\n";
+    assert_eq!(summary(&fixture), row);
+    assert_eq!(
+        written(|out| write_developer_options(&fixture.options, out)),
+        "Hardened with proof-checks, ignore-told-ranges\n"
+    );
+    fixture.options.option_words = boxed(&["testing=A", "check=Validate", "testing=B"]);
+    let developer = "Built with developer options: --aot-check=Validate\n";
+    assert_eq!(summary(&fixture), format!("{row}{developer}"));
+    assert_eq!(
+        written(|out| write_developer_options(&fixture.options, out)),
+        format!("Hardened with proof-checks, ignore-told-ranges\n{developer}")
+    );
+}
+
 #[test]
 fn only_text_report_ends_with_access_lines() {
     let records = [
@@ -300,34 +365,6 @@ fn access_counts_have_columns_then_two_counts_of_their_own() {
             r#"{"accesses":{"byName":1,"tested":6,"free":8,"#,
             r#""testedSlotOnly":4,"provenWithoutAnyTest":5}}"#,
         )
-    );
-}
-
-#[test]
-fn untyped_note_counts_files() {
-    assert_eq!(untyped_note(0), "");
-    assert_eq!(untyped_note(1), "1 file compiled without types");
-    assert_eq!(untyped_note(2), "2 files compiled without types");
-    assert_eq!(untyped_note(1204), "1,204 files compiled without types");
-}
-
-#[test]
-fn note_says_how_fast_the_program_was_compiled() {
-    let mut statistics = Statistics::default();
-    statistics.count(StatisticId::SourceLines, 119_100);
-    statistics.count(StatisticId::SourceLinesOfDeclarations, 1_000_000);
-    statistics.add_time(Stage::Load, core::time::Duration::from_millis(1_180));
-    statistics.add_time(
-        Stage::GenerateCode,
-        core::time::Duration::from_millis(8_000),
-    );
-    statistics.add_time(Stage::RunTime, core::time::Duration::from_secs(50));
-    let speed = "compiled 119,100 lines in 9.18 s (12,973 lines/s)";
-    assert_eq!(written(|out| write_untyped_note(&statistics, out)), speed);
-    statistics.count(StatisticId::SourceFilesDemoted, 1);
-    assert_eq!(
-        written(|out| write_untyped_note(&statistics, out)),
-        format!("1 file compiled without types, {speed}")
     );
 }
 
@@ -402,21 +439,26 @@ fn details_need_counted_access() {
     );
 }
 
-#[test]
-fn trim_causes_have_sentence_and_position() {
-    let at_location = |location| UnseenCodeRecord {
+fn unseen_code_at(builtin: u32, location: SourceLocation) -> UnseenCodeRecord {
+    UnseenCodeRecord {
         cause: EngineCause::EvaluatesText,
-        builtin: ABSENT_WORD,
+        builtin,
         witness: Witness {
             function: ABSENT_WORD,
             value: ABSENT_WORD,
             location,
         },
-    };
+    }
+}
+
+const TRIM_HEADING: &str = "             trim  kept APIs your code doesn't call:\n";
+
+#[test]
+fn trim_causes_without_place_follow_from_others() {
     let records = [
-        at_location(location(testing::PROGRAM, LINE_2_COLUMN_14)),
-        at_location(location(MODULE_WITHOUT_TEXT, 0)),
-        at_location(NO_LOCATION),
+        unseen_code_at(ABSENT_WORD, location(testing::PROGRAM, LINE_2_COLUMN_14)),
+        unseen_code_at(ABSENT_WORD, location(MODULE_WITHOUT_TEXT, 0)),
+        unseen_code_at(ABSENT_WORD, NO_LOCATION),
     ];
     let mut fixture = ReportFixture::new(ResultRecords {
         unseen_code: &records,
@@ -430,15 +472,111 @@ fn trim_causes_have_sentence_and_position() {
         unseen(UnseenCodeCause::LoadsModuleByName, Some(3)),
         unseen(UnseenCodeCause::FlowResultDisabled, None),
     ];
-    let sentences = [
-        "the program calls eval() or new Function() (src/a.ts:2:14)",
-        "the program can run code that isn't in the executable",
-        "the program imports a module that isn't in the executable",
-        "the program calls import() or require() with a dynamic path",
-        "a developer option turned the analysis off",
+    let lines = [
+        TRIM_HEADING,
+        "                   the program calls eval() or new Function()\n",
+        "                     src/a.ts:2:14\n",
+        "                   a developer option turned the analysis off\n",
     ];
-    let lines = sentences
-        .map(|sentence| format!("--trim kept APIs your code doesn't call because {sentence}\n"));
+    assert_eq!(trim_causes(&fixture), lines.concat());
+}
+
+#[test]
+fn trim_causes_are_all_listed_if_none_has_a_place() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.options.trim.removes_unused = true;
+    fixture.used_features.causes = vec![
+        unseen(UnseenCodeCause::EvaluatesText, None),
+        unseen(UnseenCodeCause::EvaluatesText, None),
+        unseen(UnseenCodeCause::RunsMachineCode, None),
+    ];
+    let lines = [
+        TRIM_HEADING,
+        "                   the program calls eval() or new Function()\n",
+        "                   the program loads a native addon or a shared library\n",
+    ];
+    assert_eq!(trim_causes(&fixture), lines.concat());
+}
+
+#[test]
+fn trim_cause_lists_each_place_once() {
+    let offsets = [LINE_2_COLUMN_14, 0, 4, 4, 15, 19];
+    let records =
+        offsets.map(|offset| unseen_code_at(ABSENT_WORD, location(testing::PROGRAM, offset)));
+    let mut fixture = ReportFixture::new(ResultRecords {
+        unseen_code: &records,
+        ..ResultRecords::default()
+    });
+    fixture.options.trim.removes_unused = true;
+    fixture.used_features.causes = (0..offsets.len() as u32)
+        .map(|index| match index {
+            0 => unseen(UnseenCodeCause::LoadsCodeByName, Some(index)),
+            _ => unseen(UnseenCodeCause::LoadsModuleByName, Some(index)),
+        })
+        .collect();
+    let lines = [
+        TRIM_HEADING,
+        "                   the program calls import() or require() with a dynamic path\n",
+        "                     src/a.ts:1:1\n",
+        "                     src/a.ts:1:5\n",
+        "                     src/a.ts:2:1\n",
+        "                     and 2 more\n",
+    ];
+    assert_eq!(trim_causes(&fixture), lines.concat());
+}
+
+#[test]
+fn place_is_listed_under_its_first_reason() {
+    let offsets = [LINE_2_COLUMN_14, LINE_2_COLUMN_14, 0, LINE_2_COLUMN_14];
+    let records =
+        offsets.map(|offset| unseen_code_at(ABSENT_WORD, location(testing::PROGRAM, offset)));
+    let mut fixture = ReportFixture::new(ResultRecords {
+        unseen_code: &records,
+        ..ResultRecords::default()
+    });
+    fixture.options.trim.removes_unused = true;
+    fixture.used_features.causes = vec![
+        unseen(UnseenCodeCause::EvaluatesText, Some(0)),
+        unseen(UnseenCodeCause::LoadsCodeByName, Some(1)),
+        unseen(UnseenCodeCause::LoadsCodeByName, Some(2)),
+        unseen(UnseenCodeCause::RunsMachineCode, Some(3)),
+    ];
+    let lines = [
+        TRIM_HEADING,
+        "                   the program calls eval() or new Function()\n",
+        "                     src/a.ts:2:14\n",
+        "                   the program calls import() or require() with a dynamic path\n",
+        "                     src/a.ts:1:1\n",
+    ];
+    assert_eq!(trim_causes(&fixture), lines.concat());
+}
+
+#[test]
+fn internal_builtin_gives_no_place() {
+    let is_internal =
+        |&word: &u32| builtin_of(word).is_some_and(|id| table::text_of(id).starts_with('%'));
+    let internal = (0..BuiltinId::COUNT)
+        .find(is_internal)
+        .expect("the table has internal built-ins");
+    let place = location(testing::PROGRAM, LINE_2_COLUMN_14);
+    let records = [
+        unseen_code_at(internal, place),
+        unseen_code_at(ABSENT_WORD, location(testing::PROGRAM, 0)),
+    ];
+    let mut fixture = ReportFixture::new(ResultRecords {
+        unseen_code: &records,
+        ..ResultRecords::default()
+    });
+    fixture.options.trim.removes_unused = true;
+    fixture.used_features.causes = vec![
+        unseen(UnseenCodeCause::RunsUnseenCode, Some(0)),
+        unseen(UnseenCodeCause::EvaluatesText, Some(1)),
+    ];
+    let lines = [
+        TRIM_HEADING,
+        "                   the program calls eval() or new Function()\n",
+        "                     src/a.ts:1:1\n",
+    ];
     assert_eq!(trim_causes(&fixture), lines.concat());
 }
 
@@ -475,7 +613,8 @@ fn summary_starts_with_trim_causes() {
     fixture.options.option_words = vec![Box::from(&b"check=Validate"[..])];
     fixture.used_features.causes = vec![unseen(UnseenCodeCause::FlowResultDisabled, None)];
     let start = [
-        "--trim kept APIs your code doesn't call because a developer option turned the analysis off\n",
+        TRIM_HEADING,
+        "                   a developer option turned the analysis off\n",
         "Built with developer options: --aot-check=Validate\n",
     ];
     let levels = [

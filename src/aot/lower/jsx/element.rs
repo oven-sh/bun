@@ -154,7 +154,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root_name = self
             .file
             .intern_binding_name(reference.binding, reference.name);
-        let function = match find_quoted_text(&path[0]) {
+        let function = match unquote_plain_string(&path[0]) {
             Some(text) => {
                 let text = self.file.intern_bytes(text);
                 self.builder.string(text)
@@ -245,7 +245,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-fn find_quoted_text(name: &[u8]) -> Option<&[u8]> {
+fn unquote_plain_string(name: &[u8]) -> Option<&[u8]> {
     let [quote @ (b'"' | b'\''), text @ .., last] = name else {
         return None;
     };

@@ -1,0 +1,17 @@
+# -- source: maps-on-prototypes-found-by-calls.js
+# class Drum { constructor(wide) { this.wide = wide; } beats(times) { return this.wide * times % 7; } }
+# class Horn { constructor(long) { this.long = long; } blows() { return this.long > 2 ? "deep" : "high"; } }
+# const band = { pick(isLoud) { return isLoud ? Horn : Drum; }, drum() { return Drum; } };
+# Object.defineProperties(band.drum().prototype, { said: { value(times) { let text = ""; while (times-- > 0) text += this.beats(times); return text; } }, skin: { get() { return this.wide * 3; } } });
+# const horn = () => Horn;
+# Object.defineProperties(horn().prototype, { pipe: { get() { return this.long + "m"; } } });
+# function plays(list) { let sum = 0; for (const one of list) sum += one.beats(3); return sum; }
+# const drums = []; for (let wide = 1; wide < 8; wide += 2) drums.push(new Drum(wide));
+# print(plays(drums), drums[1].said(4), drums[2].skin, new Horn(3).blows(), new Horn(1).pipe, Object.getOwnPropertyNames(Drum.prototype).join());
+# -- end of source
+# How a program lays accessors for its debugger. Definitions one by one on a prototype that a call finds opened the classes behind it: the map goes by the call.
+# RUN(LAID): walk f0:Body mechanisms=all
+# LAID-NOT: = DefineOwnProperty
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6 2630 15 deep 1m constructor,beats,said,skin
+# ANSWERS-NEXT: exited with 0

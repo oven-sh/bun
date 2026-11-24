@@ -18,12 +18,14 @@ struct AdditionsToGlobalObject {
             lazyClass.visit(visitor);
         for (auto& structure : m_returnedDictionaryStructures)
             visitor.append(structure);
+        visitor.append(m_boundFunctionReplacementStructure);
     }
 
     // By `classIndex`.
     JSC::LazyClassStructure m_classes[Counts::numberOfClasses];
     // What an object with every member of a returned dictionary has, made when the first is returned.
     JSC::WriteBarrier<JSC::Structure> m_returnedDictionaryStructures[Counts::numberOfReturnedDictionaries];
+    JSC::WriteBarrier<JSC::Structure> m_boundFunctionReplacementStructure;
 };
 
 }

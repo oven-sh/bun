@@ -1,5 +1,5 @@
 // A parent that returns what it is given lets one evaluation of a class define its names on an object that another evaluation of the same class made: the slots are taken, and each evaluation finds its own.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function attempt(f) { try { report(f()); } catch (e) { report(e instanceof TypeError ? "TypeError" : "other"); } }
 class Base { kept = 1; constructor(given) { if (given) return given; } }

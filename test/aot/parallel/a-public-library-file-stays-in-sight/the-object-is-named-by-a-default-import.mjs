@@ -1,3 +1,3 @@
-// The object of the file is asked of the run time by name here: native code hands it over, so it does not stay in sight.
+// The object of the file is the record that its body returns: whoever names it is handed that record, and the file stays in sight.
 import path from "node:path";
 console.log(path.join("a", "b"));

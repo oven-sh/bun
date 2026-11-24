@@ -277,6 +277,34 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("Worker", () => {
+    it.skipIf(!isASAN || isWindows)("frees its templates and the state of its isolate", async () => {
+      // leaksan.supp hides what is allocated while a module is evaluated, so the call runs from an immediate.
+      const addon = join(directories.bunRelease, "build/Release/v8tests.node");
+      const worker = `const addon = require(${JSON.stringify(addon)}); setImmediate(addon.fill_templates_and_isolate);`;
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `new (require("worker_threads").Worker)(${JSON.stringify(worker)}, { eval: true })
+             .on("exit", code => console.log("worker exit " + code));`,
+        ],
+        env: {
+          ...bunEnv,
+          // Makes WTF allocate with the system malloc, which LeakSanitizer tracks.
+          Malloc: "1",
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(__dirname, "../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "worker exit 0\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   describe("FunctionTemplate", () => {
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");

@@ -36,12 +36,14 @@ pub(in crate::lower) use self::called_declarations::{
 };
 pub(in crate::lower) use self::called_initializers::find_function_that_initializes;
 pub(in crate::lower) use self::enter::MakerOfScope;
-pub(in crate::lower) use self::environments::environment_layout;
+pub(in crate::lower) use self::environments::{
+    ResolvedFields, environment_layout, instance_layout,
+};
 pub(in crate::lower) use self::eval::NamesOfFileForEvals;
 pub(crate) use self::eval::lower_direct_eval;
 pub(crate) use self::identifiers::find_tested_local;
 pub(in crate::lower) use self::plan::is_let_declaration;
-pub(in crate::lower) use self::registries::RegistryNames;
+pub(in crate::lower) use self::registries::holds_registry;
 pub(crate) use self::state::ScopeState;
 pub(in crate::lower) use self::state::{DeadZone, LocalBinding};
 pub(in crate::lower) use self::walk::{Initialization, WalkedFunction, WalkedFunctionId};
@@ -54,7 +56,8 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) modules: &'x ModuleGraph,
     pub(crate) builtins: &'x ResolvedBuiltins,
     pub(crate) fields_under_signed_members: &'x [MemberId],
-    pub(crate) holds_registry: &'x dyn Fn(SymbolId) -> bool,
+    /// Which of some variables hold registries; `None` if nothing makes any.
+    pub(crate) find_registries: Option<&'x dyn Fn(&[SymbolId]) -> Vec<bool>>,
     pub(crate) max_captures: usize,
     pub(crate) names_lie_on_object_prototype: bool,
 }
@@ -71,6 +74,7 @@ pub(crate) enum ScopeSlot {
     WithObject,
     EvalVariables,
     ParameterEvalVariables,
+    ModuleInstance,
     Class(ClassSlot),
 }
 

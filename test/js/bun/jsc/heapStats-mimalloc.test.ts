@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -63,6 +63,22 @@ describe("heapStats() mimalloc integration", () => {
     }
     void before;
   });
+
+  // A debug build pads every block.
+  test.concurrent.skipIf(isASAN || isDebug)(
+    "the receive buffer of an event loop has a page of its own size",
+    async () => {
+      const script = `
+      import { heapStats } from "bun:jsc";
+      const pages = heapStats({ dump: true }).mimallocDump.heaps.flatMap(heap => heap.pages);
+      console.log(pages.some(page => page.block_size > 512 * 1024 && page.block_size < 640 * 1024));
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // mimalloc tags its arena mmaps with an app-reserved VM tag (240-255). The old default,
   // 100, is VM_MEMORY_IOACCELERATOR, so profilers reported Bun's heap as GPU memory.

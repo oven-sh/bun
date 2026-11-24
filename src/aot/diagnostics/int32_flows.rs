@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn other_kinds_keep_the_words_of_the_engine() {
         for kind in [
-            UserDiagnosticKind::Int32OfDependencyNotProven,
+            UserDiagnosticKind::UnprovenDependencyInt32,
             UserDiagnosticKind::InvalidRegExpLiteral,
         ] {
             let record = record(kind, Int32ProofFailure::AnyNumber);

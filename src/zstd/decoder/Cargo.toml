@@ -1,0 +1,22 @@
+[package]
+name = "bun_zstd_decoder"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+# Nothing of Bun's C++ is called: JavaScriptCore's programs link this crate without it.
+[dependencies]
+bun_highway.workspace = true
+
+[[test]]
+name = "decode"
+path = "tests/decode.rs"
+
+[[test]]
+name = "built"
+path = "tests/built.rs"

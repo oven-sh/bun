@@ -20,6 +20,5 @@
 # }
 # -- end of source
 # RUN: plan orders mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: orders L0
 # CHECK: "name" symbol("fast"){{*}} "depth" "items" | symbol("port"){{*}} symbol("closed"){{*}} symbol("owner")

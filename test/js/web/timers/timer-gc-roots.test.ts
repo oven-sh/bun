@@ -65,6 +65,26 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["setInterval", "this._repeat = null"],
+    ["setInterval", "this._idleTimeout = -1"],
+    ["setTimeout", "this._repeat = -1"],
+    ["setTimeout", "this._idleTimeout = -1; this.refresh()"],
+    ["setTimeout", "queueMicrotask(() => { this._idleTimeout = -1; this.refresh(); })"],
+  ])("%s is not rooted after its callback ends it with %s", async (set, body) => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      // Not the completion value of the script, which -e roots.
+      const timer = ${set}(function () {
+        ${body};
+        setImmediate(() => console.log("rooted:", heapStats().protectedObjectTypeCounts.Timeout || 0));
+      }, 1);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "rooted: 0\n", stderr: "", exitCode: 0 });
+  });
+
   for (const kind of ["setTimeout", "setInterval", "setImmediate"] as const) {
     test(`${kind}: callback stays reachable across GC while armed`, async () => {
       const body =
@@ -89,6 +109,30 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+test.concurrent.each([
+  ["callback", "setImmediate(() => held)"],
+  ["only argument", "setImmediate(noop, held)"],
+  ["arguments", "setImmediate(noop, held, 1)"],
+])("an Immediate that has run lets go of its %s", async (_, schedule) => {
+  const src = `
+    const refs = [];
+    const noop = () => {};
+    globalThis.immediates = Array.from({ length: 100 }, () => {
+      const held = {};
+      refs.push(new WeakRef(held));
+      return ${schedule};
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    console.log(refs.filter(ref => ref.deref()).length);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(Number.parseInt(stdout)).toBeLessThan(10);
+  expect(exitCode).toBe(0);
 });
 
 describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {

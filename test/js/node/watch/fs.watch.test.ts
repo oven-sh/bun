@@ -77,6 +77,19 @@ describe("fs.watch", () => {
       done(e);
     }
   });
+  test("a separator after the directory is not part of the reported name", async () => {
+    using dir = tempDir("watch-trailing-separator", { "a.txt": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const watcher = fs.watch(String(dir) + path.sep, (_, name) => name?.endsWith("a.txt") && resolve(name));
+    watcher.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "a.txt"), "x"));
+    try {
+      expect(await promise).toBe("a.txt");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
   test("add file/folder to folder", done => {
     let count = 0;
     const root = path.join(testDir, "add-directory");
@@ -169,6 +182,24 @@ describe("fs.watch", () => {
     });
   });
 
+  test("a recursive watcher sees subfolders of a folder that is already watched", async () => {
+    using dir = tempDir("watch-flat-then-recursive", { "nested/.keep": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const flat = fs.watch(String(dir), () => {});
+    const recursive = fs.watch(String(dir), { recursive: true }, (_, filename) => {
+      if (filename === path.join("nested", "file.txt")) resolve();
+    });
+    recursive.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "hello"));
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+      flat.close();
+      recursive.close();
+    }
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -253,6 +284,25 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+    using dir = tempDir("watch-backslash", { "a\\b": "real", "a/b": "decoy" });
+    const real = path.join(String(dir), "a\\b");
+    const decoy = path.join(String(dir), "a", "b");
+
+    const { promise, resolve } = Promise.withResolvers<string | null>();
+    const watcher = fs.watch(real, (_event, filename) => resolve(filename));
+    const interval = repeat(() => {
+      fs.writeFileSync(decoy, "decoy");
+      fs.writeFileSync(real, "real");
+    });
+    try {
+      expect(await promise).toBe("a\\b");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
 
   test("should error on invalid path", done => {
     try {
@@ -1664,8 +1714,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 // PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
 // calling fs.watch() reused that manager: it mutated the watcher map and drove
 // the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// debug_assert and aborted; release builds raced). The watchers are now
+// kept per VM, so a Worker's watcher never aliases the main thread's.
 //
 // Must run in a subprocess: on an unpatched debug build the Worker's
 // fs.watch() call aborts the whole runtime.

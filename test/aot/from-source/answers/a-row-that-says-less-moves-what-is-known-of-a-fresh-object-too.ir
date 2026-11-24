@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# class Box { count: number; constructor() { this.count = 1; } }
+# function bump(box: Box): void { let turns = 0; for (let i = 0; i < 2; i++) turns = (turns + i) | 0; box.count = 9 + turns; }
+# function main(): number { const box = new Box(); bump(box); return box.count; }
+# function run(): number { return main() + main(); }
+# print("sum " + run() + ".");
+# -- end of source
+# The injected fault, testing=UnderstateEffects, is a single fault that applies in two places. The walk removes the named effect from the effects of an operation.
+# So does escape analysis, which computes the effects again for what is known about a fresh object.
+# Here Link's summary of bump() is treated as if it listed no write of ObjectFields, so the field of the fresh box is read as the constructor left it.
+# While escape analysis still used the complete effects entry, the fault changed nothing here, and every control on a fresh object was vacuous.
+# f1 = bump
+# RUN: run-in-shell mechanisms=all
+# CHECK: sum 20.
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ObjectFields
+# LIE: sum 2.
+# LIE-NEXT: exited with 0
+# RUN(NET): run-in-shell mechanisms=all testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f1/ObjectFields
+# NET: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ObjectFields, but operand 0 changed there
+# NET: crashed
+# NET: with

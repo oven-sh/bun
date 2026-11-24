@@ -11,10 +11,11 @@
 # RUN(WIRE): print
 # WIRE: name="Row" {{*}}key="mark" {{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
 # RUN: walk f2 mechanisms=all-LoopInvariants
-# CHECK: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Expected
+# CHECK: = GetSlot {{*}}key="mark" {{*}}level=Expected
 # CHECK-NOT: key="mark" {{*}}level=Proven
 # RUN(TWICE): walk f2 mechanisms=all
-# TWICE: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Expected
+# TWICE: = GetSlot {{*}}key="mark" {{*}}level=Expected
 # TWICE-NOT: key="mark" {{*}}level=Proven
-# TWICE: = HasNoFieldOutsideSlot
-# TWICE: = GetSlotOrUndefined {{*}}key="mark" {{*}}level=Proven
+# TWICE: isLoopHead=true
+# TWICE: = IsSlotFilled {{*}}key="mark" {{*}}level=Proven
+# TWICE: = GetSlot {{*}}key="mark" {{*}}level=Proven

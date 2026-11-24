@@ -55,7 +55,7 @@ impl AnswerShape {
             CodeAnswer::Computed(ComputedTargets::All {
                 cause,
                 host_modules,
-            }) => AnswerShape::All(cause, host_modules.to_vec()),
+            }) => AnswerShape::All(*cause, host_modules.to_vec()),
             CodeAnswer::NotFound(failure) => AnswerShape::NotFound(failure),
         }
     }

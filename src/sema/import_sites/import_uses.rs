@@ -1,9 +1,11 @@
 use super::statements::value_import_symbols;
-use crate::atom::known;
+use crate::atom::{Atom, known};
 use crate::bind::{Binding, Bound, Decl, ImplicitReferenceKind, Parent, SymbolId};
 use crate::fold::Decisions;
-use crate::hir::{Expr, ExprId, ExprKind, File, Flags, ImportEqualsId, ImportId, NodeData};
-use crate::util::PositionSet;
+use crate::hir::{
+    Expr, ExprId, ExprKind, File, Flags, ImportEqualsId, ImportId, NodeData, PatKind, TypeNodeKind,
+};
+use crate::util::{FxHashMap, PositionSet};
 
 pub(super) struct ImportUses {
     pub is_import: PositionSet,
@@ -51,12 +53,15 @@ impl ImportUses {
     }
 }
 
+pub(super) fn names_eval(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::Ident(name) if name == known::eval)
+}
+
 pub fn find_imports_of_unused_names(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
 ) -> Vec<ImportId> {
-    let names_eval = |e: &Expr| matches!(e.kind, ExprKind::Ident(name) if name == known::eval);
     if hir.exprs.iter().any(names_eval) {
         return Vec::new();
     }
@@ -151,6 +156,51 @@ fn add_entity_root_uses(hir: &File<'_>, bound: &Bound<'_>, uses: &mut ImportUses
     }
 }
 
+/// What a function is written with before its body is replaced counts as dead code. Those expressions aren't bound, so
+/// a name that the file also declares elsewhere is not a use.
+fn add_uses_in_replaced_bodies(hir: &File<'_>, bound: &Bound<'_>, uses: &mut ImportUses) {
+    let mut functions = hir.fns.iter();
+    if !functions.any(|it| it.flags.contains(Flags::REPLACED_BODY)) {
+        return;
+    }
+    let unused = uses.is_import.iter();
+    let unused = unused.filter(|&index| !uses.used_anywhere.contains(index));
+    let mut imports: FxHashMap<Atom, SymbolId> = unused
+        .map(|index| SymbolId(index as u32))
+        .map(|symbol| (bound.symbol(symbol).name, symbol))
+        .collect();
+    let names_in_patterns = hir.pats.iter().filter_map(|it| match it.kind {
+        PatKind::Ident(name) => Some(name),
+        _ => None,
+    });
+    let names_of_functions = hir.fns.iter().map(|it| it.name);
+    let names_of_classes = hir.classes.iter().map(|it| it.name);
+    let declared = names_of_functions.chain(names_of_classes);
+    for name in names_in_patterns.chain(declared) {
+        imports.remove(&name);
+    }
+    let mut operands_of_types: Vec<ExprId> = Vec::new();
+    for node in hir.types.iter() {
+        if let TypeNodeKind::Typeof { expr, .. } = node.kind {
+            let mut operand = expr;
+            while let ExprKind::Dot { obj, .. } = hir[operand].kind {
+                operand = obj;
+            }
+            operands_of_types.push(operand);
+        }
+    }
+    operands_of_types.sort_unstable();
+    for (e, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+        if let ExprKind::Ident(name) = node.kind
+            && let Some(&symbol) = imports.get(&name)
+            && bound.parent_of_expr(e) == Parent::None
+            && operands_of_types.binary_search(&e).is_err()
+        {
+            uses.add_use(symbol, false);
+        }
+    }
+}
+
 pub(super) fn compute_import_uses(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -164,6 +214,7 @@ pub(super) fn compute_import_uses(
     for index in 0..hir.exprs.len() {
         let e = ExprId(index as u32);
         if bound.is_evaluated_ident(e)
+            && !hir.is_in_known_evaluation(hir[e].pos)
             && let Binding::Symbol(symbol) = bound.binding(e)
         {
             let is_live = !decisions.is_dead_expr(e);
@@ -173,6 +224,7 @@ pub(super) fn compute_import_uses(
             }
         }
     }
+    add_uses_in_replaced_bodies(hir, bound, &mut uses);
     for export in hir.exports.iter() {
         if export.type_only || export.has_module_specifier {
             continue;

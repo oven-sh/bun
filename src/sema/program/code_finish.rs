@@ -166,7 +166,7 @@ pub(super) fn find_answers_so_far<'s>(
         written.push(match (waits, resolution) {
             (false, _) => answer_of(atoms, arena, site.specifier, resolution, targets),
             (true, SiteResolution::Constant(_)) => CodeAnswer::Erased,
-            (true, SiteResolution::Computed(_)) => CodeAnswer::Computed(ComputedTargets::All {
+            (true, SiteResolution::Computed(_)) => CodeAnswer::Computed(&ComputedTargets::All {
                 cause: ComputedUnknown::ExternalCandidate,
                 host_modules: &[],
             }),
@@ -278,7 +278,8 @@ fn answer_of<'s>(
         }) => (Some(*cause), *host_modules, &[][..]),
     };
     let targets = candidate_targets(candidates, targets);
-    CodeAnswer::Computed(computed_targets(atoms, arena, cause, &targets, spellings))
+    let targets = computed_targets(atoms, arena, cause, &targets, spellings);
+    CodeAnswer::Computed(arena.alloc(targets))
 }
 
 fn candidate_targets(

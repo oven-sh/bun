@@ -1,0 +1,11 @@
+{
+  "why": "nobody awaits the call that the tests leave in flight: on a busy machine `bun test` now and then says more, or less",
+  "printed": [
+    "the test ends 0 undefined",
+    "came opening,total | calls 0 | the real total | undefined"
+  ],
+  "tests": [
+    "(pass) the test ends at once"
+  ],
+  "exitCode": 0
+}

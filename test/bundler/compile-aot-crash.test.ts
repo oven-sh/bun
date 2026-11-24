@@ -7,8 +7,6 @@ import { test } from "../aot/supported";
 
 setDefaultTimeout(60_000);
 
-const root = isWindows ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
-
 if (isASAN)
   console.error(
     "SKIPPED: compile-aot-crash.test.ts: in a Bun built with AddressSanitizer its handler answers a segmentation fault, not Bun's",
@@ -95,10 +93,10 @@ test.if(!isASAN)("a crash in compiled code lists the compiled functions on the s
     .slice(1)
     .filter(line => line.startsWith("    at "));
   expect(frames).toEqual([
-    `    at byteAt (${root}app.ts:6:17)`,
-    `    at sumBytes (${root}app.ts:14:47)`,
-    `    at startReading (${root}app.ts:18:17)`,
-    `    at ${root}app.ts:22:13`,
+    `    at byteAt (./app.ts:6:17)`,
+    `    at sumBytes (./app.ts:14:47)`,
+    `    at startReading (./app.ts:18:17)`,
+    `    at ./app.ts:22:13`,
   ]);
   const url = stderr.match(/^ (\S*CGaot\S*)$/m)![1];
   // The URL is some 190 letters of an alphabet of 64, so a name of three letters stands in one build in 1,400 by chance.

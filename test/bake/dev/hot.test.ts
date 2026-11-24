@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -691,3 +691,108 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+devTest("a save of a CommonJS module reaches the ES modules that import it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import dep from "./dep.cjs";
+      console.log("cjs: " + dep.value);
+      globalThis.readCjs = () => dep.value;
+      import.meta.hot.accept();
+    `,
+    "dep.cjs": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("cjs: 1");
+    for (const n of [2, 3]) {
+      await dev.write("dep.cjs", `module.exports = { value: ${n} };`);
+      await c.expectMessage(`cjs: ${n}`);
+      expect(await c.js<number>`readCjs()`).toBe(n);
+    }
+  },
+});
+
+// The server cannot reload a page to get a value that an update missed.
+for (const [file, text] of [
+  ["data.json", (n: number) => `{ "value": ${n} }`],
+  ["data.cjs", (n: number) => `module.exports = { value: ${n} };`],
+] as const) {
+  devTest(`server: a save of ${file} reaches a route that imports it`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `
+        import data from '../${file}';
+        export default () => new Response('value: ' + data.value);
+      `,
+      [file]: text(1),
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("value: 1");
+      for (const n of [2, 3]) {
+        await dev.write(file, text(n));
+        await dev.fetch("/").equals("value: " + n);
+      }
+    },
+  });
+}
+
+devTest("server: a module that an update reaches from two saved files is disposed of once", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import { pool } from '../pool';
+      export default () => new Response(pool());
+    `,
+    "pool.ts": `
+      import { a } from './a';
+      import { b } from './b';
+      globalThis.open = (globalThis.open ?? 0) + 1;
+      export const pool = () => a + ' ' + b + ' open: ' + globalThis.open;
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => { globalThis.open--; });
+    `,
+    "a.ts": `export const a = 'a1';`,
+    "b.ts": `export const b = 'b1';`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("a1 b1 open: 1");
+    for (const n of [2, 3]) {
+      {
+        await using batch = await dev.batchChanges();
+        await dev.write("a.ts", `export const a = 'a${n}';`);
+        await dev.write("b.ts", `export const b = 'b${n}';`);
+      }
+      await dev.fetch("/").equals(`a${n} b${n} open: 1`);
+    }
+  },
+});
+
+for (const [how, callback] of [
+  ["throws", `() => { throw new Error('from dispose'); }`],
+  ["rejects", `async () => { throw new Error('from dispose'); }`],
+] as const) {
+  devTest(`server: an update goes on after a dispose callback that ${how}`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `
+        import { value } from '../module';
+        export default () => new Response('value: ' + value);
+      `,
+      "module.ts": `
+        export const value = 1;
+        import.meta.hot.accept();
+        import.meta.hot.dispose(${callback});
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("value: 1");
+      for (const n of [2, 3]) {
+        await dev.patch("module.ts", { find: "value = " + (n - 1), replace: "value = " + n });
+        await dev.output.waitForLine(/from dispose/);
+        await dev.fetch("/").equals("value: " + n);
+      }
+    },
+  });
+}

@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# function hilly(Ground) { return class Hill extends Ground { climb() { var up = 0; for (var k = 1; k < 4; k++) { var step = this.spot(2, k) - this.spot(2, k - 1); if (step > 0) up += step; } return up; } }; }
+# class Snow extends hilly(Object) { constructor(land) { super(); this.land = land; } spot(i, k) { return this.land.spot(i, k) / 2 + 1; } }
+# class Land extends hilly(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, 3 - i, i * i]; this.rows = r; } spot(i, k) { return this[i][k]; } }
+# function walked(days) { var land = new Land(4), high = 0; for (var day = 0; day < days; day++) { var here = land.spot(day & 3, 3); high = here > high ? here + land.rows : high - 1; } return high; }
+# print(walked(8), new Snow(new Land(4)).climb(), new Land(4).climb());
+# -- end of source
+# Each call of the mixin gets a copy of it, entered where the callee is the mixin: the class extends what one of two calls returns. The instances are arrays, known by their structure.
+# RUN: walk f2 mechanisms=all
+# CHECK: HasStructureOfClass
+# CHECK: AreMembersUnchanged {{*}}key="spot"
+# RUN(ANSWER): run-in-shell
+# ANSWER: 9 1.5 3
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 9 1.5 3
+# CHECKED-NEXT: exited with 0

@@ -9,22 +9,18 @@
 # f1 = lone, f2 = under, f3 = named
 # None stands in a loop, nothing else leans on the list, and no more is known of it than what is written. No test is built and no arm: the read is one operation, which is emitted as the call of a stub.
 # RUN(LONE): walk f1 mechanisms=all
-# REQUIRES(LONE): entries-of-bun
 # LONE-LABEL: code f1:Body
 # LONE-NOT: testedType=Array
 # LONE: : anything{{*}} = GetArrayElement {{*}}level=Expected
 # LONE-NOT: = ElemGet
 # RUN(UNDER): walk f2 mechanisms=all
-# REQUIRES(UNDER): entries-of-bun
 # UNDER-LABEL: code f2:Body
 # UNDER: : anything{{*}} = GetArrayElement {{*}}level=Expected
 # UNDER-NOT: = ElemGet
 # A key that is written a text is looked for as a name.
 # RUN(NAMED): walk f3 mechanisms=all
-# REQUIRES(NAMED): entries-of-bun
 # NAMED-LABEL: code f3:Body
 # NAMED-NOT: = GetArrayElement
 # NAMED: = ElemGet
 # RUN(WITHHELD): walk f1 mechanisms=all-Guesses
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD: = ElemGet

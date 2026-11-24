@@ -7,11 +7,13 @@ mod closed_module;
 pub mod decorator_metadata;
 mod lint;
 mod parents;
+mod property_place;
 mod runtime;
 pub mod static_referent;
 
 pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use property_place::{PropertyPlace, find_property_place};
 pub use runtime::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
@@ -353,6 +355,21 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     .then_some((object, key))
 }
 
+/// The first `require(..)`, `module.exports = ..` or `exports.a = ..` of a file, which makes one that neither imports nor
+/// exports a CommonJS module.
+pub fn find_commonjs_indicator(hir: &File) -> Option<ExprId> {
+    (0..hir.exprs.len() as u32).map(ExprId).find(|&e| {
+        matches!(hir[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
+            && (require_argument(hir, e).is_some()
+                || matches!(
+                    assignment_declaration_kind(hir, e),
+                    JsDeclarationKind::ModuleExports
+                        | JsDeclarationKind::ExportsProperty(_)
+                        | JsDeclarationKind::ObjectDefinePropertyExports
+                ))
+    })
+}
+
 /// `IsRequireCall`: returns the argument if `e` is `require(x)`.
 pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
     let ExprKind::Call(c) = hir[e].kind else {
@@ -598,6 +615,7 @@ impl<'s> Symbols<'s> {
             many: ArenaVec::new_in(arena),
         };
         all.list.reserve_exact(symbols.len() + namespaces);
+        crate::util::prefault(all.list.spare_capacity_mut());
         all.rest.reserve_exact(symbols.len() - plain + namespaces);
         all.many.reserve_exact(many);
         for symbol in symbols {
@@ -976,6 +994,19 @@ pub enum FnOwner {
     Stmt(StmtId),
     Member(MemberId),
     Type(TypeNodeId),
+}
+
+impl FnOwner {
+    pub(crate) fn text_of_expression_or_declaration(
+        self,
+        hir: &File<'_>,
+    ) -> Option<std::ops::Range<u32>> {
+        match self {
+            FnOwner::Expr(written) => Some(hir[written].pos..hir[written].end),
+            FnOwner::Stmt(declared) => Some(hir[declared].loc.pos..hir[declared].loc.end),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1901,6 +1932,79 @@ impl<S: Storage> BoundIn<S> {
         parent.unwrap_or_default().get()
     }
 
+    /// True if `s` is the initializer of a `for` statement, or the left side of a `for`-`in` or `for`-`of` statement.
+    pub fn is_head_of_for(&self, hir: &File, s: StmtId) -> bool {
+        let Parent::Stmt(above) = self.parent_of_stmt(s) else {
+            return false;
+        };
+        matches!(
+            hir[above].kind,
+            StmtKind::For { init: head, .. }
+                | StmtKind::ForIn { left: head, .. }
+                | StmtKind::ForOf { left: head, .. } if head == s
+        )
+    }
+
+    /// Returns the statement that holds `e` if only expressions and a declarator are between them.
+    pub fn statement_of_expr(&self, mut e: ExprId) -> Option<StmtId> {
+        loop {
+            match self.parent_of_expr(e) {
+                Parent::Expr(above) => e = above,
+                Parent::Stmt(statement) => return statement.some(),
+                Parent::VarInit(declaration) => return self.var_stmt[declaration.idx()].some(),
+                _ => return None,
+            }
+        }
+    }
+
+    fn is_inside_expr(&self, hir: &File<'_>, inner: ExprId, outer: ExprId) -> bool {
+        if inner == outer || hir[inner].pos < hir[outer].pos || hir[inner].end > hir[outer].end {
+            return false;
+        }
+        let mut at = inner;
+        while let Parent::Expr(above) = self.parent_of_expr(at) {
+            if above == outer {
+                return true;
+            }
+            at = above;
+        }
+        false
+    }
+
+    /// Moves an assignment that is part of another one's value in front of it: `o.a = o.b = 0` creates `b` first.
+    pub fn move_inner_assignments_first<T>(
+        &self,
+        hir: &File<'_>,
+        items: Vec<T>,
+        assignment_of: impl Fn(&T) -> Option<ExprId>,
+    ) -> Vec<T> {
+        let is_part_of_expression = |item: &T| {
+            assignment_of(item).is_some_and(|assignment| {
+                matches!(self.parent_of_expr(assignment), Parent::Expr(_))
+            })
+        };
+        if !items.iter().any(is_part_of_expression) {
+            return items;
+        }
+        let mut ordered = Vec::with_capacity(items.len());
+        let mut enclosing: SmallVec<[(Option<ExprId>, T); 4]> = SmallVec::new();
+        for item in items {
+            let assignment = assignment_of(&item);
+            while let Some((outer, _)) = enclosing.last() {
+                let is_inside = matches!((*outer, assignment), (Some(outer), Some(inner)) if self.is_inside_expr(hir, inner, outer));
+                if is_inside {
+                    break;
+                }
+                ordered.extend(enclosing.pop().map(|(_, outer)| outer));
+            }
+            enclosing.push((assignment, item));
+        }
+        while let Some((_, outer)) = enclosing.pop() {
+            ordered.push(outer);
+        }
+        ordered
+    }
+
     /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
     #[inline]
     pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
@@ -2296,6 +2400,18 @@ impl Bound<'_> {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn first_declaration_of_literal_member(&self, p: PropId) -> PropId {
+        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
+            return p;
+        };
+        let mut declarations = self.symbol(*symbol).decls.iter();
+        let first = declarations.find_map(|declaration| match *declaration {
+            Decl::Property(first) => Some(first),
+            _ => None,
+        });
+        first.unwrap_or(p)
     }
 
     /// True if `m`, which has a name, has a symbol other than the one its container has under that

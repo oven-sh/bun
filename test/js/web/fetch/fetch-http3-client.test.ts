@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
 import { listen } from "node:quic";
+import zlib from "node:zlib";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -934,6 +935,72 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
+test("a gzip body that waits for its consumer ends at its Content-Length, with the stream still open", async () => {
+  const size = 768 * 1024;
+  const wire = gzipSync(Buffer.alloc(size));
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200", "content-encoding": "gzip", "content-length": String(wire.length) });
+        this.writer.writeSync(wire);
+      },
+    },
+  );
+  try {
+    const res = await fetch(`https://127.0.0.1:${origin.address!.port}/`, h3);
+    expect((await res.bytes()).length).toBe(size);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
+test.each([
+  ["FIN", (stream: any) => stream.writer.endSync(), true],
+  ["RESET_STREAM", (stream: any) => stream.resetStream(0x102n), "ECONNRESET"],
+  [
+    "CONNECTION_CLOSE",
+    (stream: any) => stream.session.destroy(undefined, { code: 0x100, type: "application" }),
+    "ECONNRESET",
+  ],
+])("an unfinished gzip stream, then %s", async (_, end, expected) => {
+  let stream: any;
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        stream = this;
+        this.sendHeaders({ ":status": "200", "content-encoding": "gzip" });
+        this.writer.writeSync(zlib.gzipSync("flushed", { finishFlush: zlib.constants.Z_SYNC_FLUSH }));
+      },
+    },
+  );
+  try {
+    const reader = (await fetch(`https://127.0.0.1:${origin.address!.port}/`, h3)).body!.getReader();
+    expect(Buffer.from((await reader.read()).value!).toString()).toBe("flushed");
+    end(stream);
+    const outcome = await reader.read().then(
+      ({ done }) => done,
+      error => error.code,
+    );
+    expect(outcome).toBe(expected);
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
 test("a response header set over the size limit fails that request and no other on the connection", async () => {
   const held = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -1061,7 +1128,7 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
 
 // Same retry, but the reconnect fails inside `connect()` itself. A QUIC
 // connect to a resolved hostname probes each address with a throwaway UDP
-// `connect(2)` (quic.c, us_quic_connect_result) and gives up when no entry is
+// `connect(2)` (quic.cpp, us_quic_connect_result) and gives up when no entry is
 // reachable. The shim lets the first probe through and refuses every later
 // one, so the handshake failure below retries onto a connect that fails
 // before it returns. On that path the request must be failed once, by the

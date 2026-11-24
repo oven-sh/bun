@@ -1,0 +1,7 @@
+// A list is cut in a loop, then it grows again: what lay behind its end is gone.
+function cutAndGrow(n) { const l = [], out = []; for (let k = 0; k < n; k++) { l.push(k, k + 1, 2, 3, 4); l.length = 2; l.length = 5; out.push(l[2], l[3], l[4], 2 in l, l.length); l.length = 0; l.length = 1; out.push(l[0], 0 in l); l.length = 0; } return out.join(); }
+function cutOnce(n) { const l = []; let s = ""; for (let k = 0; k < n; k++) { l.push("a" + k, "b", "c", "d"); l.length = 1 + (k & 1); l[l.length + 1] = "e"; s += l.map(x => x).length + ":" + Object.keys(l).join("") + ";"; l.length = 0; } return s; }
+function cutThenPush(n) { const l = [1]; let s = 0; for (let k = 0; k < n; k++) { l.push(k, k, k); l.length = 1; l[3] = k; s += (1 in l ? 100 : 0) + (2 in l ? 1000 : 0) + (l[2] === undefined ? 1 : 10000); l.length = 1; } return s; }
+function cutObjects(n) { const l = []; let s = 0; for (let k = 0; k < n; k++) { l.push({ k }, { k }, [k]); l.length = 1; l.length = 3; for (const x of l) s += x ? 1 : 0; l.length = 0; } return s; }
+function reversed(n) { const l = [], out = []; for (let k = 0; k < n; k++) { l.push(1, 2, 3, 4); l.length = 2; l.length = 4; l.reverse(); out.push(l.indexOf(3), l.indexOf(2), l.lastIndexOf(4), l.includes(undefined)); l.length = 0; } return out.join(); }
+for (let round = 0; round < 3; round++) console.log(cutAndGrow(12), cutOnce(8), cutThenPush(40), cutObjects(40), reversed(6));

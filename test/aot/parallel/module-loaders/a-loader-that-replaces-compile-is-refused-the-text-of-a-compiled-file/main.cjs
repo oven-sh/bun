@@ -15,5 +15,5 @@ try {
   console.log(error.message.split(":")[0].replace(/'.*'/, "'<path>'"));
 }
 /* Output:
-Cannot hand the source text of '<path>' to module._compile
+Cannot pass the source of '<path>' to module._compile
 */

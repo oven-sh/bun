@@ -1,0 +1,44 @@
+# -- source: main.cjs
+# var __extends = (function () {
+#   var extendStatics = function (d, b) {
+#     extendStatics = Object.setPrototypeOf || ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) || function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+#     return extendStatics(d, b);
+#   };
+#   return function (d, b) {
+#     if (typeof b !== "function" && b !== null) throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+#     extendStatics(d, b);
+#     function __() { this.constructor = d; }
+#     d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+#   };
+# })();
+# function inherit(child, parent) { child.prototype = Object.create(parent.prototype); child.prototype.constructor = child; child.super_ = parent; return child; }
+# function A(n) { this.n = n; }
+# A.prototype.get = function () { return this.n; };
+# function B(n) { this.m = n; }
+# B.prototype.get = function () { return this.m; };
+# var OfA = (function (_super) { __extends(OfA, _super); function OfA(n) { var _this = _super.call(this, n) || this; _this.k = 1; return _this; } return OfA; })(A);
+# var OfB = (function (_super) { __extends(OfB, _super); function OfB(n) { return _super.call(this, n) || this; } return OfB; })(B);
+# function Last(n) { A.call(this, n); this.l = 2; }
+# inherit(Last, A);
+# function Other(n) { B.call(this, n); }
+# inherit(Other, B);
+# var all = [new OfA(1), new OfB(2), new Last(3), new Other(4)];
+# print(all[0].get() + all[0].k + all[1].get() + all[2].get() + all[2].l + all[3].get());
+# -- end of source
+# No class meets another in the parameters of a helper, and what the parent fills is there.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L4 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L5 {{*}}changes=[] stays-with-compiled-code
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: field L0.0 "n" {{*}}absent
+# FIELDS: field L1.0 {{*}} filled
+# FIELDS: field L2.0 {{*}} filled
+# FIELDS: field L3.0 {{*}} filled
+# FIELDS: field L4.0 {{*}} filled
+# FIELDS: field L5.0 {{*}} filled
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 13

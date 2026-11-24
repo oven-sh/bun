@@ -1,0 +1,1 @@
+Three calls of import() are in flight at once, and the file that is read first runs first.

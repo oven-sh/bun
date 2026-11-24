@@ -58,6 +58,10 @@ struct bsd_addr_t {
 
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef __APPLE__
 /*
  * Extended version for sendmsg_x() and recvmsg_x() calls
@@ -229,20 +233,8 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 int bsd_would_block();
 int bsd_send_is_transient_error();
 
-// return LIBUS_SOCKET_ERROR or the fd that represents listen socket
-// listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error);
-
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
-
-/* Creates an UDP socket bound to the hostname and port */
-LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err);
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
-
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
-
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
 
 int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
@@ -250,6 +242,62 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
+
+#ifdef __cplusplus
+}
+
+#include <errno.h>
+#include <utility>
+
+/* Cleaning up after a failure must not replace the error that the caller is about to read. */
+struct us_keep_last_error_t {
+    int saved_errno = errno;
+#ifdef _WIN32
+    int saved_wsa_error = WSAGetLastError();
+#endif
+    ~us_keep_last_error_t() {
+        errno = saved_errno;
+#ifdef _WIN32
+        WSASetLastError(saved_wsa_error);
+#endif
+    }
+};
+
+class [[clang::trivial_abi, nodiscard]] us_fd_t {
+    LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
+
+public:
+    us_fd_t() = default;
+    explicit us_fd_t(LIBUS_SOCKET_DESCRIPTOR fd) : fd(fd) {}
+    us_fd_t(us_fd_t &&other) : fd(other.release()) {}
+    us_fd_t &operator=(us_fd_t other) {
+        std::swap(fd, other.fd);
+        return *this;
+    }
+    ~us_fd_t() {
+        if (*this) {
+            us_keep_last_error_t keep;
+            bsd_close_socket(fd);
+        }
+    }
+
+    explicit operator bool() const { return fd != LIBUS_SOCKET_ERROR; }
+    LIBUS_SOCKET_DESCRIPTOR get() const { return fd; }
+    LIBUS_SOCKET_DESCRIPTOR release() { return std::exchange(fd, LIBUS_SOCKET_ERROR); }
+};
+
+// listen both on ipv6 and ipv4
+us_fd_t bsd_create_listen_socket(const char *host, int port, int options, int* error);
+
+us_fd_t bsd_create_listen_socket_unix(const char *path, size_t pathlen, int options, int* error);
+
+/* Creates an UDP socket bound to the hostname and port */
+us_fd_t bsd_create_udp_socket(const char *host, int port, int options, int *err);
+
+us_fd_t bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
+
+us_fd_t bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
+#endif
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

@@ -8,6 +8,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
+import { bytesAndStoredStrings } from "../harness/executable-bytes";
 import { buildFlags } from "../harness/flags";
 import { describe, test } from "../supported";
 
@@ -154,7 +155,7 @@ describe.concurrent("names that the program reads", () => {
         expect(rows["binding: String(error)"]).toBe(JSON.stringify(JSON.parse(rows["binding: class"]) + ": gone"));
         expect(rows["binding: bound"]).toBe(JSON.stringify("bound " + JSON.parse(rows["binding: function"])));
 
-        const file = readFileSync(executable);
+        const file = bytesAndStoredStrings(executable);
         expect(written.filter(name => file.includes(name) || file.includes(Buffer.from(name, "utf16le")))).toEqual([]);
         const map: { names: string[]; x_facebook_sources: [{ names: string[] }][] } = JSON.parse(
           readFileSync(executable + ".map", "utf8"),
@@ -179,7 +180,7 @@ describe.concurrent("names that the program reads", () => {
         expect(rows["key: method"]).toBe('""');
         expect(rows["key: getter"]).toBe('"get "');
         expect(rows["classes listed by name"]).toBe("1");
-        const file = readFileSync(executable);
+        const file = bytesAndStoredStrings(executable);
         expect(written.filter(name => file.includes(name))).toEqual([]);
       }),
     buildLimit,

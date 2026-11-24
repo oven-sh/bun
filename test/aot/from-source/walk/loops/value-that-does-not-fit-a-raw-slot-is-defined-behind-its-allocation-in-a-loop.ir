@@ -7,7 +7,7 @@
 # -- end of source
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
-# CHECK: b0({{*}}: i32 @JSValue
+# CHECK: b0({{*}}: int[0, 2147483647] @JSValue
 # CHECK-NOT: TypeTest
 # CHECK: = NewObject
 # CHECK-NOT: PropDefine

@@ -1,10 +1,10 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="measured"
 // CHECK-NOT: Return
-// CHECK: [[errorOfMeasured]] = NewRuntimeError runtimeError=LeftOutOfExecutable
+// CHECK: [[errorOfMeasured]] = NewRuntimeError runtimeError=OmittedFromExecutable
 // CHECK-NEXT: Throw [[errorOfMeasured]]
 
 // A name in a type is not evaluated. The type of the function is found all the same.

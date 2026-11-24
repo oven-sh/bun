@@ -80,8 +80,8 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 // @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
-    let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    let vm = global_object.bun_vm();
+    vm.exit_handler.exit_code.set(code);
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
@@ -100,7 +100,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 bun_core::reload_process(should_clear_terminal, false);
             });
         }
-        vm.exit_handler.requested = true;
+        vm.exit_handler.requested.set(true);
         vm.on_exit();
         vm.global_exit();
     }
@@ -209,14 +209,6 @@ mod _impl {
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
-
-    #[cfg(windows)]
-    unsafe extern "C" {
-        // SAFETY precondition: `name` must point to a NUL-terminated wide string;
-        // `value` must be either null (delete) or a NUL-terminated wide string.
-        // Raw-pointer contract — cannot be `safe fn`.
-        fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-    }
 
     // ───────────────────────────── title ─────────────────────────────
 
@@ -440,17 +432,8 @@ mod _impl {
             });
         }
 
-        // Per-platform path-separator literal suffixes.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        const EVAL_SUFFIX: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        const STDIN_SUFFIX: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if let Some(main) = vm.main()
             && !strings::ends_with(main, EVAL_SUFFIX)
             && !strings::ends_with(main, STDIN_SUFFIX)
@@ -470,7 +453,7 @@ mod _impl {
                     .map(|&arg| super::worker_option_string(arg)),
             );
         } else {
-            for arg in &vm.argv {
+            for arg in vm.argv {
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.push(BunString::clone_utf8(arg));
             }
@@ -489,13 +472,13 @@ mod _impl {
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead
         // (`undefined` when empty, matching `node -i` without `-e`).
-        if let Some(script) = vm.module_loader.interactive_eval_script {
+        if let Some(script) = vm.module_loader.interactive_eval_script.get() {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
             return EncodedSlice::from_bytes(script).to_js(global_object);
         }
-        if let Some(source) = vm.module_loader.eval_source.as_deref() {
+        if let Some(source) = vm.module_loader.eval_source.get() {
             return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
@@ -515,12 +498,7 @@ mod _impl {
         global_object: &JSGlobalObject,
         directory: &[u8],
     ) -> JsResult<JSValue> {
-        if cfg!(windows) {
-            let to_separator = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-            let spelled: Vec<u8> = directory.iter().map(to_separator).collect();
-            return bun_string_jsc::create_utf8_for_js(global_object, &spelled);
-        }
-        bun_string_jsc::create_utf8_for_js(global_object, directory)
+        bun_string_jsc::create_utf8_for_js(global_object, &bun_paths::to_native(directory))
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -577,9 +555,8 @@ mod _impl {
     /// Resolves `to` against the working directory when that is a folder of the executable, which the system cannot do.
     fn resolve_chdir_target<'a>(
         to: &'a bun_core::ZStr,
-        buf: &'a mut bun_paths::PathBuffer,
+        path: &'a mut bun_paths::Path,
     ) -> ChdirTarget<'a> {
-        use bun_paths::resolve_path::{self, platform};
         let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
             return ChdirTarget::OnDisk(to);
         };
@@ -587,11 +564,11 @@ mod _impl {
         if !bun_paths::is_absolute(to.as_bytes()) && current.is_none() {
             return ChdirTarget::OnDisk(to);
         }
-        let path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            current.unwrap_or(b"/"),
-            &mut buf[..],
-            &[to.as_bytes()],
-        );
+        path.resolve_in_place(&[current.unwrap_or(b"/"), to.as_bytes()]);
+        path.copy_trailing_sep_from(to);
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
+            return ChdirTarget::InExecutable(Err(bun_sys::E::ENAMETOOLONG));
+        }
         if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
             return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
         }
@@ -609,8 +586,7 @@ mod _impl {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
 
         let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
@@ -623,7 +599,7 @@ mod _impl {
         let prev_cwd: Box<[u8]> = Box::from(
             bun_core::working_directory_in_executable().unwrap_or_else(|| vm.top_level_dir()),
         );
-        let mut resolved = bun_paths::path_buffer_pool::get();
+        let mut resolved = bun_paths::Path::new();
         let on_disk = match resolve_chdir_target(slice, &mut resolved) {
             ChdirTarget::OnDisk(path) => path,
             ChdirTarget::InExecutable(Ok(directory)) => {
@@ -639,17 +615,14 @@ mod _impl {
         match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
-                vm.test_isolation_scope(|state| {
-                    state.saved_cwd.get_or_insert(prev_cwd);
-                });
-                #[cfg(windows)]
-                let without_trailing_slash =
-                    bun_paths::string_paths::without_trailing_slash_windows_path;
-                #[cfg(not(windows))]
-                let without_trailing_slash = strings::without_trailing_slash;
+                if vm.test_isolation_enabled.get() {
+                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
+                        saved.get_or_insert(prev_cwd);
+                    });
+                }
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(vm.top_level_dir()),
+                    bun_paths::without_trailing_sep(vm.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {
@@ -665,6 +638,7 @@ mod _impl {
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
     extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
+        use bun_core::WStr;
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;
@@ -682,11 +656,10 @@ mod _impl {
         };
         buf1[len1] = 0;
 
-        static EMPTY_W: [u16; 1] = [0];
-        let str2: Option<*const u16> = if v.tag() != bun_core::Tag::Dead {
+        let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
             Some('str_: {
                 if v.tag() == bun_core::Tag::Empty {
-                    break 'str_ EMPTY_W.as_ptr();
+                    break 'str_ WStr::EMPTY;
                 }
                 let len2: usize = if v.is_8bit() {
                     strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
@@ -695,14 +668,11 @@ mod _impl {
                     v.length()
                 };
                 buf2[len2] = 0;
-                buf2.as_ptr()
+                WStr::from_buf(&buf2, len2)
             })
         } else {
             None
         };
-        // SAFETY: buf1[len1] == 0; str2 is either null or NUL-terminated
-        unsafe {
-            let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
-        }
+        let _ = bun_sys::windows::SetEnvironmentVariableW(WStr::from_buf(&buf1, len1), str2);
     }
 } // mod _impl

@@ -1,0 +1,20 @@
+# f1 = turn
+# -- source: float64-matrix-transpose.ts
+# const side = 16;
+# const table = new Float64Array(side * side);
+# const turned = new Float64Array(side * side);
+# function turn(i: number): number {
+#   for (let r = 0; r < side; r++) for (let c = 0; c < side; c++) turned[c * side + r] = table[r * side + c]!;
+#   return turned[i & 255]!;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 12 instructions, 8 of them patches, a turn of the written loop steps by 4.
+# When the bound was taken: loop: operations 122, patches 0, moves 8, unlikely 0 ; loop: operations 17, patches 1, moves 1, unlikely 0. The first is eight turns laid out: 16 an element; the second the loop as written.
+# RUN(X64): loops most:130,18 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 130
+# X64-NEXT: loop: at most 18

@@ -27,7 +27,6 @@
 #include "BroadcastChannel.h"
 
 #include "BunBroadcastChannelRegistry.h"
-#include "BunClientData.h"
 #include "EventNames.h"
 #include "MessageEvent.h"
 #include "SerializedScriptValue.h"
@@ -44,11 +43,14 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 {
     EventTarget::initializeWeakPtrFactory();
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);
-    jsRef(context.jsGlobalObject());
+    jsRef();
 }
 
 BroadcastChannel::~BroadcastChannel()
 {
+    // As in Node, an open channel keeps the process alive whether or not script can reach it, until its context goes.
+    if (m_keepAlive.isActive())
+        scriptExecutionContext()->keepEventLoopAliveUntilStopped();
     close();
 }
 
@@ -105,15 +107,7 @@ void BroadcastChannel::close()
     if (prev & Closed)
         return;
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
-}
-
-// Its context stopped (a worker's, or a disposed Bun.ModuleGraph's): nobody is left to close() it,
-// so what it holds of the event loop goes too.
-void BroadcastChannel::stop()
-{
-    close();
-    if (auto* context = scriptExecutionContext())
-        jsUnref(context->jsGlobalObject());
+    jsUnref();
 }
 
 void BroadcastChannel::contextDestroyed()
@@ -141,22 +135,6 @@ bool BroadcastChannel::virtualHasPendingActivity() const
     // with no listener is a no-op anyway.
     uint64_t s = m_state.load(std::memory_order_acquire);
     return !(s & Closed) && (s & HasMessageListener);
-}
-
-void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
-{
-    if (!m_hasRef) {
-        m_hasRef = true;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
-    }
-}
-
-void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
-{
-    if (m_hasRef) {
-        m_hasRef = false;
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
 }
 
 } // namespace WebCore

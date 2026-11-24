@@ -1,0 +1,23 @@
+# f1 = sum
+# -- source: a-raw-number-that-arrives-at-a-copied-callee-is-not-asked-which-numbers-link-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# const halves = [0.5, 1.5, 2.5, 3.5];
+# function sum(rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) halves.forEach(x => { total += x; }); return total; }
+# let out = "";
+# for (let k = 0; k < 3; k++) out += sum(2) + ";" + sum(0) + "|";
+# print(out);
+# -- end of source
+# The test at the door of a copy buys a narrower type for the price of a look at a tag. A number that lies raw in a register has no tag: "a fraction" is three instructions, "an int32 or a fraction" thirty,
+# in every turn, and what they buy is the knowledge of which numbers a double is. The copy is walked with the type that the argument has: the element goes from its read into the sum.
+# RUN: walk f1 mechanisms=all
+# CHECK: [[element]]: number @Double = GetArrayElement {{*}}arrayStorage=Double level=Proven {{*}}isPresent
+# CHECK-NOT: = TypeTest [[element]]
+# CHECK-NOT: = Narrowed [[element]]
+# CHECK: = Add {{*}}, [[element]] form=Numbers
+# What plain Bun prints.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 16;0|16;0|16;0|
+# ANSWERS-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime
+# HARDENED: 16;0|16;0|16;0|
+# HARDENED-NEXT: exited with 0

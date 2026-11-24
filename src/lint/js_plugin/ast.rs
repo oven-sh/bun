@@ -18,6 +18,8 @@ use crate::estree::{Dialect, NodeType, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
+use std::cell::RefCell;
+use std::mem::take;
 
 /// The meaning of the number in a word.
 #[derive(Copy, Clone)]
@@ -165,6 +167,39 @@ struct Tree {
     types: Vec<u8>,
     /// UTF-8.
     extra: Vec<u8>,
+}
+
+thread_local! {
+    /// Empty lists. New ones for each file would leave the allocator with free memory for every size that a file has had.
+    static SPARE: RefCell<(Vec<VNode<'static>>, Tree)> = RefCell::default();
+}
+
+fn give_back<T>(mut list: Vec<T>, spare: &mut Vec<T>) {
+    if list.capacity() * size_of::<T>() <= 4 << 20 {
+        list.clear();
+        *spare = list;
+    }
+}
+
+/// For a thread that is done with linting
+pub fn drop_spare_lists() {
+    drop(SPARE.take());
+}
+
+/// The same memory, for the nodes of another file.
+fn emptied<'a>(mut nodes: Vec<VNode<'_>>) -> Vec<VNode<'a>> {
+    nodes.clear();
+    nodes.into_iter().map(|_| unreachable!()).collect()
+}
+
+impl Drop for Numbered<'_> {
+    fn drop(&mut self) {
+        SPARE.with_borrow_mut(|(nodes, tree)| {
+            give_back(emptied(take(&mut self.nodes)), nodes);
+            give_back(take(&mut self.types), &mut tree.types);
+            give_back(take(&mut self.parents), &mut tree.parents);
+        });
+    }
 }
 
 /// The slot that a node's number gets written to.
@@ -317,6 +352,13 @@ impl<'a> Writer<'a, '_> {
     }
 
     pub(super) fn into_numbered(self) -> Numbered<'a> {
+        SPARE.with_borrow_mut(|(_, tree)| {
+            give_back(self.tree.starts, &mut tree.starts);
+            give_back(self.tree.ends, &mut tree.ends);
+            give_back(self.tree.fields, &mut tree.fields);
+            give_back(self.tree.lists, &mut tree.lists);
+            give_back(self.tree.strings, &mut tree.strings);
+        });
         Numbered {
             nodes: self.nodes,
             types: self.tree.types,
@@ -538,6 +580,7 @@ pub(super) fn walk<'a, 's>(
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
 ) -> Writer<'a, 's> {
+    let (nodes, tree) = SPARE.take();
     let mut writer = Writer {
         text: file.text(),
         dialect: Dialect::of(file),
@@ -545,8 +588,8 @@ pub(super) fn walk<'a, 's>(
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],
-        nodes: Vec::new(),
-        tree: Tree::default(),
+        nodes: emptied(nodes),
+        tree,
         extra_units: 0,
         open: Vec::new(),
     };
@@ -575,6 +618,16 @@ impl Writer<'_, '_> {
             alternates.len() as u32,
             0,
         ];
+        let words = [
+            &tree.starts,
+            &tree.ends,
+            &tree.parents,
+            &tree.fields,
+            &tree.lists,
+            &tree.strings,
+        ];
+        let words = HEADER + alternates.len() + words.iter().map(|it| it.len()).sum::<usize>();
+        out.reserve_exact(4 * words + 8 * tree.numbers.len() + tree.types.len() + tree.extra.len());
         wire::words(out, &header);
         for number in &tree.numbers {
             out.extend_from_slice(&number.to_le_bytes());

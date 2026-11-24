@@ -1,5 +1,5 @@
 // A variable holds an object, a list, a text, undefined, null or a boolean when a loop begins and an integer from the second turn on. Each turn reads it and adds to a variable of the module or of the function around it.
-// STATISTIC: LoopsBuiltTwice >= 8
+// STATISTIC: WalkLoopsVersioned >= 7
 let out = "";
 let total = 0;
 let last = 0;

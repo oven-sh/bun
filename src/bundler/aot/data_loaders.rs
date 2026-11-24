@@ -4,7 +4,7 @@ use bstr::BStr;
 use bun_alloc::Arena;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
-use bun_aot::load::source_provider::{DataFailure, SourceFile};
+use bun_aot::load::source_provider::{DataFailure, SourceFile, is_short_blank_text};
 use bun_ast::{Expr, Loader, Loc, Log, Source};
 use bun_core::strings;
 use bun_sema::atom::Interner;
@@ -77,7 +77,9 @@ pub(crate) fn parse_data<'s>(
             let path = embedded.embed_file(context, file, log)?;
             let runs_in_place = context.module_prefix.is_empty();
             match runs_in_place {
-                true => Ok(create_string_module(&path, arena, atoms)),
+                true => Ok(DataModule::FileInPlace(
+                    arena.alloc(DataValue::String(atoms.intern(&path))),
+                )),
                 false => Ok(DataModule::EmbeddedFile {
                     path: atoms.intern(&path),
                 }),
@@ -93,8 +95,7 @@ pub(crate) fn parse_data<'s>(
         }),
         Loader::Sqlite => Ok(DataModule::Database {
             path: atoms.intern(file.path),
-            // A file of the build has its whole path. `PluginModules::add_database` names the others as the program does.
-            place: match bun_paths::is_absolute(file.path) {
+            place: match bun_paths::is_absolute(file.path) && bun_sys::exists(file.path) {
                 true => DatabasePlace::Disk,
                 false => DatabasePlace::WorkingDirectory,
             },
@@ -130,7 +131,7 @@ fn parse_structured<'s>(
     atoms: &Interner<'s>,
     log: &mut Log,
 ) -> Result<DataModule<'s>, DataFailure> {
-    let default: &'s DataValue<'s> = if strings::is_all_whitespace(source.contents()) {
+    let default: &'s DataValue<'s> = if is_short_blank_text(source.contents()) {
         arena.alloc(DataValue::Object(&[]))
     } else {
         parse_structured_value(format, source, arena, atoms, log)?
@@ -248,6 +249,15 @@ mod tests {
         contents: &[u8],
         check: impl for<'c, 's> FnOnce(Outcome<'c, 's>) -> R,
     ) -> R {
+        load_at(PATH, loader, contents, check)
+    }
+
+    fn load_at<R>(
+        path: &[u8],
+        loader: Loader,
+        contents: &[u8],
+        check: impl for<'c, 's> FnOnce(Outcome<'c, 's>) -> R,
+    ) -> R {
         with_test_context(
             |_| {},
             |context| {
@@ -257,7 +267,7 @@ mod tests {
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
                 let file = SourceFile {
-                    path: PATH,
+                    path,
                     contents,
                     loader,
                 };
@@ -402,8 +412,8 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn empty_and_blank_files_are_empty_objects() {
-        for contents in [&b""[..], &b" \n\t"[..]] {
+    fn empty_and_short_blank_files_are_empty_objects() {
+        for contents in [&b""[..], &b" \n\r"[..], &[b' '; 32][..]] {
             for loader in [
                 Loader::Json,
                 Loader::Jsonc,
@@ -420,6 +430,16 @@ mod tests {
                     assert_eq!(outcome.result.unwrap(), module);
                 });
             }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn blank_file_with_a_tab_or_of_33_bytes_goes_to_its_parser() {
+        for contents in [&b" \n\t"[..], &[b' '; 33][..]] {
+            load(Loader::Json, contents, |outcome| {
+                assert!(matches!(outcome.result, Err(DataFailure::InvalidText)));
+            });
         }
     }
 
@@ -492,10 +512,24 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn sqlite_opens_original_path() {
-        load(Loader::Sqlite, b"database", |outcome| {
+        let file_that_exists = std::env::current_exe().unwrap();
+        let path = file_that_exists.to_str().unwrap().as_bytes();
+        load_at(path, Loader::Sqlite, b"database", |outcome| {
+            let module = DataModule::Database {
+                path: outcome.atoms.intern(path),
+                place: DatabasePlace::Disk,
+            };
+            assert_eq!(outcome.result.unwrap(), module);
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn sqlite_absent_at_the_build_is_looked_up_at_the_run() {
+        load(Loader::Sqlite, b"", |outcome| {
             let module = DataModule::Database {
                 path: outcome.atoms.intern(PATH),
-                place: DatabasePlace::Disk,
+                place: DatabasePlace::WorkingDirectory,
             };
             assert_eq!(outcome.result.unwrap(), module);
         });

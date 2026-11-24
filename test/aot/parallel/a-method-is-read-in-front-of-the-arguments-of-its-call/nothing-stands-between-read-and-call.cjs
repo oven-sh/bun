@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsThroughTable >= 1
+// STATISTIC: MethodCallsThroughTable = 0
 // Nothing that anybody sees stands between the read and the call: the read may be left to the call, though one receiver holds the name as a field that was stored onto it from outside.
 "use strict";
 class A { constructor(n) { this.n = n; } f(x) { return this.n + x; } }

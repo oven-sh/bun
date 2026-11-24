@@ -1,0 +1,9 @@
+# the red control: a member is read off the answer
+# -- source: main.js
+# const given = JSON.parse(process.argv[2] ?? "5");
+# const own = Object.getPrototypeOf(given);
+# console.log(own.toFixed.call(7, 2));
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go NumberPrototype
+# CHECK: lookup let-go StringPrototype

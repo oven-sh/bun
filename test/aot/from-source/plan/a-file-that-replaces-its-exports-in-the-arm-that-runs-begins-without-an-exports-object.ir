@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# const make = require("./index.cjs");
+# const made = make({ step: 2 });
+# made.twice();
+# print(String(made.twice()));
+# -- source: index.cjs
+# if (true) { module.exports = require("./factory.cjs"); } else { module.exports = require("./other.cjs"); }
+# -- source: factory.cjs
+# module.exports = function make(config) { var count = 0; var step = config.step; function bump() { count = count + step; return count; } function twice() { bump(); return bump(); } return { twice: twice }; };
+# -- source: other.cjs
+# module.exports = function make() { return { twice() { return 0; } }; };
+# -- end of source
+# index.cjs is written as the index file of a package that ships two builds: it replaces its exports in the arm of an `if` that runs; the other arm is dead. Nothing can see the object that its exports would
+# begin as, so the file begins without one, as where the store is a statement of the file itself: its exports have one store. With two, Link no longer names the one function that a call of them enters.
+# The answers where what the file hands on is called twice, in a loop, by two names or from inside itself, and where the file is seen half loaded: ../../parallel/a-file-replaces-its-exports-in-the-arm-that-runs.
+# f4 = the body of index.cjs
+# RUN: walk f4:Body mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: = NewObject
+# CHECK: = PutModuleVariable
+# CHECK-NOT: = PutModuleVariable
+# CHECK: Return
+# RUN(SHELL): run-in-shell
+# SHELL: 8
+# RUN(CLOSED): run-in-shell mechanisms=none
+# CLOSED: 8

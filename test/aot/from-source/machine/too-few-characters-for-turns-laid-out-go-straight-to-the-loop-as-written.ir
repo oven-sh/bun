@@ -1,0 +1,28 @@
+# -- source: main.js
+# function hash(text, from, to) { let h = 7; for (let i = from; i < to; i++) h = ((h ^ text.charCodeAt(i)) * 31) | 0; return h; }
+# const texts = JSON.parse('["the quick brown fox jumps over the lazy dog", "wide \\u0416\\u4e2d text of some length, and then some more"]');
+# for (const text of texts) for (const [from, to] of [[0, 0], [0, 3], [4, 11], [4, 12], [4, 13], [0, 27], [5, 40], [30, 20]]) print(hash(text, from, to));
+# -- end of source
+# A counted loop over the characters of a text is laid out twice, for narrow texts and for wide ones, each behind a front of its own that asks whether eight turns are left. A loop of three turns failed that question at the first front,
+# went on to the second front and failed it there again. The two layouts stand in a row as those for the kinds of lists do: where too few turns are left for any layout the way goes straight to the loop as written.
+# f1 = hash
+# RUN: compile UnrolledLoopRemaindersShared mechanisms=all
+# CHECK: statistic UnrolledLoopRemaindersShared 1
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 7
+# SHELL-NEXT: 3329090
+# SHELL-NEXT: -527398700
+# SHELL-NEXT: 830508058
+# SHELL-NEXT: -24051157
+# SHELL-NEXT: 671434024
+# SHELL-NEXT: -896513802
+# SHELL-NEXT: 7
+# SHELL-NEXT: 7
+# SHELL-NEXT: 3438365
+# SHELL-NEXT: 1997227173
+# SHELL-NEXT: 1784501583
+# SHELL-NEXT: -515024783
+# SHELL-NEXT: 548893185
+# SHELL-NEXT: 1406269936
+# SHELL-NEXT: 7
+# SHELL-NEXT: exited with 0

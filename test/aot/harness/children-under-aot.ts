@@ -13,7 +13,7 @@ const withoutPreload: Record<string, string> = {
   [join(repository, "test")]: join(import.meta.dir, "children-in-test.toml"),
 };
 
-// A compiled run keeps a part of the stack from the program: docs/compiler/compatibility.mdx, "Smaller differences". A child whose command sets the size of its stack gets
+// A compiled run keeps a part of the stack from the program. A child whose command sets the size of its stack gets
 // that much more, in KB, so that the program has what the file meant it to have.
 const stackKeptFromProgram = (isASAN ? 3 : 1) * 256;
 const withStackKeptFromProgram = (word: string) =>

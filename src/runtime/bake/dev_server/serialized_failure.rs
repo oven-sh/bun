@@ -114,7 +114,7 @@ impl Packed {
 
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
-/// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
+/// Stored in `Graphs::bundling_failures` keyed by its `OwnerPacked`.
 ///
 /// PERF: `data` is an owned `Box<[u8]>`, so `Clone` deep-copies between
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —
@@ -134,13 +134,6 @@ impl SerializedFailure {
                 .expect("infallible: size matches"),
         );
         Packed::from_bits(raw).decode()
-    }
-
-    /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
-    /// `_dev` parameter so call sites read uniformly.
-    pub(crate) fn deinit<D>(&self, _dev: &D) {
-        // Drop happens via owner; nothing to do for the borrow form used by
-        // `index_failures` (which iterates `&SerializedFailure`).
     }
 
     /// `SerializedFailure.initFromLog`.
@@ -205,7 +198,8 @@ fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
 fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
     write_string32(data.text.as_ref(), w);
     if let Some(loc) = &data.location {
-        if loc.line < 0 {
+        // The reader takes a line of 0 as "no location" and reads no more of it.
+        if loc.line <= 0 {
             _ = w.write_int_le::<u32>(0);
             return;
         }
@@ -215,8 +209,10 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
         _ = w.write_int_le::<u32>(loc.length);
 
+        let (line_text, units_in_front) = loc.excerpt();
+        _ = w.write_int_le::<u32>(u32::try_from(units_in_front).expect("int cast"));
         // TODO: syntax highlighted line text + give more context lines
-        write_string32(loc.line_text.as_deref().unwrap_or(b""), w);
+        write_string32(line_text, w);
 
         // The file is not specified here. Since the transpiler runs every file
         // in isolation, it would be impossible to reference any other file

@@ -7,7 +7,7 @@ use bun_bundler::options::{OutputFile, OutputKind};
 use bun_core::{Global, Output, UnwrapOrOom};
 use bun_options_types::Format;
 use bun_options_types::context::ContextData;
-use bun_paths::resolve_path::platform_to_posix_in_place;
+use bun_paths::{from_portable, to_portable_in_place};
 use bun_sema::json::Json;
 use bun_sema::resolve::AOT_CONDITION;
 use bun_sema::util::SharedSort;
@@ -127,8 +127,8 @@ struct ExportedFile {
 }
 
 fn posix_dest_path(file: &OutputFile) -> Vec<u8> {
-    let mut path = bun_core::strings::remove_leading_dot_slash(&file.dest_path).to_vec();
-    platform_to_posix_in_place::<u8>(&mut path);
+    let mut path = bun_paths::without_leading_dot_slash(&file.dest_path).to_vec();
+    to_portable_in_place::<u8>(&mut path);
     path
 }
 
@@ -154,7 +154,7 @@ fn find_exported_files(
     });
     let mut exported: Vec<ExportedFile> = entry_points
         .map(|file| {
-            let (javascript, source) = (posix_dest_path(file), file.src_path.text);
+            let (javascript, source) = (posix_dest_path(file), &*file.src_path);
             ExportedFile {
                 subpath: subpath_of(&javascript),
                 source: source.to_vec(),
@@ -294,7 +294,7 @@ struct WrittenFiles<'a> {
 impl WrittenFiles<'_> {
     // The project's package.json names a source file, or what this build makes of it.
     fn find(&self, written: &[u8]) -> Option<usize> {
-        let path = absolute_path(self.project_directory, written);
+        let path = absolute_path(self.project_directory, &from_portable(written));
         self.exported.iter().position(|file| {
             file.source == path || absolute_path(self.outdir, &file.javascript) == path
         })

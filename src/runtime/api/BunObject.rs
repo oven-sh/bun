@@ -12,38 +12,33 @@ pub(crate) fn get_public_path_with_asset_prefix(
     origin: &bun_url::URL,
     asset_prefix: &[u8],
     out: &mut Vec<u8>,
-    platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Path;
 
-    let relative_path: &[u8] = if strings::has_prefix(to, dir) {
-        strings::without_trailing_slash(&to[dir.len()..])
+    let relative;
+    let is_below_dir = strings::has_prefix(to, dir);
+    let relative_path: &[u8] = if is_below_dir {
+        bun_paths::without_trailing_sep(&to[dir.len()..])
     } else {
-        match platform {
-            Platform::Posix => {
-                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
-            }
-            Platform::Windows => {
-                resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
-            }
-            Platform::Loose => {
-                resolve_path::relative_platform::<resolve_path::platform::Loose, false>(dir, to)
-            }
-            Platform::Nt => {
-                resolve_path::relative_platform::<resolve_path::platform::Nt, false>(dir, to)
-            }
-        }
+        relative = Path::relative(dir, to).into_portable();
+        &relative
     };
     if !origin.is_absolute() {
         out.extend_from_slice(strings::trim_left(relative_path, b"/"));
         return;
     }
-    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-        let abs_path = if bun_paths::is_absolute(to) {
+    let is_on_another_volume = !is_below_dir && bun_paths::is_absolute(relative_path);
+    if is_on_another_volume
+        || strings::has_prefix(relative_path, b"..")
+        || strings::has_prefix(relative_path, b"./")
+    {
+        let resolved;
+        let abs_path: &[u8] = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            resolved = Path::resolve(&[VirtualMachine::get().top_level_dir(), to]);
+            &resolved
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);
@@ -55,7 +50,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
     // path at most two separators longer than `asset_prefix` + `relative_path`.
     out.reserve(origin.origin.len() + asset_prefix.len() + relative_path.len() + 3);
     origin
-        .join_write(out, asset_prefix, b"", relative_path, b"")
+        .join_write(out, asset_prefix, relative_path)
         .expect("infallible: in-memory write");
 }
 
@@ -73,11 +68,10 @@ use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_zlib as zlib;
+use bun_sys::{self as sys, Fd};
+use bun_zlib::{Inflater, deflate, inflate};
 
 use crate::node;
-use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
@@ -201,7 +195,7 @@ pub(crate) fn shell_escape<'a>(
 
 /// `Bun.gc(force)`: heap size after the collection.
 pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
-    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+    cx.global().bun_vm().garbage_collect_from_js(force)
 }
 
 pub(crate) fn braces(
@@ -216,27 +210,7 @@ pub(crate) fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(
-                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                    );
-                }
-            };
-        }
-
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
-            Ok(v) => break 'lexer_output v,
-            Err(err) => {
-                return Err(
-                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                );
-            }
-        }
-    };
+    let mut lexer_output = Braces::tokenize(brace_slice);
 
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
@@ -290,7 +264,6 @@ pub(crate) fn braces(
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
             return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
@@ -322,9 +295,8 @@ pub(crate) fn which<'a>(
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
     let cwd = options.cwd.unwrap_or_else(|| vm.top_level_dir());
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    bun_which::which(&mut *path_buf, path, cwd, command)
-        .map(|bin_path| heap.create_utf8_string(bin_path))
+    bun_which::which(path, cwd, command)
+        .map(|bin_path| heap.create_utf8_string(&bin_path))
         .transpose()
 }
 
@@ -545,20 +517,9 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let callback = callback.to_js();
-
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let get_or_put_result = VirtualMachine::get()
-        .as_mut()
-        .macros
-        .get_or_put(id)
-        .expect("unreachable");
-    if get_or_put_result.found_existing {
-        get_or_put_result.value_ptr.unprotect();
-    }
-
-    callback.protect();
-    *get_or_put_result.value_ptr = callback;
+    let vm = VirtualMachine::get();
+    let callback = jsc::Strong::create(callback.to_js(), vm.global());
+    vm.macros.with_mut(|macros| macros.insert(id, callback));
 
     Ok(())
 }
@@ -580,10 +541,9 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 // `ExceptionValidationScope`).
 // HOST_EXPORT(BunObject_getter_main, jsc)
 pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
-    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
+    let vm = global_this.bun_vm();
     // If JS has set it to a custom value, use that one
-    if let Some(overridden_main) = vm.overridden_main.get() {
+    if let Some(overridden_main) = vm.overridden_main.get().get() {
         return overridden_main;
     }
     // No entry module (`bun bake`): an empty string, as `Bun.main` is always a string.
@@ -595,7 +555,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
-        if vm.main_resolved_path.is_empty() {
+        if vm.main_resolved_path.get().is_empty() {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(main, b"[eval]") {
                 break 'use_resolved_path;
@@ -604,7 +564,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             }
 
-            let Ok(fd) = sys::openat_a(
+            let Ok(file) = sys::File::openat(
                 if cfg!(windows) {
                     Fd::INVALID
                 } else {
@@ -622,14 +582,14 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+            let fd = file.fd();
             #[cfg(windows)]
             {
                 let mut wpath = bun_paths::w_path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
                     break 'use_resolved_path;
                 };
-                vm.main_resolved_path = BunString::clone_utf16(fdpath);
+                vm.main_resolved_path.set(BunString::clone_utf16(fdpath));
             }
             #[cfg(not(windows))]
             {
@@ -640,15 +600,16 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
                 // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
                 if let Some(atom) = BunString::try_create_atom(fdpath) {
-                    vm.main_resolved_path = atom;
+                    vm.main_resolved_path.set(atom);
                 } else {
-                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
+                    vm.main_resolved_path.set(BunString::clone_utf8(fdpath));
                 }
             }
         }
 
         return vm
             .main_resolved_path
+            .get()
             .to_js(global_this)
             .or_pending_exception();
     }
@@ -658,12 +619,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
 pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    // SAFETY: bun_vm() returns the live per-thread singleton.
-    global_this
-        .bun_vm()
-        .as_mut()
-        .overridden_main
-        .set(global_this, new_value);
+    (global_this.bun_vm().overridden_main).with_mut(|main| main.set(global_this, new_value));
     true
 }
 
@@ -696,11 +652,11 @@ pub(crate) fn open_in_editor<'a>(
 
     EDITOR_CONTEXT.with(|cell| {
         let edit = &mut *cell.borrow_mut();
-        let env = vm.transpiler.env_mut();
+        let env = vm.transpiler.get().env_mut();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            if !strings::eql_long(&edit.name, name, true) {
+            if !strings::eql_long(&edit.name, name) {
                 let prev = core::mem::take(edit);
                 edit.name = name.to_vec();
                 edit.detect_editor(env);
@@ -761,7 +717,7 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
 }
 
 // HOST_EXPORT(Bun__gc, c)
-pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+pub(crate) fn gc(vm: &VirtualMachine, sync: bool) -> usize {
     vm.garbage_collect_from_js(sync)
 }
 
@@ -782,24 +738,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
-        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
-            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        Resolved::Found(value)
+            if matches!(mode, ResolveMode::RequireResolve | ResolveMode::EsmResolve)
+                && bun_standalone_graph::Graph::get_ref()
+                    .is_some_and(|graph| graph.compiled_program.is_some()) =>
+        {
+            Ok(find_source_path_of_compiled_file(specifier, &value, mode).unwrap_or(value))
         }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
 }
 
-/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
 /// A path in the executable is its own answer.
 fn find_source_path_of_compiled_file(
     specifier: &BunString,
     resolved: &BunString,
+    mode: ResolveMode,
 ) -> Option<BunString> {
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let program = graph.compiled_program.as_ref()?;
     program.root_on_build_machine()?;
-    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+    let written = specifier.to_utf8();
+    if mode == ResolveMode::EsmResolve && !bun_paths::is_absolute(written.slice()) {
+        return None;
+    }
+    if bun_standalone_graph::is_bun_standalone_file_path(written.slice()) {
         return None;
     }
     let path = resolved.to_utf8();
@@ -834,7 +798,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         mode,
     )? {
         Ok(path) => path,
-        Err(err) if err.as_class_ref::<jsc::ResolveMessage>().is_some() => {
+        Err(err) if err.is::<jsc::ResolveMessage>() => {
             return Ok(Resolved::NotFound(err));
         }
         // e.g. an onResolve plugin returned an invalid result
@@ -866,7 +830,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -918,7 +882,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -966,15 +930,14 @@ pub(crate) fn bun_resolve_sync_with_paths(
         return JSValue::ZERO;
     };
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let bun_vm = global.bun_vm().as_mut();
-    debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
+    let transpiler = &global.bun_vm().transpiler;
+    debug_assert!(transpiler.get().resolver.custom_dir_paths.is_none());
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    let paths = unsafe { bun_ptr::detach_lifetime(paths) };
+    transpiler.with_mut(|t| t.resolver.custom_dir_paths = Some(paths));
     scopeguard::defer! {
-        // SAFETY: same VM pointer; called before returning to C++.
-        global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
+        transpiler.with_mut(|t| t.resolver.custom_dir_paths = None);
     }
 
     jsc::to_js_host_call(global, || {
@@ -982,7 +945,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -1050,14 +1013,14 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     // For a data-property options object the user's `{ fetch: fn }` on this
     // stack still retains them, but a Proxy- or accessor-backed options
     // object returns a fresh fn that nothing else holds. `compute_id`,
-    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // `listen()`'s `set_routes`, and the wrapper allocation can
     // all trigger a GC in that window, so gcProtect each handler for its
     // duration. `Protected`'s `Drop` unprotects on every exit path (including
     // a thrown `listen()` and the hot-reload early return).
     let _handler_pins: [bun_jsc::js_value::Protected; 10] =
         crate::server::protect_handler_shadows(&config);
 
-    let vm = global_object.bun_vm().as_mut();
+    let vm = global_object.bun_vm();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
     // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
@@ -1085,7 +1048,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
-                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `drop`.
                         unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
@@ -1112,19 +1075,17 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     }
 
     macro_rules! serve_with {
-        ($ServerType:ty, $tag:expr) => {{
+        ($ServerType:ty, $js:ident, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
-            if global_object.has_exception() {
+            let Some((server, route_list_object)) = <$ServerType>::listen(server) else {
                 return Ok(JSValue::ZERO);
-            }
-            // SAFETY: `listen` frees the server only when it throws.
-            let server_ref: &$ServerType = unsafe { &*server };
-            let obj = <$ServerType>::ptr_to_js(server, global_object);
+            };
+            let server = crate::generated_bindgen::server::$js::wrap(server, global_object);
+            let server_ref: &$ServerType = &server;
+            let obj = server.to_js();
             if route_list_object != JSValue::ZERO {
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
@@ -1159,49 +1120,42 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server.set_js_ref_strong(global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
+            server_ref.context.set(context.id());
             // SAFETY: `server` is heap-allocated and leaves its context in
-            // `stop_listening` / `deinit`.
-            unsafe {
-                (*server).context.set(context.id());
-                bun_jsc::AbortHandle::arm_owner(server, context)
-            };
+            // `stop_listening` / `drop`.
+            unsafe { bun_jsc::AbortHandle::arm_owner(server.as_ptr(), context) };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
             if server_ref.config.get().allow_hot {
-                // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
-                // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
+                if let Some(hot) = vm.hot_map() {
                     hot.insert_raw(
                         &server_ref.config.get().id,
                         HotMapEntry {
                             tag: $tag as u8,
-                            ptr: server.cast::<()>(),
+                            ptr: server.as_ptr().cast::<()>(),
                         },
                     );
                 }
             }
 
-            // SAFETY: bun_vm() returns the live thread-local VM.
-            if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
-                let any = AnyServer::from(server.cast_const());
+            if let Some(debugger) = vm.debugger.get() {
+                let any = AnyServer::from(server.as_ptr().cast_const());
                 crate::server::http_server_agent::notify_server_started(
-                    &mut debugger.http_server_agent,
+                    &debugger.http_server_agent,
                     any,
                 );
                 bun_core::handle_oom(
                     crate::server::http_server_agent::notify_server_routes_updated(
-                        &mut debugger.http_server_agent,
+                        &debugger.http_server_agent,
                         any,
                     ),
                 );
@@ -1216,13 +1170,29 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
     let development = config.is_development();
     match (development, has_ssl_config) {
         (true, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
-            serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer)
+            serve_with!(
+                crate::api::DebugHTTPSServer,
+                js_DebugHTTPSServer,
+                AnyServerTag::DebugHTTPSServer
+            )
         }),
-        (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
+        (true, false) => serve_with!(
+            crate::api::DebugHTTPServer,
+            js_DebugHTTPServer,
+            AnyServerTag::DebugHTTPServer
+        ),
         (false, true) => bun_removable_features::removable_body!(TlsSockets, Abort, {
-            serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer)
+            serve_with!(
+                crate::api::HTTPSServer,
+                js_HTTPSServer,
+                AnyServerTag::HTTPSServer
+            )
         }),
-        (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
+        (false, false) => serve_with!(
+            crate::api::HTTPServer,
+            js_HTTPServer,
+            AnyServerTag::HTTPServer
+        ),
     }
 }
 
@@ -1244,38 +1214,30 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 
     #[cfg(not(windows))]
     {
-        use core::ffi::c_void;
-
         if path.len() > MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let buf_len = buf.len();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(
-            bun_core::working_directory_in_executable()
-                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..buf_len - 1],
-            &[path],
-        ) else {
+        let cwd = bun_core::working_directory_in_executable()
+            .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
+        let mut joined = bun_paths::Path::resolve(&[cwd, path]);
+        joined.copy_trailing_sep_from(path);
+        if joined.len() >= MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
-        };
+        }
+        let joined: &bun_core::ZStr = &joined;
         let graph = bun_standalone_graph::Graph::get_ref()
             .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
-        let embedded = graph.and_then(|graph| graph.find_ref(joined));
+        let embedded = graph.and_then(|graph| graph.find_data(joined));
         if graph.is_some_and(|graph| graph.find_dir(joined)) {
             use bun_jsc::SysErrorJsc as _;
             let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        let path_len = joined.len();
-        buf[path_len] = 0;
-
-        // SAFETY: buf[path_len] == 0 written above
-        let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
+        let written = bun_standalone_graph::find_written_file(joined)
+            .map(|path| bun_core::ZBox::from_vec(path.into_vec()));
+        let buf_z = written.as_deref().unwrap_or(joined);
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let flags = if options.shared {
@@ -1314,8 +1276,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return jsc::ArrayBuffer::create_uint8_array(global_this, view);
         }
 
-        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
-            Ok(result) => result,
+        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            Ok(map) => map.into_raw(),
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
                 let err = node::fs::error_for_caller([None, None], err);
@@ -1323,32 +1285,15 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
-            // `delta < page_size`, so rounding down recovers the mmap base.
-            let page = bun_sys::page_size();
-            let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
-        }
-
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
+        // SAFETY: the pages move to JSC, and only the deallocator unmaps them.
         unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
-                Some(munmap_dealloc),
-                map_len as *mut c_void,
+                map.as_ptr().cast(),
+                map.len(),
+                Some(sys::Mmap::unmap_raw),
+                core::ptr::without_provenance_mut(map.len()),
             )
         }
     }
@@ -1362,22 +1307,18 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
     use bun_jsc::StrongOptional;
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
+    let vm = global_this.bun_vm();
     let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
+    if let Some(v) = rare.s3_default_client.get().get() {
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    // SAFETY: `transpiler.env` is the VM's dotenv loader, which outlives the call.
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+        (*vm.transpiler.get().env).get_s3_credentials()
+    });
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1401,7 +1342,8 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
+    rare.s3_default_client
+        .set(StrongOptional::create(js_client, global_this));
     Ok(js_client)
 }
 
@@ -1430,24 +1372,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let valkey = valkey.into_raw();
-    let as_js = js_RedisClient::to_js(valkey, global_this);
-
-    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
-    valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
-    match SubscriptionCtx::init(valkey_ref) {
-        Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
-        Err(err) => {
-            let _ =
-                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
-            return JSValue::ZERO;
-        }
-    }
-
-    as_js
+    crate::valkey_jsc::js_valkey::js::to_js(valkey, global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1474,7 +1399,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         // We don't really do that right now, but exposing the output source
         // code here as an easily accessible Blob is even worse for them.
         // So let's omit any source code files from the list.
-        if !file.appears_in_embedded_files_array() {
+        if !file.appears_in_embedded_files_array() || graph.is_file_for_file_system_alone(file) {
             continue;
         }
         sort_indices.push(index as u32);
@@ -1512,7 +1437,7 @@ pub(crate) mod environment_variables {
         global_object: &JSGlobalObject,
         ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
     ) -> usize {
-        let bun_vm = global_object.bun_vm().as_mut();
+        let bun_vm = global_object.bun_vm();
         let env = bun_vm.env_loader();
         let keys: &[Box<[u8]>] = env.map.map.keys();
         // C++ declares this out-param as `void**` and only ever round-trips it
@@ -1580,7 +1505,7 @@ pub(crate) mod environment_variables {
         name: &BunString,
         value: &BunString,
     ) {
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
 
         // Synchronize the slot swap + env.map.put against a concurrently
@@ -1597,7 +1522,7 @@ pub(crate) mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        let env_map = &mut vm.transpiler.env_mut().map;
+        let env_map = &mut vm.transpiler.get().env_mut().map;
 
         // `delete process.env.X`
         if value.tag() == bun_core::Tag::Dead {
@@ -1638,28 +1563,16 @@ pub(crate) mod environment_variables {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
-    // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
-    let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
+    let vm = jsc::virtual_machine::VirtualMachine::get();
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
-    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+    use bun_deflate::{Error, Format, Level, Output};
 
     type BufferResult<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
-
-    /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
-    #[inline]
-    fn libdeflate_status_str(s: bun_libdeflate::Status) -> &'static str {
-        match s {
-            bun_libdeflate::Status::Success => "success",
-            bun_libdeflate::Status::BadData => "bad data",
-            bun_libdeflate::Status::ShortOutput => "short output",
-            bun_libdeflate::Status::InsufficientSpace => "insufficient space",
-        }
-    }
 
     enum Library {
         Zlib,
@@ -1678,26 +1591,26 @@ pub(crate) mod JSZlib {
         }
     }
 
-    fn init_error<'a>(heap: &JsHeap<'a>, err: zlib::ZlibError) -> bindgen::Error<'a> {
-        match err {
-            zlib::ZlibError::OutOfMemory => bun_alloc::AllocError.into(),
-            zlib::ZlibError::InvalidArgument => {
-                heap.error(format_args!("Zlib error: Invalid argument"))
-            }
-            err => heap.error(format_args!("{} Zlib error", <&'static str>::from(err))),
-        }
+    const ZLIB_ERROR: &str = "Zlib returned an error";
+
+    fn zlib_error<'a>(heap: &JsHeap<'a>, err: bun_zlib::Error) -> bindgen::Error<'a> {
+        let message = match err {
+            bun_zlib::Error::Alloc(err) => return err.into(),
+            bun_zlib::Error::InvalidParameter => "Zlib error: Invalid argument",
+            bun_zlib::Error::Damaged(damage) => damage.message(),
+            _ => ZLIB_ERROR,
+        };
+        heap.error(format_args!("{message}"))
     }
 
-    fn read_error<'a>(
-        heap: &JsHeap<'a>,
-        err: zlib::ZlibError,
-        message: Option<&[u8]>,
-    ) -> bindgen::Error<'a> {
-        if err == zlib::ZlibError::OutOfMemory {
-            return bun_alloc::AllocError.into();
-        }
-        let message = message.unwrap_or(b"Zlib returned an error");
-        heap.error(format_args!("{}", bstr::BStr::new(message)))
+    fn too_large_error<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+        heap.error_with_code(
+            jsc::ErrorCode::BUFFER_TOO_LARGE,
+            format_args!(
+                "Cannot create a Buffer larger than {} bytes",
+                ArrayBuffer::MAX_SIZE
+            ),
+        )
     }
 
     pub(crate) fn gzip_sync<'a>(
@@ -1752,69 +1665,55 @@ pub(crate) mod JSZlib {
             // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
             if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
                 // The trailer is untrusted; if its size cannot be reserved, start small and grow.
-                reserved = list
-                    .try_reserve_exact((estimated_size as usize).max(64))
-                    .is_ok();
+                let size = estimated_size as usize;
+                let is_compressed = size > compressed.len();
+                let spare = usize::from(is_compressed) * inflate::SPARE_CAPACITY;
+                reserved = list.try_reserve_exact((size + spare).max(64)).is_ok();
             }
         }
         if !reserved {
             list.try_reserve_exact(if compressed.len() > 512 {
                 compressed.len()
             } else {
-                32
+                4 * compressed.len() + inflate::SPARE_CAPACITY
             })
             .map_err(|_| bun_alloc::AllocError)?;
         }
 
+        let max_output = ArrayBuffer::MAX_SIZE;
         match library {
             Library::Zlib => {
-                let mut reader = zlib::ZlibReaderArrayList::init_with_options(
-                    compressed,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: options
-                            .window_bits
-                            .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
-                        ..Default::default()
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all(true) {
-                    return Err(read_error(heap, err, reader.error_message()));
+                let window_bits = options
+                    .window_bits
+                    .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32);
+                let status = Inflater::from_zlib_window_bits(window_bits)
+                    .and_then(|mut inflater| {
+                        inflater.inflate_to_vec(&mut { compressed }, &mut list, max_output)
+                    })
+                    .map_err(|err| zlib_error(heap, err))?;
+                match status {
+                    inflate::Status::StreamEnd => {
+                        heap.create_uint8_array_from_box(list.into_boxed_slice())
+                    }
+                    inflate::Status::NeedsOutput => Err(too_large_error(heap)),
+                    _ => Err(heap.error(format_args!("{ZLIB_ERROR}"))),
                 }
-                drop(reader);
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
-                    return Err(bun_alloc::AllocError.into());
-                };
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
+                let decompress = if is_gzip {
+                    bun_deflate::gunzip
                 } else {
-                    bun_libdeflate::Encoding::Deflate
+                    bun_deflate::inflate
                 };
-                let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                match result.status {
-                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
-                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
-                        return Err(heap.error_with_code(
-                            jsc::ErrorCode::BUFFER_TOO_LARGE,
-                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
-                        ));
-                    }
-                    _ => {
-                        return Err(heap.error(format_args!(
-                            "libdeflate returned an error: {}",
-                            libdeflate_status_str(result.status),
-                        )));
+                let (vec, limit) = (&mut list, max_output);
+                match decompress(compressed, Output::Vec { vec, limit }) {
+                    Ok(_) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                    Err(Error::Alloc(err)) => Err(err.into()),
+                    Err(Error::InsufficientSpace) => Err(too_large_error(heap)),
+                    Err(err) => {
+                        Err(heap.error(format_args!("libdeflate returned an error: {err}")))
                     }
                 }
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }
@@ -1829,59 +1728,37 @@ pub(crate) mod JSZlib {
 
         match Library::from_option(heap, options.library)? {
             Library::Zlib => {
-                // `init` reserves `deflateBound` of the input.
+                let container = if is_gzip {
+                    deflate::Container::Gzip
+                } else {
+                    deflate::Container::Raw
+                };
                 let mut list: Vec<u8> = Vec::new();
-
-                let mut reader = zlib::ZlibCompressorArrayList::init(
-                    data,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: 15,
-                        gzip: is_gzip,
-                        level,
-                        mem_level: options.mem_level,
-                        strategy: options.strategy,
+                let mut compress = || {
+                    let options = deflate::Options {
+                        level: level.try_into()?,
+                        strategy: options.strategy.try_into()?,
+                        memory_level: options.mem_level as u8,
                         ..Default::default()
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all() {
-                    return Err(read_error(heap, err, reader.error_message()));
-                }
-                drop(reader);
+                    };
+                    deflate::compress(data, &mut list, container, options)
+                };
+                compress().map_err(|err| zlib_error(heap, err))?;
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
-                    .contains(&level)
-                {
+                let Some(level) = Level::new(level) else {
                     return Err(heap.invalid_arguments(format_args!(
-                        "Compression level must be between {} and {} for libdeflate",
-                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
-                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                        "Compression level must be between 0 and {} for libdeflate",
+                        Level::MAX,
                     )));
-                }
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
-                    return Err(bun_alloc::AllocError.into());
                 };
-                let encoding = if is_gzip {
-                    bun_libdeflate::Encoding::Gzip
-                } else {
-                    bun_libdeflate::Encoding::Deflate
-                };
-
-                let mut list: Vec<u8> = Vec::new();
-                let result = compressor
-                    .compress_to_vec(data, &mut list, encoding)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                if result.status != bun_libdeflate::Status::Success {
-                    return Err(heap.error(format_args!(
-                        "libdeflate error: {}",
-                        libdeflate_status_str(result.status),
-                    )));
+                let format = if is_gzip { Format::Gzip } else { Format::Raw };
+                match bun_deflate::compress_to_vec(data, format, level) {
+                    Ok(list) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                    Err(Error::Alloc(err)) => Err(err.into()),
+                    Err(err) => Err(heap.error(format_args!("libdeflate error: {err}"))),
                 }
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
         }
     }
@@ -1896,7 +1773,7 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, i32> {
-        let level = options.level.map_or(3, |level| level as i32);
+        let level = (options.level).map_or(bun_zstd::DEFAULT_LEVEL, |level| level as i32);
         if !(1..=22).contains(&level) {
             return Err(
                 heap.invalid_arguments(format_args!("Compression level must be between 1 and 22"))
@@ -1909,8 +1786,8 @@ pub(crate) mod JSZstd {
     pub(crate) enum Failure {
         /// The output, whose size the input decides, or zstd's own state for it could not be allocated.
         OutOfMemory,
-        /// An `ERR_ZSTD` with this message.
-        Compression(&'static [u8]),
+        /// An `ERR_ZSTD` with the message of the error.
+        Compression(bun_zstd::Error),
         /// An `ERR_ZSTD` naming the error.
         Decompression(bun_zstd::ZstdError),
     }
@@ -1920,7 +1797,7 @@ pub(crate) mod JSZstd {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Failure::OutOfMemory => f.write_str("Out of memory"),
-                Failure::Compression(message) => write!(f, "{}", bstr::BStr::new(message)),
+                Failure::Compression(err) => write!(f, "{err}"),
                 Failure::Decompression(err) => write!(f, "Decompression failed: {err}"),
             }
         }
@@ -1958,29 +1835,19 @@ pub(crate) mod JSZstd {
 
     /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
     fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
-        let max_size = bun_zstd::compress_bound(input.len());
-        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
-        if bun_zstd::is_error(max_size) {
-            return Err(Failure::Compression(b"Input is too large to compress"));
+        let mut output = Vec::new();
+        match bun_zstd::compress_append(&mut output, input, level) {
+            Ok(()) => Ok(output.into_boxed_slice()),
+            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
+            Err(err) => Err(Failure::Compression(err)),
         }
-
-        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
-        let mut output: Vec<u8> = Vec::new();
-        output
-            .try_reserve_exact(max_size)
-            .map_err(|_| Failure::OutOfMemory)?;
-
-        if let bun_zstd::Result::Err(err) =
-            bun_zstd::compress_append(&mut output, input, Some(level))
-        {
-            return Err(Failure::Compression(err.as_bytes()));
-        }
-
-        Ok(output.into_boxed_slice())
     }
 
-    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
-        bun_zstd::decompress_alloc(input)
+    fn decompress_to_box(
+        spare: &mut bun_zstd::SpareTables,
+        input: &[u8],
+    ) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc_with(spare, input)
             .map(Vec::into_boxed_slice)
             .map_err(Failure::from)
     }
@@ -1999,7 +1866,9 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         data: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let output = decompress_to_box(data).map_err(|failure| failure.into_error(heap))?;
+        let output = (crate::jsc_hooks::runtime_state().zstd_tables)
+            .with_mut(|spare| decompress_to_box(spare, data))
+            .map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
 
@@ -2027,7 +1896,7 @@ pub(crate) mod JSZstd {
             this.result = if this.is_compress {
                 compress_to_box(input, this.level)
             } else {
-                decompress_to_box(input)
+                decompress_to_box(&mut bun_zstd::SpareTables::default(), input)
             };
             Some(done)
         }
@@ -2091,18 +1960,10 @@ pub(crate) mod JSZstd {
 // Referenced: bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
-//
-// NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
-// `Option<Arc<high_tier::BlobStore>>` opaque stubs in `bun_jsc`. The real
-// `Blob::Store` (intrusively refcounted, with `File` payload) lives in this
-// crate and can't move down without dragging `node::PathLike`/S3/aio. The
-// stores exist purely for per-VM lazy init; that is per-thread
-// in practice (`VirtualMachine::get()` is thread-local), so cache the
-// `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
-    use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
+    use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
 
@@ -2118,17 +1979,15 @@ mod stdio_stores {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        RefPtr::new(Store {
-            data: Data::File(FileStore {
+        RefPtr::new(Store::new(
+            Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        })
+            bun_http_types::MimeType::NONE,
+        ))
     }
 
     fn make_blob(

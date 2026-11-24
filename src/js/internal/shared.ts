@@ -430,6 +430,30 @@ function makeNodeEntryList(entries: PerformanceNodeEntry[]) {
   };
 }
 
+/** What a built-in module publishes to. node:diagnostics_channel keeps it up to date, so the module does not have to load it. */
+class BuiltinChannel {
+  hasSubscribers = false;
+  channel: { publish(message: unknown): void; withStoreScope(message: unknown): Disposable } | undefined = undefined;
+
+  publish(message: unknown) {
+    this.channel?.publish(message);
+  }
+}
+
+const builtinChannels: {
+  byName: Map<string | symbol, BuiltinChannel>;
+  link: ((name: string) => void) | undefined;
+} = { byName: new $Map(), link: undefined };
+
+function builtinChannel(name: string) {
+  let channel = builtinChannels.byName.$get(name);
+  if (channel === undefined) {
+    builtinChannels.byName.$set(name, (channel = new BuiltinChannel()));
+    builtinChannels.link?.(name);
+  }
+  return channel;
+}
+
 // Node's ERR_INTERNAL_ASSERTION constructor appends this automatically; bun's
 // $ERR_INTERNAL_ASSERTION takes the full message, so call sites share it here.
 const kInternalAssertionSuffix =
@@ -476,6 +500,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  reportUncaughtException,
   isInsideNodeModules,
   resistStopPropagation,
 
@@ -486,6 +511,9 @@ export default {
   kNodeEntryTypes,
   NodeEntryObserver,
   PerformanceNodeEntry,
+
+  builtinChannel,
+  builtinChannels,
 
   kHandle,
   kClusterOwner,

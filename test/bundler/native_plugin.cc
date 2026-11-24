@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <node_api.h>
-#include <string>
 
 #ifdef _WIN32
 #define BUN_PLUGIN_EXPORT __declspec(dllexport)
@@ -163,28 +162,6 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
     result->source_len = 0;
     result->loader = 0;
   }
-}
-
-// Logs an error at the last byte of a source line of 5,001 bytes.
-extern "C" BUN_PLUGIN_EXPORT void
-plugin_impl_long_line_error(const OnBeforeParseArguments *args,
-                            OnBeforeParseResult *result) {
-  static const std::string line = std::string(5000, 'a') + "]";
-  static const char message[] = "Unexpected ]";
-  BunLogOptions options;
-  options.__struct_size = sizeof(BunLogOptions);
-  options.message_ptr = (const uint8_t *)message;
-  options.message_len = sizeof(message) - 1;
-  options.path_ptr = args->path_ptr;
-  options.path_len = args->path_len;
-  options.source_line_text_ptr = (const uint8_t *)line.data();
-  options.source_line_text_len = line.size();
-  options.level = (int8_t)BUN_LOG_LEVEL_ERROR;
-  options.line = 1;
-  options.lineEnd = 1;
-  options.column = 5001;
-  options.columnEnd = 5002;
-  (result->log)(args, &options);
 }
 
 extern "C" BUN_PLUGIN_EXPORT void
@@ -693,6 +670,16 @@ plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
   // Intentionally not setting the context here:
   // result->plugin_source_code_context = ctx;
   result->free_plugin_source_code_context = random_user_context_free;
+}
+
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_context_without_source(const OnBeforeParseArguments *args,
+                                   OnBeforeParseResult *result) {
+  External *external = (External *)args->external;
+  result->plugin_source_code_context =
+      compilation_ctx_new(nullptr, 0, &external->compilation_ctx_freed_count);
+  result->free_plugin_source_code_context =
+      (void (*)(void *))compilation_ctx_free;
 }
 
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

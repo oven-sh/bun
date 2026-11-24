@@ -1,0 +1,22 @@
+# -- source: a-read-off-an-object-created-below-a-created-one-whose-parents-both-come-late-leaves-the-flow-closed.js
+# const base = { greet: "hi", count: 2 };
+# function deepBase() { return function () { return function () { return function () { return function () { return function () { return base; }; }; }; }; }; }
+# const lateBase = deepBase()()()()()();
+# const middle = Object.create(lateBase);
+# middle.own = 1;
+# function deepMiddle() { return function () { return function () { return middle; }; }; }
+# const lateMiddle = deepMiddle()()();
+# const top = Object.create(lateMiddle);
+# top.mine = 3;
+# function read(o) { return o.greet + o.count + o.own + o.mine; }
+# let out = "";
+# for (let i = 0; i < 3; i++) out += read(top) + ",";
+# print(out, read(top).length);
+# -- end of source
+# The read in read() watches what stands above `top`. When `middle` arrives there the read is told by that node, and a read told by a node that it watches laid no watch: what stands above `middle`, still empty then, was never watched, and `base` came to nobody. The watch on what stands above is laid in that telling too, once a node.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f1 
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: hi213,hi213,hi213, 5

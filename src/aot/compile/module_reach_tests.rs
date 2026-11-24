@@ -7,6 +7,7 @@ use bun_sema::program::FileId;
 
 use super::testing::{default_settings, with_loaded_build, with_loaded_build_and_options};
 use super::{BoundProject, LoadedBuild};
+use crate::ir::generated::ModuleRequestKind;
 use crate::load::ProjectId;
 use crate::modules::{ModuleRef, Shape};
 
@@ -1054,9 +1055,10 @@ fn class_stored_under_a_name_that_nobody_reads_leaves_its_checks() {
     );
 }
 
-const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 6] = [
+const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 7] = [
+    ("main.mjs", "import './page.mjs';"),
     (
-        "main.mjs",
+        "page.mjs",
         "import { C } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);",
     ),
     ("p/package.json", r#"{ "name": "p", "sideEffects": false }"#),
@@ -1112,8 +1114,8 @@ fn root_does_not_check_an_importer_behind_an_import_that_is_removed() {
 #[test]
 fn root_does_not_check_a_name_that_it_takes_through_a_file_that_is_left_out() {
     let mut files = NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT.to_vec();
-    files[0].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
-    files[2].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
+    files[1].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
+    files[3].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
     files.push(("p/a2.mjs", "export { K1 } from './b.mjs';"));
     assert_eq!(
         describe_checks(&files, false),
@@ -1129,4 +1131,119 @@ fn check_of_a_copy_that_nothing_stores_is_found() {
     assert_eq!(roots, ["main.mjs", "p/b.mjs"]);
     let names = ("main.mjs".to_string(), "p/c.cjs".to_string());
     assert_eq!(found, Some(names));
+}
+
+fn describe_imports(files: &[(&str, &str)]) -> Vec<String> {
+    with_loaded_build(files, &default_settings(), |build, loaded| {
+        let Ok(bound) = build.bind_modules(loaded) else {
+            panic!("the modules were not bound");
+        };
+        let graph = &bound.projects.application.graph;
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        let name_of = |file: FileId| {
+            let name = files.module(file).file_name();
+            name.strip_prefix(b"/project/")
+                .unwrap_or(name)
+                .as_bstr()
+                .to_string()
+        };
+        let mut lines = Vec::new();
+        for &file in graph.record_files() {
+            let imports = graph.requests(file).iter();
+            let imports = imports.filter(|it| it.kind == ModuleRequestKind::Import);
+            let names: Vec<String> = imports
+                .filter_map(|it| match it.target {
+                    ModuleRef::File(target) => Some(name_of(target)),
+                    _ => None,
+                })
+                .collect();
+            if !names.is_empty() {
+                lines.push(format!("{}: {}", name_of(file), names.join(" ")));
+            }
+        }
+        lines.sort_unstable();
+        lines
+    })
+}
+
+const UNREAD_NAME_OF_AN_INDEX: [(&str, &str); 5] = [
+    ("main.mjs", "import './page.mjs';"),
+    (
+        "page.mjs",
+        "import { w } from './p/index.mjs'; const m = await import('./p/index.mjs'); console.log(m.z);",
+    ),
+    ("p/package.json", r#"{ "name": "p", "sideEffects": false }"#),
+    (
+        "p/index.mjs",
+        "export * from './owner.cjs'; export { w } from './owner.cjs';",
+    ),
+    ("p/owner.cjs", "module.exports = { w: 1, z: 2 };"),
+];
+
+#[test]
+fn unread_import_stays_where_the_link_looks_its_name_up() {
+    assert_eq!(
+        describe_imports(&UNREAD_NAME_OF_AN_INDEX),
+        [
+            "main.mjs: page.mjs",
+            "p/index.mjs: p/owner.cjs",
+            "page.mjs: p/index.mjs"
+        ]
+    );
+}
+
+#[test]
+fn unread_import_goes_where_its_name_is_bound() {
+    let mut files = UNREAD_NAME_OF_AN_INDEX;
+    files[3].1 = "export const w = 1; export const z = 2;";
+    assert_eq!(describe_imports(&files[..4]), ["main.mjs: page.mjs"]);
+}
+
+#[test]
+fn unread_entry_point_import_is_kept() {
+    let mut files = UNREAD_NAME_OF_AN_INDEX;
+    files[3].1 = "export const w = 1; export const z = 2;";
+    files[1].0 = "main.mjs";
+    assert_eq!(describe_imports(&files[1..4]), ["main.mjs: p/index.mjs"]);
+}
+
+const UNREAD_NAME_OF_A_FILE_ON_A_CYCLE: [(&str, &str); 5] = [
+    (
+        "main.mjs",
+        "import * as shelf from './shelf.mjs'; console.log(shelf.label);",
+    ),
+    (
+        "shelf.mjs",
+        "import crate from './crate.cjs'; import { tag } from './box.cjs'; export const label = typeof crate.later;",
+    ),
+    (
+        "box.cjs",
+        "const crate = require('./crate.cjs'); module.exports = { tag: 'box' };\n\
+        module.exports.later = function () { return require('./shelf.mjs'); };",
+    ),
+    (
+        "crate.cjs",
+        "module.exports.later = function () { return require('./box.cjs'); };",
+    ),
+    ("package.json", r#"{ "name": "p", "sideEffects": false }"#),
+];
+
+#[test]
+fn unread_import_stays_where_a_root_checks_its_name() {
+    let files = UNREAD_NAME_OF_A_FILE_ON_A_CYCLE;
+    assert_eq!(
+        describe_imports(&files),
+        ["main.mjs: shelf.mjs", "shelf.mjs: crate.cjs box.cjs"]
+    );
+    assert_eq!(describe_checks(&files, false).0, ["main.mjs", "shelf.mjs"]);
+}
+
+#[test]
+fn unread_import_of_a_file_that_is_left_out_goes() {
+    let mut files = UNREAD_NAME_OF_A_FILE_ON_A_CYCLE;
+    files[3].1 = "module.exports.later = function () {};";
+    assert_eq!(
+        describe_imports(&files),
+        ["main.mjs: shelf.mjs", "shelf.mjs: crate.cjs"]
+    );
 }

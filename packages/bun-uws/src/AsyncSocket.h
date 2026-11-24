@@ -44,16 +44,11 @@ namespace uWS {
         NEEDS_UNCORK
     };
 
-    template <bool, bool, typename> struct WebSocketContext;
-
 template <bool SSL>
 struct AsyncSocket {
     /* This guy is promiscuous */
     template <bool> friend struct HttpContext;
-    template <bool, bool, typename> friend struct WebSocketContext;
     template <bool> friend struct TemplatedApp;
-    template <bool, typename> friend struct WebSocketContextData;
-    template <typename, typename> friend struct TopicTree;
     template <bool> friend struct HttpResponse;
 
 
@@ -166,7 +161,7 @@ public:
                 slot = loopData->acquireCorkSlot(this, SSL);
             }
             auto *s = loopData->getCorkSlot(slot);
-            char *sendBuffer = s->buffer + s->offset;
+            char *sendBuffer = s->buffer.get() + s->offset;
             s->offset += (unsigned int) size;
             ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
             loopData->touchCorkSlot(slot);
@@ -178,7 +173,7 @@ public:
             if (corked) {
                 auto *s = loopData->getCorkSlot(slot);
                 ourCorkOffset = s->offset;
-                ourCorkBuffer = s->buffer;
+                ourCorkBuffer = s->buffer.get();
                 s->offset = 0;
             }
 
@@ -200,7 +195,7 @@ public:
 
     /* Whether every byte handed to us_socket_write() has reached the kernel.
      * For TLS, us_socket_write() can report records as written while their
-     * ciphertext still sits in the connection's spill (openssl.c
+     * ciphertext still sits in the connection's spill (openssl.cpp
      * ssl_emit); the close-after-drain gates in HttpResponse /
      * HttpContext must wait for that too. Kept separate from
      * getBufferedAmount() so WebSocket's maxBackpressure policy and the
@@ -211,41 +206,6 @@ public:
             return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
         }
         return true;
-    }
-
-    /* Returns the text representation of an IPv4 or IPv6 address */
-    std::string_view addressAsText(std::string_view binary) {
-        static thread_local char buf[64];
-        int ipLength = 0;
-
-        if (!binary.length()) {
-            return {};
-        }
-
-        unsigned char *b = (unsigned char *) binary.data();
-
-        if (binary.length() == 4) {
-            ipLength = snprintf(buf, sizeof(buf), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-        } else {
-            ipLength = snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11],
-                b[12], b[13], b[14], b[15]);
-        }
-
-        return {buf, (unsigned int) ipLength};
-    }
-
-    /* Returns the remote IP address or empty string on failure */
-    std::string_view getRemoteAddress() {
-        static thread_local char buf[16];
-        int ipLength = 16;
-        us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
-        return std::string_view(buf, (unsigned int) ipLength);
-    }
-
-    /* Returns the text representation of IP */
-    std::string_view getRemoteAddressAsText() {
-        return addressAsText(getRemoteAddress());
     }
 
     /**
@@ -318,7 +278,7 @@ public:
         if (LoopData::CORK_BUFFER_SIZE - s->offset < length) {
             return nullptr;
         }
-        char *room = s->buffer + s->offset;
+        char *room = s->buffer.get() + s->offset;
         s->offset += (unsigned int) length;
         loopData->touchCorkSlot(slot);
         return room;
@@ -380,7 +340,7 @@ public:
                 auto *s = loopData->getCorkSlot(slot);
                 if (length <= LoopData::CORK_COPY_MAX && LoopData::CORK_BUFFER_SIZE - s->offset >= length) {
                     /* If the entire chunk fits in cork buffer */
-                    memcpy(s->buffer + s->offset, src, length);
+                    memcpy(s->buffer.get() + s->offset, src, length);
                     s->offset += (unsigned int) length;
                     ASSERT(s->offset <= LoopData::CORK_BUFFER_SIZE);
                     loopData->touchCorkSlot(slot);
@@ -480,7 +440,7 @@ public:
 
         const char *corkBuffer = nullptr;
         if (slot != LoopData::INVALID_CORK_SLOT) {
-            corkBuffer = loopData->getCorkSlot(slot)->buffer;
+            corkBuffer = loopData->getCorkSlot(slot)->buffer.get();
             loopData->releaseCorkSlot(slot);
         }
 
@@ -525,7 +485,7 @@ public:
 
         auto *s = loopData->getCorkSlot(slot);
         unsigned int offset = s->offset;
-        char *buffer = s->buffer;
+        char *buffer = s->buffer.get();
         loopData->releaseCorkSlot(slot);
 
         if (offset) {

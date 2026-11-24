@@ -23,6 +23,7 @@ pub(super) fn destructure_array(
     }
     let iterator = lowering.emit_iterator_open(value, IteratorKind::Sync, Some(shape));
     let position = lowering.position();
+    lowering.destructured_position = None;
     lowering.begin_cleanup(BlockRole::IterationCleanup, Some(iterator));
     for (index, element) in elements.iter().enumerate() {
         let prepared = lowering.prepare_target(element.target);

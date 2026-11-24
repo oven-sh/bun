@@ -3,8 +3,8 @@ use super::manifest::{ExportsEntry, ExportsMap, build_exports_entry, non_empty_s
 use super::*;
 use crate::module_format::DeclaredModuleType;
 use crate::program::HostModuleId;
+use crate::resolve::{basename, normalize_slashes, parent_directory};
 use bun_paths::MAX_PATH_BYTES;
-use bun_paths::resolve_path::join_string_buf;
 use std::cell::OnceCell;
 use std::sync::LazyLock;
 
@@ -56,6 +56,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
         };
@@ -80,6 +81,7 @@ impl<'h> Resolver<'h> {
                 path,
                 required,
                 links_followed,
+                has_side_effects,
             } => {
                 let module_path = |found: Vec<u8>| match links_followed {
                     true => found,
@@ -87,6 +89,14 @@ impl<'h> Resolver<'h> {
                 };
                 let path = module_path(path);
                 let required = required.map(module_path);
+                let found = std::iter::once(&path).chain(&required);
+                for file in found.filter(|_| has_side_effects) {
+                    if self.declared_side_effects(file) != DeclaredSideEffects::Unspecified {
+                        let state = self.code_state();
+                        let mut files = state.files_found_with_side_effects.lock();
+                        files.insert(self.keep(file));
+                    }
+                }
                 if let Some(required) = required.filter(|required| *required != path) {
                     let (imported, required) = (self.keep(&path), self.keep(&required));
                     let mut required_files = self.code_state().required_files.lock();
@@ -126,6 +136,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => return file,
             found @ (FoundCode::External(_) | FoundCode::NotFound(_)) => found,
         };
@@ -138,6 +149,7 @@ impl<'h> Resolver<'h> {
                 path: _,
                 required: _,
                 links_followed: _,
+                has_side_effects: _,
             } => file,
             FoundCode::External(_) | FoundCode::NotFound(_) => found,
         }
@@ -173,10 +185,16 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return DeclaredModuleType::Unknown;
         }
-        match self.module_type_manifest(dirname::<Posix>(path)) {
+        let directory = parent_directory(path);
+        let by_directory = &self.code_state().package_module_types;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let declared = match self.module_type_manifest(directory) {
             Some(manifest) => manifest.module_type,
             None => DeclaredModuleType::Unknown,
-        }
+        };
+        *by_directory.insert_ref(self.keep(directory), declared)
     }
 
     pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
@@ -191,7 +209,7 @@ impl<'h> Resolver<'h> {
     }
 
     pub(super) fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
-        if strings::basename_posix(directory) == b"node_modules" {
+        if basename(directory) == b"node_modules" {
             return None;
         }
         Some(inside(directory, b"node_modules")).filter(|it| self.is_dir(it))
@@ -202,8 +220,8 @@ impl<'h> Resolver<'h> {
         if !self.code_options().preserves_symlinks {
             return real;
         }
-        let real_directory = self.host.realpath(dirname::<Posix>(found));
-        let expected = inside(&real_directory, strings::basename_posix(found));
+        let real_directory = self.host.realpath(parent_directory(found));
+        let expected = inside(&real_directory, basename(found));
         match is_same_path(&real, &expected, self.host.is_case_sensitive()) {
             true => found.to_vec(),
             false => real,
@@ -335,7 +353,7 @@ fn module_type_from_extension(
     path: &[u8],
     package_module_type: DeclaredModuleType,
 ) -> DeclaredModuleType {
-    let name = strings::basename_posix(path);
+    let name = basename(path);
     let dot = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
     match &name[dot..] {
         b".mjs" | b".mts" => DeclaredModuleType::Esm,
@@ -345,8 +363,10 @@ fn module_type_from_extension(
     }
 }
 
-pub(super) fn join_unrooted(base: &[u8], rest: &[u8]) -> Vec<u8> {
-    preserve_trailing_slash(join(b"/", &inside(base, rest)), rest)
+/// `join`, but `rest` never replaces `base`, and a `/` at its end is kept.
+pub fn join_unrooted(base: &[u8], rest: &[u8]) -> Vec<u8> {
+    let names = strings::trim_left(rest, b"/");
+    preserve_trailing_slash(join(b"/", &inside(base, names)), rest)
 }
 
 pub(super) fn preserve_trailing_slash(mut joined: Vec<u8>, written: &[u8]) -> Vec<u8> {
@@ -518,7 +538,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn find_node_modules(&self, directory: &[u8]) -> Option<Vec<u8>> {
-        if strings::basename_posix(directory) == b"node_modules" {
+        if basename(directory) == b"node_modules" {
             return None;
         }
         Some(inside(directory, b"node_modules")).filter(|it| self.host.is_dir(it))
@@ -595,7 +615,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn load_target_file(&self, target: &[u8], kind: TargetKind) -> Result<Vec<u8>, CodeFailure> {
-        let directory = dirname::<Posix>(target);
+        let directory = parent_directory(target);
         if !self.host.is_dir(directory) {
             return Err(CodeFailure::ModuleNotFound);
         }
@@ -646,7 +666,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         if trimmed.is_empty() || trimmed.ends_with(b"/") {
             return None;
         }
-        if !self.host.is_dir(dirname::<Posix>(trimmed)) {
+        if !self.host.is_dir(parent_directory(trimmed)) {
             return None;
         }
         if self.host.is_file(trimmed) {
@@ -663,7 +683,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
     }
 
     fn find_file_in_another_case(&self, path: &[u8]) -> Option<Vec<u8>> {
-        let directory = dirname::<Posix>(path);
+        let directory = parent_directory(path);
         let name = &path[strings::last_index_of_char(path, b'/')? + 1..];
         let (files, _) = self.host.entries(directory);
         let listed = files.iter().find(|file| file.eq_ignore_ascii_case(name))?;
@@ -707,6 +727,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
                     path: found,
                     required: main,
                     links_followed: false,
+                    has_side_effects: false,
                 },
             });
         }
@@ -764,6 +785,7 @@ fn found_file(path: Vec<u8>) -> FoundCode {
         path,
         required: None,
         links_followed: false,
+        has_side_effects: false,
     }
 }
 
@@ -891,12 +913,15 @@ fn resolve_target_text(
     if !target.starts_with(b"./") || has_invalid_segment(target) {
         return Err(CodeFailure::InvalidPackageTarget);
     }
-    let resolved = join_posix(&[PACKAGE_URL, target]);
+    let (target, subpath) = (&*normalize_slashes(target), &*normalize_slashes(subpath));
+    let resolved = join_unrooted(PACKAGE_URL, target);
     if has_invalid_segment(&resolved) {
         return Err(CodeFailure::InvalidModuleSpecifier);
     }
     match key {
-        KeyKind::Exact | KeyKind::Directory => Ok(join_posix(&[PACKAGE_URL, target, subpath])),
+        KeyKind::Exact | KeyKind::Directory => {
+            Ok(join_unrooted(PACKAGE_URL, &[target, subpath].concat()))
+        }
         KeyKind::Pattern => substitute_subpath(&resolved, subpath)
             .filter(|path| !has_invalid_segment(path))
             .ok_or(CodeFailure::InvalidModuleSpecifier),
@@ -969,10 +994,6 @@ fn decode_percent(text: &[u8]) -> Option<Vec<u8>> {
     }
     decoded.extend_from_slice(rest);
     Some(decoded)
-}
-
-fn join_posix(parts: &[&[u8]]) -> Vec<u8> {
-    join_string_buf::<Posix>(&mut path_buffer_pool::get()[..], parts).to_vec()
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ test("as in bun test", async () => {
     counts: plain.counts,
     exitCode: plain.exitCode,
   });
-  expect(compiled.stderr).not.toMatch(/TS\d+/);
+  expect(compiled.stderr).not.toMatch(/^\w+: TS\d+:/m);
   const errorLines = (text: string) => text.split("\n").filter(line => line.startsWith("error"));
   expect(errorLines(compiled.stderr)).toEqual(errorLines(plain.stderr));
   expect(compiled.stderr.match(/SyntaxError/g)?.length).toBe(plain.stderr.match(/SyntaxError/g)?.length);

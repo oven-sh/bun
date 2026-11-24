@@ -1,0 +1,17 @@
+# -- source: the-halves-of-an-accessor-written-in-a-map-stay-where-the-target-is-in-sight.js
+# let hits = 0, kept = 0;
+# const accessors = { first: { get() { hits++; return this.n + 1; } }, second: { get() { return 2; }, set(v) { kept = v; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer(n) { this.n = n; }
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer(3).first, hits, typeof kept);
+# -- end of source
+# Nobody reads or stores `second`, the target is the prototype of a constructor function and nothing else, and the map is only looked into: its getter and setter are reached by nobody.
+# RUN(MAP): link why-gone L3
+# MAP: why-gone L3: it has not gone
+# RUN(HALVES): link functions mechanisms=all
+# HALVES: function f3 unreached
+# HALVES: function f4 unreached
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 1 number

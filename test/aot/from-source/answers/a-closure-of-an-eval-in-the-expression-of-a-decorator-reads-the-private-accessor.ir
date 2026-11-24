@@ -1,0 +1,11 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const same = (_: any, __: any): any => undefined;
+# let probe: any;
+# class Box { @(probe = eval("(o) => o.#x"), same) accessor #x = 7; }
+# print(probe(new Box()));
+# -- end of source
+# The expression of a decorator is evaluated with the computed keys, before any decorator is applied. A closure of an eval in it reads the accessor that it decorates later.
+# RUN: run-in-shell
+# CHECK: 7
+# CHECK-NEXT: exited with 0

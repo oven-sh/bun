@@ -4,7 +4,10 @@
 mod deprecated;
 
 use super::config::oxlint_category;
+use super::resolved::needs_resolver;
+use super::write_json;
 use crate::languages::Language;
+use crate::options::Json;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
@@ -384,6 +387,29 @@ impl Registry {
                 NativePlugins::None => false,
                 NativePlugins::Only(names) => names.iter().any(|it| **it == *prefix),
             }
+    }
+
+    /// JSON: `{ prefix: [package or null, ..names] }`, the rules for which an ESLint config never needs the package's.
+    pub fn rules_that_replace_packages(&self) -> Vec<u8> {
+        let text = |it: &str| Json::String(it.as_bytes().to_vec());
+        let mut all: Vec<(Vec<u8>, Json)> = Vec::new();
+        for &plugin in Plugin::ALL {
+            let prefix = plugin.prefix().as_bytes();
+            if !Plugin::is_native_under_eslint(prefix) || !self.replaces_plugin(prefix) {
+                continue;
+            }
+            let rules = self.rules.iter().filter(|it| it.meta.plugin == plugin);
+            let names = rules.map(|it| it.meta.name).filter(|name| {
+                (self.get_preferring(plugin, name.as_bytes(), false))
+                    .is_some_and(|it| !it.meta.hands_back && !needs_resolver(it.meta))
+            });
+            let package = plugin.package().map_or(Json::Null, text);
+            let entry = std::iter::once(package).chain(names.map(text)).collect();
+            all.push((prefix.to_vec(), Json::Array(entry)));
+        }
+        let mut json = Vec::new();
+        write_json(&mut json, &Json::Object(all));
+        json
     }
 
     pub fn all(&self) -> &[&'static RuleEntry] {

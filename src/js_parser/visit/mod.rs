@@ -98,6 +98,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
+        let entered = self.while_loading.enter_function(open_parens_loc);
+
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol_in(name_ref, is_expr);
@@ -215,6 +217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
+        self.while_loading.functions_around -= entered;
 
         func
     }
@@ -223,9 +226,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
-        let mut duplicate_args_check: Option<
-            bun_collections::pool::PoolGuard<'static, StringVoidMap>,
-        > = None;
+        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<StringVoidMap>> =
+            None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
@@ -254,9 +256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         for arg in args.iter_mut() {
-            if arg.ts_decorators.len_u32() > 0 {
-                self.visit_ts_decorators(&mut arg.ts_decorators);
-            }
+            self.visit_ts_decorators(arg.ts_decorators);
 
             // reborrow per-iter.
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
@@ -267,8 +267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // `Vec<Expr>` is not `Copy`; mutate in place.
-    pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+    pub(crate) fn visit_ts_decorators(&mut self, decs: js_ast::StoreSlice<Expr>) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
@@ -993,7 +992,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        self.visit_ts_decorators(&mut class.ts_decorators);
+        self.visit_ts_decorators(class.ts_decorators);
 
         if let Some(name) = class.class_name {
             self.record_declared_symbol_in(name.ref_, is_expr);
@@ -1023,7 +1022,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .original_name
                 .slice();
             let body_ref = if class.should_lower_standard_decorators
-                && class.ts_decorators.len_u32() > 0
+                && !class.ts_decorators.is_empty()
             {
                 let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
                 class.inner_class_ref = inner_ref;
@@ -1100,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     continue;
                 }
-                self.visit_ts_decorators(&mut property.ts_decorators);
+                self.visit_ts_decorators(property.ts_decorators);
                 let is_private = if let Some(key) = property.key {
                     matches!(key.data, ExprData::EPrivateIdentifier(_))
                 } else {
@@ -1373,7 +1372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             injected.push(Stmt::assign(target, init));
                         }
                         // Keep `#x;` for brand; keep decorated props for `lower_class`.
-                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                        if is_private || !prop.ts_decorators.is_empty() {
                             class_body.push(G::Property {
                                 initializer: None,
                                 ..prop
@@ -1383,6 +1382,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
+                        // Without a `super()` call, the assignments go after the directive prologue.
+                        let prologue_len = leading_directive_count(old_body);
                         let super_end = if class.extends.is_some() {
                             old_body
                                 .iter()
@@ -1391,9 +1392,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if matches!(&se.value.data, ExprData::ECall(c)
                                             if matches!(c.target.data, ExprData::ESuper(_))))
                                 })
-                                .map_or(0, |i| i + 1)
+                                .map_or(prologue_len, |i| i + 1)
                         } else {
-                            0
+                            prologue_len
                         };
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + injected.len(),
@@ -1523,6 +1524,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
+        // What came before is from an expression that this list is in: it belongs to the list around.
+        let outlined_around = p.react_compiler_outlined_from_nested.len();
+
         {
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
@@ -1614,7 +1618,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.visit_and_append_stmt(list, stmt)?;
                 // Outlined functions can use variables from this scope, so they can't go at the end of the module.
-                visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+                if p.react_compiler_outlined_from_nested.len() > outlined_around {
+                    visited.extend(
+                        p.react_compiler_outlined_from_nested
+                            .drain(outlined_around..),
+                    );
+                }
             }
 
             // Transform block-level function declarations into variable declarations
@@ -1684,12 +1693,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn` is not `Copy` (`return_ts_metadata` can own a `Vec`),
-                            // so this is a move. The statement is not kept (`before.clear()` below),
-                            // and the AST store never drops its nodes: the `Vec` is not freed twice.
-                            let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
-                                Some(p.new_expr(E::Function { func }, stmt.loc));
+                                Some(p.new_expr(E::Function { func: data.func }, stmt.loc));
                         }
                         _ => {
                             non_fn_stmts.push(stmt);
@@ -1739,6 +1744,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 before.extend_from_slice(&non_fn_stmts);
+
+                // A directive only counts while it comes first, so the prologue of
+                // `visited` moves ahead of these statements.
+                let prologue_len = leading_directive_count(&visited);
+                if prologue_len > 0 {
+                    let mut with_prologue =
+                        ListManaged::with_capacity_in(prologue_len + before.len(), p.arena);
+                    with_prologue.extend_from_slice(&visited[..prologue_len]);
+                    with_prologue.extend_from_slice(&before);
+                    before = with_prologue;
+                    visited.copy_within(prologue_len.., 0);
+                    let rest = visited.len() - prologue_len;
+                    visited.truncate(rest);
+                }
             }
 
             let mut visited_count = visited.len();
@@ -2046,9 +2065,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
-                StmtData::SDirective(_) if !p.options.keep_directives => continue,
-
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements
                     if output.len() > 0 {
@@ -2222,6 +2238,20 @@ fn scopes_for_enum_at<'a>(
     map.get(&loc)
         .copied()
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
+}
+
+/// The length of the directive prologue at the head of a body: its directives and the legal
+/// comments between them. A statement that a transform adds to the body goes after it.
+pub(crate) fn leading_directive_count(stmts: &[Stmt]) -> usize {
+    let mut count = 0;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            bun_ast::stmt::Data::SDirective(_) => count = i + 1,
+            bun_ast::stmt::Data::SComment(_) => {}
+            _ => break,
+        }
+    }
+    count
 }
 
 fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {

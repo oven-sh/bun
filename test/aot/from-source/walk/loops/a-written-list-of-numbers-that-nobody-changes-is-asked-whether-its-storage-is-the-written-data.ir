@@ -1,0 +1,35 @@
+# -- source: main.cjs
+# "use strict";
+# const TABLE = [3, 10, 17, 24, 31, 38, 45, 52];
+# const CHANGED = [3, 10, 17, 24, 31, 38, 45, 52];
+# const SORTED = [3, 10, 17, 24, 31, 38, 45, 52];
+# function sum() { let s = 0; for (let i = 0; i < TABLE.length; i++) s += TABLE[i]; return s; }
+# function masked(turns) { let s = 0; for (let i = 0; i < turns; i++) s += TABLE[(i * 7) & 7]; return s; }
+# function sumOfChanged() { let s = 0; for (let i = 0; i < CHANGED.length; i++) s += CHANGED[i]; return s; }
+# function change(k) { CHANGED[k & 7] = k; SORTED.sort(); }
+# function sumOfSorted() { let s = 0; for (let i = 0; i < SORTED.length; i++) s += SORTED[i]; return s; }
+# sink(sum, masked, sumOfChanged, change, sumOfSorted);
+# -- end of source
+# A written list of numbers is born round the storage that lies in the image, and whoever changes it gets storage of its own first. So one compare of the storage's address in front of a loop says that
+# the list still holds what is written: its length is the written number, it has no hole, its kind is known. Behind it the list takes the notes of a list that is made in sight.
+# It is asked only of a list that a constant of the file holds and that, by Link, nobody stores into, grows, sorts or lets go: one that is changed would fail the compare for good.
+# OPTIONS: check=Validate
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Int32 data=d
+# CHECK: = GetArrayElement {{*}}isPresent
+# RUN(MASKED): walk f2:Body mechanisms=all
+# MASKED-LABEL: code f2:Body
+# MASKED: = HasArrayStorage {{*}}arrayStorage=Int32 data=d
+# MASKED: = GetArrayElement {{*}}isInBounds, isPresent
+# RUN(CHANGED): walk f3:Body mechanisms=all
+# CHANGED-LABEL: code f3:Body
+# CHANGED-NOT: = HasArrayStorage {{*}}data=d
+# RUN(SORTED): walk f5:Body mechanisms=all
+# SORTED-LABEL: code f5:Body
+# SORTED-NOT: = HasArrayStorage {{*}}data=d
+# RUN(ROWS): link accesses
+# ROWS: receiver-unchanged f1 v
+# ROWS: receiver-unchanged f2 v
+# ROWS-NOT: receiver-unchanged f3 v
+# ROWS-NOT: receiver-unchanged f5 v

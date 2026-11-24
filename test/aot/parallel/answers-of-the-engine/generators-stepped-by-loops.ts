@@ -1,5 +1,5 @@
 // A loop, a pattern, a spread and a yield* step a generator without calling next and without an object for each step: what is yielded, sent and returned, early exits, bodies that throw, generators that have ended or are running.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function* count(limit: number): Generator<number, string> { for (let number = 0; number < limit; number++) yield number; return "returned"; }
 function sum(iterable: Generator<number>) { let total = 0; for (const number of iterable) total += number; return total; } // @ts-expect-error

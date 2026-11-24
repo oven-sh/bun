@@ -150,7 +150,7 @@ console.log("bytes made in plain sight", Buffer.from("he").length);
 
 // GENERATED: make asList asListByConcat totalLengthByTypeof
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v2 = PropGet v1 key="eval" [isFreeName]
@@ -163,7 +163,7 @@ console.log("bytes made in plain sight", Buffer.from("he").length);
 // CHECK-NEXT: ReturnCall v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asList"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: v1 = Builtin builtin=ArrayIsArray
 // CHECK-NEXT: v2 = TypeTest v0 testedType=Array
@@ -187,7 +187,7 @@ console.log("bytes made in plain sight", Buffer.from("he").length);
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="asListByConcat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Data data=[[d_1]]
 // CHECK-NEXT: v2 = PropGet v1 key="concat"
@@ -195,7 +195,7 @@ console.log("bytes made in plain sight", Buffer.from("he").length);
 // CHECK-NEXT: ReturnCall v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="totalLengthByTypeof"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: v1 = Integer
 // CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}

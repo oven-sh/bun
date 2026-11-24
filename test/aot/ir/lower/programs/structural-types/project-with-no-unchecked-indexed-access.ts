@@ -155,7 +155,7 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 
 // GENERATED: score rest get drop
 // CHECK-LABEL: function {{*}}name="score"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|string):
 // CHECK-NEXT: v2 = ElemGet v0, v1
 // CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
@@ -173,7 +173,7 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: v1 = IteratorOpen v0 elementCount=1 [isDestructuring, hasRest]
 // CHECK-NEXT: Jump -> next b1()
@@ -205,7 +205,7 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 // CHECK-NEXT: Rethrow v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_2]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
@@ -228,7 +228,7 @@ attempt("honest again", () => [firstPlusOne([1]), checkedInPlace([1]), total([1,
 // CHECK-NEXT: Return v13
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="scores"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined] variableName="scores"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: v1 = PropDelete v0 key="a"
 // CHECK-NEXT: v2 = Undefined

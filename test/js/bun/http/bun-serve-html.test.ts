@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -1390,6 +1390,50 @@ test.concurrent("a route keeps failing when its broken module was imported throu
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
 });
 
+// The bundle of the second route finds "shared.ts" in the graph, so it doesn't parse "broken.ts" again.
+test.concurrent("a route fails when a module that another route bundled imports a broken module", async () => {
+  const page = (script: string) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./${script}"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-shared-import-of-broken-module", {
+    "first.html": page("first.ts"),
+    "first.ts": `import "./shared.ts";`,
+    "second.html": page("second.ts"),
+    "second.ts": `import "./shared.ts";`,
+    "other.html": page("other.ts"),
+    "other.ts": `console.log("other");`,
+    "shared.ts": `import "./broken.ts";`,
+    "broken.ts": `const = ;`,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import first from "./first.html";
+      import second from "./second.html";
+      import other from "./other.html";
+
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/first": first, "/second": second, "/other": other },
+      });
+      const status = path => fetch(new URL(path, server.url)).then(response => response.status);
+      console.log(await status("/first"), await status("/second"), await status("/second"), await status("/other"));
+      writeFileSync("broken.ts", "export {};");
+      // With BUN_ASSUME_PERFECT_INCREMENTAL, the default of debug builds, a failed route waits for the watcher.
+      const deadline = Date.now() + 30_000;
+      async function rebuiltStatus(path) {
+        let rebuilt = await status(path);
+        while (rebuilt !== 200 && Date.now() < deadline) {
+          await Bun.sleep(10);
+          rebuilt = await status(path);
+        }
+        return rebuilt;
+      }
+      console.log(await rebuiltStatus("/second"), await rebuiltStatus("/first"));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 500 500 200\n200 200", exitCode: 0 });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion
@@ -2009,4 +2053,55 @@ describe("production headers and import.meta.env", () => {
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["../web", "../web/index.html"],
+  ["./a\\b", "a\\\\b/index.html"],
+])("dev server entry module id matches when the cwd contains a backslash (page in %s)", async (pages, id) => {
+  const cwd = "a\\b";
+  using dir = tempDir("html-backslash", {
+    [join(cwd, pages, "index.html")]: `<script type="module" src="./main.js"></script>`,
+    [join(cwd, pages, "main.js")]: `console.log("main");`,
+    [join(cwd, "serve.ts")]: `
+      import { join } from "node:path";
+      const { default: page } = await import(join(import.meta.dir, ${JSON.stringify(pages)}, "index.html"));
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
+      const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+      const bundle = await (await fetch(new URL(src, server.url))).text();
+      console.log(bundle.match(/main: "(.+)"/)[1], bundle.match(/"(.+\\.html)": \\[/)[1]);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(join(String(dir), cwd));
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: `${id} ${id}`, exitCode: 0 });
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["c\\", "script"],
+  [".\\c\\", "script"],
+  ["\\c\\", "script"],
+  ["c\\..\\", "asset"],
+  ["..\\", "asset"],
+  ["c\\d/", "asset"],
+])("a bundled server with chunks whose names start with %s serves the %s", async (prefix, file) => {
+  using dir = tempDir("html-naming-backslash", {
+    "index.html": `<script type="module" src="./main.js"></script>`,
+    "main.js": `import asset from "./asset.bin"; console.log(asset);`,
+    "asset.bin": "",
+    "server.ts": `
+        import page from "./index.html";
+        using server = Bun.serve({ port: 0, routes: { "/": page } });
+        const [, src] = (await (await fetch(server.url)).text()).match(/src="([^"]+)"/);
+        const script = new URL(src, server.url);
+        const [, asset] = (await (await fetch(script)).text()).match(/"([^"]+\\.bin)"/);
+        console.log((await fetch(new URL(${file === "asset" ? "asset" : "script"}, script))).status);
+      `,
+  });
+  await Bun.build({
+    entrypoints: [join(String(dir), "server.ts")],
+    outdir: join(String(dir), "out"),
+    target: "bun",
+    naming: { entry: "serve.[ext]", chunk: prefix + "[name]-[hash].[ext]" },
+  });
+  expect(await bunRun(join(String(dir), "out", "serve.js"))).toSpawn("200");
 });

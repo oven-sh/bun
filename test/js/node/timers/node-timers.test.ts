@@ -278,6 +278,70 @@ describe("clear", () => {
   });
 });
 
+/** What `script` printed by the time its process ended by itself. */
+async function runToExit(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A test that times out does not end its child.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0, signalCode: null });
+
+describe.concurrent("Immediate.ref() holds the event loop only while the immediate is queued", () => {
+  it.each([
+    ["unref() and ref() in the callback", "const i = setImmediate(() => report(i.unref().ref()));"],
+    [
+      "process.unref() and process.ref() in the callback",
+      "const i = setImmediate(() => { process.unref(i); process.ref(i); report(i); });",
+    ],
+    [
+      "unref() in the queue, ref() in the callback",
+      "const i = setImmediate(() => report(i.ref())).unref(); setImmediate(() => {});",
+    ],
+    [
+      "ref() after the queue dropped it",
+      `const i = setImmediate(() => {}).unref(); process.once("beforeExit", () => report(i.ref()));`,
+    ],
+  ])("%s", async (_, script) => {
+    // The global keeps the collector from releasing a ref that leaked.
+    const report = `function report(i) { console.log((globalThis.kept = i).hasRef()); }`;
+    expect(await runToExit(report + script)).toEqual(printed("false"));
+  });
+
+  it("unref() and ref() in the queue", async () => {
+    const script = `
+      const i = setImmediate(() => console.log("ran"));
+      console.log("after unref:", i.unref().hasRef());
+      console.log("after ref:", i.ref().hasRef());`;
+    expect(await runToExit(script)).toEqual(printed("after unref: false\nafter ref: true\nran"));
+  });
+});
+
+describe.concurrent("writes to _repeat, _onTimeout and _idleTimeout in the first callback", () => {
+  it.each([
+    {
+      set: "setTimeout",
+      writes: "t._repeat = 1; t._onTimeout = null; clearTimeout(t); t._onTimeout = callback",
+      fires: 2,
+    },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t._repeat = null; t.refresh()", fires: 1 },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t.refresh(); t._repeat = null", fires: 1 },
+  ])("$set: $writes", async ({ set, writes, fires }) => {
+    const script = `
+      let fires = 0;
+      const callback = () => { if (++fires === 1) { ${writes} } else clearTimeout(t); };
+      const t = ${set}(callback, 1);
+      process.on("exit", () => console.log(fires));`;
+    expect(await runToExit(script)).toEqual(printed(String(fires)));
+  });
+});
+
 describe("_idleStart", () => {
   // https://github.com/oven-sh/bun/issues/26508
   // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two

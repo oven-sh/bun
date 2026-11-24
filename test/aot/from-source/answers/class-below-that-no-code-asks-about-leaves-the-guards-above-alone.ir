@@ -15,11 +15,11 @@
 # -- end of source
 # `first` is asked behind the guard of Base. Below is made first, so Base is entered as the class above it before its own guards begin; no compiled code reads a member of a Below.
 # What changes in Below ends nothing in Base. What changes in Base ends the guard of Base, and the walk down finds nobody who listens.
-# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(NEVER): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = -1; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # NEVER: ,0,1,2,3,4,5,6,7 1
 # NEVER-NEXT: guards ended: 0
 # NEVER-NEXT: exited with 0
-# RUN(BELOW): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = 5; globalThis.change = (Base, Below) => { Below.prototype.first = () => 70; Below.prototype.other = 1; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsEnded")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
+# RUN(BELOW): run-in-shell --aotCountsPath=/dev/null let held; globalThis.keep = item => { held = item; }; globalThis.kept = () => held.first(); globalThis.when = 5; globalThis.change = (Base, Below) => { Below.prototype.first = () => 70; Below.prototype.other = 1; }; globalThis.report = () => { const lines = aotRuntimeCounters().split("\n"); let ended = "0"; for (let i = 0; i < lines.length; i++) { if (lines[i].includes("counter:ClassGuardBitsInvalidated")) ended = lines[i].split("\t")[0]; } print("guards ended: " + ended); };
 # BELOW: ,0,1,2,3,4,5,6,7 70
 # BELOW-NEXT: guards ended: 0
 # BELOW-NEXT: exited with 0

@@ -1,7 +1,6 @@
 // JSTransformStream — the TransformStream instance cell, and the C++ base of the
 // native TransformerKind specializations (JSCompressionStream, JSDecompressionStream,
-// JSTextEncoderStream, JSTextDecoderStream). The subclasses free their native state
-// eagerly at ClearAlgorithms with vm.heap.addFinalizer as a fallback; no destroy().
+// JSTextEncoderStream, JSTextDecoderStream).
 #pragma once
 
 #include "root.h"

@@ -16,12 +16,10 @@ interface Place {
 
 interface Guard extends Place {
   aot: "type-check";
-  cause: string;
   function: string;
   failure: "leaves" | "rejoins" | "throws";
   copies: number;
   type: string;
-  from?: Place;
 }
 
 interface Report {
@@ -34,17 +32,7 @@ interface Report {
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildTimeout = 300_000;
 const textAndJSON = ["--explain=guards", "--explain=guards-json"];
-const membersOfPlace = "file line col";
-const membersOfGuard = `aot cause ${membersOfPlace} function failure copies type`;
-/** In the order in which the text counts them. */
-const causes = [
-  "wrong-type",
-  "untyped-value",
-  "unknown-callee",
-  "untyped-collection",
-  "analysis-disabled",
-  "read-before-init",
-];
+const membersOfGuard = "aot file line col function failure copies type";
 const costOfFailure = {
   leaves: "when it fails, the rest of the call runs in the function's slow version",
   rejoins: "when it fails, only this operation is slower",
@@ -155,7 +143,6 @@ const linesDecidedBy = (guards: Guard[]) =>
   guards.flatMap((guard, index) => [
     `note: ${index + 1}.`,
     ...(guard.line > 0 ? [at(guard)] : []),
-    ...(guard.from && at(guard.from) !== at(guard) ? ["note: The value comes from here.", at(guard.from)] : []),
     ...(guard.function ? [`note: in function '${guard.function}'`] : []),
     ...(guard.type ? [`note: type '${guard.type}'`] : []),
     `note: ${costOfFailure[guard.failure]}`,
@@ -163,13 +150,9 @@ const linesDecidedBy = (guards: Guard[]) =>
   ]);
 
 function expectTextAndJSONToAgree({ lines, guards }: Report) {
-  const [total, byCause, ...entries] = lines;
+  const [total, ...entries] = lines;
   const counted = `${guards.length} type guard${guards.length === 1 ? "" : "s"}`;
   expect(total).toStartWith(`note: ${counted} can fail at run time. `);
-  expect(byCause).toStartWith("note: By cause: ");
-  expect(byCause!.match(/\d+/g)?.map(Number)).toEqual(
-    causes.map(cause => guards.filter(guard => guard.cause === cause).length).filter(count => count > 0),
-  );
   const decided = linesDecidedBy(guards);
   expect(entries.map(withoutWording).filter(line => decided.includes(line))).toEqual(decided);
 }
@@ -252,10 +235,8 @@ describe.concurrent("--explain=guards", () => {
         expect(guards).not.toBeEmpty();
         expect(linesOf(stdout)).toHaveLength(guards.length);
         for (const guard of guards) {
-          expect(Object.keys(guard).join(" ")).toBe(guard.from ? `${membersOfGuard} from` : membersOfGuard);
-          if (guard.from) expect(Object.keys(guard.from).join(" ")).toBe(membersOfPlace);
+          expect(Object.keys(guard).join(" ")).toBe(membersOfGuard);
           expect(guard.aot).toBe("type-check");
-          expect(causes).toContain(guard.cause);
           expect(Object.keys(costOfFailure)).toContain(guard.failure);
           expect(guard.copies).toBeGreaterThan(0);
         }

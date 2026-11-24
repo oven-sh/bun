@@ -1,0 +1,1 @@
+exports.vase = 2;

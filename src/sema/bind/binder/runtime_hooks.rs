@@ -83,10 +83,7 @@ impl Binder<'_, '_> {
         else {
             return;
         };
-        let declares = |class: &&ClassId| {
-            let mut members = f[**class].members.iter();
-            members.any(|member| f[member].key == PropKey::Private(name))
-        };
+        let declares = |class: &&ClassId| self.private_names_of_classes.contains(&(**class, name));
         let environments = self.runtime_hooks.private_environments.iter();
         let class = environments.rev().find(declares).copied();
         self.runtime_hooks

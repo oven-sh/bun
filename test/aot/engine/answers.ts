@@ -51,7 +51,9 @@ function testsMadeOf(folderName: string, tool: string[], isTest: RegExp, title: 
         slot(async () => {
           await using child = Bun.spawn({
             cmd: [bunExe(), join(import.meta.dir, "..", "tools", tool[0]), tool[1], join(folder, name)],
-            env: bunEnv,
+            // Without a front end named, ../shell/tools builds a program and writes an executable to learn whether this Bun is one.
+            // The tool builds with this Bun whatever the answer, and a Bun that writes no program is a test that could not be made.
+            env: { ...bunEnv, FRONT_END: bunExe() },
             stdin: "ignore",
             stdout: "pipe",
             stderr: "pipe",

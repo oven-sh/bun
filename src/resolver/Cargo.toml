@@ -35,6 +35,7 @@ bun_removable_features.workspace = true
 bun_resolve_builtins.workspace = true
 bun_js_parser.workspace = true
 bun_ast.workspace = true
+bun_node_path.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true

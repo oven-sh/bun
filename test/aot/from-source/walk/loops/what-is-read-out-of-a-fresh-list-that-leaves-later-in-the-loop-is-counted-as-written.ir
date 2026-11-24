@@ -12,8 +12,9 @@
 # OPTIONS: check=Validate
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK: = HasArrayElement {{*}}level=Proven
 # CHECK: isLoopHead=true
-# CHECK: = HasArrayElement
+# CHECK: = HasContiguousIndex
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: from the right "ba"
 # ANSWERS: over a gap "ca"

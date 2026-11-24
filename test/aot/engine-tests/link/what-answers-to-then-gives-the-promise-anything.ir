@@ -1,0 +1,160 @@
+# What answers to `then` hands whatever it likes to the function that it is passed: a promise that is resolved with such an object holds anything, and not the object.
+# function later() { return { then(resolve) { resolve(21); } }; }  Bun.sleep(0).then(later).then(behindThen);  fails().catch(later).then(behindCatch);
+# function own() { const made = make(); made.then = function (resolve) { resolve(21); }; return made; }  Bun.sleep(0).then(own).then(behindOwn);
+# The rows of then | catch settle what the callback returns. If they laid the object into the value of the new promise as it is, whoever reads the value would be typed by the object while a number arrives.
+# A promise that was given a `then` of its own is asked like any other object.
+# A second thing keeps the three parameters open today: the object escapes, and whatever reaches unseen code opens every promise (somebodyCanBeHandedSomething in AOTLinkReach.cpp). The test holds whichever of the two is narrowed.
+# The records are what the front end writes of that text, less the library.
+# f1 = make, f2 = later, f3 = fails, f4 = own, f5 = behindThen, f6 = behindCatch, f7 = behindOwn, f8 = then
+# RUN: link functions mechanisms=all
+# CHECK: function f5
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f6
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f7
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=
+# CHECK: function f8
+
+module m0 path="thenable.ts" displayPath="thenable.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=41 fields=[{key="then" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="seen" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} @0
+    v8 = NewClosure function=f6 @0
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} @0
+    v10 = NewClosure function=f7 @0
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} @0
+    v12 = String string="" @11
+    v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @11
+    PutModuleVariable v13 variable=g1 @4
+    v15 = Builtin builtin=GlobalThis @481
+    v16 = PropGet v15 key="Bun" [isFreeName] @481
+    v17 = Convert v16 declared={type=builtin(Bun) flags=[IsExpected]} @481
+    v18 = PropGet v17 key="sleep" @481
+    v19 = Convert v18 declared={type=builtin(BunSleep) flags=[IsExpected]} @481
+    v20 = Integer @491
+    v21 = Call v19, v17, v20 calleeKey="sleep" calleeName="Bun.sleep" @485
+    v22 = Convert v21 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @481
+    v23 = PropGet v22 key="then" @492
+    v24 = Call v23, v22, v1 calleeKey="then" calleeName="then" @494
+    v25 = Convert v24 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]} @481
+    v26 = PropGet v25 key="then" @504
+    v27 = Call v26, v25, v7 calleeKey="then" calleeName="then" @506
+    v28 = Convert v27 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @481
+    v29 = Call v3 calleeName="fails" @524
+    v30 = PropGet v29 key="catch" @530
+    v31 = Call v30, v29, v1 calleeKey="catch" calleeName="catch" @532
+    v32 = Convert v31 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @524
+    v33 = PropGet v32 key="then" @543
+    v34 = Call v33, v32, v9 calleeKey="then" calleeName="then" @545
+    v35 = Convert v34 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @524
+    v36 = Builtin builtin=GlobalThis @564
+    v37 = PropGet v36 key="Bun" [isFreeName] @564
+    v38 = Convert v37 declared={type=builtin(Bun) flags=[IsExpected]} @564
+    v39 = PropGet v38 key="sleep" @564
+    v40 = Convert v39 declared={type=builtin(BunSleep) flags=[IsExpected]} @564
+    v41 = Integer @574
+    v42 = Call v40, v38, v41 calleeKey="sleep" calleeName="Bun.sleep" @568
+    v43 = Convert v42 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @564
+    v44 = PropGet v43 key="then" @575
+    v45 = Call v44, v43, v5 calleeKey="then" calleeName="then" @577
+    v46 = Convert v45 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @564
+    v47 = PropGet v46 key="then" @585
+    v48 = Call v47, v46, v11 calleeKey="then" calleeName="then" @587
+    v49 = Convert v48 declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} @564
+    v50 = Undefined @564
+    Return v50 @564
+}
+function f1 name="make" module=m0 position=146 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="made" @177
+    Return v1 @177
+}
+function f2 name="later" module=m0 position=15 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f8 @43
+    v1 = NewObject -, v0 layout=L0 fields=[0] @41
+    v2 = FinishObject v1 @41
+    Return v2 @41
+}
+function f3 name="fails" module=m0 position=104 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="first" @135
+    Throw v1 @135
+}
+function f4 name="own" module=m0 position=187 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0 @222
+    v1 = Call v0 calleeName="make" @222
+    v2 = NewClosure function=f9 @242
+    PropSet v1, v2 key="then" @230
+    Return v1 @311
+}
+function f5 name="behindThen" module=m0 position=319 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @353
+    v2 = CheckInitialized v1 name="seen" @353
+    v3 = TypeOf v0 @361
+    v4 = Add v2, v3 @361
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @353
+    v6 = GetModuleVariable variable=g1 @353
+    v7 = CheckInitialized v6 name="seen" @353
+    PutModuleVariable v5 variable=g1 @353
+    v9 = Undefined @353
+    Return v9 @353
+}
+function f6 name="behindCatch" module=m0 position=373 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @408
+    v2 = CheckInitialized v1 name="seen" @408
+    v3 = TypeOf v0 @416
+    v4 = Add v2, v3 @416
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @408
+    v6 = GetModuleVariable variable=g1 @408
+    v7 = CheckInitialized v6 name="seen" @408
+    PutModuleVariable v5 variable=g1 @408
+    v9 = Undefined @408
+    Return v9 @408
+}
+function f7 name="behindOwn" module=m0 position=428 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @461
+    v2 = CheckInitialized v1 name="seen" @461
+    v3 = TypeOf v0 @469
+    v4 = Add v2, v3 @469
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @461
+    v6 = GetModuleVariable variable=g1 @461
+    v7 = CheckInitialized v6 name="seen" @461
+    PutModuleVariable v5 variable=g1 @461
+    v9 = Undefined @461
+    Return v9 @461
+}
+function f8 name="then" module=m0 position=43 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    v1 = Integer integer=21 @92
+    v2 = Call v0, -, v1 calleeName="resolve" @84
+    v3 = Undefined @84
+    Return v3 @84
+}
+function f9 module=m0 position=242 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    v1 = Integer integer=21 @296
+    v2 = Call v0, -, v1 calleeName="resolve" @288
+    v3 = Undefined @288
+    Return v3 @288
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

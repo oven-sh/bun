@@ -1,0 +1,22 @@
+# f1 = copy
+# f2 = fields
+# -- source: main.mjs
+# function copy(d, a, s, n) { for (let i = 0; i < n; i++) d[a + i] = s[i]; return d[3]; }
+# function fields(o) { for (let i = 0; i < o.s.length; i++) o.d[i] = o.s[i]; return o.d[3]; }
+# function sums(d, s, n) { for (let i = 0; i < n; i++) d[i] = s[i] + 1; return d[3]; }
+# const o = JSON.parse('{"d":[1,2,3,4,5,6,7,8],"s":[8,7,6,5,4,3,2,1]}');
+# const view = new Int32Array(8);
+# print(copy(view, 1, o.s, 7), copy(o.d, 0, o.s, 8), fields(o), sums(o.d, o.s, 8), view.join());
+# -- end of source
+# The elements go in one operation before the loop. The loop begins behind them.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = CopyElements
+# CHECK: isLoopHead=true
+# RUN(FIELDS): walk f2:Body mechanisms=all
+# FIELDS: = GetValueAtSiteOrAbsent {{*}} key="d"
+# FIELDS: = GetValueAtSiteOrAbsent {{*}} key="length"
+# FIELDS: = CopyElements
+# RUN(COUNT): compile ElementCopyLoopsHoisted mechanisms=all
+# COUNT: statistic ElementCopyLoopsHoisted
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6 5 5 6 0,8,7,6,5,4,3,2

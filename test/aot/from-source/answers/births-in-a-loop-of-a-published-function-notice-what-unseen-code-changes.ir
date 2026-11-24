@@ -1,0 +1,33 @@
+# -- source: main.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# Point.prototype.sum = function () { return this.x + this.y; };
+# function run(count) {
+#   let total = 0;
+#   for (let i = 0; i < count; i++) {
+#     if (i === 5) poke(Point);
+#     total += new Point(i, 1).sum();
+#   }
+#   return total;
+# }
+# publish(run);
+# print(run(10));
+# print(run(10));
+# -- end of source
+# `run` is handed to unseen code, so nobody knows `count`, and the first object of `Point` is made in the first turn of the loop. Each turn reads the prototype object off the function and makes an object below it.
+# Neither ends a guard once the guards of `Point` have begun, so the look at `sum` need not be taken again behind a birth. What unseen code does in turn five still has to be noticed: behind the call the look is taken again, and the birth reads `prototype` anew.
+# RUN: run-in-shell globalThis.publish = run => { globalThis.kept = run; }; globalThis.poke = () => { };
+# CHECK: 55
+# CHECK-NEXT: 55
+# CHECK-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.publish = run => { globalThis.kept = run; }; globalThis.poke = given => { given.prototype.sum = function () { return 1000; }; };
+# REPLACES: 5015
+# REPLACES-NEXT: 10000
+# REPLACES-NEXT: exited with 0
+# RUN(SWAPS): run-in-shell globalThis.publish = run => { globalThis.kept = run; }; globalThis.poke = given => { given.prototype = { sum() { return 2000; } }; };
+# SWAPS: 10015
+# SWAPS-NEXT: 20000
+# SWAPS-NEXT: exited with 0
+# RUN(HIDES): run-in-shell globalThis.publish = run => { globalThis.kept = run; }; globalThis.poke = given => { Object.setPrototypeOf(given.prototype, { sum() { return 1; } }); delete given.prototype.sum; };
+# HIDES: 20
+# HIDES-NEXT: 10
+# HIDES-NEXT: exited with 0

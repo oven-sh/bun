@@ -51,8 +51,7 @@ const EVP_MD* digestAlgorithm(CryptoAlgorithmIdentifier hashFunction);
 
 std::optional<Vector<uint8_t>> calculateDigest(const EVP_MD* algorithm, const Vector<uint8_t>& message);
 
-// DER-marshals a key (SPKI for public, PKCS#8 for private). Uses the CBB C
-// API because bssl::ScopedCBB is unavailable under BORINGSSL_NO_CXX (Windows).
+// DER-marshals a key (SPKI for public, PKCS#8 for private).
 std::optional<Vector<uint8_t>> marshalEVPKey(EVP_PKEY*, bool isPublic);
 
 Vector<uint8_t> convertToBytes(const BIGNUM*);

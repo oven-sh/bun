@@ -1,5 +1,5 @@
 // The block is walked once for each way that brings the source in sight, the literal with it: its name is bound anew on each way.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 2
+// STATISTIC: ObjectAssignCallsExpanded >= 2
 type Options = { depth: number; level?: number; quiet?: boolean };
 let work = 0;
 function settle(verbose: boolean, depth: number): Options {

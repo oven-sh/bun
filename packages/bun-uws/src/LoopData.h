@@ -22,6 +22,7 @@
 #include <ctime>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -29,8 +30,12 @@
 #include <wtf/Assertions.h>
 
 #include "MoveOnlyFunction.h"
-#include "PerMessageDeflate.h"
 // clang-format off
+
+/* src/uws_sys/WebSocket.rs */
+struct SharedDeflate;
+extern "C" SharedDeflate *Bun__SharedDeflate__create();
+extern "C" void Bun__SharedDeflate__destroy(SharedDeflate *);
 
 namespace uWS {
 
@@ -43,15 +48,15 @@ private:
     int currentDeferQueue = 0;
     std::vector<MoveOnlyFunction<void()>> deferQueues[2];
 
-    /* Map from void ptr to handler */
-    std::map<void *, MoveOnlyFunction<void(Loop *)>> postHandlers, preHandlers;
+    /* Called with their key, before and after an iteration */
+    std::map<const void *, void (*)(const void *)> tickHandlers;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force
      * the outer socket down the uncorked slow path. cork() grabs whichever
      * slot is free; uncork() releases the slot you're in. No ordering. */
     struct CorkSlot {
-        char *buffer = nullptr;
+        std::unique_ptr<char[]> buffer;
         void *socket = nullptr;
         unsigned int offset = 0;
         unsigned int ssl : 1 = 0;
@@ -68,20 +73,9 @@ public:
     static constexpr int INVALID_CORK_SLOT = -1;
 
     LoopData() {
-        corkSlots[0].buffer = new char[CORK_BUFFER_SIZE];
-        corkSlots[1].buffer = new char[CORK_BUFFER_SIZE];
+        corkSlots[0].buffer = std::make_unique_for_overwrite<char[]>(CORK_BUFFER_SIZE);
+        corkSlots[1].buffer = std::make_unique_for_overwrite<char[]>(CORK_BUFFER_SIZE);
         updateDate();
-    }
-
-    ~LoopData() {
-        /* If we have had App.ws called with compression we need to clear this */
-        if (zlibContext) {
-            delete zlibContext;
-            delete inflationStream;
-            delete deflationStream;
-        }
-        delete [] corkSlots[0].buffer;
-        delete [] corkSlots[1].buffer;
     }
 
     /* Returns the slot index this socket is corked in, or INVALID_CORK_SLOT. */
@@ -131,14 +125,6 @@ public:
         ASSERT(slot == 0 || slot == 1);
         corkSlots[slot].socket = nullptr;
         corkSlots[slot].offset = 0;
-    }
-
-    /* Transfer ownership of a slot to a new socket (used during WebSocket
-     * upgrade to hand the HTTP socket's cork buffer to the new WebSocket). */
-    void transferCorkSlot(int slot, void *socket, bool ssl) {
-        ASSERT(slot == 0 || slot == 1);
-        corkSlots[slot].socket = socket;
-        corkSlots[slot].ssl = ssl;
     }
 
     CorkSlot *getCorkSlot(int slot) {
@@ -198,10 +184,10 @@ public:
     /* A longer write is not copied into the cork buffer: it goes out behind it in one vectored write. */
     static constexpr unsigned int CORK_COPY_MAX = 16 * 1024;
 
-    /* Per message deflate data */
-    ZlibContext *zlibContext = nullptr;
-    InflationStream *inflationStream = nullptr;
-    DeflationStream *deflationStream = nullptr;
+    struct DestroySharedDeflate {
+        void operator()(SharedDeflate *shared) const { Bun__SharedDeflate__destroy(shared); }
+    };
+    std::unique_ptr<SharedDeflate, DestroySharedDeflate> sharedDeflate;
 };
 
 }

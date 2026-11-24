@@ -103,6 +103,15 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The bundler's onResolve plugins have this record and have not answered. Only their answer gives it a module.
+        const AT_ON_RESOLVE_PLUGINS = 1 << 19;
+
+        /// The bundler keyed this record's module by (path, loader), not by path alone.
+        const KEYED_BY_LOADER = 1 << 20;
+
+        /// The resolver made the import external. A module of the bundle can have the same path: it is not that module.
+        const IS_EXTERNAL = 1 << 21;
     }
 }
 

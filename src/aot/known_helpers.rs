@@ -13,22 +13,23 @@ pub use self::find::{
     BindingValues, Certainty, FileHelpers, HeldFunction, KnownFunction, KnownReference,
 };
 use self::held_early::find_files_held_early;
-pub use self::private_state::FilePrivateStates;
+pub use self::private_state::{FilePrivateStates, StateOwner};
 pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
-    PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
-    resolve_loaded_reference, resolve_private_field_call, resolve_reference,
+    PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference,
+    calls_only_published_helpers, resolve_callee, resolve_loaded_reference,
+    resolve_private_field_call, resolve_public_field, resolve_reference,
 };
 
 use crate::builtins::id::BuiltinId;
 use crate::ir::{InParallel, for_each_mut};
 use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, SymbolId};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, FnId, NodeData};
-use bun_sema::program::{FileId, Files};
+use bun_sema::bind::{Binding, Parent, SymbolId};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::FxHashSet;
 use std::sync::OnceLock;
 
@@ -43,6 +44,7 @@ pub struct PublishedFunction {
 pub enum Reference {
     Helper(Helper),
     Global(&'static [&'static str]),
+    Holder,
 }
 
 #[derive(Default)]
@@ -57,10 +59,42 @@ fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
     at.ok().map(|at| &sorted[at].1)
 }
 
+fn is_made_behind(hir: &File<'_>, defined: StmtId, position: u32) -> bool {
+    let statements = hir.body;
+    let find = |position: u32| {
+        let (mut first, mut end) = (0, statements.len());
+        while first < end {
+            let middle = (first + end) / 2;
+            match hir[hir.id_at::<StmtId>(statements, middle)].start <= position {
+                true => first = middle + 1,
+                false => end = middle,
+            }
+        }
+        let at = first.checked_sub(1)?;
+        Some((at, hir.id_at::<StmtId>(statements, at)))
+    };
+    let (Some((before, found)), Some((behind, around))) =
+        (find(hir[defined].start), find(position))
+    else {
+        return false;
+    };
+    let may_run_earlier = matches!(hir[around].kind, StmtKind::Fn(_) | StmtKind::Labeled { .. });
+    found == defined
+        && before < behind
+        && matches!(hir[defined].kind, StmtKind::Var(_) | StmtKind::Expr(_))
+        && (hir[around].start..hir[around].loc.end).contains(&position)
+        && hir[defined].loc.end <= hir[around].start
+        && !may_run_earlier
+}
+
 fn reads_private_state(helper: Helper) -> bool {
     matches!(
         helper,
-        Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldSet | Helper::ClassPrivateFieldIn
+        Helper::ClassPrivateFieldGet
+            | Helper::ClassPrivateFieldSet
+            | Helper::ClassPrivateFieldIn
+            | Helper::AssertClassBrand
+            | Helper::PrivateElementAdd
     )
 }
 
@@ -113,6 +147,15 @@ impl KnownHelpers {
         known
     }
 
+    pub fn leave_replaceable_variables(&mut self, modules: &ModuleGraph) {
+        for (index, helpers) in self.files.iter_mut().enumerate() {
+            let file = FileId(index as u32);
+            if helpers.bindings().len() != 0 && modules.holds_replaceable_variable(file) {
+                helpers.leave_replaceable_variables(&|id| modules.is_replaceable(Sym { file, id }));
+            }
+        }
+    }
+
     pub fn has_bindings(&self) -> bool {
         !self.binding_names.is_empty()
     }
@@ -155,6 +198,20 @@ impl KnownHelpers {
         }))
     }
 
+    fn holds_at_call(
+        files: &Files<'_>,
+        file: FileId,
+        values: &BindingValues,
+        callee: ExprId,
+    ) -> bool {
+        values.holds_from_the_start
+            || (values.certainty != Certainty::MayHoldOtherValues
+                && values.defined_by.is_some_and(|defined| {
+                    let hir = files.hir(file);
+                    is_made_behind(hir, defined, hir[callee].pos)
+                }))
+    }
+
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (files.hir(file), files.bound(file));
         let mut callee = hir.skip_type_assertions(callee);
@@ -192,5 +249,63 @@ impl KnownHelpers {
         };
         let known = self.function(file, held.definition)?;
         (values.holds_from_the_start && known.relies_on_facts).then_some(known)
+    }
+
+    /// The only function that `callee` ever holds. A call before its initialization throws.
+    pub fn only_callee(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let values = self.binding(file, symbol)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let is_only_value = values.certainty != Certainty::MayHoldOtherValues
+            && held.closure == held.definition
+            && !files.bound(file).is_visible_to_eval(symbol);
+        (is_only_value && known.relies_on_facts).then_some(known)
+    }
+
+    /// A helper that a statement ahead of the call defines, both of them statements of one body.
+    pub fn callee_defined_ahead(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let (defined, called) = (values.defined_by?, bound.statement_of_expr(callee)?);
+        let body = bound.parent_of_stmt(defined);
+        let is_ahead = matches!(body, Parent::File | Parent::FnBody(_))
+            && body == bound.parent_of_stmt(called)
+            && hir[defined].start < hir[called].start;
+        (is_ahead && values.certainty != Certainty::MayHoldOtherValues && known.relies_on_facts)
+            .then_some(known)
+    }
+
+    /// A helper that answers a value with a marker before it asks anything else. What it names for other values does not matter there.
+    pub fn callee_returning_marked_value(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let tests_marker_first = known.shape == Shape::ImportStarMarkedOrCopied;
+        (values.holds_from_the_start && (known.relies_on_facts || tests_marker_first))
+            .then_some(known)
     }
 }

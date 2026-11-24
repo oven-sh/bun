@@ -14,7 +14,8 @@
     "a C compiler": true,
     "python3": true,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "linux-aarch64": {
     "the table of built-ins": true,
@@ -31,7 +32,8 @@
     "a C compiler": true,
     "python3": true,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "linux-x64-asan": {
     "the table of built-ins": true,
@@ -48,7 +50,8 @@
     "a C compiler": true,
     "python3": true,
     "a canary": true,
-    "test files of a folder below run by name": false
+    "test files of a folder below run by name": false,
+    "an unprivileged user": null
   },
   "linux-x64-hardened": {
     "the table of built-ins": null,
@@ -65,7 +68,8 @@
     "a C compiler": true,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "linux-x64-musl": {
     "the table of built-ins": null,
@@ -82,7 +86,8 @@
     "a C compiler": true,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "linux-aarch64-musl": {
     "the table of built-ins": null,
@@ -99,7 +104,8 @@
     "a C compiler": null,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "darwin-aarch64": {
     "the table of built-ins": null,
@@ -116,7 +122,8 @@
     "a C compiler": true,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "darwin-x64": {
     "the table of built-ins": null,
@@ -133,7 +140,8 @@
     "a C compiler": null,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "windows-x64": {
     "the table of built-ins": null,
@@ -150,7 +158,8 @@
     "a C compiler": true,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   },
   "windows-aarch64": {
     "the table of built-ins": null,
@@ -167,6 +176,7 @@
     "a C compiler": null,
     "python3": null,
     "a canary": true,
-    "test files of a folder below run by name": null
+    "test files of a folder below run by name": null,
+    "an unprivileged user": null
   }
 }

@@ -4706,6 +4706,21 @@
           "multiple": true
         },
         {
+          "name": "aot-order",
+          "description": "With --aot: lay the executable out by order files that runs of it wrote",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "aot-record-order",
+          "description": "With --aot: build an executable that writes an order file when it runs",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "no-compile-function-source",
           "description": "With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws",
           "hasValue": false,

@@ -1,4 +1,3 @@
-use crate::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 use bun_core::{Global, Output};
 use bun_install::PackageManager;
@@ -8,7 +7,6 @@ pub(crate) struct ScanCommand;
 
 impl ScanCommand {
     pub(crate) fn exec_with_manager(
-        ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],
     ) -> crate::Result<()> {
@@ -39,8 +37,7 @@ impl ScanCommand {
         );
 
         let security_scan_results =
-            match security_scanner::perform_security_scan_for_all(manager, &mut *ctx, original_cwd)
-            {
+            match security_scanner::perform_security_scan_for_all(manager, original_cwd) {
                 Ok(v) => v,
                 Err(e) => {
                     Output::err_generic("Could not perform security scan (<d>{s}<r>)", (e.name(),));

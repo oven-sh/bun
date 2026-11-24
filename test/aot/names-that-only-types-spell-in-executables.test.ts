@@ -1,11 +1,12 @@
 // Types are erased from a program. A name or a text that only a type spells leaves nothing in an executable built with --aot,
 // unless something outside the program can bring it in and the executable has to know it then.
 import { expect } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { beforeAll, describe, eachRow, test } from "./supported";
@@ -112,7 +113,7 @@ describe.each([
         bunEnv,
       ),
     );
-    bytes = readFileSync(executable);
+    bytes = bytesAndStoredStrings(executable);
   }, 300_000);
 
   const found = (names: string[]) =>

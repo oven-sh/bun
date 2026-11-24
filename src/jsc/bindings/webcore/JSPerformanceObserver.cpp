@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSPerformanceObserver.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -37,21 +35,12 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSPerformanceEntry.h"
 #include "JSPerformanceObserverCallback.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -60,47 +49,16 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     PerformanceObserver::Init result;
-    JSValue bufferedValue;
-    if (isNullOrUndefined)
-        bufferedValue = jsUndefined();
-    else {
-        bufferedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "buffered"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!bufferedValue.isUndefined()) {
-        result.buffered = convert<IDLBoolean>(lexicalGlobalObject, bufferedValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.buffered = false;
-    JSValue entryTypesValue;
-    if (isNullOrUndefined)
-        entryTypesValue = jsUndefined();
-    else {
-        entryTypesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "entryTypes"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!entryTypesValue.isUndefined()) {
-        result.entryTypes = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, entryTypesValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    JSValue typeValue;
-    if (isNullOrUndefined)
-        typeValue = jsUndefined();
-    else {
-        typeValue = object->get(&lexicalGlobalObject, vm.propertyNames->type);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!typeValue.isUndefined()) {
-        result.type = convert<IDLDOMString>(lexicalGlobalObject, typeValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "buffered"_s), result.buffered);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLSequence<IDLDOMString>>(lexicalGlobalObject, *object, Identifier::fromString(vm, "entryTypes"_s), result.entryTypes);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    convertDictionaryMember<IDLDOMString>(lexicalGlobalObject, *object, vm.propertyNames->type, result.type);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 
@@ -112,41 +70,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_takeReco
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceObserverConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceObserverConstructor_supportedEntryTypes);
 
-class JSPerformanceObserverPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformanceObserverPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformanceObserverPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceObserverPrototype))) JSPerformanceObserverPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObserverPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformanceObserverPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObserverPrototype, JSPerformanceObserverPrototype::Base);
-
+using JSPerformanceObserverPrototype = JSDOMPrototype<JSPerformanceObserver>;
 using JSPerformanceObserverDOMConstructor = JSDOMConstructor<JSPerformanceObserver>;
 
 /* Hash table for constructor */
@@ -191,12 +117,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceObserverDOMConstructorConstruct, JSPerfo
 
 template<> const ClassInfo JSPerformanceObserverDOMConstructor::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverDOMConstructor) };
 
-template<> JSValue JSPerformanceObserverDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
 template<> void JSPerformanceObserverDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 1, "PerformanceObserver"_s, JSPerformanceObserver::prototype(vm, globalObject));
@@ -206,15 +126,15 @@ template<> void JSPerformanceObserverDOMConstructor::initializeProperties(VM& vm
 /* Hash table for prototype */
 
 static const HashTableValue JSPerformanceObserverPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceObserverConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSPerformanceObserverPrototype::constructorGetter, 0 } },
     { "observe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverPrototypeFunction_observe, 0 } },
     { "disconnect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverPrototypeFunction_disconnect, 0 } },
     { "takeRecords"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverPrototypeFunction_takeRecords, 0 } },
 };
 
-const ClassInfo JSPerformanceObserverPrototype::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverPrototype) };
+template<> const ClassInfo JSPerformanceObserverPrototype::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverPrototype) };
 
-void JSPerformanceObserverPrototype::finishCreation(VM& vm)
+template<> void JSPerformanceObserverPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformanceObserver::info(), JSPerformanceObserverPrototypeTableValues, *this);
@@ -223,42 +143,14 @@ void JSPerformanceObserverPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformanceObserver::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserver) };
 
-JSPerformanceObserver::JSPerformanceObserver(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceObserver>&& impl)
-    : JSDOMWrapper<PerformanceObserver>(structure, globalObject, WTF::move(impl))
-{
-}
-
 JSObject* JSPerformanceObserver::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSPerformanceObserverPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSPerformanceObserverPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSPerformanceObserver::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSPerformanceObserver>(vm, globalObject);
+    return JSPerformanceObserverPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSPerformanceObserver::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceObserverDOMConstructor, DOMConstructorID::PerformanceObserver>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSPerformanceObserver::destroy(JSC::JSCell* cell)
-{
-    JSPerformanceObserver* thisObject = static_cast<JSPerformanceObserver*>(cell);
-    thisObject->JSPerformanceObserver::~JSPerformanceObserver();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSPerformanceObserverPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSPerformanceObserver::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsPerformanceObserverConstructor_supportedEntryTypesGetter(JSGlobalObject& lexicalGlobalObject)
@@ -322,96 +214,6 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_takeRec
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_takeRecords, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserver>::call<jsPerformanceObserverPrototypeFunction_takeRecordsBody>(*lexicalGlobalObject, *callFrame, "takeRecords");
-}
-
-JSC::GCClient::IsoSubspace* JSPerformanceObserver::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSPerformanceObserver, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserver, m_subspaceForPerformanceObserver));
-}
-
-template<typename Visitor>
-void JSPerformanceObserver::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSPerformanceObserver);
-
-template<typename Visitor>
-void JSPerformanceObserver::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSPerformanceObserver::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSPerformanceObserver::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSPerformanceObserver::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceObserver>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-void JSPerformanceObserverOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsPerformanceObserver = static_cast<JSPerformanceObserver*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsPerformanceObserver->wrapped(), jsPerformanceObserver);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceObserver@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore19PerformanceObserverE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceObserver>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<PerformanceObserver>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7PerformanceObserver@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore19PerformanceObserverE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // PerformanceObserver has subclasses. If PerformanceObserver has subclasses that get passed
-        // to toJS() we currently require PerformanceObserver you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<PerformanceObserver>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserver& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-PerformanceObserver* JSPerformanceObserver::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceObserver>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

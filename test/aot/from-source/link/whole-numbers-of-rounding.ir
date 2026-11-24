@@ -1,0 +1,13 @@
+# f1 = half, f2 = part
+# -- source: main.ts
+# function half(x: number): number { return Math.floor(x / 2); }
+# function part(x: number): number { return x / 2; }
+# const numbers = JSON.parse("[7,-7,0.5]") as number[];
+# let seen = ""; for (const x of numbers) seen += half(x) + " " + part(x) + " " + Math.trunc(x) + ";"; print(seen);
+# -- end of source
+# What Math.floor, Math.ceil, Math.trunc and Math.round give has no fraction.
+# RUN: link functions
+# CHECK: function f1 {{*}}result=int|whole
+# CHECK: function f2 {{*}}result=number
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3 3.5 7;-4 -3.5 -7;0 0.25 0;

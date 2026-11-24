@@ -36,6 +36,7 @@ import {
   symbolDescription,
   type Builtin,
   type ClassMember,
+  type Construction,
   type NamespaceDefinition,
   type OverloadDispatch,
   type ValueKind,
@@ -175,6 +176,8 @@ function getKindType(kind: Kind): b.TableType {
       return b.bigint;
     case "string":
       return b.string;
+    case "symbol":
+      return b.symbol;
     case "stringObject":
       return b.instance("String");
     case "array":
@@ -199,7 +202,15 @@ export function dispatchOfBindgen(
   dispatchWithin = (signature: Signature): DispatchDeclaration => ({ signature: fn.signatures.indexOf(signature) }),
 ): DispatchDeclaration {
   const converted = new Map<OverloadDispatch, DispatchDeclaration>();
-  const convertNode = ({ argument, byKind }: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+  const convertNode = (node: Exclude<OverloadDispatch, Signature>): DispatchDeclaration => {
+    if ("passed" in node) {
+      const branches = [
+        { tested: b.notPassed.spec, then: convert(node.notPassed) },
+        { tested: typeOfKind("other"), then: convert(node.passed) },
+      ];
+      return { argument: node.argument, branches };
+    }
+    const { argument, byKind } = node;
     const groups = Array.from(
       Map.groupBy(byKind, ([, target]) => target),
       ([target, entries]) => ({ target, kinds: entries.map(([kind]) => kind) }),
@@ -296,7 +307,7 @@ const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.i
 function computeBodyUses(type: Type, capability: Capability, isRead: boolean): readonly UseSpec[] {
   const sharesNativeObject = () => [...collectParts([type])].some(part => part instanceof RefType);
   if (type.holdsJSValue || type.passesValue || sharesNativeObject()) {
-    if (isRead) return b.handedOver;
+    if (isRead) return b.retainedByNativeCode;
     return capability === "js" ? [b.everything] : usesWithoutJavaScript;
   }
   return type.borrowsHeap ? [b.readsContents()] : [];
@@ -324,7 +335,7 @@ function computeReceiverUses(signature: Signature, className: string | null): re
   if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
     const mayAnswerReceiver =
       signature.passThis && className !== null && mayHoldInstanceOf(signature.returns.resultType, className);
-    return mayAnswerReceiver ? [...b.handedOver, b.returned] : b.handedOver;
+    return mayAnswerReceiver ? [...b.retainedByNativeCode, b.returned] : b.retainedByNativeCode;
   }
   if (signature.capability === "js") return [b.everything];
   // A function that is no member of a class has a receiver only if its body is handed `this`.
@@ -398,7 +409,10 @@ function createField(
     ];
   }
   if (receiver !== null) uses.this ??= receiver.uses;
-  else if (isRead && signature.receiver !== "static") uses.this ??= b.handedOver;
+  else if (isRead && signature.receiver !== "static") uses.this ??= b.retainedByNativeCode;
+  const writes = columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState);
+  // `held: "pinned"`, the one conversion that throws on its way into Rust: a small view gets a buffer, and its bytes move there.
+  const pinsBytes = args.some(({ type }) => type.rustFromExternThrows);
   return {
     ...columns,
     this: receiver === null ? undefined : new b.TableType(receiver.type),
@@ -427,7 +441,7 @@ function createField(
       args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
-    writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
+    writes: pinsBytes && writes && !writes.includes("TypedArrayStorage") ? [...writes, "TypedArrayStorage"] : writes,
     implementation: columns.implementation ?? b.hostCall,
   };
 }
@@ -742,7 +756,7 @@ const setterTakingAnything = (isRead: boolean, isStatic: boolean): b.SetterOptio
   value: b.any,
   capability: "js",
   throws: true,
-  uses: isRead ? { ...(isStatic ? {} : { this: b.handedOver }), value: b.handedOver } : undefined,
+  uses: isRead ? { ...(isStatic ? {} : { this: b.retainedByNativeCode }), value: b.retainedByNativeCode } : undefined,
 });
 
 // The field that a read of the property finds the answer in, once it is there. A property that can be redefined may be something else.
@@ -863,14 +877,13 @@ function pathOfClass(
 const pathOfConstructorBinding = (type: ClassType): BuiltinPath =>
   pathOfNativeBinding("Bindgen", `${type.origin!.stem}.bind.ts`, type.name);
 
-function collectConstruction(type: ClassType): DeclaredField | undefined {
-  const { construct, name } = type;
-  if (construct === null) return undefined;
+function collectConstruction(type: ClassType, construction: Construction): DeclaredField {
   if (type.illegalConstructor)
-    return { ...createField(construct, null, b.never.spec, true), capability: "heap", throws: true };
-  const instance = b.instance(name);
-  // A constructor that makes the object itself can keep it.
-  return createField(construct, null, (type.passStructure ? instance : instance.fresh).spec, true);
+    return { ...createField(construction, null, b.never.spec, true), capability: "heap", throws: true };
+  const instance = b.instance(type.name);
+  const field = createField(construction, null, (construction.isFresh ? instance.fresh : instance).spec, true);
+  const isLongest = type.constructions.every(({ args }) => args.length <= construction.args.length);
+  return isLongest ? field : { ...field, args: { ...field.args, $next: b.notPassed } };
 }
 
 function collectClass(type: ClassType, joins: Joins): Declaration[] {
@@ -889,7 +902,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       ? `globalObject->m_bindgenAdditions.m_classes[${cpp}::classIndex].getConcurrently()`
       : undefined,
     hasConstructor: construct !== null,
-    construct: collectConstruction(type),
+    construct: type.constructions.map(construction => collectConstruction(type, construction)),
     prototypeListsAllMembers: true,
   });
   const byName = (left: ClassMember, right: ClassMember) => compareBytes(left.name, right.name);
@@ -906,7 +919,10 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
       : []),
     ...setMemberParts(
       declared.map(declaration => (declaration.declares === "Class" ? { ...declaration, name } : declaration)),
-      { length: construct === null ? null : (construct.length ?? construct.requiredCount) },
+      {
+        length: construct?.length ?? null,
+        dispatches: construct === null ? [] : [{ mode: "Construct", root: dispatchOfBindgen(construct) }],
+      },
     ),
     ...(prototypeBase === null ? [] : b.inherits(joinPath([path, "prototype"]), prototypeBase)),
     // setup${name}ClassStructure() in bindgen-emit.ts puts these on the prototype beside the members of the schema, and nothing else.

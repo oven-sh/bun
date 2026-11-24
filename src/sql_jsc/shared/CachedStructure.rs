@@ -1,13 +1,12 @@
 use core::ffi::{CStr, c_char};
-use core::mem::{ManuallyDrop, MaybeUninit};
 
 use crate::jsc::{
-    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StrongOptional, bun_string_jsc,
+    ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, JsResult, MarkedArgumentBuffer,
+    StrongOptional, bun_string_jsc,
 };
+use bun_collections::BoundedArray;
 use bun_jsc::Weak;
-use bun_ptr::RawSlice;
-use bun_sql::shared::{ColumnIdentifier, Data};
+use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
@@ -52,13 +51,13 @@ impl CachedStructure {
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
-    /// the shared body of `{Postgres,MySQL}SQLStatement::structure()`.
+    /// the shared body of `Columns::build_structure()` and `MySQLStatement::structure()`.
     ///
     /// Builds an `ExternColumnIdentifier` array on the stack when the
     /// non-duplicate count fits in `JSObject::max_inline_capacity()` (then
     /// bakes it into a JSC `Structure`), otherwise heap-allocates and stores
     /// the boxed slice on `self.fields`. Duplicates are skipped. Callers must
-    /// have already run their `check_for_duplicate_fields()` pass so that
+    /// have already run `dedupe_columns()` so that
     /// `ColumnIdentifier::Duplicate` tags are present.
     ///
     /// `columns` is iterated twice (count + build), hence the `Clone` bound;
@@ -71,74 +70,32 @@ impl CachedStructure {
     ) where
         I: Iterator<Item = &'a ColumnIdentifier> + Clone,
     {
-        // lets avoid most allocations
-        let mut stack_ids: [MaybeUninit<ExternColumnIdentifier>; 70] =
-            [const { MaybeUninit::uninit() }; 70];
         // lets de duplicate the fields early
         let non_duplicated_count = columns
             .clone()
             .filter(|c| !matches!(c, ColumnIdentifier::Duplicate(_)))
             .count();
 
-        let max_inline = JSObject::max_inline_capacity() as usize;
-        // Initialized to empty so the `> max_inline` branch below can
-        // unconditionally `into_boxed_slice()` it; in the `<= max_inline`
-        // branch it stays empty and is never read.
-        let mut heap_ids: Vec<ExternColumnIdentifier> = Vec::new();
-        let ids: &mut [MaybeUninit<ExternColumnIdentifier>] = if non_duplicated_count <= max_inline
-        {
-            &mut stack_ids[..non_duplicated_count]
-        } else {
-            heap_ids = Vec::with_capacity(non_duplicated_count);
-            // Spare capacity is exactly the uninitialized `[MaybeUninit<T>]` view
-            // we need; fully initialized in the loop below before any read.
-            &mut heap_ids.spare_capacity_mut()[..non_duplicated_count]
-        };
+        let ids = columns.filter_map(|column| match column {
+            ColumnIdentifier::Name(name) => Some(ExternColumnIdentifier::Name(
+                bun_core::String::create_atom_if_possible(name),
+            )),
+            ColumnIdentifier::Index(index) => Some(ExternColumnIdentifier::Index(*index)),
+            ColumnIdentifier::Duplicate(_) => None,
+        });
 
-        let mut i: usize = 0;
-        for name_or_index in columns {
-            if matches!(name_or_index, ColumnIdentifier::Duplicate(_)) {
-                continue;
-            }
-
-            let mut out = ExternColumnIdentifier::default();
-            match name_or_index {
-                ColumnIdentifier::Name(name) => {
-                    out.value.name =
-                        ManuallyDrop::new(bun_core::String::create_atom_if_possible(name.slice()));
-                }
-                ColumnIdentifier::Index(index) => {
-                    out.value.index = *index;
-                }
-                ColumnIdentifier::Duplicate(_) => unreachable!(),
-            }
-            out.tag = match name_or_index {
-                ColumnIdentifier::Name(_) => 2,
-                ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Duplicate(_) => 0,
-            };
-            ids[i].write(out);
-            i += 1;
-        }
-
-        if non_duplicated_count > max_inline {
-            // SAFETY: `heap_ids` has capacity `non_duplicated_count` and every
-            // slot in [0..non_duplicated_count] was initialized in the loop above.
-            unsafe { heap_ids.set_len(non_duplicated_count) };
-            // Ownership transfer of heap `ids` to CachedStructure, which
-            // becomes responsible for freeing the alloc'd slice.
+        if non_duplicated_count > JSObject::max_inline_capacity() as usize {
+            let mut heap_ids = Vec::with_capacity(non_duplicated_count);
+            heap_ids.extend(ids);
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
-            // SAFETY: every `ids[..len]` slot was initialized in the loop above.
-            let ids: &mut [ExternColumnIdentifier] = unsafe { ids.assume_init_mut() };
-            // C++ copies each name into an `Identifier`; the stack buffer
-            // outlives the call and its atoms are released right after.
+            let mut stack_ids = BoundedArray::<ExternColumnIdentifier, 70>::new();
+            ids.for_each(|id| stack_ids.append_assume_capacity(id));
+            let ids = stack_ids.slice();
             // SAFETY: `owner` is a cell; `ids` is a valid initialized buffer.
             let structure = unsafe {
                 JSObject::create_structure(global_object, owner, ids.len() as u32, ids.as_mut_ptr())
             };
-            // SAFETY: initialized above; not read again.
-            unsafe { core::ptr::drop_in_place(ids) };
             self.set(global_object, Some(structure), None);
         }
     }
@@ -212,7 +169,7 @@ pub(crate) fn column_name_to_js(
 ) -> JsResult<JSValue> {
     match column {
         ColumnIdentifier::Name(name) | ColumnIdentifier::Duplicate(name) => {
-            bun_string_jsc::create_utf8_for_js(global_object, name.slice())
+            bun_string_jsc::create_utf8_for_js(global_object, name)
         }
         ColumnIdentifier::Index(index) => {
             let mut digits = bun_core::fmt::ItoaBuf::new();
@@ -234,10 +191,5 @@ pub(crate) fn transform_name(
         .call(global_object, JSValue::UNDEFINED, &[name])?
         .to_bun_string(global_object)?;
     let renamed = renamed.to_utf8();
-    ColumnIdentifier::init(Data::Temporary(RawSlice::new(renamed.slice())))
-        .map_err(|_| JsError::OutOfMemory)
+    Ok(ColumnIdentifier::init(renamed.slice().into()))
 }
-
-// No explicit `impl Drop` is needed: the GC-strong structure handle is freed
-// by `impl Drop for StrongOptional`, and the field array (including each
-// element's owned name) is freed by `Drop` on `Box<[ExternColumnIdentifier]>`.

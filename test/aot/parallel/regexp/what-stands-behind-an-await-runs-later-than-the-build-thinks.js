@@ -2,7 +2,7 @@
 // and the pattern is made before its second half has stored the other text: the build foresaw ^later-[0-9]+$, which is in the image and nobody asks for; the program makes ^sooner-[0-9]+$, which has no record,
 // and the run time's own matcher gives the answers of plain Bun. A wrong guess costs a miss, never a wrong match.
 // COUNTER: RegExpsCreatedWithoutRecord = 1
-// COUNTER: RegExpPredictedTextsCreated = 0
+// COUNTER: PredictedRegExpsCreated = 0
 const parts = ["^", "sooner", "-[0-9]+$"];
 async function change() {
   await null;

@@ -10,6 +10,7 @@ const writesState = { writes: ["TypedArrayElements", "ExternalState"] } as const
 /** `internalBinding("quic").Endpoint` of Node. */
 export const QuicEndpoint = b.class({
   rustPath: "crate::node::quic::QuicEndpoint",
+  thisValue: "this_value",
   construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
   proto: {
     address,
@@ -24,6 +25,7 @@ export const QuicEndpoint = b.class({
 
 export const QuicSession = b.class({
   rustPath: "crate::node::quic::QuicSession",
+  thisValue: "this_value",
   proto: {
     applicationOptions: { returns: b.any.returning("object"), ...js },
     destroy: { ...js, args: { options: b.any } },
@@ -43,6 +45,7 @@ export const QuicSession = b.class({
 
 export const QuicStream = b.class({
   rustPath: "crate::node::quic::QuicStream",
+  thisValue: "this_value",
   proto: {
     abortForDestroy: { args: { stopSendingCode: b.any, resetCode: b.any }, capability: "js" },
     attachSource: { ...js, args: { source: b.any } },

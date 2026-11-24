@@ -23,7 +23,7 @@
 # print(byValue(takers[1], 14)); print(kept!());
 # print("went on");
 # -- end of source
-# The green control of the seven tests beside it: the same ways without the lie: what a callee keeps has left, and nothing of it is overwritten.
+# This is the passing control of the seven tests next to it. It takes the same paths without the fault: whatever a callee retains has escaped, and none of it is overwritten.
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 5

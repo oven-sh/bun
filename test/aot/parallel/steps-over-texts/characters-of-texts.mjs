@@ -1,0 +1,16 @@
+const f = (s, r = []) => { for (const c of s) r.push(c.charCodeAt(0), c.codePointAt(0), c === "\u{1F600}", c < "b", c < "￿", c > "\uD800", c.length); return r.join(); };
+console.log(f("a\u{1F600}"));
+console.log(f("\uD83Dz"));
+console.log(f("\uDE00\uD83D"));
+console.log(f(""));
+const g = s => { let k = 0; for (const c of s) switch (c) { case "\u{1F600}": k += 100; break; case "\uD83D": k += 10; break; case "": k += 1000; break; case "ab": k += 5000; break; default: k++; } return k; };
+console.log(g("x\u{1F600}\uD83D"), g("ab"));
+const h = v => { let n = ""; for (const c of v) { n = c + n; if (n.length > 3) break; } return n; };
+console.log(h("abcdef"), h(["p", "q"]), h(new Set("xyx")), h("\u{1F600}b").length);
+const same = (s, t) => { let n = 0; for (const c of s) for (const d of t) if (c === d) n++; return n; };
+console.log(same("a\u{1F600}\u{1F601}\uD83D", "\u{1F601}a\uD83D\u{1F600}\u{1F600}"));
+const copy = s => { let out = ""; for (const c of s) out += c === "|" ? " " : c; return out; };
+const long = ("ab|ÿĀ|\u{1F600}\uD83D|").repeat(40);
+console.log(copy(long) === long.replaceAll("|", " "), copy(long).length, copy(""), copy("\uDE00"). length);
+const kept = s => { const list = []; for (const c of s) list.push(c); return list.map(c => c.length).join(""); };
+console.log(kept("a\u{1F600}b\uD83D"), kept(JSON.parse('"x\\ud83d\\ude00"') + "y"));

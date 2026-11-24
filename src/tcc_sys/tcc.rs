@@ -139,7 +139,7 @@ pub enum OutputFormat {
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
+    /// Opaque TinyCC compilation state, owned by [`OwnedState`].
     pub struct State;
 }
 
@@ -154,25 +154,42 @@ pub struct Config<'a, ErrCtx> {
     pub err: ConfigErr<ErrCtx>,
 }
 
-impl State {
-    /// Create a new TCC compilation context
-    pub(crate) fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
-        // SAFETY: tcc_new has no preconditions.
-        NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
+/// Owns a compilation context and the code it relocated.
+pub struct OwnedState(NonNull<State>);
+
+impl core::ops::Deref for OwnedState {
+    type Target = State;
+    fn deref(&self) -> &State {
+        State::opaque_ref(self.0.as_ptr())
+    }
+}
+
+impl core::ops::DerefMut for OwnedState {
+    fn deref_mut(&mut self) -> &mut State {
+        State::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedState {
+    fn drop(&mut self) {
+        // SAFETY: a `tcc_new` handle, deleted once.
+        unsafe { tcc_delete(self.0.as_ptr()) }
+    }
+}
+
+impl OwnedState {
+    /// Keeps the compiled code mapped for the life of the process.
+    pub fn leak(self) {
+        let _ = core::mem::ManuallyDrop::new(self);
     }
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<'_, ErrCtx>,
-    ) -> Result<NonNull<State>, Error> {
-        let state_ptr = State::new()?;
-        // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
-        let guard = scopeguard::guard(state_ptr, |p| {
-            // SAFETY: p was returned by tcc_new and has not yet been deleted.
-            unsafe { tcc_delete(p.as_ptr()) }
-        });
-        // SAFETY: state_ptr is valid and uniquely owned for the duration of this fn.
-        let state: &mut State = unsafe { &mut *state_ptr.as_ptr() };
+    ) -> Result<Self, Error> {
+        // SAFETY: tcc_new has no preconditions.
+        let state = NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)?;
+        let mut state = Self(state);
 
         // setOutputType has side effects that are conditional on existing
         // options, so this must be called after setOptions
@@ -201,20 +218,11 @@ impl State {
 
         state.set_output_type(config.output_type)?;
 
-        let state_ptr = scopeguard::ScopeGuard::into_inner(guard);
-        Ok(state_ptr)
+        Ok(state)
     }
+}
 
-    /// Free a TCC compilation context
-    ///
-    /// # Safety
-    /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
-    pub unsafe fn destroy(s: *mut State) {
-        // opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
-        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
-        unsafe { tcc_delete(s) }
-    }
-
+impl State {
     /// Set error/warning display callback
     pub(crate) fn set_error_func<Context>(
         &mut self,

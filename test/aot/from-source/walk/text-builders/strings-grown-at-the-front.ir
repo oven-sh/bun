@@ -1,0 +1,17 @@
+# f1 = box, f2 = both, f3 = boxes, f4 = reads
+# -- source: main.ts
+# function box(width: number, height: number): string { let text = ""; for (let y = 0; y < height; y++) { let line = ""; for (let x = 0; x < width; x++) { if (x % 3) line += "#"; else line = x + line; } text += line + "/"; } return text; }
+# function both(width: number, height: number): string { let text = ""; for (let y = 0; y < height; y++) { let line = y % 2 ? ">" : ""; for (let x = 0; x < width; x++) line = "(" + line; text += line; } return text + " " + text.length; }
+# function boxes(width: number, height: number): string { let text = ""; for (let y = 0; y < height; y++) { let line = ""; for (let x = 0; x < width; x++) line += "#"; text += line + "/"; } return text; }
+# function reads(width: number, height: number): number { let text = "", sum = 0; for (let y = 0; y < height; y++) { let line = ""; for (let x = 0; x < width; x++) line = x + line; text += line + "/"; sum += text.charCodeAt(y); } return sum; }
+# print(box(5, 3), both(3, 2), boxes(2, 3), reads(3, 3), box(0, 2));
+# -- end of source
+# A string that an inner loop grows at the front is a deep rope. A text that takes it in stays a rope: only its readers flatten it.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: StringBuilder
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH-NOT: StringBuilder
+# RUN(BOXES): walk f3 mechanisms=all
+# BOXES: = StackStringBuilderFinish
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 30###/30###/30###/ ((((((> 7 ##/##/##/ 147 //

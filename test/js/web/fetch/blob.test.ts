@@ -1033,6 +1033,17 @@ describe("Blob from ArrayBuffer-like values", () => {
   });
 });
 
+test.each([
+  ["a response's", () => new Response("abc d\u00e9f").blob()],
+  ["one of bytes", async () => new Blob([new TextEncoder().encode("abc d\u00e9f")])],
+])("text() of an ASCII slice does not decide how the rest of the blob is read: %s", async (_, make) => {
+  const blob = await make();
+  expect(await blob.slice(0, 3).text()).toBe("abc");
+  expect(await blob.slice(0, 7).text()).toBe("abc d\u00e9f".slice(0, 6));
+  expect(await blob.text()).toBe("abc d\u00e9f");
+  expect(await blob.slice(0, 3).text()).toBe("abc");
+});
+
 // A `type` that is a registered MIME string is interned; `slice()` without a
 // contentType keeps an interned parent type. Guards the interned set's membership.
 test.each([

@@ -272,7 +272,7 @@ test.skipIf(isWindows)(
 // free needs a GC to land inside the microtask drain, which conservative stack
 // scanning makes non-deterministic. Instead, the source wrapper must still be
 // Strong-protected right after a re-entrant reader.cancel(), because
-// on_read_chunk's own pin keeps it above the downgrade-at-one threshold.
+// the ref that the dispatcher holds keeps it above the downgrade-at-one threshold.
 // Windows uses libuv for pipe I/O; the read_with_fn path under test is POSIX.
 test.skipIf(isWindows)(
   "re-entrant cancel inside a subprocess stdout read keeps the FileReader pinned for the rest of the dispatch",

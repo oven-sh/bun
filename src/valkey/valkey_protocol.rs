@@ -1,21 +1,13 @@
-use core::fmt;
-
-use bstr::BStr;
-
-#[derive(strum::IntoStaticStr, strum::EnumString, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RedisError {
     AuthenticationFailed,
     ConnectionClosed,
-    InvalidArgument,
-    InvalidArray,
     InvalidAttribute,
-    InvalidBigNumber,
     InvalidBlobError,
     InvalidBoolean,
     InvalidBulkString,
     InvalidCommand,
     InvalidDouble,
-    InvalidErrorString,
     InvalidInteger,
     InvalidMap,
     InvalidNull,
@@ -23,10 +15,7 @@ pub enum RedisError {
     InvalidResponse,
     InvalidResponseType,
     InvalidSet,
-    InvalidSimpleString,
     InvalidVerbatimString,
-    JSError,
-    OutOfMemory,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
@@ -35,10 +24,6 @@ pub enum RedisError {
     /// The server answered with a `-` or `!` error reply.
     ServerError,
 }
-
-bun_core::impl_tag_error!(RedisError);
-
-// `valkeyErrorToJS` alias deleted — lives in bun_runtime::valkey_jsc::protocol_jsc (extension trait).
 
 /// RESP protocol types
 #[repr(u8)]
@@ -100,106 +85,14 @@ pub enum RESPValue {
     Null,
     Double(f64),
     Boolean(bool),
-    VerbatimString(VerbatimString),
+    VerbatimString(Box<[u8]>),
     Map(Vec<MapEntry>),
     Set(Vec<RESPValue>),
-    Attribute(Attribute),
     Push(Push),
     BigNumber(Box<[u8]>),
 }
 
-// `deinit` deleted — all payloads are Box/Vec; Drop is automatic.
-
-impl fmt::Display for RESPValue {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RESPValue::SimpleString(str) => write!(writer, "{}", BStr::new(str)),
-            RESPValue::Error(str) => write!(writer, "{}", BStr::new(str)),
-            RESPValue::Integer(int) => write!(writer, "{}", int),
-            RESPValue::BulkString(maybe_str) => {
-                if let Some(str) = maybe_str {
-                    write!(writer, "{}", BStr::new(str))
-                } else {
-                    writer.write_str("(nil)")
-                }
-            }
-            RESPValue::Array(array) => {
-                writer.write_str("[")?;
-                for (i, value) in array.iter().enumerate() {
-                    if i > 0 {
-                        writer.write_str(", ")?;
-                    }
-                    fmt::Display::fmt(value, writer)?;
-                }
-                writer.write_str("]")
-            }
-            RESPValue::Null => writer.write_str("(nil)"),
-            RESPValue::Double(d) => write!(writer, "{}", d),
-            RESPValue::Boolean(b) => write!(writer, "{}", b),
-            RESPValue::VerbatimString(verbatim) => {
-                write!(
-                    writer,
-                    "{}:{}",
-                    BStr::new(&verbatim.format),
-                    BStr::new(&verbatim.content)
-                )
-            }
-            RESPValue::Map(entries) => {
-                writer.write_str("{")?;
-                for (i, entry) in entries.iter().enumerate() {
-                    if i > 0 {
-                        writer.write_str(", ")?;
-                    }
-                    fmt::Display::fmt(&entry.key, writer)?;
-                    writer.write_str(": ")?;
-                    fmt::Display::fmt(&entry.value, writer)?;
-                }
-                writer.write_str("}")
-            }
-            RESPValue::Set(set) => {
-                writer.write_str("Set{")?;
-                for (i, value) in set.iter().enumerate() {
-                    if i > 0 {
-                        writer.write_str(", ")?;
-                    }
-                    fmt::Display::fmt(value, writer)?;
-                }
-                writer.write_str("}")
-            }
-            RESPValue::Attribute(attribute) => {
-                writer.write_str("(Attr: ")?;
-                writer.write_str("{")?;
-                for (i, entry) in attribute.attributes.iter().enumerate() {
-                    if i > 0 {
-                        writer.write_str(", ")?;
-                    }
-                    fmt::Display::fmt(&entry.key, writer)?;
-                    writer.write_str(": ")?;
-                    fmt::Display::fmt(&entry.value, writer)?;
-                }
-                writer.write_str("} => ")?;
-                fmt::Display::fmt(&*attribute.value, writer)?;
-                writer.write_str(")")
-            }
-            RESPValue::Push(push) => {
-                write!(writer, "Push({}: [", BStr::new(&push.kind))?;
-                for (i, value) in push.data.iter().enumerate() {
-                    if i > 0 {
-                        writer.write_str(", ")?;
-                    }
-                    fmt::Display::fmt(value, writer)?;
-                }
-                writer.write_str("])")
-            }
-            RESPValue::BigNumber(str) => write!(writer, "BigNumber({})", BStr::new(str)),
-        }
-    }
-}
-
-// `toJS` / `ToJSOptions` / `toJSWithOptions` aliases deleted — live in
-// bun_runtime::valkey_jsc::protocol_jsc as extension-trait methods.
-
-pub struct ValkeyReader<'a> {
+pub(crate) struct ValkeyReader<'a> {
     buffer: &'a [u8],
     pos: usize,
     /// Bytes of aggregate `Vec` preallocation still allowed for the current
@@ -209,7 +102,7 @@ pub struct ValkeyReader<'a> {
 }
 
 impl<'a> ValkeyReader<'a> {
-    pub fn init(buffer: &'a [u8]) -> ValkeyReader<'a> {
+    pub(crate) fn init(buffer: &'a [u8]) -> ValkeyReader<'a> {
         ValkeyReader {
             buffer,
             pos: 0,
@@ -222,7 +115,7 @@ impl<'a> ValkeyReader<'a> {
     ///
     /// Callers use this to compute how many bytes a `read_value` call consumed.
     #[inline]
-    pub fn pos(&self) -> usize {
+    pub(crate) fn pos(&self) -> usize {
         self.pos
     }
 
@@ -289,7 +182,7 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    pub(crate) fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+    pub(crate) fn read_verbatim_string(&mut self) -> Result<Box<[u8]>, RedisError> {
         let len = self.read_integer()?;
         if !(0..=Self::MAX_BULK_LEN).contains(&len) {
             return Err(RedisError::InvalidVerbatimString);
@@ -313,10 +206,7 @@ impl<'a> ValkeyReader<'a> {
             return Err(RedisError::InvalidVerbatimString);
         }
 
-        let format = Box::<[u8]>::from(&content_with_format[0..3]);
-        let content = Box::<[u8]>::from(&content_with_format[4..]);
-
-        Ok(VerbatimString { format, content })
+        Ok(Box::<[u8]>::from(&content_with_format[4..]))
     }
 
     /// Maximum allowed nesting depth for RESP aggregate types.
@@ -348,7 +238,7 @@ impl<'a> ValkeyReader<'a> {
         cap
     }
 
-    pub fn read_value(&mut self) -> Result<RESPValue, RedisError> {
+    pub(crate) fn read_value(&mut self) -> Result<RESPValue, RedisError> {
         self.prealloc_budget = self.buffer.len() - self.pos;
         self.read_value_with_depth(0)
     }
@@ -499,27 +389,12 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidAttribute);
                 }
-                let len = usize::try_from(len).expect("int cast");
-
-                let mut attrs =
-                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
-                // errdefer cleanup handled by Vec Drop on `?`
-                let mut i: usize = 0;
-                while i < len {
-                    let key = self.read_value_with_depth(depth + 1)?;
-                    // errdefer key.deinit() — `key` drops automatically on `?` below
-                    let value = self.read_value_with_depth(depth + 1)?;
-                    attrs.push(MapEntry { key, value });
-                    i += 1;
+                // Nothing reads the pairs: the reply is the value behind them.
+                for _ in 0..len {
+                    self.read_value_with_depth(depth + 1)?;
+                    self.read_value_with_depth(depth + 1)?;
                 }
-
-                // Read the actual value that follows the attributes
-                let value = Box::new(self.read_value_with_depth(depth + 1)?);
-
-                Ok(RESPValue::Attribute(Attribute {
-                    attributes: attrs,
-                    value,
-                }))
+                self.read_value_with_depth(depth + 1)
             }
             RESPType::Push => {
                 if depth >= Self::MAX_NESTING_DEPTH {
@@ -574,7 +449,7 @@ impl<'a> ValkeyReader<'a> {
 }
 
 /// Outcome of an incremental [`ReplyScanner::scan`] pass.
-pub enum ScanResult {
+pub(crate) enum ScanResult {
     /// A complete top-level reply is buffered and safe to hand to
     /// [`ValkeyReader::read_value`].
     Complete,
@@ -585,7 +460,7 @@ pub enum ScanResult {
 /// Incrementally locates the end of the next complete RESP reply without
 /// materializing any values.
 ///
-/// `on_data` re-runs the tree parser over the accumulated read buffer on every
+/// The tree parser starts over on the accumulated read buffer on every
 /// socket callback. Without this scanner, an aggregate reply (`*N`, `%N`, `~N`,
 /// `>N`, `|N`) whose elements arrive in separate TCP segments is re-parsed from
 /// its header each time — O(N^2) element parses for an N-element reply, which a
@@ -594,7 +469,7 @@ pub enum ScanResult {
 /// byte is examined a bounded number of times; the allocating parser only runs
 /// once a full reply is known to be present.
 #[derive(Default)]
-pub struct ReplyScanner {
+pub(crate) struct ReplyScanner {
     /// Byte offset of the next unscanned element, relative to the start of the
     /// buffer passed to [`ReplyScanner::scan`].
     pos: usize,
@@ -607,7 +482,7 @@ pub struct ReplyScanner {
 impl ReplyScanner {
     /// Discard all progress. Must be called whenever the underlying buffer is
     /// consumed or replaced.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.pos = 0;
         self.stack.clear();
         self.crlf_skip = 0;
@@ -616,7 +491,7 @@ impl ReplyScanner {
     /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
     /// buffer) for the end of the next complete reply. `buffer` must be the
     /// same byte stream as the previous call with zero or more bytes appended.
-    pub fn scan(&mut self, buffer: &[u8]) -> Result<ScanResult, RedisError> {
+    pub(crate) fn scan(&mut self, buffer: &[u8]) -> Result<ScanResult, RedisError> {
         loop {
             let mut reader = ValkeyReader {
                 buffer,
@@ -765,74 +640,7 @@ pub struct MapEntry {
     pub value: RESPValue,
 }
 
-// `MapEntry::deinit` deleted — fields drop automatically.
-
-pub struct VerbatimString {
-    pub(crate) format: Box<[u8]>, // e.g. "txt" or "mkd"
-    pub content: Box<[u8]>,
-}
-
-// `VerbatimString::deinit` deleted — Box<[u8]> fields drop automatically.
-
 pub struct Push {
     pub kind: Box<[u8]>,
     pub data: Vec<RESPValue>,
-}
-
-// `Push::deinit` deleted — Box/Vec fields drop automatically.
-
-pub struct Attribute {
-    pub(crate) attributes: Vec<MapEntry>,
-    pub value: Box<RESPValue>,
-}
-
-// `Attribute::deinit` deleted — Vec/Box fields drop automatically.
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SubscriptionPushMessage {
-    Message,
-    Subscribe,
-    Unsubscribe,
-    /// `pmessage` / `smessage` — delivered without a promise pair; no listener
-    /// API is exposed for pattern subscriptions, so the payload is dropped.
-    PatternMessage,
-}
-
-bun_core::comptime_string_map! {
-    static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
-        b"message" => SubscriptionPushMessage::Message,
-        b"subscribe" => SubscriptionPushMessage::Subscribe,
-        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
-    };
-}
-
-impl SubscriptionPushMessage {
-    #[inline]
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if let Some(kind) = SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied() {
-            return Some(kind);
-        }
-        match bytes.split_first() {
-            Some((b'p' | b's', base)) => match SUBSCRIPTION_PUSH_MESSAGES.get(base).copied() {
-                Some(kind @ (Self::Subscribe | Self::Unsubscribe)) => Some(kind),
-                Some(Self::Message) => Some(Self::PatternMessage),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds.
-    #[inline]
-    pub fn is_reply_kind(kind: &[u8]) -> bool {
-        match kind.split_first() {
-            Some((b'p' | b's', base)) => matches!(
-                Self::from_bytes(base),
-                Some(Self::Subscribe | Self::Unsubscribe)
-            ),
-            _ => false,
-        }
-    }
 }

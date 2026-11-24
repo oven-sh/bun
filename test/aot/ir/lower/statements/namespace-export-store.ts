@@ -1,8 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[namespace]] = FinishObject
-// CHECK: PropSet [[namespace]], {{*}}key="f"
-// CHECK: PropSet [[namespace]], {{*}}key="C"
+// CHECK: PutModuleVariable
+// CHECK: [[name]] = Convert [[namespace]]
+// CHECK: PropSet [[name]], {{*}}key="f"
+// CHECK: PropSet [[name]], {{*}}key="C"
 
 // RUN(LOCAL): lower
 // LOCAL-NOT: key="g"

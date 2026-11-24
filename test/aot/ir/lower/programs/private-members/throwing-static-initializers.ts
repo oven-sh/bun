@@ -61,7 +61,7 @@ class Methods { static { row("methods and accessors are there from the start", (
 
 // GENERATED: said #g #s C readA poke
 // CHECK-LABEL: function {{*}}name="said"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1() handler=b2():
@@ -80,19 +80,19 @@ class Methods { static { row("methods and accessors are there from the start", (
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Integer integer=1
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#s"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="#s"
+// CHECK-NEXT: v1 = NewRuntimeError runtimeError=OmittedFromExecutable name="#s"
 // CHECK-NEXT: Throw v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
@@ -100,8 +100,8 @@ class Methods { static { row("methods and accessors are there from the start", (
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="readA"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_3]], v1: function):
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=[[f_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_3]], v1: [[f_4]]):
 // CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_3]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="C"
 // CHECK-NEXT: v4 = StrictEq v3, v1
@@ -126,22 +126,22 @@ class Methods { static { row("methods and accessors are there from the start", (
 // CHECK-NEXT: Throw v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="poke"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_5]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="Later"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_5]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v4 = StrictEq v2, v3
 // CHECK-NEXT: Branch v4 -> taken b1(), notTaken b4()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v6 = TypeTest v5 testedType=absent
 // CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3(| 0)
 // CHECK-NEXT: b2(v7):
 // CHECK-NEXT: v8 = NewRuntimeError runtimeError=InvalidPrivateWrite
 // CHECK-NEXT: Throw v8
 // CHECK-NEXT: b3(v9):
-// CHECK-NEXT: PutModuleVariable v0 variable=[[g_6]]
+// CHECK-NEXT: PutModuleVariable v0 variable=[[g_7]]
 // CHECK-NEXT: v11 = Undefined
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: b4():

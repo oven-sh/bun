@@ -1,0 +1,13 @@
+# `limit > 100` in every turn, of a parameter of which nothing is known: the relation as written may run other code (a valueOf), which ends in every turn what is shown of the lists that the loop reads.
+# A value that no turn changes, of which nothing is expected, and which every turn holds against a number by a relation is asked once in front of the loop whether it is a number; in the copy behind the yes the relation is one of numbers.
+# f1 = above
+# -- source: what-every-turn-holds-against-a-number-is-asked-in-front-of-the-loop-whether-it-is-one.ts
+# declare function sink(...values: unknown[]): void;
+# function above(list: any, limit: any) { let sum = 0; for (let i = 0; i < list.length; i++) { if (limit > 100) sum += 1; sum += list[i]; } return sum; }
+# sink(above);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = Greater {{*}}form=Integers

@@ -19,16 +19,44 @@ impl<S: Storage> FileIn<S> {
     }
 
     pub fn import_attribute(&self, attributes: ExprId, key: Atom) -> Option<Atom> {
-        let ExprKind::Object(props) = self.exprs.get(attributes.idx())?.kind else {
-            return None;
-        };
-        let mut all = props.iter().map(|prop| &self[prop]);
-        let prop =
-            all.find(|prop| prop.kind == PropKind::Init && prop.key == PropKey::Name(key))?;
-        match self.exprs.get(prop.value.idx())?.kind {
+        let value = self.import_attribute_value(attributes, key)?;
+        match self.exprs.get(value.idx())?.kind {
             ExprKind::String(text) => Some(text),
             _ => None,
         }
+    }
+
+    pub fn import_attribute_value(&self, attributes: ExprId, key: Atom) -> Option<ExprId> {
+        let ExprKind::Object(props) = self.exprs.get(attributes.idx())?.kind else {
+            return None;
+        };
+        let mut found = None;
+        for prop in props.iter().map(|prop| &self[prop]) {
+            match (prop.kind, prop.key) {
+                (PropKind::Init, PropKey::Name(name)) if name == key => found = Some(prop.value),
+                (PropKind::Spread, _) | (_, PropKey::Computed(_)) => found = None,
+                (_, PropKey::Name(name)) if name == key => found = None,
+                _ => {}
+            }
+        }
+        found
+    }
+
+    /// Returns true if the attribute that `import_attribute` reads under `key` is constant: every property is `name: value`, and exactly one is named `key`, with a string.
+    pub fn is_import_attribute_settled(&self, attributes: ExprId, key: Atom) -> bool {
+        let Some(ExprKind::Object(props)) = self.exprs.get(attributes.idx()).map(|it| it.kind)
+        else {
+            return false;
+        };
+        let mut found = 0;
+        let are_plain = props.iter().map(|prop| &self[prop]).all(|prop| {
+            let is_key = prop.key == PropKey::Name(key);
+            found += usize::from(is_key);
+            prop.kind == PropKind::Init
+                && matches!(prop.key, PropKey::Name(_))
+                && (!is_key || matches!(self[prop.value].kind, ExprKind::String(_)))
+        });
+        are_plain && found == 1
     }
 
     pub fn find_name_of_loaded_import(&self, name: Atom) -> Option<(Atom, Atom)> {

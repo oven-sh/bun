@@ -1,7 +1,5 @@
 //! `JSFrameworkRouter`: a JS class for testing the router.
 
-use bun_paths::strings;
-
 use bun_alloc::{AllocError, Arena};
 use bun_collections::BoundedArray;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -47,13 +45,10 @@ impl JSFrameworkRouter {
             global,
         )?;
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            bun_resolver::fs::FileSystem::get().top_level_dir(),
-            root.slice(),
-        ))
-        .into();
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+        let abs_root: Box<[u8]> = paths::Path::resolve(&[top_level_dir, root.slice()])
+            .as_bytes()
+            .into();
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),
@@ -80,7 +75,6 @@ impl JSFrameworkRouter {
             stored_parse_errors: Vec::new(),
         };
 
-        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
         // The handler only touches `files`/`stored_parse_errors`, so split-borrow
         // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
@@ -93,7 +87,8 @@ impl JSFrameworkRouter {
                 files,
                 stored_parse_errors,
             };
-            router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
+            (global.bun_vm().transpiler)
+                .with_mut(|t| router.scan(TypeIndex::init(0), &mut t.resolver, &mut ctx))?;
         }
 
         if !jsfr.stored_parse_errors.is_empty() {

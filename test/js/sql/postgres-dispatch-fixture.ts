@@ -311,7 +311,78 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     }
     return { thrown, sameBackend: (await backendPid(unprepared)) === pid };
   },
+
+  async "a Bind waits for the query ahead"() {
+    await pair([text("warm"), text("warm")]);
+    const ahead = settle(pair(["p", "q"]).execute());
+    const outer = settle(pair(callingFromBind(() => waitInsideConversion(ahead))).execute());
+    return { ahead: await ahead, outer: await outer, afterwards: await settle(sql`select 1 as ok`) };
+  },
+
+  async "a Bind waits for the first of two queries ahead"() {
+    const key = String(process.pid);
+    await using other = new SQL({ url, max: 1 });
+    const locked = (value: string) => sql`select pg_advisory_xact_lock(${key}::text::bigint), ${value}::text as x`;
+    await pair([text("warm"), text("warm")]);
+    await locked("warm");
+    await other`select pg_advisory_lock(${key}::text::bigint)`;
+    const ahead = [settle(pair(["p", "q"]).execute()), settle(locked("blocked").execute())];
+    const outer = settle(pair(callingFromBind(() => waitInsideConversion(ahead[0]))).execute());
+    await other`select pg_advisory_unlock(${key}::text::bigint)`;
+    return { ahead: await Promise.all(ahead), outer: await outer, afterwards: await settle(sql`select 1 as ok`) };
+  },
+
+  async "a Bind waits for the retry of the query ahead"() {
+    await pair([text("warm"), text("warm")]);
+    await sql`deallocate all`.simple();
+    const ahead = settle(pair(["p", "q"]).execute());
+    const outer = settle(pair(callingFromBind(() => waitInsideConversion(ahead))).execute());
+    return { ahead: await ahead, outer: await outer, afterwards: await settle(sql`select 1 as ok`) };
+  },
+
+  async "a Bind waits for a query that it starts"() {
+    let nested!: Promise<unknown>;
+    const values = callingFromBind(() => waitInsideConversion((nested = settle(sql`select 2 as y`.execute()))));
+    const outer = await settle(pair(values));
+    return { outer, nested: await nested, afterwards: await settle(sql`select 1 as ok`) };
+  },
+
+  // The value was let through as bytes. The retry has to send it as text.
+  async "the Bind of a retry waits for a query that it starts"() {
+    await sql`create temporary table retyped (v bytea)`.simple();
+    const insert = (value: unknown) => sql.unsafe("insert into retyped values ($1) returning *", [value]);
+    await insert(null);
+    await sql`alter table retyped alter v type text`.simple();
+    let nested!: Promise<unknown>;
+    const toString = () => (waitInsideConversion((nested = settle(sql`select 2 as y`.execute()))), "x");
+    const outer = await settle(insert(Object.assign(new ArrayBuffer(1), { toString })));
+    return { outer, nested: await nested, afterwards: await settle(sql`select 1 as ok`) };
+  },
+
+  async "a Bind waits for another connection"() {
+    const pid = await backendPid(sql);
+    await using other = new SQL({ url, max: 1 });
+    const outer = await settle(pair(callingFromBind(() => waitInsideConversion(other`select 1`.execute()))));
+    return { outer, sameBackend: (await backendPid(sql)) === pid };
+  },
 };
+
+const pair = (values: unknown[]) => sql.unsafe("select $1::text as a, $2::text as b", values);
+
+/** The conversion of the second value replaces the first, which the conversion has passed. The Bind converts that one. */
+function callingFromBind(act: () => void) {
+  const bound: unknown[] = ["", ""];
+  // unsafe() copies its values with slice().
+  class Values extends Array {
+    static get [Symbol.species]() {
+      return function () {
+        return bound;
+      } as any;
+    }
+  }
+  const late = { toString: () => (act(), "late") };
+  return Values.from(["x", { toString: () => ((bound[0] = late), "y") }]);
+}
 
 async function replyDuringConversion(inFlight: number) {
   const pid = await backendPid(sql);

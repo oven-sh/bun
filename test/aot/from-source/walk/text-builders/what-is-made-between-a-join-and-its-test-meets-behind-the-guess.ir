@@ -12,7 +12,6 @@
 # console.log(ends("a/x", odd[0], undefined), ends("a/7", odd[1], undefined), ends("a/y", odd[2], 1), ends("a/true", odd[3], undefined));
 # -- end of source
 # RUN(ENDS): walk f1 mechanisms=all
-# REQUIRES(ENDS): entries-of-bun
 # ENDS-LABEL: code f1:Body
 # ENDS: = TypeTest
 # ENDS: = GetStringCodeUnit

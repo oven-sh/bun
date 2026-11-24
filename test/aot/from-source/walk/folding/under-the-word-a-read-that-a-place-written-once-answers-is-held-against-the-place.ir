@@ -1,0 +1,25 @@
+# -- source: main.js
+# const limit = Number(text());
+# function limits() {
+#   const first = limit;
+#   call();
+#   return first * 10 + limit;
+# }
+# print(limits());
+# -- end of source
+# f1 = limits. `limit` is written once, by the body of its module, so what the first read found is kept by the place: no effect ends it, and the second read, behind unseen code, is answered by the first.
+# Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) that note used to be switched off: the second read was built, so the lane tested a form that no
+# user gets, and nothing asked whether the place still holds what was kept. Now the form stays (the sum takes the first read twice) and the read is walked once more, where it stands, and held against memory:
+# two checks, for the value may be NaN.
+# RUN(KEPT): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# KEPT-LABEL: code f1:Body
+# KEPT-COUNT-2: = GetModuleVariable
+# KEPT-NOT: isKnownInitialized
+# RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# HELD-COUNT-2: source=RememberedFact
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime globalThis.text = () => "4"; globalThis.call = () => { };
+# RIGHT: 44
+# RIGHT-NEXT: exited with 0
+# RUN(NAN): run-in-shell testing=CheckProofsAtRunTime globalThis.text = () => "four"; globalThis.call = () => { };
+# NAN: NaN
+# NAN-NEXT: exited with 0

@@ -8,8 +8,7 @@ use bun_core::strings;
 use bun_jsc::JsResult;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, posix_to_platform_in_place};
+use bun_paths::to_native_in_place;
 use bun_resolve_builtins::Alias;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner};
@@ -25,7 +24,7 @@ use bun_sema::resolve::{
     AOT_CONDITION, CachedConfig, CodeFailure, CodeHost, CodeImportForm, CodeImportKind,
     CodeOptions, CodeParseRequest, CodeRequest, ComputedCandidate, ComputedCodeRequest,
     ComputedResolution, FileSearch, FoundCode, Host, HostResolution, Options, ParseOptions,
-    ParsedCode, Paths, Resolver, ScriptKind, inside,
+    ParsedCode, Paths, Resolver, ScriptKind, basename, inside, parent_directory,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
@@ -60,7 +59,7 @@ impl DiskWithBuiltinModules {
             0 => usize::from(bun_core::get_thread_count()),
             threads => threads,
         };
-        let working_directory = strings::without_trailing_slash(working_directory);
+        let working_directory = bun_paths::without_trailing_sep(working_directory);
         let mut disk = Disk::with_already_read(threads, Default::default(), working_directory)
             .started_in(working_directory);
         disk.bundled_libs = Some(BUNDLED);
@@ -72,7 +71,7 @@ impl DiskWithBuiltinModules {
             }
         }
         // SAFETY: the thread of the VM waits in the native call that makes this host and drops it.
-        let file_finder = unsafe { FileFinder::new(&vm.transpiler, conditions) };
+        let file_finder = unsafe { FileFinder::new(vm.transpiler.get(), conditions) };
         DiskWithBuiltinModules {
             disk,
             modules,
@@ -272,7 +271,7 @@ impl Answer {
 
 fn native_text(path: &[u8]) -> Vec<u8> {
     let mut text = to_native(path).to_vec();
-    posix_to_platform_in_place(&mut text);
+    to_native_in_place(&mut text);
     text
 }
 
@@ -319,10 +318,16 @@ fn vm_code_options(vm: &VirtualMachine, root: &[u8]) -> CodeOptions {
     let top_level_directory = from_native(vm.top_level_dir());
     let node_path = vm.env_loader().get(b"NODE_PATH").unwrap_or_default();
     let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };
-    let tsconfig_override = vm.transpiler.resolver.opts.tsconfig_override.as_deref();
+    let tsconfig_override = vm
+        .transpiler
+        .get()
+        .resolver
+        .opts
+        .tsconfig_override
+        .as_deref();
     let mut code = CodeOptions::bun_run(root);
     code.remove_condition(AOT_CONDITION);
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     code.node_paths = strings::tokenize(node_path, separator)
         .map(|entry| from_argument(&top_level_directory, entry))
         .collect();
@@ -368,7 +373,7 @@ pub(crate) fn resolve_computed_specifier(
     };
     let vm = global.bun_vm();
     let requested_importer = from_native(importer_argument);
-    let requested_directory = dirname::<Posix>(&requested_importer);
+    let requested_directory = parent_directory(&requested_importer);
     let host = DiskWithBuiltinModules::new(vm, 0, requested_directory, &[]);
     let directory = host.realpath(requested_directory);
     if !host.is_dir(&directory) {
@@ -383,7 +388,7 @@ pub(crate) fn resolve_computed_specifier(
     let resolution = resolver.resolve_computed_code(&ComputedCodeRequest {
         prefix: prefix_argument,
         suffix: suffix_argument,
-        importer: &inside(&directory, strings::basename_posix(&requested_importer)),
+        importer: &inside(&directory, basename(&requested_importer)),
         directory: &directory,
         kind,
         form: CodeImportForm::Static,
@@ -602,7 +607,7 @@ pub(crate) fn describe_code_graph(
         code.add_custom_condition(condition);
     }
     let vm = cx.global().bun_vm();
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     let host =
         DiskWithBuiltinModules::new(vm, threads, &working_directory, &code.custom_conditions);
 
@@ -634,6 +639,7 @@ pub(crate) fn describe_code_graph(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
     let description = match load_program(&session, &host, &request) {
         Ok(loaded) => {

@@ -672,7 +672,7 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
     }
     let validated = match (definition, parse_rule_id(id)) {
         (Definition::Missing, _) => Ok(()),
-        (Definition::Js(rule), _) => match &rule.schema {
+        (Definition::Js(rule), _) => match &rule.about().schema {
             js_plugin::Schema::Json(schema) => schema::validate_as_eslint_8(Some(schema), options),
             // Without a schema, ESLint 8 doesn't validate anything.
             js_plugin::Schema::None | js_plugin::Schema::Any => Ok(()),

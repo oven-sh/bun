@@ -1,0 +1,18 @@
+# `for (let i = n - 1; i >= 0; --i) { const x = a[i]; if (x > 1) s += x; }`: the list under the counter is asked in front of the loop, and where that fails the turns that are left run in a copy of the loop that asks the counter alone.
+# Only the ways out of the typed copy lead to that copy, and they were rare. What only rare edges lead to is a rare region to the back end: "hardly ever runs, nothing is paid for it":
+# a loop whose head lies in one is not turned, and a slow call inside one is no rare region of its own, so the counter, which lives across it, got a slot: stored at the head and read back at the step, in every turn: 38 instructions a turn where the same turn takes 33.
+# The rest of a loop's turns run there once a guess has failed: that is unlikely, not rare. The entry of such a copy is unlikely now, and so is each block that enters it.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(...values: unknown[]): void;
+# function tally(a: any): any { const n = a.length; let s = 0, c = 0; for (let i = n - 1; i >= 0; --i) { const x = a[i]; if (x > 1) { s += x; c++; } } return s + c; }
+# hand(tally);
+# print(tally([0.5, 1.5, 2.5]), tally([0.5, undefined, 2.5, 3.5]), tally([2, "x", 4]), tally([]), tally({ length: 2, 0: 4, 1: 5 }), tally("29"), tally({ length: 1.5, 0: 3 }), tally([, 5, , 7]));
+# -- end of source
+# f1 = tally
+# RUN(CLASS): walk f1 mechanisms=all
+# CLASS: frequency=Unlikely:
+# RUN(LOOPS): loops f1:Body mechanisms=all
+# LOOPS: loop: operations 0, patches 0, moves 0, unlikely
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 6 8 8 0 11 0922 0 14

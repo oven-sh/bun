@@ -1,6 +1,8 @@
 // Bun.serve starts the development server, which bundles files from the disk when it runs and runs them beside the program. Where
 // the compiler sees `app`, the world is open, and the server answers as in the whole executable. Where it does not see the options
-// the call throws an EvalError, whole or trimmed: a server whose options nobody follows would open the world of every such program.
+// the call throws a TypeError that says so, whole or trimmed: a server whose options nobody follows would open the world of every such program.
+// The refusal asks the executable and not the call, so it holds where the compiler does not see which function is called either. Proofs rest
+// on it: the late code stores over Date, which compiled code takes for a constant wherever the world is closed.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -14,17 +16,34 @@ const framework = `{
   serverComponents: { separateSSRGraph: false, serverRuntimeImportSource: entry, serverRegisterClientReferenceExport: "registerClientReference" },
 }`;
 const asks = `const response = await fetch(server.url);
-console.log("answer:", response.status, await response.text());
+console.log("answer:", response.status, await response.text(), typeof Date.now());
 server.stop(true);
 process.exit(0);
 `;
-const programs: Record<string, string> = {
-  "app is written": `const entry = process.cwd() + "/entry.ts";\nconst server = Bun.serve({ port: 0, app: { root: process.cwd(), framework: ${framework} } });\n${asks}`,
-  "the options are not seen": `const entry = process.cwd() + "/entry.ts";\nconst server = Bun.serve(JSON.parse(JSON.stringify({ port: 0, app: { root: process.cwd(), framework: ${framework} } })));\n${asks}`,
+const oneOfTwo = `const other = options => ({ url: "none", stop() {} });\nconst flag = JSON.parse("true");\n`;
+const refusal =
+  "TypeError: app: this executable only runs code that was compiled into it, and the build didn't see your code pass this option. Write it in the object that Bun.serve() is called with";
+const programs: Record<string, { isRefused: boolean; source: string }> = {
+  "app is written": {
+    isRefused: false,
+    source: `const entry = process.cwd() + "/entry.ts";\nconst server = Bun.serve({ port: 0, app: { root: process.cwd(), framework: ${framework} } });\n${asks}`,
+  },
+  "the options are not seen": {
+    isRefused: true,
+    source: `const entry = process.cwd() + "/entry.ts";\nconst server = Bun.serve(JSON.parse(JSON.stringify({ port: 0, app: { root: process.cwd(), framework: ${framework} } })));\n${asks}`,
+  },
+  "the function called is one of two and app is written": {
+    isRefused: false,
+    source: `const entry = process.cwd() + "/entry.ts";\n${oneOfTwo}const server = (flag ? Bun.serve : other)({ port: 0, app: { root: process.cwd(), framework: ${framework} } });\n${asks}`,
+  },
+  "the function called is one of two and the options are not seen": {
+    isRefused: true,
+    source: `const entry = process.cwd() + "/entry.ts";\n${oneOfTwo}const server = (flag ? Bun.serve : other)(JSON.parse(JSON.stringify({ port: 0, app: { root: process.cwd(), framework: ${framework} } })));\n${asks}`,
+  },
 };
 const late = {
   "entry.ts": `export function render(request, meta) { return meta.pageModule.default(request, meta); }\nexport function registerClientReference(value, file, uid) { return { value, file, uid }; }\n`,
-  "routes/index.ts": `export default function () { return new Response("late code " + [1, 2, 3].map(n => n * 2).join()); }\n`,
+  "routes/index.ts": `globalThis.Date = { now: () => "stored over" };\nexport default function () { return new Response("late code " + [1, 2, 3].map(n => n * 2).join()); }\n`,
 };
 
 async function run(cmd: string[], cwd: string) {
@@ -44,8 +63,8 @@ async function run(cmd: string[], cwd: string) {
 (!canTrim || unsupported ? describe.skip : describe.concurrent)(
   "the development server in a trimmed executable answers as in the whole one",
   () => {
-    for (const [name, source] of Object.entries(programs)) {
-      (name === "the options are not seen" ? test.todo : test)(
+    for (const [name, { isRefused, source }] of Object.entries(programs)) {
+      test(
         name,
         () =>
           slot(async () => {
@@ -76,13 +95,14 @@ async function run(cmd: string[], cwd: string) {
               const ran = await run([join(String(dir), kind)], String(dir));
               answers[kind] = {
                 answer: ran.stdout.split("\n").filter(line => line.startsWith("answer:")),
+                isRefused: ran.stderr.includes(refusal),
                 exitCode: ran.exitCode,
               };
             }
-            expect(answers).toEqual({
-              whole: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 },
-              trimmed: { answer: ["answer: 200 late code 2,4,6"], exitCode: 0 },
-            });
+            const expected = isRefused
+              ? { answer: [], isRefused, exitCode: 1 }
+              : { answer: ["answer: 200 late code 2,4,6 string"], isRefused, exitCode: 0 };
+            expect(answers).toEqual({ whole: expected, trimmed: expected });
           }),
         600_000,
       );

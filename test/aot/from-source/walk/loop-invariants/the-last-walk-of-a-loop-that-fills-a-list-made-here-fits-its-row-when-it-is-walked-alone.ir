@@ -1,0 +1,42 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const prices: number[] = [];
+# for (let i = 0; i < 6; i++) prices.push(i + 0.5);
+# const none: number[] = [];
+# function show(list: unknown[]): string {
+#   let text = list.length + ":";
+#   for (let i = 0; i < list.length; i++) text += (i in list ? String(list[i]) : "-") + ",";
+#   return text;
+# }
+# function ofNothing(turns: number): string {
+#   let said = "";
+#   for (let t = 0; t < turns; t++) said = show(none.map(x => x + 1)) + show(none.filter(x => x > 1));
+#   return said;
+# }
+# function ofACopyThatItsCallbackEmpties(turns: number): string {
+#   let said = "";
+#   for (let t = 0; t < turns; t++) {
+#     const copy = prices.map(x => x);
+#     const made = copy.map((x, i, all) => {
+#       if (i === 0) {
+#         all.length = 0;
+#         all.push(9.5);
+#       }
+#       return x + 1;
+#     });
+#     said = show(copy) + show(made);
+#   }
+#   return said;
+# }
+# print(ofNothing(30));
+# print(ofACopyThatItsCallbackEmpties(30));
+# -- end of source
+# OPTIONS: check=ReplayFinalLoopVisits
+# RUN(ALONE): walk f2 mechanisms=all
+# ALONE: code f2:Body
+# RUN(EMPTIED): walk f3 mechanisms=all
+# EMPTIED: code f3:Body
+# RUN(RIGHT): run-in-shell
+# RIGHT: 0:0:
+# RIGHT-NEXT: 1:9.5,6:1.5,-,-,-,-,-,
+# RIGHT-NEXT: exited with 0

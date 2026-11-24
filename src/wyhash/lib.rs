@@ -20,32 +20,11 @@ const PRIMES: [u64; 5] = [
     0x1d8e4e27c47d124f,
 ];
 
-// A single unaligned load. Mirrors the `Wyhash::read4`/`read8` treatment
-// below (~lib.rs:600): the per-byte `[data[0], data[1], ...]` spelling left a
-// cmp/je-to-panic ladder per byte in `WyhashStateless::final_`/`round`, and
-// `final_` is the `StringHashMap` short-key hash — hit on every parser /
-// resolver / module-registry HashMap probe during startup (identifier/path
-// keys are <32B so `aligned_len == 0` and the whole key goes through `final_`).
-// Every caller proves the length first (the `1..=31` arms of `final_` slice
-// `rem_key = &b[0..rem_len]` with `rem_len` == the match scrutinee; `round`
-// takes a `&[u8]` it `debug_assert!`s == 32), so a single unaligned load is sound.
 #[inline(always)]
-fn read_bytes<const BYTES: u8>(data: &[u8]) -> u64 {
-    debug_assert!(data.len() >= usize::from(BYTES));
-    // Rust cannot mint an integer type from a const generic; dispatch on the only values used.
-    match BYTES {
-        1 => u64::from(data[0]),
-        2 => u64::from(u16::from_le_bytes([data[0], data[1]])),
-        // SAFETY: `data.len() >= BYTES == 4` (asserted above; every caller
-        // proves it). `read_unaligned` imposes no alignment requirement.
-        4 => u64::from(u32::from_le(unsafe {
-            core::ptr::read_unaligned(data.as_ptr().cast::<u32>())
-        })),
-        // SAFETY: `data.len() >= BYTES == 8` (asserted above; every caller
-        // proves it). `read_unaligned` imposes no alignment requirement.
-        8 => u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) }),
-        _ => unreachable!(),
-    }
+fn read_bytes<const BYTES: usize>(data: &[u8]) -> u64 {
+    let mut bytes = [0; 8];
+    *bytes.first_chunk_mut::<BYTES>().unwrap() = *data.first_chunk().unwrap();
+    u64::from_le_bytes(bytes)
 }
 
 #[inline(always)]
@@ -88,13 +67,6 @@ fn mix1(a: u64, b: u64, seed: u64) -> u64 {
 #[cold]
 #[inline(never)]
 fn final_long(seed: u64, key: &[u8]) -> u64 {
-    debug_assert!((17..32).contains(&key.len()));
-
-    let head = mix0(
-        read_8bytes_swapped(key),
-        read_8bytes_swapped(&key[8..]),
-        seed,
-    );
     let tail = match key.len() {
         17 => mix1(read_bytes::<1>(&key[16..]), PRIMES[4], seed),
         18 => mix1(read_bytes::<2>(&key[16..]), PRIMES[4], seed),
@@ -161,6 +133,12 @@ fn final_long(seed: u64, key: &[u8]) -> u64 {
         ),
         _ => unreachable!(),
     };
+    // After the `match`, which proves the length.
+    let head = mix0(
+        read_8bytes_swapped(key),
+        read_8bytes_swapped(&key[8..]),
+        seed,
+    );
     head ^ tail
 }
 
@@ -180,9 +158,7 @@ impl WyhashStateless {
     }
 
     #[inline(always)]
-    fn round(&mut self, b: &[u8]) {
-        debug_assert!(b.len() == 32);
-
+    fn round(&mut self, b: &[u8; 32]) {
         self.seed = mix0(
             read_bytes::<8>(&b[0..]),
             read_bytes::<8>(&b[8..]),
@@ -195,16 +171,12 @@ impl WyhashStateless {
     }
 
     #[inline(always)]
-    fn update(&mut self, b: &[u8]) {
-        debug_assert!(b.len().is_multiple_of(32));
-
-        let mut off: usize = 0;
-        while off < b.len() {
-            self.round(&b[off..off + 32]);
-            off += 32;
+    fn update(&mut self, blocks: &[[u8; 32]]) {
+        for block in blocks {
+            self.round(block);
         }
 
-        self.msg_len += b.len();
+        self.msg_len += size_of_val(blocks);
     }
 
     // `final_` is the `StringHashMap` short-key hash (every parser / resolver /
@@ -308,11 +280,11 @@ impl WyhashStateless {
     // bun_js_parser/bun_collections crate boundary; force it.
     #[inline(always)]
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        let aligned_len = input.len() - (input.len() % 32);
+        let (blocks, tail) = input.as_chunks();
 
         let mut c = WyhashStateless::init(seed);
-        c.update(&input[0..aligned_len]);
-        c.final_(&input[aligned_len..])
+        c.update(blocks);
+        c.final_(tail)
     }
 }
 
@@ -342,15 +314,13 @@ impl Wyhash11 {
         if self.buf_len != 0 && self.buf_len + b.len() >= 32 {
             off += 32 - self.buf_len;
             self.buf[self.buf_len..self.buf_len + off].copy_from_slice(&b[0..off]);
-            self.state.update(&self.buf[0..]);
+            self.state.update(core::slice::from_ref(&self.buf));
             self.buf_len = 0;
         }
 
-        let remain_len = b.len() - off;
-        let aligned_len = remain_len - (remain_len % 32);
-        self.state.update(&b[off..off + aligned_len]);
+        let (blocks, tail) = b[off..].as_chunks();
+        self.state.update(blocks);
 
-        let tail = &b[off + aligned_len..];
         self.buf[self.buf_len..self.buf_len + tail.len()].copy_from_slice(tail);
         self.buf_len += usize::from(u8::try_from(tail.len()).expect("int cast"));
     }
@@ -487,7 +457,7 @@ impl Wyhash {
             };
 
             new_self.final0();
-            new_self.final1(input, offset);
+            new_self.final1(input, &input[offset..]);
         }
 
         new_self.final2()
@@ -511,10 +481,11 @@ impl Wyhash {
         debug_assert!(input.len() <= 16);
 
         if input.len() >= 4 {
-            let end = input.len() - 4;
             let quarter = (input.len() >> 3) << 2;
-            self.a = (Self::read4(&input[0..]) << 32) | Self::read4(&input[quarter..]);
-            self.b = (Self::read4(&input[end..]) << 32) | Self::read4(&input[end - quarter..]);
+            let head = &input[..quarter + 4];
+            let tail = &input[input.len() - head.len()..];
+            self.a = (read_bytes::<4>(head) << 32) | read_bytes::<4>(&head[quarter..]);
+            self.b = (read_bytes::<4>(&tail[quarter..]) << 32) | read_bytes::<4>(tail);
         } else if !input.is_empty() {
             self.a = (u64::from(input[0]) << 16)
                 | (u64::from(input[input.len() >> 1]) << 8)
@@ -529,41 +500,17 @@ impl Wyhash {
     #[inline]
     fn round(&mut self, input: &[u8; 48]) {
         // Manually unrolled.
-        let a0 = Self::read8(&input[0..]);
-        let b0 = Self::read8(&input[8..]);
+        let a0 = read_bytes::<8>(&input[0..]);
+        let b0 = read_bytes::<8>(&input[8..]);
         self.state[0] = Self::mix(a0 ^ Self::SECRET[1], b0 ^ self.state[0]);
 
-        let a1 = Self::read8(&input[16..]);
-        let b1 = Self::read8(&input[24..]);
+        let a1 = read_bytes::<8>(&input[16..]);
+        let b1 = read_bytes::<8>(&input[24..]);
         self.state[1] = Self::mix(a1 ^ Self::SECRET[2], b1 ^ self.state[1]);
 
-        let a2 = Self::read8(&input[32..]);
-        let b2 = Self::read8(&input[40..]);
+        let a2 = read_bytes::<8>(&input[32..]);
+        let b2 = read_bytes::<8>(&input[40..]);
         self.state[2] = Self::mix(a2 ^ Self::SECRET[3], b2 ^ self.state[2]);
-    }
-
-    // A single unaligned load. The previous per-byte `[data[0], data[1], ...]`
-    // spelling left a cmp/je-to-panic ladder per byte in the `small_key` disasm
-    // (8 bounds checks for the 4× `read4` at len∈[4,16]). All call sites slice
-    // from a buffer whose length is already proven ≥4/≥8 by the enclosing
-    // branch (`small_key`: `len >= 4`; `round`: `&[u8; 48]`; `final1`:
-    // `i + 16 < len` / `len - 16` / `len - 8`), so a single unaligned load is sound.
-    #[inline(always)]
-    fn read4(data: &[u8]) -> u64 {
-        debug_assert!(data.len() >= 4);
-        // SAFETY: every caller passes a slice with ≥4 bytes (see comment above);
-        // `read_unaligned` imposes no alignment requirement.
-        u64::from(u32::from_le(unsafe {
-            core::ptr::read_unaligned(data.as_ptr().cast::<u32>())
-        }))
-    }
-
-    #[inline(always)]
-    fn read8(data: &[u8]) -> u64 {
-        debug_assert!(data.len() >= 8);
-        // SAFETY: every caller passes a slice with ≥8 bytes (see comment above);
-        // `read_unaligned` imposes no alignment requirement.
-        u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) })
     }
 
     #[inline]
@@ -588,23 +535,22 @@ impl Wyhash {
 
     // input_lb must be at least 16-bytes long (in shorter key cases the small_key function will be
     // used instead). Indexes into a slice rather than offsetting raw pointers.
+    // `input` is the unhashed tail of `input_lb`.
     #[inline]
-    fn final1(&mut self, input_lb: &[u8], start_pos: usize) {
+    fn final1(&mut self, input_lb: &[u8], mut input: &[u8]) {
         debug_assert!(input_lb.len() >= 16);
-        debug_assert!(input_lb.len() - start_pos <= 48);
-        let input = &input_lb[start_pos..];
+        debug_assert!(input.len() <= 48);
 
-        let mut i: usize = 0;
-        while i + 16 < input.len() {
+        while input.len() > 16 {
             self.state[0] = Self::mix(
-                Self::read8(&input[i..]) ^ Self::SECRET[1],
-                Self::read8(&input[i + 8..]) ^ self.state[0],
+                read_bytes::<8>(input) ^ Self::SECRET[1],
+                read_bytes::<8>(&input[8..]) ^ self.state[0],
             );
-            i += 16;
+            input = &input[16..];
         }
 
-        self.a = Self::read8(&input_lb[input_lb.len() - 16..]);
-        self.b = Self::read8(&input_lb[input_lb.len() - 8..]);
+        self.a = read_bytes::<8>(&input_lb[input_lb.len() - 16..]);
+        self.b = read_bytes::<8>(&input_lb[input_lb.len() - 8..]);
     }
 
     #[inline(always)]
@@ -628,7 +574,7 @@ impl Wyhash {
         if input.len() <= 16 {
             this.small_key(input);
         } else {
-            let mut i: usize = 0;
+            let mut rest = input;
             if input.len() >= 48 {
                 // Hot path for `Bun.hash` over large buffers. Rust's
                 // `#[inline]` is a hint that opt-level 0 ignores, so a
@@ -637,46 +583,27 @@ impl Wyhash {
                 // round per iteration (3× 128-bit multiply, 6× le-u64 read).
                 let [mut s0, mut s1, mut s2] = this.state;
                 let (k1, k2, k3) = (Self::SECRET[1], Self::SECRET[2], Self::SECRET[3]);
-                // Six little-endian u64 reads per round. The previous
-                // safe-Rust spellings here — `input[i..i+48].try_into()` plus
-                // per-byte shift-or — left a slice bounds-check + panic edge
-                // per iteration and 48 scalar byte loads per round, which made
-                // `Wyhash::hash` the #1 self-time symbol when
-                // `RuntimeTranspilerCache` hashes multi-MB sources. Take the
-                // base pointer once and issue six `read_unaligned::<u64>` per
-                // round.
-                //
-                // `i + 48 < len` ⇔ `i < len - 48`; len ≥ 48 is guaranteed
-                // by the enclosing branch, so the subtraction is safe and we
-                // skip a per-iteration overflow check on the addition.
-                let bound = input.len() - 48;
-                let p = input.as_ptr();
-                while i < bound {
+                while rest.len() > 48 {
+                    let words = rest[..48].as_chunks().0;
                     macro_rules! r8 {
-                        ($o:literal) => {
-                            // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
-                            // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
-                            // addresses an 8-byte window wholly inside `input`.
-                            // `read_unaligned` imposes no alignment requirement.
-                            u64::from_le(unsafe {
-                                core::ptr::read_unaligned(p.add(i + $o).cast::<u64>())
-                            })
+                        ($i:literal) => {
+                            u64::from_le_bytes(words[$i])
                         };
                     }
                     // u64×u64 → u128 cannot overflow; `wrapping_mul` skips
                     // the debug-mode overflow check that plain `*` emits.
-                    let m0 = ((r8!(0) ^ k1) as u128).wrapping_mul((r8!(8) ^ s0) as u128);
+                    let m0 = ((r8!(0) ^ k1) as u128).wrapping_mul((r8!(1) ^ s0) as u128);
                     s0 = (m0 as u64) ^ ((m0 >> 64) as u64);
-                    let m1 = ((r8!(16) ^ k2) as u128).wrapping_mul((r8!(24) ^ s1) as u128);
+                    let m1 = ((r8!(2) ^ k2) as u128).wrapping_mul((r8!(3) ^ s1) as u128);
                     s1 = (m1 as u64) ^ ((m1 >> 64) as u64);
-                    let m2 = ((r8!(32) ^ k3) as u128).wrapping_mul((r8!(40) ^ s2) as u128);
+                    let m2 = ((r8!(4) ^ k3) as u128).wrapping_mul((r8!(5) ^ s2) as u128);
                     s2 = (m2 as u64) ^ ((m2 >> 64) as u64);
-                    i += 48;
+                    rest = &rest[48..];
                 }
                 this.state = [s0, s1, s2];
                 this.final0();
             }
-            this.final1(input, i);
+            this.final1(input, rest);
         }
 
         this.total_len = input.len();
@@ -806,10 +733,7 @@ pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 ///
 /// Chunk size and "copy unconditionally" vs "borrow if already lowercase" are
 /// output-irrelevant — streaming Wyhash is chunk-invariant and the bytes fed
-/// to the hasher are identical either way — so this collapses the three
-/// open-coded copies in `http::hash_header_name`,
-/// `s3_signing::S3Credentials::hash_const`, and
-/// `collections::CaseInsensitiveAsciiStringContext::hash_bytes`.
+/// to the hasher are identical either way.
 #[inline]
 pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {
     let mut buf = [0u8; 48];
@@ -842,7 +766,7 @@ pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {
 /// evaluation (e.g. `generated_symbol_name!` in `js_parser`, which needs the
 /// hash at compile time). The runtime
 /// [`Wyhash::hash`] is intentionally NOT `const fn` — its perf-tuned hot loop
-/// uses `slice.try_into()` (trait call) and the streaming API uses
+/// indexes by range (trait call) and the streaming API uses
 /// `copy_from_slice`, neither of which is const-compatible. Keep the two in
 /// lock-step; `tests::hash_const_matches_runtime` guards drift.
 pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {

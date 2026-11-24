@@ -73,6 +73,7 @@ impl ModuleItems {
                 intern_item_name(atoms, OUTLINED, &[number, b":", symbol.name].concat())
             }
             SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
+            SymbolOrigin::RawTemplate => Atom::NONE,
         }
     }
 

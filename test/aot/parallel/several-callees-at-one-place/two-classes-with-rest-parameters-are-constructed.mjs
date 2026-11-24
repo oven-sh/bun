@@ -1,0 +1,1 @@
+class A { constructor(...a) { this.n = a[0]; } m() {} } class B { constructor(...a) { this.n = a[0]; } m() {} } const t = { a: A, b: B }; let s = 0; for (let i = 0; i < 4; i++) s += new (i & 1 ? t.a : t.b)(i, 9).n; console.log(s);

@@ -8,9 +8,9 @@
 # for (const make of [() => ({ idq: undefined, noteq: {}, zq: 0 }), () => ({ idq: 7, noteq: 2 }), () => ({ idq: 8, noteq: {} })]) out.push(see(make()));
 # print(out.join(" "));
 # -- end of source
-# RUN(STOPS): compile MakersWithoutFieldsHeldFilled FieldsAskedWhereMakersEnd mechanisms=all
-# STOPS: statistic MakersWithoutFieldsHeldFilled 0
-# STOPS: statistic FieldsAskedWhereMakersEnd 1
+# RUN(STOPS): compile IncompleteAllocationsTrapped FieldInitializationChecksEmitted mechanisms=all
+# STOPS: statistic IncompleteAllocationsTrapped 0
+# STOPS: statistic FieldInitializationChecksEmitted 0
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: idq,noteq,zq idq,noteq idq,noteq
 # ANSWERS-NEXT: exited with 0

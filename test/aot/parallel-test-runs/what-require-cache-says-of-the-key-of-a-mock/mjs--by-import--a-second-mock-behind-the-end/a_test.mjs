@@ -1,0 +1,20 @@
+import { test, vi } from "bun:test";
+const key = require.resolve("./part.mjs");
+const listed = () => { let seen = false; for (const each in require.cache) seen ||= each === key; return seen; };
+const view = step => console.log("SAID", step, key in require.cache, Object.keys(require.cache).includes(key), typeof require.cache[key], typeof Object.getOwnPropertyDescriptor(require.cache, key), listed());
+const tried = async read => { try { return String(await read()); } catch (error) { return "threw " + String(error?.message).slice(0, 40); } };
+test("t", async () => {
+  vi.doMock("./part.mjs", () => ({ x: "mock" }));
+  console.log("SAID first", await tried(async () => (await import("./part.mjs")).x));
+  view("mocked");
+  vi.doUnmock("./part.mjs");
+  view("ended");
+  vi.doMock("./part.mjs", () => ({ x: "second" }));
+  view("laid again");
+  console.log("SAID second", await tried(async () => (await import("./part.mjs")).x));
+  view("mocked again");
+  vi.doUnmock("./part.mjs");
+  view("ended again");
+  console.log("SAID real", await tried(async () => (await import("./part.mjs")).x), await tried(() => require("./part.mjs").x), globalThis.ran);
+  view("real");
+});

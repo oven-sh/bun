@@ -10,24 +10,29 @@
 # if (which === 3) print(typeof endsInThat());
 # print("went on");
 # -- end of source
-# THE DOOR OF A RESULT, AS A USER BUILDS: no word that checks proofs. THE LIE, testing=UnseenCodeAnswersUndefined: Link takes what the shell's `id` gives for undefined, so it proves all three results undefined, and a number comes.
-# returnsIt: the return holds what goes out to the type that the result is held to (Plan::typeHeldOfResult()): the number is stopped there, by name.
-# endsInIt ends in a call of a value of which only the flow says what it is: its result passes no return, so the record of a call of it claims nothing, and what Link has proven is asked where the call stands.
-# endsInThat ends in a call of a function by its binding, which is held to no more than it is itself: the callee's return is its door.
-# BELIEVED, each printed "undefined" for a number and went on.
-# OPTIONS: testing=UnseenCodeAnswersUndefined
+# The entry check on a result, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so it proves that all three results are undefined, but a number arrives.
+# returnsIt: the return checks the outgoing value against the type that the result is held to (Plan::typeHeldOfResult()). The number is caught there, and the process crashes with a named error.
+# endsInIt ends in a call of a value that only the flow analysis identifies. Its result passes no return, so the record of a call of endsInIt claims nothing,
+# and what Link has proven is checked at that call.
+# endsInThat ends in a call of a function through its binding. That callee's result is held to no wider a type than the result of endsInThat, so the callee's return is the entry check of endsInThat.
+# When the proofs were trusted unchecked, each function printed "undefined" for a number and the program continued.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
 # RUN(RETURNS): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
 # RETURNS: got it
-# RETURNS-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# RETURNS-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# RETURNS-NEXT: found int32 in a call result
 # RETURNS-NOT: went on
 # RETURNS: crashed with
 # RUN(ENDS): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
-# ENDS: AOT: f0 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# ENDS: bun: internal AOT error: type check failed at {{*}}
+# ENDS-NEXT: found int32 in a call result
 # ENDS-NOT: went on
 # ENDS: crashed with
 # RUN(THAT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
 # THAT: got it
-# THAT-NEXT: AOT: f1 at {{*}}: the result of a call is not of the type that the compiler has proven of it. It is: number. This is a bug in Bun.
+# THAT-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# THAT-NEXT: found int32 in a call result
 # THAT-NOT: went on
 # THAT: crashed with
 # RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;

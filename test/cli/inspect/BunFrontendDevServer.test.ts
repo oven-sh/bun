@@ -377,15 +377,8 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     `);
   });
 
-  test("should notify on bundleFailed events", async () => {
-    // Create a file with a syntax error to trigger a bundle failure
-    const invalidContent = `
-      // Syntax error - missing closing parenthesis
-      export function brokenFunction(name: string {
-        return \`Broken, \${name}!\`;
-      }
-    `;
-
+  // Breaks utils.ts with `invalidContent`, waits for the bundle to fail, and returns the decoded errors.
+  async function bundleFailedErrors(invalidContent: string) {
     // Listen for bundleStart event first to get the serverId
     const bundleStartPromise = session.waitForEvent("BunFrontendDevServer.bundleStart");
 
@@ -430,6 +423,39 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     // Set it to a deterministic number.
     errors[0].owner = 123;
 
+    // Fix the file so subsequent tests don't fail
+    const fixedPromise = session.waitForEvent("BunFrontendDevServer.bundleComplete");
+    fs.writeFileSync(
+      join(tempdir, "utils.ts"),
+      `
+      // Fixed utility module
+      export function greet(name: string) {
+        return \`Hello, \${name}!\`;
+      }
+    `,
+    );
+
+    // A rebuild that reads the file in the middle of that write fails. Its event must not reach the next test.
+    let status: number;
+    do {
+      const response = await fetch(serverUrl.href);
+      await response.blob();
+      status = response.status;
+    } while (status !== 200);
+    await fixedPromise;
+
+    return errors;
+  }
+
+  test("should notify on bundleFailed events", async () => {
+    // Create a file with a syntax error to trigger a bundle failure
+    const errors = await bundleFailedErrors(`
+      // Syntax error - missing closing parenthesis
+      export function brokenFunction(name: string {
+        return \`Broken, \${name}!\`;
+      }
+    `);
+
     expect(errors).toMatchInlineSnapshot(`
       [
         {
@@ -443,6 +469,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 3,
                 "lineText": "      export function brokenFunction(name: string {",
+                "lineTextColumnOffset": 0,
               },
               "message": "Expected ")" but found "{"",
               "notes": [],
@@ -455,6 +482,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "length": 1,
                 "line": 5,
                 "lineText": "      }",
+                "lineTextColumnOffset": 0,
               },
               "message": "Unexpected }",
               "notes": [],
@@ -464,17 +492,28 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
         },
       ]
     `);
+  });
 
-    // Fix the file so subsequent tests don't fail
-    fs.writeFileSync(
-      join(tempdir, "utils.ts"),
-      `
-      // Fixed utility module
-      export function greet(name: string) {
-        return \`Hello, \${name}!\`;
+  test("bundleFailed says where the excerpt of a long line starts", async () => {
+    // `lineText` is the 40 bytes before the error and the 80 from it. `column` counts from the start of the line.
+    const line =
+      "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it";
+    const errors = await bundleFailedErrors(`
+      // Syntax error - missing closing parenthesis
+${line}
+        return \`Broken, \${name}!\`;
       }
-    `,
-    );
+    `);
+
+    const { location } = errors[0].messages[0];
+    expect(location).toEqual({
+      column: 51,
+      length: 1,
+      line: 3,
+      lineTextColumnOffset: 10,
+      lineText: line.slice(10, 130),
+    });
+    expect(location.lineText[location.column - 1 - location.lineTextColumnOffset]).toBe("{");
   });
 
   test("should notify on clientNavigated events", async () => {

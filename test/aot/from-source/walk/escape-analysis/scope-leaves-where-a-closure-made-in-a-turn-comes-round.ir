@@ -8,6 +8,6 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true:
-# CHECK: GetEnvironmentField {{*}}[followsItsStore]
+# CHECK: GetEnvironmentField {{*}}[isKnownInitialized]
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: the source prints the same

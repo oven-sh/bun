@@ -1,0 +1,7 @@
+# -- source: main.js
+# class Xor { constructor(key) { this.key = key; } mix(i) { return this.key[i & 3] ^ 5; } }
+# globalThis.kept = Xor;
+# -- end of source
+# `this.key[i & 3] ^ 5` says of the field: a list of int32. That fits a list and a view alike, as any list of numbers does: the uses give the field NO word. The int32 of the front end is an alias of its own and no number to the checker's plain question: a Buffer in such a field cost a stream's transform 38% more.
+# RUN(WORD): print
+# WORD: layout {{*}}name="Xor"{{*}}key="key" declared={type=anything}

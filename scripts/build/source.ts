@@ -22,7 +22,7 @@ import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
-import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
+import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
@@ -138,6 +138,12 @@ export type Source =
        */
       identity: string;
       /**
+       * Absolute path of the file that pins the download's sha256 (format:
+       * `pinnedSha256` in download.ts). The fetch fails if it has no line for
+       * `url`, or if the download hashes to something else.
+       */
+      sha256sums?: string;
+      /**
        * Paths to delete (relative to destDir) after extraction. WebKit
        * deletes `include/unicode` on macOS (conflicts with system ICU
        * headers); nodejs-headers deletes openssl/uv (conflict with
@@ -239,18 +245,6 @@ export interface ExeStep {
 
 export type DirectStep = GenStep | ExeStep;
 
-/** A header derived from a template in the source tree. */
-export interface HeaderSubst {
-  /** Template path relative to srcDir (e.g. "zlib.h.in"). */
-  from: string;
-  /**
-   * Literal replacements applied via `String.split(from).join(to)` — no
-   * regex. cmake's `configure_file(@ONLY)` is exactly this: each `@VAR@`
-   * token swaps for a fixed string. Order is as given.
-   */
-  replace?: Array<[from: string, to: string]>;
-}
-
 /**
  * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
  *
@@ -295,19 +289,12 @@ export interface DirectBuild {
   /** Include dirs relative to srcDir (no -I prefix). "." for the root. */
   includes?: string[];
   /**
-   * Headers written to buildDir/deps/<name>/. Key is the output filename;
-   * buildDir is added to -I so sources find them. Two value forms:
-   *
-   *   string       Literal contents written at configure time. For
-   *                autotools-style `#include "config.h"` where we
-   *                hand-write the answers instead of probing.
-   *
-   *   HeaderSubst  Derived from a template in srcDir at build time
-   *                (ninja edge). For *.h.in files where the upstream
-   *                header is too large to inline but the substitution
-   *                is trivial.
+   * Headers written to buildDir/deps/<name>/ at configure time, from filename
+   * to contents; buildDir is added to -I so sources find them. For
+   * autotools-style `#include "config.h"` where we hand-write the answers
+   * instead of probing.
    */
-  headers?: Record<string, string | HeaderSubst>;
+  headers?: Record<string, string>;
   /**
    * Build-time host tool that generates headers the library sources
    * include. Compiled WITHOUT sanitizers — it runs once on the build
@@ -409,13 +396,6 @@ export interface CargoBuild {
    * unit-separator (\x1f) encoding so multi-word flags work.
    */
   rustflags?: string[];
-  /**
-   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std, so
-   * `rustup target add` (dep_cargo_cross rule) won't help. When true, passes
-   * `-Zbuild-std=std,panic_abort` so cargo builds std from source. Requires
-   * nightly cargo + `rustup component add rust-src`.
-   */
-  buildStd?: boolean;
 }
 
 /**
@@ -436,16 +416,6 @@ export interface Provides {
   includes: string[];
   /** Preprocessor defines to add to bun's compilation. */
   defines?: string[];
-  /**
-   * Source files (relative to the SOURCE dir) that bun compiles directly
-   * into its own binary — no nested build producing a `.a`. Declared as
-   * implicit outputs of the fetch rule so ninja knows where they come from;
-   * bun.ts adds them to its C/C++ source lists.
-   *
-   * Most deps provide `.a` files via `libs`. This is for the rare case of
-   * a single-file dep with no build system (picohttpparser: one .c file).
-   */
-  sources?: string[];
   /**
    * Other files of a prebuilt tarball that an edge of the graph reads,
    * relative to the extracted directory. Implicit outputs of the fetch edge,
@@ -469,25 +439,16 @@ export interface Provides {
 export type DepName =
   | "WebKit"
   | "boringssl"
-  | "brotli"
-  | "cares"
   | "highway"
-  | "libdeflate"
-  | "libjpeg-turbo"
   | "libuv"
-  | "libwebp"
   | "lolhtml"
-  | "lshpack"
   | "lsqpack"
   | "lsquic"
   | "mimalloc"
   | "nodejs"
-  | "picohttpparser"
   | "rust-argon2"
   | "sqlite"
-  | "tinycc"
-  | "zlib"
-  | "zstd";
+  | "tinycc";
 
 /**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
@@ -501,17 +462,13 @@ export interface Dependency {
   /**
    * Patch files to apply after extraction. Paths relative to repo root.
    * Patches are included in the source identity hash — changing a patch
-   * invalidates the fetched source and triggers re-fetch.
-   *
-   * Files ending in `.patch` are applied with `git apply`. Other files are
-   * OVERLAYS — copied into the source root as-is. Useful for injecting a
-   * CMakeLists.txt into a project that lacks one (tinycc).
+   * invalidates the fetched source and triggers re-fetch. Applied with `git apply`.
    */
   patches?: string[];
 
   /**
-   * Other deps whose headers this dep's sources include — e.g. a dep that
-   * needs zlib's `zlib.h`, which zlib's build generates.
+   * Other deps whose headers this dep's sources include — e.g. lsquic,
+   * which needs BoringSSL's `ssl.h`.
    *
    * Resolves to the named dep's `outputs` (generated headers + source stamp),
    * order-only inputs of this dep's compiles. Does NOT link the other dep.
@@ -563,11 +520,6 @@ export interface ResolvedDep {
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
-  /**
-   * Absolute paths to .c/.cpp files bun compiles directly (from
-   * Provides.sources). Empty for most deps — they provide .a files.
-   */
-  sources: string[];
   /**
    * The final build output(s). Use these as implicit inputs on anything
    * downstream that needs this dep built first.
@@ -631,7 +583,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // $rm_paths: space-separated paths (relative to dest) to delete after
   // extraction. Trailing positional args to fetch-cli, may be empty.
   n.rule("dep_fetch_prebuilt", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $rm_paths`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $sha256sums $rm_paths`,
     description: "fetch $name (prebuilt)",
     restat: true,
     pool: "dep",
@@ -658,8 +610,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     // "the dir exists" — also repairs a partially auto-installed pinned
     // toolchain (no distributable manifest, which would otherwise error with
     // `Missing manifest in toolchain '<channel>-<host>'` before cargo even
-    // ran). ~70ms no-op when complete. Same pattern as `rust_build_cross` in
-    // rust.ts — see the longer comment there.
+    // ran). ~70ms no-op when complete.
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
     const cargoCrossEnsure =
       cfg.rustToolchain !== undefined
@@ -667,7 +618,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
         : `${stream} $env ${rustup} -q target add $rust_target`;
     // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
     // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
-    // being passed as a literal arg. See rust.ts `rust_build_cross`.
+    // being passed as a literal arg.
     const cargoCrossChain = `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`;
     n.rule("dep_cargo_cross", {
       command: hostWin ? `cmd /c "${cargoCrossChain}"` : cargoCrossChain,
@@ -702,17 +653,6 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   n.rule("dep_gen", {
     command: `${stream} $opts $cmd`,
     description: "gen $desc",
-    restat: true,
-  });
-
-  // DirectBuild header substitution: literal string replacement on a
-  // template file (cmake's configure_file(@ONLY) without the cmake).
-  // restat is what makes this cheap — if the output text is unchanged
-  // (unmodified template, same replacements), downstream .o files are
-  // pruned via their depfile entries.
-  n.rule("dep_subst", {
-    command: `${cfg.jsRuntime} ${fetchCli} subst $in $out $pairs`,
-    description: "subst $out",
     restat: true,
   });
 
@@ -831,15 +771,10 @@ export function resolveDep(
   // we don't want patches changing between emitFetch and the hash check.
   const patches = dep.patches ?? [];
 
-  // Sources bun compiles directly (from Provides.sources). Resolved to
-  // absolute paths for (a) the ResolvedDep return and (b) declaring as
-  // implicit outputs of fetch so ninja knows where they come from.
-  const resolvedSources = (provides.sources ?? []).map(s => resolve(srcDir, s));
-
-  // DirectBuild sources are ALSO compiled in our ninja graph, so they need
-  // the same implicit-output-of-fetch treatment. Include the codegen tool
-  // source, its input, and any HeaderSubst templates — all read at build
-  // time from the fetched tree.
+  // DirectBuild sources are compiled in our ninja graph, so they are declared
+  // as implicit outputs of fetch: ninja then knows where they come from.
+  // Include the codegen tool source and its input — both read at build time
+  // from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     assert(
@@ -848,9 +783,6 @@ export function resolveDep(
     );
     for (const s of buildSpec.sources) {
       directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
-    }
-    for (const h of Object.values(buildSpec.headers ?? {})) {
-      if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
     }
     if (buildSpec.codegen !== undefined) {
       directSources.push(resolve(srcDir, buildSpec.codegen.tool));
@@ -866,7 +798,7 @@ export function resolveDep(
   // For local/in-tree: source is already on disk.
   let sourceStamp: string | undefined;
   if (source.kind === "github-archive") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, directSources);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers a rebuild.
@@ -895,8 +827,8 @@ export function resolveDep(
   }
 
   // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
-  // Deps whose headers this one includes (a dep → zlib's generated
-  // zlib.h): they must exist first; the depfiles track their content.
+  // Deps whose headers this one includes (lsquic → BoringSSL's
+  // ssl.h): they must exist first; the depfiles track their content.
   const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
@@ -927,9 +859,7 @@ export function resolveDep(
     generatedHeaders = buildSpec.consumerOutputs ?? [];
     configureInputs = buildSpec.configureInputs ?? [];
   } else {
-    // No build step. The fetch stamp (if any) is the only output. For deps
-    // with provides.sources (picohttpparser), emitBun adds a phony pointing
-    // at the compiled .o files so `--target <name>` actually compiles them.
+    // No build step. The fetch stamp (if any) is the only output.
     libs = [];
     outputs = sourceStamp === undefined ? [] : [sourceStamp];
   }
@@ -951,7 +881,6 @@ export function resolveDep(
     objects,
     includes,
     defines: provides.defines ?? [],
-    sources: resolvedSources,
     outputs,
     generatedHeaders,
     configureInputs,
@@ -996,9 +925,9 @@ function emitFetch(
 
   n.build({
     outputs: [refStamp],
-    // Source files bun compiles directly (picohttpparser.c). Declaring
-    // them as outputs tells ninja "fetch creates these" — otherwise ninja
-    // errors "missing and no known rule to make it" on fresh checkouts.
+    // Source files our graph compiles. Declaring them as outputs tells
+    // ninja "fetch creates these" — otherwise ninja errors "missing and no
+    // known rule to make it" on fresh checkouts.
     ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
     rule: "dep_fetch",
     inputs: [],
@@ -1056,17 +985,19 @@ function emitPrebuilt(
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: [...libs, ...files],
+    // .sha256: a checkout with no pin for this version can have filled the shared cache since.
+    implicitOutputs: [...libs, ...files, ...(source.sha256sums !== undefined ? [resolve(destDir, ".sha256")] : [])],
     rule: "dep_fetch_prebuilt",
     inputs: [],
-    // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing
+    // Not download.ts: it has a lot of shared helpers — editing
     // those shouldn't re-download a multi-hundred-MB WebKit tarball.
-    implicitInputs: [fetchCliPath],
+    implicitInputs: [fetchCliPath, ...(source.sha256sums !== undefined ? [source.sha256sums] : [])],
     vars: {
       name,
       url: source.url,
       dest: destDir,
       identity: source.identity,
+      sha256sums: source.sha256sums !== undefined ? quote(source.sha256sums, cfg.host.os === "windows") : "-",
       // Space-separated relative paths. No quoting needed — paths are
       // under our control (include/node/openssl etc.), no spaces.
       rm_paths: (source.rmAfterExtract ?? []).join(" "),
@@ -1104,7 +1035,6 @@ function emitPrebuilt(
     configureInputs: provides.contentsDecideGraph ? [stamp] : [],
     includes,
     defines: provides.defines ?? [],
-    sources: [],
     outputs,
   };
 }
@@ -1146,7 +1076,6 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
-  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not
@@ -1208,10 +1137,8 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
   }
 
   // ─── Emit build node ───
-  // dep_cargo_cross prepends `rustup target add` for Tier 2 cross targets.
-  // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
-  // fail — they use plain dep_cargo with -Zbuild-std instead.
-  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
+  // dep_cargo_cross prepends `rustup target add` for cross targets.
+  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined;
   const node = {
     outputs: [lib],
     inputs: [],
@@ -1327,14 +1254,7 @@ function emitDirect(
 
   const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
-  const libFlags = [
-    ...baseFlags,
-    ...picFlags(cfg, spec.pic),
-    ...incFlags,
-    ...defFlags,
-    ...(spec.cflags ?? []),
-    ...safeStackFlags(cfg, name),
-  ];
+  const libFlags = [...baseFlags, ...picFlags(cfg, spec.pic), ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
@@ -1342,31 +1262,14 @@ function emitDirect(
   const orderOnly = [...(sourceStamp === undefined ? [] : [sourceStamp]), ...fetchDepStamps];
 
   // ─── Generated headers (optional) ───
-  // Literal-string headers are written at configure time via writeIfChanged
-  // (mtime only moves when contents change). HeaderSubst headers become
-  // ninja edges — their template lives in srcDir, which doesn't exist
-  // until fetch runs. Either way buildDir goes on -I and the outputs are
-  // implicit inputs to every cc edge.
+  // Written at configure time via writeIfChanged (mtime only moves when
+  // contents change).
   const headers = Object.entries(spec.headers ?? {});
   const needsBuildDirInc = headers.length > 0 || spec.codegen !== undefined;
-  const generated: string[] = [];
   if (headers.length > 0) {
     mkdirSync(buildDir, { recursive: true });
     for (const [h, body] of headers) {
-      const out = resolve(buildDir, h);
-      if (typeof body === "string") {
-        writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
-      } else {
-        n.build({
-          outputs: [out],
-          rule: "dep_subst",
-          inputs: [resolve(srcDir, body.from)],
-          implicitInputs: [fetchCliPath],
-          orderOnlyInputs: orderOnly,
-          vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
-        });
-        generated.push(out);
-      }
+      writeIfChanged(resolve(buildDir, h), body === "" ? "/* stub — generated at configure */\n" : body);
     }
   }
 
@@ -1417,11 +1320,10 @@ function emitDirect(
   }
 
   // ─── Compile + archive ───
-  // Generated headers (codegen + subst) are implicit inputs to every .o —
-  // library sources include them. buildDir goes on -I so #include "foo.h"
-  // finds literal, subst, and codegen headers alike.
-  if (generatedHeader !== undefined) generated.push(generatedHeader);
-  const implicit = generated;
+  // The codegen header is an implicit input to every .o — library sources
+  // include it. buildDir goes on -I so #include "foo.h" finds literal and
+  // codegen headers alike.
+  const implicit = generatedHeader === undefined ? [] : [generatedHeader];
   const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
 
   const objects = spec.sources.map(s => {
@@ -1564,12 +1466,12 @@ function emitDirect(
   }
   n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
-  // ready. For no-archive direct deps that's the generated header set
-  // (subst/literal/codegen) plus the fetch stamp — not the .o files.
+  // ready. For no-archive direct deps that's the codegen header
+  // plus the fetch stamp — not the .o files.
   return {
     libs: spec.libs ?? [],
     objects,
-    headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
+    headerOutputs: sourceStamp === undefined ? implicit : [...implicit, sourceStamp],
     checks,
   };
 }

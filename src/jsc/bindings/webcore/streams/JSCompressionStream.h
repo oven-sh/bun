@@ -6,6 +6,7 @@
 #include "root.h"
 #include "StreamsForward.h"
 
+#include "JSCompressionStreamShared.h"
 #include "JSDOMGlobalObject.h"
 #include "JSTransformStream.h"
 #include "StreamConstructor.h"
@@ -16,8 +17,10 @@ class JSCompressionStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSCompressionStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSCompressionStream*>(cell)->~JSCompressionStream(); }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,11 +38,8 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust CompressionStreamCoder, refcounted (ownership rules on its
-    // `ref_count` field). This cell's reference is released eagerly at
-    // ClearAlgorithms (post-flush / error / cancel); a vm.heap.addFinalizer
-    // registered in the constructor is the idempotent fallback.
-    void* m_coder { nullptr };
+    // Null while an off-thread step owns it. Released eagerly at ClearAlgorithms (post-flush / error / cancel).
+    std::unique_ptr<CompressionStreamCoder> m_coder;
 
 private:
     JSCompressionStream(JSC::VM&, JSC::Structure*);

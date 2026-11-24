@@ -178,8 +178,8 @@ impl Parser<'_> {
                     if self.is_closing_code_fence(off, pivot_line.data) {
                         line.r#type = LineType::Blank; // ending fence treated as blank
                         self.last_line_has_list_loosening_effect = false;
-                        if let Some(cb_off) = self.current_block {
-                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
+                        if let Some(block) = &mut self.current_block {
+                            block.flags |= types::BLOCK_CLOSED;
                         }
                         break;
                     }
@@ -221,8 +221,8 @@ impl Parser<'_> {
                             is_empty = true;
                             break;
                         }
-                        if let Some(cb_off) = self.current_block {
-                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
+                        if let Some(block) = &mut self.current_block {
+                            block.flags |= types::BLOCK_CLOSED;
                         }
                     }
                     line.r#type = LineType::Html;
@@ -654,15 +654,14 @@ impl Parser<'_> {
                 let tbl_result = self.is_table_underline(off);
                 if tbl_result.is_underline
                     && self.current_block.is_some()
-                    && self.current_block_lines.len() >= 1
+                    && let [lines_before @ .., header_line] = self.current_block_lines()
                 {
                     // GFM: validate that header row column count matches delimiter row column count.
-                    let header_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     let header_cols =
                         self.count_table_row_columns(header_line.beg, header_line.end);
                     let is_header_too_far_in = header_line.indent >= self.code_indent_offset
                         && compat::indented_line_is_no_table_header(&self.flags);
-                    let interrupts_paragraph = self.current_block_lines.len() > 1
+                    let interrupts_paragraph = !lines_before.is_empty()
                         && compat::table_does_not_interrupt_a_paragraph(&self.flags);
                     if (header_cols == tbl_result.col_count
                         || compat::table_header_has_any_number_of_cells(&self.flags))
@@ -797,7 +796,6 @@ impl Parser<'_> {
         }
 
         // Flush current leaf block before any container transitions
-        // so that VerbatimLine data stays contiguous after its BlockHeader.
         if (n_children == 0 && n_parents + n_brothers < self.n_containers)
             || n_brothers > 0
             || n_children > 0
@@ -814,7 +812,7 @@ impl Parser<'_> {
         // Enter brother containers
         if n_brothers > 0 {
             // Close old LI, open new LI
-            self.push_container_bytes(
+            self.push_container_block(
                 BlockType::Li,
                 if self.containers[n_parents as usize].is_task {
                     self.text[self.containers[n_parents as usize].task_mark_off as usize] as u32
@@ -824,7 +822,7 @@ impl Parser<'_> {
                 types::BLOCK_CONTAINER_CLOSER,
                 (self.line_beg, self.container_end(n_parents), 0),
             )?;
-            self.push_container_bytes(
+            self.push_container_block(
                 BlockType::Li,
                 if container.is_task {
                     self.text[container.task_mark_off as usize] as u32
@@ -884,18 +882,17 @@ impl Parser<'_> {
         // Opening code fence: start block but don't include fence line as content
         if line.r#type == LineType::Fencedcode && line.enforce_new_block {
             self.end_current_block()?;
-            self.start_new_block(line)?;
+            self.start_new_block(line);
             self.fence_indent = line.indent;
 
             // Extract info string position and store in block data
-            if let Some(cb_off) = self.current_block {
+            if let Some(hdr) = &mut self.current_block {
                 let fence_count = line.data >> 8;
                 let mut info_beg: OFF = line.beg + fence_count;
                 // Skip whitespace before info string
                 while info_beg < line.end && helpers::is_blank(self.text[info_beg as usize]) {
                     info_beg += 1;
                 }
-                let hdr = self.get_block_header_at(cb_off);
                 hdr.data = info_beg;
                 hdr.flags |= types::BLOCK_FENCED_CODE;
             }
@@ -910,8 +907,8 @@ impl Parser<'_> {
         // Single-line blocks
         if line.r#type == LineType::Hr || line.r#type == LineType::Atxheader {
             self.end_current_block()?;
-            self.start_new_block(line)?;
-            self.add_line_to_current_block(line)?;
+            self.start_new_block(line);
+            self.add_line_to_current_block(line);
             self.end_current_block()?;
             *pivot_line = Line {
                 r#type: LineType::Blank,
@@ -922,8 +919,7 @@ impl Parser<'_> {
 
         // Setext underline changes current block to header
         if line.r#type == LineType::Setextunderline {
-            if let Some(cb_off) = self.current_block {
-                let blk = self.get_block_at(cb_off);
+            if let Some(blk) = &mut self.current_block {
                 blk.block_type = BlockType::H;
                 blk.data = line.data;
                 blk.flags |= types::BLOCK_SETEXT_HEADER;
@@ -940,15 +936,12 @@ impl Parser<'_> {
 
         // Table underline
         if line.r#type == LineType::Tableunderline {
-            if let Some(cb_off) = self.current_block {
-                if self.current_block_lines.len() > 1 {
+            if let Some(blk) = &mut self.current_block {
+                if let [_, .., last_line] = self.block_lines[self.current_block_first_line..] {
                     // GFM: table interrupts paragraph. Split: lines 0..N-2 stay as paragraph,
                     // last line becomes table header.
-                    let last_line = self.current_block_lines[self.current_block_lines.len() - 1];
                     // Remove the last line from current paragraph block
-                    let _ = self.current_block_lines.pop();
-                    let hdr = self.get_block_header_at(cb_off);
-                    hdr.n_lines -= 1;
+                    let _ = self.block_lines.pop();
                     // End the paragraph
                     self.end_current_block()?;
                     // Start a new table block with the saved header line
@@ -960,18 +953,17 @@ impl Parser<'_> {
                         data: line.data,
                         ..Line::default()
                     };
-                    self.start_new_block(&header_as_line)?;
-                    self.add_line_to_current_block(&header_as_line)?;
+                    self.start_new_block(&header_as_line);
+                    self.add_line_to_current_block(&header_as_line);
                 } else {
                     // Single line paragraph: convert directly to table
-                    let blk = self.get_block_at(cb_off);
                     blk.block_type = BlockType::Table;
                     blk.data = line.data;
                 }
             }
             // Change pivot to table
             pivot_line.r#type = LineType::Table;
-            self.add_line_to_current_block(line)?;
+            self.add_line_to_current_block(line);
             return Ok(());
         }
 
@@ -982,19 +974,19 @@ impl Parser<'_> {
 
         // Start new block if needed
         if self.current_block.is_none() {
-            self.start_new_block(line)?;
+            self.start_new_block(line);
             *pivot_line = *line;
         }
 
         // Add line to current block
-        self.add_line_to_current_block(line)?;
+        self.add_line_to_current_block(line);
 
         // Ensure we alternate line buffers to avoid aliasing
         *line_idx ^= 1;
         Ok(())
     }
 
-    pub(crate) fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
+    pub(crate) fn start_new_block(&mut self, line: &Line) {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -1009,85 +1001,60 @@ impl Parser<'_> {
             BlockType::Html => (line.data, 0),
             _ => (0, line.data),
         };
-        let aligned = self.append_block_header(BlockHeader {
+        debug_assert!(self.current_block.is_none());
+        self.current_block = Some(BlockHeader {
             block_type,
-            _pad: [0; 3],
             flags,
             data,
             n_lines: 0,
-        })?;
-
-        self.current_block = Some(aligned);
-        self.current_block_lines.clear();
-        Ok(())
+        });
+        self.current_block_first_line = self.block_lines.len();
     }
 
-    pub(crate) fn add_line_to_current_block(
-        &mut self,
-        line: &Line,
-    ) -> Result<(), bun_alloc::AllocError> {
-        if let Some(cb_off) = self.current_block {
-            let hdr = self.get_block_header_at(cb_off);
-            hdr.n_lines += 1;
-            self.current_block_lines.push(VerbatimLine {
+    pub(crate) fn add_line_to_current_block(&mut self, line: &Line) {
+        if self.current_block.is_some() {
+            self.block_lines.push(VerbatimLine {
                 beg: line.beg,
                 end: line.end,
                 indent: line.indent,
             });
         }
-        Ok(())
     }
 
     pub(crate) fn end_current_block(&mut self) -> Result<(), parser::Error> {
-        if let Some(cb_off) = self.current_block {
-            // Capture the header fields, drop the &mut borrow, then access
-            // other &self fields.
-            let (is_setext, hdr_n_lines) = {
-                let hdr = self.get_block_header_at(cb_off);
-                (
-                    hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0,
-                    hdr.n_lines,
-                )
-            };
-            if is_setext
-                && hdr_n_lines > 0
-                && self.current_block_lines.len() > 0
-                && self.current_block_lines[0].beg < self.size
-                && self.text[self.current_block_lines[0].beg as usize] == b'['
-            {
-                self.consume_ref_defs_from_current_block();
-            }
-            let hdr = self.get_block_header_at(cb_off);
-
-            // All lines consumed (`current_block_is_only_ref_defs` keeps such a
-            // block from becoming a heading)
-            if is_setext && hdr.n_lines == 0 {
-                hdr.flags |= types::BLOCK_REF_DEF_ONLY;
-            }
-
-            // Write accumulated lines to block_bytes
-            let line_bytes: &[u8] = bun_core::slice_as_bytes(&self.current_block_lines);
-            // The block's lines land in `block_bytes` too (12 bytes per
-            // line), not just its header, so this growth needs the same cap.
-            parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;
-            self.block_bytes.extend_from_slice(line_bytes);
-            self.current_block = None;
+        let Some(mut hdr) = self.current_block.take() else {
+            return Ok(());
+        };
+        let is_setext =
+            hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0;
+        if is_setext
+            && let Some(first) = self.current_block_lines().first()
+            && self.ch(first.beg) == b'['
+        {
+            self.consume_ref_defs_from_current_block();
         }
-        Ok(())
+        // Every line has at least one byte of the input, whose size is an `OFF`.
+        hdr.n_lines = (self.block_lines.len() - self.current_block_first_line) as u32;
+
+        // All lines consumed (`current_block_is_only_ref_defs` keeps that from being a heading)
+        if is_setext && hdr.n_lines == 0 {
+            hdr.flags |= types::BLOCK_REF_DEF_ONLY;
+        }
+        self.append_block_header(hdr)
     }
 
     /// Whether nothing of the current block is left once its reference
     /// definitions are taken away: then there is nothing for a line under it to
     /// make a heading of.
     fn current_block_is_only_ref_defs(&mut self) -> bool {
-        let Some(first) = self.current_block_lines.first() else {
+        let Some(first) = self.current_block_lines().first() else {
             return false;
         };
         if self.ch(first.beg) != b'[' {
             return false;
         }
         self.buffer.clear();
-        for vline in &self.current_block_lines {
+        for vline in &self.block_lines[self.current_block_first_line..] {
             if !self.buffer.is_empty() {
                 self.buffer.push(b'\n');
             }
@@ -1110,14 +1077,9 @@ impl Parser<'_> {
     }
 
     pub(crate) fn consume_ref_defs_from_current_block(&mut self) {
-        if self.current_block_lines.is_empty() {
-            return;
-        }
-
         // Merge lines into buffer for ref def parsing
         self.buffer.clear();
-        for idx in 0..self.current_block_lines.len() {
-            let vline = self.current_block_lines[idx];
+        for vline in &self.block_lines[self.current_block_first_line..] {
             if vline.beg > vline.end || vline.end > self.size {
                 continue;
             }
@@ -1170,10 +1132,9 @@ impl Parser<'_> {
                 newlines += 1;
             }
             if self.track {
-                let first = self.current_block_lines.get(lines_consumed as usize);
-                let last = self
-                    .current_block_lines
-                    .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                let lines = &self.block_lines[self.current_block_first_line..];
+                let first = lines.get(lines_consumed as usize);
+                let last = lines.get((lines_consumed + newlines).saturating_sub(1) as usize);
                 if let (Some(first), Some(last)) = (first, last) {
                     self.renderer.ptr.definition(&types::Definition {
                         beg: first.beg,
@@ -1181,7 +1142,7 @@ impl Parser<'_> {
                         label: result.label,
                         dest: result.dest,
                         title: result.title,
-                        lines: &self.current_block_lines
+                        lines: &lines
                             [lines_consumed as usize..(lines_consumed + newlines) as usize],
                     });
                 }
@@ -1193,28 +1154,10 @@ impl Parser<'_> {
         // Restore buffer for reuse.
         self.buffer = merged;
 
-        if lines_consumed > 0 {
-            if let Some(cb_off) = self.current_block {
-                let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
-                if lines_consumed >= hdr_n_lines {
-                    // All lines consumed
-                    self.current_block_lines.clear();
-                    self.get_block_header_at(cb_off).n_lines = 0;
-                } else {
-                    // Remove first lines_consumed lines
-                    let total = self.current_block_lines.len();
-                    let remaining = total - lines_consumed as usize;
-                    // SAFETY: ranges overlap (src after dst); copy_within handles memmove semantics
-                    self.current_block_lines
-                        .copy_within(lines_consumed as usize..total, 0);
-                    self.current_block_lines.truncate(remaining);
-                    self.get_block_header_at(cb_off).n_lines = hdr_n_lines - lines_consumed;
-                }
-            }
-        }
+        let first = self.current_block_first_line;
+        let end = (first + lines_consumed as usize).min(self.block_lines.len());
+        self.block_lines.drain(first..end);
     }
-
-    // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
 use crate::types::LineType;

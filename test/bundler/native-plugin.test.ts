@@ -1,6 +1,7 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
+import { readdirSync, readlinkSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, isMusl, makeTree, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -358,46 +359,6 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
-  it("keeps an excerpt of a logged source line of more than 1,000 bytes", async () => {
-    await Bun.$`echo ${"export default 1;"} > index.ts`;
-
-    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
-    const external = napiModule.createExternal();
-
-    const result = await Bun.build({
-      outdir,
-      entrypoints: [path.join(tempdir, "index.ts")],
-      throw: false,
-      plugins: [
-        {
-          name: "long-line",
-          setup(build) {
-            build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl_long_line_error", external });
-          },
-        },
-      ],
-    });
-
-    // The plugin logs a line of 5,000 `a` and a `]`, with the error at the `]`.
-    const excerpt = Buffer.alloc(119, "a").toString() + "]";
-    const [message] = result.logs;
-    expect({
-      success: result.success,
-      text: message.message,
-      line: message.position?.line,
-      column: message.position?.column,
-      lineText: message.position?.lineText,
-      printed: Bun.inspect(message, { colors: false }).split("\n").slice(0, 2),
-    }).toEqual({
-      success: false,
-      text: "Unexpected ]",
-      line: 1,
-      column: 5001,
-      lineText: excerpt,
-      printed: ["1 | " + excerpt, Buffer.alloc(4 + 119, " ").toString() + "^"],
-    });
-  });
-
   it("works with versioning", async () => {
     const filter = /\.ts/;
 
@@ -554,6 +515,58 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     }
 
     expect.unreachable("Should have caught an error");
+  });
+
+  it("frees the context of a plugin that leaves the source as it is", async () => {
+    await Bun.write(path.join(tempdir, "untouched.ts"), `export const ok = 1;\n`);
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(tempdir, "untouched.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse(
+              { filter: /untouched\.ts$/ },
+              { napiModule, symbol: "plugin_impl_context_without_source", external },
+            );
+          },
+        },
+      ],
+    });
+
+    expect(await result.outputs[0].text()).toEndWith("untouched.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
+    expect(napiModule.getCompilationCtxFreedCount(external)).toBe(1);
+  });
+
+  it.skipIf(!isLinux)("closes a file that a plugin reads and leaves as it is", async () => {
+    await Bun.write(path.join(tempdir, "read-and-left.ts"), `export const ok = 1;\n`);
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(tempdir, "read-and-left.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse({ filter: /read-and-left\.ts$/ }, { napiModule, symbol: "plugin_impl", external });
+          },
+        },
+      ],
+    });
+
+    expect(await result.outputs[0].text()).toEndWith("read-and-left.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
+    const open = readdirSync("/proc/self/fd").flatMap(fd => {
+      try {
+        return readlinkSync(`/proc/self/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.filter(target => target.endsWith("read-and-left.ts"))).toEqual([]);
   });
 
   it("should fail gracefully when passing something that is NOT a bunler plugin", async () => {

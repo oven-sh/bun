@@ -19,7 +19,11 @@ interface Image {
   segments: Segment[];
   importAt: Map<number, string>;
   stubs: Set<number>;
+  // The imports to which a word of the data may point, or undefined where the file does not say.
+  addressIsTaken?: Set<string>;
   ownTables: [number, number][];
+  // The addresses at which functions begin, in order, or none where the file does not say.
+  functionStarts: number[];
 }
 
 const jumpSlot = { x64: 7, arm64: 1026 };
@@ -39,22 +43,38 @@ function readMachO(file: Uint8Array): Image {
     const end = file.indexOf(0, at);
     return Buffer.from(file.subarray(at, end < 0 || end > at + most ? at + most : end)).toString("latin1");
   };
-  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], importAt: new Map(), stubs: new Set(), ownTables: [] };
+  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], importAt: new Map(), stubs: new Set(), ownTables: [], functionStarts: [] };
   const pointers: { address: number; size: number; first: number; each: number; isStub: boolean }[] = [];
   let symbols = 0;
   let strings = 0;
   let indirect = 0;
+  let [distances, distancesEnd, functionStart] = [0, 0, 0];
   for (let index = 0, at = 32; index < u32(16); index++, at += u32(at + 4)) {
     const command = u32(at);
     if (command === 2) [symbols, strings] = [u32(at + 8), u32(at + 16)];
     if (command === 11) indirect = u32(at + 56);
+    if (command === 0x26) [distances, distancesEnd] = [u32(at + 8), u32(at + 8) + u32(at + 12)];
     if (command !== 0x19) continue;
-    if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: (u32(at + 60) & 4) !== 0 });
+    if (u64(at + 40) === 0 && u64(at + 48) > 0) functionStart = u64(at + 24);
+    const isExecutable = (u32(at + 60) & 4) !== 0;
+    // __TEXT holds constants too. Four bytes of 0x10 read as an `adr`.
+    const code: Segment[] = [];
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
       const type = u32(section + 64) & 0xff;
+      const offset = u32(section + 48);
+      if (isExecutable && (u32(section + 64) & 0x80000400) !== 0) code.push({ offset, end: offset + u64(section + 40), address: u64(section + 32), isExecutable });
       if (type === 6 || type === 7) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: 8, isStub: false });
       if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
     }
+    if (code.length > 0) image.segments.push(...code);
+    // --trim leaves the constants behind a cut in a segment of their own, mapped for execution as __TEXT is. A segment without a section of instructions is data.
+    else if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: false });
+  }
+  // LC_FUNCTION_STARTS: each is a distance from the one before, the first from the header, in seven bits a byte.
+  for (let at = distances, scale = 1; at < distancesEnd; at++) {
+    functionStart += (file[at]! & 0x7f) * scale;
+    scale = file[at]! < 0x80 ? 1 : scale * 128;
+    if (scale === 1) image.functionStarts.push(functionStart);
   }
   for (const { address, size, first, each, isStub } of pointers) {
     for (let index = 0; index * each < size; index++) {
@@ -90,7 +110,7 @@ function readElf(file: Uint8Array): Image {
     const segment = segments.find(each => address >= each.address && address < each.address + (each.end - each.offset));
     return segment && segment.offset + (address - segment.address);
   };
-  const elf: Image = { file, view, isArm64, segments, importAt: new Map(), stubs: new Set(), ownTables: [] };
+  const elf: Image = { file, view, isArm64, segments, importAt: new Map(), stubs: new Set(), addressIsTaken: new Set(), ownTables: [], functionStarts: [] };
   if (!dynamic) return elf;
   const tags = new Map<number, number>();
   for (let at = dynamic[0]; at < dynamic[1]; at += 16) if (!tags.has(u64(at))) tags.set(u64(at), u64(at + 8));
@@ -113,6 +133,8 @@ function readElf(file: Uint8Array): Image {
       const symbol = u32(at + 12);
       if (symbol === 0 || u16(symbols + symbol * 24 + 6) !== 0) continue;
       if (type === jumpSlot[kind] || type === globalData[kind] || type === absolute[kind]) elf.importAt.set(u64(at), nameOf(symbol));
+      // Where something takes the address of an import, all have to get the same one: the linker writes the stub's address there, and into the symbol for the loader.
+      if (u64(symbols + symbol * 24 + 8) !== 0) elf.addressIsTaken!.add(nameOf(symbol));
     }
   }
   for (const { offset, end, address, isExecutable } of segments) {
@@ -173,7 +195,10 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
     const base = address - offset;
     if (!isExecutable) {
       for (let at = (offset + 7) & ~7; at + 8 <= end; at += 8) {
-        if (view.getUint32(at + 4, true) === 0 && !isInOwnTable(base + at)) found(nameAt(view.getUint32(at, true)), base + at);
+        if (view.getUint32(at + 4, true) !== 0 || isInOwnTable(base + at)) continue;
+        // A number may equal the address of a slot or a stub. It is a pointer only to an import whose address is taken.
+        const name = nameAt(view.getUint32(at, true));
+        if (name !== undefined && elf.addressIsTaken?.has(name) !== false) found(name, base + at);
       }
       continue;
     }
@@ -210,7 +235,7 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       if (!isBranch && !isOperand) continue;
       const name = nameAt(base + at + 4 + word);
       const isShortBranch = before === 0xe8 || before === 0xe9;
-      if (name !== undefined && (!isShortBranch || beginsAnInstruction(file, at - 1, offset))) found(name, base + at);
+      if (name !== undefined && (!isShortBranch || beginsAnInstruction(elf, at - 1, offset, base))) found(name, base + at);
     }
   }
   return places;
@@ -218,6 +243,11 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
 
 export function importsOf(file: Uint8Array): string[] {
   return [...new Set(readImage(file).importAt.values())].sort();
+}
+
+/** Where the slots and the stubs of an import lie. */
+export function addressesOf(file: Uint8Array, name: string): number[] {
+  return [...readImage(file).importAt].filter(([, each]) => each === name).map(([address]) => address);
 }
 
 export function placesThatCall(file: Uint8Array, names: readonly string[]): Place[] {
@@ -291,8 +321,11 @@ function leadsTo(file: Uint8Array, from: number, to: number): boolean {
 }
 
 // `e8` and four bytes are a call only where an instruction begins: `80 bb e8 96 00 00 01` is `cmpb $1, 0x96e8(%rbx)`.
-// A function begins at a multiple of 16 behind padding. It is no call only if none of the three nearest such places leads to it.
-function beginsAnInstruction(file: Uint8Array, at: number, start: number): boolean {
+// A Mach-O file pads with `nop` or zeros, and lists where its functions begin. It is a call if the beginning lies outside the section.
+// Without a list, a function begins at a multiple of 16 behind `cc`. It is no call only if none of the three nearest such places leads to it.
+function beginsAnInstruction({ file, functionStarts }: Image, at: number, start: number, base: number): boolean {
+  const listed = functionStarts.findLast(address => address - base <= at);
+  if (listed !== undefined) return listed - base < start || leadsTo(file, listed - base, at);
   let heads = 0;
   for (let head = at & ~15; head > start && head > at - 65536 && heads < 3; head -= 16) {
     if (file[head - 1] !== 0xcc) continue;

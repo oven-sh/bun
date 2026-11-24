@@ -5,7 +5,6 @@ use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
 type SymbolList = Vec<bun_ast::Symbol>;
 
-use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
@@ -25,7 +24,10 @@ pub use super::impl_;
 pub use super::parser;
 
 /// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
-pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
+pub(crate) fn is_equivalent<'bump>(
+    selectors: &[Selector<'bump>],
+    other: &[Selector<'bump>],
+) -> bool {
     if selectors.len() != other.len() {
         return false;
     }
@@ -81,13 +83,9 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
 
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
-pub(crate) fn downlevel_selectors<'bump>(
-    bump: &'bump Bump,
-    selectors: &mut [Selector],
-    targets: &Targets,
-) -> VendorPrefix {
+pub(crate) fn downlevel_selectors(selectors: &mut [Selector], targets: &Targets) -> VendorPrefix {
     let mut any = AnyLowering::default();
-    let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, &mut any);
+    let mut necessary_prefixes = downlevel_selector_list(selectors, targets, &mut any);
     if !any.blocked {
         necessary_prefixes.insert(any.prefixes);
     }
@@ -113,8 +111,7 @@ impl AnyLowering {
     }
 }
 
-fn downlevel_selector_list<'bump>(
-    bump: &'bump Bump,
+fn downlevel_selector_list(
     selectors: &mut [Selector],
     targets: &Targets,
     any: &mut AnyLowering,
@@ -122,14 +119,13 @@ fn downlevel_selector_list<'bump>(
     let mut necessary_prefixes = VendorPrefix::empty();
     for selector in selectors.iter_mut() {
         for component in selector.components.iter_mut() {
-            necessary_prefixes.insert(downlevel_component(bump, component, targets, any));
+            necessary_prefixes.insert(downlevel_component(component, targets, any));
         }
     }
     necessary_prefixes
 }
 
-fn downlevel_component<'bump>(
-    bump: &'bump Bump,
+fn downlevel_component(
     component: &mut Component,
     targets: &Targets,
     any: &mut AnyLowering,
@@ -139,8 +135,8 @@ fn downlevel_component<'bump>(
             return match pc {
                 PseudoClass::Dir { direction } => {
                     if targets.should_compile_same(Feature::DirSelector) {
-                        *component = downlevel_dir(bump, *direction, targets);
-                        return downlevel_component(bump, component, targets, any);
+                        *component = downlevel_dir(*direction, targets);
+                        return downlevel_component(component, targets, any);
                     }
                     VendorPrefix::empty()
                 }
@@ -149,8 +145,8 @@ fn downlevel_component<'bump>(
                     // compile this to :is(:lang(a), :lang(b)) etc.
                     if languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList)
                     {
-                        *component = Component::Is(lang_list_to_selectors(bump, languages));
-                        return downlevel_component(bump, component, targets, any);
+                        *component = Component::Is(lang_list_to_selectors(languages));
+                        return downlevel_component(component, targets, any);
                     }
                     VendorPrefix::empty()
                 }
@@ -159,7 +155,7 @@ fn downlevel_component<'bump>(
         }
         Component::PseudoElement(pe) => pe.get_necessary_prefixes(targets),
         Component::Is(selectors) => {
-            let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, any);
+            let mut necessary_prefixes = downlevel_selector_list(selectors, targets, any);
             necessary_prefixes.insert(VendorPrefix::NONE);
 
             // Convert :is to :-webkit-any/:-moz-any if needed.
@@ -170,7 +166,7 @@ fn downlevel_component<'bump>(
             necessary_prefixes
         }
         Component::Negation(selectors) => {
-            let mut necessary_prefixes = downlevel_selector_list(bump, selectors, targets, any);
+            let mut necessary_prefixes = downlevel_selector_list(selectors, targets, any);
 
             // Downlevel :not(.a, .b) -> :not(:is(.a, .b)) if not list is unsupported.
             // We need to use :is() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
@@ -182,8 +178,6 @@ fn downlevel_component<'bump>(
                 }
 
                 let is: Selector = Selector::from_component(Component::Is({
-                    // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
-                    // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
                     let mut new_selectors: Vec<Selector> = Vec::with_capacity(selectors.len());
                     for sel in selectors.iter() {
                         new_selectors.push(sel.deep_clone());
@@ -195,8 +189,8 @@ fn downlevel_component<'bump>(
 
             necessary_prefixes
         }
-        Component::Where(s) | Component::Has(s) => downlevel_selector_list(bump, s, targets, any),
-        Component::Any { selectors, .. } => downlevel_selector_list(bump, selectors, targets, any),
+        Component::Where(s) | Component::Has(s) => downlevel_selector_list(s, targets, any),
+        Component::Any { selectors, .. } => downlevel_selector_list(selectors, targets, any),
         _ => VendorPrefix::empty(),
     }
 }
@@ -206,7 +200,7 @@ const RTL_LANGS: &[&[u8]] = &[
     b"nqo", b"pnb", b"ps", b"sd", b"ug", b"ur", b"yi",
 ];
 
-fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: &Targets) -> Component {
+fn downlevel_dir<'bump>(dir: parser::Direction, targets: &Targets) -> Component<'bump> {
     // Convert :dir to :lang. If supported, use a list of languages in a single :lang,
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
     if !targets.should_compile_same(Feature::LangSelectorList) {
@@ -219,15 +213,13 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: &Tar
         return c;
     } else {
         if dir == parser::Direction::Ltr {
-            return Component::Negation(lang_list_to_selectors(bump, RTL_LANGS));
+            return Component::Negation(lang_list_to_selectors(RTL_LANGS));
         }
-        return Component::Is(lang_list_to_selectors(bump, RTL_LANGS));
+        return Component::Is(lang_list_to_selectors(RTL_LANGS));
     }
 }
 
-fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) -> Box<[Selector]> {
-    // `Component::Is`/`Negation` carry `Box<[Selector]>`; this could become
-    // `&'bump [Selector]` once the arena lifetime is plumbed through.
+fn lang_list_to_selectors<'bump>(langs: &[&'bump [u8]]) -> Box<[Selector<'bump>]> {
     let mut selectors: Vec<Selector> = Vec::with_capacity(langs.len());
     for lang in langs {
         selectors.push(Selector::from_component(Component::NonTsPseudoClass(
@@ -936,27 +928,20 @@ pub(crate) mod serialize {
 
                 if dest.minify {
                     // Serialize as both an identifier and a string and choose the shorter one.
-                    // SAFETY: per the `CssString` invariant, the pointee borrows the parser
-                    // arena which outlives the `Printer` it is being written to.
-                    let value_bytes = unsafe { crate::arena_str(*value) };
-
                     // Identifier form goes into the printer's reusable scratch
                     // buffer; the quoted-string length is counted in a null
                     // sink, so picking the shorter form allocates nothing.
                     dest.scratchbuf.clear();
-                    let _ =
-                        css::serializer::serialize_identifier(value_bytes, &mut dest.scratchbuf);
+                    let _ = css::serializer::serialize_identifier(value, &mut dest.scratchbuf);
                     let id_len = dest.scratchbuf.len();
 
                     let mut counter = bun_io::DiscardingWriter::new();
-                    let _ = css::serializer::serialize_string(value_bytes, &mut counter);
+                    let _ = css::serializer::serialize_string(value, &mut counter);
 
                     if id_len > 0 && id_len < counter.count {
                         dest.write_scratchbuf(0..id_len)?;
                     } else {
-                        // `serialize_string` is called directly here since `CssString`
-                        // (`*const [u8]`) does not implement `generic::ToCss`.
-                        dest.serialize_string(value_bytes)?;
+                        dest.serialize_string(value)?;
                     }
                 } else {
                     CSSStringFns::to_css(value, dest)?;
@@ -1466,10 +1451,7 @@ pub(crate) mod serialize {
         if let Some(ctx) = context {
             dest.nesting_expansions += 1;
             if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
-                return dest.new_error(
-                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
-                    None,
-                );
+                return dest.new_error(crate::error::PrinterErrorKind::maximum_nesting_expansion);
             }
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
@@ -1569,12 +1551,12 @@ fn is_simple(selector: &parser::Selector) -> bool {
     !any_is_combinator
 }
 
-struct CombinatorIter<'a> {
-    pub sel: &'a parser::Selector,
+struct CombinatorIter<'a, 'bump> {
+    pub sel: &'a parser::Selector<'bump>,
     pub i: usize,
 }
 
-impl<'a> CombinatorIter<'a> {
+impl<'a> CombinatorIter<'a, '_> {
     /// Original source has this iterator defined like so:
     /// ```rs
     /// selector
@@ -1595,12 +1577,12 @@ impl<'a> CombinatorIter<'a> {
     }
 }
 
-struct CompoundSelectorIter<'a> {
-    pub sel: &'a parser::Selector,
+struct CompoundSelectorIter<'a, 'bump> {
+    pub sel: &'a parser::Selector<'bump>,
     pub i: usize,
 }
 
-impl<'a> CompoundSelectorIter<'a> {
+impl<'a, 'bump> CompoundSelectorIter<'a, 'bump> {
     /// This iterator is basically like doing `selector.components.splitByCombinator()`.
     ///
     /// For example:
@@ -1628,7 +1610,7 @@ impl<'a> CompoundSelectorIter<'a> {
     ///  .rev() // reverse
     /// ```
     #[inline]
-    fn next(&mut self) -> Option<&'a [parser::Component]> {
+    fn next(&mut self) -> Option<&'a [parser::Component<'bump>]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`
         let items = self.sel.components.as_slice();
         if self.i < items.len() {

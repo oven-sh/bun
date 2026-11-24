@@ -9,7 +9,6 @@
 # console.log(digest("abcdefghij"));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) frequency=Rare isLoopHead=true
 # CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true

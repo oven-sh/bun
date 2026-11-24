@@ -1,5 +1,5 @@
 // If the result of an operator were a number as soon as its operands held numbers, the bigint that comes later would be added, negated, counted, masked and shifted as a double. A bigint beside a number throws.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function toldSum(n) { report(typeof n); report("" + n); report("" + n * n); report("" + -n); report(n === n); report(n > 5); let m = n; m++; report("" + m); }
 function toldProduct(n) { report(typeof n); report("" + n); report("" + n * n); report("" + -n); report(n === n); report(n > 5); let m = n; m++; report("" + m); }

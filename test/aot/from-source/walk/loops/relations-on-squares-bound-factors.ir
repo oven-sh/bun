@@ -1,0 +1,244 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function sieve(flags: Uint8Array): number {
+#   flags.fill(1);
+#   for (let i = 2; i * i < flags.length; i++) if (flags[i]) for (let j = i * i; j < flags.length; j += i) flags[j] = 0;
+#   let count = 0;
+#   for (let i = 2; i < flags.length; i++) if (flags[i]) count++;
+#   return count;
+# }
+# function belowZero(flags: Uint8Array, from: number): number { let x = from | 0, steps = 0; while (x * x < flags.length) { if (flags[x]) steps += 7; x--; steps++; } return steps * 1000 - x; }
+# function above(flags: Uint8Array, from: number): number { let x = from | 0, steps = 0; while (x * x > flags.length && steps < 9) { x++; steps++; } return steps * 1000 + x; }
+# function product(flags: Uint8Array, from: number, other: number): number { let x = from | 0, y = other | 0, steps = 0; while (x * y < flags.length && steps < 9) { x++; steps++; } return steps * 1000 + x; }
+# print([sieve(new Uint8Array(1000)), belowZero(new Uint8Array(30), -3), above(new Uint8Array(30), -9), product(new Uint8Array(30), 2, 4)].join(" "));
+# -- end of source
+# Nothing bounds `i` but `i * i < flags.length`. Without it `j` is a whole number in a double. Where the relation holds, `i` is at most the square root of the bound's largest value.
+# A square that lies above the bound, and a product of two values, bound nothing.
+# f1 = sieve, f2 = belowZero, f3 = above, f4 = product
+# RUN(SIEVE): walk f1 mechanisms=all
+# SIEVE-LABEL: code f1:Body
+# SIEVE: int[2, 65536] @Int32) isInLoop=true isLoopHead=true
+# SIEVE: int[2, 65535] @Int32 = Narrowed {{*}}narrowsTermOfOperand
+# SIEVE-NOT: @Double) isInLoop=true isLoopHead=true
+# SIEVE: PutTypedArrayElement {{*}}isInsideView
+# RUN(ABOVE): walk f3 mechanisms=all
+# ABOVE-LABEL: code f3:Body
+# ABOVE-NOT: narrowsTermOfOperand
+# RUN(PRODUCT): walk f4 mechanisms=all
+# PRODUCT-LABEL: code f4:Body
+# PRODUCT-NOT: narrowsTermOfOperand
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=GlobalThis @902
+    v9 = PropGet v8 key="print" [isFreeName] @902
+    v10 = Builtin builtin=Uint8Array @919
+    v11 = Integer integer=1000 @930
+    v12 = Construct v10, -, v11 calleeName="Uint8Array" @919 @915
+    v13 = Convert v12 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @915
+    v14 = Call v1, -, v13 calleeName="sieve" @909
+    v15 = Builtin builtin=Uint8Array @952
+    v16 = Integer integer=30 @963
+    v17 = Construct v15, -, v16 calleeName="Uint8Array" @952 @948
+    v18 = Convert v17 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @948
+    v19 = Integer integer=-3 @968
+    v20 = Call v3, -, v18, v19 calleeName="belowZero" @938
+    v21 = Builtin builtin=Uint8Array @983
+    v22 = Integer integer=30 @994
+    v23 = Construct v21, -, v22 calleeName="Uint8Array" @983 @979
+    v24 = Convert v23 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @979
+    v25 = Integer integer=-9 @999
+    v26 = Call v5, -, v24, v25 calleeName="above" @973
+    v27 = Builtin builtin=Uint8Array @1016
+    v28 = Integer integer=30 @1027
+    v29 = Construct v27, -, v28 calleeName="Uint8Array" @1016 @1012
+    v30 = Convert v29 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1012
+    v31 = Integer integer=2 @1032
+    v32 = Integer integer=4 @1035
+    v33 = Call v7, -, v30, v31, v32 calleeName="product" @1004
+    v34 = NewArray v14, v20, v26, v33 contents=number @908
+    v35 = PropGet v34 key="join" @908
+    v36 = String string=" " @1044
+    v37 = Call v35, v34, v36 calleeKey="join" calleeName="join" @1039
+    v38 = Convert v37 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @908
+    v39 = Call v9, -, v38 calleeName="print" @902
+    v40 = Undefined @902
+    Return v40 @902
+}
+function f1 name="sieve" module=m0 position=52 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array):
+    v1 = PropGet v0 key="fill" @98
+    v2 = Integer integer=1 @109
+    v3 = Call v1, v0, v2 calleeKey="fill" calleeName="flags.fill" @104
+    v4 = Convert v3 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @98
+    v5 = Integer integer=2 @128
+    v6 = Convert v5 declared={type=number} @128
+    Jump -> next b1(v6) @124
+  b1(v7: number):
+    LoopHint @124
+    v9 = Mul v7, v7 @131
+    v10 = PropGet v0 key="length" @139
+    v11 = Less v9, v10 @131
+    Branch v11 -> taken b2(), notTaken b8() @131
+  b2():
+    v12 = ElemGet v0, v7 @162
+    v13 = ToBoolean v12 @162
+    Branch v13 -> taken b3(| 0), notTaken b6(| 0) @162
+  b3(v14):
+    v15 = Mul v7, v7 @185
+    v16 = Convert v15 declared={type=number} @185
+    Jump -> next b4(v16) @181
+  b4(v17: number):
+    LoopHint @181
+    v19 = PropGet v0 key="length" @196
+    v20 = Less v17, v19 @192
+    Branch v20 -> taken b5(), notTaken b7() @192
+  b5():
+    v21 = Integer @229
+    ElemSet v0, v17, v21 @218
+    v23 = Add v17, v7 @215
+    v24 = Convert v23 declared={type=number} @210
+    Jump -> next b4(v24) @210
+  b6(v25):
+    Jump -> next b7() @162
+  b7():
+    v26 = Increment v7 @153
+    v27 = Convert v26 declared={type=number} @153
+    Jump -> next b1(v27) @153
+  b8():
+    v28 = Integer @246
+    v29 = Convert v28 declared={type=number} @246
+    v30 = Integer integer=2 @264
+    v31 = Convert v30 declared={type=number} @264
+    Jump -> next b9(v29, v31) @260
+  b9(v32: number, v33: number):
+    LoopHint @260
+    v35 = PropGet v0 key="length" @271
+    v36 = Less v33, v35 @267
+    Branch v36 -> taken b10(), notTaken b13() @267
+  b10():
+    v37 = ElemGet v0, v33 @294
+    v38 = ToBoolean v37 @294
+    Branch v38 -> taken b11(| 0), notTaken b12(v32) @294
+  b11(v39):
+    v40 = Increment v32 @304
+    v41 = Convert v40 declared={type=number} @304
+    Jump -> next b12(v41) @304
+  b12(v42: number):
+    v43 = Increment v33 @285
+    v44 = Convert v43 declared={type=number} @285
+    Jump -> next b9(v42, v44) @285
+  b13():
+    v45 = Convert v32 declared={type=number} @322
+    Return v45 @322
+}
+function f2 name="belowZero" module=m0 position=331 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Integer @408
+    v3 = BitOr v1, v2 @401
+    v4 = Convert v3 declared={type=number} @401
+    v5 = Integer @419
+    v6 = Convert v5 declared={type=number} @419
+    Jump -> next b1(v4, v6) @422
+  b1(v7: number, v8: number):
+    LoopHint @422
+    v10 = Mul v7, v7 @429
+    v11 = PropGet v0 key="length" @437
+    v12 = Less v10, v11 @429
+    Branch v12 -> taken b2(), notTaken b5() @429
+  b2():
+    v13 = ElemGet v0, v7 @457
+    v14 = ToBoolean v13 @457
+    Branch v14 -> taken b3(| 0), notTaken b4(v8) @457
+  b3(v15):
+    v16 = Integer integer=7 @476
+    v17 = Add v8, v16 @476
+    v18 = Convert v17 declared={type=number} @467
+    Jump -> next b4(v18) @467
+  b4(v19: number):
+    v20 = Decrement v7 @479
+    v21 = Convert v20 declared={type=number} @479
+    v22 = Increment v19 @484
+    v23 = Convert v22 declared={type=number} @484
+    Jump -> next b1(v21, v23) @484
+  b5():
+    v24 = Integer integer=1000 @510
+    v25 = Mul v8, v24 @502
+    v26 = Sub v25, v7 @502
+    v27 = Convert v26 declared={type=number} @502
+    Return v27 @502
+}
+function f3 name="above" module=m0 position=522 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number):
+    v2 = Integer @595
+    v3 = BitOr v1, v2 @588
+    v4 = Convert v3 declared={type=number} @588
+    v5 = Integer @606
+    v6 = Convert v5 declared={type=number} @606
+    Jump -> next b1(v4, v6) @609
+  b1(v7: number, v8: number):
+    LoopHint @609
+    v10 = Mul v7, v7 @616
+    v11 = PropGet v0 key="length" @624
+    v12 = Greater v10, v11 @616
+    Branch v12 -> taken b2(), notTaken b4() @616
+  b2():
+    v13 = Integer integer=9 @648
+    v14 = Less v8, v13 @640
+    Branch v14 -> taken b3(), notTaken b4() @640
+  b3():
+    v15 = Increment v7 @653
+    v16 = Convert v15 declared={type=number} @653
+    v17 = Increment v8 @658
+    v18 = Convert v17 declared={type=number} @658
+    Jump -> next b1(v16, v18) @658
+  b4():
+    v19 = Integer integer=1000 @684
+    v20 = Mul v8, v19 @676
+    v21 = Add v20, v7 @676
+    v22 = Convert v21 declared={type=number} @676
+    Return v22 @676
+}
+function f4 name="product" module=m0 position=696 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array, v1: number, v2: number):
+    v3 = Integer @786
+    v4 = BitOr v1, v3 @779
+    v5 = Convert v4 declared={type=number} @779
+    v6 = Integer @801
+    v7 = BitOr v2, v6 @793
+    v8 = Integer @812
+    v9 = Convert v8 declared={type=number} @812
+    Jump -> next b1(v5, v9) @815
+  b1(v10: number, v11: number):
+    LoopHint @815
+    v13 = Mul v10, v7 @822
+    v14 = PropGet v0 key="length" @830
+    v15 = Less v13, v14 @822
+    Branch v15 -> taken b2(), notTaken b4() @822
+  b2():
+    v16 = Integer integer=9 @854
+    v17 = Less v11, v16 @846
+    Branch v17 -> taken b3(), notTaken b4() @846
+  b3():
+    v18 = Increment v10 @859
+    v19 = Convert v18 declared={type=number} @859
+    v20 = Increment v11 @864
+    v21 = Convert v20 declared={type=number} @864
+    Jump -> next b1(v19, v21) @864
+  b4():
+    v22 = Integer integer=1000 @890
+    v23 = Mul v11, v22 @882
+    v24 = Add v23, v10 @882
+    v25 = Convert v24 declared={type=number} @882
+    Return v25 @882
+}

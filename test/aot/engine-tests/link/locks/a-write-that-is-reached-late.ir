@@ -1,0 +1,33 @@
+# Link goes by what the table says lies under a name until a write is followed there. The write stands in a function that is reached through the very member: once it is found, whoever has gone by the member is told, and asks again
+# In whichever order the nodes are taken the end is the same: the order check of `link` runs over this program too
+# console.log(late); function late() { console.log = f; }      late is called by what console.log is taken to be no longer
+# RUN: locks open
+# CHECK: locked Console constant link
+# CHECK: open ConsoleLog written-under-its-name
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = PropGet v1 key="log"
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3 calleeKey="log"
+    v5 = NewClosure function=f1
+    v6 = Call v5
+    Return v4
+}
+function f1 name="late" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="log"
+    Return v2
+}
+function f2 name="one" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}

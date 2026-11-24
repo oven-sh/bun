@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# const list = [1, 2, 3];
+# list.push(id(-7));
+# function last(): number { return list[list.length - 1]!; }
+# print(last() < 0 ? "negative" : "at least nothing");
+# print("went on");
+# -- end of source
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined.
+# So all that it sees stored into the array are integer literals that are not negative: int[0, 2147483647], and it claims the same range for the result of last(). The array holds -7.
+# The read is checked for an int32 and claims nothing narrower. Every caller relies on the result being in the range, so the entry check of the result tests for the range, and the process crashes.
+# RUN: run-in-shell mechanisms=all
+# CHECK: negative
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUnknownCallsReturnUndefined
+# LIE: in a call result
+# LIE-NOT: went on
+# LIE: crashed

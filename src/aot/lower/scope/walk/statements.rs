@@ -1,5 +1,5 @@
 use bun_sema::bind::{CommonJsVariable, Decl, ScopeId, SymbolId};
-use bun_sema::hir::{Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
+use bun_sema::hir::{ExprKind, Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
 use super::{Context, PatternRole, Task, WalkedLoop, WalkedTry, Walker};
 use crate::lower::scope::ScopeSlot;
@@ -21,8 +21,10 @@ impl Walker<'_, '_> {
         self.enter_scope(own_scope, context);
         if let StmtKind::Expr(expression) = hir[statement].kind
             && !context.is_conditional
+            && let ExprKind::Call(call) = hir[expression].kind
+            && matches!(hir[hir[call].callee].kind, ExprKind::Super)
         {
-            self.unconditional_statements.push(expression);
+            self.unconditional_calls_of_super.insert(expression);
         }
         match hir[statement].kind {
             StmtKind::Expr(expression)
@@ -35,7 +37,7 @@ impl Walker<'_, '_> {
                 self.push_initialization(symbol, context);
             }
             StmtKind::ExportAssign(value) => {
-                if self.walk.has_wrapper_parameters {
+                if self.walk.wrapper_slots.contains(CommonJsVariable::Module) {
                     let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
                     self.record_slot_use(context.function, self.file_scope, slot);
                 }

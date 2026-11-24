@@ -1,0 +1,16 @@
+# f1 = run
+# -- source: main.js
+# class Lost {}
+# Lost.prototype.gone = 0;
+# function run(turns) { let sum = 0; for (let i = 0; i < turns; i++) { const c = new Lost(); c.gone++; sum += c.gone; } return sum; }
+# print(run(1000), run(0));
+# -- end of source
+# A new object has no field of its own yet: the read finds the number on the prototype of its class. It was a lookup by name that might run any code, as was the store.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = PropGet
+# CHECK: = GetSlotOrUndefined {{*}}key="gone" receivers=[L0]
+# CHECK-NOT: = PropGet
+# CHECK-NOT: PropSet
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1000 0

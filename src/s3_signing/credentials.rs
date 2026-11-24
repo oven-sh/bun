@@ -4,8 +4,8 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::strings;
+use bun_http_types::ETag::{Header, Headers};
 use bun_http_types::Method::Method;
-use bun_picohttp::Header as PicoHeader;
 use bun_ptr::{RefCount, RefPtr};
 
 use super::acl::ACL;
@@ -25,16 +25,6 @@ macro_rules! alloc_print {
 }
 
 use bun_core::fmt::hex_lower as HexLower;
-
-#[inline]
-fn pico_header_empty() -> PicoHeader {
-    PicoHeader::ZERO
-}
-
-#[inline]
-fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
-    PicoHeader::new(name, value)
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MultiPartUploadOptions
@@ -69,7 +59,7 @@ impl MultiPartUploadOptions {
     pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * Self::ONE_MIB;
     pub const DEFAULT_PART_SIZE: usize = Self::MIN_SINGLE_UPLOAD_SIZE;
     /// dont make sense more than this because we use fetch; anything greater will be 64
-    pub const MAX_QUEUE_SIZE: u8 = 64;
+    pub(crate) const MAX_QUEUE_SIZE: u8 = 64;
 }
 
 impl Default for MultiPartUploadOptions {
@@ -464,7 +454,7 @@ impl S3Credentials {
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
         let mut tmp_buffer = [0u8; 4096];
 
-        let authorization: Box<[u8]> = 'brk: {
+        let mut authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
             let mut hmac_sig_service = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
             let mut hmac_sig_service2 = [0u8; bun_sha_hmac::hmac::EVP_MAX_MD_SIZE];
@@ -778,13 +768,10 @@ impl S3Credentials {
         // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
-            // SignResult implements Drop, so struct-update `..default()`
-            // is forbidden; mutate a default in place instead.
-            let mut r = SignResult::default();
-            r.acl = sign_options.acl;
-            r.url = authorization;
-            r.storage_class = sign_options.storage_class;
-            return Ok(r);
+            return Ok(SignResult {
+                url: authorization,
+                headers: Headers::default(),
+            });
         }
 
         if contains_newline_or_cr(aws_content_hash)
@@ -811,75 +798,25 @@ impl S3Credentials {
         )
         .into_boxed_slice();
 
-        // SignResult implements Drop, so struct-update `..default()` is forbidden.
-        let mut result = SignResult::default();
-        result.amz_date = amz_date;
-        result.host = host;
-        result.authorization = authorization;
-        result.acl = sign_options.acl;
-        result.storage_class = sign_options.storage_class;
-        result.request_payer = request_payer;
-        result.url = url;
-        result._headers_len = 4;
-        // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
-        // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
-        // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
-        // after the corresponding header is written.
-        result._headers[0] = pico_header_new(b"x-amz-content-sha256", aws_content_hash);
-        result._headers[1] = pico_header_new(b"x-amz-date", &result.amz_date);
-        result._headers[2] = pico_header_new(b"Host", &result.host);
-        result._headers[3] = pico_header_new(b"Authorization", &result.authorization);
+        let headers = [
+            Some(Header::new(b"x-amz-content-sha256", aws_content_hash)),
+            Some(Header::new(b"x-amz-date", &amz_date)),
+            Some(Header::new(b"Host", &host)),
+            Some(Header::new(b"Authorization", &authorization)),
+            acl.map(|value| Header::new(b"x-amz-acl", value)),
+            session_token.map(|value| Header::new(b"x-amz-security-token", value)),
+            storage_class.map(|value| Header::new(b"x-amz-storage-class", value)),
+            content_disposition.map(|value| Header::new(b"content-disposition", value)),
+            content_encoding.map(|value| Header::new(b"content-encoding", value)),
+            content_md5
+                .as_deref()
+                .map(|value| Header::new(b"content-md5", value)),
+            request_payer.then_some(Header::new(b"x-amz-request-payer", b"requester")),
+        ];
+        let headers = Headers::copy_of(headers.iter().copied().flatten());
+        bun_core::secure_zero(&mut authorization);
 
-        if let Some(acl_value) = acl {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-acl", acl_value);
-            result._headers_len += 1;
-        }
-
-        if let Some(token) = session_token {
-            let session_token_value = Box::<[u8]>::from(token);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-security-token", &session_token_value);
-            result.session_token = session_token_value;
-            result._headers_len += 1;
-        }
-        if let Some(storage_class_value) = storage_class {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-storage-class", storage_class_value);
-            result._headers_len += 1;
-        }
-
-        if let Some(cd) = content_disposition {
-            let content_disposition_value = Box::<[u8]>::from(cd);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-disposition", &content_disposition_value);
-            result.content_disposition = content_disposition_value;
-            result._headers_len += 1;
-        }
-
-        if let Some(ce) = content_encoding {
-            let content_encoding_value = Box::<[u8]>::from(ce);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-encoding", &content_encoding_value);
-            result.content_encoding = content_encoding_value;
-            result._headers_len += 1;
-        }
-
-        if let Some(c_md5) = content_md5.as_deref() {
-            let content_md5_value = Box::<[u8]>::from(c_md5);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-md5", &content_md5_value);
-            result.content_md5 = content_md5_value;
-            result._headers_len += 1;
-        }
-
-        if request_payer {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-request-payer", b"requester");
-            result._headers_len += 1;
-        }
-
-        Ok(result)
+        Ok(SignResult { url, headers })
     }
 }
 
@@ -951,83 +888,28 @@ const DIGESTED_HMAC_256_LEN: usize = 32;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct SignResult {
-    pub(crate) amz_date: Box<[u8]>,
-    pub(crate) host: Box<[u8]>,
-    pub(crate) authorization: Box<[u8]>,
     pub url: Box<[u8]>,
-
-    pub(crate) content_disposition: Box<[u8]>,
-    pub(crate) content_encoding: Box<[u8]>,
-    pub(crate) content_md5: Box<[u8]>,
-    pub(crate) session_token: Box<[u8]>,
-    pub(crate) acl: Option<ACL>,
-    pub(crate) storage_class: Option<StorageClass>,
-    pub(crate) request_payer: bool,
-    // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
-    // must be a raw (ptr,len) pair; see note in sign_request.
-    pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
-    pub(crate) _headers_len: u8,
+    headers: Headers,
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
-
-    pub fn headers(&self) -> &[PicoHeader] {
-        &self._headers[0..self._headers_len as usize]
-    }
-
-    pub fn mix_with_header<'b>(
-        &self,
-        headers_buffer: &'b mut [PicoHeader],
-        header: PicoHeader,
-    ) -> &'b [PicoHeader] {
-        // copy the headers to buffer
-        let len = self._headers_len as usize;
-        for (i, existing_header) in self._headers[0..len].iter().enumerate() {
-            headers_buffer[i] = *existing_header;
-        }
-        headers_buffer[len] = header;
-        &headers_buffer[0..len + 1]
-    }
-}
-
-impl Default for SignResult {
-    fn default() -> Self {
-        Self {
-            amz_date: Box::default(),
-            host: Box::default(),
-            authorization: Box::default(),
-            url: Box::default(),
-            content_disposition: Box::default(),
-            content_encoding: Box::default(),
-            content_md5: Box::default(),
-            session_token: Box::default(),
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-            _headers: [pico_header_empty(); Self::MAX_HEADERS],
-            _headers_len: 0,
-        }
+    /// The signed headers, then `range` or else `content_type`.
+    pub fn headers(&self, range: Option<&[u8]>, content_type: Option<&[u8]>) -> Headers {
+        let unsigned = match (range, content_type) {
+            (Some(range), _) => Some(Header::new(b"range", range)),
+            (None, Some(value @ [_, ..])) => Some(Header::new(b"Content-Type", value)),
+            _ => None,
+        };
+        Headers::copy_of(self.headers.iter().chain(unsigned))
     }
 }
 
 impl Drop for SignResult {
     fn drop(&mut self) {
         // Zero-before-free for secrets.
-        zero_sensitive(&mut self.amz_date);
-        zero_sensitive(&mut self.session_token);
-        zero_sensitive(&mut self.content_disposition);
-        zero_sensitive(&mut self.content_encoding);
-        zero_sensitive(&mut self.host);
-        zero_sensitive(&mut self.authorization);
-        zero_sensitive(&mut self.url);
-        // content_md5 is not sensitive; Box drop handles it.
+        bun_core::secure_zero(&mut self.url);
+        bun_core::secure_zero(&mut self.headers.buf);
     }
-}
-
-#[inline]
-fn zero_sensitive(b: &mut Box<[u8]>) {
-    bun_core::secure_zero(b);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

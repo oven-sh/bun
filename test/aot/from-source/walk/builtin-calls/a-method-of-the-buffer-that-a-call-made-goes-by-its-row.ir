@@ -1,0 +1,17 @@
+# the text of a request's body: `Buffer.concat(chunks).toString("utf8")`, outside of loops: the Buffer is made by the row of concat and nobody has seen it, so it is as its class makes it:
+# its methods are found without a look at the cell and go by their rows; they went by name, through the stub of a call by name into the host's function
+# f1 = text, f2 = first
+# -- source: a-method-of-the-buffer-that-a-call-made-goes-by-its-row.ts
+# declare function sink(...values: unknown[]): void;
+# function text(chunks: Buffer[]): string { return Buffer.concat(chunks).toString("utf8"); }
+# function first(chunks: Buffer[]): number { return Buffer.concat(chunks).readUInt8(0); }
+# sink(text([Buffer.alloc(2)]), first([Buffer.alloc(2)]));
+# -- end of source
+# RUN(TEXT): walk f1 mechanisms=all
+# TEXT: = CallBuiltin {{*}}overload=BufferConcat/0
+# TEXT-NOT: = PropGet
+# TEXT: = CallBuiltin {{*}}overload=BufferPrototypeToString/0
+# RUN(FIRST): walk f2 mechanisms=all
+# FIRST: = CallBuiltin {{*}}overload=BufferConcat/0
+# FIRST-NOT: = PropGet
+# FIRST: {{*}}overload=BufferPrototypeReadUInt8/0

@@ -20,6 +20,7 @@ fn find_lines_left_out(main: &str) -> Vec<String> {
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],
+            files_with_kept_imports: &[],
             starts_of_workers: &[],
             beside: bind_input.beside,
         };
@@ -268,6 +269,7 @@ fn variable_that_a_function_in_a_function_names_stays_with_the_outer_function() 
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],
+            files_with_kept_imports: &[],
             starts_of_workers: &[],
             beside: bind_input.beside,
         };
@@ -296,6 +298,7 @@ fn find_files_left_out(files: &[(&str, &str)]) -> Vec<String> {
             isolates_code_from_disk: false,
             mocks_any_module: false,
             files_started_by_runner: &[],
+            files_with_kept_imports: &[],
             starts_of_workers: &[],
             beside: bind_input.beside,
         };

@@ -1,0 +1,4 @@
+// The same lines; what holds the rows is a record and no list: the test in front fails and the loop goes on in the copy without that guess.
+class Cloth { constructor(threads) { this.wide = threads.length; this.threads = threads; } seams() { const { wide, threads } = this; let worth = 0; const walked = stitch => { let from = 0; for (let at = 1; at <= wide; at++) { if (at < wide && stitch(at) === stitch(from)) continue; if (at - from > 2) worth += at - from; from = at; } }; for (let row = 0; row < wide; row++) { walked(at => threads[row][at]); walked(at => threads[at][row]); } return worth; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const rounds = JSON.parse("2"); for (let t = 0; t < rounds; t++) console.log(new Cloth(Object.assign({ length: rows.length }, rows)).seams());

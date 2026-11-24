@@ -28,7 +28,7 @@ const repo = resolve(import.meta.dirname, "..");
 // again for the few dozen arch gates.
 const TARGETS = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin"];
 
-// Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s of
+// Mordant's nightly can be older than rust-toolchain.toml's, so `#[allow]`s of
 // lints added since then are unknown to it.
 const RUSTFLAGS = "-A unknown_lints";
 

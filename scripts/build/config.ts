@@ -170,7 +170,7 @@ export interface Config {
   /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
   fuzzilliCompilerOnly: boolean;
   /**
-   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC included: selects the `-hardened` WebKit prebuilt.
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
@@ -399,7 +399,7 @@ export interface Config {
   msvcLinker: string | undefined;
   /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -611,7 +611,7 @@ export interface Toolchain extends JsToolchain {
   msvcLinker: string | undefined;
   /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 }
 
@@ -1124,11 +1124,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
   // keep become available_externally, their module-private guards included,
   // and inlining one leaves a reference to guards that nothing defines.
-  // Android, FreeBSD: not enabled (never built that way; untested).
-  // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
-  // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
+  if (asan || fuzzilli) {
     lto = false;
   }
 

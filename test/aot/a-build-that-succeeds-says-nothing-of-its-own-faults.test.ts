@@ -17,6 +17,8 @@ const programs: Record<string, string> = {
     "class A { #k = 2; #m(x) { return x * this.#k; } of(x) { return this.#m(x); } }\nconst a = new A();\nfunction f(l) { let s = 0; for (let i = 0; i < l.length; i++) { s += a.of(l[i]); } return s; }\nconst go = [f][JSON.parse('0')];\nconst list = JSON.parse('[1,2,3,4.5]');\nconsole.log(go(list));\n",
   "12-an-heir.mjs":
     "class A { #k = 2; of(x) { return x * this.#k; } }\nclass B extends A { #k = 5; both(x) { return this.of(x) + this.#k; } }\nconst b = new B();\nfunction f(l) { let s = 0; for (let i = 0; i < l.length; i++) { s += b.both(l[i]); } return s; }\nconst go = [f][JSON.parse('0')];\nconst list = JSON.parse('[1,2,3,4.5]');\nconsole.log(go(list));\n",
+  "13-a-view-where-an-array-was-found.cjs":
+    'class H { constructor(s, d) { this.s = s; this.d = d; let c = 0; for (let i = 2; i < d.length; i += 3) { if (typeof d[i] !== "number") continue; if (this.s[i] > this.d[i - 3]) c++; } this.c = c; } }\nfunction f(a, d) { return new H(a[0], d).c; }\nconst makers = [() => JSON.parse("[6,5,4,3,2,1]"), () => new Float64Array([6, 5, 4])];\nfor (const a of makers) for (const b of makers) console.log(f([a()], b()));\n',
 };
 
 describe("compile/aot/a-build-that-succeeds-says-nothing-of-its-own-faults", () => {

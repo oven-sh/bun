@@ -1,0 +1,18 @@
+# -- source: main.ts
+# import * as names from "./names.ts";
+# declare function print(...values: unknown[]): void;
+# function joined(): string { return names.text() + names.whole() + names.text(); }
+# function itself(): object { return names; }
+# print(joined(), Object.keys(itself()).join());
+# -- source: names.ts
+# export function text(): string { return "t"; }
+# export function whole(): number { return 7; }
+# -- end of source
+# The namespace of a module of source text runs no code of the program where it is read. So a read whose members are folded goes, and one that is handed on is no call of unknown code.
+# RUN(JOINED): walk f1 mechanisms=all-Inlining
+# JOINED: code f1:Body
+# JOINED-NOT: = ModuleNamespace
+# RUN(ITSELF): walk f2 mechanisms=all-Inlining
+# ITSELF: = ModuleNamespace module=m1 traits=[mayThrow, mayCollect, mayTouchMemory]
+# RUN(SHELL): run-in-shell
+# SHELL: t7t text,whole

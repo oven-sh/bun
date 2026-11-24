@@ -1,4 +1,11 @@
 // A tail call that leaves the instance, for another instance or for JavaScript: whoever called the function that left has its own instance and memory again when the call returns.
+// STATISTIC: WasmOptimizedCopies = 7
+// STATISTIC: WasmBaselineCopies = 12
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 7
+// COUNTER in every build: WasmInstancesUsingImageCode = 2
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 2
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

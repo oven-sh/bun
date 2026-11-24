@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const L = [2.5, 1, 0.75, 3, 1.25, 2, 0.5, 4, 3.5, 6, 5.25, 7, 8.5, 9, 10.75, 11];
+# function chosen(list: number[]): void { for (let i = 0; i + 1 < list.length; i += 2) { const a = list[i]!, b = list[i + 1]!; const low = a < b ? a : b, high = a < b ? b : a; list[i] = high; list[i + 1] = low; } }
+# for (let r = 0; r < 3; r++) chosen(L);
+# print(L.join());
+# -- end of source
+# The second store of a turn may ask nothing any more. It takes a value that fits double storage, or one that was itself read present out of double storage: that is no NaN. A value chosen between two such reads is one of them.
+# f1 = chosen
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: PutDoubleIndex
+# CHECK: PutDoubleIndex
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2.5,1,3,0.75,2,1.25,4,0.5,6,3.5,7,5.25,9,8.5,11,10.75

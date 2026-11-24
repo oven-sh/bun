@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSPerformanceObserverEntryList.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
 #include "JSDOMConvertInterface.h"
@@ -32,20 +30,10 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSPerformanceEntry.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -56,69 +44,23 @@ static JSC_DECLARE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction
 static JSC_DECLARE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName);
 
-// Attributes
-
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor);
-
-class JSPerformanceObserverEntryListPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSPerformanceObserverEntryListPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSPerformanceObserverEntryListPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceObserverEntryListPrototype))) JSPerformanceObserverEntryListPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObserverEntryListPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSPerformanceObserverEntryListPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObserverEntryListPrototype, JSPerformanceObserverEntryListPrototype::Base);
-
+using JSPerformanceObserverEntryListPrototype = JSDOMPrototype<JSPerformanceObserverEntryList>;
 using JSPerformanceObserverEntryListDOMConstructor = JSDOMConstructorNotConstructable<JSPerformanceObserverEntryList>;
 
 template<> const ClassInfo JSPerformanceObserverEntryListDOMConstructor::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryListDOMConstructor) };
 
-template<> JSValue JSPerformanceObserverEntryListDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSPerformanceObserverEntryListDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "PerformanceObserverEntryList"_s, JSPerformanceObserverEntryList::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSPerformanceObserverEntryListPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceObserverEntryListConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSPerformanceObserverEntryListPrototype::constructorGetter, 0 } },
     { "getEntries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverEntryListPrototypeFunction_getEntries, 0 } },
     { "getEntriesByType"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, 1 } },
     { "getEntriesByName"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, 1 } },
 };
 
-const ClassInfo JSPerformanceObserverEntryListPrototype::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryListPrototype) };
+template<> const ClassInfo JSPerformanceObserverEntryListPrototype::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryListPrototype) };
 
-void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
+template<> void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformanceObserverEntryList::info(), JSPerformanceObserverEntryListPrototypeTableValues, *this);
@@ -127,44 +69,14 @@ void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSPerformanceObserverEntryList::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryList) };
 
-JSPerformanceObserverEntryList::JSPerformanceObserverEntryList(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceObserverEntryList>&& impl)
-    : JSDOMWrapper<PerformanceObserverEntryList>(structure, globalObject, WTF::move(impl))
-{
-}
-
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceObserverEntryList>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceObserverEntryList::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSPerformanceObserverEntryListPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSPerformanceObserverEntryListPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSPerformanceObserverEntryList::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSPerformanceObserverEntryList>(vm, globalObject);
+    return JSPerformanceObserverEntryListPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSPerformanceObserverEntryList::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceObserverEntryListDOMConstructor, DOMConstructorID::PerformanceObserverEntryList>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSPerformanceObserverEntryList::destroy(JSC::JSCell* cell)
-{
-    JSPerformanceObserverEntryList* thisObject = static_cast<JSPerformanceObserverEntryList*>(cell);
-    thisObject->JSPerformanceObserverEntryList::~JSPerformanceObserverEntryList();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSPerformanceObserverEntryListPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSPerformanceObserverEntryList::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunction_getEntriesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSPerformanceObserverEntryList>::ClassParameter castedThis)
@@ -223,37 +135,6 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserverEntryList>::call<jsPerformanceObserverEntryListPrototypeFunction_getEntriesByNameBody>(*lexicalGlobalObject, *callFrame, "getEntriesByName");
-}
-
-JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserverEntryList, m_subspaceForPerformanceObserverEntryList));
-}
-
-void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSPerformanceObserverEntryList>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceObserverEntryList>&& impl)
-{
-    return createWrapper<PerformanceObserverEntryList>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-PerformanceObserverEntryList* JSPerformanceObserverEntryList::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceObserverEntryList>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

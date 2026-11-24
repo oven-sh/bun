@@ -16,7 +16,6 @@
 # console.log(run(list), run(list), run([1, 2, 3]));
 # -- end of source
 # RUN(FORM): walk f1 mechanisms=all-Inlining
-# REQUIRES(FORM): entries-of-bun
 # FORM-LABEL: code f1:Body
 # FORM: number @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN
 # FORM: undefined|number {{*}}= GetArrayElement {{*}}level=Proven

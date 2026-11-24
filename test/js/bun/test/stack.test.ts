@@ -175,3 +175,47 @@ test("Async functions frame should be included in stack trace", async () => {
         at async <anonymous> (file:NN:NN)"
   `);
 });
+
+test("Bun.inspect shows async frames whether or not the stack of the error has been read", async () => {
+  async function later(depth: number): Promise<number> {
+    await Promise.resolve();
+    if (depth === 0) throw new Error("two awaits down");
+    return (await later(depth - 1)) + 1;
+  }
+
+  const shown: string[] = [];
+  for (const reads of [false, true]) {
+    try {
+      await later(2);
+    } catch (error) {
+      if (reads) expect((error as Error).stack).toContain("at async later");
+      shown.push(Bun.inspect(error));
+    }
+  }
+
+  expect(shown[0].match(/at async later /g)).toHaveLength(2);
+  expect(shown[1]).toBe(shown[0]);
+});
+
+test("Bun.inspect shows functions without a name whether or not the stack of the error has been read", () => {
+  function throwsInside() {
+    (() => {
+      throw new Error("no name");
+    })();
+  }
+
+  for (const colors of [false, true]) {
+    const shown: string[] = [];
+    for (const reads of [false, true]) {
+      try {
+        throwsInside();
+      } catch (error) {
+        if (reads) expect((error as Error).stack).toContain("at <anonymous> (");
+        shown.push(Bun.inspect(error, { colors }));
+      }
+    }
+
+    expect(Bun.stripANSI(shown[0])).toMatch(/at <anonymous> \(.*\n +at throwsInside \(.*\n +at <anonymous> \(/);
+    expect(shown[1]).toBe(shown[0]);
+  }
+});

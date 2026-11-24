@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::defer_requires::function_called_in_place;
 use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
@@ -201,6 +202,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `ref_` first, then derive the visit-time flags into the user bits.
         e_.ref_ = result.r#ref;
         e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
+
+        if p.options.features.defers_requires
+            && (p.while_loading.functions_around == 0
+                || result.is_inside_with_scope
+                || is_delete_target)
+        {
+            p.while_loading.note_read(result.r#ref);
+        }
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
@@ -549,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let mut props = G::PropertyList::init_capacity(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),
                             );
-                            props.extend(object.properties.iter().map(G::Property::shallow_clone));
+                            props.extend_from_slice(&object.properties);
                             props
                         }
                         None => bun_alloc::AstAlloc::take(&mut e_.properties),
@@ -730,12 +739,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return;
                         }
 
-                        if p.source.path.is_node_module() {
-                            p.log().add_error(
-                                Some(p.source),
-                                expr.loc,
-                                b"For security reasons, macros cannot be run from node_modules.",
-                            );
+                        if let Some(reason) = p.macro_denied_reason() {
+                            p.log().add_error(Some(p.source), expr.loc, reason);
                             *e = p.new_expr(E::Undefined {}, expr.loc);
                             return;
                         }
@@ -750,31 +755,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .name
                                 .slice()
                         });
-                        let (record_path_text, record_range) = {
-                            let record =
-                                &p.import_records.items()[macro_ref_data.import_record_id as usize];
-                            (record.path.text, record.range)
-                        };
                         // We must visit it to convert inline_identifiers and record usage
-                        // Reborrow via the field-disjoint `Lexer::log()` accessor
-                        // so `&p.lexer` and `&mut p.options` split cleanly under
-                        // borrowck.
-                        let log = p.lexer.log();
-                        let source = p.source;
-                        let Ok(macro_result) = p
-                            .options
-                            .macro_context
-                            .as_deref_mut()
-                            .expect("macro_context")
-                            .call(
-                                record_path_text,
-                                source.path.source_dir(),
-                                log,
-                                source,
-                                record_range,
-                                expr,
-                                name,
-                            )
+                        let Ok(macro_result) =
+                            p.call_macro(macro_ref_data.import_record_id, expr, name)
                         else {
                             return;
                         };
@@ -800,6 +783,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
             *e = e_.fold(p.arena, expr.loc);
             return;
+        }
+    }
+
+    fn call_macro(
+        &self,
+        import_record_id: u32,
+        caller: Expr,
+        name: &[u8],
+    ) -> Result<Expr, crate::Error> {
+        let record = &self.import_records.items()[import_record_id as usize];
+        self.options.macro_context.expect("macro_context").call(
+            self.arena,
+            record.path.text,
+            self.source.path.source_dir(),
+            self.log(),
+            self.source,
+            record.range,
+            caller,
+            name,
+        )
+    }
+
+    fn macro_denied_reason(&self) -> Option<&'static [u8]> {
+        let path = &self.source.path;
+        if path.is_dependency() {
+            Some(b"For security reasons, macros cannot be run from node_modules.")
+        } else if path.text.starts_with(b"data:") {
+            Some(b"Macros cannot be run from a \"data:\" URL module.")
+        } else {
+            None
         }
     }
 
@@ -1298,6 +1311,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                if matches!(e_.value.data, js_ast::ExprData::EIdentifier(_)) {
+                    p.mark_feature_under_kept_directive(
+                        StrictModeFeature::DeleteBareName,
+                        js_lexer::range_of_identifier(p.source, e_.value.loc),
+                        b"",
+                    );
+                }
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
@@ -1976,6 +1996,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) && p.then_catch_chain.has_catch,
         };
 
+        if p.options.features.lists_loads {
+            p.while_loading.called = function_called_in_place(&e_).map(|it| it.0);
+        }
+
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
         p.visit_expr_in_out(
             &mut e_.target,
@@ -2429,12 +2453,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
-                if p.source.path.is_node_module() {
-                    p.log().add_error(
-                        Some(p.source),
-                        expr.loc,
-                        b"For security reasons, macros cannot be run from node_modules.",
-                    );
+                if let Some(reason) = p.macro_denied_reason() {
+                    p.log().add_error(Some(p.source), expr.loc, reason);
                     *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }
@@ -2447,44 +2467,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .name
                         .slice()
                 });
-                let (record_path_text, record_range) = {
-                    let record =
-                        &p.import_records.items()[macro_ref_data.import_record_id as usize];
-                    (record.path.text, record.range)
-                };
-                let copied = Expr {
-                    loc: expr.loc,
-                    data: expr.data,
-                };
                 let start_error_count = p.log().msgs.len();
                 p.macro_call_count += 1;
-                // Reborrow via the field-disjoint `Lexer::log()` accessor
-                // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck.
-                let log = p.lexer.log();
-                let source = p.source;
-                let macro_result = match p
-                    .options
-                    .macro_context
-                    .as_deref_mut()
-                    .expect("macro_context")
-                    .call(
-                        record_path_text,
-                        source.path.source_dir(),
-                        log,
-                        source,
-                        record_range,
-                        copied,
-                        name,
-                    ) {
-                    Ok(r) => r,
-                    Err(_) => {
-                        if p.log().msgs.len() == start_error_count {
-                            p.log()
-                                .add_error(Some(p.source), expr.loc, b"macro threw exception");
-                        }
-                        return;
+                let Ok(macro_result) = p.call_macro(macro_ref_data.import_record_id, expr, name)
+                else {
+                    if p.log().msgs.len() == start_error_count {
+                        p.log()
+                            .add_error(Some(p.source), expr.loc, b"macro threw exception");
                     }
+                    return;
                 };
 
                 if !matches!(macro_result.data, Data::ECall(..)) {
@@ -2707,6 +2698,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             ..Default::default()
         };
+        let entered = p.while_loading.enter_function(expr.loc);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
@@ -2784,6 +2776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        p.while_loading.functions_around -= entered;
 
         // Restore before any further `p.*` call so the stack-local pointer
         // never escapes this frame.

@@ -90,13 +90,27 @@ export default b.declarations(
   extendAll(
     ["NodeFs", "FsStats", "Buffer"],
     "%NodeJSFS%",
-    ...nativeBindings("Bindgen", "node_fs_binding.bind.ts", "binding"),
+    ...nativeBindings(
+      "Bindgen",
+      "node_fs_binding.bind.ts",
+      "binding",
+      "appendFileSync",
+      "chmodSync",
+      "closeSync",
+      "existsSync",
+      "fstatSync",
+      "lstatSync",
+      "readFileSync",
+      "readdirSync",
+      "statSync",
+    ),
   ),
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),
 
   extendAll(
     ["HttpParser"],
+    "%HTTPParser%",
     "node:_http_common",
     "node:_http_client",
     "node:_http_server",

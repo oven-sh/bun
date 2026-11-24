@@ -1,4 +1,4 @@
-// STATISTIC: LiteralArgumentsTakenApart >= 3
+// STATISTIC: LiteralArgumentsScalarized >= 3
 function answer(value: unknown, status: number, headers: Record<string, string>): Response {
   return Response.json(value, { status, headers });
 }

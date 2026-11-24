@@ -102,7 +102,7 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     let mut i: usize = 2;
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
-            // libjpeg's next_marker() skips to the next 0xFF with a warning, so the decoder accepts this junk too.
+            // The decoder skips to the next 0xFF, so it accepts this junk too.
             let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
                 return Orientation::Normal;
             };

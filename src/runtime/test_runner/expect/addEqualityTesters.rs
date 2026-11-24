@@ -1,7 +1,8 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 
-use super::super::jest::{FileColumns as _, Jest};
+use super::super::bun_test;
+use super::super::jest::Jest;
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
@@ -9,11 +10,9 @@ impl Expect {
     /// The first call in a new test file drops the testers that the previous file registered itself.
     pub(crate) fn equality_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = ExpectMatcherUtils::from_js(&utils_value) else { return Ok(None) };
 
-        let file = Jest::file_generation(global);
+        let file = Jest::file_generation();
         let same_file = utils.testers_file.replace(file) == file;
         let Some(testers) = js::equality_testers_get_cached(utils_value) else { return Ok(None) };
         if same_file || !utils.testers_of_file.get().contains(&true) {
@@ -44,7 +43,7 @@ impl Expect {
     /// register their equality testers and snapshot serializers again.
     #[optimize(size)]
     pub(crate) fn reset_for_test_isolation(global: &JSGlobalObject) {
-        if !global.bun_vm().test_isolation_state.shares_global {
+        if !global.bun_vm().test_isolation_state.shares_global.get() {
             return;
         }
         let utils_value = ExpectMatcherUtils::singleton(global);
@@ -57,10 +56,8 @@ impl Expect {
 
     #[optimize(size)]
     pub(crate) fn is_called_by_test_file(global: &JSGlobalObject) -> bool {
-        let Some(runner) = Jest::runner() else { return false };
-        let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
-        let path = runner.files.items_source()[buntest.get().file_id as usize].path.text;
-        global.get_caller_src_loc().str.eql_utf8(path)
+        let Some(buntest) = bun_test::clone_active_strong() else { return false };
+        global.get_caller_src_loc().str.eql_utf8(buntest.file.path)
     }
 
     pub(crate) fn add_equality_testers(cx: &mut JsScope<'_>, testers: JsLocal<'_>) -> JsResult<()> {
@@ -71,9 +68,7 @@ impl Expect {
         }
 
         let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = ExpectMatcherUtils::from_js(&utils_value) else { return Ok(()) };
 
         // Build a new array, because script may still hold the old one through `this.customTesters`.
         let all = JSValue::create_empty_array(global, 0)?;

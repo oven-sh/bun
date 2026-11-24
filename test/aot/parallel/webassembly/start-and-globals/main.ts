@@ -1,4 +1,11 @@
 // The start function runs while the instance is made. Globals of every kind: its own, imported, exported, constant and not. Several results, recursion, and a stack that runs out.
+// STATISTIC: WasmOptimizedCopies = 10
+// STATISTIC: WasmBaselineCopies = 0
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 0
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

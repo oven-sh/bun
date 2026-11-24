@@ -1,0 +1,44 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# let last = 5;
+# function make(kind: number, at: number): number[] {
+#   const list: number[] = [];
+#   for (let i = 0; i < 40; i++) list.push(i === at ? -1 : kind ? i + 0.5 : i + 1);
+#   return list;
+# }
+# function run(list: number[]): number {
+#   let t = 0;
+#   const n = list.length;
+#   for (let i = 0; i < n; i++) {
+#     const x = list[i];
+#     if (x < 0) break;
+#     t = t + x;
+#     last = t;
+#   }
+#   return t;
+# }
+# function show(kind: number, at: number): void {
+#   let work = 0;
+#   for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   last = 5;
+#   const t = run(make(kind, at));
+#   print(kind, at, t, last);
+# }
+# for (const row of JSON.parse("[[0,0],[0,1],[0,8],[0,9],[0,20],[1,0],[1,1],[1,8],[1,9],[1,20]]") as number[][]) show(row[0] | 0, row[1] | 0);
+# -- end of source
+# The turns over a list of numbers are laid out once for each kind of storage; each layout leaves the store out and hands over on its own. Leaving at 0 stores nothing, leaving at 1, 8, 9, 20 stores
+# what the turn in front stored (with the store made always the first line of each kind ends in 0; with none made the others end in 5).
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
+# RUN(RIGHT): run-in-shell
+# RIGHT: 0 0 0 5
+# RIGHT-NEXT: 0 1 1 1
+# RIGHT-NEXT: 0 8 36 36
+# RIGHT-NEXT: 0 9 45 45
+# RIGHT-NEXT: 0 20 210 210
+# RIGHT-NEXT: 1 0 0 5
+# RIGHT-NEXT: 1 1 0.5 0.5
+# RIGHT-NEXT: 1 8 32 32
+# RIGHT-NEXT: 1 9 40.5 40.5
+# RIGHT-NEXT: 1 20 200 200
+# RIGHT-NEXT: exited with 0

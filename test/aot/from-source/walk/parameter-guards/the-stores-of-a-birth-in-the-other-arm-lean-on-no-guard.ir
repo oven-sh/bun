@@ -1,0 +1,14 @@
+# f1 = make, f2 = Row
+# -- source: the-stores-of-a-birth-in-the-other-arm-lean-on-no-guard.ts
+# declare function sink(...values: unknown[]): void;
+# declare function next(): boolean;
+# class Row {
+#     name?: string; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number; h?: number;
+#     constructor(name: string) { if (next()) { this.name = name; } else { this.a = 1; this.b = 2; this.c = 3; this.d = 4; this.e = 5; this.f = 6; this.g = 7; this.h = 8; } }
+# }
+# function make(name: any) { return new Row(name); }
+# sink(make);
+# -- end of source
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f2:Body
+# PLAN-NOT: unit f2:ParameterGuard

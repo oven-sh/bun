@@ -1,0 +1,32 @@
+# `Object.prototype.hasOwnProperty.call(o, k)`, `Math.max.apply(null, list)`, `Reflect.construct(Uint32Array, [2])`, `Uint32Array.of(1, 2)`: the row says "what the operand gives, called or constructed".
+# Link applies such a use by the operand's own rows and lays their answer into the result of the row. Beside that answer it laid anything, for every operand that is a built-in: so the answer was lost.
+# Where every answer of the operand is handed back and what arrives is one built-in and nothing else, nothing is laid beside it.
+# In `below` a class written over a view may arrive too, so it stays anything. In `target` there is another new target, and the built-in's own call answers out of sight.
+# -- source: what-a-row-hands-back-from-a-built-in-that-it-calls-is-what-the-rows-of-that-built-in-give.ts
+# declare function sink(...values: unknown[]): void;
+# class Longer extends Uint32Array { get length() { return 9; } }
+# class Odd { get length() { return 7; } }
+# function has(o: object, k: string): unknown { return Object.prototype.hasOwnProperty.call(o, k); }
+# function most(list: number[]): unknown { return Math.max.apply(null, list); }
+# function of(view: Uint32Array): number { return view.length; }
+# function reflected(view: Uint32Array): number { return view.length; }
+# function below(view: Uint32Array): number { return view.length; }
+# function target(view: Uint32Array): number { return view.length; }
+# const make = (C: any) => C.of(1, 2);
+# sink(has({ a: 1 }, "a"), most([1, 5, 3]), most([]), of(Uint32Array.of(1, 2)), reflected(Reflect.construct(Uint32Array, []) as Uint32Array), below(make(Uint32Array)), below(make(Longer)));
+# sink(target(Reflect.construct(Uint32Array, [2], Odd) as Uint32Array));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=boolean
+# CHECK: function f2 {{*}}result=number
+# CHECK: function f3 
+# CHECK-NEXT: parameter 0 {{*}}proven=Uint32Array
+# CHECK: function f4 
+# CHECK-NEXT: parameter 0 {{*}}proven=Uint32Array
+# RUN(OTHERS): link functions mechanisms=all
+# OTHERS: function f5 
+# OTHERS-NOT: proven=Uint32Array
+# OTHERS: function f7 
+# RUN(SHELL): run-in-shell globalThis.sink = (...values) => print(values.join(" "));
+# SHELL: true 5 -Infinity 2 0 2 9
+# SHELL-NEXT: 7

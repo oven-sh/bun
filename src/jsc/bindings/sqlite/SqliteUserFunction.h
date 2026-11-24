@@ -3,7 +3,9 @@
 // It calls SQLite, so include it after the SQLite header of the module (lazy_sqlite3.h on macOS).
 
 #include "root.h"
+#include "OutPtr.h"
 #include "SqliteColumnNames.h"
+#include "SqlitePtr.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Error.h>
@@ -97,10 +99,28 @@ inline bool sqliteCommitsWhenFinalized(sqlite3_stmt* stmt)
 // function fails, the authorizer denies and the update hook isn't called. They check it before anything else.
 inline thread_local bool sqliteScriptIsForbidden = false;
 
-inline void sqliteFinalize(sqlite3_stmt* stmt, bool mayCallScript)
+template<typename T>
+void SqliteDeleter<T>::operator()(T* handle) const
+{
+    if constexpr (std::is_same_v<T, sqlite3>) {
+        sqlite3_close_v2(handle);
+    } else if constexpr (std::is_same_v<T, sqlite3_stmt>) {
+        WTF::SetForScope forbidScript { sqliteScriptIsForbidden, true };
+        sqlite3_finalize(handle);
+    } else if constexpr (std::is_same_v<T, sqlite3_session>) {
+        sqlite3session_delete(handle);
+    } else if constexpr (std::is_same_v<T, sqlite3_backup>) {
+        sqlite3_backup_finish(handle);
+    } else {
+        static_assert(std::is_fundamental_v<T>);
+        sqlite3_free(handle);
+    }
+}
+
+inline void sqliteFinalize(SqlitePtr<sqlite3_stmt>&& stmt, bool mayCallScript)
 {
     WTF::SetForScope forbidScript { sqliteScriptIsForbidden, !mayCallScript };
-    sqlite3_finalize(stmt);
+    sqlite3_finalize(stmt.release());
 }
 
 // The statement that called the function fails, so a commit that needs it is rolled back.

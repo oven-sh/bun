@@ -79,12 +79,26 @@ function nextMethodOf(log: Log, value: unknown): Function | undefined {
   return typeof next === "function" && log.originOf(next) === undefined ? next : undefined;
 }
 
+// What nobody feeds never answers: the iterator of a stream without a source, or of the readable end of a transform that nobody writes to.
+const staysAway = Symbol("stays away");
+const millisecondsForStep = 200;
+function settledSoon(log: Log, step: Promise<unknown>): Promise<unknown> {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, millisecondsForStep, staysAway);
+    const settle = (value: unknown) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    withoutRecording(log, () => Reflect.apply(promiseThen, step, [settle, () => settle(undefined)]));
+  });
+}
+
 async function stepIterator(log: Log, iterator: unknown, next: Function): Promise<unknown[]> {
   const yielded: unknown[] = [];
   try {
     for (let step = 0; step < maxIteratorSteps; step++) {
       let result: any = Reflect.apply(next, iterator, []);
-      if (types.isPromise(result)) result = await result;
+      if (types.isPromise(result)) result = await settledSoon(log, result);
       if (!isObject(result) || log.originOf(result) !== undefined) break;
       const { done, value } = result as IteratorResult<unknown>;
       if (done) break;
@@ -126,7 +140,7 @@ function saveMember({ mode, key }: Invocation, realm: Realm, receiver: unknown):
   if (mode !== "Set" || !isObject(receiver) || !realm.isKnownObject(receiver)) return undefined;
   const descriptor = Reflect.getOwnPropertyDescriptor(receiver, key);
   if (descriptor && Object.hasOwn(descriptor, "value")) {
-    // A store reaches what native code keeps beside the property, and a definition does not: the engine goes on calling what was last stored to Error.prepareStackTrace.
+    // A store reaches what native code keeps beside the property, and a definition that changes an attribute does not: the engine goes on calling what was last stored to Error.prepareStackTrace.
     return () => {
       Reflect.set(receiver, key, descriptor.value);
       if (!Bun.deepEquals(Reflect.getOwnPropertyDescriptor(receiver, key), descriptor, true)) Reflect.defineProperty(receiver, key, descriptor);

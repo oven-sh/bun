@@ -56,7 +56,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    pub(crate) fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -64,7 +64,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write_latin1(&mut self, data: &streams::Result<'_>) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
@@ -84,44 +84,17 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    /// # Safety
-    /// `this` is the allocation `JSSink::constructor` made for the JS wrapper, whose
-    /// `finalize` (the sole caller) frees it exactly once, here.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
-        // frees the box.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
-    pub(crate) fn end_from_js(
-        &mut self,
-        _cx: &bun_jsc::JsThread<'_>,
-    ) -> bun_sys::Result<ArrayBuffer> {
-        if self.done {
-            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
-        }
-
-        self.done = true;
-        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
-        let mut bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC: the trait impl below converts the returned
-        // `ArrayBuffer` with `to_js_unchecked`, which installs
-        // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
-        let owned = bytes.to_owned_slice();
-        Ok(ArrayBuffer::from_owned_bytes(
-            owned,
-            if self.as_uint8array {
-                JSType::Uint8Array
-            } else {
-                JSType::ArrayBuffer
-            },
-        ))
-    }
-
     pub(crate) fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink)
         // which includes @sizeOf(ArrayBufferSink).
         self.bytes.capacity() as usize
+    }
+}
+
+impl crate::webcore::sink::WrappedSink for ArrayBufferSink {
+    type Wrapped = bun_ptr::AliasableBox<Self>;
+    fn as_non_null(wrapped: &Self::Wrapped) -> core::ptr::NonNull<Self> {
+        wrapped.as_non_null()
     }
 }
 
@@ -130,20 +103,23 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
-        unsafe { Self::destroy(this) };
-    }
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, cx) {
-            // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
-            // deallocator when the global allocator isn't mimalloc.
-            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(cx.global()) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            }),
-            bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
-        }
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        let value = if this.done {
+            ArrayBuffer::create::<{ JSType::ArrayBuffer }>(cx.global(), b"")
+        } else {
+            this.done = true;
+            let mut bytes = core::mem::take(&mut this.bytes);
+            bytes.shrink_to_fit();
+            let kind = if this.as_uint8array {
+                JSType::Uint8Array
+            } else {
+                JSType::ArrayBuffer
+            };
+            ArrayBuffer::from_default_allocator(cx.global(), kind, bytes)
+        };
+        Ok(value.or_pending_exception())
     }
 }

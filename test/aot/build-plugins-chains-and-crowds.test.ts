@@ -88,6 +88,16 @@ build.onLoad({ filter: /.*/, namespace: "chain" }, (args: any) => { const index 
     ],
     prints: (many * (many - 1)) / 2 + "\n",
   },
+  "defer() throws once its onLoad has answered, also during a later onLoad": {
+    alone: true,
+    files: { "main.ts": `// @ts-ignore\nimport { accepted } from "chain:0"; console.log(accepted);` },
+    plugins: [
+      `const kept: (() => unknown)[] = []; let accepted = 0;
+build.onResolve({ filter: /^chain:/ }, (args: any) => ({ path: args.path.slice(6), namespace: "chain" }));
+build.onLoad({ filter: /.*/, namespace: "chain" }, (args: any) => { for (const defer of kept) { try { defer(); accepted++; } catch (error: any) { if (error.code !== "ERR_INVALID_STATE") throw error; } } kept.push(args.defer); const next = Number(args.path) + 1; return { contents: next < 100 ? 'export { accepted } from "chain:' + next + '";' : "export const accepted = " + accepted + ";", loader: "js" }; });`,
+    ],
+    prints: "0\n",
+  },
   "a file that many files import is loaded once": {
     files: {
       "main.ts": `import { a } from "./a"; import { b } from "./b"; import { shared } from "./shared"; console.log(a, b, shared);`,

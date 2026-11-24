@@ -1,5 +1,5 @@
 import * as b from "bun-builtins-table";
-import { handedOver } from "./native-code.ts";
+import { retainedByNativeCode } from "./native-code.ts";
 
 type ParameterList = Readonly<Record<string, b.TableType>>;
 
@@ -79,10 +79,10 @@ const constructed: b.FunctionField[] = [
     runsOnlyOperandCode: true,
     uses: {
       value: [
-        ...handedOver,
+        ...retainedByNativeCode,
         b.runsTransitively("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
       ],
-      encoding: [...handedOver, b.runs("ToPrimitive")],
+      encoding: [...retainedByNativeCode, b.runs("ToPrimitive")],
     },
     implementation: b.hostCall,
   },
@@ -237,7 +237,7 @@ const createdByFrom: b.FunctionField[] = [
     returns: b.instance("Buffer"),
     capability: "js",
     throws: true,
-    uses: { value: handedOver, encodingOrOffset: handedOver, length: handedOver },
+    uses: { value: retainedByNativeCode, encodingOrOffset: retainedByNativeCode, length: retainedByNativeCode },
     implementation: fromInJavaScript,
   },
 ];
@@ -337,7 +337,8 @@ export default b.declarations(
           capability: "js",
           throws: true,
           runsOnlyOperandCode: true,
-          uses: { list: [b.readsContents(), readAsArrayLike] },
+          // An element that is no Uint8Array is refused, and the message reads its constructor's name.
+          uses: { list: [b.readsContents(), readAsArrayLike, b.contentsStoredIn(b.nativeMemory)] },
           reads: viewHeaps,
           implementation: b.hostCall,
         },
@@ -543,6 +544,8 @@ export default b.declarations(
       writeUIntLE: numberWriteWithWidth,
     },
   }),
+  // A popular gzip wrapper replaces it during each write if the descriptor says it can.
+  b.extend("Buffer.concat", { marks: ["IsReportedAsReadOnly"] }),
   b.same("Buffer.prototype.toLocaleString", "Buffer.prototype.toString"),
   b.same("Buffer.prototype.@@@nodejs.util.inspect.custom", "Buffer.prototype.inspect"),
   // JSBuffer.cpp: the constructor lays itself there.

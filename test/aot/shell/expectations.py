@@ -41,7 +41,7 @@ READ_ELSEWHERE = {'STATISTIC:', 'TODO:'}
 READ_BY_NOTHING = re.compile(r'^// (?:IR-UNTIL|KNOWN|PARTLY|UNKNOWN) .*$|^.*//! .+$', re.M)
 WORD = re.compile(r'[A-Za-z_][A-Za-z0-9_]{2,}')
 NO_WORD_OF_A_PATTERN = re.compile(r'\\(.)|\[\^?\]?(?:\\.|[^\]\\])*\]|\{\d*,?\d*\}|\(\?P?<\w+>')
-TEXT_OF_A_MODULE = re.compile(r' functionText="(?:[^"\\\n]|\\.)*"')
+FUNCTION_SOURCE_FIELD = re.compile(r' functionSource="(?:[^"\\\n]|\\.)*"')
 ANYTHING_BETWEEN = r'[\s\S]*'
 # The position may be followed by the origin's other words (tail, constructs), then by ` # ` and the sweep's marks.
 PLACE_IN_SOURCE = re.compile(r' @\d+(?::\d+)?(?= tail\b| constructs\b| # |$)|$')
@@ -124,8 +124,8 @@ def describe(failed):
 
 def dump_of(program, words):
     """(the records of the program, a line each, and (the number of a function, a role) -> the lines of the Code of that unit, for each unit that has Code). Raises toolchain.ToolFailed."""
-    # The records quote the text of each module, and with it these very lines: a pattern would find itself there.
-    text = TEXT_OF_A_MODULE.sub('', toolchain.print_program(program, words))
+    # The records hold the function source of each module, and with it these very lines: a pattern would find itself there.
+    text = FUNCTION_SOURCE_FIELD.sub('', toolchain.print_program(program, words))
     records = [line for line in text.split('\n') if line and not line.startswith((' ', '}'))]
     numbers = [head.split(' ')[1][1:] for head in records if head.startswith('function ') and head.endswith(' {')]
     units, lines = {}, None

@@ -40,6 +40,13 @@ pub(super) struct Declaration {
 }
 
 impl Declaration {
+    pub(super) fn is_import(&self) -> bool {
+        matches!(
+            self.kind,
+            DeclarationKind::Import | DeclarationKind::ImportEquals
+        )
+    }
+
     pub(super) fn new(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> Declaration {
         Declaration {
             decl,

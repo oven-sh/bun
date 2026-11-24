@@ -17,13 +17,13 @@ import { built, spawned, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { beforeAll, describe, test } from "./supported";
 
-// Eight classes are too many to tell apart by tests: the calls of `area` go through the image's method table. It begins at a page, and nothing but the
+// Twelve classes are too many to tell apart by tests: the calls of `area` go through the image's method table. It begins at a page, and nothing but the
 // slot handlers lies behind it: the last page in front of the code holds those two sections alone, whatever the sizes of the others are.
 const program = `interface Shape { area(): number }
-${Array.from("ABCDEFGH", (name, index) => `class ${name} implements Shape { constructor(public n: number) {} area(): number { return this.n * ${index + 1}; } }`).join("\n")}
-const makers = [A, B, C, D, E, F, G, H];
+${Array.from("ABCDEFGHIJKL", (name, index) => `class ${name} implements Shape { constructor(public n: number) {} area(): number { return this.n * ${index + 1}; } }`).join("\n")}
+const makers = [A, B, C, D, E, F, G, H, I, J, K, L];
 const shapes: Shape[] = [];
-for (let i = 0; i < 8 + process.argv.length - 2; i++) shapes.push(new makers[i % 8](1));
+for (let i = 0; i < 12 + process.argv.length - 2; i++) shapes.push(new makers[i % 12](1));
 let sum = 0;
 for (const shape of shapes) sum += shape.area();
 console.log("answer", sum * 0.125, /^a+[b-y\\u00e0-\\u00ff\\u0430-\\u044f]?z$/.test("aaz"));
@@ -189,7 +189,7 @@ const refusedWith = (sentence: string) => ({
 
 describe("an executable whose image header names a range outside its code segment does not start", () => {
   test("an unedited copy runs", () => {
-    expect(results.unedited).toEqual({ stdout: "answer 4.5 true\n", stderr: "", exitCode: 0, signal: null });
+    expect(results.unedited).toEqual({ stdout: "answer 9.75 true\n", stderr: "", exitCode: 0, signal: null });
   });
 
   test.each(Object.keys(headersThatContradictThemselves))("the code %s", name => {

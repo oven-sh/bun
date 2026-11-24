@@ -1,0 +1,32 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const turns: number = JSON.parse("16");
+# const buffer = new ArrayBuffer(8 * 16, { maxByteLength: 8 * 64 }), view = new Float64Array(buffer);
+# function shrink(turn: number) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; if (turn === 3 + work) buffer.resize(8 * 6); }
+# function sum(view: Float64Array, turns: number): number { let total = 0; for (let i = 0; i < turns; i++) { shrink(i); const element = view[i]; total += element === undefined ? 100 : element; } return total; }
+# for (let i = 0; i < 16; i++) view[i] = i + 1;
+# print(sum(view, turns), view.length);
+# -- end of source
+# The typed array tracks the length of its buffer, and one iteration shrinks the buffer.
+# Fault injection, testing=AssumeInvariantArrayStorage: the iterations of a loop are assumed to leave the storage of arrays and of typed arrays, and therefore their lengths, unchanged.
+# So whatever an iteration reads of them is hoisted and read once, before the loop. The iterations after the resize keep reading inside the capacity that the buffer retains.
+# With testing=CheckBoundsAtRunTime (--aot-harden=ignore-told-ranges) and with testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the same operations are built in the same places.
+# The hoisted values are checked against the cell inside the iteration, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1021 6
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,CheckProofsAtRunTime
+# HELD: 1021 6
+# HELD-NEXT: exited with 0
+# The fault in a default build: the program prints a different result, and nothing crashes.
+# RUN(SILENT): run-in-shell mechanisms=all testing=AssumeInvariantArrayStorage
+# SILENT: 136 6
+# SILENT-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,AssumeInvariantArrayStorage
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed
+# POSITIONS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# POSITIONS: crashed with
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeInvariantArrayStorage
+# PROOFS: bun: internal AOT error: redundancy elimination check failed
+# PROOFS-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# PROOFS: crashed with

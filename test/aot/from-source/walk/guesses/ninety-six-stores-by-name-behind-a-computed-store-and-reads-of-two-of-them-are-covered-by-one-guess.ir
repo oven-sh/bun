@@ -1,0 +1,122 @@
+# Behind a computed store nothing is known of the slots of `all`: one guess covers the stores by name that follow, the second store into `f0` and the reads of `f0` and `f1`.
+# The reads look at no slot: the guess knows that both were stored in front of them.
+# The search for what the guess covers finds two things a store, and past 192 it goes by tables. The ninety-seventh store here brings it to 194: the two reads are answered by the tables.
+# f1 = fill
+# -- source: main.js
+# function fill(key) {
+#   const all = {};
+#   all[key] = 1;
+#   publish(all);
+#   all.f0 = 0;
+#   all.f1 = 1;
+#   all.f2 = 2;
+#   all.f3 = 3;
+#   all.f4 = 4;
+#   all.f5 = 5;
+#   all.f6 = 6;
+#   all.f7 = 7;
+#   all.f8 = 8;
+#   all.f9 = 9;
+#   all.f10 = 10;
+#   all.f11 = 11;
+#   all.f12 = 12;
+#   all.f13 = 13;
+#   all.f14 = 14;
+#   all.f15 = 15;
+#   all.f16 = 16;
+#   all.f17 = 17;
+#   all.f18 = 18;
+#   all.f19 = 19;
+#   all.f20 = 20;
+#   all.f21 = 21;
+#   all.f22 = 22;
+#   all.f23 = 23;
+#   all.f24 = 24;
+#   all.f25 = 25;
+#   all.f26 = 26;
+#   all.f27 = 27;
+#   all.f28 = 28;
+#   all.f29 = 29;
+#   all.f30 = 30;
+#   all.f31 = 31;
+#   all.f32 = 32;
+#   all.f33 = 33;
+#   all.f34 = 34;
+#   all.f35 = 35;
+#   all.f36 = 36;
+#   all.f37 = 37;
+#   all.f38 = 38;
+#   all.f39 = 39;
+#   all.f40 = 40;
+#   all.f41 = 41;
+#   all.f42 = 42;
+#   all.f43 = 43;
+#   all.f44 = 44;
+#   all.f45 = 45;
+#   all.f46 = 46;
+#   all.f47 = 47;
+#   all.f48 = 48;
+#   all.f49 = 49;
+#   all.f50 = 50;
+#   all.f51 = 51;
+#   all.f52 = 52;
+#   all.f53 = 53;
+#   all.f54 = 54;
+#   all.f55 = 55;
+#   all.f56 = 56;
+#   all.f57 = 57;
+#   all.f58 = 58;
+#   all.f59 = 59;
+#   all.f60 = 60;
+#   all.f61 = 61;
+#   all.f62 = 62;
+#   all.f63 = 63;
+#   all.f64 = 64;
+#   all.f65 = 65;
+#   all.f66 = 66;
+#   all.f67 = 67;
+#   all.f68 = 68;
+#   all.f69 = 69;
+#   all.f70 = 70;
+#   all.f71 = 71;
+#   all.f72 = 72;
+#   all.f73 = 73;
+#   all.f74 = 74;
+#   all.f75 = 75;
+#   all.f76 = 76;
+#   all.f77 = 77;
+#   all.f78 = 78;
+#   all.f79 = 79;
+#   all.f80 = 80;
+#   all.f81 = 81;
+#   all.f82 = 82;
+#   all.f83 = 83;
+#   all.f84 = 84;
+#   all.f85 = 85;
+#   all.f86 = 86;
+#   all.f87 = 87;
+#   all.f88 = 88;
+#   all.f89 = 89;
+#   all.f90 = 90;
+#   all.f91 = 91;
+#   all.f92 = 92;
+#   all.f93 = 93;
+#   all.f94 = 94;
+#   all.f95 = 95;
+#   all.f0 = 96;
+#   return all.f0 + all.f1;
+# }
+# globalThis.kept = fill;
+# print(fill("x"));
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: = IsNotFrozen
+# WALK-NOT: = IsNotFrozen
+# WALK-NOT: = IsSlotFilled
+# WALK: = PutSlotOrAdd {{*}}key="f0"
+# WALK: = PutSlotOrAdd {{*}}key="f1"
+# WALK: = PutSlotOrAdd {{*}}key="f95"
+# WALK: = PutSlot {{*}}key="f0"
+# WALK-NOT: = IsSlotFilled
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
+# ANSWERS: 97

@@ -14,6 +14,8 @@ struct Needs {
     bindings: SmallVec<[BindingRef; 4]>,
     environments: SmallVec<[OwnedEnvironment; 2]>,
     is_over_limit: bool,
+    is_settled: bool,
+    scopes_supplied: SmallVec<[OwnedEnvironment; 1]>,
 }
 
 struct ListedBindings<'x> {
@@ -182,6 +184,9 @@ fn plan_captures(problem: &CaptureProblem<'_>, fields_of_scopes: &[BindingRef]) 
     while let Some(function) = queue.pop() {
         is_queued[function.index()] = false;
         let own_needs = &mut needs[function.index()];
+        if own_needs.is_settled {
+            continue;
+        }
         if own_needs.bindings.is_empty()
             && own_needs.environments.is_empty()
             && input.entry_captures.is_empty()
@@ -198,9 +203,18 @@ fn plan_captures(problem: &CaptureProblem<'_>, fields_of_scopes: &[BindingRef]) 
             derived = list_captures(problem, function, own_needs, fields_of_scopes);
         }
         let supplied = collect_supplied_captures(listed, own_needs, &derived);
+        if own_needs.is_over_limit {
+            debug_assert!(
+                supplied.values.is_empty(),
+                "over the limit everything is supplied as a scope"
+            );
+            own_needs.scopes_supplied = SmallVec::from_slice(&supplied.environments);
+            own_needs.is_settled = true;
+        }
         captures[function.index()] = derived;
         for &supplier in suppliers[function.index()].iter() {
-            let has_grown = add_supplier_needs(&mut needs[supplier.index()], supplier, &supplied);
+            let supplier_needs = &mut needs[supplier.index()];
+            let has_grown = add_supplier_needs(listed, supplier_needs, supplier, &supplied);
             if has_grown && !is_queued[supplier.index()] {
                 is_queued[supplier.index()] = true;
                 queue.push(supplier);
@@ -365,19 +379,25 @@ fn collect_supplied_captures(
 }
 
 fn add_supplier_needs(
+    listed: &ListedBindings<'_>,
     needs: &mut Needs,
     supplier: WalkedFunctionId,
     supplied: &SuppliedCaptures,
 ) -> bool {
     let mut has_grown = false;
     for &(binding, owner) in supplied.values.iter() {
-        if owner != supplier {
-            has_grown |= insert_sorted(&mut needs.bindings, binding);
+        if owner != supplier && insert_sorted(&mut needs.bindings, binding) {
+            has_grown = true;
+            if needs.is_settled {
+                let scope = (listed.find(binding).scope, owner);
+                needs.is_settled = needs.scopes_supplied.binary_search(&scope).is_ok();
+            }
         }
     }
-    for &(scope, owner) in supplied.environments.iter() {
-        if owner != supplier {
-            has_grown |= insert_sorted(&mut needs.environments, (scope, owner));
+    for &scope in supplied.environments.iter() {
+        if scope.1 != supplier && insert_sorted(&mut needs.environments, scope) {
+            has_grown = true;
+            needs.is_settled &= needs.scopes_supplied.binary_search(&scope).is_ok();
         }
     }
     has_grown

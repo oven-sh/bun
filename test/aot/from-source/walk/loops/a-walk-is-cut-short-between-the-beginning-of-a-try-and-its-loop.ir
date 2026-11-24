@@ -1,0 +1,15 @@
+# -- source: a-walk-is-cut-short-between-the-beginning-of-a-try-and-its-loop.ts
+# declare function print(...values: unknown[]): void;
+# function fill(list: number[], n: number): number[] { for (let i = 0; i < n; i++) list[i] = i; return list; }
+# let total = 0;
+# for (let round = 0; round < 50; round++) total += fill([], round % 5).length;
+# print(total);
+# -- end of source
+# The loop of `fill` is copied into the loop of the module. Under the word the walk of the loop around is cut short at an operation that is built where the try of the loop within has begun and its head is not yet entered.
+# The compiler died here: it ended a block where none was left. A cut is taken up in front of the next operation of the input.
+# OPTIONS: testing=AbortLoopVisits:7:0
+# STATISTIC: LoopVisitsAborted >= 1
+# RUN: walk f0 mechanisms=all
+# CHECK: code f0:Body
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 100

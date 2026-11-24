@@ -180,9 +180,8 @@ describe("dns", () => {
   // The pending-host-cache slot holds a Box<[u8]> clone of the hostname so
   // concurrent lookups for the same name can coalesce. When process.exit()
   // tears the VM down (BUN_DESTRUCT_VM_ON_EXIT=1, set by the CI runner) while
-  // a libc getaddrinfo is still on the work pool, the Resolver is dropped
-  // with that slot still occupied. HiveArray used to skip Drop on its slots,
-  // so the hostname Box leaked. Only observable via LSan, so ASAN-only.
+  // a libc getaddrinfo is still on the work pool, the unfinished job has to
+  // free that slot. Only observable via LSan, so ASAN-only.
   test.skipIf(!isASAN || isWindows)(
     "pending-cache hostname is freed when VM tears down mid-lookup",
     async () => {
@@ -196,7 +195,7 @@ describe("dns", () => {
             server.listen(0, "127.0.0.1", () => {
               const port = server.address().port;
               // node:net's connect("localhost") routes through Bun.dns.lookup
-              // with the libc backend, which populates pending_host_cache_native.
+              // with the libc backend, which populates the native pending cache.
               for (let i = 0; i < 20; i++) {
                 const s = net.connect(port, "localhost");
                 s.on("error", () => {});
@@ -546,6 +545,18 @@ describe("dns", () => {
           ...queries("host.corp.example", baseFlags | suppressUnusable),
           ...queries("host.corp.example", baseFlags),
         ],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("a failed lookup() does not keep the event loop alive", async () => {
+      const script = `
+        import { getEventLoopStats } from "bun:internal-for-testing";
+        const code = await Bun.dns.lookup("host.corp.example").catch(e => e.code);
+        console.log(JSON.stringify({ code, loopActive: getEventLoopStats().loopActive }));
+      `;
+      expect(await exchange({}, script)).toMatchObject({
+        printed: { code: "DNS_ENOTFOUND", loopActive: false },
         exitCode: 0,
       });
     });

@@ -189,7 +189,13 @@ impl DuplicateNames<'_, '_> {
                     (Decl::Var(_), Decl::Var(_)) => true,
                     _ => name == known::default && !merges(earlier) && !merges(later),
                 };
-                if symbol.is_none() || symbol != earlier_symbol || is_exported_twice {
+                // A type of the name between them may have given them two symbols.
+                let share_one_object = match (earlier, later) {
+                    (Decl::Class(_) | Decl::Fn(_), Decl::Module(_)) => true,
+                    _ => merges(earlier) && merges(later),
+                };
+                let are_two_exports = symbol != earlier_symbol && !share_one_object;
+                if symbol.is_none() || are_two_exports || is_exported_twice {
                     self.redeclarations
                         .push(EarlyRedeclaration { earlier, later });
                 }

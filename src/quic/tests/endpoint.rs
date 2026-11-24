@@ -235,10 +235,7 @@ fn nothing_goes_with_a_probe_of_the_mtu() {
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &[0; 1500], false);
     raw.lose();
-    for _ in 0..25 {
-        raw.request_packets(&"a".repeat(10));
-        raw.advance(1);
-    }
+    raw.request_many_packets(250);
     raw.peer.send(id, &[0; 3000], false);
     raw.advance(RTT);
     raw.peer.send(id, &[0; 2000], false);

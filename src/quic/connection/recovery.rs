@@ -499,7 +499,11 @@ impl Connection {
                 let space = handshake.or(self.spaces.initial.as_mut());
                 crate::with(space, |it| it.probes = 1);
             }
-            (_, SpaceId::Data) => self.probe(SpaceId::Data, PROBES.into()),
+            (_, SpaceId::Data) => {
+                // What is already waiting gets its turn, but requests had better stay unsent.
+                let is_waiting = self.side.is_server() && self.streams.state.has_lost_data();
+                self.probe(SpaceId::Data, (PROBES - u8::from(is_waiting)).into());
+            }
             _ => {
                 self.probe(SpaceId::Initial, usize::MAX);
                 self.probe(SpaceId::Handshake, usize::MAX);

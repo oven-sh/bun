@@ -112,6 +112,8 @@ pub struct Connection {
     is_ready: bool,
     can_open_streams: bool,
     tickets_wanted: u8,
+    /// In the CRYPTO frames that follow the handshake.
+    next_message_at: u64,
     tokens_received: u8,
     origin_frames_received: u8,
 
@@ -125,8 +127,8 @@ pub struct Connection {
     next_skip: u64,
     /// The last one that was.
     skipped: Option<u64>,
-    uses_spin_bit: bool,
-    spin_bit: bool,
+    /// They do not spin. The IDs of the peer take them in turn (RFC 9000 §17.4).
+    spin_bits: u8,
 
     path: Path,
     candidates: Vec<Path>,
@@ -221,7 +223,7 @@ impl Connection {
         shared: &mut Shared,
     ) -> Box<Self> {
         let crypto = shared.crypto;
-        let [spin, a, b, c, d, seed @ ..] = crypto.random::<13>();
+        let [spin_bits, a, b, c, d, seed @ ..] = crypto.random::<13>();
         let mut local_ids = LocalIds::default();
         let id = local_ids.issue(slot, shared);
         let local = Box::new(TransportParameters {
@@ -254,6 +256,7 @@ impl Connection {
                 true => handshake::MAX_TICKETS,
                 false => 0,
             },
+            next_message_at: 0,
             tokens_received: 0,
             origin_frames_received: 0,
             spaces: Spaces::default(),
@@ -262,9 +265,7 @@ impl Connection {
             integrity_limit: u64::MAX,
             next_skip: u64::MAX,
             skipped: None,
-            // RFC 9000 §17.4.
-            uses_spin_bit: spin >= 16,
-            spin_bit: spin < 8,
+            spin_bits,
             congestion: Controller::new(config.congestion, path.mtu.current, random),
             first_peer: path.addresses.peer,
             path,

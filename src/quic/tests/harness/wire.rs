@@ -270,7 +270,11 @@ fn decode_ack<'a>(input: &mut &[u8]) -> Decoded<'a> {
 pub(crate) fn decode(mut payload: &[u8]) -> Vec<Decoded<'_>> {
     let (input, mut out) = (&mut payload, Vec::new());
     while !input.is_empty() {
-        let (kind, layout) = match take_varint(input) {
+        let len = input.len();
+        let kind = take_varint(input);
+        // RFC 9000 §12.4.
+        assert_eq!(len - input.len(), varint(kind).len());
+        let (kind, layout) = match kind {
             0x00 => continue,
             0x02 => {
                 out.push(decode_ack(input));

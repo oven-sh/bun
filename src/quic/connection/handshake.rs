@@ -40,6 +40,9 @@ const MAX_TOKENS: u8 = 16;
 const TICKET_FORMAT: u32 = 1;
 /// What a peer has to accept on a request stream for HTTP/3 to be practical.
 const MIN_HTTP3_WINDOW: u64 = 4096;
+/// RFC 8446 §4.
+const NEW_SESSION_TICKET: u8 = 4;
+const CERTIFICATE_REQUEST: u8 = 13;
 const UNEXPECTED_MESSAGE: Alert = Alert(10);
 const NO_APPLICATION_PROTOCOL: Alert = Alert(120);
 
@@ -387,6 +390,18 @@ impl Connection {
         if id == SpaceId::Data {
             if self.side.is_server() {
                 return Err(alert_error(UNEXPECTED_MESSAGE));
+            }
+            // Messages are told apart for as long as they arrive in order (RFC 9000 §7.5).
+            while let Some(at) = self.next_message_at.checked_sub(offset)
+                && let Some(&[kind, a, b, c]) = data.get(at as usize..).and_then(<[_]>::first_chunk)
+            {
+                match kind {
+                    NEW_SESSION_TICKET => {}
+                    // RFC 9001 §4.4.
+                    CERTIFICATE_REQUEST => return Err(Error::violation("late authentication")),
+                    _ => return Err(alert_error(UNEXPECTED_MESSAGE)),
+                }
+                self.next_message_at += 4 + u64::from(u32::from_be_bytes([0, a, b, c]));
             }
             if self.tickets_wanted == 0 {
                 return Ok(());

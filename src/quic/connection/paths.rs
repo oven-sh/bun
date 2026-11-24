@@ -338,7 +338,6 @@ impl Connection {
             let old = core::mem::replace(&mut self.path.remote, spare);
             self.track_reset_token(&self.path, shared);
             self.remote_ids.retire(old.sequence)?;
-            self.spin_bit = false;
         }
         while let Some(at) = (self.candidates.iter()).position(|it| it.remote.sequence < oldest) {
             let path = self.candidates.remove(at);
@@ -397,6 +396,13 @@ impl Connection {
         shared: &mut Shared,
     ) -> Result {
         if self.path.on_response(now, data) {
+            // Both challenges may have got there, and some only answer the last.
+            let is_due = |it: &&mut Path| {
+                it.is_wanted && it.addresses == *from && it.challenges.len() < MAX_CHALLENGES
+            };
+            crate::with(self.candidates.iter_mut().find(is_due), |it| {
+                it.owes_challenge = true;
+            });
             return Ok(());
         }
         let is_client = self.side.is_client();
@@ -420,7 +426,6 @@ impl Connection {
         self.abandon_path(&old, shared)?;
         self.path.is_wanted = false;
         self.previous_peer = Some(from.peer);
-        self.spin_bit = false;
         if is_other_port {
             self.path.mtu = old.mtu;
         } else {

@@ -11,6 +11,8 @@ use super::peer::Peer;
 use super::wire::{self, prefixed, take, take_prefixed, varint};
 use super::{address, crypto, tls};
 
+/// Far enough for the pacer not to gather small packets, however many there are.
+pub(crate) const APART: Duration = Duration::from_micros(251);
 /// The round trip time that a connection starts with, in milliseconds.
 pub(crate) const RTT: u64 = 20;
 
@@ -91,7 +93,7 @@ pub(crate) struct Raw {
     /// With their reset tokens.
     pub(crate) ids: BTreeMap<u64, (Vec<u8>, Vec<u8>)>,
     pub(crate) new_token: Vec<u8>,
-    pub(crate) challenges: Vec<Vec<u8>>,
+    pub(crate) challenges: Vec<(Addresses, Vec<u8>)>,
     pub(crate) close: Option<(Layer, u64)>,
     pub(crate) reason: Vec<u8>,
 }
@@ -99,7 +101,7 @@ pub(crate) struct Raw {
 impl Raw {
     /// `config` is for the other side, which is the one that is tested.
     pub(crate) fn new(side: Side, config: Config) -> Self {
-        // The last packet number that can be skipped, the longest delay, and the spin bit in use.
+        // The last packet number that can be skipped, and the longest delay.
         let crypto = crypto::Toy::new(1, &[4, 13]);
         let mut this = Self {
             now: Instant::from_micros(1_000_000),
@@ -354,19 +356,16 @@ impl Raw {
         (ranges.iter()).fold("ack".into(), |text, it| format!("{text} {}-{}", it.0, it.1))
     }
 
-    /// On top of what `wire` knows, `ack` is for all that has arrived, `respond` is for the last challenge but as many as it
-    /// says, and `hello` and `flight` are CRYPTO frames, which can be told where to start and to end.
+    /// On top of what `wire` knows, `ack` is for all that has arrived, `respond` is for the last challenge to the current
+    /// address, or else to any, and `hello` and `flight` are CRYPTO frames, which can be told where to start and to end.
     pub(crate) fn encode(&self, kind: Kind, frames: &str) -> Vec<u8> {
         let frame = |tokens: Vec<&str>| match tokens[..] {
             ["ack"] if self.received[kind.space()].is_empty() => Vec::new(),
             ["ack"] => wire::frames(&self.ack(kind)),
-            ["respond", ref later @ ..] => {
-                let later = later.first().map_or(0, |it| it.parse().unwrap());
-                [
-                    &[0x1b],
-                    &self.challenges[self.challenges.len() - 1 - later][..],
-                ]
-                .concat()
+            ["respond"] => {
+                let here = (self.challenges.iter()).rfind(|it| it.0 == self.addresses);
+                let challenge = here.or_else(|| self.challenges.last()).unwrap();
+                [&[0x1b], &challenge.1[..]].concat()
             }
             [name @ ("hello" | "flight"), ref range @ ..] => {
                 let data = if name == "hello" {
@@ -494,8 +493,17 @@ impl Raw {
 
     /// Has the peer send one packet for each byte, on a new stream.
     pub(crate) fn request_packets(&mut self, data: &str) {
+        self.request_packets_every(Duration::ZERO, data);
+    }
+
+    pub(crate) fn request_many_packets(&mut self, count: usize) {
+        self.request_packets_every(APART, &"a".repeat(count));
+    }
+
+    fn request_packets_every(&mut self, interval: Duration, data: &str) {
         let id = self.peer.open(Direction::Unidirectional);
         for byte in data.bytes() {
+            self.now = self.now + interval;
             self.peer.send(id, &[byte], false);
             self.process();
         }
@@ -646,12 +654,13 @@ impl Raw {
         if kind == Kind::Initial && (self.side.is_server() || is_eliciting) {
             assert!(packet.datagram.len() >= 1200);
         }
-        packet.frames = (frames.into_iter().map(|it| self.note(kind, it))).collect();
+        let note = |it| self.note(kind, packet.addresses, it);
+        packet.frames = frames.into_iter().map(note).collect();
         true
     }
 
     /// Returns the text, without what is random or of no consequence.
-    fn note(&mut self, kind: Kind, frame: wire::Decoded) -> String {
+    fn note(&mut self, kind: Kind, addresses: Addresses, frame: wire::Decoded) -> String {
         match (frame.name, &frame.integers[..], &frame.bytes[..]) {
             ("ack", [_, largest, ..], _) => assert!(*largest < self.next[kind.space()]),
             ("crypto", [at], [data]) => place(&mut self.crypto[kind.space()], *at, data),
@@ -667,7 +676,7 @@ impl Raw {
                 return frame.name.into();
             }
             ("path_challenge", _, [data]) => {
-                self.challenges.push(data.to_vec());
+                self.challenges.push((addresses, data.to_vec()));
                 return frame.name.into();
             }
             ("close", [code, 0], [reason]) | ("application_close", [code], [reason]) => {

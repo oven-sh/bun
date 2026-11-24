@@ -259,7 +259,7 @@ impl Connection {
         let Some(http3) = self.http3.as_mut().filter(|_| self.side.is_client()) else {
             return Ok(());
         };
-        if !is_request(first) || http3.peer_go_away.is_some_and(|it| it < first) {
+        if !is_request(first) {
             return Err(Error::http3(
                 http3_code::ID_ERROR,
                 "invalid ID in GOAWAY frame",

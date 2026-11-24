@@ -17,7 +17,7 @@ use crate::event::CloseReason;
 use crate::frame::Frame;
 use crate::packet::{
     FIXED_BIT, Invariants, KEY_PHASE, LONG_HEADER, LongHeader, LongKind, MIN_DATAGRAM_LEN,
-    MIN_RESET_LEN, Opened, SPIN_BIT, Sealed,
+    MIN_RESET_LEN, Opened, Sealed,
 };
 use crate::path::{Addresses, without_zone};
 use crate::stream_id::{Direction, Side};
@@ -66,7 +66,12 @@ impl Connection {
         } else if !self.accepts_from(from) {
             return;
         }
+        let tail = (datagram.last_chunk().copied()).filter(|_| len >= MIN_RESET_LEN);
         let result = self.receive_packets(now, from, datagram, len, shared);
+        if !matches!(result, Ok(true)) && tail.is_some_and(|it| self.is_reset(from, ResetToken(it)))
+        {
+            self.drain(CloseReason::StatelessReset);
+        }
         self.after_datagram(now, from, len, result, shared);
     }
 
@@ -355,10 +360,6 @@ impl Connection {
             self.postpone(packet);
             return Ok(false);
         };
-        let tail = packet
-            .last_chunk()
-            .copied()
-            .filter(|_| packet.len() >= MIN_RESET_LEN);
         let expected = space.received.expected;
         let opened =
             Sealed::new(packet, 1 + LocalId::LEN, &*keys.header, expected).and_then(|it| {
@@ -371,10 +372,6 @@ impl Connection {
                 Some((key.and_then(|key| it.open(key))?, generation))
             });
         let Some((packet, generation)) = opened else {
-            if tail.is_some_and(|tail| self.is_reset(from, ResetToken(tail))) {
-                self.drain(CloseReason::StatelessReset);
-                return Ok(false);
-            }
             return self.on_forgery();
         };
         let (space, version) = (&mut self.spaces.data, self.version);
@@ -388,10 +385,6 @@ impl Connection {
             (self.timers).set(Timer::KeyDiscard, now + self.settling_period());
         }
         let is_current_path = *from == self.path.addresses;
-        if is_current_path && packet.number >= expected && self.uses_spin_bit {
-            // RFC 9000 §17.4.
-            self.spin_bit = (packet.first & SPIN_BIT != 0) == self.side.is_server();
-        }
         let arrival = Arrival {
             now,
             from,

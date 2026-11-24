@@ -320,6 +320,7 @@ fn frame_headers_count_for_flow_control() {
     raw.peer.send_headers(0, "a=b");
     raw.connection().finish(FIRST);
     assert!((4231..4250).any(|limit| {
+        raw.advance(1);
         raw.send(&format!("max_stream_data 0 {limit}"));
         raw.frames().starts_with("fin 0 ")
     }));
@@ -347,7 +348,7 @@ fn is_blocked_when_there_is_no_room_for_a_frame() {
     let used = 5 + 5 + write(String::new()).0;
     for (name, used, frame) in [
         ("max_stream_data_bidi_local", used, "stream_data_blocked"),
-        ("max_data", used + 9 + 1 + 1, "data_blocked"),
+        ("max_data", used + 11 + 1 + 1, "data_blocked"),
     ] {
         let is_blocked = |left| {
             write(format!("{name}={}", used + left))
@@ -516,7 +517,7 @@ fn early_requests() {
         let settings = if changes {
             ""
         } else {
-            "settings 0x1=4096 0x7=100"
+            "settings 0x1=4096 0x7=100 0x21=0"
         };
         assert_eq!(raw.read_control(), settings);
     }
@@ -530,7 +531,7 @@ fn early_requests() {
     raw.accepts_early_data = true;
     raw.start(&ticket);
     raw.request(GET);
-    assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100");
+    assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100 0x21=0");
     assert_eq!(raw.read_http3(0), format!("headers {GET}"));
     raw.shake_hands();
     raw.confirm();

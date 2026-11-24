@@ -37,7 +37,7 @@ fn opens_the_control_and_qpack_streams() {
         let mut raw = Raw::http3(side).connected();
         let types = [2, 6, 10].map(|id| raw.streams[&(id | !side as u64)][0]);
         assert_eq!(types, [0, 3, 2]);
-        assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100");
+        assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100 0x21=0");
 
         let raw = Raw::http3(side).http3_config(|it| {
             it.advertises_max_field_section_size = true;
@@ -47,7 +47,7 @@ fn opens_the_control_and_qpack_streams() {
         let origin = [", origin abc", ""][side as usize];
         assert_eq!(
             raw.connected().read_control(),
-            format!("settings 0x6=1000 0x1=4096 0x7=100 0x8=1 0x33=1{origin}")
+            format!("settings 0x6=1000 0x1=4096 0x7=100 0x8=1 0x33=1 0x21=0{origin}")
         );
     }
 }
@@ -163,7 +163,7 @@ fn errors_on_the_control_stream() {
         (&[Server], "goaway 1", ID_ERROR),
         (&[Server], "goaway 2", ID_ERROR),
         (&[Server], "goaway 3", ID_ERROR),
-        (&[Server], "goaway 4, goaway 8", ID_ERROR),
+        (BOTH, "goaway 4, goaway 8", ID_ERROR),
     ] {
         for &side in sides {
             let mut raw = Raw::http3(side).connected_with("");

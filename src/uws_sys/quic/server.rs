@@ -352,18 +352,17 @@ unsafe extern "C" fn us_quic_socket_context_listen(
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let flags = flags & !crate::LIBUS_LISTEN_REUSE_ADDR;
     let bind = || server.engine.bind(server, host, port, flags);
-    let socket = bind().or_else(|| {
-        // and so does `stop()` on an idle server.
-        let now = now();
-        release_port(port, |it| {
-            let is_busy = |it: &bun_quic::Connection| {
-                (!it.has_sent_everything() && it.deserted_from() > now).then_some(())
-            };
-            let engine = it.owner.engine();
-            !engine.has_unsent() && engine.find_map(is_busy).is_none()
-        });
-        bind()
+    let (socket, now) = (bind(), now());
+    // and so does `stop()` on an idle server. If the port is shared, the old socket takes packets away.
+    release_port(port, |it| {
+        let is_busy = |it: &bun_quic::Connection| {
+            let is_done = it.has_sent_everything() && !(socket.is_some() && it.is_delivering());
+            (!is_done && it.deserted_from() > now).then_some(())
+        };
+        let engine = it.owner.engine();
+        !engine.has_unsent() && engine.find_map(is_busy).is_none()
     });
+    let socket = socket.or_else(bind);
     socket.map_or(core::ptr::null(), |it| Rc::as_ptr(&it))
 }
 

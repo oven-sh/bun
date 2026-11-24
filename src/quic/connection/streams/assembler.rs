@@ -78,9 +78,29 @@ impl Assembler {
         })
     }
 
-    /// Undoes [`Self::pop`].
-    pub(crate) fn put_back(&mut self, offset: u64, chunk: Vec<u8>) {
+    /// Undoes [`Self::pop`]. The first `used` bytes are not needed any more.
+    pub(crate) fn put_back(&mut self, mut offset: u64, mut chunk: Vec<u8>, used: usize) {
+        if used > chunk.len() / 2 {
+            (offset, chunk) = (offset + used as u64, chunk.split_off(used));
+        }
         self.held += chunk.len();
         self.chunks.insert(offset, chunk);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn used_part_of_a_chunk_is_dropped() {
+        let (mut assembler, mut read) = (Assembler::default(), 0);
+        for end in (0..100_000).step_by(1000) {
+            assert!(assembler.insert(end, &[0; 1000]).is_ok());
+            let (offset, chunk) = assembler.pop(read).unwrap_or_default();
+            read = end + 999;
+            assembler.put_back(offset, chunk, (read - offset) as usize);
+            assert_eq!(assembler.held, 1);
+        }
     }
 }

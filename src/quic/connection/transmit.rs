@@ -258,7 +258,7 @@ impl Connection {
         let packet = match kind {
             None => {
                 let flags = FIXED_BIT
-                    | if self.spin_bit { SPIN_BIT } else { 0 }
+                    | self.spin_bits.rotate_left(self.path.remote.sequence as u32) & SPIN_BIT
                     | if self.key_update.phase { KEY_PHASE } else { 0 };
                 Unsealed::short(out, flags, destination, number, len)
             }
@@ -476,6 +476,7 @@ impl Connection {
         }
         self.streams.write_owed_frames(out, end, sent);
         if has_datagrams {
+            self.congestion.hurry();
             if self.streams.state.has_urgent_frames() {
                 self.streams.write_stream_frames(out, end, sent);
             }
@@ -629,7 +630,6 @@ impl Connection {
     /// These packets are not sent again, and have no part in congestion control (RFC 9000 §8.2.1 and §9.4).
     #[cold]
     fn probe_paths(&mut self, now: Instant, batch: &mut Batch) {
-        self.probe_path(now, batch, true);
         let mut candidates = core::mem::take(&mut self.candidates);
         for path in &mut candidates {
             core::mem::swap(&mut self.path, path);
@@ -637,6 +637,8 @@ impl Connection {
             core::mem::swap(&mut self.path, path);
         }
         self.candidates = candidates;
+        // Last, as a queue that the paths share may only have room for one.
+        self.probe_path(now, batch, true);
         self.set_path_timer();
     }
 

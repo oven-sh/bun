@@ -1,7 +1,7 @@
 //! RFC 9221.
 
 use bun_quic::Direction::Unidirectional;
-use bun_quic::{Side, StreamId};
+use bun_quic::{Duration, Side, StreamId};
 
 use crate::harness::messages::GET;
 use crate::harness::raw::{RTT, Raw};
@@ -154,6 +154,17 @@ fn wait_for_congestion_control() {
     while raw.connection().drop_oldest_datagram().is_some() {}
     raw.advance(10);
     assert_eq!(raw.packets(), "");
+}
+
+#[test]
+fn do_not_wait_for_one_another() {
+    for mut raw in both() {
+        for id in 0..40 {
+            raw.now = raw.now + Duration::from_micros(100);
+            raw.connection().send_datagram(id, b"a".to_vec());
+            assert_eq!(raw.frames(), "datagram a");
+        }
+    }
 }
 
 /// RFC 9297 §2.1.1.

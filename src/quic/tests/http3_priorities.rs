@@ -73,7 +73,7 @@ fn updates_override_the_field() {
     }
     let urgencies = [0, 4, 8, 12, 16, 20].map(|id| urgency(&mut raw, id));
     assert_eq!(urgencies, [5, 7, 6, 2, 0, 1]);
-    assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100");
+    assert_eq!(raw.read_control(), "settings 0x1=4096 0x7=100 0x21=0");
 
     raw.peer.send_headers(0, OK);
     raw.connection().finish(StreamId(0));

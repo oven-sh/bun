@@ -9,7 +9,7 @@ use bun_quic::{Batch, Direction, Duration, Side};
 use crate::harness::keys::{V1, V2};
 use crate::harness::raw::Kind::{Handshake, Initial, Short};
 use crate::harness::raw::{Packet, RTT, Raw};
-use crate::harness::tls::{TICKET, Toy, message};
+use crate::harness::tls::{FINISHED, TICKET, Toy, message};
 use crate::harness::wire::show_hex;
 
 #[test]
@@ -553,6 +553,41 @@ fn tickets_and_tokens() {
         raw.send(&ticket);
         assert_eq!(raw.events(), events);
         assert_eq!(raw.connection().tls().is_some(), wants_tickets);
+    }
+}
+
+#[test]
+fn only_tickets_follow_the_handshake() {
+    let stream = [
+        message(TICKET, &[b"a"]),
+        message(TICKET, &[&[FINISHED; 9]]),
+        message(FINISHED, &[]),
+    ]
+    .concat();
+    let unexpected = Some((Transport, CRYPTO_ERROR + 10));
+    for (pieces, error) in [
+        (&[(0, 26)][..], unexpected),
+        (&[(0, 25)], None),
+        (&[(0, 7), (7, 22), (22, 26)], unexpected),
+        (&[(0, 12), (0, 5), (12, 26)], unexpected),
+        (&[(0, 12), (12, 22)], None),
+        (&[(22, 26), (0, 22)], None),
+        (&[(0, 9), (9, 26)], None),
+    ] {
+        let mut raw = Raw::server().connected();
+        for &(start, end) in pieces {
+            raw.send(&format!("crypto {start} {}", show_hex(&stream[start..end])));
+        }
+        assert_eq!(raw.error(), error, "{pieces:?}");
+    }
+    for (wants_tickets, pause) in [(false, 0), (true, 0), (true, 3000)] {
+        for (kind, error) in [(13, PROTOCOL_VIOLATION), (24, CRYPTO_ERROR + 10)] {
+            let raw = Raw::server().config(|it| it.wants_tickets = wants_tickets);
+            let mut raw = raw.connected();
+            raw.advance(pause);
+            raw.send(&format!("crypto 0 {}", show_hex(&message(kind, &[]))));
+            assert_eq!(raw.error(), Some((Transport, error)));
+        }
     }
 }
 

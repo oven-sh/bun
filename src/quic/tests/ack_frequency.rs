@@ -8,7 +8,7 @@ use bun_quic::transport_code::PROTOCOL_VIOLATION;
 
 use crate::harness::paths::NEW;
 use crate::harness::raw::Kind::{Handshake, Initial};
-use crate::harness::raw::{RTT, Raw};
+use crate::harness::raw::{APART, RTT, Raw};
 use crate::harness::wire::groups;
 
 #[test]
@@ -71,10 +71,12 @@ fn invalid_frequency() {
 fn acknowledge(raw: &mut Raw, packets: usize, round_trips: usize, rtt: u64) -> String {
     let mut frames = Vec::new();
     for _ in 0..round_trips {
-        raw.request_packets(&"a".repeat(packets));
-        raw.advance(rtt);
+        let start = raw.now;
+        raw.request_many_packets(packets);
+        raw.now = start + Duration::from_millis(rtt);
         let last = *raw.received[2].last().unwrap();
         for number in last + 1 - packets as u64..=last {
+            raw.now = raw.now + APART;
             raw.send(&format!("ack 0-{number}"));
             frames.push(raw.frames());
         }
@@ -107,8 +109,8 @@ fn asks_a_peer_that_can_be_asked() {
 fn aims_at_few_acknowledgments_in_a_round_trip() {
     let mut raw = Raw::client().with("min_ack_delay=1000").connected();
     for (packets, round_trips, tolerances) in [
-        (8, 22, "2 30 59 89 119 150"),
-        (1, 30, "148 146 144 141 138 135 132 129 126"),
+        (8, 22, "2 29 56 84 113 142 150"),
+        (1, 30, "148 146 144 142 140 137 134 131 128"),
     ] {
         let frames = acknowledge(&mut raw, packets, round_trips, RTT);
         let frames = groups(&frames);
@@ -119,19 +121,17 @@ fn aims_at_few_acknowledgments_in_a_round_trip() {
 
 #[test]
 fn starts_from_what_the_peer_does() {
-    for (sent, tolerance) in [(20, 2), (100, 50 - 13), (299, 149 - 13), (300, 75 - 13)] {
+    for (sent, tolerance) in [(20, 2), (100, 50 - 25), (299, 149 - 25), (300, 75 - 25)] {
         let mut raw = Raw::client().with("min_ack_delay=1000").connected();
-        let (id, end) = (
-            raw.peer.open(Unidirectional),
-            raw.now + Duration::from_millis(RTT),
-        );
+        raw.now = raw.now + APART * (300 - sent);
+        let id = raw.peer.open(Unidirectional);
         while raw.received[2].last() < Some(&(sent - 1)) {
-            raw.now = raw.now + Duration::from_micros(50);
+            raw.now = raw.now + APART;
             raw.peer.send(id, b"a", false);
             raw.forget();
         }
-        raw.now = end + Duration::from_millis(RTT);
-        raw.send("ack 0-1");
+        raw.now = raw.now + Duration::from_millis(RTT);
+        raw.send("ack");
         assert_eq!(raw.frames(), format!("ack_frequency 0 {tolerance} 25000 1"));
     }
 }
@@ -152,7 +152,7 @@ fn starts_over_on_another_network() {
     for (address, frames) in [("192.0.2.1:2000", ""), (NEW, "ack_frequency 3 2 25000 1")] {
         let mut raw = Raw::client().with("min_ack_delay=1000").connected();
         let asked = acknowledge(&mut raw, 8, 8, RTT);
-        assert!(asked.ends_with("ack_frequency 2 59 25000 1"));
+        assert!(asked.ends_with("ack_frequency 2 56 25000 1"));
         raw.move_to(address);
         raw.send_expanded("ack, ping");
         raw.forget();

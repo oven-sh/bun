@@ -493,9 +493,10 @@ impl Endpoint {
         let is_long = first & LONG_HEADER != 0;
         let routes = &self.shared.routes;
         let route = if is_long {
-            let id = Invariants::read(datagram)?.destination;
-            (LocalId::new(id).and_then(|id| routes.by_id.get(&id)))
-                .or_else(|| routes.by_initial_id.get(&ConnectionId::new(id)?))
+            let id = Invariants::read(datagram).map(|it| it.destination);
+            (id.and_then(LocalId::new)
+                .and_then(|id| routes.by_id.get(&id)))
+            .or_else(|| routes.by_initial_id.get(&ConnectionId::new(id?)?))
         } else {
             routes.by_id.get(&LocalId(*rest.first_chunk()?))
         };

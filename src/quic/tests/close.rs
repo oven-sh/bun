@@ -427,7 +427,7 @@ fn other_frames_do_not_take_the_room_of_the_notice_and_the_close() {
     raw.forget();
     raw.connection().go_away();
     raw.abort(Transport, 1, &[]);
-    assert_eq!(raw.frames(), "stream 3 9 #070104, close 0x1");
+    assert_eq!(raw.frames(), "stream 3 11 #070104, close 0x1");
 }
 
 #[test]
@@ -686,7 +686,9 @@ fn stateless_reset() {
         (false, 0x40, 21),
         (false, 0x7f, 43),
         (false, 0x40, 1200),
+        (false, 0xc0, 43),
         (false, 0xc0, 1200),
+        (true, 0x00, 43),
         (true, 0x40, 25),
         (true, 0x40, 43),
     ] {
@@ -701,6 +703,17 @@ fn stateless_reset() {
         raw.advance(1000);
         assert_eq!(raw.packets(), "");
     }
+}
+
+#[test]
+fn stateless_reset_with_a_long_header() {
+    let raw = Raw::server().with("stateless_reset_token=sixteen-bytes-xy");
+    let mut raw = raw.connected();
+    let header = raw.long_header(2);
+    raw.reset(&header, 60, b"sixteen-bytes-xz");
+    assert_eq!(raw.events(), "");
+    raw.reset(&header, 60, b"sixteen-bytes-xy");
+    assert_eq!(raw.events(), "closed: StatelessReset");
 }
 
 #[test]

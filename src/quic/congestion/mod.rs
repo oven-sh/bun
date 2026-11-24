@@ -284,6 +284,11 @@ impl Controller {
         }
     }
 
+    /// For a packet with DATAGRAM frames, which do not wait for one another (RFC 9221 §5).
+    pub(crate) fn hurry(&mut self) {
+        self.pacer.hurry();
+    }
+
     /// For when the loss of what has been sent so far has nothing to do with bursts.
     pub(crate) fn excuse_bursts(&mut self, now: Instant) {
         self.spread.start_period(now, self.last_sent);

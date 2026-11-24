@@ -19,6 +19,8 @@ mod setting {
     pub(super) const MAX_FIELD_SECTION_SIZE: u64 = 0x06;
     pub(super) const QPACK_BLOCKED_STREAMS: u64 = 0x07;
     pub(super) const ENABLE_CONNECT_PROTOCOL: u64 = 0x08;
+    /// RFC 9114 §7.2.4.1.
+    pub(super) const RESERVED: u64 = 0x21;
     pub(super) const H3_DATAGRAM: u64 = 0x33;
 }
 
@@ -43,6 +45,7 @@ pub(crate) struct ControlReader {
     is_skipping: bool,
     has_settings: bool,
     max_push_id: u64,
+    go_away: Option<u64>,
 }
 
 const MALFORMED: Error = Error::http3(http3_code::FRAME_ERROR, "malformed control frame");
@@ -136,7 +139,10 @@ impl ControlReader {
         }
         match kind {
             _ if !rest.is_empty() => Err(MALFORMED),
-            kind::GOAWAY => Ok(Some(ControlFrame::GoAway(StreamId(id)))),
+            kind::GOAWAY if self.go_away.replace(id).is_none_or(|last| id <= last) => {
+                Ok(Some(ControlFrame::GoAway(StreamId(id))))
+            }
+            kind::GOAWAY => Err(Error::http3(http3_code::ID_ERROR, "GOAWAY was raised")),
             kind::MAX_PUSH_ID if id >= self.max_push_id => {
                 self.max_push_id = id;
                 Ok(None)
@@ -197,6 +203,7 @@ pub(crate) fn write_settings(config: &Http3Config, out: &mut Vec<u8>) {
         ),
         (config.connect_protocol, setting::ENABLE_CONNECT_PROTOCOL, 1),
         (config.datagrams, setting::H3_DATAGRAM, 1),
+        (true, setting::RESERVED, 0),
     ] {
         if is_sent {
             payload.varint(id);

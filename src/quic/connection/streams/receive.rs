@@ -36,7 +36,7 @@ impl Stream {
     }
 
     pub(crate) fn put_back(&mut self, offset: u64, chunk: Vec<u8>) {
-        self.kept.put_back(offset, chunk);
+        (self.kept).put_back(offset, chunk, (self.read - offset) as usize);
     }
 
     #[inline]

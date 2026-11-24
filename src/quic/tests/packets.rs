@@ -1,7 +1,7 @@
 use bun_quic::Direction::Unidirectional;
 use bun_quic::{Algorithm, Duration};
 
-use crate::harness::paths::{NEW, OLD, new_id};
+use crate::harness::paths::new_id;
 use crate::harness::raw::Kind::{Handshake, Short};
 use crate::harness::raw::{RTT, Raw};
 
@@ -111,39 +111,30 @@ fn packets_are_long_enough_to_be_answered_with_a_reset() {
 
 /// RFC 9000 §17.4.
 #[test]
-fn spin_bit() {
-    for (random, of_server, of_client) in [
-        (16, [1, 0, 0, 1], [0, 1, 1, 0]),
-        (15, [0; 4], [0; 4]),
-        (8, [0; 4], [0; 4]),
-        (7, [1; 4], [1; 4]),
-    ] {
-        for (raw, expected) in Raw::both().into_iter().zip([of_server, of_client]) {
+fn spin_bit_does_not_spin() {
+    for (random, expected) in [(0xdf, 0), (0x20, 1)] {
+        for raw in Raw::both() {
             raw.peer.crypto.planned.borrow_mut().push(vec![random; 13]);
             let mut raw = raw.connected();
-            let spins = [(2, 1), (3, 0), (1, 1), (4, 1)].map(|(number, spin)| {
+            for (number, spin) in [(2, 1), (3, 0), (1, 1), (4, 1)] {
                 raw.flipped = spin << 5;
                 raw.send_as(number, "ping");
                 raw.connection().acknowledge();
-                raw.take()[0].first >> 5 & 1
-            });
-            assert_eq!(spins, expected);
+                assert_eq!(raw.take()[0].first >> 5 & 1, expected);
+            }
         }
     }
 }
 
 #[test]
-fn spin_bit_starts_over_with_another_id_or_path() {
-    for (address, frames) in [(OLD, new_id(1, 1)), (NEW, "respond".into())] {
-        let mut raw = Raw::client().connected();
-        raw.flipped = 1 << 5;
-        raw.send("ping");
-        raw.move_to(address);
-        raw.send_expanded("ping");
-        assert_eq!(raw.take()[0].first >> 5 & 1, 1);
-        raw.send(&format!("{frames}, ping"));
+fn spin_bit_is_drawn_for_each_id() {
+    for (random, expected) in [(0xef, 0), (0x10, 1)] {
+        let raw = Raw::client();
+        raw.peer.crypto.planned.borrow_mut().push(vec![random; 13]);
+        let mut raw = raw.connected();
+        raw.send(&format!("{}, ping", new_id(1, 1)));
         raw.connection().acknowledge();
-        assert_eq!(raw.take()[0].first >> 5 & 1, 0);
+        assert_eq!(raw.take()[0].first >> 5 & 1, expected);
     }
 }
 

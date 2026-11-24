@@ -65,7 +65,7 @@ fn validates_both_paths_when_a_client_moves() {
             raw.move_to(address);
             raw.send_expanded("ping");
             raw.peer.send(3, b"after", false);
-            let expected = format!("{OLD} 1[path_challenge]; 1[path_challenge, ack 0-1]");
+            let expected = format!("1[path_challenge, ack 0-1]; {OLD} 1[path_challenge]");
             assert_eq!(raw.packets(), expected);
             raw.send("respond");
             assert_eq!(raw.events(), format!("path {OLD} to {address}"));
@@ -75,10 +75,23 @@ fn validates_both_paths_when_a_client_moves() {
             assert_eq!(rtt.is_zero(), !is_same_network);
             raw.move_to(OLD);
             raw.send_expanded("ping");
-            let expected = format!("{address} 1[path_challenge]; 1[path_challenge, ack 0-3]");
+            let expected = format!("1[path_challenge, ack 0-3]; {address} 1[path_challenge]");
             assert_eq!(raw.packets(), expected);
         }
     }
+}
+
+#[test]
+fn asks_again_if_only_the_challenge_for_the_old_path_is_answered() {
+    let mut raw = Raw::client().connected();
+    raw.move_to(NEW);
+    raw.send_expanded("ping");
+    raw.forget();
+    raw.challenges.retain(|it| it.0 != raw.addresses);
+    raw.send("respond");
+    assert_eq!(raw.packets(), "1[path_challenge, ack 0-2]");
+    raw.send("respond");
+    assert_eq!(raw.events(), format!("path {OLD} to {NEW}"));
 }
 
 #[test]
@@ -115,7 +128,7 @@ fn stays_with_a_client_that_comes_back() {
     raw.peer.send(3, b"held", false);
     raw.forget();
     raw.move_to(OLD);
-    raw.send("respond 1, ping");
+    raw.send("respond, ping");
     assert_eq!(raw.packets(), "1[ack 0-2, stream 3 0 held]");
     assert_eq!(raw.events(), "");
 }
@@ -141,7 +154,7 @@ fn validates_an_address_from_which_only_an_id_has_come() {
     raw.send_as(3, "padding 5");
     assert_eq!(raw.packets(), "");
     raw.send_as(4, &format!("{}, padding 5", new_id(2, 0)));
-    let challenges = format!("{OLD} 1[path_challenge]; 1[path_challenge]");
+    let challenges = format!("1[path_challenge]; {OLD} 1[path_challenge]");
     assert_eq!(raw.packets(), challenges);
     raw.send_expanded("respond");
     assert_eq!(raw.events(), "");

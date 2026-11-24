@@ -7,6 +7,9 @@ use crate::time::{Duration, Instant};
 
 /// In packets.
 const BURST: u8 = 10;
+/// In bytes. What a packet counts as at least if the last one has only just taken all there was to send, so that what is
+/// written bit by bit gets time to gather.
+const MIN_CHARGE: u16 = 1200;
 const MAX_QUANTUM: u64 = 64 * 1024;
 const MICROS_PER_HALVING: u64 = 512;
 pub(super) const MAX_OVERFLOWS: u32 = 5;
@@ -79,6 +82,8 @@ pub(super) struct Pacer {
     steady: u64,
     /// Since the last packet.
     has_run_dry: bool,
+    /// The next packet is not to hold up those that follow.
+    is_urgent: bool,
     /// Nothing has been heard of what was sent since the flight was empty. The free burst may still be in the queue.
     is_restarting: bool,
     trial: Trial,
@@ -165,6 +170,10 @@ impl Pacer {
         self.has_run_dry = true;
     }
 
+    pub(super) fn hurry(&mut self) {
+        self.is_urgent = true;
+    }
+
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
         self.is_restarting = self.has_run_dry && !is_recovering;
@@ -187,10 +196,16 @@ impl Pacer {
     pub(super) fn on_sent(&mut self, now: Instant, len: u16) -> Place {
         let time = self.time_per_byte.saturating_mul(len.into());
         let pause = Duration::from_micros(time.saturating_mul(PAUSE) >> FRACTION_BITS);
-        let place = match now - self.last_sent_at > pause.min(MAX_PAUSE) {
+        let gap = now - self.last_sent_at;
+        let place = match gap > pause.min(MAX_PAUSE) {
             true if now >= self.left_at => Place::FirstAfterGap,
             true => Place::First,
             false => Place::Later,
+        };
+        let is_urgent = core::mem::take(&mut self.is_urgent);
+        let charge = match self.has_run_dry && gap <= MAX_PAUSE && !is_urgent {
+            true => len.max(MIN_CHARGE),
+            false => len,
         };
         (self.last_sent_at, self.has_run_dry) = (now, false);
         self.left_at =
@@ -199,7 +214,7 @@ impl Pacer {
             self.burst_tokens -= 1;
             return place;
         }
-        self.rest = self.rest.saturating_sub(len.into());
+        self.rest = self.rest.saturating_sub(charge.into());
         self.sent_since_overflow += u64::from(len);
         if self.sent_since_overflow > QUANTA_PER_OVERFLOW * self.max_quantum() {
             self.forget_overflow();
@@ -207,7 +222,8 @@ impl Pacer {
         if now > self.catch_up_until {
             self.next = self.next.max(now);
         }
-        let time = time.saturating_add(self.remainder);
+        let time =
+            (self.time_per_byte.saturating_mul(charge.into())).saturating_add(self.remainder);
         self.remainder = time % (1 << FRACTION_BITS);
         self.next = self.next + Duration::from_micros(time >> FRACTION_BITS);
         place

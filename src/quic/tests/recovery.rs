@@ -180,14 +180,38 @@ fn packets_out_of_order_count_for_the_window() {
 }
 
 #[test]
+fn small_writes_in_quick_succession_are_gathered() {
+    for algorithm in [Algorithm::Bbr, Algorithm::Cubic] {
+        let mut raw = (Raw::client().config(|it| it.congestion = algorithm)).connected();
+        let id = raw.peer.open(Unidirectional);
+        for (micros, range) in [(0, 11..25), (100, 11..40), (251, 40..41)] {
+            let before = raw.received[2].len();
+            for _ in 0..40 {
+                raw.now = raw.now + Duration::from_micros(micros);
+                raw.peer.send(id, &[0; 100], false);
+                raw.process();
+            }
+            raw.advance(RTT);
+            let packets = raw.received[2].len() - before;
+            assert!(range.contains(&packets), "{micros} {packets}");
+            raw.send("ack");
+        }
+        assert_eq!(raw.streams[&id].len(), 12_000);
+    }
+}
+
+#[test]
 fn packet_threshold_has_no_limit() {
     let mut raw = Raw::client().connected();
-    for (len, frames) in [(400, "stream 3 0 a"), (300, "")] {
+    for _ in 0..8 {
+        raw.request_packets("a");
+        raw.now = raw.now + Duration::from_secs(1);
+        raw.send("ack");
+    }
+    for (len, frames) in [(400, "stream 35 0 a"), (300, "")] {
         let late = raw.received[2].last().unwrap() + 1;
-        raw.request_packets(&"a".repeat(len / 2));
-        raw.advance(1);
-        raw.request_packets(&"a".repeat(len / 2));
-        raw.advance(RTT);
+        raw.request_many_packets(len);
+        raw.now = raw.now + Duration::from_secs(1);
         assert!(raw.received[2].contains(&(late + len as u64 - 1)));
         raw.received[2].remove(&late);
         raw.send("ack");
@@ -481,6 +505,27 @@ fn probes_repeat_the_oldest_packets() {
     );
     let stats = raw.connection().stats();
     assert_eq!((stats.packets_lost, stats.packets_retransmitted), (0, 4));
+}
+
+#[test]
+fn probes_of_a_server_get_round_to_what_the_window_holds_back() {
+    let of_server = ["stream 3 0 *1165", "stream 3 37376 *1150"];
+    let of_client = ["stream 2 0 *1165", "stream 2 1165 *1163"];
+    for (raw, expected) in Raw::both().into_iter().zip([of_server, of_client]) {
+        let raw = raw.config(|it| it.congestion = Algorithm::Cubic);
+        let mut raw = raw.connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &filler(0, 44_000), true);
+        raw.advance(RTT);
+        let last = raw.take().last().unwrap().number;
+        raw.send(&format!("ack {last}-{last}"));
+        raw.advance(RTT);
+        raw.forget();
+        raw.wait();
+        let packets = raw.take();
+        let last_frames = packets.iter().filter_map(|it| it.frames.last());
+        assert_eq!(last_frames.collect::<Vec<_>>(), expected);
+    }
 }
 
 #[test]

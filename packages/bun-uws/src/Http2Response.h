@@ -1,32 +1,15 @@
-#ifndef UWS_H2CONTEXT_H
-#define UWS_H2CONTEXT_H
+#ifndef UWS_H2RESPONSE_H
+#define UWS_H2RESPONSE_H
 
 // clang-format off
 
 /* What C++ sees of src/uws_sys/h2.rs. */
-
-#include "libusockets.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 namespace uWS {
-
-struct Http2Context {
-    us_socket_group_t group;
-    /* `s` is in `group`. `prefaceConsumed` bytes of the preface came before `data`. */
-    void (*onAdopt)(Http2Context *, us_socket_t *s, const char *data, int length, unsigned prefaceConsumed);
-    void (*closeAll)(Http2Context *);
-    size_t (*closeIdle)(Http2Context *, bool closeWhenIdle);
-};
-
-struct Http2SocketData {
-    void *connection;
-    /* Of the app that accepted it, whose filters count it until it closes. */
-    void *httpContextData;
-    bool filteredOpen, filteredAccept;
-};
 
 struct Http2Response;
 

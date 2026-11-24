@@ -1,7 +1,7 @@
 #ifndef UWS_H3RESPONSEDATA_H
 #define UWS_H3RESPONSEDATA_H
 
-#include "AsyncSocketData.h"
+#include "BackPressure.h"
 #include "quic.h"
 
 #include <wtf/Vector.h>
@@ -13,14 +13,12 @@ namespace uWS {
 struct Http3Response;
 
 struct Http3ResponseData {
-    /* Same callback signatures as HttpResponseData so the C ABI matches. */
     using OnWritableCallback = bool (*)(Http3Response *, uint64_t, void *);
     using OnAbortedCallback = void (*)(Http3Response *, void *);
     using OnTimeoutCallback = void (*)(Http3Response *, void *);
     using OnDataCallback = void (*)(Http3Response *, const char *, size_t, bool, void *);
 
-    /* Same bit values as HttpResponseData so uws_res_state() consumers
-     * (Zig's State enum) work unchanged. */
+    /* State in src/uws_sys/Response.rs. */
     enum : uint8_t {
         HTTP_STATUS_CALLED = 1,
         HTTP_WRITE_CALLED = 2,
@@ -38,7 +36,7 @@ struct Http3ResponseData {
      * QUIC always reports backpressure between HEADERS and DATA (lsquic
      * needs a process_conns() in between), and TCP tryEnd() does when the
      * peer stalls or aborts mid-stream. Keep the onWritable context
-     * pointer in its own slot, same as HttpResponseData<SSL>. */
+     * pointer in its own slot. */
     void *writableUserData = nullptr;
     void *socketData = nullptr;
     OnWritableCallback onWritable = nullptr;

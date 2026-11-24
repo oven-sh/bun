@@ -55,8 +55,7 @@ pub enum SocketKind {
     // ── Bun.spawn IPC over socketpair ─────────────────────────────────────
     SpawnIpc,
 
-    // ── Bun.serve / uWS — handlers live in C++; dispatch calls a thunk and
-    //    the thunk reads `group->ext` as the templated `HttpContext<SSL>*`.
+    // ── Bun.serve / uWS — dispatch goes through the vtable of the group ───
     UwsHttp,
     UwsHttpTls,
 
@@ -111,8 +110,6 @@ impl SocketKind {
 /// that silently rot if this enum is reordered.
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
-#[unsafe(no_mangle)]
-static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 /// Referenced from `openssl.cpp` so the new-session callback's per-SSL marker is

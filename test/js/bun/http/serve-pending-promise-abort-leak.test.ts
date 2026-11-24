@@ -92,7 +92,7 @@ test("resolve() inside abort handler is handled safely", async () => {
 test("streaming 413 detaches the response so a late resolve/reject is a no-op", async () => {
   // Run in a subprocess: without the fix this is a heap-use-after-free under
   // ASAN (render() corks a uWS socket that was freed when the 413 closed the
-  // connection — markDone() cleared onAborted so no abort ever detached
+  // connection — end_response() cleared onAborted so no abort ever detached
   // ctx.resp).
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-413-streaming-late-resolve-fixture.ts")],
@@ -617,7 +617,7 @@ test("async server.upgrade() frees the context while the handler promise stays p
 });
 
 test("413 on a chunked upload frees the context while the handler promise stays parked", async () => {
-  // The 413 path ends the request through end_without_body, and uWS markDone()
+  // The 413 path ends the request through end_without_body, and end_response()
   // clears onAborted, so on_abort can never run for this request. The held
   // resolve keeps the promise alive forever, so only the end path itself can
   // release the context.

@@ -777,7 +777,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             // The held request completes; its full response must reach the
             // client before the server closes the now-idle connection. A HEAD
             // response has no body, so its completion goes through the
-            // no-body end path rather than internalEnd.
+            // no-body end path rather than finish().
             release.resolve();
             const doneMark = mode === "inflightHead" ? "\\r\\n\\r\\n" : "\\r\\nok";
             while (!buf.includes(doneMark) && !events.includes("close")) await new Promise(r => setImmediate(r));
@@ -1065,9 +1065,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 
   test("in-flight Bun.file (sendfile) response completes across stop(), then its connection is closed", async () => {
-    // The sendfile completion path (uws_res_end_sendfile) bypasses internalEnd
+    // The sendfile completion path (end_send_file) bypasses finish()
     // and returns `false` to uWS's onWritable, so none of the parser-side
-    // shouldCloseConnection() gates run; the explicit gate after the stream's
+    // closes_after_response() gates run; the explicit gate after the stream's
     // on_complete is what closes the drained connection here.
     const dir = tempDirWithFiles("drain-sendfile", {});
     await using proc = Bun.spawn({
@@ -1142,8 +1142,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 
   test("a response completing inside another socket's parse window still closes its drained connection", async () => {
-    // internalEnd's post-uncork close gate must key on WHICH socket the
-    // parser is on, not the context-wide isParsingHttp bit: B's parked
+    // complete()'s post-uncork close gate must key on WHICH socket the
+    // parser is on, not a context-wide bit: B's parked
     // response below completes in the microtask drain inside A's onData
     // (A's body completion resolves it), and B gets no later gate of its
     // own. With the context-wide bit, B lingered until idleTimeout and
@@ -1371,9 +1371,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 
   test("pre-handshake TLS close does not steal another connection's count", async () => {
-    // For TLS, +1 fires in onHandshake, -1 in onClose. A socket that RSTs
-    // before the handshake reaches onClose without a matching +1; without the
-    // per-socket filteredOpen gate that -1 would steal the live handshaken
+    // A socket that RSTs before the handshake still reaches onClose. Without
+    // a matching +1, its -1 would steal the live handshaken
     // connection's count and leave it stuck after that connection closes, so
     // stop(false) would never resolve. The live connection holds a request
     // across stop() so the sweep cannot close it before the raw closes land.
@@ -1396,7 +1395,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             },
           });
           const port = server.port;
-          // One real TLS keep-alive connection: handshake completes, count=1.
+          // One real TLS keep-alive connection: count=1.
           const c = tls.connect({ port, host: "127.0.0.1", ca: serverTls.cert, rejectUnauthorized: false });
           let buf = "";
           const closed = Promise.withResolvers();
@@ -1410,7 +1409,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
           await inflight.promise;
           // Three raw TCP connects that close before the handshake. onClose
-          // fires for each; without filteredOpen, each -1 would steal c's
+          // fires for each; without a matching +1, each -1 would steal c's
           // count (and the rest would be swallowed by the prev==0 guard).
           for (let i = 0; i < 3; i++) {
             const raw = net.connect(port, "127.0.0.1");
@@ -1419,8 +1418,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
               raw.on("error", reject);
             });
             // One junk byte wakes Linux TCP_DEFER_ACCEPT so accept() runs
-            // (and so onClose does), while still not a valid ClientHello so
-            // onHandshake never fires +1.
+            // (and so onClose does), while still not a valid ClientHello.
             raw.write("\\x00");
             raw.destroy();
           }

@@ -1,11 +1,9 @@
-// HTTP/3 C ABI. Mirrors the uws_* surface in libuwsockets.cpp 1:1
-// (same parameter shapes, same callback signatures) so the caller can
-// pattern-match NewApp/NewResponse without protocol-specific branches.
-// Kept in its own TU so HTTP/1.1 and HTTP/3 stay file-level separable.
+// HTTP/3 C ABI.
 
 // clang-format off
 #include "_libusockets.h"
 #include "quic.h"
+#include <bun-usockets/src/internal/internal.h>
 
 #include <bun-uws/src/Http3App.h>
 #include <bun-uws/src/Http3Response.h>
@@ -37,10 +35,7 @@ typedef void (*uws_h3_listen_handler)(us_quic_listen_socket_t*, void*);
 
 uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, unsigned int idle_timeout_s, const void* routes)
 {
-    uWS::SocketContextOptions sco;
-    static_assert(sizeof(sco) == sizeof(options));
-    memcpy(&sco, &options, sizeof(sco));
-    return (uws_h3_app_t*)H3App::create(sco, idle_timeout_s, routes);
+    return (uws_h3_app_t*)H3App::create(options, idle_timeout_s, routes);
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
@@ -50,9 +45,7 @@ const void* uws_h3_app_routes(uws_h3_app_t* app) { return ((H3App*)app)->http3Co
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
 {
-    uWS::SocketContextOptions sco;
-    memcpy(&sco, &options, sizeof(sco));
-    return ((H3App*)app)->addServerNameWithOptions(hostname, sco);
+    return ((H3App*)app)->addServerNameWithOptions(hostname, options);
 }
 
 void uws_h3_app_listen_with_config(uws_h3_app_t* app, const char* host, uint16_t port,

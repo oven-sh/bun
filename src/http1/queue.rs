@@ -4,30 +4,30 @@ const SPARE_CAPACITY: usize = 12;
 
 /// Bytes that leave from the front without moving the others.
 #[derive(Default)]
-pub(super) struct Queue {
+pub struct Queue {
     bytes: Vec<u8>,
     head: usize,
 }
 
 impl Queue {
-    pub(super) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.bytes.len() - self.head
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub(super) fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         self.bytes.capacity()
     }
 
-    pub(super) fn as_slice(&self) -> &[u8] {
+    pub fn as_slice(&self) -> &[u8] {
         self.bytes.get(self.head..).unwrap_or_default()
     }
 
     /// Returns what to append to.
-    pub(super) fn reserve(&mut self, additional: usize) -> &mut Vec<u8> {
+    pub fn reserve(&mut self, additional: usize) -> &mut Vec<u8> {
         if additional > self.bytes.capacity() - self.bytes.len() {
             self.make_room(additional);
         }
@@ -41,19 +41,23 @@ impl Queue {
             self.bytes.drain(..self.head);
         } else {
             let capacity = (needed + SPARE_CAPACITY).max(self.capacity() * 2);
-            let mut bytes = Vec::with_capacity(capacity.max(MIN_CAPACITY));
+            let capacity = capacity.max(MIN_CAPACITY);
+            if self.head == 0 {
+                return self.bytes.reserve_exact(capacity - self.bytes.len());
+            }
+            let mut bytes = Vec::with_capacity(capacity);
             bytes.extend_from_slice(self.as_slice());
             self.bytes = bytes;
         }
         self.head = 0;
     }
 
-    pub(super) fn append(&mut self, bytes: &[u8]) {
+    pub fn append(&mut self, bytes: &[u8]) {
         self.reserve(bytes.len()).extend_from_slice(bytes);
     }
 
     /// Keeps the allocation.
-    pub(super) fn consume(&mut self, len: usize) {
+    pub fn consume(&mut self, len: usize) {
         self.head += len;
         if self.is_empty() {
             self.bytes.clear();
@@ -62,7 +66,7 @@ impl Queue {
     }
 
     /// Frees the allocation with the last byte.
-    pub(super) fn erase(&mut self, len: usize) {
+    pub fn erase(&mut self, len: usize) {
         self.head += len;
         if self.is_empty() {
             *self = Self::default();

@@ -14,7 +14,7 @@ use crate::byte_sets::{
     RELAXED_CONTENT, TOKEN, UPPERCASE_METHOD, VISIBLE,
 };
 
-/// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpParser.h.
+/// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpRequest.h.
 pub(super) const MAX_FIELDS: usize = 198;
 const MAX_TRAILER_FIELDS: usize = 199;
 pub(super) const BLANKS: &[u8] = b" \t";

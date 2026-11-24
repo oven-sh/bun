@@ -1209,7 +1209,7 @@ where
 
     /// `end_stream()` for a response the sink already ended
     /// (`HTTPServerWritable::ended_response`), where `resp` must no longer be
-    /// dereferenced. `markDone()` already did what `detach_response()` would.
+    /// dereferenced. The end already did what `detach_response()` would.
     ///
     /// HTTP/1 arrives from the stream's resolve/reject reaction, by then
     /// uSockets may have freed or recycled the socket. HTTP/2 and HTTP/3
@@ -1235,7 +1235,7 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
             let _base_ref = self.detach_response();
-            // uWS markDone() clears onAborted on end, so on_abort can never
+            // uWS clears onAborted on end, so on_abort can never
             // run for this request; this is the last chance to reclaim an
             // outstanding claim (e.g. a 413 while the handler promise parks).
             self.reclaim_promise_cell();
@@ -1244,7 +1244,7 @@ where
             // This end can run uncorked (e.g. render_production_error from a
             // rejection microtask), where no cork or parser gate runs the
             // close check for Connection: close or a graceful-stop mark. The
-            // shim no-ops when the socket is corked (the cork wrapper's own
+            // call no-ops when the socket is corked (the cork wrapper's own
             // gate runs later) or already closed.
             resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
@@ -1284,7 +1284,7 @@ where
             resp.write_status(b"413 Payload Too Large");
         }
         // The normal end path detaches `self.resp` and releases the base ref. uWS
-        // markDone() clears onAborted, so no abort would ever do either.
+        // clears onAborted on end, so no abort would ever do either.
         self.end_without_body(!MUX);
         self.unpipe();
     }

@@ -8,9 +8,9 @@ use bun_http_types::h2::{
     CLIENT_PREFACE, DEFAULT_MAX_FRAME_SIZE, DEFAULT_WINDOW_SIZE, ErrorCode, FrameHeader, FrameType,
     MAX_STREAM_ID, MAX_WINDOW_SIZE, SettingsType,
 };
+use bun_http1::queue::Queue;
 
 use super::output::{ACK, END_HEADERS, END_STREAM, Output, RecentStreams};
-use super::queue::Queue;
 use super::request::DecodeBuffer;
 use super::stream::{DEFAULT_TIMEOUT, Stream};
 use super::{

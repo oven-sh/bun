@@ -18,7 +18,7 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 // WTF::StringImpl is allocated via bmalloc, which is not ASAN-instrumented by
 // default. On Linux, `Malloc=1` makes bmalloc route through the system allocator
 // so ASAN observes the free and flags the use-after-free in
-// uWS::HttpResponse::upgrade(). We only do this on Linux: on Windows the
+// upgrade(). We only do this on Linux: on Windows the
 // bmalloc system-heap path crashes (SIGILL on aarch64), and with WTF allocations
 // going through system malloc LeakSanitizer starts reporting pre-existing
 // process-lifetime WebKit singletons, so we also disable LSan for the subprocess.

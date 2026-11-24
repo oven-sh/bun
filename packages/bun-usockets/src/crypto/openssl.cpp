@@ -2794,7 +2794,7 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
 
 /* Ciphertext bytes already sealed for `s` and counted as written by
  * us_internal_ssl_write, still waiting on a writable event to reach the
- * kernel. uWS's AsyncSocket::hasFullyDrained() checks this so the HTTP
+ * kernel. AsyncSocket::has_fully_drained() checks this so the HTTP
  * close-after-drain gates do not fire while the last batch is still in
  * userspace. */
 unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
@@ -3383,18 +3383,6 @@ void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
 
   SSL_CTX_up_ref(ctx);
   names->tree->add(hostname_pattern, us_ssl_ctx_ptr{ctx});
-}
-
-/* Returns the SSL_CTX registered for `hostname_pattern` via
- * us_listen_socket_add_server_name, or NULL. Owned - the caller must release
- * the reference. The on_server_name resolvers return owned references (the
- * SNI dispatcher frees them after SSL_set_SSL_CTX takes its own), so the
- * tree's reference must not be handed out as a borrow. */
-struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
-                                                         const char *hostname_pattern) {
-  SSL_CTX *ctx = us_server_names_find(ls->server_names, hostname_pattern);
-  if (ctx) SSL_CTX_up_ref(ctx);
-  return ctx;
 }
 
 void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,

@@ -26,7 +26,7 @@ extern "C" fn Bun__outOfMemory() -> ! {
     bun_core::out_of_memory()
 }
 
-/// Called by `uWS::Loop::create` when it can't create a thread's event loop.
+/// Called by `uws_get_loop` when it can't create a thread's event loop.
 /// Running out of file descriptors isn't a bug in Bun, so print an error instead of a crash report.
 #[cfg(unix)]
 #[unsafe(no_mangle)]

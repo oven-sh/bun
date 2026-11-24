@@ -15,6 +15,7 @@ pub mod byte_sets;
 mod chunked;
 mod error;
 pub mod message;
+pub mod queue;
 pub mod request;
 mod response;
 

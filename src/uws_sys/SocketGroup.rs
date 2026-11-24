@@ -97,6 +97,14 @@ pub enum ConnectResult {
     Failed,
 }
 
+/// None may close under the iteration.
+pub(crate) fn list_of_sockets(head: *mut us_socket_t) -> impl Iterator<Item = *mut us_socket_t> {
+    let some = |socket: *mut us_socket_t| (!socket.is_null()).then_some(socket);
+    core::iter::successors(some(head), move |&socket| {
+        some(uws_socket_next(us_socket_t::opaque_mut(socket)))
+    })
+}
+
 impl SocketGroup {
     /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
     /// recovers inside handlers — pass the embedding struct so dispatch can
@@ -125,12 +133,8 @@ impl SocketGroup {
         self.loop_.set(ptr::null_mut());
     }
 
-    /// None may close under the iteration.
     pub(crate) fn sockets(&self) -> impl Iterator<Item = *mut us_socket_t> {
-        let some = |socket: *mut us_socket_t| (!socket.is_null()).then_some(socket);
-        core::iter::successors(some(self.head_sockets.get()), move |&socket| {
-            some(uws_socket_next(us_socket_t::opaque_mut(socket)))
-        })
+        list_of_sockets(self.head_sockets.get())
     }
 
     pub fn close_all(&self) {

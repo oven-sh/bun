@@ -32,11 +32,6 @@ struct us_socket_t;
 void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue, bool adopted);
 }
 
-namespace uWS {
-template<bool SSL, bool IsNodeHttp>
-struct HttpResponseData;
-}
-
 namespace Bun {
 
 using Bindgen::Generated::JSNodeHTTPResponse;
@@ -79,9 +74,6 @@ public:
     {
         static_cast<JSNodeHTTPServerSocket*>(cell)->JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket();
     }
-
-    template<bool SSL>
-    static void clearSocketData(bool upgraded, us_socket_t* socket);
 
     void close();
     bool isClosed() const;
@@ -135,7 +127,7 @@ public:
 
     /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();
-    /* Closes the connection if uWS counts it as idle (HttpResponse::closeIfIdle). Returns whether it closed it. */
+    /* Closes the connection if uWS counts it as idle. Returns whether it closed it. */
     bool closeIfIdle();
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
@@ -149,7 +141,7 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. */
     void updateTunnelIdle();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;

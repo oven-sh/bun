@@ -6,10 +6,10 @@ use std::rc::Rc;
 use bun_core::fmt::{ItoaBuf, itoa};
 use bun_hpack::Indexing;
 use bun_http_types::h2::{ErrorCode, FrameType};
+use bun_http1::queue::Queue;
 
 use super::connection::{Connection, Pin};
 use super::output::{END_STREAM, Fields};
-use super::queue::Queue;
 use super::{Host, INITIAL_STREAM_WINDOW, WIDE_STREAM_WINDOW};
 
 bitflags::bitflags! {

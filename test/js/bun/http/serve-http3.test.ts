@@ -1791,7 +1791,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
 describe("Bun.serve HTTP/3 production", () => {
   // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
-  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  // H1 writes it via write_mark(); H3 must too.
   test("Date header is sent on every response shape", async () => {
     await withServer(async port => {
       // Cover every Http3Response header-send path: internalEnd (string/buffer
@@ -1867,7 +1867,7 @@ describe("Bun.serve HTTP/3 production", () => {
   });
 
   // Expect: 100-continue is answered before the handler runs for both
-  // transports (src/uws_sys/http1.rs, h3.rs); a
+  // transports (src/uws_sys/http1/mod.rs, h3.rs); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
 

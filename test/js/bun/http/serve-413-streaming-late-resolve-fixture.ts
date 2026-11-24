@@ -3,7 +3,7 @@ import { connect } from "node:net";
 // A chunked (no Content-Length) POST that exceeds maxRequestBodySize hits the
 // streaming 413 in onBufferedBodyChunk, not the up-front server.zig check.
 // That path previously wrote the 413 directly on the raw uWS response without
-// detaching ctx.resp or releasing the base ref — uWS markDone() nulls
+// detaching ctx.resp or releasing the base ref — end_response() nulls
 // onAborted, so when the socket closed no abort fired. If the fetch handler's
 // Promise then settled, handleResolve()/handleReject() dereferenced the
 // already-freed response (heap-use-after-free under ASAN) and the

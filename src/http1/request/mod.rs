@@ -29,7 +29,7 @@ pub fn is_path_for(method: &[u8], path: &[u8]) -> bool {
     }
 }
 
-#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RequestOptions {
     /// 0 if it is not set.
     pub max_header_size: u64,
@@ -81,8 +81,6 @@ enum Body {
     Failed(RequestError),
 }
 
-/// packages/bun-uws/src/HttpParser.h mirrors the public fields and the size.
-#[repr(C)]
 pub struct RequestParser {
     /// A request was the last one, or a response of `Bun.serve()` closed the connection.
     pub is_closing: bool,
@@ -121,6 +119,12 @@ impl RequestParser {
 
     pub fn has_incomplete_body(&self) -> bool {
         !matches!(self.body, Body::None | Body::AfterTrailers)
+    }
+
+    /// Frees the buffers.
+    pub fn release(&mut self) {
+        self.partial_head = Vec::new();
+        self.trailers = Vec::new();
     }
 
     /// The trailer section of the current request, with the empty line that ends it.

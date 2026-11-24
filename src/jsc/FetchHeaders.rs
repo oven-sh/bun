@@ -74,7 +74,6 @@ unsafe extern "C" {
     );
     safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
         arg0: &mut FetchHeaders,
-        ssl: bool,
         arg1: *mut c_void,
     );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
@@ -147,8 +146,8 @@ impl FetchHeaders {
     }
 
     /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
-    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
-        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
+    pub fn to_uws_response_for_websocket_upgrade(&mut self, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, uws_response)
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {

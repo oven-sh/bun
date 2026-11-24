@@ -14,7 +14,7 @@ import {
   type FeatureName,
 } from "../../../scripts/build/trim/features.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
-import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
+import type { BuiltinEntry, CxxFunctionPattern } from "../../../scripts/build/trim/types.ts";
 import { rustSource as removableFeaturesRustSource } from "../../../src/codegen/generate-removable-features.ts";
 import { run as runCommand } from "../../aot/harness/run";
 
@@ -606,15 +606,23 @@ export interface LinkInputs {
 
 export function writeLinkInputs(
   folder: string,
-  options?: { minimums?: Record<FeatureName, number>; builtins?: BuiltinEntry[] },
+  options?: {
+    minimums?: Record<FeatureName, number>;
+    builtins?: BuiltinEntry[];
+    cxxFunctions?: Record<FeatureName, CxxFunctionPattern[]>;
+  },
 ): LinkInputs {
   const features = join(folder, "features.json");
   const builtinUses = join(folder, "builtin-uses.json");
-  const withMinimums = model.features.map(feature => {
+  const withOptions = model.features.map(feature => {
     const minimum = options?.minimums?.[feature.name];
-    return { ...feature, minimumBytes: minimum === undefined ? {} : { elf: minimum, macho: minimum, coff: minimum } };
+    return {
+      ...feature,
+      minimumBytes: minimum === undefined ? {} : { elf: minimum, macho: minimum, coff: minimum },
+      cxxFunctions: options?.cxxFunctions?.[feature.name] ?? feature.cxxFunctions,
+    };
   });
-  writeFileSync(features, serializeFeatureModel({ ...model, features: withMinimums }));
+  writeFileSync(features, serializeFeatureModel({ ...model, features: withOptions }));
   writeFileSync(builtinUses, serializeBuiltinUses({ entries: options?.builtins ?? toyBuiltins }));
   return { features, builtinUses };
 }

@@ -108,6 +108,11 @@ impl InternalLoopData {
         self.parent_ptr.set(ptr);
     }
 
+    /// Their groups do not list them.
+    pub(crate) fn low_priority_sockets(&self) -> impl Iterator<Item = *mut us_socket_t> {
+        crate::socket_group::list_of_sockets(self.low_prio_head.get())
+    }
+
     /// For a handler that may run outside of a tick. It can close sockets, then tick the loop.
     pub(crate) fn keeping_closed_sockets<R>(&self, f: impl FnOnce() -> R) -> R {
         self.tick_depth.update(|depth| depth + 1);

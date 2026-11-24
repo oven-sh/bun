@@ -229,7 +229,7 @@ impl FileResponseStream {
         if use_sendfile {
             this_ref.sendfile.set(Sendfile {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                socket_fd: opts.resp.get_native_handle(),
+                socket_fd: opts.resp.get_fd(),
                 offset: opts.offset,
                 remain: opts.length.expect("can_sendfile gates None"),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -475,8 +475,7 @@ impl FileResponseStream {
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
         self.deliver(resp, StreamEnd::Complete);
-        // `end_send_file` bypasses every shouldCloseConnection() gate: it does
-        // not go through internalEnd, and the onWritable gate is skipped
+        // `end_send_file` does not close, and the onWritable gate is skipped
         // because this frame returns `false` to it. Run the gate here — after
         // `on_complete`, which must see a live socket — so Connection: close
         // and the graceful-stop close-when-idle mark actually close.
@@ -489,9 +488,7 @@ impl FileResponseStream {
         // passing `resp` to `on_complete` after the end sound). It is still
         // *this* HTTP socket: an upgrade (us_socket_adopt) is only reachable
         // from a live in-flight request, and this one just completed. And if
-        // anything in the frame closed it, the shim's leading
-        // us_socket_is_closed check returns before touching the destructed
-        // ext. Only `finish()` runs after this, and it never touches `resp`.
+        // anything in the frame closed it, this does nothing. `finish()` never touches `resp`.
         resp.close_if_done_and_marked();
         self.finish();
     }

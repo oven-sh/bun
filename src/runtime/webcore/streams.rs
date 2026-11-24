@@ -1761,7 +1761,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
             // When the sink already ended the response through uWS
             // (`res.end()`/`try_end` drained, which wrote the terminating
-            // chunk and `markDone()`d the response), `end_stream()` would
+            // chunk), `end_stream()` would
             // write a second `0\r\n\r\n` that corrupts the next response on a
             // keep-alive connection.
             if !self.ended_response {

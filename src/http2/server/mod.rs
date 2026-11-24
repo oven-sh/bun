@@ -2,7 +2,6 @@
 
 mod connection;
 mod output;
-mod queue;
 mod request;
 mod stream;
 
@@ -11,13 +10,13 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use bun_http_types::Method::Method;
+use bun_http1::queue::Queue;
 
 pub use connection::Connection;
 pub use stream::{OnData, OnEvent, OnWritable, State, Stream};
 
 use connection::Pin;
 use output::Fields;
-use queue::Queue;
 use request::DecodeBuffer;
 
 const MAX_FRAME_SIZE: u32 = 16384;

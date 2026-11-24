@@ -3,7 +3,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Structure.h>
-#include <bun-uws/src/HttpParser.h>
+#include <bun-uws/src/HttpRequest.h>
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
 #include "decodeURIComponentSIMD.h"

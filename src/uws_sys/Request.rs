@@ -125,7 +125,7 @@ bun_opaque::opaque_ffi! {
 
 impl Request {
     fn routed(&self) -> &Routed<'_, &bun_http1::request::Request<'_>> {
-        // SAFETY: http1.rs lent it to the handler that has `self` on its stack.
+        // SAFETY: `http1::Routes::dispatch` lent it to the handler that has `self` on its stack.
         unsafe { &*self.as_mut_ptr().cast() }
     }
     /// The next route gets it.

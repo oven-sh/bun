@@ -51,24 +51,6 @@ namespace utils {
  * buffers u64toa and std::to_chars write into; neither appends a terminator. */
 static constexpr size_t U64_MAX_DIGITS = std::numeric_limits<uint64_t>::digits10 + 1;
 
-inline int u32toaHex(uint32_t value, char *dst) {
-    char palette[] = "0123456789abcdef";
-    char temp[10];
-    char *p = temp;
-    do {
-        *p++ = palette[value % 16];
-        value /= 16;
-    } while (value > 0);
-
-    int ret = (int) (p - temp);
-
-    do {
-        *dst++ = *--p;
-    } while (p != temp);
-
-    return ret;
-}
-
 inline int u64toa(uint64_t value, char *dst) {
     char temp[U64_MAX_DIGITS];
     char *p = temp;

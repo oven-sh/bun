@@ -3,14 +3,14 @@
 
 use core::any::Any;
 use core::cell::{Cell, OnceCell};
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use bun_core::scoped::ScopedFlag as _;
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
-use bun_uws_sys::app::c as uws_app_c;
+use bun_uws_sys::app::ConnectionChange;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::{AsCtxPtr, OptionCellExt as _};
@@ -483,24 +483,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
-    /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
-    /// `HttpContext::onClose` / `HttpResponse::destroyForUpgrade()` — see
-    /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
-    extern "C" fn on_connection_filter(
-        _socket: *mut uws_sys::us_socket_t,
-        opened: i32,
-        user_data: *mut c_void,
-    ) {
+    /// Feeds [`Self::active_connection_count`].
+    fn on_connection_change(user_data: *mut c_void, change: ConnectionChange) {
         // SAFETY: `user_data` is the `*mut Self` registered in `listen()`; the server outlives every socket in its app.
         let this = unsafe { &*user_data.cast::<Self>() };
-        // Count from accept (2 / -2), not from open (1 / -1): a TLS socket still handshaking will dispatch once that completes.
-        match opened {
-            2 => {
+        match change {
+            ConnectionChange::Accepted => {
                 this.note_connection_opened();
                 return;
             }
-            3 => {
+            ConnectionChange::TunnelBusy => {
                 this.note_tunnel_idle(false);
                 // With a listener open, the loop ref is the user's to drop (`server.unref()`).
                 if !this.has_listener() {
@@ -508,13 +500,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 return;
             }
-            -3 => this.note_tunnel_idle(true),
-            -4 => {
+            ConnectionChange::TunnelIdle => this.note_tunnel_idle(true),
+            ConnectionChange::IdleTunnelGone => {
                 this.note_tunnel_idle(false);
                 this.note_connection_closed();
             }
-            -2 => this.note_connection_closed(),
-            _ => return,
+            ConnectionChange::Gone => this.note_connection_closed(),
         }
         if !this.has_loop_holding_connections() && !this.has_listener() {
             this.deinit_if_we_can();
@@ -1126,7 +1117,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Invoke the JS-side
-    /// `node:http` request handler (`NodeHTTPServer__onRequest_{http,https}`),
+    /// `node:http` request handler (`NodeHTTPServer__onRequest`),
     /// then drive the returned promise / [`NodeHTTPResponse`] through the
     /// completion / abort / error paths.
     pub(crate) fn on_node_http_request(
@@ -1184,20 +1175,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let mut node_http_response = None;
 
-        let on_request_ffi = if SSL {
-            ffi::NodeHTTPServer__onRequest_https
-        } else {
-            ffi::NodeHTTPServer__onRequest_http
-        };
         let result: JSValue = bun_jsc::host_fn::from_js_host_call(global, || {
-            on_request_ffi(
+            ffi::NodeHTTPServer__onRequest(
                 any_server_packed,
                 global,
                 this_object,
                 callback,
                 method_string,
                 req,
-                std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
+                SSL,
+                resp,
                 &mut node_http_response,
             )
         })
@@ -1408,7 +1395,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
         debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
             count + 1
@@ -1599,7 +1585,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Close idle keep-alive connections now and mark busy ones to
             // close once their in-flight work completes; open websockets are
             // untouched and drain on their own. Each close reaches
-            // `on_connection_filter(-2)` synchronously, so hold the guard so
+            // `on_connection_change` synchronously, so hold the guard so
             // that path cannot run the idle pass under this frame —
             // `stop()` runs `deinit_if_we_can` right after this returns.
             //
@@ -1850,7 +1836,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub(crate) fn set_using_custom_expect_handler(&self, value: bool) {
         if let Some(app) = self.app() {
-            ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app.cast::<c_void>(), value);
+            bun_opaque::opaque_deref_mut(app).set_using_custom_expect_handler(value);
         }
     }
 
@@ -2314,11 +2300,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // Idempotent, so re-running set_routes on reload() is fine.
-        if self.config.get().is_node_http_server {
-            ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
-        }
-
         route_list_value
     }
 
@@ -2560,38 +2541,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
+        bun_opaque::opaque_deref_mut(app)
+            .on_connection_change(Self::on_connection_change, this.cast::<c_void>());
 
         if this_ref.config.get().is_node_http_server {
+            bun_opaque::opaque_deref_mut(app).enable_node_http();
             this_ref.set_using_custom_expect_handler(true);
         }
 
         // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
         // points into it, so it has to outlive the listen calls below.
         let mut stripped_hostname: Option<bun_core::ZBox> = None;
-        // `host` and the path reference `config.address`'s backing storage,
-        // which the trampolines never touch (they only write `listener`/
-        // `h3_listener`), so the bytes remain valid through the listen calls.
         enum Addr<'a> {
-            Tcp { port: u16, host: *const c_char },
+            Tcp {
+                port: u16,
+                host: Option<&'a bun_core::ZStr>,
+            },
             Unix(&'a bun_core::ZStr),
         }
         let (addr, tcp, options) = {
             let cfg = this_ref.config.get();
             let addr = match &cfg.address {
                 server_config::Address::Tcp { port, hostname } => {
-                    let mut host: *const c_char = core::ptr::null();
-                    if let Some(existing) = hostname.as_deref() {
+                    let host = hostname.as_ref().map(|existing| {
                         let bytes = existing.as_bytes();
                         let bare = bun_core::ip_address::strip_ipv6_brackets(bytes);
-                        host = if bare.len() == bytes.len() {
-                            existing.as_ptr()
+                        if bare.len() == bytes.len() {
+                            existing.as_zstr()
                         } else {
-                            stripped_hostname
-                                .insert(bun_core::ZBox::from_bytes(bare))
-                                .as_ptr()
-                        };
-                    }
+                            (stripped_hostname.insert(bun_core::ZBox::from_bytes(bare))).as_zstr()
+                        }
+                    });
                     Addr::Tcp { port: *port, host }
                 }
                 server_config::Address::Unix(unix) => Addr::Unix(unix.as_zstr()),
@@ -2612,18 +2592,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut refused_ports = Vec::new();
                 loop {
                     if tcp {
-                        // SAFETY: app is a live uws handle owned by this server.
-                        unsafe {
-                            (*app).listen_with_config(
-                                Some(trampoline::on_listen::<SSL, DEBUG>),
-                                this.cast::<c_void>(),
-                                uws_app_c::uws_app_listen_config_t {
-                                    port: port as c_int,
-                                    host,
-                                    options,
-                                },
-                            );
-                        }
+                        let app = bun_opaque::opaque_deref_mut(app);
+                        this_ref.on_listen(app.listen(host, port, options));
                     }
 
                     if Self::HAS_H3 {
@@ -2645,7 +2615,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 },
                                 &uws_sys::h3::ListenConfig {
                                     port: h3_port,
-                                    host,
+                                    host: host.map_or(core::ptr::null(), bun_core::ZStr::as_ptr),
                                     options,
                                 },
                             );
@@ -2684,15 +2654,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         bun_core::warn!("http3: true with a unix socket — HTTP/3 listener skipped");
                     }
                 }
-                // SAFETY: app is a live uws handle owned by this server.
-                unsafe {
-                    (*app).listen_on_unix_socket(
-                        trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this.cast::<c_void>(),
-                        path,
-                        options,
-                    );
-                }
+                let app = bun_opaque::opaque_deref_mut(app);
+                this_ref.on_listen(app.listen_on_unix_socket(path, options));
             }
         }
 
@@ -2877,26 +2840,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // the bodies downcast `user_data` and forward into the typed method.
 mod trampoline {
     use super::*;
-    use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
-
-    pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
-        // SAFETY: the server is stopped, which drops this, within the tick that closes its group.
-        server.on_listen(unsafe { uws_sys::app::OwnedListenSocket::from_raw(socket) });
-    }
-
-    pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        _domain: *const c_char,
-        _flags: i32,
-        user_data: *mut c_void,
-    ) {
-        on_listen::<SSL, DEBUG>(socket, user_data);
-    }
+    use bun_uws_sys::{Request as UwsRequest, uws_res};
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
@@ -3033,43 +2977,23 @@ mod ffi {
     // has Rust-layout fields (Vec, Cell, …); irrelevant for an opaque handle.
     #[allow(improper_ctypes)]
     unsafe extern "C" {
-        // `app` is the opaque `uws::App<SSL>*`; C++ only flips a flag / assigns a
-        // handler. Callers pass the live `self.app` handle, so no precondition.
-        pub(super) safe fn NodeHTTP_setUsingCustomExpectHandler(
-            ssl: bool,
-            app: *mut c_void,
-            value: bool,
-        );
-        pub(super) safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
-
         /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
         /// `IncomingMessage`/`ServerResponse` pair, allocates a
         /// [`NodeHTTPResponse`] (returned via `node_response_ptr` with one ref
-        /// taken), and invokes `callback(req, res)`. The plain-HTTP and HTTPS
-        /// monomorphizations differ only in the `Response<SSL>` opaque type.
+        /// taken), and invokes `callback(req, res)`.
         ///
         /// `&JSGlobalObject` / `&mut Option<_>` discharge the deref'd-param
         /// preconditions; `request`/`response` are opaque uws
         /// handles (module-private — sole caller passes live pointers).
-        pub(super) safe fn NodeHTTPServer__onRequest_http(
+        pub(super) safe fn NodeHTTPServer__onRequest(
             any_server: usize,
             global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,
             callback: jsc::JSValue,
             method_string: jsc::JSValue,
             request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(false).Response
-            node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
-        ) -> jsc::JSValue;
-
-        pub(super) safe fn NodeHTTPServer__onRequest_https(
-            any_server: usize,
-            global: &jsc::JSGlobalObject,
-            this_value: jsc::JSValue,
-            callback: jsc::JSValue,
-            method_string: jsc::JSValue,
-            request: *mut uws_sys::Request,
-            response: *mut c_void, // *uws.NewApp(true).Response
+            is_ssl: bool,
+            response: &uws_sys::uws_res,
             node_response_ptr: &mut Option<bun_ptr::RefPtr<NodeHTTPResponse>>,
         ) -> jsc::JSValue;
     }

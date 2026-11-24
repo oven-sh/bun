@@ -3,26 +3,28 @@
 //! regardless of transport. Requests are [`crate::h3::Request`].
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::ManuallyDrop;
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 use std::rc::Rc;
 use std::time::Instant;
 
 use bun_core::ffi::slice;
 use bun_http_types::Method::Method;
 use bun_http2::server;
-use bun_ptr::{AnyRefCounted, RefPtr};
+use bun_ptr::{AnyRefCounted, BackRef, RefPtr};
 
+use crate::app::{self, BUN_DEFAULT_MAX_HTTP_HEADER_SIZE, ConnectionChange, Http2, Http2App};
 use crate::h3::Head;
+use crate::http1::{VACATED_LEN, VACATED_OFFSET};
 use crate::quic::Header;
 use crate::request::Routes;
-use crate::response::{State, TCPResponse, WriteResult};
+use crate::response::{State, WriteResult};
 use crate::socket_group::VTable;
-use crate::thunk::OpaqueHandle;
 use crate::{
-    AnyRequest, AnyResponse, CloseCode, Loop, SocketAddress, SocketGroup, thunk, us_socket_t,
+    AnyRequest, AnyResponse, CloseCode, Loop, SocketAddress, SocketGroup, SocketKind, thunk,
+    us_socket_t, uws_res,
 };
 
 pub use crate::h3::Request;
@@ -154,7 +156,7 @@ impl Response {
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        TCPResponse::as_handle(self.stream().socket()?.0.cast()).get_remote_socket_info()
+        uws_res::of(self.stream().socket()?.0).get_remote_socket_info()
     }
     pub(crate) fn force_close(&mut self) {
         self.stream().abort()
@@ -257,16 +259,23 @@ impl Socket {
         us_socket_t::opaque_mut(self.0)
     }
 
-    /// `Http2SocketData::connection`
-    fn connection_slot<'a>(self) -> &'a mut *const Connection {
-        self.get().ext()
+    fn data_ptr(self) -> *mut SocketData {
+        self.get().ext_ptr().wrapping_add(VACATED_OFFSET).cast()
     }
 
     fn connection(self) -> ManuallyDrop<Rc<Connection>> {
-        // SAFETY: from `on_adopt`, and `on_close` is the last event.
-        ManuallyDrop::new(unsafe { Rc::from_raw(*self.connection_slot()) })
+        // SAFETY: from `adopt`, and `on_close` is the last event.
+        ManuallyDrop::new(unsafe { Rc::from_raw((*self.data_ptr()).connection) })
     }
 }
+
+struct SocketData {
+    connection: *const Connection,
+    /// It counts the socket until it closes.
+    parent: BackRef<app::Context>,
+}
+
+const _: () = assert!(size_of::<SocketData>() <= VACATED_LEN);
 
 impl server::Socket for Socket {
     fn write(self, bytes: &[u8]) -> usize {
@@ -311,7 +320,7 @@ impl server::Host for Host {
         self.date.get()
     }
     fn max_header_size(&self) -> usize {
-        c::BUN_DEFAULT_MAX_HTTP_HEADER_SIZE.load(Ordering::Relaxed)
+        BUN_DEFAULT_MAX_HTTP_HEADER_SIZE.load(Ordering::Relaxed)
     }
     fn schedule_drain(&self) {
         if let Some((cb, app)) = self.schedule_drain.get() {
@@ -323,13 +332,8 @@ impl server::Host for Host {
     }
 }
 
-/// `uWS::Http2Context`
-#[repr(C)]
 struct Context {
     group: SocketGroup,
-    on_adopt: unsafe extern "C" fn(&Context, *mut us_socket_t, *const u8, c_int, c_uint),
-    close_all: extern "C" fn(&Context),
-    close_idle: extern "C" fn(&Context, bool) -> usize,
     server: Rc<Server>,
 }
 
@@ -337,14 +341,11 @@ impl Context {
     fn new(idle_timeout_s: u32) -> Rc<Self> {
         let host = Host {
             routes: Routes::default(),
-            date: c::uws_loop_date(),
+            date: &Loop::get().data().date,
             schedule_drain: Cell::new(None),
         };
         let context = Rc::new(Self {
             group: SocketGroup::default(),
-            on_adopt: Self::on_adopt,
-            close_all: Self::close_all,
-            close_idle: Self::close_idle,
             server: Server::new(host, idle_timeout_s),
         });
         (context.group).init(Loop::get(), Some(&VTABLE), ptr::null_mut());
@@ -356,31 +357,36 @@ impl Context {
             .sockets()
             .map(|socket| Rc::clone(&Socket(socket).connection()))
     }
+}
 
-    /// SAFETY: `data` has `len` bytes.
-    unsafe extern "C" fn on_adopt(
-        &self,
-        socket: *mut us_socket_t,
-        data: *const u8,
-        len: c_int,
-        preface_len: c_uint,
-    ) {
-        let socket = Socket(socket);
-        let connection = Connection::new(Rc::clone(&self.server), socket, preface_len as usize);
-        *socket.connection_slot() = Rc::into_raw(connection);
-        if len > 0 {
-            // SAFETY: forwarded.
-            (socket.connection()).on_data(unsafe { slice(data, len as usize) });
-        } else {
+impl Http2App for Context {
+    fn adopt(&self, res: &uws_res, preface_len: usize, data: &[u8]) {
+        if !res.can_upgrade() {
+            return;
+        }
+        let (parent, socket) = (res.vacate_for_http2(), Socket(res.socket().raw()));
+        // SAFETY: there is room, and no event comes before the write. The move resets the timeout.
+        unsafe {
+            socket.get().move_to(&self.group, SocketKind::Dynamic);
+            let connection = Connection::new(Rc::clone(&self.server), socket, preface_len);
+            socket.data_ptr().write(SocketData {
+                connection: Rc::into_raw(connection),
+                parent: BackRef::new(parent),
+            });
+        }
+        socket.get().set_allows_half_open(false);
+        if data.is_empty() {
             socket.connection().flush();
+        } else {
+            socket.connection().on_data(data);
         }
     }
 
-    extern "C" fn close_all(&self) {
+    fn close_all(&self) {
         Connection::close_all(self.connections());
     }
 
-    extern "C" fn close_idle(&self, close_when_idle: bool) -> usize {
+    fn close_idle(&self, close_when_idle: bool) -> usize {
         Connection::close_idle(self.connections(), close_when_idle)
     }
 }
@@ -414,7 +420,8 @@ extern "C" fn on_writable(socket: *mut us_socket_t) -> *mut us_socket_t {
 
 extern "C" fn on_close(socket: *mut us_socket_t, _: c_int, _: *mut c_void) -> *mut us_socket_t {
     ManuallyDrop::into_inner(Socket(socket).connection()).on_close();
-    c::uws_h2_socket_on_close(Socket(socket).get());
+    // SAFETY: from `adopt`.
+    unsafe { &(*Socket(socket).data_ptr()).parent }.report(ConnectionChange::Gone);
     socket
 }
 
@@ -442,9 +449,10 @@ impl OwnedApp {
         idle_timeout_s: u32,
     ) -> Self {
         let context = Context::new(idle_timeout_s);
-        let (parent, pointer) = (ptr::from_mut(parent).cast(), Rc::as_ptr(&context).cast());
-        // SAFETY: `parent` is a live TemplatedApp<SSL>, which runs nothing once this is dropped.
-        unsafe { c::uws_app_attach_http2(SSL.into(), parent, pointer, allow_http1) };
+        parent.attach_http2(Http2 {
+            app: Rc::<Context>::clone(&context),
+            allows_http1: allow_http1,
+        });
         Self(context)
     }
 
@@ -561,29 +569,5 @@ impl App {
         H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
         self.route_ref::<U, H>(None, p, owner);
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C"
-// ──────────────────────────────────────────────────────────────────────────
-
-mod c {
-    use super::*;
-
-    // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
-    // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
-    // only pointer arg is the opaque handle (plus value types) are `safe fn`.
-    // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
-    unsafe extern "C" {
-        pub(super) safe static BUN_DEFAULT_MAX_HTTP_HEADER_SIZE: AtomicUsize;
-        pub(super) safe fn uws_loop_date() -> &'static Cell<[u8; 29]>;
-        pub(super) fn uws_app_attach_http2(
-            ssl: c_int,
-            app: *mut crate::app::uws_app_t,
-            context: *const c_void,
-            allow_http1: bool,
-        );
-        pub(super) safe fn uws_h2_socket_on_close(socket: &mut us_socket_t);
     }
 }

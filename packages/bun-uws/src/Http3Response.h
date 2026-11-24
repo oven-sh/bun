@@ -3,7 +3,6 @@
 
 #include "quic.h"
 #include "Http3ResponseData.h"
-#include "HttpResponseData.h"
 #include "Utilities.h"
 
 #include <charconv>
@@ -48,9 +47,10 @@ struct Http3Response {
         Http3ResponseData *d = getHttpResponseData();
         if (d->state & Http3ResponseData::HTTP_WROTE_DATE_HEADER) return;
         d->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
-        LoopData *ld = (LoopData *) us_loop_ext(
+        /* The start of LoopData in src/uws_sys/Loop.rs. */
+        const char *date = (const char *) us_loop_ext(
             (us_loop_t *) us_quic_socket_context_loop(us_quic_stream_context((us_quic_stream_t *) this)));
-        writeHeader("date", std::string_view{ld->date, 29});
+        writeHeader("date", std::string_view{date, 29});
     }
 
     /* RFC 9114 §4.1: a 1xx response is its own HEADERS frame with no body and
@@ -140,7 +140,7 @@ struct Http3Response {
     Http3Response *pause() { us_quic_stream_want_read((us_quic_stream_t *) this, 0); return this; }
     Http3Response *resume() { us_quic_stream_want_read((us_quic_stream_t *) this, 1); return this; }
 
-    Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
+    Http3Response *cork(auto &&fn) { fn(); return this; }
     void *getSocketData() { return getHttpResponseData()->socketData; }
 
     Http3Response *onWritable(void *userData, Http3ResponseData::OnWritableCallback h) {

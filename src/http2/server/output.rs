@@ -2,8 +2,8 @@ use bun_hpack::{Encoder, Indexing};
 use bun_http_types::h2::{
     DEFAULT_MAX_FRAME_SIZE, DEFAULT_WINDOW_SIZE, ErrorCode, FrameHeader, FrameType,
 };
+use bun_http1::queue::Queue;
 
-use super::queue::Queue;
 use super::{HIGH_WATER_MARK, MAX_CONCURRENT_STREAMS};
 
 pub(super) const END_STREAM: u8 = 0x1;

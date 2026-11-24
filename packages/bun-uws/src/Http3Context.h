@@ -2,9 +2,11 @@
 #define UWS_H3CONTEXT_H
 
 #include "quic.h"
-#include "Loop.h"
+#include "HttpRequest.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+
+#include <memory>
 
 namespace uWS {
 
@@ -26,9 +28,9 @@ struct Http3Context {
     };
     using Ptr = std::unique_ptr<Http3Context, Deleter>;
 
-    static Ptr create(Loop *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, const void *routes) {
+    static Ptr create(us_loop_t *loop, us_bun_socket_context_options_t options, unsigned idleTimeoutSecs, const void *routes) {
         us_quic_socket_context_t *ctx = us_create_quic_socket_context(
-            (us_loop_t *) loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
+            loop, options, sizeof(Http3ContextData), idleTimeoutSecs);
         if (!ctx) return nullptr;
         new (us_quic_socket_context_ext(ctx)) Http3ContextData{routes};
 

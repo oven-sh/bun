@@ -378,7 +378,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
         let upgraded = unsafe {
-            (&mut *res).upgrade(
+            (*res).upgrade(
                 dw.cast(),
                 req.header(b"sec-websocket-key").unwrap_or(b""),
                 req.header(b"sec-websocket-protocol").unwrap_or(b""),

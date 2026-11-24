@@ -32,7 +32,7 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
     }
     #[inline]
     fn to_any(&mut self) -> AnyResponse {
-        Response::<SSL>::res_to_any(self.downcast())
+        Response::<SSL>::res_to_any(self.as_mut_ptr())
     }
 }
 

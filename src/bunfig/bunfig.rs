@@ -1298,7 +1298,6 @@ impl Bunfig {
         tool: Option<&mut crate::ToolReader<'_>>,
         counts: Counts,
     ) -> crate::Result<()> {
-        let source = &source.as_secret();
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`

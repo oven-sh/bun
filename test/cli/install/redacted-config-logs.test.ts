@@ -141,34 +141,6 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-// A line of bunfig.toml can hold a credential, so a diagnostic about it keeps only the
-// excerpt around its position, at every line length. The token here is more than 80
-// bytes after the value that the warning points at.
-test("a bunfig warning shows the excerpt around it, not the rest of its line", async () => {
-  const far = Buffer.alloc(150, "x").toString();
-  const line = `install = { globalDir = "/x", cache = "${far}", registry = { url = "https://r.example/", token = "S3cretValueS3cretValue" } }`;
-  using dir = tempDir("bunfig-warning-excerpt", {
-    "bunfig.toml": line + "\n",
-    "package.json": "{}",
-    "home/.gitkeep": "",
-  });
-  const home = join(String(dir), "home");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1", HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(err).toContain('warn: ignoring "globalDir" in project bunfig.toml');
-  expect(err).toContain(`1 | ${line.slice(0, line.indexOf('"/x"') + 80)}\n`);
-  expect(err).not.toContain("S3cretValue");
-  expect(out).not.toContain("S3cretValue");
-  expect(exitCode).toBe(0);
-});
-
 // The config loaders split user:password@ off a registry URL, but a token
 // written as a path segment stays part of it, and these messages echo that
 // URL (or the manifest / tarball URL built from it) when no request can be

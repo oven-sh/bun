@@ -1131,6 +1131,31 @@ devTest("importing bun on the client", {
     });
   },
 });
+devTest("error overlay shows the excerpt around an error deep inside a long line, and underlines the token", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `let ok = 1;\n${Buffer.alloc(100, "a")}]${Buffer.alloc(100, "b")}`,
+  },
+  async test(dev) {
+    // The `]` is at column 101 of a 201-character line. The overlay shows the 40
+    // characters before it and the 80 from it. The harness reads the column of
+    // an error from where its underline starts in what is shown: 41.
+    await using c = await dev.client("/", {
+      errors: ['index.ts:2:41: error: Expected ";" but found "]"'],
+    });
+    const shown = await c.js<{ excerpt: string; underlineStart: number }>`(() => {
+      const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
+      return {
+        excerpt: msg.querySelector(".view > pre").textContent,
+        underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
+      };
+    })()`;
+    expect(shown).toEqual({ excerpt: `${Buffer.alloc(40, "a")}]${Buffer.alloc(79, "b")}`, underlineStart: 40 });
+  },
+});
 devTest("import.meta.main", {
   files: {
     "index.html": emptyHtmlFile({

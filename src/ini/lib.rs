@@ -1089,8 +1089,7 @@ mod draft {
                 npmrc_path,
                 bun_ast::ToSourceOptions { convert_bom: true },
             ) {
-                Ok(mut source) => {
-                    source.secrecy = bun_ast::SourceSecrecy::Secret;
+                Ok(source) => {
                     if source
                         .check_parseable_len(&mut log, "INI document")
                         .is_err()
@@ -1358,7 +1357,6 @@ mod draft {
         log: &mut Log,
         source: &Source,
     ) -> OOM<()> {
-        let source = &source.as_secret();
         let mut configs: Vec<ConfigItem> = Vec::new();
         parse_npmrc_into(install, env, log, source, 0, &mut configs)?;
         let sources = std::slice::from_ref(source);

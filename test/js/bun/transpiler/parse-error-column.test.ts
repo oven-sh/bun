@@ -130,12 +130,16 @@ test.concurrent("long non-ASCII line's lineText window covers the error token", 
   });
 });
 
-test.concurrent("long non-ASCII line's lineText window does not split a UTF-8 sequence", async () => {
-  // `]` at byte 600 of a 1,201-byte line: the window is applied, and its
+test.concurrent.each([
+  // `]` at byte 160 of a 321-byte line: `lineText` is the whole line.
+  [160, 81],
+  // `]` at byte 600 of a 1,201-byte line: `lineText` is an excerpt, and its
   // bounds are snapped to UTF-8 char boundaries.
-  const half = Buffer.alloc(600, "\u00E9").toString();
+  [600, 301],
+])("long non-ASCII line's lineText does not split a UTF-8 sequence: `]` at byte %i", async (bytes, column) => {
+  const half = Buffer.alloc(bytes, "\u00E9").toString();
   expect(await lineTextWindow(half + "]" + half)).toEqual({
-    stdout: `{"column":301,"hasToken":true,"chars":["]","\u00E9"]}`,
+    stdout: `{"column":${column},"hasToken":true,"chars":["]","\u00E9"]}`,
     stderr: "",
     exitCode: 0,
   });
@@ -189,15 +193,20 @@ test.concurrent.each([["build"], ["run"]])(
   },
 );
 
-// A line over 1,000 bytes is cut when more than 80 bytes start at the error,
-// and the cut drops a prefix when more than 40 bytes precede the error.
+// The printed line is cut when more than 80 bytes start at the error, and the
+// cut drops a prefix when more than 40 bytes precede the error. A line is
+// stored whole up to 1,000 bytes, and that limit does not change what is printed.
 test.concurrent.each([
-  ["a 1,000-byte line is kept whole", fill(100, "a") + "]" + fill(899, "b"), 0, 1000],
-  ["a 1,001-byte line is cut", fill(100, "a") + "]" + fill(900, "b"), 60, 180],
+  ["a 1,000-byte line", fill(100, "a") + "]" + fill(899, "b"), 60, 180],
+  ["a 1,001-byte line", fill(100, "a") + "]" + fill(900, "b"), 60, 180],
   ["80 bytes from the error to the end keep the whole line", fill(1000, "a") + "]" + fill(79, "b"), 0, 1080],
   ["81 bytes from the error to the end cut the line", fill(1000, "a") + "]" + fill(80, "b"), 960, 1080],
   ["40 bytes before the error drop no prefix", fill(40, "a") + "]" + fill(1000, "b"), 0, 120],
   ["41 bytes before the error drop one byte", "c" + fill(40, "a") + "]" + fill(1000, "b"), 1, 121],
+  ["a 200-byte line, 80 bytes from the error to the end", fill(120, "a") + "]" + fill(79, "b"), 0, 200],
+  ["a 201-byte line, 81 bytes from the error to the end", fill(120, "a") + "]" + fill(80, "b"), 80, 200],
+  ["a 141-byte line, 40 bytes before the error", fill(40, "a") + "]" + fill(100, "b"), 0, 120],
+  ["a 142-byte line, 41 bytes before the error", "c" + fill(40, "a") + "]" + fill(100, "b"), 1, 121],
 ])("CLI caret at an excerpt limit: %s", async (_, line, start, end) => {
   const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": line });
   expect(excerpts).toEqual([{ excerpt: "1 | " + line.slice(start, end), caret: 4 + line.indexOf("]") - start }]);
@@ -237,18 +246,71 @@ test.concurrent("CLI caret is aligned for both the error and its note on a long 
   ]);
 });
 
-test.concurrent("bun install points the caret at the token inside a long package.json line", async () => {
-  // The `}` is at column 179 of a 1,179-byte line. The excerpt starts 40 bytes
-  // before it (the caret used to be indented by the full 178 columns), while
-  // the `at file:line:col` suffix still reports the real column.
-  const { stderr, excerpts } = await printedExcerpts(["install"], {
-    "package.json": '{"name":"x",' + fill(150, " ") + '"dependencies": }' + fill(1000, " ") + "\n",
-  });
-  expect(excerpts).toEqual([
-    { excerpt: "1 | " + fill(24, " ") + '"dependencies": }', caret: 4 + 24 + '"dependencies": '.length },
-  ]);
-  expect(stderr).toContain("package.json:1:179");
-});
+test.concurrent.each([[379], [1179]])(
+  "bun install points the caret at the token inside a package.json line of %i bytes",
+  async length => {
+    // The `}` is at column 179. The excerpt starts 40 bytes before it (the caret
+    // used to be indented by the full 178 columns), while the `at file:line:col`
+    // suffix still reports the real column.
+    const { stderr, excerpts } = await printedExcerpts(["install"], {
+      "package.json": '{"name":"x",' + fill(150, " ") + '"dependencies": }' + fill(length - 179, " ") + "\n",
+    });
+    expect(excerpts).toEqual([
+      { excerpt: "1 | " + fill(24, " ") + '"dependencies": }', caret: 4 + 24 + '"dependencies": '.length },
+    ]);
+    expect(stderr).toContain("package.json:1:179");
+  },
+);
+
+// The excerpt is the 40 bytes before the position and the 80 bytes from it,
+// without the spaces at its end. A credential elsewhere on the line is not in it.
+test.concurrent.each([
+  {
+    file: "package.json",
+    text: `{"name":"x", "repository": "https://user:S3cretValue@git.example/x.git",${fill(150, " ")}"name": "y",${fill(150, " ")}"version": "1.0.0"}`,
+    at: '"name": "y"',
+    message: 'warn: Duplicate key "name" in object literal',
+  },
+  {
+    file: "bun.lock",
+    text: `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "x" } },\n  "packages": {${fill(60, " ")}"p0": ["p0@1.0.0", "", {}, "sha512-x"]${fill(150, " ")}}\n}`,
+    at: '"sha512-x"',
+    message: "warn: Unsupported or malformed integrity hash; ignoring",
+  },
+  {
+    file: "bunfig.toml",
+    text: `install = {${fill(60, " ")}globalDir = "/x", registry = { url = "https://r.example/${fill(150, "x")}/", token = "S3cretValueS3cretValue" } }`,
+    at: '"/x"',
+    message: 'warn: ignoring "globalDir" in project bunfig.toml',
+  },
+  {
+    file: ".npmrc",
+    text: `//registry.example/${fill(60, "p")}/:certfile=/etc/ssl/${fill(120, "x")}.pem`,
+    at: "certfile",
+    message: "warn: certfile is not supported; ignoring this .npmrc option",
+  },
+])(
+  "bun install prints the excerpt of a long line of $file, with the caret under the position",
+  async ({ file, text, at, message }) => {
+    using dir = tempDir("parse-col-install", { "package.json": '{"name":"x"}', [file]: text + "\n", "home/.keep": "" });
+    // An empty home, so the machine's own config files add no diagnostic.
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: { ...bunEnv, NO_COLOR: "1", HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    const lines = text.split("\n");
+    const number = lines.findIndex(line => line.includes(at)) + 1;
+    const offset = lines[number - 1].indexOf(at);
+    const excerpt = lines[number - 1].slice(offset - 40, offset + 80).trimEnd();
+    expect(stderr.replaceAll("\r\n", "\n")).toContain(`${number} | ${excerpt}\n${fill(4 + 40, " ")}^\n${message}`);
+    expect(stderr).not.toContain("S3cretValue");
+  },
+);
 
 test.concurrent(
   "excerpt of a line following a U+2028 line separator starts at the line's first character",
@@ -361,10 +423,55 @@ test.concurrent("position.lineText is the whole line for a ResolveMessage from B
   });
 });
 
+// What the CLI prints of such a line is still the excerpt: the 40 bytes before
+// the error and the 80 bytes from it. 26 bytes of "x" are 26 columns, and 26
+// bytes of U+00E9 are 13.
 test.concurrent.each([
-  ["ASCII", `export const a = "${fill(60, "x")}"; const b = (;${fill(100, "y")}`],
-  ["non-ASCII", `export const a = "${fill(120, "\u00E9")}"; const b = (;${fill(100, "y")}`],
-])("CLI caret is under the token in the middle of a %s line of 1,000 bytes or less", async (_, line) => {
-  const { excerpts } = await printedExcerpts(["build", "line.ts"], { "line.ts": line + "\n" });
-  expect(excerpts).toEqual([{ excerpt: "1 | " + line, caret: 4 + line.indexOf("(;") + 1 }]);
+  ["ASCII", "x", 26],
+  ["non-ASCII", "\u00E9", 13],
+])(
+  "CLI prints the excerpt around an error in the middle of a %s line of 1,000 bytes or less",
+  async (_, char, columns) => {
+    const line = `export const a = "${fill(120, char)}"; const b = (;${fill(100, "y")}`;
+    const { excerpts } = await printedExcerpts(["build", "line.ts"], { "line.ts": line + "\n" });
+    expect(excerpts).toEqual([
+      {
+        excerpt: "1 | " + fill(26, char) + '"; const b = (;' + fill(79, "y"),
+        caret: 4 + columns + '"; const b = ('.length,
+      },
+    ]);
+  },
+);
+
+test.concurrent("the development error page of Bun.serve gets the excerpt, as the CLI prints it", async () => {
+  const line = `export const a = "${fill(120, "x")}"; const b = (;${fill(100, "y")}`;
+  using dir = tempDir("parse-col-dev-page", {
+    "broken.ts": line + "\n",
+    "server.ts": `
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        async fetch() {
+          await import("./broken.ts");
+          return new Response("unreachable");
+        },
+      });
+      const html = await (await fetch(server.url)).text();
+      const json = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html)[1];
+      console.log(JSON.stringify(JSON.parse(json).problems.build.msgs.map(msg => msg.data.location.line_text)));
+      server.stop(true);
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([fill(26, "x") + '"; const b = (;' + fill(79, "y")]);
+  expect(exitCode).toBe(0);
 });

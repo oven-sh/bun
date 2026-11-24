@@ -3574,7 +3574,6 @@ pub mod bv2_impl {
                 contents: new_source.contents.clone(),
                 identifier_name: new_source.identifier_name.clone(),
                 index: new_source.index,
-                secrecy: new_source.secrecy,
             };
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: new_source,

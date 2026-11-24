@@ -1025,19 +1025,10 @@ declare var CryptoKey: {
 interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
 
 interface Position {
-  /**
-   * The text of the source line. For a very long line, this can be an excerpt
-   * around the position instead of the whole line, and then `column` does not
-   * index it.
-   */
   lineText: string;
   file: string;
   namespace: string;
   line: number;
-  /**
-   * The column in the whole line, in UTF-16 code units. The first column is 1.
-   * The value is 0 or -1 when the message has no position in a line.
-   */
   column: number;
   length: number;
   offset: number;

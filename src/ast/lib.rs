@@ -517,7 +517,7 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
-/// A public [`Source`]'s line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
+/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
 pub const MAX_WHOLE_LINE_LEN: usize = 1000;
 
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
@@ -533,20 +533,20 @@ pub struct Location {
     pub length: u32,
     // TODO: document or remove
     pub offset: usize,
-    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
-    pub line_text_start_column: u32,
+    /// 1-based column of the line at which `line_text` starts, set by [`Location::init_or_null`].
+    /// `None` on a hand-built location: [`Location::excerpt`] shows its `line_text` as given.
+    pub line_text_column: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
     pub line: i32,
     // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
-    // original docs: 0-based, in bytes.
-    // but there is a place where this is emitted in output, implying one based character offset
+    // 1-based, in UTF-16 code units, from `init_or_null`.
     pub column: i32,
 }
 
-// `length` and `line_text_start_column` share one word, so the start column adds no bytes.
+// `length` and `line_text_column` share one word, so the start column adds no bytes.
 const _: () = assert!(core::mem::size_of::<Location>() == 72);
 
 impl Default for Location {
@@ -557,14 +557,47 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
-            line_text_start_column: 0,
+            line_text_column: None,
             line: 0,
             column: 0,
         }
     }
 }
 
+/// The bounds of the excerpt of `line` around the byte at `offset`: 40 bytes before it and 80 after, on UTF-8 boundaries.
+fn excerpt_bounds(line: &[u8], offset: usize) -> (usize, usize) {
+    let mut lo = offset.saturating_sub(40);
+    let mut hi = (offset + 80).min(line.len());
+    while lo > 0 && !bun_core::strings::is_utf8_char_boundary(line[lo]) {
+        lo -= 1;
+    }
+    while hi < line.len() && !bun_core::strings::is_utf8_char_boundary(line[hi]) {
+        hi += 1;
+    }
+    (lo, hi)
+}
+
 impl Location {
+    /// The part of `line_text` that a display shows, and the number of UTF-16 code units of the line in front of that
+    /// part. A line from [`Location::init_or_null`] with more than 80 bytes after the error is cut around the error.
+    pub fn excerpt(&self) -> (&[u8], usize) {
+        let text = self.line_text.as_deref().unwrap_or_default();
+        let Some(start) = self.line_text_column else {
+            return (text, 0);
+        };
+        let in_front = (start.get() - 1) as usize;
+        let units = usize::try_from(self.column.saturating_sub(1))
+            .unwrap_or(0)
+            .saturating_sub(in_front);
+        let offset = bun_core::strings::wtf8_offset_of_utf16_index(text, units as u32);
+        if text.len() <= 80 + offset {
+            return (text, in_front);
+        }
+        let (lo, hi) = excerpt_bounds(text, offset);
+        let cut = bun_core::strings::wtf8_len_utf16(&text[..lo]) as usize;
+        (&text[lo..hi], in_front + cut)
+    }
+
     /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
     pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -638,7 +671,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Box::default()),
                     offset: 0,
-                    line_text_start_column: 0,
+                    line_text_column: None,
                 });
             }
             let data = match tracker {
@@ -646,31 +679,20 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // A longer line with more than 80 bytes after the error is cut to about 120 bytes around it.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            let mut line_text_start_column = 0;
-            if (source.secrecy == SourceSecrecy::Secret || full_line.len() > MAX_WHOLE_LINE_LEN)
-                && full_line.len() > 80 + offset_in_line
-            {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
-                    lo -= 1;
-                }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
-                    hi += 1;
-                }
+            let mut line_text_column = core::num::NonZeroU32::MIN;
+            // A longer line is stored as its excerpt: a one-line bundle can have thousands of diagnostics.
+            if full_line.len() > MAX_WHOLE_LINE_LEN && full_line.len() > 80 + offset_in_line {
+                let (lo, hi) = excerpt_bounds(full_line, offset_in_line);
                 if lo > 0 {
                     // Same counter as `column_count`, over the kept bytes only.
                     let mut kept = ErrorPositionState::default();
                     kept.advance(full_line, lo, offset_in_line);
-                    line_text_start_column =
-                        u32::try_from(data.column_count.saturating_sub(kept.column_number))
-                            .expect("int cast");
+                    let cut = data.column_count.saturating_sub(kept.column_number);
+                    line_text_column =
+                        line_text_column.saturating_add(u32::try_from(cut).expect("int cast"));
                 }
                 full_line = &full_line[lo..hi];
             }
@@ -687,7 +709,7 @@ impl Location {
                 },
                 line_text: Some(Box::from(full_line)),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
-                line_text_start_column,
+                line_text_column: Some(line_text_column),
             });
         }
         None
@@ -763,7 +785,8 @@ impl Data {
         };
 
         if let Some(location) = &self.location {
-            if let Some(line_text_) = location.line_text.as_deref() {
+            if location.line_text.is_some() {
+                let (line_text_, units_in_front) = location.excerpt();
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 // The creator of the location may have included the lines preceding its own line.
@@ -775,7 +798,7 @@ impl Data {
                         line_text,
                         usize::try_from(location.column - 1)
                             .expect("int cast")
-                            .saturating_sub(location.line_text_start_column as usize),
+                            .saturating_sub(units_in_front),
                     );
                     let gutter = bun_core::fmt::digit_count(location.line);
                     for (line, text) in
@@ -1569,7 +1592,6 @@ impl Log {
         self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
         if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
             location.line_text = None;
-            location.line_text_start_column = 0;
         }
     }
 
@@ -2053,20 +2075,7 @@ pub struct Source<'a> {
     pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
-
-    pub secrecy: SourceSecrecy,
 }
-
-/// Whether a [`Source`] can hold credentials (bunfig.toml, `.npmrc`). A diagnostic keeps only a short excerpt of its lines.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum SourceSecrecy {
-    #[default]
-    Public,
-    Secret,
-}
-
-// `secrecy` sits in the padding after `index`.
-const _: () = assert!(core::mem::size_of::<Source>() == 112);
 
 impl Default for Source<'_> {
     fn default() -> Self {
@@ -2075,7 +2084,6 @@ impl Default for Source<'_> {
             contents: Cow::Borrowed(b""),
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
-            secrecy: SourceSecrecy::Public,
         }
     }
 }
@@ -2368,17 +2376,6 @@ impl<'a> Source<'a> {
             path,
             contents: Cow::Owned(contents),
             ..Default::default()
-        }
-    }
-
-    /// A borrowed copy marked [`SourceSecrecy::Secret`], made where a file that can hold credentials is parsed.
-    pub fn as_secret(&self) -> Source<'_> {
-        Source {
-            path: self.path,
-            contents: Cow::Borrowed(&self.contents),
-            identifier_name: Cow::Borrowed(&self.identifier_name),
-            index: self.index,
-            secrecy: SourceSecrecy::Secret,
         }
     }
 

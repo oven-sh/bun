@@ -183,7 +183,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     contents: std::borrow::Cow::Borrowed(&source_ref.contents),
                     identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
-                    secrecy: source_ref.secrecy,
                 };
                 &source_storage
             } else {

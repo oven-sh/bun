@@ -715,13 +715,25 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
 }
 
 function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageLevel) {
+  // As in the terminal: a line with more than 80 characters after the error is cut to an excerpt around the error.
+  const { lineText } = location;
+  const at = location.column - 1;
+  let start = 0;
+  let end = lineText.length;
+  if (end > at + 80) {
+    start = Math.max(0, at - 40);
+    end = at + 80;
+    const isLowSurrogate = (index: number) => (lineText.charCodeAt(index) & 0xfc00) === 0xdc00;
+    if (start > 0 && isLowSurrogate(start)) start--;
+    if (isLowSurrogate(end)) end++;
+  }
   return [
     elem("div", { class: "code" }, [
       elem("div", { class: "gutter" }, [elemText("div", null, `${location.line}`)]),
       elem("div", { class: "view" }, [
-        mapCodePreviewLine(syntaxHighlight(location.lineText)),
+        mapCodePreviewLine(syntaxHighlight(lineText.slice(start, end))),
         elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
-          elemText("span", { class: "space" }, "_".repeat(location.column - 1)),
+          elemText("span", { class: "space" }, "_".repeat(at - start)),
           elemText("span", { class: "line" }, "_".repeat(location.length)),
         ]),
       ]),

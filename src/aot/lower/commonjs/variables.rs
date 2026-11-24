@@ -428,7 +428,7 @@ impl FileLowering<'_, '_, '_, '_> {
         candidates: &[SpelledModule],
     ) -> Vec<(Vec<u8>, usize)> {
         let mut found: Vec<(Vec<u8>, usize)> = Vec::new();
-        if !self.has_source_path() {
+        if is_name_of_text(self.inputs.sources.public_path(self.file)) {
             return found;
         }
         let is_windows = self.inputs.options.platform.contains(Platforms::WINDOWS);

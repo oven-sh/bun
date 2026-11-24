@@ -186,6 +186,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
             let _ = self.add_range_error(r, format_args!("Unexpected end of file"));
+        } else if self.is_secret() {
+            let _ = self.add_range_error(r, format_args!("Unexpected token"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
             let raw = bun_core::fmt::escape_control_chars(raw);
@@ -200,11 +202,19 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
             let _ = self.add_range_error(r, format_args!("Expected {what} but found end of file"));
+        } else if self.is_secret() {
+            let _ = self.add_range_error(r, format_args!("Expected {what}"));
         } else {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
             let raw = bun_core::fmt::escape_control_chars(raw);
             let _ = self.add_range_error(r, format_args!("Expected {what} but found \"{raw}\""));
         }
+    }
+
+    /// Whether a message must leave out the bytes of the source.
+    #[inline]
+    fn is_secret(&self) -> bool {
+        self.source.secrecy == bun_ast::SourceSecrecy::Secret
     }
 
     fn js_punct_message(c: u8) -> Option<&'static str> {
@@ -871,6 +881,14 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     #[cold]
     fn warn_duplicate_key(&mut self, key_text: &[u8], key_range: Range) {
         let source = self.source;
+        if self.is_secret() {
+            self.log.add_range_warning_fmt(
+                Some(source),
+                key_range,
+                format_args!("Duplicate key in object literal"),
+            );
+            return;
+        }
         self.log.add_range_warning_fmt(
             Some(source),
             key_range,
@@ -1125,6 +1143,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let s = core::str::from_utf8(text).expect("ascii");
             match s.parse::<f64>() {
                 Ok(v) => value = v,
+                Err(_) if self.is_secret() => {
+                    self.add_error(pos, format_args!("Invalid number"));
+                    return Err(crate::Error::SyntaxError);
+                }
                 Err(_) => {
                     self.add_error(
                         pos,
@@ -1211,6 +1233,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     loc: usize2loc(pos),
                     len: ident_len(tail) as i32,
                 };
+                if self.is_secret() {
+                    let _ = self.add_range_error(r, format_args!("Unexpected token"));
+                    return Err(crate::Error::ParserError);
+                }
                 let raw = &tail[..ident_len(tail)];
                 let _ =
                     self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));

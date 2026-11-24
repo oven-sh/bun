@@ -1577,7 +1577,7 @@ fn parse_data_loader<'a>(
                 Err(_) => return None,
             }
         }
-        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
+        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena) {
             Ok(e) => e,
             Err(_) => return None,
         },

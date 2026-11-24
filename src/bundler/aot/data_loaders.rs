@@ -185,7 +185,7 @@ fn parse_tree<'a>(
         StructuredFormat::Json5 => {
             bun_parsers::json5::JSON5Parser::parse(source, log, scratch).ok()
         }
-        StructuredFormat::Toml => bun_parsers::toml::TOML::parse(source, log, scratch, false).ok(),
+        StructuredFormat::Toml => bun_parsers::toml::TOML::parse(source, log, scratch).ok(),
         StructuredFormat::Yaml => bun_parsers::yaml::YAML::parse(
             source,
             log,

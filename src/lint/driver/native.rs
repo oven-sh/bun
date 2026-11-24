@@ -30,22 +30,19 @@ impl Mistake {
         Mistake { message, at }
     }
 
-    /// Formats the error like Bun's other errors, with a code frame from `bunfig` ([`Options::bunfig`]).
+    /// Formats the error like Bun's other errors, with its place in `bunfig` ([`Options::bunfig`]).
     pub(crate) fn print(&self, cwd: &[u8], bunfig: &[u8], colors: bool) -> Vec<u8> {
         let text = fs::read(&paths::resolve(cwd, bunfig)).unwrap_or_default();
         let text = strings::without_utf8_bom(&text);
-        let location = self.at.and_then(|at| {
-            let before = text.get(..at)?;
-            let start = strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
-            let line = text.get(start..)?;
-            let end = strings::index_of_char_usize(line, b'\n').unwrap_or(line.len());
-            Some(bun_ast::Location {
-                file: bunfig.to_vec().into(),
-                line: strings::count_char(before, b'\n') as i32 + 1,
-                column: strings::utf8_decoded_len_utf16(before.get(start..)?) as i32 + 1,
-                line_text: Some(line.get(..end)?.to_vec().into()),
-                ..Default::default()
-            })
+        let source = bun_ast::Source {
+            secrecy: bun_ast::SourceSecrecy::Secret,
+            ..bun_ast::Source::init_path_string(bunfig, text)
+        };
+        let location = self.at.filter(|at| *at <= text.len()).and_then(|at| {
+            let loc = bun_ast::Loc {
+                start: i32::try_from(at).ok()?,
+            };
+            bun_ast::Location::init_or_null(Some(&source), bun_ast::Range { loc, len: 0 })
         });
         let message = bun_ast::Msg {
             kind: bun_ast::Kind::Err,

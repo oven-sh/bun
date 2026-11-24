@@ -99,7 +99,7 @@ test("registry port is not mistaken for a credential when the package is scoped"
   expect(exitCode).toBe(1);
 });
 
-test("bunfig password value is masked in config error output", async () => {
+test("a bunfig syntax error prints its message and place, and no line of the file", async () => {
   using dir = tempDir("redacted-bunfig-password", {
     "bunfig.toml": `l;password = "supersecretvalue"`,
     "package.json": "{}",
@@ -117,7 +117,9 @@ test("bunfig password value is masked in config error output", async () => {
 
   expect(plainOut).not.toContain("supersecretvalue");
   expect(plainErr).not.toContain("supersecretvalue");
-  expect(plainErr).toContain(`l;password = "****************"`);
+  expect(plainErr).toContain("error: Expected '=' after a key but found (redacted)\n    at ");
+  expect(plainErr).toContain("bunfig.toml:1:2\n");
+  expect(plainErr).not.toMatch(/^\s*\d+ \| /m);
 
   await using colored = Bun.spawn({
     cmd: [bunExe(), "install"],
@@ -135,10 +137,306 @@ test("bunfig password value is masked in config error output", async () => {
 
   expect(coloredOut).not.toContain("supersecretvalue");
   expect(coloredErr).not.toContain("supersecretvalue");
-  expect(coloredErr).toContain("****************");
+  expect(Bun.stripANSI(coloredErr)).toContain("error: Expected '=' after a key but found (redacted)\n    at ");
+  expect(Bun.stripANSI(coloredErr)).not.toMatch(/^\s*\d+ \| /m);
 
   expect(plainExit).toBe(1);
   expect(coloredExit).toBe(1);
+});
+
+// bunfig.toml, a `--config` file and .npmrc can hold credentials, so a diagnostic
+// about one of them names its place and shows no line of the file. That holds
+// for every function that logs, whether or not the call site asks for redaction.
+describe.concurrent("a diagnostic about a config file shows no line of it", () => {
+  const secret = Buffer.alloc(44, "S3cretValue").toString();
+  // More than 80 bytes, so the value after it is outside the old 120-byte excerpt.
+  const far = Buffer.alloc(150, "x").toString();
+  const emptyPackage = { "package.json": "{}" };
+  const script = { ...emptyPackage, "a.js": "" };
+
+  const macroNotAnObject =
+    'Invalid macro remapping in "react": expected object where the keys are import names and the value is a string path to replace';
+
+  type Row = {
+    title: string;
+    files: Record<string, string>;
+    cmd: string[];
+    kind: "error" | "warn";
+    message: string;
+    // The file of the diagnostic, and the text that the column points at. No text: the place has no line.
+    file: string;
+    points_at?: string;
+    exitCode: number;
+  };
+  const rows: Row[] = [
+    {
+      title: "bunfig.toml: ignored globalDir, token after the old excerpt",
+      files: {
+        ...emptyPackage,
+        "bunfig.toml": `install = { globalDir = "/x", cache = "${far}", registry = { url = "https://r.example/", token = "${secret}" } }\n`,
+      },
+      cmd: ["install"],
+      kind: "warn",
+      message: 'ignoring "globalDir" in project bunfig.toml, set it in $HOME/.bunfig.toml or $BUN_INSTALL_GLOBAL_DIR',
+      file: "bunfig.toml",
+      points_at: '"/x"',
+      exitCode: 0,
+    },
+    {
+      title: "bunfig.toml: ignored globalBinDir, token inside the old excerpt",
+      files: {
+        ...emptyPackage,
+        "bunfig.toml": `install = { globalBinDir = "/x", registry = { url = "https://r.example/", token = "${secret}" } }\n`,
+      },
+      cmd: ["install"],
+      kind: "warn",
+      message: 'ignoring "globalBinDir" in project bunfig.toml, set it in $HOME/.bunfig.toml or $BUN_INSTALL_BIN',
+      file: "bunfig.toml",
+      points_at: '"/x"',
+      exitCode: 0,
+    },
+    {
+      title: "bunfig.toml: macro key that is not a package path",
+      files: { ...script, "bunfig.toml": `macros = { "./relative" = { a = "b" }, "x${secret}" = { a = "b" } }\n` },
+      cmd: ["run", "a.js"],
+      kind: "warn",
+      message: '"./relative" is not a package path. "macros" remaps package paths to macros. Skipping.',
+      file: "bunfig.toml",
+      points_at: '"./relative"',
+      exitCode: 0,
+    },
+    {
+      title: "bunfig.toml: macro remap that is not an object",
+      files: { ...script, "bunfig.toml": `macros = { react = "${secret}" }\n` },
+      cmd: ["run", "a.js"],
+      kind: "warn",
+      message: macroNotAnObject,
+      file: "bunfig.toml",
+      points_at: `"${secret}"`,
+      exitCode: 0,
+    },
+    {
+      title: "bunfig.toml: macro remap value that is not a string",
+      files: { ...script, "bunfig.toml": `macros = { react = { jsx = 1, other = "${secret}" } }\n` },
+      cmd: ["run", "a.js"],
+      kind: "warn",
+      message:
+        'Invalid macro remapping for import "jsx": expected string to remap to. e.g. "graphql": "bun-macro-relay" ',
+      file: "bunfig.toml",
+      points_at: "1, other",
+      exitCode: 0,
+    },
+    {
+      title: "--config json: macro remap that is not an object",
+      files: { ...script, "cfg.json": `{ "macros": { "react": "${secret}" } }\n` },
+      cmd: ["--config=./cfg.json", "run", "a.js"],
+      kind: "warn",
+      message: macroNotAnObject,
+      file: "cfg.json",
+      points_at: `"${secret}"`,
+      exitCode: 0,
+    },
+    {
+      title: "--config json: syntax error, token before the old excerpt",
+      files: {
+        ...emptyPackage,
+        "cfg.json": `{ "install": { "registry": { "url": "https://r.example/", "token": "${secret}" }, "cache": "${far}", "frozenLockfile": tru } }\n`,
+      },
+      cmd: ["--config=./cfg.json", "install"],
+      kind: "error",
+      message: "Unexpected token",
+      file: "cfg.json",
+      points_at: "tru }",
+      exitCode: 1,
+    },
+    {
+      title: "--config json: duplicate key",
+      files: {
+        ...emptyPackage,
+        "cfg.json": `{ "install": { "registry": { "token": "${secret}" }, "registry": "https://r.example/" } }\n`,
+      },
+      cmd: ["--config=./cfg.json", "install"],
+      kind: "warn",
+      message: "Duplicate key in object literal",
+      file: "cfg.json",
+      points_at: '"registry": "https',
+      exitCode: 0,
+    },
+    {
+      title: "--config json: the unexpected bare word is the token",
+      files: { ...emptyPackage, "cfg.json": `{ "install": { "registry": { "token": ${secret} } } }\n` },
+      cmd: ["--config=./cfg.json", "install"],
+      kind: "error",
+      message: "Unexpected token",
+      file: "cfg.json",
+      points_at: secret,
+      exitCode: 1,
+    },
+    {
+      title: "--config json: the token is where a colon is expected",
+      files: { ...emptyPackage, "cfg.json": `{ "install": { "registry": { "token" "${secret}" } } }\n` },
+      cmd: ["--config=./cfg.json", "install"],
+      kind: "error",
+      message: 'Expected ":"',
+      file: "cfg.json",
+      points_at: `"${secret}"`,
+      exitCode: 1,
+    },
+    {
+      // A name that does not end in `.toml` goes to the JSON parser.
+      title: "--config with a TOML file that is not named .toml",
+      files: { ...emptyPackage, "bunfig.ci": `install = { registry = { token = "${secret}" } }\n` },
+      cmd: ["--config=./bunfig.ci", "install"],
+      kind: "error",
+      message: "Unexpected token",
+      file: "bunfig.ci",
+      points_at: "install",
+      exitCode: 1,
+    },
+    {
+      title: "bunfig.toml: invalid value, bare token key",
+      files: { ...emptyPackage, "bunfig.toml": `install = { registry = { token = "${secret}" }, cafile = 1 }\n` },
+      cmd: ["install"],
+      kind: "error",
+      message: "Invalid cafile. Expected a string.",
+      file: "bunfig.toml",
+      points_at: "1 }",
+      exitCode: 1,
+    },
+    {
+      title: "bunfig.toml: invalid value, quoted token key",
+      files: { ...emptyPackage, "bunfig.toml": `install = { registry = { "token" = "${secret}" }, cafile = 1 }\n` },
+      cmd: ["install"],
+      kind: "error",
+      message: "Invalid cafile. Expected a string.",
+      file: "bunfig.toml",
+      points_at: "1 }",
+      exitCode: 1,
+    },
+    {
+      title: "bunfig.toml: invalid value, a key that no redaction knows",
+      files: { ...emptyPackage, "bunfig.toml": `install = { apiKey = "${secret}", cafile = 1 }\n` },
+      cmd: ["install"],
+      kind: "error",
+      message: "Invalid cafile. Expected a string.",
+      file: "bunfig.toml",
+      points_at: "1 }",
+      exitCode: 1,
+    },
+    {
+      title: "bunfig.toml: syntax error on the last line of a multi-line token",
+      files: { ...emptyPackage, "bunfig.toml": `[install]\ntoken = """\n${secret}""" }\n` },
+      cmd: ["install"],
+      kind: "error",
+      message: "Expected a newline or end of file after a key/value pair",
+      file: "bunfig.toml",
+      points_at: "}",
+      exitCode: 1,
+    },
+    {
+      title: ".npmrc: certfile",
+      files: { ...emptyPackage, ".npmrc": `//registry.example/:certfile=/path/${secret}\n` },
+      cmd: ["install"],
+      kind: "warn",
+      message: "certfile is not supported; ignoring this .npmrc option",
+      file: ".npmrc",
+      points_at: "certfile",
+      exitCode: 0,
+    },
+    {
+      title: ".npmrc: keyfile",
+      files: { ...emptyPackage, ".npmrc": `//registry.example/:keyfile=/path/${secret}\n` },
+      cmd: ["install"],
+      kind: "warn",
+      message: "keyfile is not supported; ignoring this .npmrc option",
+      file: ".npmrc",
+      points_at: "keyfile",
+      exitCode: 0,
+    },
+    {
+      title: ".npmrc: certfile with no value",
+      files: { ...emptyPackage, ".npmrc": "//registry.example/:certfile=\n" },
+      cmd: ["install"],
+      kind: "warn",
+      message: "certfile is not supported; ignoring this .npmrc option",
+      file: ".npmrc",
+      exitCode: 0,
+    },
+    {
+      title: ".npmrc: misspelt _authToken with no value",
+      files: { ...emptyPackage, ".npmrc": "//registry.example/:_authtoken=\n" },
+      cmd: ["install"],
+      kind: "warn",
+      message: "ignoring unknown .npmrc option _authtoken",
+      file: ".npmrc",
+      exitCode: 0,
+    },
+    {
+      title: "bun lint: unknown rule in a --config json",
+      files: {
+        ...script,
+        "cfg.json": `{ "lint": { "rules": { "not-a-rule": "error" } }, "install": { "registry": { "token": "${secret}" } } }\n`,
+      },
+      cmd: ["--config=./cfg.json", "lint", "a.js"],
+      kind: "error",
+      message: 'Unknown rule "not-a-rule"',
+      file: "cfg.json",
+      points_at: '"not-a-rule"',
+      exitCode: 2,
+    },
+    {
+      title: "bun lint: unknown rule in bunfig.toml",
+      files: { ...script, "bunfig.toml": `lint = { rules = { "not-a-rule" = "error" } } # ${secret}\n` },
+      cmd: ["lint", "a.js"],
+      kind: "error",
+      message: 'Unknown rule "not-a-rule"',
+      file: "bunfig.toml",
+      points_at: '"not-a-rule"',
+      exitCode: 2,
+    },
+  ];
+
+  test.each(rows)("$title", async ({ files, cmd, kind, message, file, points_at, exitCode }) => {
+    using dir = tempDir("config-diagnostic-no-line", { ...files, "home/.gitkeep": "" });
+    // An empty home, so the machine's own config files cannot add a diagnostic.
+    const home = join(String(dir), "home");
+    const isolated = {
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: home,
+      NPM_CONFIG_USERCONFIG: undefined,
+      npm_config_userconfig: undefined,
+    };
+
+    // `file:line:column` of the text that the diagnostic points at.
+    let place = file;
+    if (points_at !== undefined) {
+      const before = files[file].slice(0, files[file].indexOf(points_at));
+      const line = before.split("\n").length;
+      place += `:${line}:${before.length - before.lastIndexOf("\n")}`;
+    }
+
+    for (const colors of [{ NO_COLOR: "1" }, { NO_COLOR: undefined, FORCE_COLOR: "1" }]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        env: { ...bunEnv, ...colors, ...isolated },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const text = Bun.stripANSI(err);
+
+      expect(text).toContain(`${kind}: ${message}\n`);
+      expect(text).toMatch(new RegExp(`^ +at .*${RegExp.escape(place)}$`, "m"));
+      expect(text).not.toMatch(/^\s*\d+ \| /m);
+      for (const printed of [out, err]) {
+        expect(printed).not.toContain("S3cretValue");
+        expect(printed).not.toContain("retVal");
+      }
+      expect(exited).toBe(exitCode);
+    }
+  });
 });
 
 // The config loaders split user:password@ off a registry URL, but a token
@@ -248,51 +546,64 @@ describe.concurrent("redact", async () => {
     {
       title: "url password",
       bunfig: `install.registry = "https://user:pass@registry.org`,
-      expected: `"https://*********@registry.org`,
+      expected: "error: Unterminated string",
+      at: "bunfig.toml:1:20",
+      secret: "user:pass",
     },
     {
-      // A userinfo password that happens to start with a redacted keyword must not
-      // arm value redaction for the rest of the line; the quoted-key scan runs only
-      // on the fall-through path after the URL/UUID/npm-secret redactors.
       title: "url password starting with a redacted keyword",
       bunfig: `install.scopes.x = { url = "https://user:token123@registry.org/", username = "alice" };bad`,
-      expected: `, username = `,
+      expected: "error: Expected a newline or end of file after a key/value pair",
+      at: "bunfig.toml:1:87",
       secret: "token123",
     },
     {
       title: "empty url password",
       bunfig: `install.registry = "https://user:@registry.org`,
-      expected: `"https://*****@registry.org`,
+      expected: "error: Unterminated string",
+      at: "bunfig.toml:1:20",
+      secret: "user:@",
     },
     {
       title: "small string",
       bunfig: `l;token = "1"`,
-      expected: `"*"`,
+      expected: "error: Expected '=' after a key but found (redacted)",
+      at: "bunfig.toml:1:2",
+      secret: `"1"`,
     },
     {
       title: "registry password",
       bunfig: `l;password = "hunter2"`,
-      expected: `"*******"`,
+      expected: "error: Expected '=' after a key but found (redacted)",
+      at: "bunfig.toml:1:2",
+      secret: "hunter2",
     },
     {
       title: "random UUID",
       bunfig: 'unre;lated = "f1b0b6b4-4b1b-4b1b-8b1b-4b1b4b1b4b1b"',
-      expected: '"************************************"',
+      expected: "error: Expected '=' after a key but found (redacted)",
+      at: "bunfig.toml:1:5",
+      secret: "f1b0b6b4-4b1b-4b1b-8b1b-4b1b4b1b4b1b",
     },
     {
       title: "random npm_ secret",
       bunfig: 'the;secret = "npm_1234567890abcdefghijklmnopqrstuvwxyz"',
-      expected: '"****************************************"',
+      expected: "error: Expected '=' after a key but found (redacted)",
+      at: "bunfig.toml:1:4",
+      secret: "npm_1234567890abcdefghijklmnopqrstuvwxyz",
     },
     {
       title: "random npms_ secret",
       bunfig: 'the;secret = "npms_1234567890abcdefghijklmnopqrstuvwxyz"',
-      expected: "*****************************************",
+      expected: "error: Expected '=' after a key but found (redacted)",
+      at: "bunfig.toml:1:4",
+      secret: "npms_1234567890abcdefghijklmnopqrstuvwxyz",
     },
     {
       title: "zero length unterminated string",
       bunfig: '_authToken = "',
-      expected: "*",
+      expected: "error: Unterminated string",
+      at: "bunfig.toml:1:14",
     },
     {
       // npm forwards these verbatim, so there is no diagnostic to redact: the
@@ -392,7 +703,7 @@ describe.concurrent("redact", async () => {
     },
   ];
 
-  for (const { title, bunfig, npmrc, expected, secret, forbidden } of tests) {
+  for (const { title, bunfig, npmrc, expected, at, secret, forbidden } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       using dir = tempDir("redacted-config-logs", {
         [bunfig ? "bunfig.toml" : ".npmrc"]: (bunfig || npmrc)!,
@@ -424,6 +735,9 @@ describe.concurrent("redact", async () => {
       expect(exitCode1).toBe(+!!bunfig);
       if (expected) expect(err1).toContain(expected);
       else expect(err1).not.toMatch(/\b(error|warn):/);
+      // A diagnostic names its place and shows no line of the file.
+      if (at) expect(err1).toContain(at + "\n");
+      expect(err1).not.toMatch(/^\s*\d+ \| /m);
       if (secret) expect(err1).not.toContain(secret);
       if (forbidden) expect(err1).not.toContain(forbidden);
 
@@ -439,8 +753,11 @@ describe.concurrent("redact", async () => {
       const [out2, err2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
       expect(exitCode2).toBe(+!!bunfig);
-      if (expected) expect(err2).toContain(expected);
-      else expect(err2).not.toMatch(/\b(error|warn):/);
+      const plain2 = Bun.stripANSI(err2);
+      if (expected) expect(plain2).toContain(expected);
+      else expect(plain2).not.toMatch(/\b(error|warn):/);
+      if (at) expect(plain2).toContain(at + "\n");
+      expect(plain2).not.toMatch(/^\s*\d+ \| /m);
       if (secret) expect(err2).not.toContain(secret);
       if (forbidden) expect(err2).not.toContain(forbidden);
     });

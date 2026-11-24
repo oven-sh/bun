@@ -205,7 +205,7 @@ pub fn with_parsed<T>(
     let mut log = Log::init();
     let root = match notation {
         Notation::Json5 => JSON5Parser::parse(&source, &mut log, &arena).ok(),
-        Notation::Toml => TOML::parse(&source, &mut log, &arena, false).ok(),
+        Notation::Toml => TOML::parse(&source, &mut log, &arena).ok(),
         Notation::Yaml => YAML::parse(&source, &mut log, &arena, CyclicAliases::Reject).ok(),
     };
     let Some(root) = root else {

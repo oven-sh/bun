@@ -13,7 +13,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     let global = unsafe { heap.global() };
     super::with_text_format_source(global, input, b"input.toml", |arena, log, source| {
         let root =
-            match TOML::parse(source, log, arena, false) {
+            match TOML::parse(source, log, arena) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());

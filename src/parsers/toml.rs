@@ -205,7 +205,6 @@ impl TOML {
                 bump: &bump,
                 source: &source,
                 log: &mut log,
-                redact: false,
                 keeps_text: true,
             },
             tokens: Vec::new(),
@@ -222,12 +221,7 @@ impl TOML {
         })
     }
 
-    pub fn parse<'a>(
-        source: &'a Source<'a>,
-        log: &mut Log,
-        bump: &'a Bump,
-        redact_logs: bool,
-    ) -> crate::Result<Expr> {
+    pub fn parse<'a>(source: &'a Source<'a>, log: &mut Log, bump: &'a Bump) -> crate::Result<Expr> {
         source.check_parseable_len(log, "TOML document")?;
         let mut parser = Parser {
             scanner: Scanner {
@@ -236,7 +230,6 @@ impl TOML {
                 bump,
                 source,
                 log,
-                redact: redact_logs,
                 keeps_text: false,
             },
             bump,
@@ -301,13 +294,18 @@ struct Scanner<'a, 'log> {
     bump: &'a Bump,
     source: &'a Source<'a>,
     log: &'log mut Log,
-    redact: bool,
     /// The caller goes by the text of a number, so its value need not fit anything.
     keeps_text: bool,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
     // ── error helpers ──────────────────────────────────────────────────────
+
+    /// Whether a message must leave out the bytes of the source.
+    #[inline]
+    fn redact(&self) -> bool {
+        self.source.secrecy == bun_ast::SourceSecrecy::Secret
+    }
 
     fn err(&mut self, pos: usize, msg: &'static [u8]) -> PErr {
         self.err_fmt(pos, format_args!("{}", bstr::BStr::new(msg)))
@@ -320,7 +318,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 source: Some(self.source),
                 loc: loc_of(pos),
                 len: 0,
-                redact_sensitive_information: self.redact,
+                redact_sensitive_information: self.redact(),
             },
         );
         PErr::Syntax
@@ -334,7 +332,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         key: &[u8],
         after: &'static str,
     ) -> PErr {
-        if self.redact {
+        if self.redact() {
             self.err_fmt(pos, format_args!("{}{}", before, after))
         } else {
             self.err_fmt(
@@ -347,7 +345,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
     fn err_char(&mut self, pos: usize, what: &'static str) -> PErr {
         match self.src.get(pos).copied() {
             None => self.err_fmt(pos, format_args!("{} end of file", what)),
-            Some(_) if self.redact => self.err_fmt(pos, format_args!("{} (redacted)", what)),
+            Some(_) if self.redact() => self.err_fmt(pos, format_args!("{} (redacted)", what)),
             Some(c) if c.is_ascii_graphic() => {
                 self.err_fmt(pos, format_args!("{} '{}'", what, c as char))
             }
@@ -362,7 +360,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
             end += 1;
         }
-        if self.redact || end == pos {
+        if self.redact() || end == pos {
             return self.err(pos, b"Strings must be quoted");
         }
         self.err_fmt(

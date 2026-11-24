@@ -867,8 +867,7 @@ pub mod parse_worker {
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
+                    let root: Expr = bun_parsers::toml::TOML::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,

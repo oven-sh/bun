@@ -1322,7 +1322,7 @@ impl Bunfig {
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
         let expr = if is_toml {
-            match TOML::parse(source, log, &bump, true) {
+            match TOML::parse(source, log, &bump) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {
@@ -1382,7 +1382,7 @@ impl Bunfig {
         // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
         let bump = Bump::borrowing_default();
-        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
+        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump)?;
         let security = file.get(b"install").and_then(|it| it.get(b"security"));
         Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
     }

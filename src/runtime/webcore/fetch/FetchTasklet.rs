@@ -2088,6 +2088,7 @@ impl FetchTasklet {
         );
         http.client.flags.is_streaming_request_body = is_stream;
         http.client.flags.forced_protocol = fetch_options.forced_protocol;
+        http.client.flags.unfinished_stream = http::UnfinishedStream::Accept;
         http.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {

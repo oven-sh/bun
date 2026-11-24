@@ -96,6 +96,7 @@ struct SocketState {
     current_request: Cell<usize>,
     base_socket: Cell<usize>,
     poll_group: Cell<usize>,
+    is_shared: Cell<bool>,
     interest: Cell<Readiness>,
     poll_status: Cell<PollStatus>,
     is_update_queued: Cell<bool>,
@@ -258,7 +259,7 @@ impl Sockets {
             info.write(AfdPollInfo {
                 timeout: i64::MAX,
                 handle_count: 1,
-                is_exclusive: 1,
+                is_exclusive: (!state.is_shared.get()).into(),
                 socket: state.base_socket.get(),
                 events: interest.bits(),
                 status: 0,
@@ -475,6 +476,7 @@ impl SocketRegistration {
         }
         state.base_socket.set(base_socket);
         state.poll_group.set(poll_group);
+        state.is_shared.set(false);
         state.interest.take();
         state.is_update_queued.set(false);
         state.handler.replace(Some(handler));
@@ -489,6 +491,13 @@ impl SocketRegistration {
             && !state.interest.replace(interest).contains(interest)
         {
             sockets.queue_update(self.token, &state);
+        }
+    }
+
+    /// Stops this and other holders of the socket from completing each other's polls.
+    pub fn set_shared(&self) {
+        if let Some(state) = self.port.sockets.get(self.token) {
+            state.is_shared.set(true);
         }
     }
 

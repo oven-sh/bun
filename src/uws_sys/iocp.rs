@@ -402,6 +402,15 @@ unsafe extern "C" fn us_poll_start_rc(p: NonNull<Poll>, loop_: &Loop, events: c_
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn us_internal_poll_set_shared(p: &Poll) {
+    p.registration.with_taken(|registration| {
+        if let Some(registration) = registration {
+            registration.set_shared();
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn us_poll_change(p: &Poll, _loop: &Loop, events: c_int) -> c_int {
     if p.events() != events {
         p.set_type(p.kind(), events);

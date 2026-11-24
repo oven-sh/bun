@@ -259,6 +259,9 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
+#ifdef _WIN32
+void us_internal_poll_set_shared(struct us_poll_t *p);
+#endif
 struct timespec;
 int us_internal_loop_has_polls(us_loop_r loop);
 /* Nonzero if us_internal_loop_wait is known not to block. */

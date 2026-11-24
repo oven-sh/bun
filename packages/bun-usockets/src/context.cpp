@@ -431,6 +431,9 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         *error = LIBUS_ERR;
         return 0;
     }
+#ifdef _WIN32
+    us_internal_poll_set_shared(p);
+#endif
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);

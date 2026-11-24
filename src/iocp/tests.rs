@@ -7,7 +7,7 @@ use core::time::Duration;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::io::{
-    AsHandle as _, AsRawHandle as _, AsRawSocket as _, BorrowedHandle, OwnedHandle,
+    AsHandle as _, AsRawHandle as _, AsRawSocket, BorrowedHandle, OwnedHandle,
 };
 use std::rc::Rc;
 use std::sync::{Arc, Barrier, OnceLock, mpsc};
@@ -466,7 +466,7 @@ fn create_socket_pair() -> (TcpStream, TcpStream) {
 
 fn register_socket(
     port: &Rc<Port>,
-    socket: &TcpStream,
+    socket: &impl AsRawSocket,
 ) -> (SocketRegistration, Rc<RefCell<Vec<Readiness>>>) {
     let events = Rc::new(RefCell::new(Vec::new()));
     let events_clone = Rc::clone(&events);
@@ -598,6 +598,30 @@ fn socket_registered_on_two_ports_is_reported_by_both() {
     }
     peer.write_all(b"x").unwrap();
     for (port, (_, events)) in ports.iter().zip(&registrations) {
+        run_until(port, || !events.borrow().is_empty());
+    }
+}
+
+#[test]
+fn shared_listener_is_polled_once_and_reported_to_every_holder() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let duplicates = [listener.try_clone().unwrap(), listener.try_clone().unwrap()];
+    let holders = [&duplicates[0], &listener, &duplicates[1]].map(|socket| {
+        let port = Port::new().unwrap();
+        let (registration, events) = register_socket(&port, socket);
+        if !ptr::eq(socket, &listener) {
+            registration.set_shared();
+        }
+        registration.set_interest(Readiness::ACCEPT);
+        (port, registration, events)
+    });
+    let (_guard, poll_count) = count_calls(Call::NtDeviceIoControlFile);
+    for (port, ..) in holders.iter().cycle().take(9) {
+        run_iteration(port, Duration::from_millis(5));
+    }
+    assert_eq!(poll_count.get(), holders.len());
+    let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    for (port, _, events) in &holders {
         run_until(port, || !events.borrow().is_empty());
     }
 }

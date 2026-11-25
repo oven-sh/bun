@@ -699,7 +699,17 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 host.note_file_left_out(&self.request, file.path, needs_extension);
                 return Ok(());
             }
-            CodeResolution::File(file) => ComputedCandidate::File(file),
+            CodeResolution::File(file) => {
+                let host = self.resolver.code_host();
+                if self.start_names_nothing
+                    && !ends_in_extension(self.request.suffix)
+                    && file.host_module.is_none()
+                    && self.request.site.type_attribute.is_some()
+                {
+                    host.note_typed_file(&self.request, file.path);
+                }
+                ComputedCandidate::File(file)
+            }
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
                 specifier,

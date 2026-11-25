@@ -94,6 +94,7 @@ diagnostic_codes! {
         EntryPointIsExternal = 100162, Error, "The entry point \"{0}\" cannot be marked as external";
         FileIsNotAProgram = 100163, Error, "\"{0}\" is loaded as JavaScript, because nothing says what else it is, and it isn't JavaScript: {1}";
         DataFileIsRefused = 100164, Error, "\"{0}\" could not be parsed as {1}: {2}";
+        FilesTakenByType = 100179, Warning, "The executable embeds {0} for this path. It names no folder, and `type: \"{1}\"` reads files of any kind: {2}. Write the folder or the extension in the path to embed fewer";
         FileEmbeddedImplicitly = 100166, Note, "The executable embeds \"{0}\" because this reads it";
         WorkerFileFoundByName = 100167, Note, "The executable holds \"{0}\", which this names, because a Worker may start from it";
         WorkerFilesFoundByName = 100168, Note, "The build can't tell which file each Worker starts from, so the executable holds these files, which the program names: {0}";

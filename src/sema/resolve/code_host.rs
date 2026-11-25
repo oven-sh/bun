@@ -80,6 +80,9 @@ pub trait CodeHost: Host {
     ) {
     }
 
+    /// A file, of data or of code, is brought by the type that the load writes, and its path names no folder.
+    fn note_typed_file(&self, _request: &ComputedCodeRequest<'_>, _path: &[u8]) {}
+
     fn stands_for_text_that_cannot_be_read(&self, _payload: &HostPayload) -> bool {
         false
     }

@@ -173,6 +173,26 @@ impl FileLeftOutByPattern {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FileTakenByType {
+    pub folder_of_text: Vec<u8>,
+    pub start: Vec<u8>,
+    pub end: Vec<u8>,
+    pub written_type: Vec<u8>,
+    pub path: Vec<u8>,
+}
+
+impl FileTakenByType {
+    pub(crate) fn written_at(&self) -> [&[u8]; 4] {
+        [
+            &self.folder_of_text,
+            &self.start,
+            &self.end,
+            &self.written_type,
+        ]
+    }
+}
+
 pub(crate) struct LoadHost<'a> {
     disk: &'a Disk,
     input: LoadHostInput<'a>,
@@ -183,6 +203,7 @@ pub(crate) struct LoadHost<'a> {
     outfile: Option<Vec<u8>>,
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
+    files_taken_by_types: Guarded<FxHashSet<FileTakenByType>>,
     guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
     resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
@@ -445,6 +466,7 @@ impl<'a> LoadHost<'a> {
                 .map(|path| from_native(path))
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
+            files_taken_by_types: Guarded::new(FxHashSet::default()),
             guesses_left_out: Guarded::new(None),
             resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
@@ -502,6 +524,17 @@ impl<'a> LoadHost<'a> {
         let mut files: Vec<FileLeftOutByPattern> = files.iter().cloned().collect();
         files.shared_sort_unstable();
         files
+    }
+
+    pub(crate) fn files_taken_by_types(&self) -> Vec<FileTakenByType> {
+        let files = self.files_taken_by_types.lock();
+        let mut files: Vec<FileTakenByType> = files.iter().cloned().collect();
+        files.shared_sort_unstable();
+        files
+    }
+
+    pub(crate) fn size_on_disk(&self, path: &[u8]) -> u64 {
+        self.disk.file_stamp(path).map_or(0, |it| it.size)
     }
 
     pub(crate) fn display_path_of(&self, path: &[u8]) -> Box<[u8]> {
@@ -1390,6 +1423,25 @@ impl CodeHost for LoadHost<'_> {
                 needs_extension,
                 path: path.to_vec(),
             });
+    }
+
+    fn note_typed_file(&self, request: &ComputedCodeRequest<'_>, path: &[u8]) {
+        let Some(written_type) = request.site.type_attribute else {
+            return;
+        };
+        if !matches!(
+            Loader::from_string(written_type),
+            Some(Loader::Text | Loader::File)
+        ) {
+            return;
+        }
+        self.files_taken_by_types.lock().insert(FileTakenByType {
+            folder_of_text: request.site.folder.to_vec(),
+            start: request.prefix.to_vec(),
+            end: request.suffix.to_vec(),
+            written_type: written_type.to_vec(),
+            path: path.to_vec(),
+        });
     }
 
     fn create_module_from_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {

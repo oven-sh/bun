@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync, symlinkSync } from "node:fs";
+import { readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, test } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -33,6 +33,7 @@ const programs = {
   "nothing-but-an-end": programOf(`require("./" + name + ".json")`),
   "nothing-but-a-type": programOf(`import("./" + name, { with: { type: "json" } })`),
   "nothing-but-the-type-of-text": programOf(`import("./" + name, { with: { type: "text" } })`),
+  "nothing-but-the-type-of-a-file": programOf(`import("./" + name, { with: { type: "file" } })`),
   "nothing-beside-a-path-with-a-type": programOf(`require("./typed.cjs").load(name)`),
   "a-folder-given-to-create-require": programOf(
     `require("node:module").createRequire(__dirname + "/locales/")("./" + name)`,
@@ -223,6 +224,43 @@ test.each([
       }
     }
   },
+  600_000,
+);
+
+test.each([
+  [
+    "nothing-but-the-type-of-text",
+    "text",
+    ["id.pem", "locales/notes.txt", "notes.txt", "query.sql", "run.log", "src/notes.txt"],
+    "id.pem, locales/notes.txt, main.cjs, notes.txt, part.cjs and 5 more",
+  ],
+  [
+    "nothing-but-the-type-of-a-file",
+    "file",
+    ["id.pem", "query.sql", "run.log"],
+    "id.pem, main.cjs, part.cjs, query.sql, run.log and 2 more",
+  ],
+] as const)(
+  "a start that names %s: the build warns of the files that the type brings, by number, size and name",
+  async (program, type, held, names) => {
+    const { executable, said } = await build(program);
+    expect(dataHeldBy(executable)).toEqual([...held]);
+    // The code of the folder is brought as text too, with the file that has the load.
+    const brought = [...held, "main.cjs", "part.cjs", "src/above.cjs", "src/part.cjs"];
+    const sizes = brought.map(file => statSync(join(directory, program, "tool", file)).size);
+    const warning = said.split("\n").find(line => line.includes("TS100179: "));
+    expect(warning).toContain(`\`type: "${type}"\` reads files of any kind: ${names}. Write the folder`);
+    expect(warning).toContain(`The executable embeds ${brought.length} files (`);
+    const [, size, unit] = /files \(([\d.]+) (bytes|KB)\) for this path\./.exec(warning!)!;
+    const total = Number(size) * (unit === "KB" ? 1000 : 1);
+    expect(Math.abs(total - sizes.reduce((sum, it) => sum + it, 0))).toBeLessThan(100);
+  },
+  600_000,
+);
+
+test.each(["a-folder", "nothing", "nothing-but-an-end", "nothing-but-a-type"] as const)(
+  "a start that names %s: no such warning",
+  async program => expect((await build(program)).said).not.toContain("TS100179"),
   600_000,
 );
 

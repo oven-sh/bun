@@ -8,10 +8,16 @@ import { describe, test } from "./supported";
 
 // A build finds what `require(object.name)` may name. It listed all the members of the object for each read, if one key of it was computed, and again after each store.
 const read = (expression: string) => `try { require(${expression}); } catch {}`;
-const upTo = (count: number, line: (index: number) => string) => Array.from({ length: count }, (_, index) => line(index));
+const upTo = (count: number, line: (index: number) => string) =>
+  Array.from({ length: count }, (_, index) => line(index));
 
 const shapes: Record<string, (count: number) => string[]> = {
-  "written keys": count => ["const o = {", ...upTo(count, i => `k${i}: "./none${i}",`), "};", ...upTo(count, i => read(`o.k${i}`))],
+  "written keys": count => [
+    "const o = {",
+    ...upTo(count, i => `k${i}: "./none${i}",`),
+    "};",
+    ...upTo(count, i => read(`o.k${i}`)),
+  ],
   "written keys and one getter": count => [
     "const o = { get g() { return 1; },",
     ...upTo(count, i => `k${i}: "./none${i}",`),
@@ -25,8 +31,16 @@ const shapes: Record<string, (count: number) => string[]> = {
     "};",
     ...upTo(count, i => read(`o.k${i}`)),
   ],
-  "computed keys": count => ["const o = {", ...upTo(count, i => `["k" + ${i}]: "./none${i}",`), "};", ...upTo(count, i => read(`o.k${i}`))],
-  "stores and reads in turns": count => ["const o = {};", ...upTo(count, i => `o.k${i} = "./none${i}"; ${read(`o.k${i}`)}`)],
+  "computed keys": count => [
+    "const o = {",
+    ...upTo(count, i => `["k" + ${i}]: "./none${i}",`),
+    "};",
+    ...upTo(count, i => read(`o.k${i}`)),
+  ],
+  "stores and reads in turns": count => [
+    "const o = {};",
+    ...upTo(count, i => `o.k${i} = "./none${i}"; ${read(`o.k${i}`)}`),
+  ],
   "one name in many objects": count => [
     ...upTo(count, i => `function f${i}(a) { a.path = "./none${i}"; ${read("a.path")} }`),
     ...upTo(count, i => `f${i}({ path: "./other${i}" });`),
@@ -44,7 +58,15 @@ const shapes: Record<string, (count: number) => string[]> = {
 async function build(folder: string, lines: string[], count: number) {
   writeFileSync(join(folder, `${count}.cjs`), [...lines, 'console.log("done");', ""].join("\n"));
   await using built = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", `./${count}.cjs`, "--outfile", join(folder, count + (isWindows ? ".exe" : ""))],
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--aot",
+      `./${count}.cjs`,
+      "--outfile",
+      join(folder, count + (isWindows ? ".exe" : "")),
+    ],
     cwd: folder,
     env: bunEnv,
     stdout: "pipe",
@@ -52,7 +74,10 @@ async function build(folder: string, lines: string[], count: number) {
     timeout: 90_000,
   });
   const [stderr, exitCode] = await Promise.all([built.stderr.text(), built.exited]);
-  expect({ stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({ stderr: [], exitCode: 0 });
+  expect({ stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
+    stderr: [],
+    exitCode: 0,
+  });
   return Number(built.resourceUsage()!.cpuTime.user) / 1e6;
 }
 

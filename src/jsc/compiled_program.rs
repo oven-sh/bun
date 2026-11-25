@@ -271,7 +271,9 @@ pub unsafe extern "C" fn Bun__AOT__isFileOfStamp(
         )
     };
     let file_of_form = || is_file_of_stamp(path_without_form(path)?);
-    is_file_of_stamp(path).or_else(file_of_form).unwrap_or(false)
+    is_file_of_stamp(path)
+        .or_else(file_of_form)
+        .unwrap_or(false)
 }
 
 /// BunCompiledModules.cpp. `require` looks in `require.cache` for a Node.js module that is named without `node:`, under the name as it is written.

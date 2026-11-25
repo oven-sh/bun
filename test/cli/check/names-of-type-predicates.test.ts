@@ -4,9 +4,12 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
 
-const variable = (at: string) => `(${at}): error TS9010: Variable must have an explicit type annotation with --isolatedDeclarations.`;
-const expression = (at: string) => `(${at}): error TS9013: Expression type can't be inferred with --isolatedDeclarations.`;
-const inaccessible = (at: string, name: string) => `(${at}): error TS9039: Type containing private name '${name}' can't be used with --isolatedDeclarations.`;
+const variable = (at: string) =>
+  `(${at}): error TS9010: Variable must have an explicit type annotation with --isolatedDeclarations.`;
+const expression = (at: string) =>
+  `(${at}): error TS9013: Expression type can't be inferred with --isolatedDeclarations.`;
+const inaccessible = (at: string, name: string) =>
+  `(${at}): error TS9039: Type containing private name '${name}' can't be used with --isolatedDeclarations.`;
 const property = "(1,37): error TS9012: Property must have an explicit type annotation with --isolatedDeclarations.";
 
 // Each program, and the errors that TypeScript reports.
@@ -33,25 +36,52 @@ const programs: Record<string, [source: string, errors: string[]]> = {
   ],
   "type parameters in a class's member": [
     "export const v = (() => { class L { v = (() => { type B = { x: 1 }; return <T extends B>(n: T, o: B): o is B => true; })(); } return null! as L; })();",
-    [variable("1,14"), property, inaccessible("1,87", "B"), inaccessible("1,103", "o is B"), inaccessible("1,103", "o")],
+    [
+      variable("1,14"),
+      property,
+      inaccessible("1,87", "B"),
+      inaccessible("1,103", "o is B"),
+      inaccessible("1,103", "o"),
+    ],
   ],
   "a union of object types": [
     "export const v = (() => { class L { v = (() => { return (o: { x: 1 } | 1): o is 1 => true; })(); } return null! as L; })();",
     [variable("1,14"), property, inaccessible("1,76", "o is 1"), inaccessible("1,76", "o")],
   ],
-  "a parameter that stays": ["function g<T>(x: T) { return (o: any): asserts o => {}; }\nexport const v = g(1);", [variable("2,14")]],
+  "a parameter that stays": [
+    "function g<T>(x: T) { return (o: any): asserts o => {}; }\nexport const v = g(1);",
+    [variable("2,14")],
+  ],
   "a type predicate that changes": [
     "function g<T>(x: T) { return (o: any): o is T => true; }\nexport const v = g(1);",
-    ["(1,30): error TS9007: Function must have an explicit return type annotation with --isolatedDeclarations.", variable("2,14")],
+    [
+      "(1,30): error TS9007: Function must have an explicit return type annotation with --isolatedDeclarations.",
+      variable("2,14"),
+    ],
   ],
   "a type query": ["function g<T>(x: T) { return (o: T): typeof o => o; }\nexport const v = g(1);", [variable("2,14")]],
 };
 
 test.concurrent.each(Object.keys(programs))("%s", async name => {
   const [source, errors] = programs[name];
-  const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: "esnext", lib: ["esnext"], types: [], declaration: true, isolatedDeclarations: true };
-  using dir = tempDir("check-names-of-predicates", { "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"] }), "a.ts": source + "\n" });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const compilerOptions = {
+    strict: true,
+    noEmit: true,
+    target: "esnext",
+    module: "esnext",
+    lib: ["esnext"],
+    types: [],
+    declaration: true,
+    isolatedDeclarations: true,
+  };
+  using dir = tempDir("check-names-of-predicates", {
+    "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"] }),
+    "a.ts": source + "\n",
+  });
+  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   const reported = stdout.split("\n").filter(line => line.includes("error TS"));
   expect(reported.sort()).toEqual(errors.map(it => `a.ts${it}`).sort());
 });

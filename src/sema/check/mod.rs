@@ -3130,13 +3130,14 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let at = self.hir(file)[pat].pos;
-        matches!(root_declaration(self.bound(file), pat), crate::bind::PatParent::Var(_))
-            && self.inference_contexts.iter().all(|it| {
-                let is_inside = || {
-                    (self.start_of(file, it.node)..self.end_of_expr(file, it.node)).contains(&at)
-                };
-                it.file != file || !is_inside()
-            })
+        matches!(
+            root_declaration(self.bound(file), pat),
+            crate::bind::PatParent::Var(_)
+        ) && self.inference_contexts.iter().all(|it| {
+            let is_inside =
+                || (self.start_of(file, it.node)..self.end_of_expr(file, it.node)).contains(&at);
+            it.file != file || !is_inside()
+        })
     }
 
     #[inline]

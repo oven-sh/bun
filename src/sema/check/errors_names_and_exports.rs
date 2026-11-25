@@ -273,7 +273,10 @@ impl Checker<'_, '_> {
         let mut inspected: Vec<u8> = Vec::new();
         // What an import shares with an exported value is a local symbol that names the value's own.
         let shared = SymFlags::ALIAS | SymFlags::EXPORT_VALUE;
-        let locals = bound.scopes.first().map_or(&[][..], |it| bound.table(it.locals));
+        let locals = bound
+            .scopes
+            .first()
+            .map_or(&[][..], |it| bound.table(it.locals));
         let shared_locals: smallvec::SmallVec<[(SymbolId, SymbolId); 2]> = (locals.iter())
             .filter(|it| bound.symbol_flags(it.1) & (shared | SymFlags::VALUE) == shared)
             .map(|it| (bound.export_symbol_of_value_symbol_if_exported(it.1), it.1))
@@ -286,7 +289,10 @@ impl Checker<'_, '_> {
             Some((e, found.1))
         });
         let aliases = bound.alias_idents.iter();
-        for (e, local) in aliases.map(|it| (it.0, bound.symbol_of_expr(it.0))).chain(named) {
+        for (e, local) in aliases
+            .map(|it| (it.0, bound.symbol_of_expr(it.0)))
+            .chain(named)
+        {
             if local.is_none() || bound.is_unchecked(e.idx()) {
                 continue;
             }

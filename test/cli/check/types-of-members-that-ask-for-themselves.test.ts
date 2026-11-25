@@ -8,7 +8,15 @@ const globals = `interface Array<T> { length: number; [index: number]: T }
 interface Boolean {} interface CallableFunction {} interface Function {} interface IArguments {} interface NewableFunction {} interface Number {} interface Object {} interface RegExp {} interface String {}
 `;
 const tsconfig = JSON.stringify({
-  compilerOptions: { strict: true, noLib: true, types: [], module: "preserve", moduleResolution: "bundler", target: "esnext", noEmit: true },
+  compilerOptions: {
+    strict: true,
+    noLib: true,
+    types: [],
+    module: "preserve",
+    moduleResolution: "bundler",
+    target: "esnext",
+    noEmit: true,
+  },
   files: ["globals.d.ts", "main.ts"],
 });
 
@@ -141,9 +149,16 @@ export interface Crate<T> { put: (x: T) => void; kind: Is<Crate<string>>["w"]; }
 
 test.concurrent.each(Object.keys(programs))("%s", async name => {
   const [files, errors] = programs[name];
-  using dir = tempDir("check-members-that-ask-for-themselves", { "globals.d.ts": globals, "tsconfig.json": tsconfig, ...files });
+  using dir = tempDir("check-members-that-ask-for-themselves", {
+    "globals.d.ts": globals,
+    "tsconfig.json": tsconfig,
+    ...files,
+  });
   for (const threads of [1, 2, 8, 32]) {
-    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), {
+      ...bunEnv,
+      NO_COLOR: "1",
+    });
     const told = [...stdout.matchAll(/^(\S+\.ts\(\d+,\d+\)): error (TS\d+)/gm)].map(it => `${it[1]} ${it[2]}`);
     expect(told.sort()).toEqual(errors);
   }

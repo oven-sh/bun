@@ -23,7 +23,10 @@ export { p0, p1, p2, p3, p6, p7 };
 // The errors are those of TypeScript 7.0.2.
 test("properties that are declared by constructors with a modifier", async () => {
   using dir = tempDir("check-static-constructors", { "tsconfig.json": tsconfig, "main.ts": program });
-  const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty", "--all"], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty", "--all"], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   const told = (stdout + stderr).matchAll(/^main\.ts(\(\d+,\d+\)): error (TS\d+)(: Type '\w+')?/gm);
   expect([...told].map(([, at, code, type]) => `${at} ${code}${type ?? ""}`)).toEqual([
     "(1,11) TS1089",

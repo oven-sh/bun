@@ -1077,17 +1077,13 @@ impl<'p, 's> Checker<'p, 's> {
         target_type: TypeId,
     ) {
         let assigned = self.p.symbol_types.get(&self.task, &sym);
-        let is_unassigned = self.found_cycle
-            && self.is_resolving(Query::Symbol(sym))
-            && assigned.is_none();
+        let is_unassigned =
+            self.found_cycle && self.is_resolving(Query::Symbol(sym)) && assigned.is_none();
         // `getTypeOfVariableOrParameterOrProperty` assigns nothing over what a nested request has assigned, and returns its own.
         let is_another = target_type != TypeId::UNRESOLVED
             && assigned.is_some_and(|it| it != target_type)
             && !self.is_innermost_tainted();
-        if !is_unassigned
-            && !is_another
-            && !self.instantiated_symbol_links.contains_key(&sym)
-        {
+        if !is_unassigned && !is_another && !self.instantiated_symbol_links.contains_key(&sym) {
             return;
         }
         if prop.flags.contains(PropFlags::THISLESS) {

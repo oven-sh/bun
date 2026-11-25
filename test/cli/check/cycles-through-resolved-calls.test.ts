@@ -5,10 +5,19 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
 
-const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: "esnext", moduleResolution: "bundler", lib: ["esnext"], types: [] };
+const compilerOptions = {
+  strict: true,
+  noEmit: true,
+  target: "esnext",
+  module: "esnext",
+  moduleResolution: "bundler",
+  lib: ["esnext"],
+  types: [],
+};
 const implicit = (name?: string) =>
   `${name ? `error TS7023: '${name}'` : "error TS7024: Function"} implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`;
-const refused = (source: string, target: string) => `error TS2345: Argument of type '${source}' is not assignable to parameter of type '${target}'.`;
+const refused = (source: string, target: string) =>
+  `error TS2345: Argument of type '${source}' is not assignable to parameter of type '${target}'.`;
 
 // What TypeScript reports for each.
 const programs: Record<string, [m0: string, m1: string, expected: string[]]> = {
@@ -75,7 +84,15 @@ test.concurrent.each(Object.keys(programs))("%s", async name => {
     "m1.ts": `import { f0 } from "./m0";\n${m1}\n`,
   });
   for (const threads of [1, 2, 2, 2, 2, 8, 8, 8, 8, 64, 64]) {
-    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
-    expect(stdout.split("\n").filter(line => line.includes("error TS")).sort()).toEqual(expected);
+    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), {
+      ...bunEnv,
+      NO_COLOR: "1",
+    });
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.includes("error TS"))
+        .sort(),
+    ).toEqual(expected);
   }
 });

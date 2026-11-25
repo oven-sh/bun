@@ -2322,8 +2322,7 @@ impl<'p, 's> Checker<'p, 's> {
             name: prop.name,
             // `createSymbolWithType`
             flags: PropFlags::OPTIONAL
-                | prop.flags
-                    & (PropFlags::READONLY | PropFlags::ACCESSOR | PropFlags::WRITE_ONLY),
+                | prop.flags & (PropFlags::READONLY | PropFlags::ACCESSOR | PropFlags::WRITE_ONLY),
             source: Self::copy_of(missing, &[prop], true, self.arena),
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),

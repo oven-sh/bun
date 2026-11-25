@@ -23,5 +23,9 @@ test("a comparison in a loop is told by the final types, as an argument by those
   using dir = tempDir("check-comparisons-while-a-loop-is-analyzed", { "tsconfig.json": tsconfig, "main.ts": program });
   const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty"], String(dir), { ...bunEnv, NO_COLOR: "1" });
   const told = (stdout + stderr).matchAll(/^main\.ts(\(\d+,\d+\)): error (TS\d+)/gm);
-  expect([...told].map(([, at, code]) => `${at} ${code}`)).toEqual(["(7,161) TS2367", "(7,175) TS2339", "(8,167) TS2367"]);
+  expect([...told].map(([, at, code]) => `${at} ${code}`)).toEqual([
+    "(7,161) TS2367",
+    "(7,175) TS2339",
+    "(8,167) TS2367",
+  ]);
 });

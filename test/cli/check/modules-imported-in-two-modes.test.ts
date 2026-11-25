@@ -11,25 +11,37 @@ test.concurrent.each([
     "import = require first, with the extensions of TypeScript",
     `import N = require("./b.mjs");\nexport { default } from "./b.mjs";\nimport { local } from "./b.mjs";\nexport const n = [N, local];\n`,
     { module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true },
-    [`c.mts(2,10): error TS2305: Module '"./b.mts"' has no exported member 'default'.`, `c.mts(3,10): error TS2459: Module '"./b.mts"' declares 'local' locally, but it is not exported.`],
+    [
+      `c.mts(2,10): error TS2305: Module '"./b.mts"' has no exported member 'default'.`,
+      `c.mts(3,10): error TS2459: Module '"./b.mts"' declares 'local' locally, but it is not exported.`,
+    ],
   ],
   [
     "import = require behind an export",
     `export { default } from "./b.mjs";\nimport N = require("./b.mjs");\nimport { local } from "./b.mjs";\nexport const n = [N, local];\n`,
     { module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true },
-    [`c.mts(1,10): error TS2305: Module '"./b.mjs"' has no exported member 'default'.`, `c.mts(3,10): error TS2459: Module '"./b.mjs"' declares 'local' locally, but it is not exported.`],
+    [
+      `c.mts(1,10): error TS2305: Module '"./b.mjs"' has no exported member 'default'.`,
+      `c.mts(3,10): error TS2459: Module '"./b.mjs"' declares 'local' locally, but it is not exported.`,
+    ],
   ],
   [
     "import = require first, without them",
     `import N = require("./b.mjs");\nimport { local, absent } from "./b.mjs";\nexport const n = [N, local, absent];\n`,
     { module: "preserve", moduleResolution: "bundler" },
-    [`c.mts(2,10): error TS2459: Module '"./b.mjs"' declares 'local' locally, but it is not exported.`, `c.mts(2,17): error TS2305: Module '"./b.mjs"' has no exported member 'absent'.`],
+    [
+      `c.mts(2,10): error TS2459: Module '"./b.mjs"' declares 'local' locally, but it is not exported.`,
+      `c.mts(2,17): error TS2305: Module '"./b.mjs"' has no exported member 'absent'.`,
+    ],
   ],
   [
     "import = require first, spelled another way than what follows",
     `import N = require("./b.mjs");\nimport { local, absent } from "./b.mts";\nexport const n = [N, local, absent];\n`,
     { module: "preserve", moduleResolution: "bundler", allowImportingTsExtensions: true },
-    [`c.mts(2,10): error TS2459: Module '"./b.mts"' declares 'local' locally, but it is not exported.`, `c.mts(2,17): error TS2305: Module '"./b.mts"' has no exported member 'absent'.`],
+    [
+      `c.mts(2,10): error TS2459: Module '"./b.mts"' declares 'local' locally, but it is not exported.`,
+      `c.mts(2,17): error TS2305: Module '"./b.mts"' has no exported member 'absent'.`,
+    ],
   ],
 ])("%s", async (_, importer, options, errors) => {
   const compilerOptions = { strict: true, noEmit: true, target: "esnext", lib: ["esnext"], types: [], ...options };
@@ -38,6 +50,9 @@ test.concurrent.each([
     "b.mts": exporter,
     "c.mts": importer,
   });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   expect(stdout.trim().split("\n")).toEqual(errors);
 });

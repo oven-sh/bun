@@ -18,30 +18,59 @@ const compilerOptions = {
 };
 
 const check = async (name: string, program: string) => {
-  using dir = tempDir("check-typedefs-found-in-themselves", { "tsconfig.json": JSON.stringify({ compilerOptions }), [name]: program });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  using dir = tempDir("check-typedefs-found-in-themselves", {
+    "tsconfig.json": JSON.stringify({ compilerOptions }),
+    [name]: program,
+  });
+  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   return [...stdout.matchAll(/^a\.[jt]s\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
 };
 
-const inFunction = (...lines: string[]) => ["/** @param {1} x */", "export function f(x) {", ...lines, "  return y;", "}", ""].join("\n");
+const inFunction = (...lines: string[]) =>
+  ["/** @param {1} x */", "export function f(x) {", ...lines, "  return y;", "}", ""].join("\n");
 
 test.concurrent.each([
-  ["an object type", inFunction("  /** @typedef {{ v: 1, n?: T }} T */", "  /** @type {T} */", "  const y = { v: x };")],
-  ["an object type in parentheses", inFunction("  /** @typedef {({ v: 1, n?: T })} T */", "  /** @type {T} */", "  const y = { v: x };")],
+  [
+    "an object type",
+    inFunction("  /** @typedef {{ v: 1, n?: T }} T */", "  /** @type {T} */", "  const y = { v: x };"),
+  ],
+  [
+    "an object type in parentheses",
+    inFunction("  /** @typedef {({ v: 1, n?: T })} T */", "  /** @type {T} */", "  const y = { v: x };"),
+  ],
   [
     "a list of properties",
-    inFunction("  /**", "   * @typedef {object} T", "   * @property {1} v", "   * @property {T} [n]", "   */", "  /** @type {T} */", "  const y = { v: x };"),
+    inFunction(
+      "  /**",
+      "   * @typedef {object} T",
+      "   * @property {1} v",
+      "   * @property {T} [n]",
+      "   */",
+      "  /** @type {T} */",
+      "  const y = { v: x };",
+    ),
   ],
   [
     "two that are found in each other",
-    inFunction("  /** @typedef {{ v: 1, n: U[] }} T */", "  /** @typedef {{ w: T | null }} U */", "  /** @type {T} */", "  const y = { v: x, n: [] };"),
+    inFunction(
+      "  /** @typedef {{ v: 1, n: U[] }} T */",
+      "  /** @typedef {{ w: T | null }} U */",
+      "  /** @type {T} */",
+      "  const y = { v: x, n: [] };",
+    ),
   ],
   [
     "in methods",
     "export class C {\n  m() {\n    /** @typedef {{ v: 1, n?: T }} T */\n    /** @type {T} */\n    const y = { v: 1 };\n    return y;\n  }\n}\n" +
       "export const o = { q() { /** @typedef {{ z?: Z }} Z */ /** @type {Z} */ const z = {}; return z; } };\n",
   ],
-  ["what doesn't come back to itself", inFunction("  /** @typedef {{ v: 1, n?: number }} T */", "  /** @type {T} */", "  const y = { v: x };")],
+  [
+    "what doesn't come back to itself",
+    inFunction("  /** @typedef {{ v: 1, n?: number }} T */", "  /** @type {T} */", "  const y = { v: x };"),
+  ],
 ])("%s", async (_, program) => {
   expect(await check("a.js", program)).toEqual([]);
 });
@@ -55,7 +84,9 @@ test.concurrent.each([
   ['type T = { [K in "a" | "b"]?: T };', "{}"],
   ["type Keys<K> = { [P in keyof K]?: Keys<K> }; type T = Keys<{ a: 1 }>;", "{}"],
 ])("in TypeScript: %s", async (types, value) => {
-  expect(await check("a.ts", `export function f(x: 1) {\n  ${types}\n  const y: T = ${value};\n  return y;\n}\n`)).toEqual(["1,17 TS4060"]);
+  expect(
+    await check("a.ts", `export function f(x: 1) {\n  ${types}\n  const y: T = ${value};\n  return y;\n}\n`),
+  ).toEqual(["1,17 TS4060"]);
 });
 
 test.concurrent("in TypeScript, in a method, a property and a variable", async () => {

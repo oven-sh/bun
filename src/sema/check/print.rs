@@ -1097,7 +1097,12 @@ pub(super) trait SymbolTracker<'p> {
     /// `ReportInferenceFallback` for `node` of `file`.
     fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
     /// The same for the parameter name in the type predicate `node`.
-    fn report_predicate_parameter(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: TypeNodeId);
+    fn report_predicate_parameter(
+        &mut self,
+        c: &mut Checker<'p, '_>,
+        file: FileId,
+        node: TypeNodeId,
+    );
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
 }

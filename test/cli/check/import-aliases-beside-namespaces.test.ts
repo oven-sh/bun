@@ -6,10 +6,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 const forms: [name: string, lines: string[], errors: string][] = [
   [
     "in the namespace, by its whole name",
-    [
-      "namespace N { export namespace b { export interface I { x: number } } export import b = N.b.I; }",
-      "export {};",
-    ],
+    ["namespace N { export namespace b { export interface I { x: number } } export import b = N.b.I; }", "export {};"],
     "1,71:2303",
   ],
   [
@@ -32,10 +29,7 @@ const forms: [name: string, lines: string[], errors: string][] = [
   ],
   [
     "in the namespace, by its name",
-    [
-      "namespace N { export namespace b { export interface I { x: number } } export import b = b.I; }",
-      "export {};",
-    ],
+    ["namespace N { export namespace b { export interface I { x: number } } export import b = b.I; }", "export {};"],
     "1,71:2303",
   ],
   [
@@ -67,12 +61,7 @@ const forms: [name: string, lines: string[], errors: string][] = [
   ],
   [
     "two aliases, the first beside a namespace",
-    [
-      "namespace a { export interface I { x: number } }",
-      "import a = b.I;",
-      "import b = a.I;",
-      "export {};",
-    ],
+    ["namespace a { export interface I { x: number } }", "import a = b.I;", "import b = a.I;", "export {};"],
     "2,1:2303 3,1:2303",
   ],
   [
@@ -88,49 +77,27 @@ const forms: [name: string, lines: string[], errors: string][] = [
   ],
   [
     "beside a function and a namespace",
-    [
-      "function a() {}",
-      "namespace a { export interface I { x: number } }",
-      "import a = a.I;",
-      "export {};",
-    ],
+    ["function a() {}", "namespace a { export interface I { x: number } }", "import a = a.I;", "export {};"],
     "3,1:2303",
   ],
   [
     "exported beside a local namespace",
-    [
-      "namespace a { export interface I { x: number } }",
-      "export import a = a.I;",
-      "export {};",
-    ],
+    ["namespace a { export interface I { x: number } }", "export import a = a.I;", "export {};"],
     "",
   ],
   [
     "exported beside an exported namespace",
-    [
-      "export namespace a { export interface I { x: number } }",
-      "export import a = a.I;",
-    ],
+    ["export namespace a { export interface I { x: number } }", "export import a = a.I;"],
     "2,1:2303",
   ],
   [
     "beside nested namespaces",
-    [
-      "namespace a.b { export interface I { x: number } }",
-      "import a = a.b.I;",
-      "let v: a = { x: '' };",
-      "export {};",
-    ],
+    ["namespace a.b { export interface I { x: number } }", "import a = a.b.I;", "let v: a = { x: '' };", "export {};"],
     "2,1:2303",
   ],
   [
     "a namespace with values",
-    [
-      "namespace a { export namespace I { export const x = 1 } }",
-      "import a = a.I;",
-      "a.x;",
-      "export {};",
-    ],
+    ["namespace a { export namespace I { export const x = 1 } }", "import a = a.I;", "a.x;", "export {};"],
     "2,1:2303 3,3:2339",
   ],
   [
@@ -153,12 +120,7 @@ const forms: [name: string, lines: string[], errors: string][] = [
   ],
   [
     "aliases of each other",
-    [
-      "namespace a { export interface I { x: number } }",
-      "import a = b;",
-      "import b = a;",
-      "export {};",
-    ],
+    ["namespace a { export interface I { x: number } }", "import a = b;", "import b = a;", "export {};"],
     "2,1:2303 3,1:2303",
   ],
   [
@@ -174,12 +136,7 @@ const forms: [name: string, lines: string[], errors: string][] = [
   ],
   [
     "the second beside a namespace",
-    [
-      "namespace b { export interface I { x: number } }",
-      "import a = b.I;",
-      "import b = a;",
-      "export {};",
-    ],
+    ["namespace b { export interface I { x: number } }", "import a = b.I;", "import b = a;", "export {};"],
     "2,1:2303 3,1:2303",
   ],
   [
@@ -270,7 +227,10 @@ const tsconfig = JSON.stringify({
 });
 
 test.concurrent.each(forms)("%s", async (_, lines, errors) => {
-  using dir = tempDir("import-aliases-beside-namespaces", { "tsconfig.json": tsconfig, "a.ts": lines.join("\n") + "\n" });
+  using dir = tempDir("import-aliases-beside-namespaces", {
+    "tsconfig.json": tsconfig,
+    "a.ts": lines.join("\n") + "\n",
+  });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "check", "--no-pretty"],
     cwd: String(dir),
@@ -279,6 +239,9 @@ test.concurrent.each(forms)("%s", async (_, lines, errors) => {
     stderr: "pipe",
   });
   const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-  const reported = Array.from((stdout + stderr).matchAll(/a\.ts\((\d+,\d+)\): error TS(\d+)/g), it => `${it[1]}:${it[2]}`);
+  const reported = Array.from(
+    (stdout + stderr).matchAll(/a\.ts\((\d+,\d+)\): error TS(\d+)/g),
+    it => `${it[1]}:${it[2]}`,
+  );
   expect(reported.sort()).toEqual(errors.split(" ").filter(Boolean).sort());
 });

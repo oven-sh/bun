@@ -1005,8 +1005,8 @@ impl Checker<'_, '_> {
                             DiagnosticKind::Grammar | DiagnosticKind::Checker
                         ) && (parsed.start, parsed.code) == (d.start, d.code)
                     });
-                drops_discarded |= !is_kept
-                    && (discarded.iter()).any(|&(from, to)| (from..to).contains(&d.start));
+                drops_discarded |=
+                    !is_kept && (discarded.iter()).any(|&(from, to)| (from..to).contains(&d.start));
                 is_kept
             });
         }

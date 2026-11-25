@@ -24,7 +24,9 @@ const functions: [source: string, returned: string][] = [
 
 test("functions that pass themselves to a call in a generic call", async () => {
   const files: Record<string, string> = {
-    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: "esnext", module: "esnext", lib: ["esnext"], types: [] } }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { strict: true, noEmit: true, target: "esnext", module: "esnext", lib: ["esnext"], types: [] },
+    }),
   };
   const expected: string[] = [];
   functions.forEach(([source, returned], at) => {
@@ -44,7 +46,15 @@ export const q: never = f("a");
   });
   using dir = tempDir("check-recursive-callbacks", files);
   for (const threads of [1, 8]) {
-    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
-    expect(stdout.split("\n").filter(line => line.includes("error TS")).sort()).toEqual(expected.sort());
+    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), {
+      ...bunEnv,
+      NO_COLOR: "1",
+    });
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.includes("error TS"))
+        .sort(),
+    ).toEqual(expected.sort());
   }
 });

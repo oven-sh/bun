@@ -788,7 +788,6 @@ function loadAllOfNodeHttp() {
 const nop = () => {};
 
 export {
-  nop,
   METHODS,
   STATUS_CODES,
   abortedSymbol,
@@ -839,6 +838,7 @@ export {
   kWaitForProxyTunnel,
   loadAllOfNodeHttp,
   noBodySymbol,
+  nop,
   onDataIncomingMessage,
   optionsSymbol,
   parseProxyConfigFromEnv,

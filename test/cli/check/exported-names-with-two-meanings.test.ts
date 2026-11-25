@@ -19,7 +19,11 @@ const tsconfig = JSON.stringify({
 // The errors are those of TypeScript 7.0.2.
 test.concurrent.each([
   ["a type and an exported value", "type Size = number;\nexport const Size = 1;\nexport default Size;\n", []],
-  ["an interface and an exported function", "interface Size { a: 1 }\nexport function Size() {}\nexport default Size;\n", []],
+  [
+    "an interface and an exported function",
+    "interface Size { a: 1 }\nexport function Size() {}\nexport default Size;\n",
+    [],
+  ],
   ["an exported type and a value", "export type Size = number;\nconst Size = 1;\nexport default Size;\n", []],
   ["a type and a value", "type Size = number;\nconst Size = 1;\nexport default Size;\n", []],
   ["a type alone", "type Size = number;\nexport default Size;\n", ["(2,16) TS1284"]],

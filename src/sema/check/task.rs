@@ -437,7 +437,10 @@ impl<'s> Task<'s> {
 
     /// For what is different if the check of an earlier file gets there first. Another task rechecks the file once the
     /// earlier files are final.
-    pub(super) fn discard_unless_first(&self, is_reachable_only_by_importers: impl FnOnce() -> bool) {
+    pub(super) fn discard_unless_first(
+        &self,
+        is_reachable_only_by_importers: impl FnOnce() -> bool,
+    ) {
         if !self.was_discarded() && !self.is_first(is_reachable_only_by_importers) {
             self.discard_until_recheck();
         }

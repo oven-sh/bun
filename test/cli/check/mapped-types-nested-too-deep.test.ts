@@ -35,7 +35,13 @@ test.concurrent.each([
   ],
   [
     "asked for its keys first",
-    [`type A = ${nest("Partial", 105)};`, "type B = keyof A;", "export const b: B = 1;", declared("z", "A"), isNever("z")],
+    [
+      `type A = ${nest("Partial", 105)};`,
+      "type B = keyof A;",
+      "export const b: B = 1;",
+      declared("z", "A"),
+      isNever("z"),
+    ],
     ["(3,17) TS2589", "(5,14) TS2322"],
   ],
   [

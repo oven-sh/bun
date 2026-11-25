@@ -5,7 +5,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
 
-const unassignable = (source: string, target: string) => `error TS2322: Type '${source}' is not assignable to type '${target}'.`;
+const unassignable = (source: string, target: string) =>
+  `error TS2322: Type '${source}' is not assignable to type '${target}'.`;
 const isolated = { declaration: true, isolatedDeclarations: true, exactOptionalPropertyTypes: true };
 
 // Each program, its options, and the errors that TypeScript reports.
@@ -71,8 +72,22 @@ export const w = v[0];
 
 test.concurrent.each(Object.keys(programs))("%s", async name => {
   const [source, options, errors] = programs[name];
-  const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: "esnext", lib: ["esnext"], types: [], ...options };
-  using dir = tempDir("check-accessors-of-siblings", { "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"] }), "a.ts": source });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const compilerOptions = {
+    strict: true,
+    noEmit: true,
+    target: "esnext",
+    module: "esnext",
+    lib: ["esnext"],
+    types: [],
+    ...options,
+  };
+  using dir = tempDir("check-accessors-of-siblings", {
+    "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"] }),
+    "a.ts": source,
+  });
+  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   expect(stdout.split("\n").filter(line => line.includes("error TS"))).toEqual(errors.map(it => `a.ts${it}`));
 });

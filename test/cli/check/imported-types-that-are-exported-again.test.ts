@@ -7,13 +7,25 @@ import { run } from "../../aot/harness/run";
 const exporter = `export interface I { i: 1 }\nexport type N = string;\nexport class K { k = 1; }\nexport default interface D { d: 1 }\nexport const X = 1;\n`;
 
 const check = async (importer: string, module: string) => {
-  const compilerOptions = { strict: true, noEmit: true, target: "esnext", lib: ["esnext"], types: [], noUnusedLocals: true, module, moduleResolution: "bundler" };
+  const compilerOptions = {
+    strict: true,
+    noEmit: true,
+    target: "esnext",
+    lib: ["esnext"],
+    types: [],
+    noUnusedLocals: true,
+    module,
+    moduleResolution: "bundler",
+  };
   using dir = tempDir("check-imported-types-exported", {
     "tsconfig.json": JSON.stringify({ compilerOptions }),
     "a.ts": exporter,
     "c.ts": importer,
   });
-  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const { stdout } = await run([bunExe(), "check", "--no-pretty", "-p", "."], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   return [...stdout.matchAll(/^c\.ts\((\d+,\d+)\): error (TS\d+)/gm)].map(([, at, code]) => `${at} ${code}`);
 };
 

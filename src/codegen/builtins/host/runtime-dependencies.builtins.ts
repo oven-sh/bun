@@ -318,7 +318,10 @@ const moduleLoaderFunctions = functionsIn(
 );
 
 // A module of the library that they have mocked is required of the loader.
-const mocksOfModules = ["bun:test.mock.module", ...["jest", "vi"].flatMap(api => [`bun:test.${api}.mock`, `bun:test.${api}.doMock`])];
+const mocksOfModules = [
+  "bun:test.mock.module",
+  ...["jest", "vi"].flatMap(api => [`bun:test.${api}.mock`, `bun:test.${api}.doMock`]),
+];
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   ...Object.fromEntries(mocksOfModules.map(path => [path, moduleLoaderFunctions])),

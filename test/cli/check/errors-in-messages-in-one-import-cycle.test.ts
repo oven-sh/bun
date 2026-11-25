@@ -4,7 +4,15 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
 
-const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: "esnext", moduleResolution: "bundler", lib: ["esnext"], types: [] };
+const compilerOptions = {
+  strict: true,
+  noEmit: true,
+  target: "esnext",
+  module: "esnext",
+  moduleResolution: "bundler",
+  lib: ["esnext"],
+  types: [],
+};
 const errors = ["nowhere", `((o: { r: number }) => o)({ r: "a" })`, `C0.s("a")`, "C0.s()", "C0.o(null!, 2n)"];
 const places = [
   (e: string) => `export const o = { m() { return ${e}; } };\nexport const f2 = (a: typeof o) => o;`,
@@ -15,7 +23,8 @@ const places = [
 function ring(pairs: number) {
   const files: Record<string, string> = {};
   for (let i = 0; i < pairs; i++) {
-    files[`a${i}.ts`] = `import { C0, f1 } from "./b${i}";\n${places[i % 3](errors[i % 5])}\nexport const q0: never = [f1(1)];\n`;
+    files[`a${i}.ts`] =
+      `import { C0, f1 } from "./b${i}";\n${places[i % 3](errors[i % 5])}\nexport const q0: never = [f1(1)];\n`;
     files[`b${i}.ts`] = `import { f2 } from "./a${i}";
 import { f1 as before } from "./b${(i + pairs - 1) % pairs}";
 export const seen = before(1);
@@ -64,10 +73,19 @@ test.concurrent.each([
   ["20 pairs of files", ring(20)],
   ["three files", apart],
 ] as const)("%s", async (_, files) => {
-  using dir = tempDir("check-errors-in-one-cycle", { "tsconfig.json": JSON.stringify({ compilerOptions, files: Object.keys(files) }), ...files });
+  using dir = tempDir("check-errors-in-one-cycle", {
+    "tsconfig.json": JSON.stringify({ compilerOptions, files: Object.keys(files) }),
+    ...files,
+  });
   const check = async (threads: number) => {
-    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
-    return stdout.split("\n").filter(line => line.includes("error TS")).sort();
+    const { stdout } = await run([bunExe(), "check", "--no-pretty", `--threads=${threads}`, "-p", "."], String(dir), {
+      ...bunEnv,
+      NO_COLOR: "1",
+    });
+    return stdout
+      .split("\n")
+      .filter(line => line.includes("error TS"))
+      .sort();
   };
   const expected = await check(1);
   expect(expected.length).toBeGreaterThan(5);

@@ -6,42 +6,45 @@ import { bunEnv, bunExe } from "harness";
 // timer with its period was then due inside that timer's next callback, and behind every one after it: its collection
 // began while the callback's async work still held its data, and only a full collection frees what an eden collection
 // found alive (a 1 s job that holds 3.5 MB over an await: 11 full collections in 25 s where 1 is needed). A tick is now
-// due one interval after the deadline of the one before it, whenever that one fired. The unit tests beside
+// due whole intervals after the deadline of the one before it, whenever that one fired. The unit tests beside
 // GarbageCollectionController::next_deadline have the arithmetic.
 test("a tick of the idle GC timer that fires late does not make the next one late", async () => {
-  const interval = 600;
-  // The child finds the schedule with a FinalizationRegistry callback, which runs right behind a tick's collection. The
-  // next tick is due 1 interval later. The child is busy from 0.8 to 1.3, so that tick fires at 1.3, and the one after it
-  // is due at 2. Armed from the late fire, it came at 2.3. Each mark is printed at its time, in intervals after the first
-  // tick. Without the concurrent collector a collection begins and ends at the tick that asked for it.
+  const interval = 500;
+  // The child reads the time of each collection in a FinalizationRegistry callback, which runs right behind it. A
+  // collection one interval after the one before it is a tick on its schedule, however long a collection takes. From
+  // there the child is busy for 1.4 intervals, so the next tick fires 0.4 late, and the one after it is due 2 intervals
+  // after the first. Armed from the late fire, it came at 2.4. The child prints when those two collections ran, in
+  // intervals after the first. Without the concurrent collector a collection ends at the tick that asked for it.
   const script = `
     const interval = ${interval};
     const spinUntil = t => { while (performance.now() < t); };
-    // Something for a tick to collect.
-    const litter = () => { globalThis.litter = Array.from({ length: 500 }, (_, i) => ({ i })); };
-    // Ends a run in which no tick comes.
+    // Something for the next tick to collect. The registry calls back once the object is collected.
+    const litter = () => {
+      registry.register({}, 0);
+      globalThis.litter = Array.from({ length: 500 }, (_, i) => ({ i }));
+    };
+    let previous = -Infinity, first, late;
+    globalThis.registry = new FinalizationRegistry(() => {
+      const now = performance.now();
+      if (first === undefined) {
+        litter();
+        if (Math.abs(now - previous - interval) < 0.1 * interval) {
+          first = now;
+          spinUntil(first + 1.4 * interval);
+        }
+        previous = now;
+      } else if (late === undefined) {
+        late = now;
+        litter();
+      } else {
+        console.log(((late - first) / interval).toFixed(2), ((now - first) / interval).toFixed(2));
+        process.exit(0);
+      }
+    });
+    // Ends a run that finds no schedule.
     setTimeout(() => process.exit(1), 8 * interval);
     // From a timer: the collection that follows the entry point has run by then, so the next one is a tick's.
-    setTimeout(() => {
-      globalThis.registry = new FinalizationRegistry(() => {
-        const tick = performance.now();
-        const at = (intervals, callback) => setTimeout(callback, tick + intervals * interval - performance.now());
-        at(0.8, () => {
-          litter();
-          spinUntil(tick + 1.3 * interval);
-          console.error("BUSY-END");
-        });
-        at(1.55, () => {
-          console.error("LATE");
-          litter();
-        });
-        at(2.2, () => {
-          console.error("DONE");
-          process.exit(0);
-        });
-      });
-      registry.register({}, 0);
-    }, 0);
+    setTimeout(litter, 0);
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -52,22 +55,20 @@ test("a tick of the idle GC timer that fires late does not make the next one lat
       BUN_IDLE_GC_SECONDS: "0",
       BUN_GARBAGE_COLLECTOR_LEVEL: "0",
       BUN_JSC_useConcurrentGC: "0",
-      BUN_JSC_logGC: "1",
     },
-    stdout: "ignore",
-    stderr: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const collectionsBetween = (from: string, to: string) => {
-    const start = stderr.indexOf(from);
-    const end = stderr.indexOf(to);
-    expect(start, stderr).toBeGreaterThanOrEqual(0);
-    expect(end, stderr).toBeGreaterThan(start);
-    return (stderr.slice(start, end).match(/=> (Eden|Full)Collection/g) ?? []).length;
-  };
-  expect({
-    atTheLateTick: collectionsBetween("BUSY-END", "LATE"),
-    atTheNextTick: collectionsBetween("LATE", "DONE"),
-    exitCode,
-  }).toEqual({ atTheLateTick: 1, atTheNextTick: 1, exitCode: 0 });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [late, next] = stdout.trim().split(" ").map(Number);
+  expect(
+    {
+      // At the end of the busy time, not a tick later.
+      theLateTickCollects: late < 1.75,
+      // At 2, or at 3: a tick more than half an interval late leaves the next point out.
+      theNextTickIsOnSchedule: Math.abs(next - Math.round(next)) < 0.3,
+      exitCode,
+    },
+    `the late tick and the next one, in intervals after the first: ${JSON.stringify(stdout)}`,
+  ).toEqual({ theLateTickCollects: true, theNextTickIsOnSchedule: true, exitCode: 0 });
 });

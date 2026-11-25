@@ -56,8 +56,11 @@ impl GarbageCollectionController {
         unsafe { vm.timer_insert(t) };
     }
 
-    /// Where a tick that was due at `deadline` is due next: the first point of its schedule, `deadline` plus whole steps of `ms`, that is more than half a step after `now` (a tick any sooner would count a step of quiet it did not wait). One step after `now` instead, a tick that fires behind the callback of a program timer with its period is due inside that timer's next callback, and behind every one after it.
+    /// Where a tick that was due at `deadline` is due next: the first point of its schedule, `deadline` plus whole intervals of `ms`, that is more than half an interval after `now` (a tick any sooner would count an interval of quiet it did not wait). One interval after `now` instead, a tick that fires behind the callback of a program timer with its period is due inside that timer's next callback, and behind every one after it. The slow interval is still counted from `now`: JSC lets optimized code go only in an idle collection that begins `optimizedCodeAgingQuietSeconds` (30) or more after the last collection of a busy heap, and a tick on the schedule can come less than an interval after a late one.
     fn next_deadline(deadline: Timespec, now: Timespec, ms: i32) -> Timespec {
+        if ms >= SLOW_REPEAT_INTERVAL_MS {
+            return now.add_ms(i64::from(ms));
+        }
         let ms = i64::from(ms.max(1));
         let earliest = now.add_ms(ms / 2);
         let next = deadline.add_ms(ms);
@@ -249,7 +252,7 @@ mod tests {
         assert_eq!(step_ns(MS, 1000), 1000 * MS);
         assert_eq!(step_ns(500 * MS - 1, 1000), 1000 * MS);
         assert_eq!(step_ns(250 * MS - 1, 500), 500 * MS);
-        assert_eq!(step_ns(14_999 * MS, 30_000), 30_000 * MS);
+        assert_eq!(step_ns(14_999 * MS, 29_999), 29_999 * MS);
         // Popped before its deadline: `bun test` runs a timer that is due when idle up to 1 ms early.
         assert_eq!(step_ns(-1, 1000), 1000 * MS);
         assert_eq!(step_ns(-MS, 1000), 1000 * MS);
@@ -260,7 +263,6 @@ mod tests {
         assert_eq!(step_ns(500 * MS, 1000), 2000 * MS);
         assert_eq!(step_ns(999 * MS, 1000), 2000 * MS);
         assert_eq!(step_ns(250 * MS, 500), 1000 * MS);
-        assert_eq!(step_ns(15_000 * MS, 30_000), 60_000 * MS);
     }
 
     #[test]
@@ -270,14 +272,21 @@ mod tests {
         assert_eq!(step_ns(1500 * MS, 1000), 3000 * MS);
         assert_eq!(step_ns(2600 * MS, 1000), 4000 * MS);
         assert_eq!(step_ns(14_200 * MS, 1000), 15_000 * MS);
-        assert_eq!(step_ns(3_600_000 * MS, 30_000), 3_630_000 * MS);
     }
 
     #[test]
-    fn every_interval_the_timer_can_have() {
-        let longest = i64::from(i32::MAX);
-        assert_eq!(step_ns(0, i32::MAX), longest * MS);
-        assert_eq!(step_ns((longest / 2 + 1) * MS, i32::MAX), 2 * longest * MS);
+    fn the_slow_interval_is_counted_from_the_fire() {
+        assert_eq!(step_ns(0, SLOW_REPEAT_INTERVAL_MS), 30_000 * MS);
+        assert_eq!(step_ns(7 * MS, SLOW_REPEAT_INTERVAL_MS), 30_007 * MS);
+        assert_eq!(
+            step_ns(3_600_000 * MS, SLOW_REPEAT_INTERVAL_MS),
+            3_630_000 * MS
+        );
+        assert_eq!(step_ns(7 * MS, i32::MAX), (i64::from(i32::MAX) + 7) * MS);
+    }
+
+    #[test]
+    fn the_shortest_intervals() {
         assert_eq!(step_ns(0, 1), MS);
         assert_eq!(step_ns(MS, 1), 2 * MS);
         assert_eq!(step_ns(0, 0), MS);

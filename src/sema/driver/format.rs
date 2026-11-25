@@ -6,12 +6,11 @@
 use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
-use bun_sema::resolve::get_relative_path_from_directory;
+use bun_sema::resolve::{get_relative_path_from_directory, parent_directory};
 use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
 use std::io::Write;
+use std::time::Duration;
 
 macro_rules! alloc_print {
     ($($arg:tt)*) => {
@@ -691,6 +690,31 @@ pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
     }
 }
 
+/// `--timing`: the files that took longest to check, the longest first.
+pub fn write_slowest_files(out: &mut Vec<u8>, report: &Report, style: &Style) {
+    const SHOWN: usize = 10;
+    let mut time_of: FxHashMap<&[u8], Duration> = FxHashMap::default();
+    for (path, time) in &report.times_of_files {
+        *time_of.entry(path).or_default() += *time;
+    }
+    let mut slowest: Vec<(&[u8], Duration)> = time_of.into_iter().collect();
+    slowest.shared_sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    slowest.truncate(SHOWN);
+    if slowest.is_empty() {
+        return;
+    }
+    out.extend_from_slice(b"  slowest files:\n");
+    let times = slowest.iter();
+    let times: Vec<BString> = times
+        .map(|(_, time)| alloc_print!("{:.1}ms", time.as_secs_f64() * 1000.0))
+        .collect();
+    let width = times[0].len();
+    for ((path, _), time) in slowest.iter().zip(&times) {
+        let path = relative_path(path, style.cwd, style);
+        let _ = writeln!(out, "    {time:>width$}  {path}");
+    }
+}
+
 /// Warnings, notes, the error count, then a per-file error count for every file.
 pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
     let in_files =
@@ -715,7 +739,7 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         let manifest = relative_path(&it.manifest, style.cwd, style);
         let cwd_flag = match it.is_cwd_manifest {
             true => BString::default(),
-            false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
+            false => alloc_print!(" --cwd={}", BStr::new(parent_directory(&manifest))),
         };
         pretty!(
             out,

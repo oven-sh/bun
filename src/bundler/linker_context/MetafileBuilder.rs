@@ -81,7 +81,7 @@ fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
+        // `each_iter` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
@@ -200,7 +200,7 @@ fn generate_chunk_json(
 /// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
+pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -458,13 +458,13 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // `&chunks[0]` directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
-        parse_graph,
+        c.bundle,
         &c.graph,
         b"", // no import prefix for metafile
         &chunks[0],
         chunks,
         None, // no display size
-        ReferencePathStyle::ImporterRelative,
+        ReferencePathStyle::Metafile,
         SourceMapShiftTracking::Disabled,
     )?;
 
@@ -935,14 +935,8 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                     for (input_key, _) in inputs_obj.iter() {
                                         // Check if target ends with the input key
                                         if target.ends_with(input_key) {
-                                            // Make sure it's a path boundary (preceded by / or \ or start)
-                                            if target.len() == input_key.len()
-                                                || (target.len() > input_key.len()
-                                                    && (target[target.len() - input_key.len() - 1]
-                                                        == b'/'
-                                                        || target
-                                                            [target.len() - input_key.len() - 1]
-                                                            == b'\\'))
+                                            let before = &target[..target.len() - input_key.len()];
+                                            if (before.last()).is_none_or(|&b| bun_paths::is_sep(b))
                                             {
                                                 matched_key = Some(input_key);
                                                 break;

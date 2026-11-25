@@ -14,22 +14,29 @@
 # print(run(new Box(1), 6, 3));
 # -- end of source
 # f1 = spoil, f2 = run: a fact ends in a callee that is said to write nothing: the value of a field, in a loop.
-# THE LIE lays the row of the call of `spoil` false: it writes no field of an object. By that row nothing in the loop writes what `o.held` reads, so the read stands in front of the loop, and the program says 1 where it should say 2.
-# Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) the process must end by name. It did not, IN A LOOP: what is remembered was asked only where an operation had built
-# nothing but constants, and a read carried out has built a record; and the test whether the slot is filled, built for its check in the turn, was itself carried in front of the loop by the row that it audits: the check in the
-# turn hung on a test from in front of the head. Now the test of a check is built where it stands, and an answer that comes from in front of the loop is read again in the turn and compared.
-# Under the lie alone the second line is `1,1,1,1,1,1,` and the process ends with 0 (no RUN of its own: the lane that lays the word on every RUN would stop it by name).
-# RUN(NAMED): run-in-shell mechanisms=all-Inlining testing=RowSaysLess:Callee/f1/ObjectFields,CheckProofsAtRunTime
+# Fault injection, testing=UnderstateEffects:Callee/f1/ObjectFields: the effects entry of the call of `spoil` falsely claims that the call writes no field of an object.
+# According to that entry nothing in the loop writes what `o.held` reads, so the read is hoisted out of the loop, and the program prints 1 where it should print 2.
+# Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks enables) the process must crash with a named error. In a loop it did not, for two reasons.
+# First, a remembered value was checked only where visiting an operation had built nothing but constants, and a hoisted read has built an operation.
+# Second, the test of whether the slot is filled, which is built for the check in the iteration, was itself hoisted out of the loop on the strength of the effects entry that it audits.
+# So the check in the iteration depended on a test from before the loop header.
+# Now the test of a check is built in place, and a value that comes from before the loop is read again in the iteration and compared.
+# With the fault alone the second line is `1,1,1,1,1,1,` and the process exits with 0.
+# That configuration has no RUN line of its own, because the lane that adds CheckProofsAtRunTime to every RUN line would make it crash with a named error.
+# RUN(NAMED): run-in-shell mechanisms=all-Inlining testing=UnderstateEffects:Callee/f1/ObjectFields,CheckProofsAtRunTime
 # NAMED: 1,1,1,1,1,1,1,1,
-# NAMED-NEXT: AOT: f2 at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it. It is: another value or a test that once passed fails. This is a bug in Bun.
+# NAMED-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (run)
+# NAMED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# NAMED-NEXT: This is a bug in Bun, not in your code.
+# NAMED-NEXT: and please report it: https://github.com/oven-sh/bun/issues
 # NAMED-NEXT: crashed with
-# RUN(INTURN): walk f2 mechanisms=all-Inlining testing=RowSaysLess:Callee/f1/ObjectFields,CheckProofsAtRunTime
+# RUN(INTURN): walk f2 mechanisms=all-Inlining testing=UnderstateEffects:Callee/f1/ObjectFields,CheckProofsAtRunTime
 # INTURN: = GetSlot {{*}} key="held"
 # INTURN: isLoopHead=true
 # INTURN: [[filled]]: boolean @Boolean = IsSlotFilled {{*}} key="held"
 # INTURN-NEXT: CheckProof [[filled]] checkedType=true {{*}}source=Field
 # INTURN: = GetSlot {{*}} key="held"
-# INTURN: CheckProof {{*}} checkedType=true {{*}}source=WhatIsRemembered
+# INTURN: CheckProof {{*}} checkedType=true {{*}}source=RememberedFact
 # INTURN: = CallDirect {{*}}function=f1
 # RUN(RIGHT): run-in-shell mechanisms=all-Inlining testing=CheckProofsAtRunTime
 # RIGHT: 1,1,1,1,1,1,1,1,

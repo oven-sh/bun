@@ -1,6 +1,6 @@
 use super::*;
 use crate::config;
-use crate::resolve::node_module_path_parts;
+use crate::resolve::{node_module_path_parts, parent_directory};
 use std::sync::OnceLock;
 
 pub(super) struct Projects<'s> {
@@ -89,7 +89,7 @@ impl<'s> Projects<'s> {
     ) -> Option<&'s Options> {
         let project = self.governing_code(context, path)?;
         if !project.config_path.is_empty()
-            && installed_package_directory(dirname::<Posix>(path)).is_none()
+            && installed_package_directory(parent_directory(path)).is_none()
             && make_the_same_program(context.options, project)
         {
             note(&self.listing_files, project);
@@ -110,7 +110,7 @@ impl<'s> Projects<'s> {
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
-        let directory = dirname::<Posix>(path);
+        let directory = parent_directory(path);
         let stated = match self.aot_sources_by_directory.get_ref(directory) {
             Some(&known) => known,
             None => {
@@ -159,7 +159,7 @@ impl<'s> Projects<'s> {
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
-        let directory = dirname::<Posix>(path);
+        let directory = parent_directory(path);
         let nearest = match self.by_directory.get_ref(directory) {
             Some(&known) => known,
             None => {
@@ -393,6 +393,18 @@ impl<'s> Files<'s> {
             true => self.compiler_options_for_file(file),
             false => self.options,
         }
+    }
+
+    /// Whether the type errors that this program finds in the file are the ones that the file's own project finds.
+    pub fn matches_own_project_checks(&self, file: FileId) -> bool {
+        let (program, project) = (self.options, self.module_options(file));
+        !self.needs_another_program(file)
+            || (program.strict_null_checks == project.strict_null_checks
+                && program.strict_function_types == project.strict_function_types
+                && program.strict_bind_call_apply == project.strict_bind_call_apply
+                && program.strict_builtin_iterator_return == project.strict_builtin_iterator_return
+                && program.exact_optional_property_types == project.exact_optional_property_types
+                && (project.libs.iter()).all(|library| program.libs.contains(library)))
     }
 
     pub fn needs_another_program(&self, file: FileId) -> bool {

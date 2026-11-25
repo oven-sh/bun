@@ -4,7 +4,7 @@ use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
@@ -34,8 +34,6 @@ pub(crate) struct ServerConfig {
     pub(crate) base_uri: Box<[u8]>,
 
     pub(crate) ssl_config: Option<SSLConfig>,
-    // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
-    // `deinit()` (frees the owned C strings).
     pub(crate) sni: Option<Vec<SSLConfig>>,
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
@@ -333,7 +331,7 @@ impl ServerConfig {
 pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
-    entry: ThisPtr<T>,
+    entry: &RefPtr<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
@@ -344,16 +342,16 @@ pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
         http_method::Optional::Any => {
-            app.any_this(path, T::on_request, entry);
+            app.any_ref(path, T::on_request, entry);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+                app.method_ref(method_, path, T::on_request, entry);
             }
         }
     }
@@ -372,30 +370,34 @@ fn serves_head(method: &http_method::Optional) -> bool {
 /// The route-registration surface shared by `uws::h2::App` and
 /// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
 pub(crate) trait MuxApp {
-    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
-    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+        U: AnyRefCounted + 'static,
+        H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+        U: AnyRefCounted + 'static,
+        H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
 }
 
 macro_rules! impl_mux_app {
     ($app:ty) => {
         impl MuxApp for $app {
             #[inline]
-            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                U: AnyRefCounted + 'static,
+                H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::method_this(self, m, p, h, this)
+                <$app>::method_ref(self, m, p, h, owner)
             }
             #[inline]
-            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                U: AnyRefCounted + 'static,
+                H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::any_this(self, p, h, this)
+                <$app>::any_ref(self, p, h, owner)
             }
         }
     };
@@ -406,7 +408,7 @@ impl_mux_app!(uws::h3::App);
 pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
     app: &mut A,
-    entry: ThisPtr<T>,
+    entry: &RefPtr<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
@@ -414,14 +416,14 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     entry.set_server(server);
 
     if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
-        http_method::Optional::Any => app.any_this(path, T::on_request, entry),
+        http_method::Optional::Any => app.any_ref(path, T::on_request, entry),
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+                app.method_ref(method_, path, T::on_request, entry);
             }
         }
     }
@@ -431,21 +433,21 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
-pub(crate) trait StaticRouteLike: Sized + 'static {
+pub(crate) trait StaticRouteLike: AnyRefCounted + 'static {
     fn set_server(&self, server: AnyServer);
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
 }
 
 impl StaticRouteLike for super::StaticRoute {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -453,11 +455,11 @@ impl StaticRouteLike for super::FileRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -465,11 +467,11 @@ impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -477,11 +479,11 @@ impl StaticRouteLike for super::html_bundle::Route {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -586,10 +588,11 @@ impl ServerConfig {
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
-        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+        let bake_pages = vm.bake_pages.take();
 
         let mut args = ServerConfig {
-            development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
+            development: if let Some(hmr) = vm.transpiler.get().options.transform_options.serve_hmr
+            {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
                 } else {
@@ -611,7 +614,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if vm.transpiler.options.production {
+        if vm.transpiler.get().options.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -627,14 +630,14 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler.get().options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.get().options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
@@ -897,30 +900,21 @@ impl ServerConfig {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-                    let bake_framework = global.bun_vm().bake_framework.get();
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+                    let bake_framework = vm.bake_framework.get().get();
+                    let transpiler = &vm.transpiler;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {
-                            match crate::bake::Framework::from_js(
-                                object,
-                                global,
-                                &mut bundler_options,
-                            ) {
-                                Ok(framework) => framework,
-                                Err(err) => {
-                                    bundler_options.destroy_plugin();
-                                    return Err(err);
-                                }
-                            }
+                            crate::bake::Framework::from_js(object, global, &mut bundler_options)?
                         }
-                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
-                        _ => crate::bake::Framework::auto(
-                            resolver,
-                            core::mem::take(&mut init_ctx.framework_router_list),
-                        ),
+                        _ if bake_pages => transpiler
+                            .with_mut(|t| crate::bake::Framework::bake_pages(&mut t.resolver)),
+                        _ => transpiler.with_mut(|t| {
+                            crate::bake::Framework::auto(
+                                &mut t.resolver,
+                                core::mem::take(&mut init_ctx.framework_router_list),
+                            )
+                        }),
                     };
 
                     let mut user_options = crate::bake::UserOptions {
@@ -932,7 +926,7 @@ impl ServerConfig {
                         bundler_options,
                     };
 
-                    let o = &vm.transpiler.options.transform_options;
+                    let o = &vm.transpiler.get().options.transform_options;
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {

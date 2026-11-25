@@ -1,0 +1,17 @@
+# -- source: a-read-that-moves-in-front-of-the-typed-copy-takes-no-length-from-in-front-of-the-turns.ts
+# declare function print(...values: unknown[]): void;
+# function run(c: any): number { let i = -1; for (const x of c) { i++; const first = c[0]; if (i === 99) first.cents = 0.5; } return i; }
+# const made: { cents: number }[] = []; for (let k = 0; k < 3; k++) made.push({ cents: k + 0.5 });
+# print(run(made));
+# -- end of source
+# c[0] is read off a list tested in front under a key from in front, so the read is built in the front of the typed copy, behind a test that the element is there. Nothing says that 0 lies inside the
+# list, so the read had first taken the list's length from in front of the turns, and that length is built where the turns begin: behind the front that the read then moved into. Where proofs are
+# checked at run time the verifier stopped the build: "the definition of an operand does not stand in front of the use on every path: GetArrayLength".
+# Whether the read moves is decided first now, and a read that moves takes neither storage nor length from in front of the turns: it runs once for each time the loop is entered.
+# Every turn passes the read: a test that only one way through a turn leans on does not come in front of the typed copy, so a read under `if (i === 99)` would stay in its arm and hold nothing here.
+# OPTIONS: testing=CheckProofsAtRunTime check=Validate
+# RUN(FORM): walk f1 mechanisms=all
+# FORM: = IsElementPresent [[list]], [[first]] arrayStorage=Contiguous [keyIsIntegral]
+# FORM: = GetArrayElement [[list]], [[first]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isPresent]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2

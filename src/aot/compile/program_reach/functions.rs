@@ -9,8 +9,8 @@ use bun_sema::hir::{
 use rustc_hash::FxHashSet;
 use smallvec::smallvec;
 
-use super::{FileScan, Interest, Part, TOP_LEVEL};
-use crate::modules::ModuleRef;
+use super::{FileScan, Interest, Part, TOP_LEVEL, Unit};
+use crate::modules::{ModuleKind, ModuleRef};
 
 impl FileScan<'_, '_> {
     pub(super) fn collect_function_units(&mut self, has_decorators: bool) {
@@ -65,7 +65,17 @@ impl FileScan<'_, '_> {
 
     pub(super) fn place_units(&mut self) {
         for (unit, position) in take(&mut self.units_placed_by_text) {
-            let around = self.region_outside(position, Some(unit));
+            let function = self.units.units[unit as usize].functions.first();
+            let parent = match function.map(|it| self.bound.fns[it.idx()].owner) {
+                Some(FnOwner::Expr(written)) if self.has_compiled_components => {
+                    self.bound.parent_of_expr(written)
+                }
+                Some(FnOwner::Stmt(declared)) if self.has_compiled_components => {
+                    self.bound.parent_of_stmt(declared)
+                }
+                _ => Parent::None,
+            };
+            let around = self.region_below(parent, position, Some(unit));
             self.units.units[unit as usize].region_around = around;
         }
     }
@@ -100,8 +110,7 @@ impl FileScan<'_, '_> {
     }
 
     fn is_in_variable_alone(&self, symbol: SymbolId) -> bool {
-        self.is_stable(symbol)
-            && self.bound.export_symbol_of_value_symbol_if_exported(symbol) == symbol
+        self.is_stable(symbol) && self.bound.exported_value(symbol) == symbol
     }
 
     fn find_variable_of_class(&self, class: ClassId) -> Option<SymbolId> {
@@ -242,6 +251,9 @@ impl FileScan<'_, '_> {
             | Interest::LinkedName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
+            | Interest::StoreIntoModuleCache(_)
+            | Interest::ModuleCacheHandedOn(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
@@ -259,7 +271,7 @@ impl FileScan<'_, '_> {
 
     fn holds_code_of(&self, module: ModuleRef) -> bool {
         match module {
-            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. } => {
+            ModuleRef::File(file) | ModuleRef::Facade(file) | ModuleRef::Inner { file, .. } => {
                 file == self.file
             }
             ModuleRef::Check(_) | ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
@@ -303,6 +315,9 @@ impl FileScan<'_, '_> {
             | Interest::RequiredName(..)
             | Interest::ModuleObject(..)
             | Interest::EntryOfModuleCache
+            | Interest::DeletionFromModuleCache(_)
+            | Interest::StoreIntoModuleCache(_)
+            | Interest::ModuleCacheHandedOn(_)
             | Interest::LoadByUnknownName
             | Interest::NameReadFromLoadByUnknownName(_)
             | Interest::LoadOfIsolatedCode
@@ -313,10 +328,50 @@ impl FileScan<'_, '_> {
         }
     }
 
+    /// Whether the variables at the top of the module are no variables of the program.
+    fn closures_hold_variables_of(&self, module: ModuleRef) -> bool {
+        let graph = self.input.graph;
+        match module {
+            ModuleRef::File(file) => match graph.kind(file) {
+                ModuleKind::CommonJs => !graph.runs_body_once(module),
+                ModuleKind::SourceText => graph.may_be_reevaluated(file),
+                _ => false,
+            },
+            ModuleRef::Inner { file, .. } => {
+                !graph.runs_body_once(module)
+                    || self.closures_hold_variables_of(ModuleRef::File(file))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the body makes nothing of the unit where nothing reaches it.
+    fn waits_in_body(&self, unit: &Unit) -> bool {
+        let Part::Bodies = unit.part else {
+            return true;
+        };
+        unit.functions.first().is_some_and(|function| {
+            let FnOwner::Stmt(statement) = self.bound.fns[function.idx()].owner else {
+                return false;
+            };
+            match self.bound.parent_of_stmt(statement) {
+                Parent::File => true,
+                Parent::FnBody(body) => self.units.inner_modules.contains_key(&body),
+                _ => false,
+            }
+        })
+    }
+
+    /// The code that makes the outermost closure which holds a variable of the body.
     pub(super) fn region_below_body(&self, mut region: u32) -> u32 {
         while region != TOP_LEVEL {
-            let around = self.units.units[region as usize - 1].region_around;
-            if self.units.find_module_with_body(around).is_some() {
+            let unit = &self.units.units[region as usize - 1];
+            let around = unit.region_around;
+            if let Some(index) = self.units.find_module_with_body(around) {
+                let module = self.units.modules[index].module;
+                if self.closures_hold_variables_of(module) && !self.waits_in_body(unit) {
+                    return around;
+                }
                 break;
             }
             region = around;
@@ -329,7 +384,7 @@ impl FileScan<'_, '_> {
             && let Some(name) = self.bound.private_name_of_reference(access)
             && let Some(unit) = self.find_unit_of_private_name(name)
         {
-            self.add_interest(self.hir[access].pos, Interest::Unit(unit));
+            self.add_interest(access, Interest::Unit(unit));
         }
     }
 }

@@ -59,11 +59,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.initialize_converted_symbol(symbol, name, value);
                     }
                     PatKind::Object(_) | PatKind::Array(_) => {
-                        self.bind_pattern(node.pat, value, None);
+                        self.bind_parameter_pattern(node.pat, value);
                     }
                     PatKind::Missing => {}
                 }
             }
+            self.destructured_position = None;
         }
         let bound = self.file.bound;
         let copies = bound.runtime.parameter_var_copies();
@@ -100,7 +101,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 (Some(local), _) => self.builder.read_variable(local.variable),
                 (None, Some(placement)) => match placement.storage {
                     Storage::Field { scope, .. } => self.get_environment(scope),
-                    Storage::Local | Storage::Variable(_) => continue,
+                    Storage::Local | Storage::Variable(_) | Storage::Instance { .. } => continue,
                 },
                 (None, None) => continue,
             };
@@ -133,7 +134,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let is_initialized = local.dead_zone != DeadZone::Uninitialized;
                 is_initialized.then(|| self.builder.read_variable(local.variable))
             }
-            Storage::Local | Storage::Variable(_) => None,
+            Storage::Local | Storage::Variable(_) | Storage::Instance { .. } => None,
         }
     }
 }

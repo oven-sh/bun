@@ -256,7 +256,7 @@ describe("transportParams.maxIdleTimeout", () => {
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`
 // never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
-// closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
+// closing (packages/bun-usockets/src/quic.cpp us_quic_on_new_conn).
 describe("endpoint.close() while a session is live", () => {
   test("stops accepting new sessions so closed can resolve", async () => {
     const tp = { maxIdleTimeout: 30 };
@@ -328,6 +328,33 @@ describe("node:quic in a Worker", () => {
     // stderr contains each worker's ExperimentalWarning.
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: expect.any(String), exitCode: 0 });
   }, 30000);
+});
+
+describe("a handshake in flight", () => {
+  test.concurrent.each(["Bun.serve", "fetch", "node:quic"])(
+    "completes when %s makes its first QUIC engine",
+    async api => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(import.meta.dir, "quic-handshake-in-flight-fixture.ts"),
+          api,
+          join(keysDir, "agent1-key.pem"),
+          join(keysDir, "agent1-cert.pem"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr contains the ExperimentalWarning.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '{"result":"answered","connections":1}\n',
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,

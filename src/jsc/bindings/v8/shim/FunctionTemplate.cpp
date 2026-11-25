@@ -43,7 +43,7 @@ Structure* FunctionTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* g
         vm,
         globalObject,
         globalObject->functionPrototype(),
-        JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
+        JSC::TypeInfo(JSC::ObjectType, StructureFlags),
         info());
 }
 

@@ -1,0 +1,23 @@
+// answers: without-library
+// # The store of the length that the list has stands in a loop, where it is answered in line. The structure of the last list lists `length` as immutable, which only the testing object of the shell can bring about: the store is refused at the first turn.
+// # At the end the shell runs the same text itself: every answer is the same.
+// # RUN: run-in-shell --useDollarVM=1 $SHELL
+// # CHECK: 6 of 6 of 6
+// # CHECK-NEXT: exited with 0
+const tools = globalThis["$" + "vm"];
+let turns = 0;
+function act(list) { for (let i = 0; i < 3; i++) { list.length = 5; turns++; } return 0; }
+function fill(n) { const list = []; for (let i = 0; i < n; i++) list.push(i + 1); return list; }
+let warm = 0;
+for (let i = 0; i < 50; i++) { const list = fill(5); act(list); warm += list.length; }
+report(warm);
+const rows = fill(5);
+if (tools) tools.makePropertiesImmutable(rows, ["length"]);
+turns = 0;
+let said = "done";
+try { said = "told " + act(rows); } catch (error) { said = error.name; }
+report(said);
+report(turns);
+report(rows.length);
+report(rows.join());
+report("end");

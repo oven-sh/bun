@@ -1,0 +1,13 @@
+# f1 = go
+# -- source: in-a-loop-the-failing-side-of-a-guess-at-an-instance-stays-without-sites.ts
+# declare function sink(...values: unknown[]): void;
+# class Step { done: boolean; value: number; constructor(n: number) { this.done = n > 3; this.value = n; } }
+# function go(c: any): number { const it = c.values(); let s = 0, r = it.next(); while (!r.done) { s += r.value; r = it.next(); } return s; }
+# sink(go, new Step(1));
+# -- end of source
+# RUN(ASKED): walk f1 mechanisms=all
+# ASKED: ShapeTest
+# ASKED: frequency=Rare isInLoop=true
+# RUN(UNMARKED): walk f1 mechanisms=all
+# UNMARKED: code f1:Body
+# UNMARKED-NOT: keepsSitesThoughRare

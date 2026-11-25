@@ -65,6 +65,8 @@
 // NAMES-NOT: RequireDynamic
 // NAMES: Return
 
+// The program lies in a folder of its own, above which no packages are installed: a name that begins with "n", "bun" or "vi" finds none.
+// FILE: names/loads.cjs
 const path = require("node:path");
 
 function written(name) {

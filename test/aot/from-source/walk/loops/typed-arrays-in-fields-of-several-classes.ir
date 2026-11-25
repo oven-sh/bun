@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# "use strict";
+# const shop = require("./shop.cjs");
+# function Flour(count) { this.length = count; this.weights = new shop.Row(count); for (let at = 0; at < count; at++) this.weights[at] = at * at; }
+# function Salt(count) { this.length = count - 1; this.weights = new shop.Row(count); for (let at = count - 1; at >= 0; at--) this.weights[at] = 9 + at; }
+# function heaviest(scale) { let most = -1; for (let at = 0; at < scale.length; at++) if (scale.weights[at] > most) most = scale.weights[at]; return most; }
+# const flour = new Flour(4), salt = new Salt(6); salt.weights[2] = 70000; globalThis.held = new Map([["flour", flour], ["salt", salt], ["asks", name => heaviest(name === "flour" ? flour : salt)]]);
+# print(globalThis.held.get("asks")("flour"), globalThis.held.get("asks")("salt"));
+# globalThis.held.get("flour").weights = [1, 2, 30.5, 4]; print(globalThis.held.get("asks")("flour"));
+# -- source: shop.cjs
+# "use strict";
+# exports.opens = function (rows) { exports.Row = rows; };
+# exports.opens(typeof Uint16Array === "undefined" ? Array : Uint16Array);
+# -- end of source
+# Two classes of one library: the field is told by its uses to be a list in both classes, and by what the makers lay to be a Uint16Array.
+# RUN(LOOP): walk f3:Body mechanisms=all
+# LOOP: testedType=Uint16Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 9 4464
+# ANSWERS-NEXT: 30.5
+# ANSWERS-NEXT: exited with 0

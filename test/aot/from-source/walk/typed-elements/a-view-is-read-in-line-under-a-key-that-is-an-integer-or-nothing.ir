@@ -1,0 +1,19 @@
+# -- source: main.js
+# function Row(seats) {
+#   this.fares = null;
+#   this.chosen = new Array(seats >> 1);
+#   for (let place = this.chosen.length - 1; place >= 0; place--) this.chosen[place] = place ^ 5;
+# }
+# Row.prototype.pays = function (seat) { const fares = this.fares; return fares[seat] > 2 ? fares[seat + 1] : 0.5; };
+# Row.prototype.night = function (fares, guests) { this.fares = fares; const chosen = this.chosen; let sum = 0; for (let guest = 0; guest < guests; guest++) sum += this.pays(chosen[guest]); this.fares = null; return sum; };
+# const front = new Row(16), prices = new Float64Array(16);
+# for (let i = 0; i < 16; i++) prices[i] = i / 4 + 1;
+# console.log(front.night(prices, 8), front.night(prices, 11));
+# -- end of source
+# `seat` is an integer or nothing, and the view comes out of a field that may hold null. The view is read under the integer in line; the read under nothing stands on the rare side, by the key as it is.
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: undefined|i32 @JSValue
+# WALK: = TypeTest {{*}}testedType=i32
+# WALK: frequency=Rare
+# WALK: = ElemGet
+# WALK-COUNT-2: = GetTypedArrayElement {{*}}level=Proven

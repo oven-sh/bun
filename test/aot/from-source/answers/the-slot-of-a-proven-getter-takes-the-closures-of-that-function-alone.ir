@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const born = { base: 1, get add() { return add; } };
+# const laid = (0, { base: 1 });
+# Object.defineProperty(laid, "add", { enumerable: true, get: function () { return add; } });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = laid.add(born.add(s, i), 1); return s; }
+# print(called(5));
+# -- end of source
+# f1 = add, f2 = called, f3 = the literal's getter, f4 = the descriptor's
+# Where Link has proven who the getter in a slot is, compiled code calls that function without a test of the half. WHO IT IS was Link's word alone: the run time ended the process where a proven half was replaced or left its slot,
+# but took any getter at the creation. Under a lie (an arm in which Link took the next function of the program for the getter) both kinds answered wrongly without a word as users build; only the checking lanes stopped.
+# The run time holds the getter of every pair that goes into an accessor's slot against the TYPE of the field (RuntimeLayoutTable::accept(), tryDefineAbsentGetterInSlot(), tryDefineAccessorsOfLiteral()): the plan recorded none there.
+# It records the closures of the proven function: another getter does not fit, and a proven half that cannot be laid ends the process: "StoreOfOtherType .. the compiler has proven that it never happens".
+# RUN(ACCESSORS): link accesses mechanisms=all
+# ACCESSORS: accessors L{{*}} getter=f3 proven
+# ACCESSORS: accessors L{{*}} getter=f4 proven once-laid
+# RUN(BORN): plan layouts mechanisms=all
+# BORN: "add" {{*}}type=f3 accessor
+# RUN(LAID): plan layouts mechanisms=all
+# LAID: "add" appended {{*}}type=f4 accessor
+# RUN(ANSWER): run-in-shell
+# ANSWER: 16
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 16
+# CHECKED-NEXT: exited with 0

@@ -32,6 +32,10 @@ impl<'a> SectionWriter<'a> {
 
     #[inline]
     pub fn next_index(&self, list: ProgramList) -> u32 {
+        debug_assert!(
+            self.first_indices[list as usize] + self.counts[list as usize] <= u64::from(u32::MAX),
+            "emit::layout::plan_sections() refuses a wire of 4 GiB before anything is written"
+        );
         (self.first_indices[list as usize] + self.counts[list as usize]) as u32
     }
 

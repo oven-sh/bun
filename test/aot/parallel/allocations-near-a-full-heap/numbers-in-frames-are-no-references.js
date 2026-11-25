@@ -15,8 +15,8 @@ class Link {
   }
 }
 const leaves = [new Leaf("a"), new Leaf("b"), new Leaf("c")];
-let oldest = new Link(leaves[0], leaves[1], 0);
-let newest = oldest;
+let oldest = null;
+let newest = null;
 function push() {
   const id = newest.id + 1;
   const link = new Link(leaves[id % 3], leaves[(id + 1) % 3], id);
@@ -49,6 +49,8 @@ function wrong() {
   return count;
 }
 function work() {
+  // The first link is made below the frames that hold the numbers.
+  oldest = newest = new Link(leaves[0], leaves[1], 0);
   isFull(grow, 1_200_000);
   let total = wrong();
   for (let cycle = 0; cycle < 40; cycle++) {

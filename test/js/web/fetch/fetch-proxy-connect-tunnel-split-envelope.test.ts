@@ -13,14 +13,9 @@
 //      never recognized — a spec-compliant keep-alive upstream that doesn't
 //      promptly FIN would deadlock the stream.
 //
-// Root cause: `handle_short_read` stashed partial envelope bytes into
-// `state.response_message_buffer` and `handle_on_data_headers` re-entered
-// from `ProxyTunnel`'s `on_data` with `response_stage == proxy_headers`,
-// appending decrypted upstream bytes onto the stale envelope and re-parsing
-// it as the user-facing response. The fix (`src/http/lib.rs`,
-// `start_proxy_handshake`) `std::mem::take`s the buffer into a local before
-// `ProxyTunnel::start` and drops it after the TLS BIO has copied any
-// trailing payload.
+// Root cause: the buffered envelope was still there when `handle_on_data_headers`
+// re-entered from `ProxyTunnel`'s `on_data`, so the decrypted upstream bytes were
+// appended to it and the envelope was parsed again as the user-facing response.
 //
 // A CONNECT response that arrives in one TCP read does NOT trigger the bug —
 // the buffer stays empty on the first parse. This test forces two separate
@@ -87,7 +82,7 @@ test("fetch through CONNECT proxy with split 200 envelope surfaces upstream resp
               return;
             }
             const upstreamSock = net.connect(upstreamPort, "127.0.0.1", async () => {
-              // Force handle_short_read on the client by making the CONNECT
+              // Force a short read on the client by making the CONNECT
               // 200 envelope arrive across two separate on_data() calls in
               // the fetch client. Nagle + TCP coalescence would otherwise
               // batch back-to-back writes into one segment. Disable Nagle
@@ -178,12 +173,8 @@ test("fetch through CONNECT proxy with split 200 envelope surfaces upstream resp
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// `handle_on_data_headers` mem::take's the header accumulation buffer into a
-// local so `to_read` is a plain borrow. These pin the behaviour of the three
-// paths the buffer must survive: the short-read put-back, 1xx interim responses
-// consumed from the accumulated buffer, and a chunked body in the same read as
-// the end of the header block (now always copied into the 16 KiB scratch rather
-// than decoded in place).
+// A head split across reads: alone, after 1xx interim responses, and with a body
+// in the same read as the end of the header block.
 describe("handle_on_data_headers split-read header accumulation", () => {
   async function serveSplit(splitAt: number | "bytes", wire: string): Promise<Response> {
     const server = net.createServer(socket => {
@@ -241,14 +232,13 @@ describe("handle_on_data_headers split-read header accumulation", () => {
   test.concurrent("chunked body in the same read as the buffered header tail", async () => {
     // Split at 30 so the first read buffers a partial header block and the
     // second read brings the rest of the headers plus the whole chunked body in
-    // one on_data() call, so the body is decoded out of the accumulation buffer.
+    // one on_data() call.
     const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
   });
 
   test.concurrent("content-length body in the same read as the buffered header tail", async () => {
-    // Non-chunked single-packet body: handle_response_body_from_single_packet
-    // with the body bytes coming from the accumulation buffer.
+    // Non-chunked single-packet body: handle_response_body_from_single_packet.
     const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
   });

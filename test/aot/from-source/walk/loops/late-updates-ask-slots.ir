@@ -1,0 +1,15 @@
+# f1 = Box
+# f2 = run
+# -- source: main.mjs
+# function Box() { this.kept = 0; this.stop = 0; }
+# Box.prototype.run = function () { while (this.stop == 0) { unseen(this); this.steps += 1; if (this.steps > this.limit) this.stop |= 2; } };
+# const unseen = (0, eval)("(function (x) { return x; })");
+# const box = new Box(); box.steps = 0; box.limit = (0, eval)("3"); globalThis.unseen = [Box, box]; box.run();
+# print(box.steps, box.stop);
+# -- end of source
+# A number that other code lays late: what a loop computes of it goes back into the slot that was found filled, behind one look.
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: MemberPassedByStores
+# CHECK: IsSlotFilled {{*}}key="steps"
+# CHECK-NOT: PutSlotOrAdd {{*}}key="steps"
+# CHECK: PutSlot {{*}}key="steps"

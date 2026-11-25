@@ -1,4 +1,11 @@
 // What fills, copies and initializes memories and tables at once, references to functions and to values of JavaScript, and calls through a reference.
+// STATISTIC: WasmOptimizedCopies = 17
+// STATISTIC: WasmBaselineCopies = 22
+// STATISTIC: WasmOptimizedCheckingCopies = 0
+// STATISTIC: WasmBaselineCheckingCopies = 19
+// COUNTER in every build: WasmInstancesUsingImageCode = 1
+// COUNTER in every build: WasmInstancesInterpreted = 0
+// COUNTER in every build: WasmModulesFoundBeforeParsing = 1
 /// <reference path="../wasm-files.d.ts" />
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 import path from "./module.wasm";

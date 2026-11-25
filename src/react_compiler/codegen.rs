@@ -290,9 +290,12 @@ pub(crate) fn codegen_function(
         // Fast Refresh hash invalidation block — see `fast_refresh_state` above.
         let _ = fast_refresh_state;
 
-        let mut new_body = preface;
-        new_body.append(&mut compiled.body);
-        compiled.body = new_body;
+        // The body starts with the directives of the function. A directive only counts
+        // while it comes first, so the memo cache is declared after them.
+        let directive_count = leading_directive_count(&compiled.body);
+        compiled
+            .body
+            .splice(directive_count..directive_count, preface);
     }
 
     // Instrument forget: emit instrumentation call at the top of the function body
@@ -353,7 +356,8 @@ pub(crate) fn codegen_function(
                 },
                 Loc::EMPTY,
             );
-            compiled.body.insert(0, instrument_call);
+            let directive_count = leading_directive_count(&compiled.body);
+            compiled.body.insert(directive_count, instrument_call);
         }
     }
 
@@ -1914,7 +1918,12 @@ fn codegen_base_instruction_value(
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
             }
         }
-        InstructionValue::CallExpression { callee, args, .. } => {
+        InstructionValue::CallExpression {
+            callee,
+            args,
+            bun_kind,
+            ..
+        } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {
@@ -1931,6 +1940,7 @@ fn codegen_base_instruction_value(
             }
             let call_expr = Expr::init(
                 E::Call {
+                    kind: *bun_kind,
                     target: callee_expr,
                     args: arguments,
                     ..Default::default()
@@ -2211,11 +2221,19 @@ fn codegen_base_instruction_value(
             expr_type,
             ..
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
-        InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
+        InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            bun_kind,
+            ..
+        } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
             Ok(Expr::init(
                 E::Template {
-                    tag: Some(tag_expr),
+                    tag: Some(E::TemplateTag {
+                        kind: *bun_kind,
+                        expr: tag_expr,
+                    }),
                     head: E::TemplateContents::Raw(value.raw),
                     parts: StoreSlice::EMPTY,
                 },
@@ -3248,6 +3266,12 @@ fn estring_utf8(s: &str) -> E::EString {
         let units: AstVec<u16> = AstAlloc::vec_from_iter(s.encode_utf16());
         E::EString::init_utf16(units.leak())
     }
+}
+
+fn leading_directive_count(body: &[Stmt]) -> usize {
+    body.iter()
+        .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+        .count()
 }
 
 #[inline]

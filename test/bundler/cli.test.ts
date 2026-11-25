@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, forEachLine, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -420,6 +420,59 @@ test("log case 2", async () => {
   `);
 });
 
+test("log with an entry point below --root and an asset", async () => {
+  using dir = tempDir("build-log-widths", {
+    "src/a.js": `import file from "./long-name.bin"; console.log(file);`,
+    "src/long-name.bin": "1",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./src/a.js", "--root=.", "--outdir=out", "--asset-naming=[name].[ext]", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.replace(/in \d+ms/g, "in {time}ms").replaceAll("\\", "/")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      src/a.js        41 bytes  (entry point)
+      long-name.bin   1 bytes   (asset)
+
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).each([
+  ["a", "long-name.js  16 bytes"],
+  ["a-b", "long-name.js   16 bytes"],
+])("log with nine outputs, the first below %s", async (first, row) => {
+  const names = [...Array.from({ length: 8 }, (_, i) => `${i ? "a-b" : first}/x${i}`), "long-name"];
+  using dir = tempDir("build-log-nine", Object.fromEntries(names.map(name => [`${name}.js`, "console.log(1);"])));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...names.map(name => `./${name}.js`), "--root=.", "--outdir=out", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain(row);
+  expect(exitCode).toBe(0);
+});
+
+test.each([
+  ["a/y", "file"],
+  ["ab", isWindows ? "file" : "directory"],
+])("--no-bundle ./%s/ takes the %s", async (name, expected) => {
+  using dir = tempDir("no-bundle-trailing-slash", { [`${name}.js`]: `file();`, [`${name}/index.js`]: `directory();` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", `./${name}/`],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`${expected}();\n`);
+  expect(exitCode).toBe(0);
+});
+
 test("--outdir build succeeds when the output directory already exists with prior output", async () => {
   using dir = tempDir("build-outdir-reuse", {
     "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
@@ -527,6 +580,30 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test.skipIf(!isLinux)("closes the files it has read", async () => {
+    using dir = tempDir("no-bundle-outdir-closes", { "src/a.ts": `console.log(1);`, "src/b.css": `a { color: red }` });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--watch", "./src/a.ts", "./src/b.css", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A build that fails keeps watching, so wait for whichever stream prints first.
+    const first = await Promise.race([forEachLine(proc.stdout).next(), forEachLine(proc.stderr).next()]);
+    expect(first.value).toStartWith("Transpiled");
+    const open = fs.readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+      try {
+        return fs.readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.filter(target => /src\/(a\.ts|b\.css)$/.test(target))).toEqual([]);
   });
 
   test("reports the size of the written file", async () => {
@@ -1153,5 +1230,41 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).toContain("The value of color in the class foo is undefined.");
     expect(stderr).not.toContain("<b>");
     expect(stderr).not.toContain("\x1b[");
+  });
+});
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+test.skipIf(!isLinux || !cc)("bun build works without getrandom() and /dev/urandom", async () => {
+  using dir = tempDir("build-no-getrandom", {
+    "index.js": `console.log(1);`,
+    "shim.c": `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <string.h>
+      #include <unistd.h>
+      long getrandom(void) { return errno = ENOSYS, -1; }
+      static int refuse(const char *name, const char *path, int flags, int mode) {
+        if (strcmp(path, "/dev/urandom")) return ((int (*)(const char *, int, ...))dlsym(RTLD_NEXT, name))(path, flags, mode);
+        write(2, "refused\\n", 8);
+        return errno = EMFILE, -1;
+      }
+      int open(const char *path, int flags, int mode) { return refuse("open", path, flags, mode); }
+      int open64(const char *path, int flags, int mode) { return refuse("open64", path, flags, mode); }
+    `,
+  });
+  const shim = join(String(dir), "shim.so");
+  await Bun.$`${cc} -shared -fPIC -o ${shim} ${join(String(dir), "shim.c")} -ldl`.env(bunEnv).quiet();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "index.js"],
+    env: { ...bunEnv, LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "// index.js\nconsole.log(1);\n",
+    stderr: expect.stringMatching(/^(refused\n)+$/),
+    exitCode: 0,
   });
 });

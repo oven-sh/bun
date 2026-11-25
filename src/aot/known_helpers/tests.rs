@@ -5,10 +5,10 @@ use super::find::{
 use super::published::{Helper, PUBLISHED_FUNCTIONS, Shape};
 use super::resolve::{KnownCallee, ResolveInput, resolve_callee, resolve_reference};
 use super::table::{Table, analyze, find_published_function};
-use super::{KnownHelpers, Reference};
+use super::{KnownHelpers, Reference, is_made_behind};
 use crate::ir::run_serially;
 use crate::modules::testing::{file_named, with_graph};
-use bun_sema::hir::{ExprKind, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
 
 pub(super) const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -189,6 +189,26 @@ fn a_helper_that_replaces_the_exports_of_its_file_too_is_an_ordinary_function() 
     assert_eq!(shapes_in("/a.cjs", &replace_each(TYPEOF, &changes)), []);
 }
 
+const EXTENDS: &str = r#"function _extends() {
+  return _extends = Object.assign ? Object.assign.bind() : function (n) {
+    for (var e = 1; e < arguments.length; e++) {
+      var t = arguments[e];
+      for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);
+    }
+    return n;
+  }, _extends.apply(null, arguments);
+}"#;
+
+#[test]
+fn extends_becomes_object_assign() {
+    let known = [Shape::AssignReplacesItself];
+    assert_eq!(shapes_in("/a.mjs", EXTENDS), known);
+    assert_eq!(
+        shapes_in("/a.mjs", &EXTENDS.replace("bind()", "bind(null, {})")),
+        []
+    );
+}
+
 fn tree_of(function: &str) -> Vec<u8> {
     with_file("/a.cjs", &format!("var written = {function};"), |input| {
         let hir = input.hir;
@@ -199,6 +219,7 @@ fn tree_of(function: &str) -> Vec<u8> {
             file: input,
             max_bytes: usize::MAX,
             is_outer_name: &|_| false,
+            known: None,
         };
         let canonical = canonical_function(&canonical_input, written);
         canonical.expect("every part of the function is read").bytes
@@ -247,6 +268,7 @@ fn every_reference_of_a_published_function_can_be_verified() {
             let can_be_verified = match reference {
                 Reference::Helper(helper) => published.contains(&helper),
                 Reference::Global(path) => find_global(path).is_some(),
+                Reference::Holder => true,
             };
             assert!(
                 can_be_verified,
@@ -996,6 +1018,47 @@ fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
 }
 
 #[test]
+fn a_guard_that_gives_undefined_is_dropped_only_where_the_operator_behind_it_goes_on() {
+    let held = |source: &str| {
+        bindings_in("/a.cjs", source, |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    let once = (1, Certainty::OnceInitialized);
+    let uncertain = (1, Certainty::MayHoldOtherValues);
+    assert_eq!(held(CREATE_BINDING), [once]);
+    let guard = "(this && this.__createBinding)";
+    let joined =
+        |by: &str| CREATE_BINDING.replace(&format!("{guard} ||"), &format!("{guard} {by}"));
+    assert_eq!(held(&joined("??")), [once]);
+    assert_eq!(held(&joined("&&")), []);
+    assert_eq!(held(&joined("&& 1 ||")), [once]);
+    assert_eq!(held(&joined("|| 1 &&")), [uncertain]);
+    assert_eq!(held(&joined("|| 1 ? null :")), []);
+    assert_eq!(held(&joined("|| this.nothing ? null :")), [uncertain]);
+    let chosen = CREATE_BINDING.replace(
+        &format!("{guard} ||"),
+        &format!("!this.nothing ? {guard} :"),
+    );
+    assert_eq!(held(&chosen), [uncertain]);
+    let behind = CREATE_BINDING.replace(&format!("{guard} ||"), &format!("1 && {guard} ||"));
+    assert_eq!(held(&behind), [uncertain]);
+    let in_es_module = |source: String| {
+        bindings_in("/a.mjs", &format!("{source}export {{}};"), |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    assert_eq!(in_es_module(CREATE_BINDING.to_string()), [once]);
+    assert_eq!(in_es_module(joined("&&")), []);
+    assert_eq!(in_es_module(joined("&& 1 ||")), [once]);
+    let star_over_nothing = format!("{}{EXPORT_STAR}", joined("&&"));
+    let relies = find_in("/a.cjs", &star_over_nothing);
+    assert!(relies.functions().all(|(_, known)| known.shape
+        != Shape::ExportStarBindsNamesTheTargetLacks
+        || !known.relies_on_facts));
+}
+
+#[test]
 fn a_definition_in_the_head_holds_from_the_start() {
     let wrapper = "var __returnValue = (v) => v;\n";
     assert_eq!(
@@ -1187,6 +1250,44 @@ fn a_declaration_that_another_file_may_call_early_guards_the_variable_that_it_na
     assert!(variable_needs_guard(&on_a_cycle));
 }
 
+#[test]
+fn a_later_statement_makes_what_runs_behind_a_definition() {
+    let cases = [
+        ("var f = 1;\nf;", true),
+        ("var f = 1;\nclass A { m() { f; } }", true),
+        ("var f = 1;\nexport default () => f;", true),
+        ("var f = 1;\nexport const o = { m() { return f; } };", true),
+        (
+            "var f = 1;\nif (globalThis.a) { function g() { f; } }",
+            true,
+        ),
+        ("f;\nvar f = 1;", false),
+        ("class A { m() { f; } }\nvar f = 1;", false),
+        ("var f = 1, g = () => f;", false),
+        ("var f = 1;\nfunction g() { f; }", false),
+        (
+            "var f = 1;\nexport function g() { class A { m() { f; } } }",
+            false,
+        ),
+        ("var f = 1;\nexport default function () { f; }", false),
+        ("{ var f = 1; }\nf;", false),
+    ];
+    for (source, is_behind) in cases {
+        analyze("/a.mjs", source, |file| {
+            let hir = file.hir;
+            let mut names = (0..hir.exprs.len() as u32).map(ExprId).filter(|&it| {
+                matches!(hir[it].kind, ExprKind::Ident(name) if file.atoms.bytes(name) == b"f")
+            });
+            let named = names.next_back().expect("the text names the variable");
+            let mut statements = (0..hir.stmts.len() as u32).map(StmtId);
+            let defined = statements.find(|&it| matches!(hir[it].kind, StmtKind::Var(_)));
+            let defined = defined.expect("the text declares the variable");
+            let found = is_made_behind(hir, defined, hir[named].pos);
+            assert_eq!(found, is_behind, "{source}");
+        });
+    }
+}
+
 const REQUIRE_OF_ESBUILD: &str = r#"var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
 }) : x)(function(x) {
@@ -1194,6 +1295,28 @@ const REQUIRE_OF_ESBUILD: &str = r#"var __require = /* @__PURE__ */ ((x) => type
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 "#;
+
+#[test]
+fn a_helper_that_a_test_may_replace_is_not_certain() {
+    let source = "var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value);
+export {};";
+    let found = find_in("/a.mjs", source);
+    let [first, second] = [0, 1].map(|at| found.bindings().nth(at).map(|(symbol, _)| symbol));
+    let seen = |replaced: Option<bun_sema::bind::SymbolId>| -> Vec<(bool, bool)> {
+        let mut found = find_in("/a.mjs", source);
+        found.leave_replaceable_variables(&|symbol| Some(symbol) == replaced);
+        let holds = found.bindings().map(|(_, values)| {
+            values.holds_from_the_start && values.certainty != Certainty::MayHoldOtherValues
+        });
+        let relies = found.functions().map(|(_, known)| known.relies_on_facts);
+        holds.zip(relies).collect()
+    };
+    assert_eq!(seen(None), [(true, true), (true, true)]);
+    assert_eq!(seen(first), [(false, true), (true, false)]);
+    assert_eq!(seen(second), [(true, true), (false, true)]);
+}
 
 #[test]
 fn the_require_of_an_es_module_is_the_require_of_the_published_text() {

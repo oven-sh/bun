@@ -1,0 +1,11 @@
+# `for (let place = 0; place < box.page.rows.length; place++) total = total + box.page.rows[place]`: the finder of the slot that a loop reads its list out of knew the type of the outermost holder alone; of what a slot on the way holds it asked what is expected, and of a slot that is proven to hold one layout nothing is expected.
+# What is found in the filled slot on the way is the type of the next holder.
+# -- source: the-list-two-names-below-its-holder-is-told-apart-in-front-of-its-loop.cjs
+# const box = { page: { rows: JSON.parse("[1, 2, 3, 4.5]") } };
+# function sum(start) { let total = start; for (let place = 0; place < box.page.rows.length; place++) total = total + box.page.rows[place]; return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ArrayOrUint8ArrayLoopsVersioned mechanisms=all
+# COUNT: statistic ArrayOrUint8ArrayLoopsVersioned 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11.5

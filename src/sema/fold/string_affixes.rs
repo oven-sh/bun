@@ -2,8 +2,11 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, SymbolId};
-use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
+use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, Decl, SymbolId};
+use crate::hir::{
+    BinOp, Branches, Call, Chain, ExprId, ExprKind, File, FnBody, FnId, IdList, MemberKey, PropKey,
+    PropKind, StmtKind,
+};
 use crate::import_sites::{
     ENCODERS, ImportSiteKind, ImportSpecifier, call_site_arguments, call_site_kind,
     find_imported_export, is_process, names_own_file, settled_symbol,
@@ -321,7 +324,10 @@ impl<'s> Folder<'_, 's> {
         if computed.is_some() && (path.leaves_folder() || arguments.next().is_some()) {
             return None;
         }
-        let written = path.write(is_join, computed.is_some());
+        let written = path.write(PathEnd {
+            is_join,
+            is_followed: computed.is_some(),
+        });
         let written = Constant::String(self.atoms.intern(&written));
         let mut parts = vec![Part::Expr(first), Part::Known(Primitive::Constant(written))];
         parts.extend(computed.map(Part::Expr));
@@ -602,6 +608,12 @@ pub fn ends_in_name_with_extension(text: &[u8]) -> bool {
     matches!(strings::last_index_of_char(name, b'.'), Some(dot) if dot != 0 && dot + 1 != name.len())
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct PathEnd {
+    pub(crate) is_join: bool,
+    pub(crate) is_followed: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct PathBelowFolder {
     segments: Vec<Vec<u8>>,
@@ -632,13 +644,13 @@ impl PathBelowFolder {
         self.segments.first().is_some_and(|first| first == b"..")
     }
 
-    pub(crate) fn write(&self, is_join: bool, is_followed: bool) -> Vec<u8> {
+    pub(crate) fn write(&self, end: PathEnd) -> Vec<u8> {
         let mut written = Vec::new();
         for segment in &self.segments {
             written.push(b'/');
             written.extend_from_slice(segment);
         }
-        if is_followed || is_join && self.ends_with_slash {
+        if end.is_followed || end.is_join && self.ends_with_slash {
             written.push(b'/');
         }
         written
@@ -674,7 +686,8 @@ pub(crate) fn find_export_of_module(
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
 ) -> Option<Atom> {
-    find_export_of_module_with(hir, bound, callee, find_constant, is_module, None)
+    let passes = Passes::default();
+    find_export_of_module_with(hir, bound, callee, find_constant, is_module, passes, None)
 }
 
 pub(crate) fn find_export_of_module_with(
@@ -683,9 +696,10 @@ pub(crate) fn find_export_of_module_with(
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
+    passes: Passes,
     known: Option<&MembersBehindNames>,
 ) -> Option<Atom> {
-    let members = walk_to_module(hir, bound, callee, find_constant, is_module, false, known)?;
+    let members = walk_to_module(hir, bound, callee, find_constant, is_module, passes, known)?;
     match members[..] {
         [member] => Some(member),
         _ => None,
@@ -695,16 +709,90 @@ pub(crate) fn find_export_of_module_with(
 #[derive(Default)]
 pub(crate) struct MembersBehindNames(RefCell<FxHashMap<SymbolId, Option<SmallVec<[Atom; 4]>>>>);
 
+/// What may stand between a name and the module that it comes from.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Passes {
+    pub(crate) awaited_imports: bool,
+    /// Calls that are given the module, whatever they make of it: `__toESM(require("fs"))`.
+    pub(crate) wrappers: bool,
+}
+
 pub(crate) fn find_members_below_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
-    follows_awaited_imports: bool,
+    passes: Passes,
 ) -> Option<SmallVec<[Atom; 4]>> {
-    let follows = follows_awaited_imports;
-    walk_to_module(hir, bound, callee, find_constant, is_module, follows, None)
+    walk_to_module(hir, bound, callee, find_constant, is_module, passes, None)
+}
+
+/// Whether `callee` is `function (mod) { return mod && mod.__esModule ? mod : { default: mod }; }`, as compilers write it.
+fn wraps_as_default(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {
+    let find_function = |e: ExprId| match hir[hir.skip_type_assertions(e)].kind {
+        ExprKind::Fn(function) => Some(function),
+        _ => None,
+    };
+    let callee = hir.skip_type_assertions(callee);
+    let initializer =
+        settled_symbol(hir, bound, callee).map(|symbol| bound.binding_initializer(hir, symbol));
+    let function = match initializer {
+        Some(BindingInitializer::Function(function)) => Some(function),
+        Some(BindingInitializer::Expression(written)) => {
+            let written = hir.skip_type_assertions(written);
+            match hir[written].kind {
+                ExprKind::Binary {
+                    op: BinOp::Or,
+                    right,
+                    ..
+                } => find_function(right),
+                _ => find_function(written),
+            }
+        }
+        _ => None,
+    };
+    function.is_some_and(|function| returns_parameter_as_default(hir, bound, function))
+}
+
+fn returns_parameter_as_default(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+    let function = hir[function];
+    let Some(parameter) = function.params.iter().next() else {
+        return false;
+    };
+    let parameter = bound.declared_symbol(Decl::Param(hir[parameter].pat));
+    if parameter.is_none() || !bound.is_stable_binding(parameter) {
+        return false;
+    }
+    let returned = match function.body {
+        FnBody::Expr(returned) => returned,
+        FnBody::Block(statements) => {
+            let mut statements = hir.ids(statements);
+            match (statements.next().map(|it| hir[it].kind), statements.next()) {
+                (Some(StmtKind::Return(returned)), None) if returned.is_some() => returned,
+                _ => return false,
+            }
+        }
+        FnBody::None => return false,
+    };
+    let names_parameter = |e: ExprId| {
+        let e = hir.skip_type_assertions(e);
+        matches!(hir[e].kind, ExprKind::Ident(_)) && bound.binding(e) == Binding::Symbol(parameter)
+    };
+    let holds_parameter_as_default = |e: ExprId| {
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(e)].kind else {
+            return false;
+        };
+        let mut properties = properties.iter();
+        matches!((properties.next(), properties.next()), (Some(only), None)
+            if hir[only].kind == PropKind::Init
+                && hir.runtime_property_key(only) == PropKey::Name(known::default)
+                && names_parameter(hir[only].value))
+    };
+    matches!(hir[hir.skip_type_assertions(returned)].kind, ExprKind::Cond { branches, .. } if {
+        let Branches { yes, no } = hir.branches(branches);
+        names_parameter(yes) && holds_parameter_as_default(no)
+    })
 }
 
 fn walk_to_module(
@@ -713,7 +801,7 @@ fn walk_to_module(
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
-    follows_awaited_imports: bool,
+    passes: Passes,
     known: Option<&MembersBehindNames>,
 ) -> Option<SmallVec<[Atom; 4]>> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
@@ -773,10 +861,30 @@ fn walk_to_module(
                     _ => break false,
                 }
             }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => e = right,
             ExprKind::Call(call) => {
-                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
+                if is_module_request(hir, bound, e, hir[call], find_constant, is_module) {
+                    break true;
+                }
+                let reads_default = pending_members.last() == Some(&known::default);
+                let is_wrapper = passes.wrappers
+                    || reads_default && wraps_as_default(hir, bound, hir[call].callee);
+                match hir.ids(hir[call].args).next() {
+                    Some(wrapped) if is_wrapper => e = wrapped,
+                    // `const fs_default = n(require("fs")); fs_default().readFileSync`
+                    None if passes.wrappers => e = hir[call].callee,
+                    _ => break false,
+                }
+                if reads_default {
+                    pending_members.pop();
+                    came_by.retain(|it| it.1 <= pending_members.len());
+                }
             }
-            ExprKind::Await(awaited) if follows_awaited_imports => {
+            ExprKind::Await(awaited) if passes.awaited_imports => {
                 let awaited = hir.skip_type_assertions(awaited);
                 let specifier = match call_site_kind(hir, bound, awaited) {
                     Some(ImportSiteKind::ImportCall(_)) => call_site_arguments(hir, bound, awaited)

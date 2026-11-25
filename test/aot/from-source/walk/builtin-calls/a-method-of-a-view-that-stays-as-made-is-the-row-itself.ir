@@ -1,0 +1,51 @@
+# -- source: a-method-of-a-view-that-stays-as-made-is-the-row-itself.ts
+# declare function sink(value: unknown): void;
+# const bytes = new Uint8Array(16); for (let i = 0; i < 16; i++) bytes[i] = i * 3;
+# const withOwnMethod: any = new Uint8Array(16);
+# const withOtherPrototype: any = new Uint8Array(16);
+# const withSpecies: any = new Uint8Array(16);
+# const withNameByKey: any = new Uint8Array(16);
+# const handedOut: any = new Uint8Array(16);
+# function sumOf(part: any): number { let sum = 0; for (let i = 0; i < part.length; i++) sum += part[i]; return sum; }
+# function copyOfPart(): number { const part = bytes.slice(2, 6); let sum = 0; for (let i = 0; i < part.length; i++) sum += part[i]!; return sum; }
+# function placeOf(byte: number): number { return bytes.indexOf(byte); }
+# function ownMethod(): unknown { return withOwnMethod.slice(2, 6); }
+# function otherPrototype(): unknown { return withOtherPrototype.slice(2, 6); }
+# function species(): string { const part = withSpecies.slice(2, 6); return part.constructor.name + part.length; }
+# function nameByKey(): unknown { return withNameByKey.slice(2, 6); }
+# function ofHandedOut(): unknown { const part: any = handedOut.slice(2, 6); return typeof part === "string" ? part : sumOf(part); }
+# const said: unknown[] = [copyOfPart(), placeOf(9), sumOf(ownMethod()), sumOf(otherPrototype()), species(), sumOf(nameByKey()), ofHandedOut()];
+# withOwnMethod.slice = () => "own";
+# Object.setPrototypeOf(withOtherPrototype, { slice() { return "of the other prototype"; } });
+# withSpecies.constructor = { [Symbol.species]: Uint16Array };
+# withNameByKey[["sl", "ice"].join("")] = () => "under a key";
+# sink(handedOut);
+# said.push(copyOfPart(), placeOf(9), ownMethod(), otherPrototype(), species(), nameByKey(), ofHandedOut());
+# sink(said.join(" | "));
+# -- end of source
+# `bytes.slice(2, 6)` on a view out of a variable of the module was a closed read of "slice" and a call of an unknown callee, and what came back was anything: the loop behind it took 111 instructions an
+# element. Link said that the variable's view stays as its class makes it; the table of receivers that stay as made listed no view at all, since the day a worker lengthened one under a loop
+# (parallel/views-whose-memory-changes-while-a-loop-runs). That fault has its own door in the walk: a view says nothing where the program names what grows shared memory. So views are listed, and the
+# receiver's door asks the same.
+# The five other views are WRITTEN ON: an own method, another prototype, a constructor with a species, a name under a key that is put together, a hand-over to code nobody sees: none of them is listed.
+# f2 = copyOfPart, f3 = placeOf, f4 = ownMethod, f5 = otherPrototype, f6 = species, f7 = nameByKey, f8 = ofHandedOut
+# RUN: walk f2:Body f3:Body f4:Body f5:Body f6:Body f7:Body f8:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: PropGet {{*}} key="slice"
+# CHECK: Uint8Array @JSValue = CallBuiltin {{*}} overload=TypedArrayPrototypeSlice/0
+# CHECK: GetTypedArrayLength
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: PropGet {{*}} key="indexOf"
+# CHECK: overload=TypedArrayPrototypeIndexOf/0
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice
+# CHECK-LABEL: code f6:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice/0
+# CHECK-LABEL: code f7:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice
+# CHECK-LABEL: code f8:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice
+# RUN(SHELL): run-in-shell globalThis.sink = value => { if (typeof value === "string") print(value); else value.slice = () => "handed out"; };
+# SHELL: 42 | 3 | 0 | 0 | Uint8Array4 | 0 | 0 | 42 | 3 | own | of the other prototype | Uint16Array4 | under a key | handed out

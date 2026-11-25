@@ -1,5 +1,5 @@
-# A counter behind `i < length` is narrowed to a range by the compare that stands in the code: the walk's own reasoning, no word of Link's. In a raw form it is asked for that range where the walk is held against
-# itself (testing=CheckWalkAtRunTime beside CheckProofsAtRunTime), and not under CheckProofsAtRunTime alone, which `--aot-harden=proof-checks` stands for.
+# A counter behind `i < length` is narrowed to a range by the compare that stands in the code: the walk's own reasoning, no word of Link's. In a raw form too it is asked for that range under
+# testing=CheckProofsAtRunTime, which `--aot-harden=proof-checks` stands for and which tests what a branch has narrowed, and where the walk is held against itself (CheckWalkAtRunTime beside it).
 # f1 = total
 # -- source: the-range-of-a-raw-counter-behind-a-compare-is-asked-under-the-word-of-the-walk.ts
 # declare function print(value: unknown): void;
@@ -8,8 +8,8 @@
 # -- end of source
 # RUN(HARDENED): walk f1 mechanisms=all-Inlining testing=CheckProofsAtRunTime
 # HARDENED-LABEL: code f1:Body
-# HARDENED: = Narrowed
-# HARDENED-NOT: typeWithoutProof=int{{*}}source=Test
+# HARDENED: [[counter]]: int[{{*}} = Narrowed
+# HARDENED-NEXT: CheckProof [[counter]] checkedType=int[{{*}}source=Test
 # RUN(WALK): walk f1 mechanisms=all-Inlining testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # WALK-LABEL: code f1:Body
 # WALK: [[counter]]: int[{{*}} = Narrowed

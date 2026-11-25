@@ -1,5 +1,5 @@
 // a name that has a slot though the layout does not list it is deleted and added again, which moves it behind the other keys, and is refused by an object that is frozen, sealed or not extensible as any other new property is
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 (globalThis as any).report = (value: unknown) => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 declare function report(value: unknown): void;
 function Thing(this: any, n: number) { this.n = n; }

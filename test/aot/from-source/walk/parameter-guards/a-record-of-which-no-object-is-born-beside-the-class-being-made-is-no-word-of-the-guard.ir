@@ -1,0 +1,19 @@
+# -- source: a-record-of-which-no-object-is-born-beside-the-class-being-made-is-no-word-of-the-guard.ts
+# declare function print(...values: unknown[]): void;
+# interface Row { id: number; name: string; email: string; active: boolean; score: number; tell?(): string }
+# const rows = JSON.parse('[{"id":1,"name":"a","email":"a@x","active":true,"score":0.5},{"id":2,"name":"b","email":"b@x","active":false,"score":1.5}]') as unknown as Row[];
+# class User { id: number; name: string; email: string; active: boolean; score: number; constructor(row: Row) { this.id = row.id; this.name = row.name; this.email = row.email; this.active = row.active; this.score = row.score; } }
+# const make = (row: Row): User => new User(row);
+# function all(): number { let s = 0; for (let i = 0; i < 64; i++) { const u = make(rows[i & 1]!); s += u.id + u.name.length + (u.active ? 1 : 0) + u.score; } return s; }
+# let sum = 0; for (let t = 0; t < 3; t++) sum += all();
+# print(sum);
+# -- end of source
+# `Row` has a member that User lacks, so the written type names two layouts: User, which fits it, and the record of the interface itself. No object of that record is ever born in this program: it cannot arrive. What is left is the class that
+# the constructor makes, and that is no word of its guard: the rows are cast to it and every one of them failed it.
+# f2 = User
+# RUN(GUARD): walk f2:ParameterGuard mechanisms=all
+# GUARD: the plan has no such unit
+# RUN(SLOW): walk f2:SlowBody mechanisms=all
+# SLOW: the plan has no such unit
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 768

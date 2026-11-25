@@ -1,0 +1,1 @@
+function run(times) { let said = ''; for (let t = 0; t < times; t++) { const list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]; for (let i = 0; i < 4; i++) list[(t + i) & 15] = -t; said += list[0] + list[1] + list[16] + ','; } return said; } console.log(run(4));

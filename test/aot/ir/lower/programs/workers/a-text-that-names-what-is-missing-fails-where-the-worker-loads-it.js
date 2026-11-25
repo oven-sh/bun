@@ -4,11 +4,11 @@
 // DIAGNOSTIC: TS100150 2
 // RUN(TEXT): link
 // TEXT: module [[text]] path="data:text/javascript,import './no-such-file.js'; postMessage(1)"
-// TEXT: modulefailure {{*}} importer=[[text]] specifier="./no-such-file.js" endsLoadOf=[[text]]
+// TEXT: modulefailure {{*}} importer=[[text]] specifier="./no-such-file.js" failedLoadRoot=[[text]]
 // RUN(THROUGH): link
 // THROUGH: module [[file]] path="/$bunfs/root/imports-what-is-missing.js"
 // THROUGH: module [[text]] path="data:text/javascript,import './imports-what-is-missing.js'; postMessage(2)"
-// THROUGH: modulefailure {{*}} importer=[[file]] specifier="./no-such-file.js" endsLoadOf=[[text]]
+// THROUGH: modulefailure {{*}} importer=[[file]] specifier="./no-such-file.js" failedLoadRoot=[[text]]
 
 // FILE: main.js
 new Worker("data:text/javascript,import './no-such-file.js'; postMessage(1)");

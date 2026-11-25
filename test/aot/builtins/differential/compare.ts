@@ -209,10 +209,10 @@ class Comparison {
     return this.hasActionFor(operand, depth === 0 ? [...readingActions, ...definingActions, "DeletesByKey"] : readingActions, key);
   }
 
-  // b.handedOver: native code reads, calls, keeps and passes on such an operand, and does not change it. Flow takes what goes into
+  // b.retainedByNativeCode: native code reads, calls, keeps and passes on such an operand, and does not change it. Flow takes what goes into
   // native memory for escaped, a call that runs other code lets whatever has escaped be read and called, and no pass takes a
   // summary of an operand from such an entry.
-  isHandedOver(parameter: DumpedParameter): boolean {
+  isRetainedByNativeCode(parameter: DumpedParameter): boolean {
     const { capability, runsOnlyOperandCode } = this.overload;
     return capability === "js" && !runsOnlyOperandCode && this.goesIntoNativeMemory(parameter);
   }
@@ -536,6 +536,11 @@ class Comparison {
     if (callee.kind === "Operand") {
       const callbacks = this.overload.callbacks.filter(callback => covers(callback.callee, operand));
       if (callbacks.some(callback => callback.resultUse === "Escapes")) return;
+      const isConversion =
+        event.key === undefined
+          ? event.trap === "apply" && this.run.log.holderOf(event.subject) !== undefined
+          : toPrimitiveKeys.includes(spellingOf(event.key));
+      if (isConversion && callbacks.some(callback => callback.resultUse === "Converted")) return;
       this.report("callbacks.resultUse", `the built-in works on the result of the callback: ${describeEvent(event)}`);
       return;
     }
@@ -573,7 +578,7 @@ class Comparison {
       return;
     }
     if (claimsEveryUse(parameter)) return;
-    const isInOtherHands = this.isHandedOver(parameter) || this.isHandedToMethodsOfEngine(parameter);
+    const isInOtherHands = this.isRetainedByNativeCode(parameter) || this.isHandedToMethodsOfEngine(parameter);
     if (isInOtherHands && !changingTraps.includes(event.trap)) return;
     if (origin.kind !== "Operand" && this.mayRunMethodsOfEngine(parameter, operand)) return;
     if (event.isDuringStep) {
@@ -754,7 +759,7 @@ class Comparison {
 
   isUnchecked(origin: Origin): boolean {
     const parameter = parameterOf(this.overload, origin.operand);
-    return parameter !== null && (claimsEveryUse(parameter) || this.isHandedOver(parameter));
+    return parameter !== null && (claimsEveryUse(parameter) || this.isRetainedByNativeCode(parameter));
   }
 
   forEachHeldValue(root: object, visit: (value: object, origin: Origin) => void): void {

@@ -223,7 +223,7 @@ impl DirInfo {
         self.tsconfig_json.map(arena_ref)
     }
 
-    pub fn get_file_descriptor(&self) -> Fd {
+    pub(crate) fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             // Scalar field read; see `get_entries_const` for the contract.
             return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);

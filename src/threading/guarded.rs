@@ -1,6 +1,7 @@
 //! A wrapper around a mutex, and a value protected by the mutex.
 
 use core::cell::UnsafeCell;
+use core::mem::ManuallyDrop;
 
 use crate::Mutex;
 
@@ -53,6 +54,22 @@ impl<Value> GuardedBy<Value, Mutex> {
             unsynchronized_value: UnsafeCell::new(value),
             mutex: Mutex::new(),
         }
+    }
+
+    /// Runs `f` under the lock, for a critical section that lets another thread free `*this`.
+    ///
+    /// # Safety
+    /// `this` stays live until the unlock after `f` returns.
+    pub unsafe fn with_lock_raw<R>(
+        this: *const Self,
+        f: impl FnOnce(&mut GuardedLock<'_, Value, Mutex>) -> R,
+    ) -> R {
+        // SAFETY: fn contract.
+        let mut guard = ManuallyDrop::new(unsafe { &*this }.lock());
+        let result = f(&mut guard);
+        // SAFETY: the guard holds this mutex on this thread, and is not used again.
+        unsafe { Mutex::unlock_raw(&raw const guard.guarded.mutex) };
+        result
     }
 }
 
@@ -132,5 +149,37 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::AtomicPtr;
+    use std::sync::Arc;
+
+    // Miri rejects the free if the other thread still holds a reference into the allocation.
+    #[test]
+    fn the_unlock_of_with_lock_raw_is_the_last_access() {
+        #[cfg(miri)]
+        const ITERATIONS: usize = 300;
+        #[cfg(not(miri))]
+        const ITERATIONS: usize = 10_000;
+
+        for _ in 0..ITERATIONS {
+            let done = Arc::new(Guarded::new(false));
+            let address = AtomicPtr::new(Arc::as_ptr(&done).cast_mut());
+            let thread = std::thread::Builder::new()
+                .spawn(move || {
+                    // SAFETY: `done` is dropped only once it reads `true`.
+                    unsafe { Guarded::with_lock_raw(address.into_inner(), |value| **value = true) };
+                })
+                .unwrap();
+            while !*done.lock() {
+                std::thread::yield_now();
+            }
+            drop(done);
+            thread.join().unwrap();
+        }
     }
 }

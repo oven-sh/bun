@@ -1,0 +1,38 @@
+# -- source: a-class-that-cannot-be-stored-there-is-not-expected.js
+# class Reply {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length + this.replyCode; }
+# }
+# class Other {
+#   constructor(start) { this.otherMark = start; }
+# }
+# const shell = {
+#   get status() { return this.inner.replyCode; },
+#   ask(name) { return this.inner.askHeader(name); },
+# };
+# function wrap(inner) {
+#   const made = Object.create(shell);
+#   made.inner = inner;
+#   return made;
+# }
+# const listeners = {};
+# function on(name, listener) { listeners[name] = listener; }
+# function emit(name, value) { return listeners[name](value); }
+# function local() { const own = new Reply(1); return own.replyCode + own.askHeader("a"); }
+# on("reply", inner => { const made = wrap(inner); return made.status + local(); });
+# on("other", other => other.otherMark);
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += emit("reply", JSON.parse('{"replyCode":' + i + '}')) + emit("other", new Other(i));
+# print(sum);
+# -- end of source
+# The one class that has the names never leaves the function that makes it: it is not among what may be stored.
+# RUN(HELD): link held fields mechanisms=all
+# HELD-NOT: "inner" appended proven=L
+# RUN(COUNTS): link held counts mechanisms=all
+# COUNTS: counts cells of fields expected by the names asked of what lies in them | 0
+# RUN(PROVING): link fields mechanisms=all
+# PROVING-NOT: "inner" appended proven=L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 24
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 24

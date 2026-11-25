@@ -5,10 +5,8 @@
 # console.log(last("abc"), last(""));
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: : int[0, 65535] @Int32{{*}}isLoopHead=true
 # CHECK: = GetStringCodeUnit
 # RUN(NEVER): walk f1 mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: : number @

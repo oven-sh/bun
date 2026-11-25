@@ -38,21 +38,6 @@ impl MutableString {
 
     // `Vec<u8>` drops automatically — no `Drop` impl needed.
 
-    /// Set `len = capacity` so callers
-    /// can index into the spare region (e.g. `read()` into `&mut list[n..]`).
-    ///
-    /// Callers must treat `list[old_len..]` as write-only until overwritten
-    /// (typically by `read()`).
-    #[inline]
-    pub fn expand_to_capacity(&mut self) {
-        // Zero only the spare region so the exposed tail is defined (avoids
-        // CWE-908 uninit-memory exposure if a caller reads before write).
-        let old = self.list.len();
-        self.list.resize(self.list.capacity(), 0);
-        debug_assert_eq!(self.list.len(), self.list.capacity());
-        let _ = old;
-    }
-
     pub fn owns(&self, items: &[u8]) -> bool {
         // Pointer-range check against the full allocation; done with addresses
         // rather than forming a `&[u8]` over `[len..cap)` (uninit) bytes.
@@ -64,20 +49,6 @@ impl MutableString {
     #[inline]
     pub fn grow_if_needed(&mut self, amount: usize) -> Result<(), AllocError> {
         self.list.try_reserve(amount).map_err(|_| AllocError)
-    }
-
-    pub(crate) fn writable_n_bytes_assume_capacity(&mut self, amount: usize) -> &mut [u8] {
-        // SAFETY: caller has reserved at least `amount` bytes of spare capacity
-        // (debug-asserted in the callee) and fully writes the returned slice
-        // before reading it.
-        unsafe { crate::vec::writable_slice_assume_capacity(&mut self.list, amount) }
-    }
-
-    /// Increases the length of the buffer by `amount` bytes, expanding the capacity if necessary.
-    /// Returns a pointer to the end of the list - `amount` bytes.
-    pub fn writable_n_bytes(&mut self, amount: usize) -> Result<&mut [u8], AllocError> {
-        self.grow_if_needed(amount)?;
-        Ok(self.writable_n_bytes_assume_capacity(amount))
     }
 
     pub fn write(&mut self, bytes: impl AsRef<[u8]>) -> Result<usize, AllocError> {
@@ -249,15 +220,6 @@ impl MutableString {
     #[inline]
     pub fn reset(&mut self) {
         self.list.clear();
-    }
-
-    #[inline]
-    pub fn reset_to(&mut self, index: usize) {
-        debug_assert!(index <= self.list.capacity());
-        // SAFETY: index <= capacity asserted; bytes in [len..index] may be
-        // uninitialized. Callers must have previously
-        // written those bytes (e.g. via writable_n_bytes).
-        unsafe { self.list.set_len(index) };
     }
 
     #[inline]

@@ -4,11 +4,10 @@ use super::{
     WithoutBunTypes,
 };
 use crate::{
-    Libs, default_compiler_options, diagnostic_from_config_error, give_pool_stack_for_lowering,
-    host, use_dedicated_pool,
+    Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
-use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
+use bun_sema::check::{Program, ProgramInputs};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -18,7 +17,8 @@ use bun_sema::program::{
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
-    HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
+    HostResolution, JsxRuntime, JsxSettings, Options, Resolver, is_javascript, is_same_path,
+    is_typescript_file_name, join,
 };
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -34,8 +34,7 @@ pub fn load_program<'s>(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
-    give_pool_stack_for_lowering();
-    use_dedicated_pool("Bun Compile");
+    use_pool_for_lowering("Bun Compile");
     let mut steps = LoggedSteps::begin(host);
     let entry_paths = match request.entry_points {
         EntryPoints::Written(specifiers) | EntryPoints::WrittenAndFound(specifiers, ..) => {
@@ -82,11 +81,17 @@ pub fn load_program<'s>(
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
-    let names_bun_types_by_itself = options.names_bun_types_by_itself;
     let is_application = request.project_origin != FileOrigin::Runtime;
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    // A folder without a tsconfig.json is read as under the one that `bun init` writes. With the library of the DOM in sight
+    // Bun's declarations leave to it what they declare themselves otherwise, the `text()` of a stream among it.
+    let is_read_as_after_bun_init =
+        is_application && has_bun_types && project.config_path.is_empty();
+    if is_read_as_after_bun_init && !options.specifies_lib {
+        options.libs = vec![b"esnext".to_vec()];
+    }
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
@@ -109,6 +114,7 @@ pub fn load_program<'s>(
     let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
     let config_path = project.config_path.clone();
     let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let guessed_entry_paths: Guarded<FxHashSet<Vec<u8>>> = Guarded::new(FxHashSet::default());
     let list_with_found = || {
         let found = found_entry_paths.lock();
         if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
@@ -139,16 +145,32 @@ pub fn load_program<'s>(
     let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
         EntryPoints::WrittenAndFound(_, find) => {
             let found = find(code);
+            let sure = found.named_by.iter();
+            let sure = sure.filter(|(_, load)| !load.is_some_and(|load| load.may_be_left_out));
+            let sure: FxHashSet<&[u8]> = sure.map(|(path, _)| &path[..]).collect();
+            let named: FxHashSet<&[u8]> = found.named_by.iter().map(|it| &it.0[..]).collect();
             let mut paths = found_entry_paths.lock();
+            let mut guessed = guessed_entry_paths.lock();
             paths.retain(|path| !found.dropped.contains(path));
-            paths.extend_from_slice(&found.paths);
+            for path in &found.paths {
+                match named.contains(&path[..]) && !sure.contains(&path[..]) {
+                    true => drop(guessed.insert(path.clone())),
+                    false => paths.push(path.clone()),
+                }
+            }
+            for (path, _) in &found.named_by {
+                if sure.contains(&path[..]) && guessed.remove(path) {
+                    paths.push(path.clone());
+                }
+            }
+            drop(guessed);
             drop(paths);
             found
         }
         _ => EntryPointsFound::default(),
     };
     steps.end("entry points, project, libraries");
-    let files = Files::load_for_compile(
+    let mut files = Files::load_for_compile(
         session,
         host,
         project.options,
@@ -161,23 +183,27 @@ pub fn load_program<'s>(
             atoms: request.atoms,
         },
     );
+    files.note_types_that_program_leads_to(
+        &|path| match &roots_with_and_without_what_is_excluded {
+            Some((_, kept)) => kept.has(&config::SplitFilePath::new(path), &|it| host.is_file(it)),
+            None => entry_paths.iter().any(|it| it == path),
+        },
+    );
     steps.end("the files: the sum of the lines above, from the walk on");
     host.loaded();
     let files: &'s Files<'s> = session.arena().alloc(files);
     free_unread_leaves(files, host);
     steps.end("free the leaves that nothing reads, settle the texts");
     let checker_session = session.keep(SessionSlot::new());
-    let node_counts = Program::count_nodes(files);
-    let program = Program::with_node_counts(checker_session.session(), files, &node_counts);
-    program.find_symbols_of_compiler();
-    let program = &*session.arena().alloc(UnsafeCell::new(program));
+    let program_inputs = ProgramInputs::read(files);
+    let program = make_checker(session, checker_session, files, &program_inputs);
     steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
     steps.end("origins of the files");
-    let bun_types = if has_bun_types_installed && names_bun_types_by_itself && is_application {
+    let bun_types = if has_bun_types_installed && files.brings_declarations() && is_application {
         BunTypes::InstalledAndNotNamed
     } else if !is_application || has_bun_types_installed {
         BunTypes::Installed
@@ -215,10 +241,11 @@ pub fn load_program<'s>(
         program,
         files,
         checker_session,
-        node_counts,
+        program_inputs,
         is_checker_freed: AtomicBool::new(false),
         cycles_entered: Default::default(),
         origins,
+        origins_behind_reach: Default::default(),
         project_origin: request.project_origin,
         diagnostics,
         bun_types,
@@ -226,6 +253,19 @@ pub fn load_program<'s>(
         files_that_project_excludes,
         files_left_to_loader: Default::default(),
     })
+}
+
+/// Makes the checker's program in a frame of its own. The program is large and is moved into the
+/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
+#[inline(never)]
+fn make_checker<'s>(
+    session: &'s Session,
+    checker_session: &'s SessionSlot,
+    files: &'s Files<'s>,
+    inputs: &ProgramInputs,
+) -> &'s UnsafeCell<Program<'s>> {
+    let program = Program::with_inputs(checker_session.session(), files, inputs);
+    UnsafeCell::from_mut(session.arena().alloc(program))
 }
 
 fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {
@@ -256,7 +296,7 @@ fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Ve
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
     let is_unread = |&file: &FileId| {
         let module = files.module(file);
-        let is_source = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx);
+        let is_source = matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx);
         module.is_leaf && is_source && !files.is_compiled(file)
     };
     let file_ids: Vec<FileId> = (0..files.modules.len())
@@ -322,12 +362,26 @@ impl<'a> FileFinder<'a> {
     }
 
     pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Static)
+    }
+
+    /// No plugin is asked.
+    pub fn find_entry_point_on_disk(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Macro)
+    }
+
+    /// A plugin that fails stops no build: the file is left out.
+    pub fn find_guessed_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Guess)
+    }
+
+    fn find_entry_point_as(&self, specifier: &[u8], form: CodeImportForm) -> Option<Vec<u8>> {
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer: b"",
             directory: &self.code.working_directory,
             kind: CodeImportKind::EntryPoint,
-            form: CodeImportForm::Static,
+            form,
         });
         match resolution {
             CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
@@ -660,11 +714,35 @@ pub(super) fn default_project(
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
         options.retain(|option| option.0 != b"verbatimModuleSyntax" && option.0 != b"lib");
+        let settings = options_of_jsx(&code.jsx);
+        options.retain(|option| settings.iter().all(|setting| option.0 != setting.0));
+        options.extend(settings);
     }
     let directory = &code.working_directory;
     let mut project = config::without_config(host, directory, options, entry_paths.to_vec());
     project.files.retain(|path| is_typescript_file_name(path));
     project
+}
+
+fn options_of_jsx(settings: &JsxSettings) -> Vec<(Vec<u8>, Json)> {
+    let default = JsxSettings::default();
+    let text = |name: &[u8], value: Vec<u8>| (name.to_vec(), Json::String(value));
+    let mut options = Vec::new();
+    match settings.runtime {
+        JsxRuntime::Automatic => {
+            if settings.import_source != default.import_source {
+                options.push(text(b"jsxImportSource", settings.import_source.clone()));
+            }
+        }
+        JsxRuntime::Classic => {
+            options.push(text(b"jsx", b"react".to_vec()));
+            if settings.factory != default.factory || settings.fragment != default.fragment {
+                options.push(text(b"jsxFactory", settings.factory.join(&b'.')));
+                options.push(text(b"jsxFragmentFactory", settings.fragment.join(&b'.')));
+            }
+        }
+    }
+    options
 }
 
 fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {
@@ -695,11 +773,20 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     let Some(root) = host.type_root_in_place_of_bun_types() else {
         return false;
     };
+    take_bun_types_below(root, &|path| host.is_file(path), options);
+    true
+}
+
+pub(crate) fn take_bun_types_below(
+    root: Vec<u8>,
+    is_file: &dyn Fn(&[u8]) -> bool,
+    options: &mut Options,
+) {
     let roots = options.effective_type_roots();
     let has_bun_types_package = roots.iter().any(|root| {
         let directories = [Some(&root[..]), root.strip_suffix(b"/@types")];
         (directories.into_iter().flatten())
-            .any(|it| host.is_file(&[it, b"/bun-types/package.json"].concat()))
+            .any(|it| is_file(&[it, b"/bun-types/package.json"].concat()))
     });
     options.type_root_of_last_resort = Some(root);
     let (named, other): (&[u8], &[u8]) = match has_bun_types_package {
@@ -711,5 +798,4 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
     if !types.iter().any(|name| name == named) {
         types.push(named.to_vec());
     }
-    true
 }

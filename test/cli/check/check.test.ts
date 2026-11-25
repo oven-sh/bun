@@ -2205,6 +2205,37 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     expect(two.exitCode).toBe(1);
   });
 
+  // The number counts the classes with private names in the files after this one, which other threads check and free.
+  test("prints the same number in the symbol name of a private method on 1 and 8 threads", async () => {
+    const count = 48;
+    const name = (i: number) => `f${String(i).padStart(2, "0")}.ts`;
+    const text = `export class C { static #m() { return C.#m; } static x: number = { f: C.#m }; }\n`;
+    using dir = project(Object.fromEntries(Array.from({ length: count }, (_, i) => [name(i), text])));
+    const expected = Array.from(
+      { length: count },
+      (_, i) =>
+        `${name(i)}(1,54): error TS2322: Type '{ f: () => typeof C.\ufffd#${count - i}@#m; }' is not assignable to type 'number'.`,
+    ).join("\n");
+    const threads = [1, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("counts a file that was freed in the symbol name of a private method", async () => {
+    using dir = project({
+      "a.ts": `export class C { static #m() { return C.#m; } static get = () => ({ f: C.#m }); }\n`,
+      "b.ts": `export class NotImported { #x = 1; y = this.#x; }\n`,
+      "c.ts": `import { C } from "./a";\nexport const x: number = C.get();\n`,
+    });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1", "--skipLibCheck"]);
+    expect(stdout).toBe(
+      `c.ts(2,14): error TS2322: Type '{ f: () => typeof C.\ufffd#2@#m; }' is not assignable to type 'number'.`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("prints related information under an error", async () => {
     using dir = project({
       "types.ts": `export interface User {\n  id: number;\n  email: string;\n}\n`,
@@ -2593,6 +2624,63 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect(timed.stderr).toMatch(/\d+ files loaded in [\d.]+ms, \d+ checked in [\d.]+ms/);
       expect(plain.stderr).not.toContain("files loaded in");
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
+    });
+
+    test("--timing lists the ten files that took longest to check, the longest first", async () => {
+      const files = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [`src/a${i}.ts`, `export const a${i} = ${i};\n`]),
+      );
+      const literals = Array.from({ length: 200 }, (_, i) => `"${i}"`).join(" | ");
+      using dir = project({
+        ...files,
+        "src/slow.ts": `type A = ${literals};\nexport declare const a: \`\${A}\${A}\`;\n`,
+      });
+      const [timed, plain] = await Promise.all([check(dir, ["--timing"]), check(dir)]);
+      const [, list] = timed.stderr.split("  slowest files:\n");
+      const lines = list.trimEnd().split("\n");
+      const listed = lines.map(line => /^ +([\d.]+)ms  (src\/\w+\.ts)$/.exec(line)!.slice(1));
+      expect(listed[0][1]).toBe("src/slow.ts");
+      const times = listed.map(([time]) => Number(time));
+      expect(times).toEqual(times.toSorted((a, b) => b - a));
+      expect(new Set(listed.map(([, path]) => path)).size).toBe(10);
+      expect(plain.stderr).not.toContain("slowest files");
+      expect([timed.stdout, plain.stdout, timed.exitCode, plain.exitCode]).toEqual(["", "", 0, 0]);
+    });
+
+    // From 512 members of the target on, the two lists are gone through side by side.
+    test.each([511, 512, 700])("relates unions of literals to a union of %d members", async count => {
+      const union = (members: string[]) => members.join(" | ");
+      const all = Array.from({ length: count }, (_, i) => `"k${String(i).padStart(4, "0")}"`);
+      const cases: [error: number | null, source: string[], target: string[]][] = [
+        [null, all.slice(0, -1), all],
+        [null, all.slice(1), all],
+        [null, all.filter((_, i) => i % 3 === 0), all],
+        [null, all.filter((_, i) => i < 100 || i > 300), all],
+        [2322, [`"a"`, ...all.slice(1)], all],
+        // Both are printed alike, because the member that differs is left out.
+        [2719, [...all.slice(0, 200), `"k0200x"`, ...all.slice(201)], all],
+        [2322, [...all.slice(0, -1), `"z"`], all],
+        [2322, [...all, "1"], all],
+        [null, [...all.slice(5), "1", "true"], [...all.slice(2), "1", "boolean"]],
+        [null, [...all.slice(9), "undefined"], [...all.slice(1), "undefined"]],
+        [2322, [...all.slice(9), "undefined"], [...all.slice(1), "null"]],
+        [null, [...all.slice(9), `"x1"`], [...all.slice(1), "`x${number}`"]],
+        [2322, [...all.slice(9), `"xy"`], [...all.slice(1), "`x${number}`"]],
+        [null, [...all.slice(9), "{ a: 1; b: 2 }"], [...all.slice(1), "{ a: 1 }"]],
+        [2322, [...all.slice(9), "{ b: 2 }"], [...all.slice(1), "{ a: 1 }"]],
+      ];
+      const lines = cases.flatMap(([, source, target], i) => [
+        `export const one${i}: ${union(target)} = null! as ${union(source)};`,
+        `export const many${i}: (${union(target)})[] = null! as (${union(source)})[];`,
+      ]);
+      using dir = project({ "a.ts": lines.join("\n") + "\n" });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.match(/^\S.*?error TS\d+/gm)).toEqual(
+        cases.flatMap(([error], i) =>
+          error ? [`a.ts(${2 * i + 1},14): error TS${error}`, `a.ts(${2 * i + 2},14): error TS${error}`] : [],
+        ),
+      );
+      expect(exitCode).toBe(1);
     });
 
     // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
@@ -8604,6 +8692,20 @@ export const c5 = N.E.A ? 1 : 2;
         a.ts(8,5): error TS2845: This condition will always return 'true'.
         a.ts(9,19): error TS2845: This condition will always return 'true'.
         a.ts(11,19): error TS2845: This condition will always return 'true'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // TypeScript crashes on this input, so the text of TS18055 has no reference.
+    test("reports TS1164 and TS18055 for an enum member with a computed name under isolatedModules", async () => {
+      using dir = project({
+        "a.ts": `export const s = "x";\n`,
+        "b.ts": `import { s } from "./a";\ndeclare const k: string;\nexport enum E { [k] = s }\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--isolatedModules"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "b.ts(3,17): error TS1164: Computed property names are not allowed in enums.
+        b.ts(3,23): error TS18055: 'E.' has a string type, but must have syntactically recognizable string syntax when 'isolatedModules' is enabled."
       `);
       expect(exitCode).toBe(1);
     });

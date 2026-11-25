@@ -1,0 +1,54 @@
+# -- source: main.cjs
+# "use strict";
+# const lib = {};
+# function fill(target) { target.add = function (a, b) { return a + b; }; Object.defineProperty(target, "marker", { value: true }); }
+# fill(lib);
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# function attempt(t) { try { return called(t); } catch (error) { return error.constructor.name; } }
+# print(attempt(6));
+# change(lib);
+# print(attempt(6));
+# -- end of source
+# f1 = called, f2 = fill, f3 = attempt
+# The other side of a-method-read-for-its-call-off-a-proven-receiver-is-read-out-of-its-slot-behind-a-look-at-the-cell.ir: the object is handed to the shell between two runs of the loop.
+# The shell makes the name a getter, deletes it, deletes it and lays an object above, stores another function, stores a number, hides it and makes it read-only, freezes the object. The looks at the cell and the slot answer each.
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: 16
+# NOTHING-NEXT: 16
+# NOTHING-NEXT: exited with 0
+# RUN(GETTER): run-in-shell change = function (lib) { Object.defineProperty(lib, "add", { configurable: true, get() { return (a, b) => a * 2 + b; } }); };
+# GETTER: 16
+# GETTER-NEXT: 121
+# GETTER-NEXT: exited with 0
+# RUN(GONE): run-in-shell change = function (lib) { delete lib.add; };
+# GONE: 16
+# GONE-NEXT: TypeError
+# GONE-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell change = function (lib) { delete lib.add; Object.setPrototypeOf(lib, { add(a, b) { return 100 + a + b; } }); };
+# ABOVE: 16
+# ABOVE-NEXT: 616
+# ABOVE-NEXT: exited with 0
+# RUN(OTHER): run-in-shell change = function (lib) { lib.add = (a, b) => a - b; };
+# OTHER: 16
+# OTHER-NEXT: -14
+# OTHER-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell change = function (lib) { lib.add = 7; };
+# NUMBER: 16
+# NUMBER-NEXT: TypeError
+# NUMBER-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell change = function (lib) { Object.defineProperty(lib, "add", { enumerable: false, writable: false, configurable: false }); };
+# HIDDEN: 16
+# HIDDEN-NEXT: 16
+# HIDDEN-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell change = function (lib) { Object.freeze(lib); };
+# FROZEN: 16
+# FROZEN-NEXT: 16
+# FROZEN-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (lib) { Object.defineProperty(lib, "add", { configurable: true, get() { return (a, b) => a * 2 + b; } }); };
+# CHECKED: 16
+# CHECKED-NEXT: 121
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (lib) { delete lib.add; Object.setPrototypeOf(lib, { add(a, b) { return 100 + a + b; } }); };
+# CHECKEDTOO: 16
+# CHECKEDTOO-NEXT: 616
+# CHECKEDTOO-NEXT: exited with 0

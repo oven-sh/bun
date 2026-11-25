@@ -1,0 +1,41 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { declare fragile?: boolean; weight: number; constructor(weight: number) { this.weight = weight; } }
+# let seen = 0;
+# function make(weight: number, marks: boolean) { const parcel = new Parcel(weight); if (marks) parcel.fragile = true; return parcel; }
+# const makes = id(make);
+# const first = makes(1, true);
+# print(Object.hasOwn(first, "fragile"), seen);
+# Object.defineProperty(id(Parcel.prototype), "fragile", { set(value: boolean) { seen++; }, configurable: true });
+# const second = makes(2, true);
+# print(Object.hasOwn(second, "fragile"), seen);
+# -- end of source
+# LIBRARY: own
+# A store into a freshly allocated object may create its field if nothing on the prototype chain of its class intercepts stores of that name.
+# A setter that the program defines on the prototype chain must be called.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: true 0
+# RIGHT-NEXT: false 1
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: true 0
+# HARDENED-NEXT: false 1
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
+# LIE: true 0
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (make)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with
+# With testing=CheckWalkAtRunTime the object itself is queried before the store, by a lookup that reads no guard.
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckWalkAtRunTime
+# ASKED: true 0
+# ASKED-NEXT: false 1
+# ASKED-NEXT: exited with 0
+# RUN(ASKEDLIE): run-in-shell mechanisms=all testing=CheckWalkAtRunTime,AssumeGuardsAndFacts
+# ASKEDLIE: true 0
+# ASKEDLIE-NEXT: bun: internal AOT error: property lookup check failed
+# ASKEDLIE-NEXT: a property store to a fixed slot assumes that 'fragile' is a writable data property, but a full lookup finds an accessor
+# ASKEDLIE: crashed with

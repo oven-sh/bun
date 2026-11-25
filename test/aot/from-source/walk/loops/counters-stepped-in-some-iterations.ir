@@ -1,0 +1,18 @@
+# A variable outside the function is stepped in some iterations alone: the typed loop carries it as an int32, and a step that leaves the int32s restarts the iteration before its store.
+# LIBRARY: own
+# -- source: main.ts
+# var odd = 2147483640;
+# function count(list: number[]): void { for (let i = 0; i < list.length; i++) if (list[i] & 1) odd++; }
+# const list = [3, 1, 4, 1, 5, 9, 2, 6];
+# publish(() => { count(list); return odd; });
+# declare function publish(run: () => number): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: i32 @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: GetModuleVariable
+# CHECK: PutModuleVariable
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); print(run()); print(run()); };
+# SHELL: 2147483645
+# SHELL-NEXT: 2147483650
+# SHELL-NEXT: 2147483655

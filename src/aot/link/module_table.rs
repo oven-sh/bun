@@ -3,6 +3,7 @@ use super::state::ModuleTable;
 use super::tables::LinkTables;
 use super::unit::LinkUnit;
 use super::{LinkProject, is_unit_optional, key_context};
+use crate::builtins::table::{ModuleFlags, module_data};
 use crate::load::{PerProject, ProgramFile, ProjectId};
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
@@ -41,6 +42,12 @@ pub(super) fn collect_modules(
         for &module in context.graph.other_modules() {
             add_named_module(context.module(module));
         }
+        let sources = projects.get(project).sources;
+        for &module in sources.modules_named_at_run_time() {
+            if !module_data(module).flags.contains(ModuleFlags::HAS_SOURCE) {
+                add_named_module(ProgramModule::Runtime(module));
+            }
+        }
     }
     for named in tables {
         for &module in &named.modules[..named.lengths.modules as usize] {
@@ -76,7 +83,9 @@ fn add_requested_records(
         for request in context.graph.requests_of(requester) {
             let target = context.module(request.target);
             match target {
-                ProgramModule::Inner { .. } | ProgramModule::Face(_) | ProgramModule::Check(_) => {
+                ProgramModule::Inner { .. }
+                | ProgramModule::Facade(_)
+                | ProgramModule::Check(_) => {
                     if known_modules.insert(target) {
                         modules.push(target);
                     }
@@ -163,6 +172,18 @@ mod tests {
             assert_eq!(count_of(&table, source), 1);
             let without_source = ProgramModule::Runtime(RuntimeModule::NodePath);
             assert_eq!(count_of(&table, without_source), 0);
+        });
+    }
+
+    #[test]
+    fn native_module_written_as_a_value_is_listed_where_a_loader_takes_unknown_names() {
+        let native = ProgramModule::Runtime(RuntimeModule::BunJsc);
+        let handed_on = "const load = [require][Number(process.argv[2])]; load('bun:jsc');";
+        with_projects(&[("index.cjs", handed_on)], |projects| {
+            assert_eq!(count_of(&collect_modules(projects, &[], &[]), native), 1);
+        });
+        with_projects(&[("index.cjs", "console.log('bun:jsc');")], |projects| {
+            assert_eq!(count_of(&collect_modules(projects, &[], &[]), native), 0);
         });
     }
 
@@ -272,13 +293,13 @@ mod tests {
         ];
         with_projects(&files, |projects| {
             let [index, legacy] = ["index.ts", "legacy.cjs"].map(|name| find_file(projects, name));
-            let declared = [ModuleRef::Check(index), ModuleRef::Face(legacy)];
+            let declared = [ModuleRef::Check(index), ModuleRef::Facade(legacy)];
             let names = ["index.ts", "legacy.cjs"];
             let mut units = names.map(|name| create_unit(projects, name, &declared));
             let table = collect_modules_of(projects, &mut units);
 
             let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
-            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Face(legacy)];
+            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Facade(legacy)];
             for records in [records_of_index, records_of_legacy] {
                 let records = records.map(|module| application_module(projects, module));
                 let first = table.index_of(records[0]) as usize;

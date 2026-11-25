@@ -1,0 +1,18 @@
+# The element of a list that holds small whole numbers or nothing is asked for an int32, not for the range that Link counted, and is compared with an int32 as it lies in its box. f3 = count.
+# -- source: cells.ts
+# declare const process: { readonly argv: readonly string[] };
+# type Player = 1 | 2;
+# class Grid {
+#   readonly cells: number[] = new Array<number>(42).fill(0);
+#   play(cell: number, player: Player): void { this.cells[cell] = player; }
+#   count(keys: readonly number[], player: Player): number { let n = 0; for (const c of keys) { const at = this.cells[c]!; if (at === player) n++; else if (at !== 0) n--; } return n; }
+# }
+# const grid = new Grid();
+# grid.play(3, 1); grid.play(4, 2);
+# console.log(grid.count([1, 3, 4], process.argv.length > 2 ? 1 : 2));
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK: : undefined|i32 @JSValue = GetArrayElement
+# CHECK: = StrictEq {{*}}form=Int32AndValue
+# RUN(RANGE): walk f3 mechanisms=all
+# RANGE-NOT: : undefined|int[0, 2147483647] @JSValue = GetArrayElement

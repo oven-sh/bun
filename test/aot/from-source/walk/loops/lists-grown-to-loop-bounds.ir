@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# function Street(long) { this.houses = []; this.long = long; }
+# Street.prototype.mail = function (at) { return this.houses[at] + at; };
+# Street.prototype.back = function (at) { return this.houses[40000 - at]; };
+# Street.prototype.build = function () { for (var at = 0; at <= 40000; at++) { var kind = at % 7 === 0 ? "mill" : "farm"; if (this.long) kind = "yard"; this.houses[at] = kind; } };
+# globalThis.streets = [new Street(false), new Street(true)];
+# for (const street of globalThis.streets) street.build();
+# -- end of source
+# A full list that a loop fills up to a known bound asks for four times the room, and for no more than the bound.
+# RUN: emit f4 mechanisms=all
+# CHECK: Writes:{Elements, ArrayStorage, AllocatorState, RuntimeState, ArrayCapacity

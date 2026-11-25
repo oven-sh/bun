@@ -1,6 +1,5 @@
 // A require function that createRequire() makes is no file's own. The program resolves names with it and hands it to text that it evaluates.
-// The text finds no file of the program through it: not in its cache, and not by loading one under a path that it computes. Its main module it finds, as in `bun <file>`.
-// In plain Bun the text finds them all.
+// The text finds the file whose path the program resolves, and the main module, as in `bun <file>`. It finds no file of the program in the cache, where plain Bun shows them all.
 const { createRequire } = require("node:module");
 const inner = require("./inner.cjs");
 const made = createRequire(__filename);
@@ -27,8 +26,8 @@ the program resolves: inner.cjs function b.txt
 the text, its cache: 0 files of the program
 the text, its main: [object Object]
 the text, an entry under the path of a file: undefined
-the text, a file under a path that it computes: throws Error
-the text, a file under a relative name that it computes: throws Error
+the text, a file under a path that it computes: function
+the text, a file under a relative name that it computes: function
 the text, a module of the library: d.txt
 the program goes on: 1 3 6
 */

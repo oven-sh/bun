@@ -84,7 +84,7 @@ export function costsTheSameInALargerProgram(way: string, words: string) {
     const lines = readdirSync(cwd)
       .filter(name => name.startsWith("counts-"))
       .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-      .filter(line => line.endsWith("\tsought:ModulesForRequireCache"));
+      .filter(line => line.endsWith("\tsought:ModulesScannedForRequireCache"));
     expect(lines.length).toBeGreaterThan(0);
     sought.set(
       modules,

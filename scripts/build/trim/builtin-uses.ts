@@ -24,9 +24,10 @@ export function checkBuiltinUses(uses: BuiltinUses, model: FeatureModel, path: s
     if (entry.id <= previousId) fail(`the id of ${entry.path} does not ascend`, path);
     previousId = entry.id;
     const seen = new Set<string>();
-    for (const { feature } of entry.uses) {
+    for (const { feature, isConditional } of entry.uses) {
       if (!known.has(feature)) fail(`${entry.path} uses ${feature}, which src/trim/features does not declare`, path);
-      if (outsidePrograms.has(feature) && isNamedByPrograms(entry))
+      // What an entry enters for some operands alone it asks for at run time, and refuses in words where it is gone.
+      if (outsidePrograms.has(feature) && !isConditional && isNamedByPrograms(entry))
         fail(`${entry.path} uses ${feature}, which no executable compiled ahead of time has`, path);
       if (seen.has(feature)) fail(`${entry.path} uses ${feature} twice`, path);
       seen.add(feature);

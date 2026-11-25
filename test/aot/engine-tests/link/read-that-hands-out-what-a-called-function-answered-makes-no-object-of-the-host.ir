@@ -1,0 +1,46 @@
+# hidden(process.stdout); setImmediate(() => {})
+# The row of the read says "any object or undefined", handed out of a native cell. Nothing fills that cell but the answer of a function of the library that the host calls (b.keptIn):
+# the stream was made by code that the compiler sees, and native code makes no object here. No object of any class exists for it.
+# The control: read-that-hands-out-what-rows-stored-as-well-lets-objects-of-any-class-exist.ir
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+module m3 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f4
+runtimefunction id=StdioGetLightStdioWriteStreams function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="stdout"
+    v7 = PropGet v0 key="hidden" [isFreeName]
+    v8 = Call v7, -, v6
+    Return v8
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="getLightStdioWriteStreams" module=m2 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v4
+}
+function f4 name="getStdioWriteStream" module=m3 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

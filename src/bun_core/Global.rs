@@ -90,13 +90,6 @@ pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_v
 // platform-specific symbolication / SEH bits stay in bun_crash_handler (T>core).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Slice of return addresses + cursor.
-#[derive(Clone, Copy)]
-pub struct StackTrace<'a> {
-    pub index: usize,
-    pub instruction_addresses: &'a [usize],
-}
-
 /// Fixed 31-frame stack-trace buffer.
 #[derive(Clone, Copy)]
 pub struct StoredTrace {
@@ -110,11 +103,8 @@ impl StoredTrace {
     };
 
     #[inline]
-    pub fn trace(&self) -> StackTrace<'_> {
-        StackTrace {
-            index: self.index,
-            instruction_addresses: &self.data,
-        }
+    pub fn trace(&self) -> &[usize] {
+        &self.data[..self.index.min(self.data.len())]
     }
 
     /// Capture the current call stack starting at `begin` (or the caller's return addr).
@@ -138,21 +128,6 @@ impl StoredTrace {
             }
         }
         stored
-    }
-
-    pub fn from(stack_trace: Option<&StackTrace<'_>>) -> StoredTrace {
-        match stack_trace {
-            None => StoredTrace::EMPTY,
-            Some(stack) => {
-                let mut data = [0usize; 31];
-                let items = core::cmp::min(stack.instruction_addresses.len(), 31);
-                data[..items].copy_from_slice(&stack.instruction_addresses[..items]);
-                StoredTrace {
-                    data,
-                    index: core::cmp::min(items, stack.index),
-                }
-            }
-        }
     }
 }
 
@@ -188,13 +163,9 @@ impl Default for DumpStackTraceOptions {
 /// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
 /// for signature parity but **ignored** here (they require symbol names to
 /// match against). Only `frame_count` is honoured.
-pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
+pub fn dump_stack_trace(trace: &[usize], limits: DumpStackTraceOptions) {
     crate::output::flush();
-    let n = trace
-        .index
-        .min(trace.instruction_addresses.len())
-        .min(limits.frame_count);
-    for &addr in &trace.instruction_addresses[..n] {
+    for &addr in trace.iter().take(limits.frame_count) {
         if addr == 0 {
             break;
         }
@@ -780,18 +751,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
         if !handle.is_null() {
-            // `Handle` is an opaque cookie returned by
-            // `AddVectoredExceptionHandler`; the kernel validates it and
-            // returns 0 on a stale/garbage value — no memory-safety
-            // preconditions, so `safe fn` discharges the link-time proof.
-            unsafe extern "system" {
-                safe fn RemoveVectoredExceptionHandler(Handle: *mut core::ffi::c_void) -> u32;
-                safe fn SetUnhandledExceptionFilter(
-                    f: Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>,
-                ) -> Option<unsafe extern "system" fn(*mut core::ffi::c_void) -> i32>;
+            use crate::windows_sys::kernel32;
+            // SAFETY: the handlers are the crash handler's, and nothing relies on them to resume.
+            unsafe {
+                let _ = kernel32::RemoveVectoredExceptionHandler(handle);
+                let _ = kernel32::SetUnhandledExceptionFilter(None);
             }
-            let _ = RemoveVectoredExceptionHandler(handle);
-            let _ = SetUnhandledExceptionFilter(None);
         }
     }
 

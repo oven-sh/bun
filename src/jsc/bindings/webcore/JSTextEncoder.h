@@ -23,56 +23,23 @@
 #include "root.h"
 
 #include "JSDOMConvertDictionary.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "TextEncoder.h"
 
 namespace WebCore {
 
-class JSTextEncoder : public JSDOMWrapper<TextEncoder> {
+class JSTextEncoder final : public JSDOMInterface<JSTextEncoder, TextEncoder> {
 public:
-    using Base = JSDOMWrapper<TextEncoder>;
-    static JSTextEncoder* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TextEncoder>&& impl)
-    {
-        JSTextEncoder* ptr = new (NotNull, JSC::allocateCell<JSTextEncoder>(globalObject->vm())) JSTextEncoder(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static TextEncoder* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoder, m_subspaceForTextEncoder);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSTextEncoder(JSC::Structure*, JSDOMGlobalObject&, Ref<TextEncoder>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, TextEncoder&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<TextEncoder>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<TextEncoder>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<TextEncoder> {
     using WrapperClass = JSTextEncoder;
-    using ToWrappedReturnType = TextEncoder*;
 };
 } // namespace WebCore

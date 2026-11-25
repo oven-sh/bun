@@ -1,10 +1,12 @@
 //! Writes "restricted pax": ustar, plus a pax header where that falls short. Regular files only.
+//! A name that npm would not find in a pax header gets a GNU one.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::header::{
     BLOCK_SIZE, Block, CHECKSUM, DEVMAJOR, DEVMINOR, GID, MAGIC, MODE, MTIME, NAME, PREFIX, SIZE,
     TYPEFLAG, UID, USTAR_MAGIC, padding_for,
 };
+use crate::npm;
 use crate::output::Output;
 use bun_core::{slice_to_nul, strings};
 use core::ops::Range;
@@ -84,6 +86,19 @@ impl<O: Output> Writer<O> {
         Ok(())
     }
 
+    fn put_pax(&mut self, typeflag: u8, name: &[u8], pax: &[u8], file: &File<'_>) -> Result<()> {
+        self.put(&format_header(&Fields {
+            name,
+            perm: file.perm & 0o777,
+            size: pax.len() as u64,
+            mtime: file.mtime.clamp(0, USTAR_MTIME_MAX),
+            typeflag,
+            strict: true,
+        }))?;
+        self.put(pax)?;
+        self.put_zeros(padding_for(pax.len() as u64))
+    }
+
     /// Starts an entry, after finishing the one before it.
     pub fn header(&mut self, file: &File<'_>) -> Result<()> {
         self.finish_entry()?;
@@ -101,16 +116,66 @@ impl<O: Output> Writer<O> {
             },
         };
 
+        let is_directory = path.last() == Some(&b'/');
+        // Readers would take the contents for more entries.
+        if file.size != 0 && (is_directory || path.is_empty()) {
+            return Err(Error::DirectoryWithContents);
+        }
+
         let mut pax: Vec<u8> = Vec::new();
         if binary {
             add_record(&mut pax, b"hdrcharset", b"BINARY")?;
         }
-        let shortened;
+        let mut shortened;
         let mut name = path;
         if !path.is_ascii() || !fits_in_ustar(path) {
+            let (position, before) = (self.written.saturating_add(BLOCK_SIZE as u64), pax.len());
             add_record(&mut pax, b"path", path)?;
+            // A character starts at one of four bytes in a row.
+            for filler in [&b"."[..], b"..", b"...", b"...."] {
+                if !npm::is_cut(&pax, position) {
+                    break;
+                }
+                pax.truncate(before);
+                add_record(&mut pax, b"comment", filler)?;
+                add_record(&mut pax, b"path", path)?;
+            }
             shortened = ustar_entry_name(path, None);
+            if !is_directory && shortened.pop_if(|last| *last == b'/').is_some() {
+                shortened.push(b'.');
+            }
             name = &shortened;
+
+            let npm_reads_it = !strings::contains_char(path, b'\n')
+                && npm::read_pax(&pax, position)
+                    .is_some_and(|read| read.path.unwrap_or(name) == path);
+            if !npm_reads_it {
+                pax.clear();
+                // A global header moves the name: an entry has one `x` header, which it may need below.
+                let (mut moved, mut filler) = (position, b".".to_vec());
+                while npm::is_cut(path, moved) && filler.len() < npm::INFLATED_AT_ONCE {
+                    pax.clear();
+                    add_record(&mut pax, b"comment", &filler)?;
+                    let by = BLOCK_SIZE + pax.len().next_multiple_of(BLOCK_SIZE);
+                    moved = position.saturating_add(by as u64);
+                    filler.write(&[b'.'; BLOCK_SIZE])?;
+                }
+                if !pax.is_empty() && !npm::is_cut(path, moved) {
+                    self.put_pax(b'g', b"pax_global_header", &pax, file)?;
+                }
+                pax.clear();
+                let with_nul = (path.len() as u64).saturating_add(1);
+                self.put(&format_header(&Fields {
+                    name: b"././@LongLink",
+                    perm: 0o644,
+                    size: with_nul,
+                    mtime: 0,
+                    typeflag: b'L',
+                    strict: true,
+                }))?;
+                self.put(path)?;
+                self.put_zeros(padding_for(with_nul).saturating_add(1))?;
+            }
         }
         let mtime_fits = (0..USTAR_MTIME_MAX).contains(&file.mtime);
         if !mtime_fits {
@@ -130,17 +195,7 @@ impl<O: Output> Writer<O> {
         }
 
         if !pax.is_empty() {
-            let block = format_header(&Fields {
-                name: &pax_attribute_name(name),
-                perm: file.perm & 0o777,
-                size: pax.len() as u64,
-                mtime: file.mtime.clamp(0, USTAR_MTIME_MAX),
-                typeflag: b'x',
-                strict: true,
-            });
-            self.put(&block)?;
-            self.put(&pax)?;
-            self.put_zeros(padding_for(pax.len() as u64))?;
+            self.put_pax(b'x', &pax_attribute_name(name), &pax, file)?;
         }
 
         let block = format_header(&Fields {

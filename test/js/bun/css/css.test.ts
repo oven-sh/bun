@@ -10425,3 +10425,18 @@ describe("properties of the range [0,∞]", () => {
   minify_test("a{padding:max(-5px,2px)}", "a{padding:2px}");
   minify_test("a{margin:calc(1px - 5px)}", "a{margin:-4px}");
 });
+
+describe("which prefixed names are known", () => {
+  // A keyword prints in lower case only when the name is known.
+  minify_test("a{-WEBKIT-BOX-SIZING:BORDER-BOX}", "a{-webkit-box-sizing:border-box}");
+  minify_test("a{-ms-box-sizing:BORDER-BOX}", "a{-ms-box-sizing:BORDER-BOX}");
+  minify_test("a{-webkit-visibility:HIDDEN}", "a{-webkit-visibility:HIDDEN}");
+  minify_test(
+    "a{-moz-box-sizing:border-box}b{box-sizing:border-box}",
+    "a{-moz-box-sizing:border-box}b{box-sizing:border-box}",
+  );
+  minify_test(
+    "a{-webkit-border-top-left-radius:1px;-webkit-border-top-left-radius:-1px}",
+    "a{-webkit-border-top-left-radius:1px;-webkit-border-top-left-radius:-1px}",
+  );
+});

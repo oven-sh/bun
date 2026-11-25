@@ -14,12 +14,13 @@
 # print(Object.keys(holder.inner!).length);
 # print("went on");
 # -- end of source
-# testing=CheckProofsAtRunTime: a unit that leaves by a tail call passes no return.
-# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
-# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# testing=CheckProofsAtRunTime: a unit that exits through a tail call passes no return, so its dead cell is overwritten before that call.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
 # RUN(CALL): run-in-shell mechanisms=-Inlining
 # CALL: 7
-# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
 # CALL-NOT: went on
 # CALL: crashed
 # CALL: with

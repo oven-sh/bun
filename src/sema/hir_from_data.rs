@@ -35,12 +35,15 @@ pub enum DataModule<'a> {
     EmbeddedFile {
         path: Atom,
     },
+    FileInPlace(&'a DataValue<'a>),
     Database {
         path: Atom,
         place: DatabasePlace,
     },
     Page,
 }
+
+pub const FOLDER_OF_DATABASE: &[u8] = b"bun-folder-of-database:";
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DatabasePlace {

@@ -1,0 +1,19 @@
+# f1 = turn
+# -- source: dot-product-over-a-row-of-a-float64-view-that-may-end-early.ts
+# const grid = new Float64Array(256), weights = new Float64Array(16);
+# function turn(row: number, width: number): number {
+#   let sum = 0;
+#   for (let k = 0; k < width; k++) sum += grid[row + k]! * weights[k]!;
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input, input));
+# -- end of source
+# Both elements may lie outside their views, and a product alone takes them: undefined is NaN there, and a NaN of any bits is a NaN. In front of that: operations 121 and 17: four tests of NaN a read.
+# When the bound was taken: loop: operations 81, patches 0, moves 0, unlikely 6 ; loop: operations 12, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:81,12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 81
+# X64-NEXT: loop: at most 12

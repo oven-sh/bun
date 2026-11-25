@@ -1,0 +1,1 @@
+exports.y = "other";

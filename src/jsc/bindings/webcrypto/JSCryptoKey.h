@@ -24,60 +24,27 @@
 
 #include "CryptoKey.h"
 #include "JSDOMConvertEnumeration.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 
 namespace WebCore {
 
-class JSCryptoKey : public JSDOMWrapper<CryptoKey> {
+class JSCryptoKey final : public JSDOMInterface<JSCryptoKey, CryptoKey> {
 public:
-    using Base = JSDOMWrapper<CryptoKey>;
-    static JSCryptoKey* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)
-    {
-        JSCryptoKey* ptr = new (NotNull, JSC::allocateCell<JSCryptoKey>(globalObject->vm())) JSCryptoKey(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static CryptoKey* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForCryptoKey, m_subspaceForCryptoKey);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+
     mutable JSC::WriteBarrier<JSC::Unknown> m_algorithm;
     mutable JSC::WriteBarrier<JSC::Unknown> m_usages;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSCryptoKey(JSC::Structure*, JSDOMGlobalObject&, Ref<CryptoKey>&&);
-
-    void finishCreation(JSC::VM&);
 };
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, CryptoKey&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CryptoKey* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<CryptoKey>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<CryptoKey>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<CryptoKey> {
     using WrapperClass = JSCryptoKey;
-    using ToWrappedReturnType = CryptoKey*;
 };
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKey::Type);
 

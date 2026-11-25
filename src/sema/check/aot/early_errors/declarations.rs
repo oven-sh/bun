@@ -68,11 +68,11 @@ impl Checker<'_, '_> {
             if !is_kept_import(&decl) {
                 continue;
             }
+            let Some(&first) = first_of_the_file.get(&sym) else {
+                continue;
+            };
             let (start, end) = self.get_error_range_for_node(file, hir.node(decl));
-            if first_of_the_file
-                .get(&sym)
-                .is_some_and(|&first| first < start)
-            {
+            if first < start {
                 self.early_error_at((file, start, end), 2440, &[Arg::Sym(sym)]);
             }
         }
@@ -89,6 +89,9 @@ impl Checker<'_, '_> {
             let ExprKind::Ident(name) = hir[store.target].kind else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[store.target].pos) {
+                continue;
+            }
             let code = match bound.binding_kind(store.symbol) {
                 BindingKind::Const if !bound.symbol(store.symbol).decls.iter().any(is_in_text) => {
                     continue;
@@ -151,6 +154,9 @@ impl Checker<'_, '_> {
             let Some((star, star_name)) = star_of(e) else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[e].pos) {
+                continue;
+            }
             let (at, name) = match hir[e].kind {
                 ExprKind::Dot { name, .. } => (hir.name_pos(e), Some(name)),
                 ExprKind::Index { index, .. } => match hir[index].kind {

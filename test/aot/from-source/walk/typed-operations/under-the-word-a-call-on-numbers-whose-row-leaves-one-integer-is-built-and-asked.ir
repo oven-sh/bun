@@ -1,0 +1,46 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function size(x: number): string { const n = x | 0; return Math.abs(n) === 0 ? "least" : "more"; }
+# function larger(x: number): string { const n = x | 0; return Math.max(n, 3) === 3 ? "least" : "more"; }
+# function whole(x: number): string { const n = x | 0; return Math.round(n) === -2147483648 ? "least" : "more"; }
+# function above(x: number): number { const sign = Math.sign((x & 3) + 1); return sign * 2; }
+# print(whole(id(7)));
+# print(id(0) ? larger(id(7)) : size(id(7)));
+# print(above(id(7)));
+# print("went on");
+# -- end of source
+# Where the signature of a call on numbers, with its range rule, leaves a single integer, the walk returns that integer and builds no operation (constantWhereRowLeavesOneIntegerInNumberBuiltins()).
+# Fault injection, testing=UnderstateEffects:Builtin/<name>/RangeOfResult: the signature declares the least integer of its range as its only result.
+# With no operation there was no check. The program printed "least" instead of "more" and did not crash, even with testing=CheckProofsAtRunTime.
+# That held for Math.abs, ceil, floor, max, min, round, sign and trunc. Now, with that switch, the shortcut is not taken: the inline code is built and checked against its signature.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.id = (x) => x;
+# RIGHT: more
+# RIGHT-NEXT: more
+# RIGHT-NEXT: 2
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# A signature that truly leaves a single integer: the sign of a number from 1 to 4. The product is folded to 2 at compile time, and the inline code stays so that it can be checked.
+# RUN(TRUE): walk f4 mechanisms=all testing=CheckProofsAtRunTime
+# TRUE: [[sign]]: 1 @Int32 = CallInline {{*}} inlineBuiltin=MathSign
+# TRUE-NEXT: = CheckProof [[sign]] checkedType=1
+# RUN(SIZE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Math.abs/RangeOfResult globalThis.id = (x) => x;
+# SIZE: more
+# SIZE-NEXT: bun: internal AOT error: type check failed at {{*}} (size)
+# SIZE-NEXT: in the result of a built-in or indirect call
+# SIZE-NOT: went on
+# SIZE: crashed with
+# RUN(LARGER): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Math.max/RangeOfResult globalThis.id = (x) => x || 1;
+# LARGER: more
+# LARGER-NEXT: bun: internal AOT error: type check failed at {{*}} (larger)
+# LARGER-NEXT: in the result of a built-in or indirect call
+# LARGER-NOT: went on
+# LARGER: crashed with
+# For an operand that has no fraction, Math.round returns the operand itself, on the strength of the type of the operand's own operation.
+# With the shortcut gone, the false signature is not read at all.
+# RUN(WHOLE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Math.round/RangeOfResult globalThis.id = (x) => x;
+# WHOLE: more
+# WHOLE-NEXT: more
+# WHOLE-NEXT: 2
+# WHOLE-NEXT: went on
+# WHOLE-NEXT: exited with 0

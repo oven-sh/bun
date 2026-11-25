@@ -1,0 +1,11 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# const same = (_: any, __: any): any => undefined;
+# let probe: any;
+# class Box { @same #m(): number { return 7; } [(probe = eval("(o) => o.#m()"), "k")](): void {} }
+# print(probe(new Box()));
+# -- end of source
+# The decorators of a class are applied behind its computed keys, so an eval in a key runs before the function of a decorated private method is made. A closure that it makes is called behind that and finds the function.
+# RUN: run-in-shell
+# CHECK: 7
+# CHECK-NEXT: exited with 0

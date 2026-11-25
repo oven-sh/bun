@@ -176,11 +176,13 @@ let global = unsafe { heap.global() };
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
+`heap.range_error(..)`, `heap.syntax_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
 `heap.string_too_long()`, `heap.memory_allocation_failed()` or
 `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any
 type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
+
+A loop that can take long calls `heap.check_termination()?`: a `node:vm` timeout or `worker.terminate()` ends it there.
 
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
@@ -232,7 +234,7 @@ arguments from left to right:
    whatever is wrong.
 
 Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
-an error when the schema is loaded.
+an error when the schema is loaded. The constructors of a [`webIDL`](#webidl) class are chosen differently.
 
 ## Types
 
@@ -262,18 +264,19 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
 | `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
+| `b.url`                                          | `JsLocal<'a, DOMURL>`            | a `URL`                                                       |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.rest(T)`                                      | `&'a [T]`                        | the same, each converted to `T`; see below                    |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
-| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
+| `b.nativePromiseContext("crate::T")`             | `Option<RefPtr<T>>`              | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `&'a T`                          | an instance                                                   |
+| `b.class(options)`                               | `&'a T`, `&'a RefPtr<T>`         | an instance; the second if the class is `refCounted`          |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
@@ -307,7 +310,8 @@ is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::St
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
-before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` made.
+before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` or
+`heap.create_array_of(marked_argument_buffer, range)` made.
 
 These are results only:
 
@@ -320,7 +324,9 @@ These are results only:
 
 A body that returns `b.any` makes the value with what the generated code calls:
 `bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
-object is `heap.create_empty_object()`.
+object is `heap.create_empty_object()`, and `heap.create_object(properties)` is one whose values are JS values.
+`heap.create_string(string)` shares the characters of a `bun_core::String`, and `heap.try_create_string(slice)` copies
+those of an `EncodedSlice`.
 
 ### Numbers
 
@@ -352,7 +358,8 @@ and ASCII and is a transcoded copy otherwise.
 body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allowStringObject`. Inside `.optional`, a union or an array, and as the value of a setter,
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
-one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does. `b.string.usv` is
+WebIDL's `USVString`: `.loose`, and each unpaired surrogate becomes U+FFFD.
 
 `b.string.view`, which comes after `.allowStringObject`, is for a body that only reads the
 characters, in Latin-1 or UTF-16: a `bun_core::StringView<'a>`, and a `&bun_core::StringView<'_>` as an argument of this type alone. It takes no reference to the
@@ -421,6 +428,8 @@ The second argument of `b.dictionary` takes:
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                                                  |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default                    |
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                                      |
+| `toJS`             | also generates `value.into_js(heap)`, which a dictionary that is a result has anyway, for a body that puts the object in a JS value it makes itself                                                                                  |
+| `webIDL`           | it is read as WebIDL reads one: a member can come from `Object.prototype`, an array is read like any other object, and what is not an object throws `TypeError: Type error`; every member must be optional or have a default         |
 | `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, for a Node function that validates under the bare name (`validateUint32(N, "N")`) |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                                               |
 
@@ -443,12 +452,12 @@ Where there is a choice, between the alternatives of a union or between overload
 it is made on the _kind_ of the value, with the cheapest test that tells the kinds
 in play apart:
 
-| Looking at                         | Kinds                                                                            |
-| ---------------------------------- | -------------------------------------------------------------------------------- |
-| the bits of the value              | `undefined`, `null`, boolean, number                                             |
-| the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
-| `JSCell::isCallable`               | a function, or a proxy of one                                                    |
-| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                 |
+| Looking at                         | Kinds                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| the bits of the value              | `undefined`, `null`, boolean, number                                                     |
+| the type byte in the cell's header | string, BigInt, symbol, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
+| `JSCell::isCallable`               | a function, or a proxy of one                                                            |
+| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                         |
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
@@ -585,7 +594,8 @@ task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
 What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
-- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
+- a `Strong`, made with `Strong::create(value.to_js(), cx.global())` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread;
+- a `StrongWrapper<T>`, made with `StrongWrapper::new(this_value, cx.global())` for a class without `mutates`. `strong.payload()` borrows the struct. It panics once the VM is closed.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec` or a `Box`: the GC does
 not look inside heap allocations. The compiler does not check this one.
@@ -650,12 +660,14 @@ is collected, make the class [`refCounted`](#refcounted).
 | `extends`        | the class [inherits from another](#extends), whose struct it has instead of a `rustPath`       |
 | `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
 | `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
+| `thisValue`      | the `JsCell<JsRef>` field of the struct that refers back to the object                         |
 | `final`          | `false` lets a class with `extends`, or hand-written C++, subclass `JSName`                    |
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 | `protoCaller`    | the method that [calls every native function of `proto`](#protocaller)                         |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
+| `webIDL`         | the class is [what WebCore's bindings make of an interface](#webidl)                           |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
@@ -691,6 +703,9 @@ pub(crate) fn constructor<'a>(
     this_value
 }
 ```
+
+With `fresh: true` next to `passStructure`, somebody has read the constructor: it returns the object it created, gives
+it no property and keeps it nowhere. `bun build --compile --aot` relies on that.
 
 A property of `proto` is one of these.
 
@@ -765,7 +780,7 @@ One class inherits from another as one WebIDL interface does:
 - `RecordableHistogram.prototype` inherits from `Histogram.prototype`, and `RecordableHistogram` from `Histogram`.
 - The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and no two
   members of a class and its subclasses have the same Rust function unless a `rustName` says so.
-  `js_RecordableHistogram::from_js(value)` is the struct if `value` is an instance of the subclass.
+  `js_RecordableHistogram::from_js(&value)` is the struct if `value` is an instance of the subclass.
 
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
@@ -777,13 +792,39 @@ collected, its internal fields, which no member of the subclass names, and the m
 An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
 base and not both.
 
+### `webIDL`
+
+For a Web API whose binding came from WebCore's generator, like `URLPattern`. With `webIDL: true` JavaScript finds what
+that binding had:
+
+- The constructor and the prototype are a `WebCore::JSDOMConstructor` and a `WebCore::JSDOMPrototype`, so
+  `DOMConstructors.h` lists the name of the class. `constructor` is the first property of the prototype, and is made
+  when it is first read. C++ gets it with `JSName::getConstructor`, not `constructorForClass`, and Rust has no
+  `get_constructor`.
+- `configurable` defaults to `true`.
+- A function throws `Can only call Name.method on instances of Name` when `this` is not an instance.
+- `new.target.prototype` is read after the arguments are converted.
+- A dictionary that is a result is made in the realm of `this`. A body gets that realm with `this_value.realm(heap)`.
+- `construct` can be a list of overloads, shortest first, each with the `rustName` of its function. How many arguments
+  the call has chooses first: a signature is a candidate if it takes that many, and those past the longest are not
+  counted. So `new A(x)` and `new A(x, undefined)` can differ. The kind of the last argument chooses among the rest as
+  in [Overloads](#overloads), except that a `webIDL` dictionary does not take a primitive.
+
+The types of the arguments are up to the schema: `b.string.usv`, `.loose`, `.wrap` and a dictionary's own `webIDL` are
+WebIDL's conversions, and `.nullable.default({})` is what it makes of a dictionary that is `undefined` or `null`.
+`extends`, `final`, `refCounted`, `forBind`, `protoCaller`, `prototypeBase`, `call`, `callInstance` and `static` do not
+go with it.
+
 ### The receiver
 
-Every member takes `&self`, a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
-`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
-is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
-properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
-never changes, and `payload.wrapper_value()` returns the object that owns the struct.
+Every member takes `&self` (or `self: &RefPtr<Self>` if the class is `refCounted`), a setter too, and mutable state is in `Cell` and `JsCell`. The struct implements
+`bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(&value)` is the struct if `value`
+is an instance. Both return a `WrapperGuard<'_, Glob>`, which borrows `value`, derefs to the struct and keeps the object
+visible to the GC's stack scan until it is dropped. `JsLocal::as_class_ref` does the same for an argument, with the
+lifetime of the call. `js_Glob::from_js_direct(&value)` returns `None` for an instance of a subclass or one with own
+properties, either of which may override a member. `value.is::<Glob>()` and `value.is_direct::<Glob>()` only test the
+class. `wrapper.payload_ptr()` is the address of the struct, which never changes, and `payload.wrapper_value()` returns
+the object that owns the struct.
 
 A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
 during another member could call it on the same object, so no member of that class has `capability: "js"`. The class
@@ -803,8 +844,7 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
 In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.any`
-is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass, which only
-hand-written C++ uses.
+is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass.
 
 ```ts
 internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
@@ -814,8 +854,10 @@ internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScr
 JSC::JSPromise* done = sinkController->m_pipeDone.get(); // null if it is empty
 ```
 
-`js_Name` has no functions for a `b.cell` field, and no getter or `internalField` property uses one. Rust reaches it
-through a [`calledFromRust`](#calls-between-c-and-rust) member function.
+No getter or `internalField` property uses a `b.cell` field. `js_Name` has functions for one that names a Rust type
+too: with `x: b.cell("JSC::RegExp", header, "bindgen::JsRegExp<'a>")`, `js_Name::x(this_value, heap)` is an
+`Option<JsRegExp<'a>>` and `js_Name::set_x(this_value, heap, value)` sets it to what `heap.create_reg_exp(..)` made.
+Otherwise Rust reaches it through a [`calledFromRust`](#calls-between-c-and-rust) member function.
 
 A getter with `cache: true` declares a field of its own name, with the same functions, and
 returns it. While the field is empty the getter calls Rust and stores the result, so emptying
@@ -887,35 +929,32 @@ js_ReadableSinkController::set_pipe_done(this_value, done);
 With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
 
 ```ts
-export const CronJob = b.class({
-  rustPath: "crate::api::cron::CronJob",
+export const FetchSession = b.class({
+  rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
   finalize: true,
-  internalFields: ["callback", "pendingPromise", "cron"],
+  thisValue: "this_value",
+  internalFields: ["checkServerIdentity"],
   proto: {
-    cron: { internalField: "cron" },
-    stop: { returns: b.self, passThis: true },
-    "@@dispose": { returns: b.self, passThis: true, rustName: "stop" },
+    close: {},
+    "@@dispose": { rustName: "close" },
   },
 });
 ```
 
 ```rust
-impl CronJob {
+impl FetchSession {
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
-    }
-
-    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
-        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
-        this_value
+        self.close();
     }
 }
 ```
 
 - The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
 - `mutates: true` is an error.
-- `construct` returns a `*mut Self`, whose ref the object takes over.
+- `construct` returns a `RefPtr<Self>`, which the object takes over.
+- A member is lent the object's ref. It takes `&self`, or `self: &RefPtr<Self>` if it keeps a `clone()`. An argument is
+  a `&RefPtr<T>` too.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
   field of its own.
 - `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
@@ -924,14 +963,20 @@ impl CronJob {
 
 Native callbacks have no capability. What they need to reach the JS object takes the global object:
 
-| Function                         | What it does                                        |
-| -------------------------------- | --------------------------------------------------- |
-| `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
-| `js_CronJob::from_js(value)`     | the struct, if `value` is an instance               |
+| Function                                  | What it does                                       |
+| ----------------------------------------- | -------------------------------------------------- |
+| `js_FetchSession::to_js(session, global)` | makes the object, which takes over the `RefPtr`    |
+| `js_FetchSession::wrap(session, global)`  | the same, as a `WrapperGuard`, to go on using both |
+| `js_FetchSession::from_js(&value)`        | the struct, if `value` is an instance              |
+| `js_FetchSession::ref_from_js(value)`     | the same, as a new `RefPtr`                        |
 
-`CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
-`NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
-back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
+The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<FetchSession>()` works.
+
+### `thisValue`
+
+To get back to its JS object a struct stores a `JsRef`, in the field that `thisValue` names. `set_js_ref_weak()` and
+`set_js_ref_strong(global)`, on a `JsWrapper` or a `WrapperGuard` of the class, fill it. It is cleared when the object is
+collected, before `finalize` or `Drop` runs. `mutates: true` is an error.
 
 ### Memory
 
@@ -977,6 +1022,8 @@ pub(crate) fn call_matcher<'a>(
 `callee` is the JS function that was called, and `arguments` is everything it was called with. The function takes its
 own arguments out of that list, so they're all `b.any`, the last one possibly `.variadic`. It also needs
 `capability: "js"`, `throws: true` and `returns: b.any`, and can't have overloads. The class can't be `refCounted`.
+The type of `matcher` is up to `call_matcher`. Every function of `proto` returns what `matcher` returns. It gets the
+first argument of `matcher` as `this_value`, which can be any `Copy` type whose `payload_ref()` gives `&Self`.
 
 ## What the compiler reads
 

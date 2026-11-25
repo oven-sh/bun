@@ -1,0 +1,31 @@
+# hidden(Object.assign(globalThis, { label: "two" }))
+# A control of a-copy-of-constant-data-onto-the-global-object-hands-nothing-out.ir: the row hands its target back.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 fields=[{key="label" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="assign"
+    v3 = Convert v2 declared={type=builtin(ObjectAssign) flags=[IsExpected]}
+    v4 = NewObject layout=L0
+    v5 = String string="two"
+    PropDefine v4, v5 key="label"
+    v7 = FinishObject v4
+    v8 = Call v3, v1, v0, v7 calleeKey="assign" calleeName="Object.assign"
+    v9 = PropGet v0 key="hidden" [isFreeName]
+    v10 = Call v9, -, v8
+    v11 = Undefined
+    Return v11
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v0
+}

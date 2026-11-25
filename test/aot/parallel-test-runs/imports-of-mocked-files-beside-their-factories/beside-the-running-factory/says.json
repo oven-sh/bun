@@ -1,0 +1,10 @@
+{
+  "why": "the turns of setImmediate are counted while a file is read on another thread: on a busy machine `bun test` now and then takes more of them",
+  "printed": [
+    "SAID turns 1"
+  ],
+  "tests": [
+    "(pass) it gets the original"
+  ],
+  "exitCode": 0
+}

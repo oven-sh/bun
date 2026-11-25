@@ -315,6 +315,26 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     });
   });
 
+  test.concurrent("removing the key that made `catalog:` peers optional resolves them to `latest`", async () => {
+    const app = await project(linker);
+    const dependencies = { "peer-deps-fixed": "1.0.0" };
+    await app.install({ dependencies }, true);
+
+    const lock = await app.lock();
+    // While the queue waits for the manifest of `a-dep`, the look-ahead reads the cached one of `no-deps`.
+    const optionalPeers = ["a-dep", "no-deps"];
+    lock.packages["peer-deps-fixed"][2] = {
+      peerDependencies: { "a-dep": "catalog:", "no-deps": "catalog:" },
+      optionalPeers,
+    };
+    delete lock.packages["no-deps"];
+    lock.packageExtensions = { "peer-deps-fixed@1.0.0": { optionalPeers } };
+    await write(join(app.dir, "bun.lock"), JSON.stringify(lock));
+
+    await app.install({ dependencies }, true);
+    expect(await app.locked()).toEqual(["a-dep@1.0.10", "no-deps@2.0.0", "peer-deps-fixed@1.0.0"]);
+  });
+
   test.concurrent("an override applies to an added dependency", async () => {
     const app = await project(linker);
     const extended = {

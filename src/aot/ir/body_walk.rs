@@ -51,7 +51,9 @@ fn walk_value<W: Words + ?Sized>(
         WRITTEN_POSITION_FOLLOWS | STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_IS_FOR_CALLERS;
     let opcode = Opcode::ALL.get((head & !marks) as usize).copied();
     let opcode = opcode.expect(WELL_FORMED);
-    let end = visit_value_fields(opcode, words, at + ValueHead::WORDS, visit).expect(WELL_FORMED);
+    let mut visit_field = |field, at| visit(field, at);
+    let end = visit_value_fields(opcode, words, at + ValueHead::WORDS, &mut visit_field);
+    let end = end.expect(WELL_FORMED);
     end + usize::from(head & WRITTEN_POSITION_FOLLOWS != 0)
 }
 
@@ -65,7 +67,9 @@ fn walk_terminator<W: Words + ?Sized>(
     let kind = TerminatorKind::ALL.get(kind as usize).copied();
     let kind = kind.expect(WELL_FORMED);
     let first_field = at + TerminatorHead::WORDS;
-    let mut at = visit_terminator_fields(kind, words, first_field, visit).expect(WELL_FORMED);
+    let mut visit_field = |field, at| visit(field, at);
+    let end = visit_terminator_fields(kind, words, first_field, &mut visit_field);
+    let mut at = end.expect(WELL_FORMED);
     for _ in 0..target_count {
         at = walk_target(words, at, visit);
     }

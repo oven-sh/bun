@@ -3,13 +3,16 @@
 // What a build of an empty program costs is taken off both. Four times the program may then cost about four times as much: a shape that costs more than `--most` times as much (6) is kept.
 // So is one whose large build costs more than `--rise` times (1.25) what an earlier table says: a square that has just begun shows there first. A table of the least that each shape ever cost makes that a ratchet.
 //
-//   bun run-growth.ts --bun <the Bun that builds> --work <folder> --finds <folder> [--size 6000] [--most 6] [--shape <name>] [--writes <table>] [--against <earlier table>] [--rise 1.25]
+//   bun run-growth.ts --bun <the Bun that builds> --work <folder> --finds <folder> [--size 6000] [--most 6] [--shape <name>] [--writes <table>] [--against <earlier table>] [--rise 1.25] [--threads 1]
+//
+// One thread shows what the work is. A table at sixteen threads beside it shows what a user pays: work that is split into lanes whatever the number of threads costs one thread more and sixteen nothing.
 //
 // It prints a line a shape: the two costs, in millions of instructions where `perf` is there and in milliseconds of processor time elsewhere, and the ratio of what they cost beyond an empty build.
 // What it keeps: <finds>/growth-<shape>/{the program at the small size, report.txt}.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 
 const { values: options } = parseArgs({
   options: {
@@ -22,10 +25,12 @@ const { values: options } = parseArgs({
     against: { type: "string", default: "" },
     writes: { type: "string", default: "" },
     rise: { type: "string", default: "1.25" },
+    threads: { type: "string", default: "1" },
   },
 });
 const { bun, work, finds } = options as Record<string, string>;
 if (!work || !finds) throw new Error("Expected --work and --finds");
+withoutInstallingPackages(work);
 
 const upTo = (n: number, each: (at: number) => string, between = "\n") =>
   Array.from({ length: n }, (_, at) => each(at)).join(between);
@@ -122,6 +127,27 @@ const whole: Record<string, [number, (n: number) => string]> = {
     n =>
       `function run(k: number, ...rest: number[]): number {\n  let total = 0;\n${upTo(n, at => `  if (k === ${at}) total += rest.length;`)}\n  return total;\n}\nconst sum = run(JSON.parse("3"), 1, 2);`,
   ],
+  // JavaScript: the checker does not take a key that is put together in the declaration of a field.
+  aRowOfClassesWithAFieldUnderAKeyThatIsPutTogether: [
+    0.25,
+    n =>
+      `class C0 { get x() { return 0; } set x(v) { } }\n${upTo(n - 1, at => `class C${at + 1} extends C${at} { ["x" + ""] = ${at + 1}; }`)}\nconst sum = new C1().x;`,
+  ],
+  aRowOfClassesWithAFieldUnderASymbol: [
+    0.25,
+    n =>
+      `class C0 { get x() { return 0; } set x(v) { } }\n${upTo(n - 1, at => `class C${at + 1} extends C${at} { [Symbol.toStringTag] = "t${at + 1}"; }`)}\nclass Z { get [Symbol.toStringTag]() { return "z"; } }\nconst sum = new C1().x;`,
+  ],
+  listsAtTheHeadOfOneFunctionEachFilledInALoopOfItsOwn: [
+    0.1,
+    n =>
+      `function run(k: number): number {\n${upTo(n, at => `  const list${at}: number[] = [];`)}\n${upTo(n, at => `  for (let i = 0; i < k; i++) list${at}.push(i);`)}\n  return list0.length + list${n - 1}.length;\n}\nconst sum = run(JSON.parse("3"));`,
+  ],
+  namesOfOneLoopThatEachTakeTheNextOnesValue: [
+    0.05,
+    n =>
+      `function use(x: any): string { return typeof x + ":" + (typeof x === "number" ? x + 1 : typeof x === "string" ? x + "!" : typeof x === "function" ? x() : x === undefined ? "none" : x.v); }\nfunction run(limit: number): string {\n  let ${upTo(n, at => `x${at}: any = ${[`${at}`, `"t${at}"`, `() => ${at}`, `{ v: ${at} }`, "undefined"][at % 5]}`, ", ")};\n  for (let i = 0; i < limit; i++) {\n${upTo(n - 1, at => `    x${n - 1 - at} = x${n - 2 - at};`)}\n  }\n  return [${upTo(n, at => `use(x${at})`, ", ")}].join(" ").length + "";\n}\nconst sum = run(JSON.parse("300"));`,
+  ],
   callsInARow: [
     1,
     n =>
@@ -141,7 +167,7 @@ const write = (shape: string, n: number) => {
     "",
   );
 };
-const extension = (shape: string) => (shape in whole ? "ts" : "js");
+const extension = (shape: string) => (shape in whole && !shape.startsWith("aRowOfClassesWithAField") ? "ts" : "js");
 
 const folder = join(work, `growth-${process.pid}`);
 const perf = Bun.which("perf");
@@ -159,7 +185,7 @@ async function costOfBuild(text: string, extension = "ts") {
         "build",
         "--compile",
         "--aot",
-        "--aot-threads=1",
+        "--aot-threads=" + options.threads,
         "./program." + extension,
         "--outfile",
         join(folder, "executable"),

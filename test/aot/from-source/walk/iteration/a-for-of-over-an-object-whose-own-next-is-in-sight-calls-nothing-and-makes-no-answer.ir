@@ -24,5 +24,5 @@
 # NEVER-NOT: key="done"
 # NEVER-NOT: RequireObject
 # NEVER-NOT: fields=[0, 1]
-# RUN(COUNT): compile IterationsOpenedByMethodsInSight mechanisms=all
-# COUNT: statistic IterationsOpenedByMethodsInSight 1
+# RUN(COUNT): compile IteratorMethodsCalledDirectly mechanisms=all
+# COUNT: statistic IteratorMethodsCalledDirectly 1

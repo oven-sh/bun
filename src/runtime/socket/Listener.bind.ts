@@ -8,6 +8,7 @@ export default b.module({ rustPath: "crate::socket::listener" });
 /** What `Bun.listen()` returns. */
 export const Listener = b.class({
   rustPath: "crate::socket::Listener",
+  thisValue: "this_value",
   types: [table.exactType("$Node.ListenerHandle"), table.exactType("$Bindgen.Listener")],
   /** The `JSSocketHandlers` cell shared with every socket this listener accepted. */
   internalFields: ["handlers"],
@@ -39,7 +40,7 @@ export const addServerName = b.fn({
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",
   uses: {
-    listener: table.handedOver,
+    listener: table.retainedByNativeCode,
     tls: [
       table.retained,
       table.reachableValuesStoredIn(table.nativeMemory),

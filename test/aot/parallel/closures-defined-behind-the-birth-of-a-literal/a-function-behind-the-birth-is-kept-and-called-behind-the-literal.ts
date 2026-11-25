@@ -1,0 +1,4 @@
+interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; eleventh(): number; twelfth(): number; }
+function makeDial(start: number): [Dial, () => number] { let at = start; let kept: () => number = () => -1; const dial: Dial = { first: () => at + 0, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: (kept = () => ++at), eleventh: () => at + 10, twelfth: () => at + 11 }; return [dial, kept]; }
+const [dial, kept] = makeDial(10); console.log(kept(), dial.tenth(), kept === dial.tenth, dial.twelfth(), Object.keys(dial).join());
+const [other, keptToo] = makeDial(100); console.log(keptToo(), other.first(), keptToo === other.tenth, keptToo === kept, dial.first());

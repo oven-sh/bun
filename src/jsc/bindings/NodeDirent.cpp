@@ -324,14 +324,14 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString name, BunString path, JSString** previousPath)
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, OwnedString name, OwnedString path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
 
     auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
     JSString* pathValue = nullptr;
-    if (path.tag == BunStringTag::WTFStringImpl && previousPath && *previousPath) {
+    if (path.get().tag == BunStringTag::WTFStringImpl && previousPath && *previousPath) {
         // The caller (readdir result toJS loop) already deduplicates the
         // underlying StringImpl per directory, so consecutive entries that
         // share a parent path arrive here with the same `path.impl.wtf`
@@ -341,9 +341,8 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         // construction/destruction acquires a WTF::Lock and touches a
         // HashTable per call in debug builds.
         auto* prevImpl = (*previousPath)->tryGetValueImpl();
-        if (prevImpl && (prevImpl == path.impl.wtf || WTF::equal(prevImpl, path.impl.wtf))) {
+        if (prevImpl && (prevImpl == path.get().impl.wtf || WTF::equal(prevImpl, path.get().impl.wtf))) {
             pathValue = *previousPath;
-            path.deref();
         }
     }
 

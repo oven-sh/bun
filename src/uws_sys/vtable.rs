@@ -15,8 +15,7 @@
 //!   fn on_close(ext, *us_socket_t, code: i32, reason: Option<*mut c_void>)
 //!
 //! `Ext` may be omitted entirely (HAS_EXT = false); handlers then take
-//! `(*us_socket_t, …)` and recover their owner from `s.group().owner::<T>()`
-//! instead.
+//! `(*us_socket_t, …)` and recover their owner from `s` instead.
 //!
 //!   fn on_timeout(ext, *us_socket_t)
 //!   fn on_long_timeout(ext, *us_socket_t)
@@ -39,7 +38,7 @@ pub trait Handler: 'static {
     /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
     type Ext;
     /// When false, handlers take `(s, …)` instead
-    /// of `(ext, s, …)` and recover their owner from `s.group().owner::<T>()`.
+    /// of `(ext, s, …)` and recover their owner from `s`.
     const HAS_EXT: bool = true;
 
     const HAS_ON_OPEN: bool = false;

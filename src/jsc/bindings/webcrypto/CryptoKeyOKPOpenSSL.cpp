@@ -34,6 +34,7 @@
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
 #include "OpenSSLCryptoUniquePtr.h"
+#include "ncrypto.h"
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
@@ -256,6 +257,14 @@ CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& see
     ED25519_keypair_from_seed(publicKey, privateKey.begin(), seed.begin());
 
     return privateKey;
+}
+
+ncrypto::EVPKeyPointer CryptoKeyOKP::toEVPKey() const
+{
+    auto keyData = ncrypto::Buffer<const unsigned char> { .data = exportKey().begin(), .len = exportKey().size() };
+    if (type() == CryptoKeyType::Private)
+        return ncrypto::EVPKeyPointer::NewRawPrivate(evpKeyType(namedCurve()), keyData);
+    return ncrypto::EVPKeyPointer::NewRawPublic(evpKeyType(namedCurve()), keyData);
 }
 
 String CryptoKeyOKP::generateJwkX() const

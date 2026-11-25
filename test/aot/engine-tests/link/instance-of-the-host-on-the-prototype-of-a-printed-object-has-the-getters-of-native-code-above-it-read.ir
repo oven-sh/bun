@@ -1,0 +1,55 @@
+# function Place() { this.label = 1; } Place.prototype.held = new MessageEvent("made up"); console.log(new Place()); setImmediate(() => {})
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+layout L0 kind=Instance name="Place" module=m0 constructor=f4 fields=[{key="label" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Glob.ts" displayPath="/$bun/js/builtins/Glob.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=GlobScan function=f2
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="setImmediate" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 calleeName="setImmediate"
+    v5 = PropGet v0 key="console" [isFreeName]
+    v6 = Convert v5 declared={type=builtin(Console) flags=[IsExpected]}
+    v7 = PropGet v6 key="log"
+    v8 = Convert v7 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v9 = PropGet v0 key="MessageEvent" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(MessageEvent) flags=[IsExpected]}
+    v11 = String string="made up"
+    v12 = Construct v10, -, v11 calleeName="MessageEvent"
+    v13 = NewClosure function=f4
+    v14 = PropGet v13 key="prototype"
+    PropSet v14, v12 key="held"
+    v16 = Construct v13
+    v17 = Call v8, v6, v16 calleeKey="log" calleeName="console.log"
+    Return v17
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="scan" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=GlobScan thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="toJSON" module=m2 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="Place" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="label"
+    v3 = Undefined
+    Return v3
+}

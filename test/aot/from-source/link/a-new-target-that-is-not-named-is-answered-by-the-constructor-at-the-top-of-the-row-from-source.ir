@@ -1,4 +1,4 @@
-# Reflect.construct() enters Low's constructor with Array as new.target: no class at or below Low. What is made through Low is then not all that its super() may give.
+# Reflect.construct() enters Low's constructor with Other as new.target: no class at or below Low. What is made through Low is then not all that its super() may give.
 # Such a site reads the result of the constructor at the top of the row beside it: `ask` may be handed what Top's constructor makes.
 # It does not read the result of the constructor next above: what enters at one level of a row would travel through the results of all the levels below, each of which
 # would climb once for each level above it: a square in the length of the row.
@@ -9,7 +9,8 @@
 # class Top { constructor() { this.top = "t"; } who() { return "top"; } }
 # class Low extends Top { constructor() { super(); this.low = "l"; } who() { return "low"; } }
 # function ask(one) { return typeof one.who + one.low + one.top; }
+# class Other {}
 # const first = new Low();
-# const second = Reflect.construct(Low, [], Array);
+# const second = Reflect.construct(Low, [], Other);
 # console.log(ask(first), ask(second), second instanceof Low);
 # -- end of source

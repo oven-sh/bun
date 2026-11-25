@@ -1,0 +1,18 @@
+# -- source: main.ts
+# const table: any = new Map([["k", () => 7]]);
+# let out = "";
+# const holder: any = { part: table.get("k") };
+# for (let i = 0; i < 40; i++) out += String(holder.part()) + "|";
+# console.log(out);
+# export {};
+# -- end of source
+# `holder.part` is proven undefined|f1. The loop is versioned for the check of this callee alone, which the iterations move in front of it: nothing else guards the version,
+# and the build stopped ("a loop is versioned without a guard") where code is verified. At default the version was taken back.
+# RUN: walk f0:Body mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: [[callee]]: undefined|f1 @JSValue = CallInline {{*}}inlineBuiltin=MapGet
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[callee]] testedType=f1
+# CHECK: isLoopHead=true
+# CHECK-NOT: TypeTest
+# CHECK: Branch [[test]]
+# CHECK: StackStringBuilderAppendInteger

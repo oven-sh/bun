@@ -1,0 +1,16 @@
+# -- source: computed-accessors-append-nothing.js
+# class Model { constructor(data) { this._data = data; for (const key of Object.keys(data)) Object.defineProperty(this, key, { get() { return this._data[key]; }, set(value) { this._data[key] = value; } }); } }
+# class Plain { constructor() { this.first = 1; } }
+# const model = new Model({ count: 0, total: 1 });
+# const plain = new Plain();
+# plain.late = 2;
+# let sum = 0;
+# for (let k = 0; k < 20; k++) { model.count = k & 7; sum += model.count + model.total + plain.late; }
+# print(sum, model._data.count);
+# -- end of source
+# A store under a name that no constructor stores may reach an accessor under a computed key: the layout appends no field for it. A class without such accessors appends one.
+# RUN(LINK): link fields mechanisms=all
+# LINK-NOT: "count" appended
+# LINK: "late" appended
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 122 3

@@ -1,18 +1,3 @@
---- a/src/liblsquic/lsquic_full_conn_ietf.c
-+++ b/src/liblsquic/lsquic_full_conn_ietf.c
-@@ -4669,4 +4669,11 @@
-      */
--    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
-+    enum packnum_space pns;  /* bun: highest PNS with keys (RFC 9000 s10.2.3) */
-+    if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
-+        pns = PNS_APP;
-+    else if (conn->ifc_flags & IFC_IGNORE_INIT)
-+        pns = PNS_HSK;
-+    else
-+        pns = PNS_INIT;
-+    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
-                                                                 CUR_NPATH(conn));
-     if (!packet_out)
 --- a/src/liblsquic/lsquic_mini_conn_ietf.h
 +++ b/src/liblsquic/lsquic_mini_conn_ietf.h
 @@ -91,6 +91,10 @@

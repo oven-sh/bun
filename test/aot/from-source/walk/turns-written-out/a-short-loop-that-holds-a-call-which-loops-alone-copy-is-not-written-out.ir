@@ -1,0 +1,30 @@
+# -- source: a-short-loop-that-holds-a-call-which-loops-alone-copy-is-not-written-out.cjs
+# "use strict";
+# function middling(box, i) { const held = box.list; const at = held[i]; return typeof at === "number" ? at * 2 + box.add : String(at).length + box.add; }
+# function small(i) { return i + 1; }
+# function withLoop(box, i) { let s = 0; for (const x of box.list) s += x + i; return s; }
+# function holdsMiddling(box) { let s = 0; for (let i = 0; i < 3; i++) s += middling(box, i); return s; }
+# function holdsSmall() { let s = 0; for (let i = 0; i < 3; i++) s += small(i); return s; }
+# function holdsOneWithLoop(box) { let s = 0; for (let i = 0; i < 3; i++) s += withLoop(box, i); return s; }
+# globalThis.sink(holdsMiddling, holdsSmall, holdsOneWithLoop);
+# -- end of source
+# f1 = middling, f2 = small, f3 = withLoop, f4 = holdsMiddling, f5 = holdsSmall, f6 = holdsOneWithLoop
+# Three turns in a function that stands in no loop are written out into straight code. Straight code is in no loop, so a callee of twelve operations, which the rule of loops alone would copy, stayed three calls, and nothing that a loop opens opened in it.
+# Such a loop stays a loop and holds one copy of its callee: no call is left.
+# RUN(STAYS): walk f4 mechanisms=all
+# STAYS: isLoopHead=true
+# RUN(COPIED): walk f4 mechanisms=all
+# COPIED: code f4:Body
+# COPIED-NOT: = CallDirect
+# A callee that is copied wherever it is called changes nothing: the turns are written out as before,
+# RUN(SMALL): walk f5 mechanisms=all
+# SMALL: code f5:Body
+# SMALL-NOT: isLoopHead=true
+# and so does one that no rule copies, for it has a loop of its own: three calls in straight code.
+# RUN(LOOPING): walk f6 mechanisms=all
+# LOOPING: code f6:Body
+# LOOPING-NOT: isLoopHead=true
+# RUN(CALLS): walk f6 mechanisms=all
+# CALLS: = CallDirect
+# CALLS: = CallDirect
+# CALLS: = CallDirect

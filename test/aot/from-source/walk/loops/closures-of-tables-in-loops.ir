@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# "use strict";
+# function P(a) { this.a = a; }
+# P.prototype.get = function () { return this.a; };
+# function C(a) { P.call(this, a); this.b = 1; }
+# C.prototype = Object.create(P.prototype, { constructor: { value: C } });
+# C.prototype.get = function () { return P.prototype.get.call(this) + this.b; };
+# let n = 0;
+# for (let k = 0; k < 10; k++) n += new C(k & 3).get();
+# print(n);
+# -- end of source
+# That the closure which the table holds is the one written, and that its class was evaluated once, is asked in front of the loop, and nothing of it in the loop: no code of the program gives it names of its own.
+# RUN: walk f0 mechanisms=all
+# CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="get"}, {layout=L0 side=Static key="call"}, {kind=ClassEvaluatedOnce layout=L1}]
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: IsPristine
+# CHECK-NOT: AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 23

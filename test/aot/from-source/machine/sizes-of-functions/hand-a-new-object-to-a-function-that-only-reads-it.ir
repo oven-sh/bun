@@ -1,0 +1,20 @@
+# f2 = pick
+# -- source: hand-a-new-object-to-a-function-that-only-reads-it.ts
+# type Entry = { weight: number };
+# type Pair = { left: Entry; right: Entry };
+# function heavier(pair: Pair): Entry {
+#   return pair.left.weight > pair.right.weight ? pair.left : pair.right;
+# }
+# function pick(left: Entry, right: Entry): Entry {
+#   return heavier({ left, right });
+# }
+# declare const input: any;
+# const light: Entry = { weight: +input };
+# (globalThis as any).answer = [pick(light, { weight: 1.5 }), pick({ weight: 2.5 }, light)];
+# -- end of source
+# The compiler before this one: 15 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 7, patches 2, moves 4, unlikely or rare 0.
+# RUN(X64): steps most:11 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 11

@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { once } from "events";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import {
@@ -13,8 +14,10 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
+import { connect, createServer, type AddressInfo } from "net";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { constants, gzipSync } from "zlib";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -569,6 +572,19 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.each(["manifest", "tarball"] as const)("retries a %s whose Content-Encoding is unfinished", async failing => {
+    const unfinished = gzipSync("{}", { finishFlush: constants.Z_SYNC_FLUSH });
+    using registry = flakyRegistry((kind, hit) =>
+      kind === failing && hit === 1 ? new Response(unfinished, { headers: { "Content-Encoding": "gzip" } }) : undefined,
+    );
+    using dir = project(registry.url);
+    const { lines, out, exitCode } = await install(String(dir));
+    expect(lines).toContain("Decompression error: ZlibError");
+    expect(out).toContain("1 package installed");
+    expect(registry.at[failing]).toHaveLength(2);
+    expect(exitCode).toBe(0);
+  });
+
   // With a lockfile the tarball is downloaded by the linker's own wait loop.
   it.each(["hoisted", "isolated"])("the %s linker waits for a tarball that backs off", async linker => {
     using registry = flakyRegistry((kind, hit) => (kind === "tarball" && hit <= 2 ? busy(500) : undefined));
@@ -688,6 +704,57 @@ describe.concurrent("backoff", () => {
     expect(registry.authorization).toEqual({
       manifest: ["Bearer retry-token", "Bearer retry-token", "Bearer retry-token"],
       tarball: ["Bearer retry-token", "Bearer retry-token", "Bearer retry-token"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the connection alive again after a proxy refused a tunnel", async () => {
+    const seen: [string, string | null][] = [];
+    using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        seen.push([pathname, request.headers.get("connection")]);
+        if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+        const dist = { tarball: `${origin}/bar-0.0.2.tgz` };
+        return Response.json({ name: "bar", versions: { "0.0.2": { name: "bar", version: "0.0.2", dist } } });
+      },
+    });
+    let tunnels = 0;
+    await using proxy = createServer(client => {
+      client.on("error", () => {});
+      let head = "";
+      client.on("data", function onHead(chunk) {
+        head += chunk;
+        if (!head.endsWith("\r\n\r\n")) return;
+        client.off("data", onHead);
+        if (++tunnels === 1) return client.end("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+        const upstream = connect(registry.port!, "127.0.0.1", () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          client.pipe(upstream).pipe(client);
+        });
+        upstream.on("error", () => client.destroy());
+        client.on("close", () => upstream.destroy());
+      });
+    }).listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    using dir = project(registry.url.href);
+    writeFileSync(join(String(dir), "ca.pem"), tls.cert);
+    const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    const { err, exitCode } = await install(
+      String(dir),
+      { https_proxy: proxyUrl, HTTPS_PROXY: proxyUrl, no_proxy: "", NO_PROXY: "" },
+      "--cafile=ca.pem",
+    );
+    expect(err).not.toContain("error:");
+    expect({ seen, tunnels }).toEqual({
+      seen: [
+        ["/bar", "keep-alive"],
+        ["/bar-0.0.2.tgz", "keep-alive"],
+      ],
+      tunnels: 2,
     });
     expect(exitCode).toBe(0);
   });

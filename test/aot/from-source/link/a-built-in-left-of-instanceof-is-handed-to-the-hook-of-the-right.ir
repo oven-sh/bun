@@ -1,0 +1,13 @@
+# -- source: a-built-in-left-of-instanceof-is-handed-to-the-hook-of-the-right.cjs
+# let seen;
+# class Box {
+#   static [Symbol.hasInstance](value) {
+#     seen = value;
+#     return true;
+#   }
+# }
+# console.log(require instanceof Box, typeof seen(process.env.NAME ?? "node:zlib").gzipSync);
+# -- end of source
+# The left of instanceof is the argument of the method that lies under Symbol.hasInstance on the right.
+# RUN: link lookups mechanisms=all
+# CHECK: lookup called-out-of-sight

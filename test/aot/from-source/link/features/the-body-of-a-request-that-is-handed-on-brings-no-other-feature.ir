@@ -1,0 +1,10 @@
+# native code asks the stream for Symbol.asyncIterator, and what values() makes is an iterator of the table
+# -- source: the-body-of-a-request-that-is-handed-on-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { return new Response(request.body); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStreamPrototype
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

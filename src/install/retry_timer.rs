@@ -8,7 +8,7 @@ use bun_http::{AsyncHTTP, HTTPClientResult, HTTPResponseMetadata};
 use bun_threading::{Condition, Guarded};
 
 use crate::package_manager_real::run_tasks::download_outcome;
-use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
+use crate::package_manager_real::{INBOX, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
 /// Only used on the install thread. Its tasks aren't counted in `pending_tasks`, so
@@ -92,13 +92,14 @@ impl PackageManager {
     /// Do not use this for a request that the registry must not get twice, like `bun publish`'s.
     pub fn send_with_retries(
         &self,
-        request: &mut AsyncHTTP<'_>,
+        mut request: Box<AsyncHTTP<'_>>,
         response_buffer: &mut MutableString,
     ) -> bun_http::Result<HTTPResponseMetadata> {
         let mut attempt: u16 = 0;
         loop {
             response_buffer.reset();
-            let response = request.send_sync_for_result(response_buffer)?;
+            let response;
+            (request, response) = request.send_sync_for_result(response_buffer)?;
             let (_, retry) = download_outcome(&response, true);
             if !retry || attempt >= self.options.max_retry_count {
                 return response.into_metadata();
@@ -197,8 +198,7 @@ fn run() {
         let waiting = timer.deadlines.len();
         timer.deadlines.retain(|deadline| *deadline > now);
         if timer.deadlines.len() < waiting {
-            // SAFETY: the singleton that queued the deadline is never freed.
-            unsafe { PackageManager::wake_raw(package_manager_real::get()) };
+            INBOX.wake();
         }
         match timer.deadlines.iter().min().copied() {
             Some(next) => {

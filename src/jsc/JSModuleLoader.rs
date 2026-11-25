@@ -31,13 +31,11 @@ impl JSModuleLoader {
     /// `*mut JSInternalPromise` directly so callers that need to store or pass
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
-        global_object: *mut JSGlobalObject,
+        global_object: &JSGlobalObject,
         key: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
-            JSGlobalObject::opaque_ref(global_object),
+            global_object,
             key,
         ))
     }
@@ -45,13 +43,11 @@ impl JSModuleLoader {
     /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]
     /// of the key. `None`, with the exception pending, if it does not resolve either.
     pub fn resolve_and_load_and_evaluate_module_ptr(
-        global_object: *mut JSGlobalObject,
+        global_object: &JSGlobalObject,
         module_name: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
-            JSGlobalObject::opaque_ref(global_object),
+            global_object,
             module_name,
         ))
     }
@@ -62,15 +58,10 @@ impl JSModuleLoader {
     /// don't launder provenance through `&T -> *mut T`. Mirrors
     /// [`Self::load_and_evaluate_module_ptr`].
     pub fn import_ptr(
-        global_object: *mut JSGlobalObject,
+        global_object: &JSGlobalObject,
         module_name: &BunString,
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
-        core::ptr::NonNull::new(JSModuleLoader__import(
-            JSGlobalObject::opaque_ref(global_object),
-            module_name,
-        ))
-        .ok_or(JsError::Thrown)
+        core::ptr::NonNull::new(JSModuleLoader__import(global_object, module_name))
+            .ok_or(JsError::Thrown)
     }
 }

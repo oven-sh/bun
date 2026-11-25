@@ -13,10 +13,6 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
-// the `Property` enum (properties_generated.rs) stays lifetime-free.
-// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
-// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub(crate) v: Vec<Transform>,
@@ -34,7 +30,7 @@ impl TransformList {
 }
 
 impl TransformList {
-    pub(crate) fn parse(input: &mut Parser<'_>) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -143,7 +139,7 @@ pub enum Transform {
 }
 
 impl Transform {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Transform> {
         let function = input.expect_function()?;
 
         input.parse_nested_block(|i| -> Result<Transform> {
@@ -679,7 +675,7 @@ pub enum Translate {
 }
 
 impl Translate {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -750,7 +746,7 @@ pub enum Rotate {
 }
 
 impl Rotate {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -852,7 +848,7 @@ pub enum Scale {
 }
 
 impl Scale {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -917,10 +913,6 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
-// port iteration; the `Property` enum is lifetime-free (see TransformList
-// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
-// work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
     pub(crate) transform: Option<(TransformList, VendorPrefix)>,
@@ -933,10 +925,10 @@ pub struct TransformHandler {
 // `context.arena` does not exist on PropertyHandlerContext; the arena is
 // recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();

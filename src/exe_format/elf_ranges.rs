@@ -3,7 +3,7 @@ use core::ops::Range;
 
 use bun_sys::elf::PT_LOAD;
 
-use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
+use crate::cut_model::{CutCapacity, CutModel, NoCutReason, SlotCosts};
 use crate::elf::{
     EM_AARCH64, EM_X86_64, Elf64_Ehdr, Elf64_Phdr, Elf64_Shdr, ElfFile, SHF_ALLOC, SHN_LORESERVE,
     SHT_NOBITS, SHT_PROGBITS, read_ehdr,
@@ -22,6 +22,7 @@ const SHT_NULL: u32 = 0;
 const SECTION_HEADER_SIZE: usize = size_of::<Elf64_Shdr>();
 const SECTION_TABLE_ALIGNMENT: u64 = 8;
 const UNREADABLE_FILE_ALIGNMENT: u64 = 0x1000;
+const PROGRAM_HEADERS_FOR_A_CUT: usize = 1;
 
 pub(crate) fn architecture(ehdr: &Elf64_Ehdr) -> Result<Architecture, ImageError> {
     match ehdr.e_machine {
@@ -57,20 +58,25 @@ pub(crate) fn cut_model(elf: &[u8]) -> CutModel {
     let Ok(table) = ProgramHeaderTable::read(elf, &ehdr) else {
         return without_cuts(NoCutReason::HeadersUnreadable);
     };
-    let capacity = compute_capacity(&ehdr, &table, alignment);
-    if let CutCapacity::NoCuts(reason) = capacity {
-        return without_cuts(reason);
-    }
-    match find_cuttable_spans(elf, &ehdr, &table) {
-        Ok(cuttable_spans) => CutModel {
-            format,
-            alignment,
-            capacity,
-            cuttable_spans,
-            spans_cut_only_at_end: Vec::new(),
-            slot_costs: None,
-        },
-        Err(_) => without_cuts(NoCutReason::HeadersUnreadable),
+    let free_slots = match count_free_slots(&ehdr, &table, alignment) {
+        Ok(free_slots) => free_slots,
+        Err(reason) => return without_cuts(reason),
+    };
+    let Ok(spans) = find_cuttable_spans(elf, &ehdr, &table) else {
+        return without_cuts(NoCutReason::HeadersUnreadable);
+    };
+    let (cuttable_spans, saved_at_ends) = spans.into_iter().unzip();
+    CutModel {
+        format,
+        alignment,
+        capacity: CutCapacity::Cuts(free_slots),
+        cuttable_spans,
+        spans_cut_only_at_end: Vec::new(),
+        slot_costs: Some(SlotCosts {
+            free_slots,
+            slots_for_a_cut: PROGRAM_HEADERS_FOR_A_CUT,
+            saved_at_ends,
+        }),
     }
 }
 
@@ -91,10 +97,11 @@ pub(crate) fn remove_ranges(
     // Read before the cuts: one at the end of the highest segment lowers where the mapped addresses end.
     let image_end = find_image_end(&table.headers)?;
     table.headers = removal.update_program_headers(&table.headers)?;
-    if table.capacity().saturating_sub(table.headers.len()) < PAYLOAD_SEGMENT_COUNT {
+    let reserved_count = count_headers_to_reserve(&table.headers);
+    if table.headers.len() + reserved_count > table.capacity() {
         return Err(ImageError::HeaderRoomExhausted);
     }
-    for _ in 0..PAYLOAD_SEGMENT_COUNT {
+    for _ in 0..reserved_count {
         table.insert_by_address(create_reserved_header(image_end, removal.alignment)?);
     }
     let section_table = removal.plan_section_table(elf, &ehdr)?;
@@ -130,27 +137,53 @@ fn compute_headers_end(table: &ProgramHeaderTable) -> u64 {
     table.end_file_offset().max(size_of::<Elf64_Ehdr>() as u64)
 }
 
-fn compute_capacity(ehdr: &Elf64_Ehdr, table: &ProgramHeaderTable, alignment: u64) -> CutCapacity {
+fn find_payload_headers(headers: &[Elf64_Phdr]) -> Option<Range<usize>> {
+    let start = headers
+        .iter()
+        .position(|header| header.p_type == PT_BUN_PAYLOAD)?;
+    Some(start..start + PAYLOAD_SEGMENT_COUNT)
+}
+
+fn headers_in_use(headers: &[Elf64_Phdr]) -> impl Iterator<Item = &Elf64_Phdr> {
+    let payload = find_payload_headers(headers).unwrap_or(0..0);
+    headers
+        .iter()
+        .enumerate()
+        .filter(move |(index, header)| match header.p_type {
+            PT_BUN_RESERVED => false,
+            PT_NULL => payload.contains(index),
+            _ => true,
+        })
+        .map(|(_, header)| header)
+}
+
+fn count_headers_to_reserve(headers: &[Elf64_Phdr]) -> usize {
+    match find_payload_headers(headers) {
+        Some(_) => 0,
+        None => PAYLOAD_SEGMENT_COUNT,
+    }
+}
+
+fn count_free_slots(
+    ehdr: &Elf64_Ehdr,
+    table: &ProgramHeaderTable,
+    alignment: u64,
+) -> Result<usize, NoCutReason> {
     if !has_section_headers(ehdr) {
-        return CutCapacity::NoCuts(NoCutReason::SectionHeadersMissing);
+        return Err(NoCutReason::SectionHeadersMissing);
     }
     let mut loads = table
         .headers
         .iter()
         .filter(|header| header.p_type == PT_LOAD);
     if !loads.all(|load| is_congruent(load, alignment)) {
-        return CutCapacity::NoCuts(NoCutReason::SegmentsNotCongruent);
+        return Err(NoCutReason::SegmentsNotCongruent);
     }
-    let used = table
-        .headers
-        .iter()
-        .filter(|header| !matches!(header.p_type, PT_NULL | PT_BUN_RESERVED))
-        .count();
-    CutCapacity::from_free_slots(
-        table
-            .capacity()
-            .saturating_sub(used + PAYLOAD_SEGMENT_COUNT),
-    )
+    let used = headers_in_use(&table.headers).count();
+    table
+        .capacity()
+        .checked_sub(used + count_headers_to_reserve(&table.headers))
+        .ok_or(NoCutReason::HeaderRoomExhausted)
 }
 
 fn find_required_ranges(
@@ -183,7 +216,7 @@ fn find_cuttable_spans(
     elf: &[u8],
     ehdr: &Elf64_Ehdr,
     table: &ProgramHeaderTable,
-) -> Result<Vec<AddressRange>, ImageError> {
+) -> Result<Vec<(AddressRange, [usize; 2])>, ImageError> {
     let required = find_required_ranges(elf, ehdr, table)?;
     let mut spans = Vec::new();
     for load in &table.headers {
@@ -191,7 +224,12 @@ fn find_cuttable_spans(
             continue;
         }
         let addresses = AddressRange::from_size(load.p_vaddr, load.p_filesz)?;
-        spans.extend(subtract_cuts(addresses, &required));
+        let mapped_end = AddressRange::from_size(load.p_vaddr, load.p_memsz)?.end;
+        let saved_at_ends = |span: AddressRange| {
+            [span.start == addresses.start, span.end == mapped_end].map(usize::from)
+        };
+        let of_segment = subtract_cuts(addresses, &required).into_iter();
+        spans.extend(of_segment.map(|span| (span, saved_at_ends(span))));
     }
     Ok(spans)
 }
@@ -348,11 +386,10 @@ impl Removal<'_> {
     ) -> Result<Vec<Elf64_Phdr>, ImageError> {
         let mut updated =
             Vec::with_capacity(headers.len() + self.cuts.len() + PAYLOAD_SEGMENT_COUNT);
-        for header in headers {
+        for header in headers_in_use(headers) {
             match header.p_type {
-                PT_NULL | PT_BUN_RESERVED => {}
                 PT_LOAD => updated.extend(self.split_load_segment(header)?),
-                PT_PHDR => updated.push(*header),
+                PT_NULL | PT_PHDR => updated.push(*header),
                 _ => {
                     let p_offset = self
                         .compute_moved_offset(header.p_offset, header.p_filesz)

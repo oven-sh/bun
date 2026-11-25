@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function greatest(list: number[], ...rest: number[]): number { if (list.length) { const found = Math.max(...list); if (found > 1e300) return 0; return found; } return rest.length; }
+# function caller(given: [number[], ...number[]]): number { const v = greatest(...given); return Math.round(v) - v; }
+# print(caller([[id(7.5), 2]]));
+# print(caller([[], 2, 3]));
+# print("went on");
+# -- end of source
+# The program calls Math.max over a spread array, outside tail position.
+# What Link claims about the result of that call rests on the signature of Math.max. The result of native code is checked against the signature at its entry check.
+# The result of the prelude function that iterates over the array in place of native code is checked against the signature too.
+# Fault injection, testing=UnderstateEffects:Builtin/Math.max/KindOfResult: the signature of Math.max declares null as its only result.
+# The program used to print 0 instead of 0.5 and continue.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0.5
+# CHECK-NEXT: 0
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Builtin/Math.max/KindOfResult
+# LIE: found double in a call result
+# LIE-NOT: went on
+# LIE: crashed

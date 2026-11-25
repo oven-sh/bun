@@ -12,7 +12,6 @@
 # console.log(show(plain) + " | " + show(from) + " | " + show(marked) + " | " + show(copy(marked)));
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject size=64 extension=
 # CHECK-NEXT: slot 0 "given" JSValue OutOfLine offset=8 {{*}}may-exist-without-storage
 # CHECK-NEXT: slot 1 "id" {{*}}Inline

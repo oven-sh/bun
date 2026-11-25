@@ -17,7 +17,6 @@
 // CONVERTS-NOT: Convert
 // CONVERTS-LABEL: function {{*}}name="textOfCurrent"
 // CONVERTS-NOT: Convert
-// CONVERTS-LABEL: function {{*}}kind=Initializer
 
 // `this.current` is a reference like `cursor.current`: the checker narrows it behind a test of it, and nothing of that is sent. The read behind the test is used as it is, like the read in front of the test, and the member is read from it. `this` has the type of its position, so both reads take it as it is.
 interface Word {

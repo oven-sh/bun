@@ -28,6 +28,12 @@
 // RUN(D16): link
 // OPTIONS(D16): threads=16 discards-first-visits
 // SAME: ONE D16
+// RUN(L1): link
+// OPTIONS(L1): threads=1 last-file-first
+// SAME: ONE L1
+// RUN(L4): link
+// OPTIONS(L4): threads=4 last-file-first discards-first-visits
+// SAME: ONE L4
 
 // Which visits of a build are thrown away is a matter of the threads' timing. Here every first visit is, on one thread and on many, and the program is what it is without that. A task whose only visit is thrown away lowers nothing: the state that the lowering keeps on its thread goes on to the next task without what was kept by the numbers of that task's rows.
 

@@ -57,7 +57,10 @@ pub(crate) fn watching<R>(
 ) -> R {
     let (modules, run_script) = (Modules::default(), environment.run_script);
     let watched = |script: &Script| {
-        let printed = run_script(script)?;
+        let printed = run_script(&Script {
+            loads_all: true,
+            ..*script
+        })?;
         modules.0.lock().extend(evaluate::modules_in(&printed));
         Ok(printed)
     };

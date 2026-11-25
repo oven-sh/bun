@@ -1,5 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isRoot, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  emptyProcessMaxRSS,
+  isASAN,
+  isDebug,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  runCommandMaxRSS,
+  tempDir,
+  tls,
+  withoutAsanQuarantine,
+} from "harness";
 import { chmodSync, existsSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -99,11 +112,11 @@ afterAll(() => {
   root?.[Symbol.dispose]();
 });
 
-async function diff(args: string[], cwd = String(root)) {
+async function diff(args: string[], cwd = String(root), env = {}) {
   await using p = Bun.spawn({
     cmd: [bunExe(), "pm", "diff", ...args],
     cwd,
-    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1" },
+    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -559,6 +572,138 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("files are printed in the order of their paths, whichever is compared first", async () => {
+    // Enough text for several threads, in files that are not in order of size.
+    const names = Array.from({ length: 24 }, (_, i) => `f${String(i).padStart(2, "0")}.js`);
+    const body = (i: number, edited: number) =>
+      Array.from(
+        { length: 40 + ((i * 7) % 24) * 20 },
+        (_, line) => `export const v${line} = ${line === 30 ? edited : line};\n`,
+      ).join("");
+    using dir = tempDir(
+      "pm-diff-many",
+      Object.fromEntries(
+        names.flatMap((name, i) => [
+          [`a/${name}`, body(i, 1000 + i)],
+          [`b/${name}`, body(i, 2000 + i)],
+        ]),
+      ),
+    );
+    const { stdout, stderr, exitCode } = await diff(["./a", "./b"], String(dir));
+    expect(stdout.split("\n").filter(l => /^(diff --git |[-+]export )/.test(l))).toEqual(
+      names.flatMap((name, i) => [
+        `diff --git a/${name} b/${name}`,
+        `-export const v30 = ${1000 + i};`,
+        `+export const v30 = ${2000 + i};`,
+      ]),
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("peak memory grows little with the number of files", async () => {
+    // Many small arrays take the most memory for their text.
+    const line = "f([1, [2], 3], { a: [4], b: 5 });\n";
+    const body = Buffer.alloc(1000 * line.length, line).toString();
+
+    async function peakMemory(count: number) {
+      const names = Array.from({ length: count }, (_, i) => `f${i}.js`);
+      using dir = tempDir(
+        "pm-diff-memory",
+        Object.fromEntries(
+          names.flatMap((name, i) => [
+            [`a/${name}`, `${body}old(${i});\n`],
+            [`b/${name}`, `${body}new_(${i});\n`],
+          ]),
+        ),
+      );
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "pm", "diff", "--stat", "./a", "./b"],
+        cwd: String(dir),
+        // The peak also depends on how many files are compared at the same time.
+        env: { ...withoutAsanQuarantine(bunEnv), UV_THREADPOOL_SIZE: undefined, GOMAXPROCS: "2", NO_COLOR: "1" },
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toEndWith(`\n${count} files changed, 0 added, 0 removed  (+${count} -${count} lines)\n`);
+      expect(exitCode).toBe(0);
+      return maxRSS;
+    }
+
+    const [few, many] = await Promise.all([peakMemory(8), peakMemory(64)]);
+    // When no AST is freed, this is over 40 MiB on Linux x64.
+    expect(many - few).toBeLessThan((isASAN || isDebug ? 32 : 24) * 1024 * 1024);
+  });
+
+  // Parses 4 MiB of CSS, which is too slow without optimizations.
+  test.skipIf(isASAN || isDebug)("peak memory does not follow the number of threads", async () => {
+    const line = "a{b:c}\n";
+    const body = Buffer.alloc(18_000 * line.length, line).toString();
+    const names = Array.from({ length: 16 }, (_, i) => `f${i}.css`);
+    const empty = Buffer.alloc(2 * 1024 * 1024, "\n").toString();
+    using dir = tempDir("pm-diff-threads", {
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [`a/${name}`, `${body}old{b:c}\n`],
+          [`b/${name}`, `${body}new{b:c}\n`],
+        ]),
+      ),
+      // Large files that take little memory are no reason to compare more of the others at once.
+      "a/x.bin": `\0old${empty}`,
+      "b/x.bin": `\0new${empty}`,
+      "a/x.map": `{"version":1${empty}`,
+      "b/x.map": `{"version":2${empty}`,
+      "b/x.txt": Buffer.alloc(24 * 1024 * 1024, "x"),
+    });
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "pm", "diff", "--stat", "./a", "./b"],
+      cwd: String(dir),
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: undefined, GOMAXPROCS: "16", NO_COLOR: "1" },
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toEndWith("\n18 files changed, 1 added, 0 removed  (+17 -16 lines)\n");
+    expect(exitCode).toBe(0);
+    // One file takes some 30 MiB.
+    expect(maxRSS - (await emptyProcessMaxRSS())).toBeLessThan(260 * 1024 * 1024);
+  });
+
+  test("a deleted file is not parsed for a patch", async () => {
+    const line = "f([1, [2], 3], { a: [4], b: 5 });\n";
+    using dir = tempDir("pm-diff-deleted", {
+      "a/gone.js": Buffer.alloc(40_000 * line.length, line).toString(),
+      "a/same.txt": "",
+      "b/same.txt": "",
+    });
+    async function run(args: string[]) {
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "pm", "diff", ...args, "./a", "./b"],
+        cwd: String(dir),
+        env: { ...withoutAsanQuarantine(bunEnv), NO_COLOR: "1" },
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toEndWith("\n0 files changed, 0 added, 1 removed  (+0 -40000 lines)\n");
+      expect(exitCode).toBe(0);
+      return maxRSS;
+    }
+    // Parsing it takes over 24 MiB on Linux x64.
+    expect((await run([])) - (await run(["--raw"]))).toBeLessThan((isASAN || isDebug ? 20 : 12) * 1024 * 1024);
+  });
+
+  // These print 60 MiB, which is too slow without optimizations, to a file through `sh`.
+  test.skipIf(isASAN || isDebug || isWindows).each([
+    ["many tokens", Buffer.alloc(2_000_000, Buffer.alloc(99, ";") + "\n"), 45],
+    ["one line that is not UTF-8", Buffer.alloc(21 * 1024 * 1024, 0xff), 85],
+  ])("the colored output is printed in parts: %s", async (_, added, mebibytes) => {
+    using dir = tempDir("pm-diff-colors", { "a/same.txt": "", "b/same.txt": "", "b/added.jsonc": added });
+    const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: ["sh", "-c", 'exec "$0" pm diff ./a ./b > out', bunExe()],
+      cwd: String(dir),
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: undefined, GOMAXPROCS: "2", NO_COLOR: undefined, FORCE_COLOR: "1" },
+    });
+    expect(stderr).toBe("");
+    expect(statSync(join(String(dir), "out")).size).toBeGreaterThan(60 * 1024 * 1024);
+    expect(exitCode).toBe(0);
+    expect(maxRSS - (await emptyProcessMaxRSS())).toBeLessThan(mebibytes * 1024 * 1024);
+  });
+
   test("identical sides say so", async () => {
     const { stdout, exitCode } = await diff(["diffme@2.0.0", "2.0.0"]);
     expect(stdout).toBe("diffme@2.0.0 → diffme@2.0.0\nNo differences (5 files)\n");
@@ -838,6 +983,67 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a directive after a banner comment stays where it is written", async () => {
+    const filler = Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("");
+    const long = (mul: number) => `module.exports=function(n,t){${filler}return n*${mul}};\n`;
+    const spaced = (mul: number) => `module.exports = function(n,t){ ${filler} return n*${mul} };\n`;
+    const banner = "/*! lib 1.0 | MIT */\n";
+    // One edit after the banner and the directive is one changed line of the un-minified print.
+    const edited = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + long(3),
+    });
+    expect(edited.text).toMatch(/\nx\.min\.js ─+ unminified \+1 -1\n/);
+    // The same file with other spacing is a formatting change only.
+    const reformatted = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + spaced(2),
+    });
+    expect(reformatted.text).toMatch(/\nx\.min\.js ─+ formatting only\n/);
+    // A string at the start of a block is kept too, and it does not make the block strict code.
+    const block = await pretty({
+      "a/sloppy.js": `{ "use strict"; var yield = 1; }\nexports.value = yield;\n`,
+      "b/sloppy.js": `{\n  "use strict";\n  var yield = 1;\n}\nexports.value = yield;\n`,
+      "a/with.js": `{ "use strict"; with (exports) { value = 1; } }\n`,
+      "b/with.js": `{\n  "use strict";\n  with (exports) {\n    value = 1;\n  }\n}\n`,
+    });
+    expect(block.text).toMatch(/\nsloppy\.js ─+ formatting only\n/);
+    expect(block.text).toMatch(/\nwith\.js ─+ formatting only\n/);
+    // Also where the string is all that the block holds, behind another statement or at the start of a function.
+    const only = await pretty({
+      "a/only.js": `exports.f = function (g) { g(); { "x"; } return g; };\nexports.h = function () { { "use strict"; } return this; };\n`,
+      "b/only.js": `exports.f = function (g) {\n  g();\n  {\n    "x";\n  }\n  return g;\n};\nexports.h = function () {\n  {\n    "use strict";\n  }\n  return this;\n};\n`,
+    });
+    expect(only.text).toMatch(/\nonly\.js ─+ formatting only\n/);
+    // A string statement that is not a directive is shown as it is written.
+    const added = await pretty({
+      "a/README.md": "x\n",
+      "b/README.md": "x\n",
+      "b/new.min.js": `{"a";run()}try{'x'}catch{}class C{static{"s"}}if(x)"y";` + long(2),
+    });
+    expect(
+      changedLines(added.text)
+        .map(l => l.replace(/^ +[\d:]+ │/, ""))
+        .slice(0, 15),
+    ).toEqual([
+      "+ {",
+      '+   "a";',
+      "+   run();",
+      "+ }",
+      "+ try {",
+      '+   "x";',
+      "+ } catch {}",
+      "+ ",
+      "+ class C {",
+      "+   static {",
+      '+     "s";',
+      "+   }",
+      "+ }",
+      "+ if (x)",
+      '+   "y";',
+    ]);
+  });
+
   test("two minified builds with different mangled names diff down to the real change", async () => {
     // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
     // inserted helper in b. Long enough on one line to count as minified.
@@ -891,6 +1097,173 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     const raw = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 }, ["--raw"]);
     expect(raw.text).toMatch(/\ndist\/x\.min\.js ─+ \+1 -1\n/);
     expect(raw.exitCode).toBe(0);
+  });
+
+  // Declares and calls one local for each id. `shift` gives them other names.
+  const locals = (ids: number[], shift: number) =>
+    ids
+      .map((id, i) => [id, String.fromCharCode(97 + ((i + shift) % 26), 65 + Math.floor(i / 26))])
+      .map(([id, name]) => `var ${name}=g(${id});${name}.p${id}end();`)
+      .join("");
+  const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
+  const changedIds = (text: string) =>
+    changedLines(text).flatMap(
+      l =>
+        l
+          .match(/│([-+]) .*\.p(\d+)end\(\);/)
+          ?.slice(1)
+          .join("") ?? [],
+    );
+
+  test.each([
+    [
+      "come or go",
+      [900, ...range(0, 40), ...range(41, 100), 901, ...range(100, 150), 902],
+      ["+900", "-40", "+901", "+902"],
+    ],
+    [
+      "move",
+      [...range(120, 150), ...range(0, 120)],
+      [...range(120, 150).map(id => `+${id}`), ...range(120, 150).map(id => `-${id}`)],
+    ],
+  ])("minified: among many locals, only those that %s are a change", async (_, now, changed) => {
+    const { text, exitCode } = await pretty({
+      "a/x.min.js": `!function(){${locals(range(0, 150), 0)}}();\n`,
+      "b/x.min.js": `!function(){${locals(now, 7)}}();\n`,
+    });
+    expect(changedIds(text)).toEqual(changed);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["smaller", range(0, 28), range(100, 132), [900, 901, ...range(0, 28)], ["+900", "+901"]],
+    ["larger", range(0, 32), range(100, 128), range(2, 32), ["-0", "-1"]],
+  ])(
+    "minified: of two functions equally close in size, the first one is the match (the %s one)",
+    async (_, first, second, now, changed) => {
+      const { text, exitCode } = await pretty({
+        "a/x.min.js": `f(function(){${locals(first, 0)}});f(function(){${locals(second, 0)}});\n`,
+        "b/x.min.js": `f(function(){${locals(now, 7)}});\n`,
+      });
+      expect(changedIds(text)).toEqual([...changed, ...second.map(id => `-${id}`)]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("a file looks the same whether it is compared alone or with enough others for several threads", async () => {
+    const lines = (count: number, line: (i: number) => string) => range(0, count).map(line).join("");
+    const readable = (name: string, last: number) =>
+      lines(400, i => `function f${i}(${name}) {\n  return ${name} + ${i === 200 ? last : i};\n}\n`);
+    const files: Record<string, [string | undefined, string]> = {
+      "added.min.js": [undefined, `!function(){${locals(range(0, 20), 0)}}();\n`],
+      "data.json": [JSON.stringify(range(0, 2000)), JSON.stringify(range(1, 2001), null, 1)],
+      "edited.js": [readable("x", 1), readable("x", 2)],
+      "edited.min.js": [
+        `!function(){${locals(range(0, 300), 0)}}();\n`,
+        `!function(){${locals(range(1, 301), 3)}}();\n`,
+      ],
+      "notes.txt": [lines(2000, i => `line ${i}\n`), lines(2000, i => `line ${i === 7 ? "seven" : i}\n`)],
+      "renamed.js": [readable("x", 1), readable("y", 1).replace("y + 7;", "x + 7;")],
+      "style.css": [lines(500, i => `.a${i}{top:${i}px}`), lines(500, i => `.a${i} { top: ${i || 9}px }\n`)],
+    };
+    const sides = (names: string[]) =>
+      Object.fromEntries([
+        ["a/same.txt", ""],
+        ["b/same.txt", ""],
+        ...names.flatMap(name =>
+          files[name].flatMap((text, side) => (text === undefined ? [] : [[`${"ab"[side]}/${name}`, text]])),
+        ),
+      ]);
+    const names = Object.keys(files);
+    const [together, ...alone] = await Promise.all([names, ...names.map(name => [name])].map(n => pretty(sides(n))));
+    const sections = (text: string) =>
+      text
+        .split(/\n(?=\S+ ─{3})/)
+        .slice(1)
+        .map(section => section.split("\n./a → ./b\n")[0].trimEnd());
+    expect(sections(together.text)).toEqual(alone.flatMap(({ text }) => sections(text)));
+    expect(sections(together.text)).toHaveLength(names.length);
+    expect([together, ...alone].map(({ exitCode }) => exitCode)).toEqual(range(0, names.length + 1).fill(0));
+  });
+
+  // From 256 KiB on, the two sides are parsed on a thread each.
+  const comments = (count: number) => Buffer.alloc(200 * count, `//${Buffer.alloc(197, "x")}\n`).toString();
+  const sum = (name: string, last: number) =>
+    `function sum(${name}) {\n  return ${name} + 1;\n}\nfunction last() {\n  return ${last};\n}\n`;
+  const nested = (last: number) => `export const f =\n${Buffer.alloc(300 * 8, "a =>\n   ").toString()}${last};\n`;
+  test.each([
+    ["a renamed local and an edit", sum("x", 1), sum("y", 2), "2 folded +1 -1"],
+    ["only a renamed local", sum("x", 1), sum("y", 1), "formatting only"],
+    ["an old side that is not parsed", sum("x", 1) + "(\n", sum("x", 1), "not parsed -1"],
+    ["a new side that is not parsed", sum("x", 1), sum("x", 1) + "(\n", "not parsed +1"],
+    ["scopes nested too deep to be renamed", nested(1), nested(2), "+1 -1"],
+  ])("a large file looks the same as a small one: %s", async (_, before, after, badge) => {
+    const [small, large] = await Promise.all(
+      [5, 1400].map(count => pretty({ "a/x.js": before + comments(count), "b/x.js": after + comments(count) })),
+    );
+    expect(large).toEqual(small);
+    expect(large.text.match(/\nx\.js ─+ (.*)\n/)?.[1]).toBe(badge);
+    expect(large.exitCode).toBe(0);
+  });
+
+  test.each([
+    [256, "formatting only"],
+    [257, "+1 -1"],
+  ])("locals are matched in scopes nested 256 deep and no deeper (%d)", async (depth, badge) => {
+    const blocks = (name: string) =>
+      `${Buffer.alloc(2 * depth, "{\n")}let ${name} = g();\n${Buffer.alloc(2 * depth, "}\n")}`;
+    const { text, exitCode } = await pretty({ "a/x.js": blocks("x"), "b/x.js": blocks("y") });
+    expect(text.match(/\nx\.js ─+ (.*)\n/)?.[1]).toBe(badge);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["small", 5],
+    ["large", 1400],
+  ])("if the old side is not parsed, notes are about the new one with its own names (%s)", async (_, count) => {
+    // The two reads are printed as one destructuring, so `process.env` is not in the print.
+    const { text, exitCode } = await pretty({
+      "a/x.js": "(\n" + comments(count),
+      "b/x.js":
+        "export const process = g();\nconst a = process.env, b = process.argv;\n" +
+        "function f(fetch) {\n  fetch(a, b);\n}\n" +
+        comments(count),
+    });
+    expect(text.split("\n").filter(l => l.startsWith("  ▲ "))).toEqual(["  ▲ +1 fetch() (x.js)"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("minified: a large file looks the same as a small one", async () => {
+    const [small, large] = await Promise.all(
+      [2000, 280_000].map(length => {
+        const text = Buffer.alloc(length, "x").toString();
+        return pretty({
+          "a/x.min.js": `!function(){${locals(range(0, 20), 0)}}();g("${text}");\n`,
+          "b/x.min.js": `!function(){${locals([900, ...range(0, 20)], 7)}}();g("${text}");\n`,
+        });
+      }),
+    );
+    expect(large).toEqual(small);
+    expect(changedIds(large.text)).toEqual(["+900"]);
+    expect(large.exitCode).toBe(0);
+  });
+
+  test("a comment that is removed right before an argument is a change", async () => {
+    const { text, exitCode } = await pretty({ "a/x.js": "f(/*c*/x);\n", "b/x.js": "f(x);\n" });
+    expect(changedLines(text)).toEqual(["    1 │- f(/*c*/x);", "    1 │+ f(x);"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a deleted file is still parsed for the terminal view", async () => {
+    const { text, exitCode } = await pretty({
+      "a/broken.js": "(\n",
+      "a/gone.min.js": `!function(){${locals(range(0, 20), 0)}}();\n`,
+      "a/same.txt": "",
+      "b/same.txt": "",
+    });
+    expect(text).toMatch(/\nbroken\.js ─+ not parsed deleted -1\n/);
+    expect(text).toMatch(/\ngone\.min\.js ─+ unminified deleted -42\n/);
+    expect(exitCode).toBe(0);
   });
 
   test("--minify folds equivalent syntax; --unminify renames locals in lockstep even in readable files; -w", async () => {
@@ -1102,6 +1475,81 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(text).toContain("▲ terminal escape sequences in index.js (shown as ␛)\n");
     expect(text).toContain("▲ bidirectional text controls in auth.js (Trojan Source; shown as ‹U+202E›)\n");
     expect(exitCode).toBe(0);
+  });
+
+  test("long files are colored line by line, in order", async () => {
+    const names = ["f0.js", "f1.js", "f2.js"];
+    const numbers = Array.from({ length: isDebug ? 700 : 4000 }, (_, i) => i + 1);
+    const { raw, stderr, exitCode } = await pretty(
+      {
+        "a/same.txt": "",
+        "b/same.txt": "",
+        ...Object.fromEntries(names.map((name, i) => [`b/${name}`, numbers.map(n => `f(${i}, ${n});\n`).join("")])),
+      },
+      [],
+      // Few threads have room for few parts.
+      { GOMAXPROCS: "2" },
+    );
+    const tint = `${ESC}[0m${ESC}[48;5;22m`;
+    const number = (n: number) => `${tint}${ESC}[33m${n}${tint}`;
+    expect(raw.split("\n").filter(line => line.includes("│"))).toEqual(
+      names.flatMap((_, i) =>
+        numbers.map(
+          n =>
+            `${ESC}[32m${String(n).padStart(5)} ${ESC}[0m${ESC}[2m│${tint}${ESC}[32m${ESC}[1m+ ${tint}` +
+            `f(${number(i)}, ${number(n)})${tint}${ESC}[2m;${tint}${ESC}[K${ESC}[0m`,
+        ),
+      ),
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("long lines and many short files are printed whole", async () => {
+    // Each of the four puts another byte of a character at the end of the first part.
+    const long = ["", "a", "aa", "aaa"].map(start => start + Buffer.alloc(4 * 20_000, "😀"));
+    const short = Array.from({ length: 400 }, (_, i) => `line ${i}`);
+    const files = [...long, ...short].map((line, i) => [`f${String(i).padStart(3, "0")}.txt`, line]);
+    const { text, stderr, exitCode } = await pretty(
+      {
+        "a/same.txt": "",
+        "b/same.txt": "",
+        ...Object.fromEntries(files.map(([name, line]) => [`b/${name}`, `${line}\n`])),
+      },
+      [],
+      { GOMAXPROCS: "8" },
+    );
+    const shown = text.split("\n").flatMap(
+      l =>
+        l
+          .match(/^(\S+) ─|│\+ (.*)/)
+          ?.slice(1)
+          .join("") ?? [],
+    );
+    expect(shown).toEqual(files.flat());
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("shift-out and shift-in bytes are drawn, and bytes that are not UTF-8 are replaced", async () => {
+    using dir = tempDir("pm-diff-bytes", {
+      "a/same.txt": "",
+      "b/same.txt": "",
+      "b/x.js": 'f("\x0f\x0e\x09\x0e");\n',
+      "b/y.txt": Buffer.from("\x0e\x01 caf\xe9\n", "latin1"),
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [bytes, stderr, exitCode] = await Promise.all([p.stdout.bytes(), p.stderr.text(), p.exited]);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/\x1b\[[0-9;]*[mK]/g, "");
+    expect(text.split("\n").filter(line => line.includes("│"))).toEqual([
+      '    1 │+ f("^O^N\t^N");',
+      "    1 │+ ^N^A caf\ufffd",
+    ]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // ConPTY rewrites the process's output.
@@ -1703,6 +2151,65 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.exitCode).toBe(0);
   });
 
+  test("a trailing slash makes ./x.tgz/ a folder", async () => {
+    using dir = tempDir("pm-diff-tgz-folder", { "one.tgz": v1, "two": { ...v1, "index.js": v2["index.js"] } });
+
+    const { stdout, stderr, exitCode } = await diff(["./one.tgz/", "./two", "--name-only"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["..\\one", "~/two\\..\\one"])("a backslash separates in %s", async side => {
+    const two = { ...v1, "index.js": v2["index.js"] };
+    using dir = tempDir("pm-diff-backslash", { one: v1, two: { ...two, ...(isWindows ? {} : { "..\\one": two }) } });
+
+    const home = { HOME: String(dir), USERPROFILE: String(dir) };
+    const { stdout, stderr, exitCode } = await diff([side, ".", "--name-only"], join(String(dir), "two"), home);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toContain("M index.js");
+    expect(exitCode).toBe(0);
+  });
+
+  // From 256 KiB on, the two tarballs are unpacked on a thread each.
+  test.each([
+    ["whole.tar", "other.tar", ""],
+    ["short.tar", "whole.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["whole.tar", "short.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["short.tar", "junk.tar", "junk.tar: failed to read tarball"],
+    ["junk.tar", "short.tar", "short.tar: blob.bin: failed to read archive data"],
+    ["whole.tar", "petabyte.tar", "petabyte.tar: blob.bin: failed to read archive data"],
+  ])("large tarballs: %s and %s", async (left, right, error) => {
+    const tar = async (fill: number) =>
+      Buffer.from(await new Bun.Archive({ "package/blob.bin": Buffer.alloc(400 * 1024, fill) }).bytes());
+    const [whole, other] = [await tar(0), await tar(1)];
+    // The size is 2^50 in base 256. The checksum counts its own field as spaces.
+    const petabyte = Buffer.from(whole).fill(0, 124, 136).fill(" ", 148, 156);
+    petabyte[124] = 0x80;
+    petabyte[129] = 4;
+    const checksum = petabyte.subarray(0, 512).reduce((sum, byte) => sum + byte);
+    petabyte.write(checksum.toString(8).padStart(6, "0") + "\0", 148);
+    using dir = tempDir("pm-diff-tarballs", {
+      "whole.tar": whole,
+      "other.tar": other,
+      "short.tar": whole.subarray(0, 300 * 1024),
+      "junk.tar": Buffer.alloc(300 * 1024, "junk"),
+      "petabyte.tar": petabyte,
+    });
+    const { stdout, stderr, exitCode } = await diff([`./${left}`, `./${right}`, "--name-only"], String(dir));
+    expect({
+      changed: stdout.split("\n").filter(l => /^[AMD] /.test(l)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    }).toEqual(
+      error
+        ? { changed: [], stderr: `error: <dir>/${error}`, exitCode: 1 }
+        : { changed: ["M blob.bin"], stderr: "", exitCode: 0 },
+    );
+  });
+
   test("a tarball entry larger than 64 MiB is read whole", async () => {
     // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
     // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.
@@ -1753,7 +2260,8 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       stderr: "pipe",
     });
     const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode };
+    const cpuSeconds = Number(p.resourceUsage()!.cpuTime.total) / 1e6;
+    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode, cpuSeconds };
   }
   const changed = (text: string) =>
     text
@@ -1806,6 +2314,65 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       expect(text).toMatch(/\nm\.js ─+ (unminified )?\+1 -1\n/);
       expect(exitCode).toBe(0);
     }
+  });
+
+  test("top-level names that direct eval can read are not renamed", async () => {
+    const files: Record<string, string> = {};
+    for (const [name, use] of [
+      ["top.js", 'console.log(eval("x"));'],
+      ["nested.cjs", 'exports.f = () => eval("x");'],
+      ["module.mjs", 'export default eval("x");'],
+    ]) {
+      files[`a/${name}`] = `var x = read(), y = other();\n${use}\n`;
+      files[`b/${name}`] = `var y = read(), x = other();\n${use}\n`;
+    }
+    for (const args of [[], ["--unminify"]]) {
+      const { text, exitCode } = await pretty(files, [...args, "--stat"]);
+      expect(text.match(/^ \S+ +│.*$/gm)!.map(line => line.split(/ +/).join(" "))).toEqual([
+        expect.stringMatching(/^ module\.mjs │ \d/),
+        expect.stringMatching(/^ nested\.cjs │ \d/),
+        expect.stringMatching(/^ top\.js │ \d/),
+      ]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("-w shows whitespace that changes what runs", async () => {
+    const { text, exitCode } = await pretty(
+      {
+        "a/after-backslash.sh": "echo \\\nrun\n",
+        "b/after-backslash.sh": "echo \\ \nrun\n",
+        "a/blank-after-backslash.sh": "echo \\\nrun\n",
+        "b/blank-after-backslash.sh": "echo \\\n\nrun\n",
+        "a/cr-first.sh": "x\nrun\n",
+        "b/cr-first.sh": "x\n\rrun\n",
+        "a/form-feed.sh": "x run\n",
+        "b/form-feed.sh": "x\frun\n",
+        "a/bin": "#!/bin/sh\n",
+        "b/bin": "\n#!/bin/sh\n",
+        "a/cr.js": "// note run()\n",
+        "b/cr.js": "// note\rrun()\n",
+        "a/cr.sh": "# note\rrun\n",
+        "b/cr.sh": "# note\nrun\n",
+        "a/crlf.txt": "one \r\ntwo\r\n",
+        "b/crlf.txt": "\none\n\n two",
+        "a/lf.js": "// note run()\n",
+        "b/lf.js": "// note\nrun()\n",
+      },
+      ["-w", "--stat"],
+    );
+    expect(text.match(/^ \S+ +│.*$/gm)!.map(line => line.split(/ +/).join(" "))).toEqual([
+      " after-backslash.sh │ 2 +-",
+      " bin │ 1 +",
+      " blank-after-backslash.sh │ 1 +",
+      " cr-first.sh │ 2 +-",
+      " cr.js │ 2 +-",
+      " cr.sh │ 3 ++-",
+      " crlf.txt │ whitespace only",
+      " form-feed.sh │ 2 +-",
+      " lf.js │ 3 ++-",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   test("a package.json name that is not an npm name is never printed or looked up", async () => {
@@ -2197,6 +2764,21 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Only a file of 64 MB reaches the limit. A debug build takes several seconds to scan it.
+  test("style sheets under the size limit are normalized whatever they add up to", async () => {
+    const { text, exitCode } = await pretty(
+      {
+        // As large as a file may be, and cheap: the parser gives up at the `;`.
+        "b/a.css": "@import;" + Buffer.alloc(64 * 1024 * 1024 - 8, " ").toString(),
+        "a/z.css": ".a{color:red}",
+        "b/z.css": ".a { color: red }",
+      },
+      ["--stat"],
+    );
+    expect(text).toMatch(/\n z\.css +│ formatting only\n/);
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",
@@ -2210,6 +2792,59 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     },
     60_000,
   );
+
+  // Each of these took 7 seconds or more in a release build.
+  const lines = (n: number, line: (i: number) => string) =>
+    Array.from({ length: n }, (_, i) => line(i)).join("\n") + "\n";
+  const withManifest = (text: string) => ({
+    "a/package.json": text,
+    "b/package.json": text,
+    "a/x.txt": "1\n",
+    "b/x.txt": "2\n",
+  });
+  test.skipIf(isDebug || isASAN).each<[string, () => Record<string, string>, string]>([
+    [
+      "changed comment lines",
+      () => ({
+        "a/i.js": lines(80_000, i => "//a" + i) + "f();\n",
+        "b/i.js": lines(80_000, i => "//b" + i) + "f();\n",
+      }),
+      "+80000 -80000",
+    ],
+    [
+      "imports",
+      () => ({ "a/i.js": lines(70_000, i => `import "a${i}";`), "b/i.js": lines(70_000, i => `import "b${i}";`) }),
+      "+70000 -70000",
+    ],
+    ["keys of package.json", () => withManifest("{" + lines(120_000, i => `"k${i}":1,`) + '"name":"p"}'), "+1 -1"],
+    [
+      "dependencies",
+      () => withManifest('{"dependencies":{' + lines(80_000, i => `"k${i}":"1",`) + '"p":"1"}}'),
+      "+1 -1",
+    ],
+    [
+      "globals that take the names for locals",
+      () => {
+        const start =
+          lines(1_000, i => "a1" + Buffer.alloc(i, "_").toString() + "();") + lines(55_000, () => "f(x=>x);");
+        return { "a/i.js": start + "one();\n", "b/i.js": start + "two();\n" };
+      },
+      "+1 -1",
+    ],
+    [
+      "a renamed local in a long statement",
+      () => ({
+        "a/i.js": "var foo = g();\nfoo.k();\nh(\n" + lines(400_000, () => "foo +") + "foo);\n",
+        "b/i.js": "var bar = g();\nbar.k();\n",
+      }),
+      "+0 -400002",
+    ],
+  ])("large inputs finish: %s", async (_, files, totals) => {
+    const { text, exitCode, cpuSeconds } = await pretty(files(), ["--stat"]);
+    expect(text).toContain("\n1 file  " + totals);
+    expect(cpuSeconds).toBeLessThan(5);
+    expect(exitCode).toBe(0);
+  });
 
   test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
     const deep = "export const f = " + Buffer.alloc(300 * 6, "() => ").toString() + "1;\n";
@@ -2232,6 +2867,50 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(text).not.toContain("empty.js");
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  const times = (text: string, n: number) => Buffer.alloc(text.length * n, text).toString();
+
+  // Under two seconds in a release build. With a pass over all removals for each join it takes minutes.
+  test.skipIf(isDebug).each([
+    [
+      "left",
+      () => times("c\nd\n", 200_000) + times("c\n", 200_000) + "e\np\n",
+      () => times("c\n", 200_000) + "e\nq\n",
+      "+1 -400001",
+    ],
+    [
+      "right",
+      () => "y\nz\n" + times("c\n", 800_000) + "w\n" + times("c\n", 800_000) + times("d\nc\n", 400_001),
+      () => "z\ny\n" + times("c\n", 800_000) + "w\n" + times("c\n", 400_001),
+      "+1 -1200002",
+    ],
+  ])(
+    "a removal that slides %s along many others joins them",
+    async (_, a, b, totals) => {
+      const { text, exitCode } = await pretty({ "a/data.txt": a(), "b/data.txt": b() }, ["--raw", "--stat"]);
+      expect(text).toContain("\n1 file  " + totals);
+      expect(exitCode).toBe(0);
+    },
+    15_000,
+  );
+
+  // Takes about a second in a release build.
+  test.skipIf(isDebug)(
+    "a long run of equal lines that only the reverse search reaches stays unchanged",
+    async () => {
+      const { text, exitCode } = await pretty(
+        {
+          "a/data.txt": times("c\n", 10_000) + times("x\n", 100_000) + "d\n",
+          "b/data.txt": "d\n" + times("x\n", 100_000) + "c\n",
+        },
+        ["--raw", "--stat"],
+      );
+      const added = Number(text.match(/\n1 file  \+(\d+) -\d+\n$/)?.[1]);
+      expect(added).toBeLessThan(100);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   test("un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters", async () => {
     const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";

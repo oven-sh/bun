@@ -1,0 +1,15 @@
+# f1 = next
+# -- source: is-error-of-a-proven-error-folds.ts
+# function next(error: Error, count: number): number {
+#   if (Error.isError(error)) return count + count;
+#   return String(error).length;
+# }
+# declare const input: any;
+# (globalThis as any).answer = next(new Error("failed"), +input);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 21, patches 5, moves 5, unlikely or rare 4.
+# RUN(X64): steps most:26 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 26

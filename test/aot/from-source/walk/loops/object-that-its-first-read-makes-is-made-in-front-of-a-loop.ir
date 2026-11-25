@@ -1,10 +1,11 @@
 # -- source: main.ts
 # function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + steps[i & 1]) | 0; return sum; }
 # function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const turns: number = JSON.parse("3");
 # const withNoTurn = attempt(0);
-# const withTurns = attempt(3);
+# const withTurns = attempt(turns);
 # const steps: number[] = [1, 2];
-# print(withNoTurn, withTurns, attempt(0), attempt(3));
+# print(withNoTurn, withTurns, attempt(0), attempt(turns));
 # declare function print(...values: unknown[]): void;
 # -- end of source
 # The list is made by whoever reads `steps` first: the word is empty in the dead zone, holds a mark from the declaration on, and then the list. Each turn read the word, tested for the mark, and checked the dead zone.

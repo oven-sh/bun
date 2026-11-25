@@ -1,0 +1,21 @@
+# `const step = machine.steps[at]; switch (step.op) { case 'mark': return step.n * 2; .. }`: the list holds five kinds of records. One of them gets its `op` from a variable, so the tag proves nothing; and `out[fork].y = ..` may lay a `y` into any of them, so a record that lacks a name cannot be said to answer undefined: no typed form takes the read.
+# What the element is, one of the five, is proven, and one of the five is written with an `n`. That one is expected at the read, as the last try in front of the read by name: one test of the shape and the slot. Nothing is asked of what was seen to arrive there.
+# f2 = weigh . L6 = { op, n }, L8 = { op, part }, L9 = { op, x, y }
+# -- source: the-one-of-the-proven-records-that-has-the-name-is-expected-at-the-read.cjs
+# function assemble(part, out) { switch (part.kind) { case 'row': for (const each of part.parts) assemble(each, out); break; case 'fork': { const fork = out.push({ op: 'fork', x: 0, y: 0 }) - 1; out[fork].x = out.length; assemble(part.left, out); const leap = out.push({ op: 'leap', x: 0 }) - 1; out[fork].y = out.length; assemble(part.right, out); out[leap].x = out.length; break; } case 'mark': out.push({ op: 'mark', n: part.place }); break; default: out.push({ op: part.kind, part }); } return out; }
+# class Machine { constructor() { this.steps = assemble({ kind: 'row', parts: [{ kind: 'fork', left: { kind: 'dot' }, right: { kind: 'mark', place: 4 } }, { kind: 'end' }] }, []); this.steps.push({ op: 'halt' }); } }
+# const machine = new Machine();
+# function weigh(at) { const step = machine.steps[at]; switch (step.op) { case 'fork': return step.x + step.y; case 'mark': return step.n * 2; case 'dot': return step.part.kind.length; default: return -1; } }
+# print(weigh(0), weigh(1), weigh(2), weigh(3), weigh(4));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: = ShapeTest {{*}}layouts=[L9]
+# CHECK: = GetSlot {{*}}key="y" receivers=[L9] level=Proven
+# RUN(MARK): walk f2 mechanisms=all
+# MARK: = ShapeTest {{*}}layouts=[L6]
+# MARK: = GetSlot {{*}}key="n" receivers=[L6] level=Proven
+# RUN(PART): walk f2 mechanisms=all
+# PART: = ShapeTest {{*}}layouts=[L8]
+# PART: = GetSlot {{*}}key="part" receivers=[L8] level=Proven
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 3 -1 8 -1

@@ -7,7 +7,7 @@
 # console.log(new Base().a, new Below().c, new Below().b);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "a" proven=i32 writers-known filled
-# CHECK: field L0.1 "b" proven=i32 writers-known filled
-# CHECK: field L1.1 "a" proven=i32 writers-known filled
-# CHECK: field L1.2 "b" proven=i32 writers-known filled
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.1 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known filled

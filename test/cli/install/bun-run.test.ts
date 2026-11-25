@@ -328,6 +328,43 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(isWindows)("--cwd reads backslashes as Windows does unless that leads nowhere", async () => {
+    using dir = tempDir("bun-run-cwd-backslash", {
+      "a/b/.keep": "",
+      "c/d/e/.keep": "",
+      "c\\d/.keep": "",
+      "f\\g/.keep": "",
+    });
+    for (const [written, expected] of [
+      ["a\\b", "a/b"],
+      ["c\\d", "c/d"],
+      ["f\\g", "f\\g"],
+      [join(String(dir), "c\\d"), "c\\d"],
+      ["a\\b/..", "a"],
+      ["c\\d/e", "c/d/e"],
+      [join(String(dir), "a/b").replaceAll("/", "\\"), "a/b"],
+    ]) {
+      const { stdout } = await $`${bunExe()} --cwd ${written} -p "process.cwd()"`.cwd(String(dir)).env(bunEnv).quiet();
+      expect(stdout.toString()).toBe(join(String(dir), expected) + "\n");
+    }
+  });
+
+  it.skipIf(isWindows)("--cwd takes ..\\ for a name only on the way to the working directory", async () => {
+    using dir = tempDir("bun-run-cwd-parent", { "a/..\\b/c/.keep": "", "a/..\\missing/.keep": "", "b/c/.keep": "" });
+    for (const [cwd, written, expected] of [
+      ["a", "..\\b", "b"],
+      ["a", "<dir>/a/..\\b", "b"],
+      ["a", "..\\missing", ""],
+      ["a", "<dir>/a/..\\missing", ""],
+      ["a/..\\b", "<dir>/a/..\\b/c", "a/..\\b/c"],
+    ]) {
+      const given = written.replace("<dir>", () => String(dir));
+      const shell = $`${bunExe()} --cwd ${given} -p "process.cwd()"`.cwd(join(String(dir), cwd));
+      const { stdout } = await shell.env(bunEnv).quiet().nothrow();
+      expect(stdout.toString()).toBe(expected && join(String(dir), expected) + "\n");
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/29273
   // `C:` is the current directory of drive C, it is not the root `C:\`.
   it.skipIf(!isWindows)("runs a script of a package.json in the root of a drive", async () => {
@@ -1358,6 +1395,40 @@ describe.concurrent("bun run", () => {
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  it.if(isWindows)("refuses to pass an argument containing a cmd.exe special character to a .cmd bin", async () => {
+    using dir = tempDir("bun-run-cmd-bin-metachar", {
+      "package.json": JSON.stringify({ name: "cmd-bin-metachar" }),
+      "node_modules/.bin/say.cmd": "@echo off\r\necho %*\r\n",
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "say", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+    };
+
+    expect(await run("hello")).toMatchObject({ stdout: "hello", exitCode: 0 });
+    expect(await run('x" & echo marker & "')).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(
+        'error: Failed to run "say.cmd": argument "x\\" & echo marker & \\"" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+      ),
+      exitCode: 1,
+    });
+    expect(await run("hello", "%PATH%")).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(
+        'error: Failed to run "say.cmd": argument "%PATH%" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+      ),
+      exitCode: 1,
+    });
   });
 
   // The node/bun shims live in one directory shared by every bun process of

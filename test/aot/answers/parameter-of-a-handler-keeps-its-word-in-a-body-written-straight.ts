@@ -1,10 +1,10 @@
 // answers: without-library
 // # A word of the frame serves the next value once its value has been read for the last time in its block. A parameter of a handler is filled by a landing pad, which is written behind every block:
 // # it has its word from the head of its block on, not from its first read: a value made in the handler in front of that read took the same word, and `said + sum` read the name of the error for the sum.
-// # OPTIONS: testing=WritesBodiesStraight
-// # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+// # OPTIONS: testing=ForceStraightCompilation
+// # RUN(STRAIGHT): compile StraightUnitsCompiled mechanisms=all
 // # REQUIRES(STRAIGHT): faulting-loop-polls
-// # STRAIGHT: statistic UnitsWrittenStraight 5
+// # STRAIGHT: statistic StraightUnitsCompiled 5
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 25 of 25 of 25

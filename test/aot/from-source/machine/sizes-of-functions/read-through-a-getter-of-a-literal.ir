@@ -1,0 +1,24 @@
+# f1 = twiceTheTotal
+# -- source: read-through-a-getter-of-a-literal.ts
+# function twiceTheTotal(cart: Cart): number {
+#   return cart.total * 2;
+# }
+# function makeCart(price: number, count: number) {
+#   return {
+#     price,
+#     count,
+#     get total(): number {
+#       return this.price * this.count;
+#     },
+#   };
+# }
+# type Cart = ReturnType<typeof makeCart>;
+# declare const input: any;
+# (globalThis as any).answer = twiceTheTotal(makeCart(+input, +input));
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 10, patches 1, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 10

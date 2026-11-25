@@ -1,0 +1,56 @@
+# import path from "node:path";  function first() { return path.basename("a"); }  function second() { return path.basename("b"); }  first();  second();
+# Two bodies name the object: each is handed the one record, and the function on it knows both its callers.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link fields functions modules mechanisms=all
+# CHECK: field L0.0 "basename" proven=f2
+# CHECK: function f2 callers-known
+# CHECK: function f3 unreached
+# CHECK: module m1 value-stays-with-compiled-code
+
+layout L0 module=m1 fields=[{key="basename" declared={type=anything} flags=[IsRequired]}, {key="join" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="join" module=m1 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1 syntheticExports=[{name="join" variable=g0 isKnownMember=true}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0 calleeName="first"
+    v2 = NewClosure function=f5
+    v3 = Call v2 calleeName="second"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="basename" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="join" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="first" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodePath
+    v1 = PropGet v0 key="basename"
+    v2 = String string="a"
+    v3 = Call v1, v0, v2 calleeKey="basename" calleeName="path.basename"
+    Return v3
+}
+function f5 name="second" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodePath
+    v1 = PropGet v0 key="basename"
+    v2 = String string="b"
+    v3 = Call v1, v0, v2 calleeKey="basename" calleeName="path.basename"
+    Return v3
+}

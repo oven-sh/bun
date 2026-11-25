@@ -6,6 +6,7 @@ import type {
   ModelBuiltin,
   ModelCallback,
   ModelCalledFunction,
+  ModelHandlerCall,
   ModelHostCall,
   ModelHostObject,
   ModelHostUse,
@@ -361,9 +362,16 @@ test("a cell that hands back what the program handed in is filled by rows, out o
   expect(
     problemsOf({ builtins: holder(reads, stores, withFlow({ transfers: [{ from: newString, to: cell }] })) }),
   ).toEqual(refusal("a row stores NewValue there"));
-  expect(
-    problemsOf({ builtins: holder(reads, stores, withFlow({ callbacks: [{ resultTo: cell } as ModelCallback] })) }),
-  ).toEqual(refusal("a row stores there what a callback answers"));
+  const answers = {
+    newTarget: none,
+    thisValue: none,
+    spreadArguments: none,
+    arguments: [],
+    resultTo: cell,
+  } as unknown as ModelCallback;
+  expect(problemsOf({ builtins: holder(reads, stores, withFlow({ callbacks: [answers] })) })).toEqual(
+    refusal("a row stores there what a callback answers"),
+  );
   expect(
     problemsOf({
       builtins: holder(
@@ -386,6 +394,51 @@ test("a cell that hands back what the program handed in is filled by rows, out o
       ],
     }),
   ).toEqual(refusal("what a function answers that the host calls is kept there"));
+});
+
+test("a cell that keeps members of an export alone is called by rows and handed to nobody", () => {
+  const withFlow = (flow: Partial<ModelOverload["flow"]>) =>
+    ({ ...overloadTaking(1), flow: { ...overloadTaking(1).flow, ...flow } }) as ModelOverload;
+  const cell = inCell("Printer.write");
+  const keepsMember: ModelHostUse = { path: [nameOf("write")], read: "Kept", cell: nameOf("Printer.write") };
+  const handlerCall = (columns: Partial<ModelHandlerCall>) =>
+    withFlow({ handlerCalls: [{ callee: cell, thisValue: none, arguments: [], ...columns } as ModelHandlerCall] });
+  const callback = (columns: Partial<ModelCallback>) =>
+    withFlow({
+      callbacks: [
+        {
+          newTarget: none,
+          thisValue: none,
+          spreadArguments: none,
+          arguments: [],
+          resultTo: none,
+          ...columns,
+        } as ModelCallback,
+      ],
+    });
+  const printer = (uses: ModelHostUse[] | null, ...overloads: ModelOverload[]) => [
+    entry("Printer.prototype.print", "Method", { moduleLoads: [reading(uses)] }, overloads),
+  ];
+  const refusal = (why: string) => [
+    `Printer.prototype.print reads print of internal/printer: members of it alone are kept, in the native cell Printer.write, and ${why}`,
+  ];
+  const handsOut = refusal("a row hands out what lies there");
+
+  expect(problemsOf({ builtins: printer([keepsMember], handlerCall({})) })).toEqual([]);
+  expect(problemsOf({ builtins: printer([keepsMember]) })).toEqual(refusal("no row calls what lies there"));
+  for (const row of [
+    withFlow({ transfers: [{ from: cell, to: { place: "Result" } }] }),
+    withFlow({ propertyActions: [{ action: "ReadsByKey", value: cell } as ModelPropertyAction] }),
+    handlerCall({ thisValue: cell }),
+    handlerCall({ arguments: [cell] }),
+    callback({ newTarget: cell }),
+    callback({ thisValue: cell }),
+    callback({ spreadArguments: cell }),
+    callback({ arguments: [cell] }),
+  ])
+    expect(problemsOf({ builtins: printer([keepsMember], handlerCall({}), row) })).toEqual(handsOut);
+  expect(problemsOf({ builtins: printer([keepsMember, { path: [], read: "Inspected" }]) })).toEqual([]);
+  expect(problemsOf({ builtins: printer([kept("Printer.write")]) })).toEqual([]);
 });
 
 test("the records of start-up are checked as those of an entry are", () => {

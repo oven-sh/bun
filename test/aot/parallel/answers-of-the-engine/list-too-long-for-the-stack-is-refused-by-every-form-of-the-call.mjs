@@ -2,7 +2,7 @@
 // a spread, `call` with a spread and `apply`, in tail position and elsewhere, of a callee with a rest parameter, which a direct call hands the list itself, and of a callee that takes nothing.
 // A short list that is spread into a rest parameter in tail position gives up the frame.
 // The text brings the library's Function.prototype.call and Function.prototype.apply as the front end writes them. The engine's own `call` would lay the list out twice.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function count(...all) { return all.length; }
 function nothing() { return "nothing"; }

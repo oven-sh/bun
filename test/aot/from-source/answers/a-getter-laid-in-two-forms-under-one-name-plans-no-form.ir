@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# const names = {};
+# Object.defineProperty(names, "size", { configurable: true, get() { return 3; } });
+# function sum(t) { let s = 0; for (let i = 0; i < t; i++) s += names.size; return s; }
+# const first = sum(5);
+# Object.defineProperty(names, "size", { configurable: true, enumerable: true, get() { return 4; } });
+# print(first, sum(5));
+# -- end of source
+# The other side of a-getter-laid-by-a-written-descriptor-lies-in-a-slot-of-its-form.ir: the name is laid in TWO forms: no form is planned, and two getters are expected of nobody.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: field {{*}} "size" {{*}}filled-by-accessors-alone
+# RUN(FORM): link fields mechanisms=all
+# FORM-NOT: "size" {{*}}form=
+# RUN(ANSWER): run-in-shell
+# ANSWER: 15 20
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 15 20
+# CHECKED-NEXT: exited with 0

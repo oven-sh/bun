@@ -1,4 +1,4 @@
-// COUNTER: CompiledStructuresMade <= 8
+// COUNTER: CompiledStructuresCreated <= 8
 // COUNTER: operationAOTGetByIdAndCache <= 8
 // The field is written `string`, and every second object is stored a number through `any`. No object leaves the program.
 class Holder { text: string; constructor(value: any) { this.text = value; } }

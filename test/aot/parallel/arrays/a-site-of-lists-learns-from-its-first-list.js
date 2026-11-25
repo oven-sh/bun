@@ -1,5 +1,6 @@
 // each site makes a few empty lists that turn into another kind of storage at once: by a spread, a push, a store far behind the end, a fraction; what they hold is printed
 // The birth of the second list of a site looks at what became of the first, so only the first spread at each site leaves its stub for the run time.
+// The first list that `spread` is handed holds texts: the literal of two whole numbers is born with storage for int32, as the engine bears it, and a site whose first list holds int32 alone is looked at again only 64 births later.
 // COUNT: operation:operationAOTAppendElements <= 4
 // COUNT: operation:operationAOTAppendMembers <= 4
 function spread(source) { return [...source]; }
@@ -10,7 +11,7 @@ function called(...rest) { return rest.length + ":" + rest.join(); }
 function passedOn(list) { return called(...list); }
 for (let turn = 0; turn < 70; turn++) {
     const lines = [
-        spread(turn % 3 ? ["a" + turn, "b"] : [turn, turn + 1]).join(),
+        spread(turn % 3 !== 1 ? ["a" + turn, "b"] : [turn, turn + 1]).join(),
         spread(new Set([turn, "s" + turn])).join(),
         spread(new Map([[turn, { turn }]]).keys()).join(),
         spread("xy" + turn).join("|"),

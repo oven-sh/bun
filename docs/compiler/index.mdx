@@ -28,7 +28,7 @@ Hello world!
 | Builds for           | Any platform, with `--target` | The platform you build on |
 | Status               | Stable                        | Experimental              |
 
-`bun build --compile` runs everything that `bun run` runs. With `bun compile`, which is short for `bun build --compile --aot`, your program starts faster and uses less memory, and [a few things differ from `bun run`](/compiler/compatibility).
+`bun build --compile` runs nearly everything that `bun run` runs. With `bun compile`, which is short for `bun build --compile --aot`, your program starts faster, and [a few things differ from `bun run`](/compiler/compatibility). A large application uses less memory, and a tiny program uses about as much as without AoT.
 
 ## Read next
 
@@ -36,6 +36,6 @@ Hello world!
 - [Bytecode caching](/compiler/bytecode): make an executable from `bun build --compile` start faster.
 - [Standalone HTML](/bundler/standalone-html): `--compile --target=browser` writes one `.html` file.
 - [Ahead-of-time compilation](/compiler/aot): what `bun compile` gets you, and when to stay with the JIT.
-- [Types](/compiler/types) and [typed percentage](/compiler/explain): how your types make compiled code faster.
-- [Compatibility](/compiler/compatibility) and [libraries](/compiler/libraries): what differs from `bun run`, and which packages it affects.
-- [Debugging](/compiler/debugging), [size](/compiler/size), [troubleshooting](/compiler/troubleshooting) and [how it works](/compiler/internals).
+- [Types](/compiler/types) and [typed percentage](/compiler/explain): make compiled code faster.
+- [Compatibility](/compiler/compatibility) and [libraries](/compiler/libraries): what differs from `bun run`.
+- [Debugging](/compiler/debugging), [size](/compiler/size) and [troubleshooting](/compiler/troubleshooting).

@@ -15,10 +15,13 @@ function project(modules: number) {
   const files: Record<string, string> = {
     "package.json": `{ "type": "module" }`,
     "shared.ts": `export const one = 1;\n`,
+    // The listing of the cache asks once whether this file has run, so there is something to count however little a require asks.
+    "never.ts": `export const v = 0;\n`,
     "requires.test.ts": `import { test } from "bun:test";
 test("requires", () => {
   let sum = 0;
 ${numbers.map(index => `  sum += require("./m${index}").v;\n`).join("")}  console.log("answers", sum);
+  if (Object.keys(require.cache).length === 0) require("./never");
   delete require.cache[require.resolve("./m" + (sum - sum))];
 });
 `,
@@ -66,7 +69,7 @@ test.concurrent.each(ways.flatMap(way => sizes.map(modules => ({ ...way, modules
     const lines = readdirSync(cwd)
       .filter(name => name.startsWith("counts-"))
       .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
-      .filter(line => line.endsWith("\tsought:ModulesForWhatHasRun"));
+      .filter(line => line.endsWith("\tsought:ModulesScannedForEvaluationStatus"));
     expect(lines.length).toBeGreaterThan(0);
     sought.set(
       `${way} ${modules}`,

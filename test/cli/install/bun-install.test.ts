@@ -7372,6 +7372,33 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  test.skipIf(isWindows)('a backslash separates in a "file:" path and in the "bin" of a dependency', async () => {
+    using dir = tempDir("manifest-backslash", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:deps\\dep" } }),
+      "deps/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", bin: { hb: "bin\\hb.js" } }),
+      "deps/dep/bin/hb.js": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    expect(await file(join(String(dir), "node_modules", "dep", "package.json")).json()).toMatchObject({ name: "dep" });
+    expect(await readlink(join(String(dir), "node_modules", ".bin", "hb"))).toBe(join("..", "dep", "bin", "hb.js"));
+  });
+
+  test('an absolute path in the "bin" of a dependency is not linked', async () => {
+    using dir = tempDir("manifest-bin-absolute", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:dep", dirs: "file:dirs" } }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        bin: { absolute: "/bin/a.js", mixed: "x\\y/../../bin/a.js" },
+      }),
+      "dep/bin/a.js": "#!/usr/bin/env node\n",
+      "dirs/package.json": JSON.stringify({ name: "dirs", version: "1.0.0", directories: { bin: "/bin" } }),
+      "dirs/bin/in-dir": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    expect(await readdirSorted(join(String(dir), "node_modules", ".bin"))).toHaveBins(["mixed"]);
+  });
+
   // The root package.json is read on two paths: against a bun.lock that already lists
   // dependencies, and when the lockfile has to be created. Both report it the same way.
   describe.concurrent("root package.json that cannot be read or parsed", () => {
@@ -16534,15 +16561,65 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
   });
 });
 
-// The progress bar copies the name it is currently showing into a fixed
-// 768-byte buffer (PackageManager.progress_name_buf). A longer name aborted the
+// Windows draws the progress bar on a console only, never into a pipe.
+it.skipIf(isWindows)("the progress line of a running script keeps its name while another package arrives", async () => {
+  const pack = (files: Record<string, string>) => new Bun.Archive(files, { compress: "gzip" }).bytes();
+  const scriptStarted = Promise.withResolvers<void>();
+  let hasLockfile = false;
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/one.tgz": () => new Response(one),
+      "/another.tgz": async () => (hasLockfile && (await scriptStarted.promise), new Response(another)),
+      "/started": () => (scriptStarted.resolve(), new Response()),
+    },
+  });
+  using dir = tempDir("install-progress-two-names", {
+    "package.json": JSON.stringify({
+      dependencies: { one: `${server.url}one.tgz`, another: `${server.url}another.tgz` },
+      trustedDependencies: ["one"],
+    }),
+  });
+  const [one, another] = await Promise.all([
+    pack({
+      "package/package.json": JSON.stringify({ name: "one", scripts: { postinstall: "bun wait.js" } }),
+      "package/wait.js": `await fetch("${server.url}started");
+        const deadline = Date.now() + 30_000;
+        while (!(await Bun.file(${JSON.stringify(join(String(dir), "node_modules/another/package.json"))}).exists())) {
+          if (Date.now() > deadline) throw new Error("another/package.json did not appear");
+          await Bun.sleep(1);
+        }`,
+    }),
+    pack({ "package/package.json": JSON.stringify({ name: "another" }) }),
+  ]);
+  async function install(cache: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=isolated", ...args],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1", BUN_INSTALL_CACHE_DIR: join(String(dir), cache) },
+      stdout: "ignore",
+      stderr: "pipe",
+      timeout: 30_000,
+    });
+    return await Promise.all([proc.stderr.text(), proc.exited]);
+  }
+  // With a lockfile the linker downloads the tarballs, so one can arrive while a script runs.
+  expect((await install(".first", "--lockfile-only"))[1]).toBe(0);
+  hasLockfile = true;
+  const [stderr, exitCode] = await install(".second");
+  expect(stderr).toContain("one... ");
+  expect(stderr).not.toContain("ano... ");
+  expect(exitCode).toBe(0);
+});
+
+// The progress bar copies the name it is currently showing into a fixed-size
+// buffer. A longer name aborted the
 // install with "panic: range end index 900 out of range for slice of length
 // 768" whenever the progress bar was on. BUN_INSTALL_PROGRESS=1 turns it on
 // without a TTY; with colors enabled an emoji shares the buffer with the name,
 // so both color settings are covered.
 describe.concurrent("progress bar with a long name", () => {
-  // Names are now limited to 255 bytes, which always fit. The two tests with this name only check that the longest name
-  // is displayed and reported in full.
+  // The longest name a package can have.
   const longName = Buffer.alloc(255, "a").toString();
   const progressEnvs = [
     ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],

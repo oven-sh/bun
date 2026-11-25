@@ -1,5 +1,5 @@
 import { bench, group, run } from "../runner.mjs";
-import jsYaml from "js-yaml";
+import * as jsYaml from "js-yaml";
 import yaml from "yaml";
 
 // Small object

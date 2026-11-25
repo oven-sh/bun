@@ -268,6 +268,7 @@ export const TestRefCounted = b.class({
   rustPath: "crate::bindgen_test::TestRefCounted",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   construct: { args: { value: b.i32.default(0) } },
   internalFields: ["listener"],
   proto: {
@@ -278,7 +279,7 @@ export const TestRefCounted = b.class({
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
-    keep: {},
+    keep: { passThis: true },
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
@@ -290,6 +291,8 @@ export const TestRefCounted = b.class({
   static: {
     /** The instance kept by `keep()`, as `[value, finalized]`. */
     kept: { returns: b.array(b.i32) },
+    /** The object of that instance, or `undefined` if it was collected. */
+    keptObject: { returns: b.any, capability: "heap" },
     release: {},
     alive: { returns: b.usize },
     /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
@@ -511,10 +514,10 @@ export const readPromisePtr = b.fn({
   args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
   returns: b.i32,
 });
-/** A new `NativePromiseContext` cell with a pointer to the same static. */
+/** A new `NativePromiseContext` cell with the only ref on a `TestRefCounted` that holds 42. */
 export const makeNativePromiseContext = b.fn({ returns: b.any, capability: "js" });
 export const readNativePromiseContext = b.fn({
-  args: { context: b.nativePromiseContext("core::sync::atomic::AtomicI32") },
+  args: { context: b.nativePromiseContext("crate::bindgen_test::TestRefCounted") },
   returns: b.i32.nullable,
 });
 export const primes = b.value({ returns: b.array(b.u32) });

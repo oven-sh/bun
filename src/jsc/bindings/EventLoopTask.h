@@ -18,13 +18,9 @@ public:
     {
     }
 
-    void performTask(ScriptExecutionContext& context)
-    {
-        m_task(context);
-        delete this;
-    }
+    void performTask(ScriptExecutionContext& context) { m_task(context); }
 
-protected:
+private:
     Function<void(ScriptExecutionContext&)> m_task;
 };
 

@@ -1,0 +1,17 @@
+# The control: one of the names that are gained is an accessor.
+# -- source: what-is-appended-has-no-type-where-a-written-descriptor-lays-a-getter-under-a-name-that-is-not-listed.js
+# const tools = Object.freeze({ __proto__: null, twice(x) { return x * 2; }, half(x) { return x / 2; } });
+# const other = Object.freeze({ __proto__: null, size: 7, twice(x) { return x * 3; }, third(x) { return x / 3; } });
+# const box = {};
+# function run(n) { let s = 0; for (let i = 0; i < n; i++) s += box.tools.twice(i); return s; }
+# function show() { print(run(5), box.marked, box.count); }
+# function fill(b) { b.tools = tools; Object.defineProperty(b, "marked", { value: true }); Object.defineProperty(b, "count", { get() { return 9; }, enumerable: true }); }
+# fill(box); show();
+# -- end of source
+# OPTIONS: check=FlowFixpoint
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "tools" appended proven
+# CHECK: "tools" appended
+# CHECK-NOT: "tools" appended proven
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 20 true 9

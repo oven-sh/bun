@@ -1,0 +1,14 @@
+# `{ ...base(k), title, done }` where the written type declares `title, done` first: the summary keeps no list of names that come as the layout declares them.
+# The order of the copy goes on with the declared order then: whether the object is born whole does not hang on the order in which an interface lists its members.
+# -- source: main.ts
+# declare function print(value: any): void;
+# interface Titled { title: string; done: boolean; kind: number; pos: number }
+# function base(k: number) { return { kind: k, pos: k + 1 }; }
+# function make(k: number): Titled { return { ...base(k), title: "n", done: true }; }
+# print(Object.keys(make(1)).join());
+# -- end of source
+# RUN(ORDERS): plan orders mechanisms=all
+# ORDERS: order {{*}}: "kind" "pos" "title" "done"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: kind,pos,title,done
+# ANSWERS-NEXT: exited with 0

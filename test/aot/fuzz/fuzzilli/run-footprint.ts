@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { withoutInstallingPackages } from "../../harness/without-installing-packages";
 
 const { values: options } = parseArgs({
   options: {
@@ -25,6 +26,7 @@ const { values: options } = parseArgs({
 });
 const { bun, work, finds } = options as Record<string, string>;
 if (!work || !finds) throw new Error("Expected --work and --finds");
+withoutInstallingPackages(work);
 
 /** The body of `function run(most)`, which returns a number. */
 const shapes: Record<string, [turns: number, body: string]> = {

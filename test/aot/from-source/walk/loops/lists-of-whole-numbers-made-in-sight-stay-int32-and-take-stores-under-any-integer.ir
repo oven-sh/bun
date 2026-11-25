@@ -1,0 +1,129 @@
+# f1 = shuffle, f4 = countDownInSight
+# -- source: lists-of-whole-numbers-made-in-sight-stay-int32-and-take-stores-under-any-integer.cjs
+# "use strict";
+# // Lists made by `new Array(n)` that hold small whole numbers, walked as programs without types walk them: the bound of a counter is a number of which the types say only that it is an integer.
+# function shuffle(size, rounds) {
+#   var row = new Array(size);
+#   var other = new Array(size);
+#   var marks = new Array(size);
+#   var level = size;
+#   var total = 0;
+#   for (var at = 0; at < size; at++) other[at] = at;
+#   for (var round = 0; round < rounds; round++) {
+#     while (level !== 1) {
+#       marks[level - 1] = level;
+#       level--;
+#     }
+#     for (var from = 0; from < size; from++) row[from] = other[from];
+#     total = (total * 31 + row[0] * 7 + row[size - 1]) % 1000003;
+#     while (true) {
+#       if (level === size) return total + " all " + other.join() + " " + marks.join();
+#       var first = other[0];
+#       for (var place = 0; place < level; place++) other[place] = other[place + 1];
+#       other[level] = first;
+#       marks[level]--;
+#       if (marks[level] > 0) break;
+#       level++;
+#     }
+#   }
+#   return total + " " + other.join() + " " + marks.join();
+# }
+# // The store alone, under a key from outside: below zero, at and past the length, far past 32 bits.
+# function moveDown(list, from, to) {
+#   for (var at = from; at < to; at++) list[at] = list[at + 1];
+#   return list;
+# }
+# function countDown(list, level, floor) {
+#   while (level !== floor) {
+#     list[level - 1] = level;
+#     level--;
+#   }
+#   return list;
+# }
+# // The same over a list made in sight, under integers of 32 bits from outside: the types say an integer, and not that it is no less than zero.
+# function countDownInSight(size, start, floor) {
+#   var marks = new Array(size);
+#   var level = start | 0;
+#   var end = floor | 0;
+#   for (var at = 0; at < size; at++) marks[at] = -7;
+#   while (level !== end) {
+#     marks[level - 1] = level;
+#     level--;
+#   }
+#   return describe(marks);
+# }
+# function moveDownInSight(size, from, to) {
+#   var list = new Array(size);
+#   var end = to | 0;
+#   for (var fill = 0; fill < size; fill++) list[fill] = fill * 3;
+#   for (var at = from | 0; at < end; at++) list[at] = list[at + 1];
+#   return describe(list);
+# }
+# function describe(list) {
+#   var keys = Object.keys(list);
+#   var text = list.length + ":";
+#   for (var at = 0; at < keys.length && at < 24; at++) text += " " + keys[at] + "=" + list[keys[at]];
+#   return text + (keys.length > 24 ? " .." : "");
+# }
+# var said = [];
+# function attempt(name, run) {
+#   var answer;
+#   try { answer = String(run()); } catch (error) { answer = error.constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# function whole(size) { var list = new Array(size); for (var at = 0; at < size; at++) list[at] = at * 3; return list; }
+# for (var turn = 0; turn < 3; turn++) {
+#   attempt("shuffle", function () { return shuffle(5, 40 + turn); });
+#   attempt("shuffle to the end", function () { return shuffle(4, 100); });
+#   attempt("shuffle of one", function () { return shuffle(1, 3); });
+#   attempt("down", function () { return describe(moveDown(whole(6), 0, 5)); });
+#   attempt("down past the end", function () { return describe(moveDown(whole(6), 3, 9)); });
+#   attempt("down from below zero", function () { return describe(moveDown(whole(6), -3, 2)); });
+#   attempt("down far out", function () { return describe(moveDown(whole(4), 4294967294, 4294967298)); });
+#   attempt("down past 53 bits' half", function () { return describe(moveDown(whole(4), 1099511627776, 1099511627778)); });
+#   attempt("down with holes", function () { var list = whole(8); delete list[3]; delete list[6]; return describe(moveDown(list, 0, 7)); });
+#   attempt("down of fractions", function () { var list = whole(5); list[2] = 0.5; return describe(moveDown(list, 0, 4)); });
+#   attempt("down of wide numbers", function () { var list = whole(5); list[4] = 3000000019; return describe(moveDown(list, 0, 4)); });
+#   attempt("down of texts", function () { var list = whole(5); list[1] = "one"; return describe(moveDown(list, 0, 4)); });
+#   attempt("down of a frozen list", function () { return describe(moveDown(Object.freeze(whole(5)), 0, 4)); });
+#   attempt("down of a sealed list past its end", function () { return describe(moveDown(Object.seal(whole(3)), 1, 5)); });
+#   attempt("down with a fixed length", function () { var list = whole(3); Object.defineProperty(list, "length", { writable: false }); return describe(moveDown(list, 1, 5)); });
+#   attempt("count", function () { return describe(countDown(new Array(6), 6, 1)); });
+#   attempt("count below zero", function () { return describe(countDown(new Array(3), 2, -3)); });
+#   attempt("count from past the end", function () { return describe(countDown(whole(3), 7, 1)); });
+#   attempt("count of wide numbers", function () { return describe(countDown(new Array(2), 4294967299, 4294967296)); });
+#   attempt("count in sight", function () { return countDownInSight(6, 6, 1); });
+#   attempt("count in sight below zero", function () { return countDownInSight(3, 2, -3); });
+#   attempt("count in sight from past the end", function () { return countDownInSight(3, 7, 1); });
+#   attempt("count in sight all below zero", function () { return countDownInSight(4, -1, -4); });
+#   attempt("down in sight", function () { return moveDownInSight(6, 0, 5); });
+#   attempt("down in sight from below zero", function () { return moveDownInSight(6, -3, 2); });
+#   attempt("down in sight past the end", function () { return moveDownInSight(6, 3, 9); });
+# }
+# function digest(text) { var hash = 2166136261; for (var at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# var say = globalThis.print || console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# Three lists made by `new Array(size)` that hold small whole numbers. `marks[level]--` stores what it has read off the same list, less one: by its type a number without fraction and no integer (a hole gives NaN): it asked the birth of
+# `marks` for doubles. `row[from] = other[from]` reads numbers without fraction: its front took `other` for doubles or int32 and asked its birth for doubles, while the loop that fills `other` asks for int32 and failed at every entry.
+# Every lone read off a list of doubles goes through a stub. All three are born for int32, and no front asks for doubles.
+# RUN(BIRTHS): walk f1 mechanisms=all
+# BIRTHS-COUNT-3: = NewArrayLike {{*}} arrayStorage=Int32
+# RUN(KINDS): walk f1 mechanisms=all
+# KINDS-NOT: arrayStorage=Double
+# `other[place] = other[place + 1]` with `place < level`, and `marks[level - 1] = level`: `level` is an integer of 53 bits by its type, so the key is no index of a list by its type, and the store behind the front was refused: the closed one
+# may run other code, every turn of the typed build left, and the build was dropped. The store asks `0 <= key` where the type does not say so, and `key < length` as ever. Five loops are built twice.
+# RUN(HEADS): walk f1 mechanisms=all
+# HEADS-COUNT-10: isLoopHead=true
+# HEADS-NOT: isLoopHead=true
+# RUN(STORES): walk f1 mechanisms=all
+# STORES-COUNT-4: = PutContiguousIndex
+# RUN(BELOW): walk f4 mechanisms=all
+# BELOW-COUNT-4: isLoopHead=true
+# BELOW-NOT: isLoopHead=true
+# RUN(ASKED): walk f4 mechanisms=all
+# ASKED: = GreaterEq
+# ASKED: = PutContiguousIndex
+# Keys below zero, at and past the length, past 32 bits; holes, fractions, numbers past 32 bits and texts among the elements; frozen and sealed lists, a length that is not writable.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 78 lines 3120871355

@@ -467,7 +467,7 @@ it("screenshot encoding options", async () => {
 
 it("screenshot Blob survives GC (mmap-backed store)", async () => {
   // The WebKit path mmap's the shm segment directly into the Blob's store
-  // — no copy. The store's allocator vtable munmap's on free (when the
+  // — no copy. The store unmaps it when dropped (when the
   // Blob's refcount drops). This verifies the mapping is valid across a
   // GC cycle and that `await blob.bytes()` reads live pages.
   await using view = new Bun.WebView({ width: 200, height: 150 });

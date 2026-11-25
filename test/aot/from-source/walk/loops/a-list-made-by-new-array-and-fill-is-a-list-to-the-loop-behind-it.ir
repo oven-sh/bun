@@ -1,0 +1,15 @@
+# -- source: a-list-made-by-new-array-and-fill-is-a-list-to-the-loop-behind-it.ts
+# declare function sink(...values: unknown[]): void;
+# declare function bytes(): Uint8Array;
+# function tally(data: Uint8Array): number { const counts = new Array(16).fill(0); for (let i = 0; i < data.length; i++) counts[data[i]! & 15]++; return counts[3] + counts[5] * 7; }
+# sink(tally(bytes()));
+# -- end of source
+# `new Array(n).fill(v)` is a call of a helper of the library. Its way for a length that is no small number ended in the call `made.fill(value)`, of which Link proved no result, so the helper gave
+# `anything`: the loop behind it guessed at a list, and every read and store had its slow way in line. The helper hands back the list that it made: the call gives an Array, the front of the loop asks
+# it for its storage once, and a turn reads an int32, adds one and stores it.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : Array {{*}}= CallDirect
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Int32
+# CHECK: : i32 {{*}}= GetArrayElement {{*}}arrayStorage=Int32 level=Proven
+# CHECK: = PutContiguousIndex

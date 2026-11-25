@@ -173,6 +173,11 @@ impl CommonJsNames {
         entries.is_some_and(|entries| entries.exports_ordinary_object)
     }
 
+    pub(in crate::modules) fn exports_function(&self, module: ModuleRef) -> bool {
+        let entries = self.entries_of(module);
+        entries.is_some_and(|entries| entries.exports_function)
+    }
+
     pub(in crate::modules) fn is_half(&self, module: ModuleRef) -> bool {
         let entries = self.entries_of(module);
         entries.is_some_and(|entries| entries.is_half)
@@ -258,6 +263,10 @@ impl Resolver<'_, '_> {
         let Some(file) = self.es_module_file(module) else {
             return Source::Unknown;
         };
+        // The load of a module with dynamic names is left to run time, so no request leads an importer to what lies behind it.
+        if self.tables.has_dynamic_names(module) {
+            return Source::Unknown;
+        }
         let resolved = self.tables.resolve(self.modules, file, name);
         if resolved.required_name.is_some() {
             return Source::Unknown;
@@ -501,6 +510,7 @@ mod tests {
             is_half: false,
             is_replaced_late: false,
             exports_ordinary_object: true,
+            exports_function: false,
             marker: Some(false),
             names,
         }

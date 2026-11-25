@@ -1,0 +1,10 @@
+# f1 = wrap
+# -- source: remainder-of-a-number-by-a-number.ts
+# function wrap(value: number, bound: number): number { return value % bound; }
+# declare const input: any;
+# (globalThis as any).answer = wrap(+input, +input.bound);
+# -- end of source
+# RUN(X64): steps most:16 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 16

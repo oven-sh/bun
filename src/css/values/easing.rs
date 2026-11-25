@@ -66,7 +66,7 @@ bun_core::comptime_string_map! {
 }
 
 impl EasingFunction {
-    pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, EasingFunction> {
         let location = input.current_source_location();
         let tok = *input.next()?;
         if let Token::Ident(ident) = tok {
@@ -253,7 +253,7 @@ impl StepPosition {
         dest.write_str(<&'static str>::from(self))
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, StepPosition> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         let keyword = if let Some(e) = STEP_POSITION_KEYWORDS.get_ascii_case_insensitive(ident) {

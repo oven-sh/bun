@@ -1,0 +1,10 @@
+# dispatchEvent is found by its name, so each of its rows is read: the row for the global object makes no object of a class nobody knows
+# -- source: an-event-that-is-dispatched-on-a-target-of-the-program-brings-no-other-feature.ts
+# const target = new EventTarget(); process.exitCode = target.dispatchEvent(new Event("a")) ? 0 : 1;
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by EventTarget
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

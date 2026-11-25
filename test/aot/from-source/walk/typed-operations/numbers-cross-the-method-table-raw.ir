@@ -1,0 +1,32 @@
+# -- source: numbers-cross-the-method-table-raw.ts
+# interface Step { stepped(sum: number): number; name(): string | number }
+# class Halve implements Step { constructor(private readonly by: number) {} stepped(sum: number): number { return sum * this.by; } name() { return 1; } }
+# class Lower implements Step { constructor(private readonly off: number) {} stepped(sum: number): number { return sum - this.off; } name() { return 2; } }
+# class Raise implements Step { constructor(private readonly on: number) {} stepped(sum: number): number { return sum + this.on; } name() { return 3; } }
+# class Cap implements Step { constructor(private readonly top: number) {} stepped(sum: number): number { return sum < this.top ? sum : this.top; } name() { return "cap"; } }
+# class Floor implements Step { constructor(private readonly low: number) {} stepped(sum: number): number { return sum > this.low ? sum : this.low; } name() { return 5; } }
+# const steps: readonly Step[] = [new Halve(0.5), new Lower(3), new Raise(4), new Cap(90), new Floor(1)];
+# function run(t: number): number {
+#   let sum = t & 63;
+#   for (let i = 0; i < 100; i++) sum = steps[i % 5]!.stepped(sum);
+#   return sum;
+# }
+# function names(): string {
+#   let all = "";
+#   for (let i = 0; i < 10; i++) all += steps[i % 5]!.name();
+#   return all;
+# }
+# print(run(1), run(40), names());
+# -- end of source
+# Five classes answer to `stepped`: too many for arms: the call goes through the method table. Every row takes a number and gives one: the plan makes a selector beside the boxed one whose rows take and
+# give it raw, and the walk names that selector where the argument is shown to be a number. Boxing the argument, unboxing it in the entry, boxing the result in the body and unboxing it in the caller
+# were 30 of the 68 instructions of a turn.
+# One row of `name` gives a text: a selector has one form for all its rows: every row of `name` boxes what it gives, and no entry boxes for its body.
+# f1 = run, f2 = names
+# RUN: walk f1:Body mechanisms=all
+# CHECK: number @Double = CallTable
+# CHECK-NOT: @JSValue = CallTable
+# RUN(NAMES): walk f2:Body mechanisms=all
+# NAMES: @JSValue = CallTable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1.9999990463256836 2.0000362396240234 123cap5123cap5

@@ -49,14 +49,17 @@ pub(in crate::lower) fn lower_unary(
     match op {
         UnOp::Plus => {
             let value = lowering.lower_expression(operand);
+            lowering.set_position(hir[expression].pos);
             lowering.builder.to_number(value)
         }
         UnOp::Minus => {
             let value = lowering.lower_expression(operand);
+            lowering.set_position(hir[expression].pos);
             lowering.builder.negate(value)
         }
         UnOp::BitNot => {
             let value = lowering.lower_expression(operand);
+            lowering.set_position(hir[expression].pos);
             lowering.builder.bit_not(value)
         }
         UnOp::Not => {
@@ -97,6 +100,9 @@ pub(in crate::lower) fn lower_binary(
             let (hir, bound) = (lowering.file.hir, lowering.file.bound);
             if settled_main_module_operand(hir, bound, expression).is_some() {
                 return lowering.lower_main_module_comparison(expression, op);
+            }
+            if let Some(comparison) = lowering.file.find_path_comparison(expression) {
+                return lowering.lower_path_comparison(comparison, op, [left, right]);
             }
             if let Some(test) = lowering.try_lower_test_value(expression) {
                 return test;
@@ -194,8 +200,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut value = self.lower_expression(innermost);
         for &(node, node_op, node_right) in spine.iter().rev() {
             let right_value = self.lower_expression(node_right);
-            if node_op == BinOp::Instanceof {
-                self.report_at_operator(node);
+            match node_op {
+                BinOp::Instanceof => self.report_at_operator(node),
+                _ => self.set_position(hir[node].pos),
             }
             value = self.emit_binary(node_op, value, right_value);
         }

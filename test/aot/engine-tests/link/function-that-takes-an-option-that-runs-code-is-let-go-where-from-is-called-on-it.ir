@@ -1,0 +1,19 @@
+# Uint8Array.from.$call(Bun.serve, <a list>), as only the text of the library can write it
+# Bun.serve may be handed an option that runs code which nobody has seen, and whether it is, is asked where it is called in sight or let go. It does not inherit %TypedArray%.from, so the rule on a
+# receiver that is only constructed does not hold for it: it is let go, and code that nobody has seen can run.
+# LIBRARY: own
+# RUN: causes
+# CHECK: unseen-code can-run
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=Uint8Array
+    v2 = PropGet v1 key="from"
+    v3 = Convert v2 declared={type=builtin(TypedArrayFrom) flags=[IsExpected]}
+    v4 = Builtin builtin=BunServe
+    v5 = Call v3, v4, v0
+    Return v5
+}

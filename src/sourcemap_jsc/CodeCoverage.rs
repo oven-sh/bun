@@ -404,9 +404,11 @@ pub mod text {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
+        let relative;
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            relative = bun_paths::Path::relative(base_path, filename);
+            filename = &relative;
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -477,9 +479,11 @@ pub mod lcov {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
+        let relative;
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            relative = bun_paths::Path::relative(base_path, filename);
+            filename = &relative;
         }
 
         // TN: test name
@@ -894,8 +898,7 @@ impl ByteRangeMapping {
         let source_url = self.source_url.slice();
         let saved_source_map = || {
             bun_jsc::VirtualMachine::VirtualMachine::get()
-                .as_mut()
-                .source_mappings()
+                .source_mappings
                 .get(source_url)
         };
         let source_map: Option<std::sync::Arc<ParsedSourceMap>> = if ignore_sourcemap {
@@ -1161,15 +1164,13 @@ impl ByteRangeMapping {
     fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
         if already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
-            if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
-                InternalSourceMap {
-                    data: blob.list.as_ptr(),
-                }
-                .for_each_object_brace(|brace| self.set_executable(brace.original));
+            if let Some(blob) = print_for_coverage(self.source_url.slice(), text)
+                && let Some(map) = InternalSourceMap::new(&blob.list)
+            {
+                map.for_each_object_brace(|brace| self.set_executable(brace.original));
             }
         } else if let Some(source_map) = bun_jsc::VirtualMachine::VirtualMachine::get()
-            .as_mut()
-            .source_mappings()
+            .source_mappings
             .get(self.source_url.slice())
         {
             source_map.for_each_object_brace(|brace| self.set_executable(brace.generated));
@@ -1184,7 +1185,9 @@ impl ByteRangeMapping {
 }
 
 /// The `InternalSourceMap` from parsing and printing `text`, if both succeed.
+#[inline(never)]
 fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableString> {
+    bun_removable_features::removable_definition!(TestCommand, print_for_coverage);
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
@@ -1207,9 +1210,9 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
             .into_iter()
             .collect(),
     );
-    let mut chunk = None;
+    let chunk = core::cell::Cell::new(None);
     // ASCII_ONLY = true: the chunk is an `InternalSourceMap`, not VLQ text.
-    bun_js_printer::print_ast::<_, true, true>(
+    bun_js_printer::print_ast::<true, true>(
         &mut bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         &arena,
         &ast,
@@ -1217,12 +1220,12 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
         &source,
         bun_js_printer::Options {
             code_coverage: true,
-            source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
+            source_map_handler: Some(&chunk),
             ..Default::default()
         },
     )
     .ok()?;
-    Some(chunk?.buffer)
+    Some(chunk.into_inner()?.buffer)
 }
 
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
@@ -1393,8 +1396,8 @@ fn find_or_insert(
     new_value.source_ids.extend(source_id);
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
     if bun_jsc::VirtualMachine::VirtualMachine::get()
-        .as_mut()
         .transpiler
+        .get()
         .options
         .code_coverage
     {

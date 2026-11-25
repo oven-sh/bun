@@ -1,7 +1,8 @@
-# it leaves the sight of the look
+# the list is handed to a function nobody knows: the class leaves the sight of Link with it
+# The twin: a-class-in-a-list-that-nobody-reads-uses-none-of-its-features.ir
 # -- source: a-class-in-a-list-uses-its-features.ts
 # const list = [WebSocket];
-# console.log(list.length);
+# (globalThis as any).keep?.(list);
 # -- end of source
 # RUN: features
 # CHECK: by WebSocket

@@ -834,8 +834,12 @@ function nodeProcessAborted(exitCode, signal) {
 }
 
 function isAlive(pid) {
+  // Upstream sends SIGCONT, which Windows does not have, so no process has ever counted as alive there.
+  if (isWindows) return false;
   try {
-    process.kill(pid, 'SIGCONT');
+    // Not SIGCONT: it takes back the SIGSTOP by which LeakSanitizer stops each thread of an exiting process, and
+    // LeakSanitizer waits for that stop forever.
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;

@@ -1,0 +1,22 @@
+# -- source: a-value-that-may-be-an-object-of-a-lost-family-is-asked-as-a-key-and-nothing-goes.js
+# class Mark { constructor(start) { this.start = start; } }
+# function m0(mark) { return { kind: "K0", k0: 1, value: "v0", mark }; }
+# function m1(mark) { return { kind: "K1", k1: 1, value: "v1", mark }; }
+# function m2(mark) { return { kind: "K2", k2: 1, value: "v2", mark }; }
+# function m3(mark) { return { kind: "K3", k3: 1, value: "v3", mark }; }
+# function m4(mark) { return { kind: "K4", k4: 1, value: "v4", mark }; }
+# function m5(mark) { return { kind: "K5", value: pick(mark.start % 5, mark), mark }; }
+# function pick(i, mark) { return i === 0 ? m0(mark) : i === 1 ? m1(mark) : i === 2 ? m2(mark) : i === 3 ? m3(mark) : i === 4 ? m4(mark) : m5(mark); }
+# const table = { v1: 1, v2: 2 };
+# function known(made) { return Object.hasOwn(table, made.value); }
+# let sum = "";
+# for (let i = 0; i < 6; i++) { const made = pick(i, new Mark(i)); sum += known(made) + "," + typeof made.mark.start + ";"; }
+# print(sum);
+# -- end of source
+# L0 = Mark. Six literal shapes meet: Link names them no more: a lost family. `made.value` may be a text or one of the family. Object.hasOwn() makes a key of it: it asks an object for @@toPrimitive, toString, valueOf. None of the six has one; above them lies what the table locks on Object.prototype, which runs no code of the program. For one layout and for a set of four that was no answer; for a lost family it was: the whole family went, and all that it holds.
+# RUN(MARK): link why-gone L0
+# MARK: why-gone L0: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "start" proven=int[0, {{*}}] writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: false,number;true,number;true,number;false,number;false,number;false,number;

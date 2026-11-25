@@ -1,0 +1,25 @@
+import { test, vi, afterAll } from "bun:test";
+const log = [];
+const said = load => Promise.resolve(load).then(it => String(it.a), error => error.message.slice(0, 30));
+afterAll(() => console.log("SAID", log.join()));
+test("t", async () => {
+  const gates = {}, calls = {}, loads = {};
+  gates.one = Promise.withResolvers(); calls.one = Promise.withResolvers();
+  vi.doMock("./x.js", () => { calls.one.resolve(); return gates.one.promise.then(() => ({ a: "value one" })); });
+  loads.one = said(import("./x.js"));
+  await calls.one.promise;
+  gates.two = Promise.withResolvers(); calls.two = Promise.withResolvers();
+  vi.doMock("./x.js", () => { calls.two.resolve(); return gates.two.promise.then(() => ({ a: "value two" })); });
+  loads.two = said(import("./x.js"));
+  await calls.two.promise;
+  gates.three = Promise.withResolvers(); calls.three = Promise.withResolvers();
+  vi.doMock("./x.js", () => { calls.three.resolve(); return gates.three.promise.then(() => ({ a: "value three" })); });
+  loads.three = said(import("./x.js"));
+  await calls.three.promise;
+  vi.doUnmock("./x.js");
+  gates.two.resolve(); gates.three.resolve(); gates.one.resolve();
+  log.push("one " + await loads.one);
+  log.push("two " + await loads.two);
+  log.push("three " + await loads.three);
+  log.push("last " + await said(import("./x.js")));
+});

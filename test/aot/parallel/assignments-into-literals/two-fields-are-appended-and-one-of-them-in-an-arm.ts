@@ -1,4 +1,4 @@
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 interface Options { depth: number; width: number }
 let work = 0;
 function only(given: Options) {

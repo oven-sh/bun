@@ -1,6 +1,7 @@
 // In a loop a helper that calls its parameter in a loop of its own is handed a closure that does the same, SIZE deep.
 // It writes a program: SIZE says how large, PASSES how many copies of its function under names of their own.
-// Sizes: 1 3 6
+// One deep the scope is taken by an argument of a call alone and is made by the function; from two on a closure holds a closure over it and it lies among the variables of the module: the sizes begin at two.
+// Sizes: 2 4 6
 // Passes: 60
 // Grows: the build, linear
 const size = Number(process.env.SIZE ?? 2),

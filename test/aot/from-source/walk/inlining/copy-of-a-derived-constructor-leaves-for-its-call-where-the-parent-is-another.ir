@@ -17,14 +17,14 @@
 # print(first.weight, first.seal, second.weight, third.weight, third.volume, third.seal, fourth.volume, fourth.seal, deeds);
 # -- end of source
 # In the copy of a derived constructor the test at super(), whether the parent is the class that is written, fails into the construction as written: nothing has been done since the copy began.
-# So nothing meets the likely way again: `this` behind super() is the fresh object of one layout, and the store behind it is a store into its slot without a test.
+# So nothing meets the likely way again: `this` behind super() is the fresh object of one layout, and the store behind it is a field of its allocation.
 # In `lastCounted` an argument of super() does a deed in front of the test: the construction as written would do it a second time: that test keeps its closed arm, which constructs by value and comes back.
 # RUN: walk f2 mechanisms=all
 # CHECK: isLoopHead=true
 # CHECK: = GetSuperBase
 # CHECK: = TypeTest
 # CHECK: Branch {{*}}notTaken [[call]]()
-# CHECK: = PutSlotOrAdd {{*}}key="seal" {{*}}level=Proven
+# CHECK: L1 @Cell = NewObject {{*}}layout=L1 fields=[1, 0]
 # RUN(CALL): walk f2 mechanisms=all
 # CALL: frequency=Rare isInLoop=true:
 # CALL: = CallDirect {{*}}function=f6 [isNeverInlined, isConstruction]

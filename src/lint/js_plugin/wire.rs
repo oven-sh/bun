@@ -75,6 +75,8 @@ pub(super) mod ask {
     pub(crate) const LIB_NAME: u32 = 17;
     /// The [`LIB_VARIABLES`] word for the name given in the details. Empty if the libraries don't define it.
     pub(crate) const LIB_VARIABLE: u32 = 18;
+    /// A text that the realm prints for the first time. The answer is `1` if another realm has printed it.
+    pub(crate) const PRINTED: u32 = 19;
 }
 
 /// Appends `list` to `lists`, prefixed with its length, and returns its offset. The empty list is at offset 0, so

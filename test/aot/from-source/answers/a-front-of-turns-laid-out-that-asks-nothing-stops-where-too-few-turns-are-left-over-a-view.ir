@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# var key = JSON.parse('"go"');
+# var halves = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k + 0.5); return l; }, wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# var T = { go(l) { var s = 0; for (var i = 0; i < l.length; i++) s += l[i]; return s; } };
+# print(T[key](new Float64Array(globalThis.fails ? 3 : 16).fill(1.5)));
+# -- end of source
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,
+# and an iteration that holds such checks is not unrolled, so no unrolled loop ever ran in those test lanes. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# The entry checks test whether eight iterations are left. For a typed array of three elements, the loop as written runs.
+# Fault injection, testing=SkipUnrollTripCountCheck: four iterations run, and the fourth reads past the end of the typed array.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 4.5
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
+# HELD: 4.5
+# HELD-NEXT: exited with 0
+# The injected fault does not harm an input that would have passed the entry checks. So the crash in the last run comes from this check and from no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollTripCountCheck
+# PASSES: 24
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollTripCountCheck globalThis.fails = true;
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

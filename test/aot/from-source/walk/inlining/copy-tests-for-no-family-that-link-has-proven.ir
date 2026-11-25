@@ -3,16 +3,21 @@
 # const xs: any[] = [];
 # for (let i = 0; i < 10; i++) xs.push(i & 1 ? { a: i } : { b: i, a: i });
 # function read(v: any) { return v.a; }
-# function run() { let t = 0; for (let i = 0; i < xs.length; i++) t += read(xs.at(i)); return t; }
+# function run() { let t = 0; for (let i = 0; i < xs.length; i++) t += read(Array.prototype.at.call(xs, i)); return t; }
 # sink(run());
 # -- end of source
 # Link's proof of a parameter is tested for in front of a copy only where one look at the value settles it: primitives, one layout, or both.
 # A family or a set of closures grows with the program, and so would each question about it and each test of it, at every copy: members times copies.
-# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess with the call as written beside it.
+# Here the parameter is one of two layouts. The copy asks for them where it reads, as a guess: where that fails, the call is made as written.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f1
 # CHECK: isInLoop=true isLoopHead=true
-# CHECK: [[element]]: anything{{*}} = Call
+# CHECK: [[element]]: anything{{*}} = Call {{*}}calleeName="Array.prototype.at.call"
 # CHECK-NOT: = TypeTest [[element]]
-# CHECK: = CallDirect [[element]] function=f1 [isNeverInlined]
+# CHECK: = ShapeTest [[element]] layouts=[L0, L1]{{*}}:1
+# RUN(REST): walk f2 mechanisms=all
+# REST-LABEL: code f2:Body
+# REST: isInLoop=true isLoopHead=true
+# REST: = CallDirect {{*}} function=f1
+

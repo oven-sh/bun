@@ -1,0 +1,20 @@
+# In a file without types `function shape(width, options = {})` gave the parameter the checked type `{}`: use was not asked, the wire said "anything", and at the join of the default and the parameter the
+# walk guessed the one layout that it saw: the empty literal's: wrong at every call that hands an object: five reads at their sites (230 instructions a call; 137 for the same function without the default).
+# Use is asked as it is for any: the parameter is expected to be the literal that has the names (f1 = shape). What arrives is asked first and read by slots; the function's own literal is asked on the
+# failing side; what is neither reads at its site.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = ShapeTest {{*}}[rejectsMarkedObjects]
+# CHECK: = GetSlot {{*}}key="label" {{*}}level=Proven
+# CHECK: = ShapeTest {{*}}[rejectsMarkedObjects]
+# CHECK: = PropGet {{*}}key="label"
+# CHECK: = GetSlot {{*}}key="depth"
+# -- source: a-parameter-with-an-empty-default-is-expected-to-be-what-its-use-says.cjs
+# "use strict";
+# function shape(width, options = {}) { const label = options.label === undefined ? "" : options.label; return width + label.length + (options.edge === undefined ? 1 : 0) + (options.depth | 0) + (options.tint ? 1 : 0); }
+# const table = { count(s) { return s.length + 1; }, text(s) { return String(s); }, wrap(s) { return [s]; }, kind(s) { return typeof s; }, none(s) { return s === null; }, shape }, key = JSON.parse('"shape"');
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += table[key](i, { label: "q", depth: i }) + table[key](i);
+# console.log(sum);
+# -- end of source

@@ -97,19 +97,19 @@ show("data on the prototype: the source", () => source.count);
 
 // GENERATED: joined dataBelow bump twice
 // CHECK-LABEL: function {{*}}name="joined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: v1 = Builtin builtin=ObjectAssign
 // CHECK-NEXT: v2 = Undefined
 // CHECK-NEXT: v3 = PropGet v0 key="data"
 // CHECK-NEXT: v4 = PropGet v0 key="methods"
-// CHECK-NEXT: v5 = NewDictionary
+// CHECK-NEXT: v5 = CopyObject v3 [assigns]
 // CHECK-NEXT: v6 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
-// CHECK-NEXT: v7 = Call v6, -, v5, v3, v4
+// CHECK-NEXT: v7 = Call v6, -, v5, v4
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="dataBelow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: v1 = Builtin builtin=Object
 // CHECK-NEXT: v2 = Builtin builtin=ObjectAssign
@@ -122,7 +122,7 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_2]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="count"
 // CHECK-NEXT: v2 = Increment v1
@@ -131,7 +131,7 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="read"
 // CHECK-NEXT: v2 = Call v1, v0 calleeKey="read" calleeName="this.read"
@@ -141,7 +141,7 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="count"
 // CHECK-NEXT: v2 = Increment v1
@@ -150,7 +150,7 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="read"
 // CHECK-NEXT: v2 = Call v1, v0 calleeKey="read" calleeName="this.read"
@@ -160,7 +160,7 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="count"
 // CHECK-NEXT: v2 = Increment v1

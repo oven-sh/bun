@@ -1,0 +1,24 @@
+# -- source: stores-reach-accessors-above.js
+# const scale = { asks() { return 1; } };
+# function beam(left, right) { scale.__defineGetter__(left, function () { return this.pans[0] - this.pans[1]; }); scale.__defineSetter__(left, function (weight) { this.pans[0] = weight + this.pans[1]; }); scale.__defineGetter__(right, function () { return this.pans[1]; }); }
+# beam("tilt", "right");
+# function hang(left, right) { const made = Object.create(scale); made.pans = [left, right]; return made; }
+# const made = hang(1, 2);
+# const dial = { configurable: true, get: undefined, set: undefined };
+# function dialed(clock, hand, turns) { dial.get = function () { return clock.ticks % turns; }; dial.set = function (to) { clock.ticks += to * turns; }; Object.defineProperty(clock, hand, dial); }
+# class Clock { constructor(ticks) { this.ticks = ticks; dialed(this, "hour", 12); dialed(this, "minute", 60); } }
+# const clock = new Clock(5);
+# class Plain { constructor() { this.first = 1; } }
+# const plain = new Plain();
+# plain.late = 2;
+# let sum = 0;
+# for (let k = 0; k < 20; k++) { made.tilt = k & 7; clock.hour = k & 3; sum += made.tilt + made.right + clock.hour + clock.minute + plain.late; }
+# print(sum, made.pans[0], clock.ticks);
+# -- end of source
+# A store behind the construction may reach an accessor that __defineSetter__ or a shared descriptor defines, on the object or above it: the layout appends no field for the name.
+# RUN(LINK): link fields mechanisms=all
+# LINK-NOT: "tilt" appended
+# LINK-NOT: "hour" appended
+# LINK: "late" appended
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 822 5 365

@@ -1,5 +1,5 @@
 use super::{AnythingReason, ShapeKind, TupleElement, TupleElementKind, TypeShape};
-use crate::check::aot::answers::GaveUp;
+use crate::check::aot::answers::{FunctionRef, GaveUp};
 use crate::check::aot::queries::Queries;
 use crate::check::aot::trust::Trust;
 use crate::program::Sym;
@@ -126,9 +126,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 flags, readonly, ..
             } => self.shape_of_tuple(ty, flags, *readonly),
             TypeData::Anon { origin, .. } => self.shape_of_anonymous_type(ty, *origin),
-            TypeData::Fns { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
-                self.shape_of_object_type(ty)
-            }
+            TypeData::Synth(shape) => match shape.constructed_by.0 {
+                Some((file, function)) => {
+                    let function = FunctionRef { file, function };
+                    let kind = ShapeKind::ConstructorFunctionInstance(function);
+                    TypeShape::declared(kind, Trust::Untrusted)
+                }
+                None => self.shape_of_object_type(ty),
+            },
+            TypeData::Fns { .. } | TypeData::ReverseMapped { .. } => self.shape_of_object_type(ty),
             TypeData::Template { texts, types } => {
                 TypeShape::undeclared(ShapeKind::TemplateLiteral {
                     texts: self.list(texts),

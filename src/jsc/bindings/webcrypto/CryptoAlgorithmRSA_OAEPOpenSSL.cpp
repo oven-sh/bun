@@ -36,6 +36,21 @@
 
 namespace WebCore {
 
+static bool setOaepLabel(EVP_PKEY_CTX* ctx, const Vector<uint8_t>& label)
+{
+    if (label.isEmpty())
+        return true;
+
+    auto copy = OpenSSLBytesPtr(static_cast<uint8_t*>(OPENSSL_malloc(label.size())));
+    memcpy(copy.get(), label.begin(), label.size());
+    if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx, copy.get(), label.size()) <= 0)
+        return false;
+
+    // Ownership transferred to OpenSSL
+    copy.release();
+    return true;
+}
+
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const CryptoAlgorithmRsaOaepParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& plainText)
 {
     auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
@@ -58,16 +73,8 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformEncrypt(const Cryp
     if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    if (!parameters.labelVector().isEmpty()) {
-        size_t labelSize = parameters.labelVector().size();
-        // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
-        auto label = OPENSSL_malloc(labelSize);
-        memcpy(label, parameters.labelVector().begin(), labelSize);
-        if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), reinterpret_cast<uint8_t*>(label), labelSize) <= 0) {
-            OPENSSL_free(label);
-            return Exception { OperationError };
-        }
-    }
+    if (!setOaepLabel(ctx.get(), parameters.labelVector()))
+        return Exception { OperationError };
 
     size_t cipherTextLen;
     if (EVP_PKEY_encrypt(ctx.get(), nullptr, &cipherTextLen, plainText.begin(), plainText.size()) <= 0)
@@ -103,16 +110,8 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_OAEP::platformDecrypt(const Cryp
     if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
 
-    if (!parameters.labelVector().isEmpty()) {
-        size_t labelSize = parameters.labelVector().size();
-        // The library takes ownership of the label so the caller should not free the original memory pointed to by label.
-        auto label = OPENSSL_malloc(labelSize);
-        memcpy(label, parameters.labelVector().begin(), labelSize);
-        if (EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(), reinterpret_cast<uint8_t*>(label), labelSize) <= 0) {
-            OPENSSL_free(label);
-            return Exception { OperationError };
-        }
-    }
+    if (!setOaepLabel(ctx.get(), parameters.labelVector()))
+        return Exception { OperationError };
 
     size_t plainTextLen;
     if (EVP_PKEY_decrypt(ctx.get(), nullptr, &plainTextLen, cipherText.begin(), cipherText.size()) <= 0)

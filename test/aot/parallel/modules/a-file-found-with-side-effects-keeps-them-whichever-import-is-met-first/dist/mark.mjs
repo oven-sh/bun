@@ -1,0 +1,1 @@
+(globalThis.marks ??= []).push("one");

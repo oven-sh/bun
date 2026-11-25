@@ -93,8 +93,7 @@ const brotliFixture = /* js */ `
     });
     const start = Date.now();
     while (Date.now() - start < 10) {}
-    // Before the fix this freed the BrotliEncoderState while the worker
-    // thread was inside BrotliEncoderCompressStream.
+    // Before the fix this freed the encoder while the worker thread was using it.
     resetWhileWriting(z, () => !written);
   }
 `;

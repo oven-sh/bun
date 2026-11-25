@@ -1,0 +1,41 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# declare function count(): number;
+# function make() {
+#   let total = 0;
+#   return {
+#     run(n: number) {
+#       for (let i = 0; i < n; i++) total += i & 7;
+#     },
+#     get() {
+#       return total;
+#     },
+#   };
+# }
+# const made = make();
+# made.run(count());
+# print(made.get());
+# -- end of source
+# f2 = run. `total` lies in the scope of make(). The turns read it for nothing but the sum that they store back, so it stays a number and is not held to int32 by a test a turn, and the counted loop
+# takes its store as it takes the store of a module's variable: left out of the eight laid-out turns, made in front of each poll and where they hand over. It was 18.0 instructions a turn, a local's 3.5.
+# RUN(NUMBER): walk f2 mechanisms=all
+# NUMBER-LABEL: code f2:Body
+# NUMBER: int|whole @Double) isInLoop=true isLoopHead=true:
+# RUN(TURNS): emit f2 mechanisms=all
+# TURNS-LABEL: unit f2:Body
+# `i & 7` stands at two places of the text: nine of the one, among them the eight turns laid out, and one of the other. arm64 has one more BitAnd, at the entry, which is none of them.
+# TURNS-COUNT-9: = BitAnd({{*}}origin = 101)
+# TURNS-NOT: = BitAnd({{*}}origin = 101)
+# RUN(OTHER): emit f2 mechanisms=all
+# OTHER-COUNT-1: = BitAnd({{*}}origin = 70)
+# OTHER-NOT: = BitAnd({{*}}origin = 70)
+# RUN(EVENT): compile UnrolledLoopsEmitted UnrolledLoopStoresSunk UnrolledLoopIntegerSums mechanisms=all
+# EVENT: statistic UnrolledLoopsEmitted 1
+# EVENT: statistic UnrolledLoopStoresSunk 1
+# EVENT: statistic UnrolledLoopIntegerSums 1
+# RUN(RIGHT): run-in-shell globalThis.count = () => 40;
+# RIGHT: 140
+# RIGHT-NEXT: exited with 0
+# RUN(NONE): run-in-shell globalThis.count = () => 0;
+# NONE: 0
+# NONE-NEXT: exited with 0

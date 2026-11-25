@@ -223,10 +223,5 @@ test.skipIf(isASAN)("crash report of compiled frames ends with a complete line w
   const frameBytes = frames.reduce((total, frame) => total + Buffer.byteLength(frame) + 1, 0);
   expect(frameBytes).toBeLessThanOrEqual(4096);
   expect(frameBytes + Buffer.byteLength(frames[0]) + 1).toBeGreaterThan(4096);
-  for (const frame of frames)
-    expect(frame).toMatch(
-      new RegExp(
-        `^    at ${deepName} \\(${isWindows ? "B:\\\\~BUN\\\\root\\\\" : "/\\$bunfs/root/"}app\\.ts:\\d+:\\d+\\)$`,
-      ),
-    );
+  for (const frame of frames) expect(frame).toMatch(new RegExp(`^    at ${deepName} \\(\\./app\\.ts:\\d+:\\d+\\)$`));
 });

@@ -1,5 +1,5 @@
 // The literal is walked in the arm with its call: what the stretch defines meets behind the arms.
-// STATISTIC: AssignmentsWrittenOutFieldByField >= 1
+// STATISTIC: ObjectAssignCallsExpanded >= 1
 type Part = { p: number };
 type Rest = { q: number };
 type Sum = { c: number; p?: number; q?: number };

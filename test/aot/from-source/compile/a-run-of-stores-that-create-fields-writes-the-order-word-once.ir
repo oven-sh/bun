@@ -1,9 +1,9 @@
-# f1 = make, f2 = Row
+# f1 = make
 # -- source: a-run-of-stores-that-create-fields-writes-the-order-word-once.ts
 # declare function sink(...values: unknown[]): void;
 # declare function next(): unknown;
-# class Row { first: unknown = next(); second: unknown = null; third: unknown = null; fourth: unknown = undefined; }
-# function make() { return new Row(); }
+# interface Row { first: unknown; second: unknown; third: unknown; fourth: unknown }
+# function make() { const row = {} as Row; row.first = next(); row.second = null; row.third = null; row.fourth = undefined; sink(row); }
 # sink(make);
 # -- end of source
 # RUN(WALK): walk f1 mechanisms=all

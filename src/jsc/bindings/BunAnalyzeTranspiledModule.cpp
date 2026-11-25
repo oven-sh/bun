@@ -16,7 +16,6 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include "IsolatedModuleCache.h"
-#include "BunAnalyzeTranspiledModule.h"
 
 // ref: JSModuleLoader.cpp
 // ref: ModuleAnalyzer.cpp
@@ -224,13 +223,11 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
-    auto* moduleInfo = provider->m_moduleInfo;
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, provider->m_moduleInfo.get());
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
     if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(moduleInfo);
         provider->m_moduleInfo = nullptr;
     }
     if (moduleRecord == nullptr) {

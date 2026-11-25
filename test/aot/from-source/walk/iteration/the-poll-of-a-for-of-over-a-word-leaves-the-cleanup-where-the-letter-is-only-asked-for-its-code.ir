@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function total(words: string[]): number {
+#   let sum = 0;
+#   for (const word of words) { for (const letter of word) sum += letter.charCodeAt(0); }
+#   return sum;
+# }
+# sink(total);
+# -- end of source
+# f1 = total
+# A step over a text makes each letter a text, which may collect; so a likely turn of the inner loop might come to owe an error, and its poll stayed under the cleanup of the outer for-of. Here the letter is only
+# asked for its code: the sweep drops the text. The walk lists the texts of letters beside the poll; none is kept; the poll leaves the error owed and the head of the typed copy has no handler edge.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = LoopHint [throwsOwedError]
+# CHECK: number @Double, {{*}}isInLoop=true isLoopHead=true:
+# CHECK: = LoopHint {{*}}LeavesOwedError
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: isInLoop=true isLoopHead=true handler=

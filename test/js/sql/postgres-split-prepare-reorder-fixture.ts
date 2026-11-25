@@ -35,7 +35,6 @@ function bindFirstParam(body: Buffer): string {
   return body.subarray(o, o + len).toString("utf-8");
 }
 
-let bindsServed = 0;
 const server = net.createServer(socket => {
   socket.on("error", () => {});
   let pending = Buffer.alloc(0);
@@ -77,7 +76,6 @@ const server = net.createServer(socket => {
         const v = bindFirstParam(body);
         // Followed by Execute + Sync; echo the bound parameter back as one row.
         reply([pgBindComplete(), pgDataRow([Buffer.from(v)]), pgCommandComplete("SELECT 1"), pgReadyForQuery()]);
-        bindsServed++;
       }
     });
   });
@@ -128,11 +126,9 @@ for (let i = 4; i < 16; i++) {
   issue(`q${i}`);
 }
 
-// Await settlement by condition: the server first has to answer as many Binds
-// as were issued, then every query has to have settled. Both polls are bounded
-// so the never-settle face surfaces as a reported failure instead of a hang.
-for (let t = 0; t < 10000 && bindsServed < expected.length; t++) await tick();
-for (let t = 0; t < 10000 && settled.some(s => !s); t++) await tick();
+// The deadline makes the never-settle face a reported failure instead of a hang.
+const deadline = performance.now() + 4_000;
+while (settled.some(s => !s) && performance.now() < deadline) await tick();
 
 await sql.close({ timeout: 0 }).catch(() => {});
 server.close();

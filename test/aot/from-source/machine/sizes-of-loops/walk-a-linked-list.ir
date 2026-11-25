@@ -1,0 +1,21 @@
+# f1 = total
+# -- source: walk-a-linked-list.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function total(entry: Entry | null): number {
+#   let sum = 0;
+#   while (entry !== null) {
+#     sum += entry.weight;
+#     entry = entry.follower;
+#   }
+#   return sum;
+# }
+# declare const input: any;
+# const last: Entry = { follower: null, weight: +input };
+# (globalThis as any).answer = total({ follower: last, weight: 1.5 }) + total(input ? last : null);
+# -- end of source
+# The compiler before this one: 3 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 5

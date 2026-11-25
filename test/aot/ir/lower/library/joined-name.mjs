@@ -1,3 +1,4 @@
+// DIAGNOSTIC: TS100096 joined-name.mjs:13
 // RUN(HELD): link
 // RUN(LEFT): link
 // OPTIONS: builtin-modules

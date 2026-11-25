@@ -1,0 +1,26 @@
+The first test file only requires the data file, through a CommonJS file. The second test file imports it. The import of the second file does not change what the first one gets.
+#### asks-first.cjs
+exports.required = require("./held.json");
+#### asks-second.cjs
+exports.required = require("./held.json");
+#### held.json
+{ "name": "later" }
+#### a.test.js
+import { test } from "bun:test";
+import cjs from "./asks-first.cjs";
+test("nothing imports the data file yet", () => {
+  console.log("| CASE", "first", JSON.stringify(cjs.required), Object.prototype.toString.call(cjs.required));
+});
+#### b.test.js
+import { test } from "bun:test";
+import held from "./held.json";
+import cjs from "./asks-second.cjs";
+test("now it is imported", () => {
+  console.log("| CASE", "second", held.name, JSON.stringify(cjs.required), Object.prototype.toString.call(cjs.required));
+});
+#### z.test.js
+import { test } from "bun:test";
+test("deletes the key", () => {
+  delete require.cache[require.resolve("./held.json")];
+  console.log("| CASE", "after that", Object.prototype.toString.call(require("./held.json")));
+});

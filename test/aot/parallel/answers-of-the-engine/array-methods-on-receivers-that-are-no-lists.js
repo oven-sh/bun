@@ -1,5 +1,5 @@
 // The library's map, filter, reduce, forEach and their like expect a list as `this`. Here they get array-likes, texts, `arguments`, lists with holes, lists below another prototype, lists that the callback changes, and species.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const show = value => JSON.stringify(value);
 const like = { length: 3, 0: "a", 1: "b", 2: "c" };

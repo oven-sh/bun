@@ -6,7 +6,7 @@
 # -- end of source
 # Nothing says what the read of `findLast` finds. The receiver is expected to be a list, above every list the table has one member under the name, and its rows name one function of the library.
 # In a loop, where the call hands over a closure, that function is copied behind the tests of what was read and of the receiver, and the call as written stands in a rare block.
-# TODO: methods of lists: the row is off at its door, copyLibraryFunctionBehindTests(): it cost a large application's build 0.6 G and bought nothing that the application, the servers or TypeScript 6 show
+# TODO: methods of lists: the row is off at its door, copyLibraryFunctionBehindTests(): it cost builds time and bought nothing that the programs measured show
 # LIBRARY: own
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body

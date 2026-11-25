@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# declare const sink: (next: (holder: any, place: number) => any) => void;
+# const at = (holder: any, place: number) => holder.charCodeAt(place);
+# function next(holder: any, place: number): any { return at(holder, place) + 1; }
+# sink(next);
+# -- end of source
+# f1 = next, f2 = at
+# The copy of at() goes on in next(), so the call in its tail position comes back: the read and the call are one call of a stub. In its own unit the call leaves by a jump, and the read stands by itself in front of it.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: InTailPosition
+# CHECK: Stub CallMethod
+# RUN(OWN): bytes f2:Body mechanisms=all
+# OWN-LABEL: unit f2:Body
+# OWN: InTailPosition
+# RUN(ANSWERS): run-in-shell globalThis.sink = next => { let reads = 0; print(next("abc", 1)); print(next({ charCodeAt: place => place + 7 }, 1)); const counted = { get charCodeAt() { reads++; return function () { return this === counted ? 1 : 2; }; } }; print(next(counted, 0), reads); for (const holder of [null, undefined, 5, {}]) try { print(next(holder, 0)); } catch (error) { print(error.constructor.name); } print(next(new String("abc"), 2)); print(next(new Proxy({ charCodeAt: () => 3 }, {}), 0)); };
+# ANSWERS: 99
+# ANSWERS-NEXT: 9
+# ANSWERS-NEXT: 2 1
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: TypeError
+# ANSWERS-NEXT: 100
+# ANSWERS-NEXT: 4
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime globalThis.sink = next => { print(next("abc", 1)); const counted = { charCodeAt() { return this === counted ? 1 : 2; } }; print(next(counted, 0)); };
+# CHECKED: 99
+# CHECKED-NEXT: 2
+# CHECKED-NEXT: exited with 0

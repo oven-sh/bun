@@ -174,6 +174,26 @@ console.log(kind(() => typeof config.flag), kind(() => typeof (config.flag)), ki
     },
     prints: 'a{"b":"c"}d fragnulle\n',
   },
+  "--jsx-runtime=classic, --jsx-factory, --jsx-fragment of a TypeScript file": {
+    flags: ["--jsx-runtime=classic", "--jsx-factory=h", "--jsx-fragment=Frag"],
+    files: {
+      "main.tsx": `declare global { namespace JSX { interface IntrinsicElements { [tag: string]: object } } }
+const h = (tag: string, props: object | null, ...kids: unknown[]) => tag + JSON.stringify(props) + kids.join();
+const Frag = "frag";
+console.log(<a title="c">d</a>, <>e</>);`,
+    },
+    prints: 'a{"title":"c"}d fragnulle\n',
+  },
+  "--jsx-runtime=automatic, --jsx-import-source of a TypeScript file": {
+    flags: ["--jsx-runtime=automatic", "--jsx-import-source=mine"],
+    files: {
+      ...packages,
+      "node_modules/mine/r.d.ts": `export namespace JSX { interface IntrinsicElements { [tag: string]: object } }
+export declare const jsx: (tag: string, props: object) => string; export declare const jsxs: typeof jsx; export declare const jsxDEV: typeof jsx; export declare const Fragment: string;`,
+      "main.tsx": `console.log(<a title="c">d</a>);`,
+    },
+    prints: 'mine:a{"title":"c","children":"d"}\n',
+  },
   "--jsx-import-source": {
     flags: ["--jsx-import-source=mine"],
     files: { ...packages, "main.jsx": `console.log(<a b="c">d</a>);` },

@@ -41,7 +41,7 @@ const bufferedSource = {
   updateRef: members.updateRef,
 } as const;
 
-const source = { refCounted: true, finalize: true, memoryCost: true } as const;
+const source = { refCounted: true, finalize: true, thisValue: "this_jsvalue", memoryCost: true } as const;
 
 /** `owner` roots the peer that produces into this source, `sinkOwner` the peer it pipes into. */
 const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] as const;

@@ -1,0 +1,23 @@
+// a balanced tree with ranges, iteration both ways, deletion, ranks; and a skip list that must say the same
+'use strict';
+function Tree(compare) { this.root = null; this.size = 0; this.compare = compare || function (a, b) { return a < b ? -1 : a > b ? 1 : 0; }; this.turns = 0; }
+function N(k, v) { this.key = k; this.value = v; this.left = this.right = null; this.height = 1; this.count = 1; }
+function h(n) { return n ? n.height : 0; } function c(n) { return n ? n.count : 0; }
+function fix(n) { n.height = 1 + Math.max(h(n.left), h(n.right)); n.count = 1 + c(n.left) + c(n.right); return n; }
+function right(n) { var l = n.left; n.left = l.right; l.right = fix(n); return fix(l); }
+function left(n) { var r = n.right; n.right = r.left; r.left = fix(n); return fix(r); }
+Tree.prototype._balance = function (n) { fix(n); var b = h(n.left) - h(n.right); if (b > 1) { this.turns++; if (h(n.left.left) < h(n.left.right)) n.left = left(n.left); return right(n); } if (b < -1) { this.turns++; if (h(n.right.right) < h(n.right.left)) n.right = right(n.right); return left(n); } return n; };
+Tree.prototype.set = function (k, v) { var self = this, old; this.root = (function go(n) { if (!n) { self.size++; return new N(k, v); } var d = self.compare(k, n.key); if (d === 0) { old = n.value; n.value = v; return n; } if (d < 0) n.left = go(n.left); else n.right = go(n.right); return self._balance(n); }(this.root)); return old; };
+Tree.prototype.get = function (k) { var n = this.root; while (n) { var d = this.compare(k, n.key); if (d === 0) return n.value; n = d < 0 ? n.left : n.right; } };
+Tree.prototype.delete = function (k) { var self = this, hit = false; function least(n) { while (n.left) n = n.left; return n; } function cut(n) { if (!n.left) return n.right; n.left = cut(n.left); return self._balance(n); } this.root = (function go(n) { if (!n) return null; var d = self.compare(k, n.key); if (d < 0) n.left = go(n.left); else if (d > 0) n.right = go(n.right); else { hit = true; if (!n.left || !n.right) return n.left || n.right; var m = least(n.right); m.right = cut(n.right); m.left = n.left; return self._balance(m); } return self._balance(n); }(this.root)); if (hit) this.size--; return hit; };
+Tree.prototype.at = function (i) { var n = this.root; while (n) { var l = c(n.left); if (i < l) n = n.left; else if (i === l) return n; else { i -= l + 1; n = n.right; } } return undefined; };
+Tree.prototype.rank = function (k) { var n = this.root, r = 0; while (n) { var d = this.compare(k, n.key); if (d <= 0) { if (d === 0) return r + c(n.left); n = n.left; } else { r += c(n.left) + 1; n = n.right; } } return r; };
+Tree.prototype[Symbol.iterator] = function () { var st = [], n = this.root; return { next: function () { while (n) { st.push(n); n = n.left; } if (!st.length) return { done: true, value: undefined }; var x = st.pop(); n = x.right; return { done: false, value: [x.key, x.value] }; } }; };
+Tree.prototype.range = function (a, b, f) { var self = this, n = 0; (function go(x) { if (!x) return; var lo = self.compare(x.key, a), hi = self.compare(x.key, b); if (lo > 0) go(x.left); if (lo >= 0 && hi < 0) { n++; f(x.key, x.value); } if (hi < 0) go(x.right); }(this.root)); return n; };
+Tree.prototype.back = function* () { var st = [], n = this.root; while (n || st.length) { while (n) { st.push(n); n = n.right; } n = st.pop(); yield n.key; n = n.left; } };
+function Skip(compare) { this.compare = compare || function (a, b) { return a < b ? -1 : a > b ? 1 : 0; }; this.head = { next: [] }; this.level = 1; this.size = 0; this.seed = 1; }
+Skip.prototype.find = function (k, update) { var x = this.head; for (var i = this.level - 1; i >= 0; i--) { while (x.next[i] && this.compare(x.next[i].key, k) < 0) x = x.next[i]; if (update) update[i] = x; } return x.next[0]; };
+Skip.prototype.set = function (k, v) { var u = [], x = this.find(k, u), l = 1; if (x && this.compare(x.key, k) === 0) { var old = x.value; x.value = v; return old; } while ((this.seed = (this.seed * 1103515245 + 12345) & 0x7fffffff) % 4 === 0 && l < 16) l++; while (this.level < l) u[this.level++] = this.head; x = { key: k, value: v, next: new Array(l) }; for (var i = 0; i < l; i++) { x.next[i] = u[i].next[i]; u[i].next[i] = x; } this.size++; };
+Skip.prototype.delete = function (k) { var u = [], x = this.find(k, u); if (!x || this.compare(x.key, k) !== 0) return false; for (var i = 0; i < this.level; i++) if (u[i].next[i] === x) u[i].next[i] = x.next[i]; while (this.level > 1 && !this.head.next[this.level - 1]) this.level--; this.size--; return true; };
+Skip.prototype[Symbol.iterator] = function* () { for (var x = this.head.next[0]; x; x = x.next[0]) yield [x.key, x.value]; };
+module.exports = { Tree: Tree, Skip: Skip };

@@ -1,0 +1,18 @@
+# `f(...xs)` in a loop where nobody has shown xs to be a list: the ways part on whether it is a list as made and meet behind the call.
+# On the way of the list no copy is made: the parameters are read out of the list and the callee is called directly. The copy is made on the other way alone.
+# -- source: main.ts
+# declare function print(value: any): void;
+# function f(a: number, b: number) { return a * 3 + b; }
+# const lists: any[] = JSON.parse("[[1,2],[3,4]]");
+# let s = 0;
+# for (let i = 0; i < 10; i++) s += f(...(lists[i & 1] as [number, number]));
+# print(s);
+# -- end of source
+# RUN(WAYS): walk f0 mechanisms=all
+# WAYS: = IsPristine {{*}}builtinClass=Array
+# WAYS: = CallDirect {{*}}function=f1
+# RUN(COPY): walk f0 mechanisms=all
+# COPY-NOT: AppendElements
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 90
+# ANSWERS-NEXT: exited with 0

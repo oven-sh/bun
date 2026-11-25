@@ -9,7 +9,7 @@ function build(parts: string[], most: number): string {
   let text = "";
   for (const part of parts) {
     text += part;
-    check(text, most);
+    if (part !== "x") check(text, most);
   }
   return text;
 }

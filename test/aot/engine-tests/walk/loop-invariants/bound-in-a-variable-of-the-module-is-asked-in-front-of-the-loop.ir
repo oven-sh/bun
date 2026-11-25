@@ -1,0 +1,72 @@
+# `i < N`, and N is a variable of the module that the loop's function reads: the read is written in the head of the loop, so that as an input value it lies in the loop, though no turn writes the variable.
+# It counts as made in front of the loop: there the variable is read once, freed of its dead zone and rounded, and the copy behind the tests goes by the lesser of the bound and the greatest int32: its counter is an int32.
+# Without that the counter may come to 2^53, where a step no longer moves it: every step was made on doubles and taken back into an integer.
+# const N = Number(process.argv[2]);
+# function sum() { let s = 0; for (let i = 0; i < N; i++) s += i & 7; return s; }
+# (globalThis as any).kept = sum;
+# console.log(sum());
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: [[rounded]]: int @Int64 = IntegerBound
+# CHECK: = TypeTest [[rounded]] testedType=i32
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = Increment {{*}}form=CheckedIntegers
+# CHECK: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK: = Less {{*}}form=Integers
+# CHECK: @Int32 = Increment {{*}}form=Integers
+
+variable g0 name="N" module=m0 declared={type=number|absent flags=[IsExpected]} flags=[IsImmutable]
+module m0 path="bound-in-a-variable-of-the-module-is-asked-in-front-of-the-loop.ts" displayPath="bound-in-a-variable-of-the-module-is-asked-in-front-of-the-loop.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=Number @10
+    v3 = Builtin builtin=Process @17
+    v4 = PropGet v3 key="argv" @17
+    v5 = Convert v4 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @17
+    v6 = Integer integer=2 @17
+    v7 = ElemGet v5, v6 @25
+    v8 = Call v2, -, v7 calleeName="Number" @10
+    v9 = Convert v8 declared={type=number} illTypedCause=DeclarationWithoutBody @10
+    PutModuleVariable v9 variable=g0 @6
+    v11 = Builtin builtin=GlobalThis @116
+    v12 = PropGet v11 key="globalThis" [isFreeName] @116
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]} @116
+    PropSet v13, v1 key="kept" @116
+    v15 = Builtin builtin=GlobalThis @147
+    v16 = PropGet v15 key="console" [isFreeName] @147
+    v17 = Convert v16 declared={type=builtin(Console) flags=[IsExpected]} @147
+    v18 = PropGet v17 key="log" @147
+    v19 = Convert v18 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @147
+    v20 = Call v1 calleeName="sum" @159
+    v21 = Call v19, v17, v20 calleeKey="log" calleeName="console.log" @155
+    v22 = Undefined @147
+    Return v22 @147
+}
+function f1 name="sum" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @60
+    v1 = Convert v0 declared={type=number} @60
+    v2 = Integer @76
+    v3 = Convert v2 declared={type=number} @76
+    Jump -> next b1(v1, v3) @72
+  b1(v4: number, v5: number):
+    LoopHint @72
+    v7 = GetModuleVariable variable=g0 @83
+    v8 = CheckInitialized v7 name="N" @83
+    v9 = Less v5, v8 @83
+    Branch v9 -> taken b2(), notTaken b3() @83
+  b2():
+    v10 = Integer integer=7 @100
+    v11 = BitAnd v5, v10 @100
+    v12 = Add v4, v11 @100
+    v13 = Convert v12 declared={type=number} @91
+    v14 = Increment v5 @86
+    v15 = Convert v14 declared={type=number} @86
+    Jump -> next b1(v13, v15) @86
+  b3():
+    Return v4 @110
+}

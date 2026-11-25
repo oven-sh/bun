@@ -13,8 +13,8 @@
 # -- end of source
 # The body of a module, without a loop, is written straight where each of its operations does the same work whatever is known of its operands: variables of modules, the tests that what is imported from a CommonJS file is there,
 # closures, classes, texts, constants. declares.mjs has such a body. The body of main.mjs calls and adds: it is walked. So is `four`, which one call enters: how often a function is called is no word on its own text.
-# RUN: compile UnitsWrittenStraight mechanisms=all
-# CHECK: statistic UnitsWrittenStraight 1
+# RUN: compile StraightUnitsCompiled mechanisms=all
+# CHECK: statistic StraightUnitsCompiled 1
 # RUN(ANSWER): run-in-shell mechanisms=all
 # ANSWER: 10
 # ANSWER-NEXT: exited with 0

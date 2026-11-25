@@ -1,0 +1,54 @@
+# The URL is made in a turn and asked one question behind the loop, and the loop is built twice behind the test of a variable that may be in its dead zone.
+# What is read behind the loop is named by the way that leaves it, so both builds make the object: a build that left it unmade would meet the other build's object behind the loop, and the walk would stop.
+# function pathOf(text, n) { let s = 0; for (let i = 0; i < n; i++) { const u = new URL(text); s += late; if (n < s) return u.pathname; } return s; } const late = 2;
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: isLoopHead=true:
+# CHECK: isLoopHead=true:
+# CHECK: key="pathname"
+
+variable g0 name="late" module=m0 declared={type=absent|i32 flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = Integer integer=2
+    PutModuleVariable v4 variable=g0
+    Return v3
+}
+function f1 name="pathOf" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b7()
+  b1(v3):
+    v4 = TypeTest v1 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b7()
+  b2(v5):
+    v6 = Integer
+    Jump -> next b3(v6, v6)
+  b3(v7, v8):
+    LoopHint
+    v10 = Less v8, v5
+    Branch v10 -> taken b4(), notTaken b6()
+  b4():
+    v11 = Builtin builtin=URL
+    v12 = Construct v11, -, v3 calleeName="URL"
+    v13 = GetModuleVariable variable=g0
+    v14 = CheckInitialized v13 name="late"
+    v15 = Add v7, v14
+    v16 = Increment v8
+    v17 = Less v5, v15
+    Branch v17 -> taken b5(), notTaken b3(v15, v16)
+  b5():
+    v18 = PropGet v12 key="pathname"
+    Return v18
+  b6():
+    Return v7
+  b7():
+    Return v1
+}

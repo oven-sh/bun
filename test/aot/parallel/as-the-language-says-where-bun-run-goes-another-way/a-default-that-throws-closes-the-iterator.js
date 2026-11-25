@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` does not call return(): "next ReferenceError".
+// `bun run` does not call return(): "next ReferenceError".
 const order = [];
 const source = {
   [Symbol.iterator]() {

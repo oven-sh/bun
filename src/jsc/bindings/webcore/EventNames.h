@@ -23,6 +23,7 @@
 
 // #include "ThreadGlobalData.h"
 #include "EventTarget.h"
+#include <wtf/ThreadSpecific.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -43,26 +44,11 @@ namespace WebCore {
 
 struct EventNames {
     WTF_MAKE_NONCOPYABLE(EventNames);
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EventNames);
 
 public:
 #define DOM_EVENT_NAMES_DECLARE(name) const AtomString name##Event;
     DOM_EVENT_NAMES_FOR_EACH(DOM_EVENT_NAMES_DECLARE)
 #undef DOM_EVENT_NAMES_DECLARE
-
-    // FIXME: The friend declaration to makeUnique below does not work in windows port.
-    //
-    // template<class T, class... Args>
-    // friend typename std::_Unique_if<T>::_Single_object makeUnique(Args&&...);
-    //
-    // This create function should be deleted later and is only for keeping EventNames as private.
-    // makeUnique should be used instead.
-    //
-    template<class... Args>
-    static std::unique_ptr<EventNames> create(Args&&... args)
-    {
-        return std::unique_ptr<EventNames>(new EventNames(std::forward<Args>(args)...));
-    }
 
     // FIXME: Inelegant to call these both event names and event types.
     // We should choose one term and stick to it.
@@ -70,7 +56,7 @@ public:
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
-    // friend class ThreadGlobalData; // Allow ThreadGlobalData to create the per-thread EventNames object.
+    friend class WTF::ThreadSpecific<EventNames>;
 
     [[maybe_unused]] int dummy; // Needed to make initialization macro work.
 };

@@ -1,0 +1,23 @@
+# None of these lays a name that the lists of its class lack: a store over a declared static method . a store into an own static field . a helper that defines `name`, with which every class object is made . a store over a declared method on the prototype object . a store that a setter of the class above answers.
+# -- source: main.js
+# class Declared { static make() { return 1; } }
+# class Counted { static count = 0; }
+# class Named {}
+# class Renamed {}
+# class Run { run() { return 1; } }
+# class Sized { static set size(value) { print(value); } }
+# class Smaller extends Sized {}
+# class Last {}
+# function named(holder, text) { return Object.defineProperty(holder, "name", { value: text, configurable: true }); }
+# Declared.make = function () { return 2; };
+# Counted.count = 1;
+# named(Named, "first");
+# named(Renamed, "second");
+# Run.prototype.run = function () { return 2; };
+# Smaller.size = 3;
+# print(Declared.make(), Counted.count, Named.name, Renamed.name, new Run().run(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L7

@@ -414,6 +414,62 @@ test.each([
   }
 });
 
+test.each([
+  ["the cached password", MYSQL_FAST_AUTH_SUCCESS, ["scramble"]],
+  [
+    "full authentication",
+    PERFORM_FULL_AUTH,
+    ["scramble", "key request 0x02", `rsa ${JSON.stringify(longPassword + "\0")}`],
+  ],
+] as const)(
+  "sha256_password as the server's default: a caching_sha2_password account logs in with %s",
+  async (_, status, sent) => {
+    const packets: string[] = [];
+    const { server, port } = await listeningServer(socket => {
+      let buffered = Buffer.alloc(0);
+      let switched = false;
+      socket.on("error", () => {});
+      socket.write(mysqlHandshakeV10({ authPlugin: "sha256_password" }));
+      socket.on("data", (chunk: Buffer) => {
+        buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+          if (!switched) {
+            // The handshake response asked for the key. The answer is another plugin.
+            switched = true;
+            const nonce = Buffer.concat([switchNonce, Buffer.from([0])]);
+            socket.write(mysqlAuthSwitchRequest(seq + 1, "caching_sha2_password", nonce));
+          } else if (seq === 0) {
+            if (!mysqlAckSessionSetup(socket, payload)) socket.end();
+          } else if (payload.length === 32) {
+            packets.push("scramble");
+            socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([status])));
+            if (status === MYSQL_FAST_AUTH_SUCCESS) socket.write(mysqlOkPacket(seq + 2));
+          } else if (payload.length === 1) {
+            packets.push(`key request 0x0${payload[0]}`);
+            socket.write(mysqlAuthMoreData(seq + 1, Buffer.from(serverKey.publicKey)));
+          } else {
+            packets.push(`rsa ${JSON.stringify(decryptPassword(payload, switchNonce))}`);
+            socket.write(mysqlOkPacket(seq + 1));
+          }
+        });
+      });
+    });
+    try {
+      await using sql = new SQL({
+        url: `mysql://root:${longPassword}@127.0.0.1:${port}/db`,
+        max: 1,
+        allowPublicKeyRetrieval: true,
+      });
+      const result = await sql.connect().then(
+        () => "ok",
+        e => e.code,
+      );
+      expect({ result, packets }).toEqual({ result: "ok", packets: [...sent] });
+    } finally {
+      server.close();
+    }
+  },
+);
+
 test("sha256_password as the server's default: an empty password is one NUL, and no key is asked for unbidden", async () => {
   const packets: string[] = [];
   const { server, port } = await listeningServer(authScript("sha256_password as the server's default", packets));

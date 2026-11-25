@@ -163,9 +163,7 @@ let loads = 0;
 build.onLoad({ filter: /.*/, namespace: "one" }, (args: any) => ({ contents: "export const which = 'one " + ++loads + "';", loader: "js" }));
 build.onLoad({ filter: /.*/, namespace: "two" }, (args: any) => ({ contents: "export const which = 'two';", loader: "js" }));`,
     ],
-    prints: "one 1 one 1 one 1\n",
-    // Without `aot` a module is known by its path alone, and the second namespace gets the module of the first.
-    differs: { stdout: "one 1 two one 1\n" },
+    prints: "one 1 two one 1\n",
   },
   "onLoad for a package in node_modules": {
     files: {

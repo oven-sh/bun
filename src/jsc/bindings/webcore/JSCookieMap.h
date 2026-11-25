@@ -1,58 +1,28 @@
 #pragma once
 
 #include "JSDOMIterator.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "CookieMap.h"
 
 namespace WebCore {
 
-class JSCookieMap : public JSDOMWrapper<CookieMap> {
+class JSCookieMap final : public JSDOMInterface<JSCookieMap, CookieMap> {
 public:
-    using Base = JSDOMWrapper<CookieMap>;
-    static JSCookieMap* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
-    {
-        JSCookieMap* ptr = new (NotNull, JSC::allocateCell<JSCookieMap>(globalObject->vm())) JSCookieMap(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static CookieMap* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForCookieMap, m_subspaceForCookieMap);
+    static constexpr uint8_t jsType = JSAsJSONType;
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSAsJSONType), StructureFlags), info());
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
-
-protected:
-    JSCookieMap(JSC::Structure*, JSDOMGlobalObject&, Ref<CookieMap>&&);
-
-    void finishCreation(JSC::VM&);
 };
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSCookieMap* castedThis);
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, CookieMap&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<CookieMap>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<CookieMap>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<CookieMap> {
     using WrapperClass = JSCookieMap;
-    using ToWrappedReturnType = CookieMap*;
 };
 
 struct CookieMapIteratorTraits;

@@ -1,11 +1,14 @@
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
+use core::ops::DerefMut;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
+use bun_core::scoped::SetForScope;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
+    self as jsc, ComptimeStringMapExt as _, IndentScope, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, StringJsc as _, VM,
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
@@ -289,11 +292,12 @@ pub(crate) mod visited {
         }
     }
 
-    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `INIT` allocates an empty map,
+    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `init` makes an empty map,
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+        fn init() -> Self {
+            Map::default()
+        }
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -312,7 +316,7 @@ pub(crate) struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
-    pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+    pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
@@ -348,7 +352,7 @@ impl<'a> Formatter<'a> {
         Self {
             remaining_values: &[],
             map: visited::Map::default(),
-            map_node: None,
+            map_node: ManuallyDrop::new(None),
             global_this: global,
             indent: 0,
             quote_strings: false,
@@ -375,6 +379,11 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    #[must_use]
+    fn quoting_strings(&mut self, quote_strings: bool) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.quote_strings, quote_strings)
+    }
+
     pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
         if self.estimated_line_length > 80 {
             self.reset_line();
@@ -399,16 +408,9 @@ impl<'a> Formatter<'a> {
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         if let Some(mut node) = self.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is
-            // exclusively owned for this `Formatter`'s lifetime; its `data` was
-            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
-            // `Map`.
-            unsafe {
-                let data = node.as_mut().data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
+            node.data = core::mem::take(&mut self.map);
+            node.data.clear();
+            visited::Pool::release(node);
         }
     }
 }
@@ -1096,23 +1098,11 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; instead the raw node is stashed on
-                // `self` and released from `JestPrettyFormat::format`'s tail, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node never returns null");
-                self.map_node = Some(node);
-                // Take the map here and swap it back into
-                // `node.data` at release time (see JestPrettyFormat::format tail),
-                // so the pooled allocation is retained across uses.
-                // SAFETY: see above.
-                unsafe {
-                    let data = (*node.as_ptr()).data.assume_init_mut();
-                    data.clear();
-                    self.map = core::mem::take(data);
-                }
+                // `Drop` puts the map back, so the pooled allocation is retained across uses.
+                let mut node = visited::Pool::get_node();
+                node.data.clear();
+                self.map = core::mem::take(&mut node.data);
+                self.map_node = ManuallyDrop::new(Some(node));
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");
@@ -1160,9 +1150,9 @@ impl<'a> Formatter<'a> {
                             writer.write_all(b"\n");
                         }
                         writer.write_all(b"String {\n");
-                        self.indent += 1;
-                        self.reset_line();
-                        self.write_indent(writer.ctx).expect("unreachable");
+                        let mut this = IndentScope::new(self);
+                        this.reset_line();
+                        this.write_indent(writer.ctx).expect("unreachable");
                         let length = str.len;
                         for i in 0..length {
                             let unit = [str.char_at(i)];
@@ -1172,12 +1162,11 @@ impl<'a> Formatter<'a> {
                                 bun_fmt::utf16(&unit)
                             ));
                             if i != length - 1 {
-                                self.write_indent(writer.ctx).expect("unreachable");
+                                this.write_indent(writer.ctx).expect("unreachable");
                             }
                         }
-                        self.reset_line();
+                        this.reset_line();
                         writer.write_all(b"}\n");
-                        self.indent = self.indent.saturating_sub(1);
                         return Ok(());
                     }
 
@@ -1461,86 +1450,70 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"\n");
                     }
 
-                    let mut was_good_time = self.always_newline_scope;
                     {
-                        self.indent += 1;
+                        let mut indented = IndentScope::new(self);
+                        let mut quoting = indented.quoting_strings(true);
+                        let this = &mut *quoting;
 
-                        self.add_for_new_line(2);
+                        this.add_for_new_line(2);
 
-                        let prev_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
+                        {
+                            let element = value.get_index(this.global_this, 0)?;
+                            let tag = Tag::get(element, this.global_this)?;
 
-                        // `indent` and `quote_strings` must be
-                        // restored even when `Tag::get` / `format` throw. Wrap the fallible body in
-                        // a closure and restore unconditionally afterward.
-                        let inner: JsResult<()> = (|| {
-                            {
-                                let element = value.get_index(self.global_this, 0)?;
-                                let tag = Tag::get(element, self.global_this)?;
+                            this.reset_line();
+                            writer.write_all(b"[");
+                            writer.write_all(b"\n");
+                            this.write_indent(writer.ctx).expect("unreachable");
+                            this.add_for_new_line(1);
 
-                                was_good_time = was_good_time
-                                    || !tag.tag.is_primitive()
-                                    || self.good_time_for_a_new_line();
+                            this.format::<W, ENABLE_ANSI_COLORS>(
+                                tag, writer.ctx, element, this.global_this,
+                            )?;
 
-                                self.reset_line();
-                                writer.write_all(b"[");
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                self.add_for_new_line(1);
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const!(true, "<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if len == 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
+                            if tag.cell.is_string_like() {
+                                if ENABLE_ANSI_COLORS {
+                                    writer.write_all(
+                                        pretty_fmt_const!(true, "<r>").as_bytes(),
+                                    );
                                 }
                             }
 
-                            let mut i: u32 = 1;
-                            while i < len {
-                                self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                            if len == 1 {
+                                this.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
                                     .expect("unreachable");
-
-                                writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
-
-                                let element = value.get_index(self.global_this, i)?;
-                                let tag = Tag::get(element, self.global_this)?;
-
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
-                                )?;
-
-                                if tag.cell.is_string_like() {
-                                    if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const!(true, "<r>").as_bytes(),
-                                        );
-                                    }
-                                }
-
-                                if i == len - 1 {
-                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                        .expect("unreachable");
-                                }
-                                i += 1;
                             }
-                            Ok(())
-                        })();
+                        }
 
-                        self.quote_strings = prev_quote_strings;
-                        self.indent = self.indent.saturating_sub(1);
-                        inner?;
+                        let mut i: u32 = 1;
+                        while i < len {
+                            this.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                .expect("unreachable");
+
+                            writer.write_all(b"\n");
+                            this.write_indent(writer.ctx).expect("unreachable");
+
+                            let element = value.get_index(this.global_this, i)?;
+                            let tag = Tag::get(element, this.global_this)?;
+
+                            this.format::<W, ENABLE_ANSI_COLORS>(
+                                tag, writer.ctx, element, this.global_this,
+                            )?;
+
+                            if tag.cell.is_string_like() {
+                                if ENABLE_ANSI_COLORS {
+                                    writer.write_all(
+                                        pretty_fmt_const!(true, "<r>").as_bytes(),
+                                    );
+                                }
+                            }
+
+                            if i == len - 1 {
+                                this.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                    .expect("unreachable");
+                            }
+                            i += 1;
+                        }
                     }
 
                     self.reset_line();
@@ -1627,7 +1600,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
+                    } else if bun_jsc::DOMFormData::from_js(&value).is_some() {
                         if let Some(to_json_function) = value
                             .get(self.global_this, "toJSON")?
                             .filter(|f| f.is_callable())
@@ -1651,12 +1624,12 @@ impl<'a> Formatter<'a> {
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id),
+                                + bun_fmt::digit_count(timer.id),
                         );
-                        if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+                        if timer.repeats() {
                             self.add_for_new_line(
                                 b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id),
+                                    + bun_fmt::digit_count(timer.id),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1664,7 +1637,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1676,7 +1649,7 @@ impl<'a> Formatter<'a> {
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                                timer.internals.id,
+                                timer.id,
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1689,7 +1662,7 @@ impl<'a> Formatter<'a> {
                     {
                         self.add_for_new_line(
                             b"Immediate(# ) ".len()
-                                + bun_fmt::digit_count(immediate.internals.id),
+                                + bun_fmt::digit_count(immediate.id),
                         );
                         writer.print(format_args!(
                             "{}Immediate{} {}(#{}{}{}{}){}",
@@ -1697,7 +1670,7 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<yellow>"),
-                            immediate.internals.id,
+                            immediate.id,
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
@@ -1779,39 +1752,28 @@ impl<'a> Formatter<'a> {
                         0
                     };
 
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
                     let map_name: &str =
                         if value.js_type() == JSType::WeakMap { "WeakMap" } else { "Map" };
 
                     if length == 0 {
-                        self.quote_strings = prev_quote_strings;
                         writer.print(format_args!("{} {{}}", map_name));
                         return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", map_name));
                     {
-                        self.indent += 1;
-                        // hoist global_this (Copy &ref) before iter mutably
-                        // borrows `self`/`writer.ctx`; NLL releases both once `iter`
-                        // is dead after `for_each` returns.
                         let global = self.global_this;
+                        let mut indented = IndentScope::new(self);
+                        let mut quoting = indented.quoting_strings(true);
                         let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
+                            formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each(
+                        value.for_each(
                             global,
                             (&raw mut iter).cast::<c_void>(),
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
-                        // `indent` / `quote_strings` must be restored on every exit,
-                        // including thrown exceptions — restore before propagating.
-                        self.indent = self.indent.saturating_sub(1);
-                        self.quote_strings = prev_quote_strings;
-                        result?;
+                        )?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
@@ -1827,38 +1789,30 @@ impl<'a> Formatter<'a> {
                         0
                     };
 
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
                     let _ = self.write_indent(writer.ctx);
 
                     let set_name: &str =
                         if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
 
                     if length == 0 {
-                        self.quote_strings = prev_quote_strings;
                         writer.print(format_args!("{} {{}}", set_name));
                         return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", set_name));
                     {
-                        self.indent += 1;
                         let global = self.global_this;
+                        let mut indented = IndentScope::new(self);
+                        let mut quoting = indented.quoting_strings(true);
                         let mut iter = SetIterator::<W, ENABLE_ANSI_COLORS> {
-                            formatter: self,
+                            formatter: &mut quoting,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each(
+                        value.for_each(
                             global,
                             (&raw mut iter).cast::<c_void>(),
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
-                        // `indent` / `quote_strings` must be restored on every exit,
-                        // including thrown exceptions — restore before propagating.
-                        self.indent = self.indent.saturating_sub(1);
-                        self.quote_strings = prev_quote_strings;
-                        result?;
+                        )?;
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
@@ -1929,14 +1883,10 @@ impl<'a> Formatter<'a> {
                         pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                     ));
                     {
-                        self.indent += 1;
-                        let old_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
-                        // `indent` and `quote_strings` must be
-                        // restored even when `fast_get` / `Tag::get` / `format` throw.
-                        // Wrap the fallible body and restore unconditionally afterward.
-                        let inner: JsResult<()> = (|| {
-                        self.write_indent(writer.ctx).expect("unreachable");
+                        let mut indented = IndentScope::new(self);
+                        let mut quoting = indented.quoting_strings(true);
+                        let this = &mut *quoting;
+                        this.write_indent(writer.ctx).expect("unreachable");
 
                         writer.print(format_args!(
                             "{}type: {}\"{}\"{}{},{}\n",
@@ -1949,10 +1899,10 @@ impl<'a> Formatter<'a> {
                         ));
 
                         if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                            value.fast_get(this.global_this, jsc::BuiltinName::Message)?
                         {
                             if message_value.is_string() {
-                                self.write_indent(writer.ctx).expect("unreachable");
+                                this.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
                                     "{}message{}:{} ",
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
@@ -1960,9 +1910,9 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 ));
 
-                                let tag = Tag::get(message_value, self.global_this)?;
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, message_value, self.global_this,
+                                let tag = Tag::get(message_value, this.global_this)?;
+                                this.format::<W, ENABLE_ANSI_COLORS>(
+                                    tag, writer.ctx, message_value, this.global_this,
                                 )?;
                                 writer.write_all(b", \n");
                             }
@@ -1970,7 +1920,7 @@ impl<'a> Formatter<'a> {
 
                         match event_type {
                             EventType::MessageEvent => {
-                                self.write_indent(writer.ctx).expect("unreachable");
+                                this.write_indent(writer.ctx).expect("unreachable");
                                 writer.print(format_args!(
                                     "{}data{}:{} ",
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
@@ -1978,20 +1928,20 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                 ));
                                 let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                                    .fast_get(this.global_this, jsc::BuiltinName::Data)?
                                     .unwrap_or(JSValue::UNDEFINED);
-                                let tag = Tag::get(data, self.global_this)?;
+                                let tag = Tag::get(data, this.global_this)?;
 
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, data, self.global_this,
+                                this.format::<W, ENABLE_ANSI_COLORS>(
+                                    tag, writer.ctx, data, this.global_this,
                                 )?;
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
                                 if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                                    value.fast_get(this.global_this, jsc::BuiltinName::Error)?
                                 {
-                                    self.write_indent(writer.ctx).expect("unreachable");
+                                    this.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
                                         "{}error{}:{} ",
                                         pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
@@ -1999,21 +1949,15 @@ impl<'a> Formatter<'a> {
                                         pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                                     ));
 
-                                    let tag = Tag::get(data, self.global_this)?;
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
+                                    let tag = Tag::get(data, this.global_this)?;
+                                    this.format::<W, ENABLE_ANSI_COLORS>(
+                                        tag, writer.ctx, data, this.global_this,
                                     )?;
                                     writer.write_all(b"\n");
                                 }
                             }
                             _ => unreachable!(),
                         }
-                        Ok(())
-                        })();
-
-                        self.quote_strings = old_quote_strings;
-                        self.indent = self.indent.saturating_sub(1);
-                        inner?;
                     }
 
                     self.write_indent(writer.ctx).expect("unreachable");
@@ -2082,35 +2026,24 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"key=");
                             }
 
-                            let old_quote_strings = self.quote_strings;
-                            self.quote_strings = true;
-
-                            let inner: JsResult<()> = (|| {
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    Tag::get(key_value, self.global_this)?,
-                                    writer.ctx,
-                                    key_value,
-                                    self.global_this,
-                                )
-                            })();
-                            self.quote_strings = old_quote_strings;
-                            inner?;
+                            let global = self.global_this;
+                            self.quoting_strings(true).format::<W, ENABLE_ANSI_COLORS>(
+                                Tag::get(key_value, global)?,
+                                writer.ctx,
+                                key_value,
+                                global,
+                            )?;
                             needs_space = true;
                         }
                     }
 
-                    if let Some(props) = value.get(self.global_this, "props")? {
-                        let prev_quote_strings = self.quote_strings;
-                        self.quote_strings = true;
-
-                        // `quote_strings` (and nested `indent` scopes) must be restored on
-                        // every exit, including thrown exceptions. Wrap the fallible body in a
-                        // closure (Ok(true) ⇒ children path printed the closing tag, so the
-                        // trailing " />" is skipped) and restore unconditionally afterward.
-                        let inner: JsResult<bool> = (|| {
-                        let Some(props_obj) = props.get_object() else { return Ok(false); };
+                    if let Some(props) = value.get(self.global_this, "props")?
+                        && let Some(props_obj) = props.get_object()
+                    {
+                        let mut quoting = self.quoting_strings(true);
+                        let this = &mut *quoting;
                         let props_iter = JSPropertyIterator::init(
-                            self.global_this,
+                            this.global_this,
                             props_obj,
                             jsc::PropertyIteratorOptions {
                                 skip_empty_name: true,
@@ -2118,87 +2051,17 @@ impl<'a> Formatter<'a> {
                             },
                         )?;
 
-                        let children_prop = props.get(self.global_this, "children")?;
+                        let children_prop = props.get(this.global_this, "children")?;
                         if props_iter.len > 0 {
-                            {
-                                self.indent += 1;
-                                let count_without_children =
-                                    props_iter.len - usize::from(children_prop.is_some());
-
-                                let loop_result: JsResult<()> = (|| {
-                                // `JSPropertyIterator::i` is private upstream;
-                                // track the 1-based iteration index locally.
-                                let mut iter_i: usize = 0;
-                                while let Some((prop, property_value)) = props_iter.next()? {
-                                    iter_i += 1;
-                                    if prop.eq_ascii(b"children") {
-                                        continue;
-                                    }
-
-                                    let tag = Tag::get(property_value, self.global_this)?;
-
-                                    if tag.cell.is_hidden() {
-                                        continue;
-                                    }
-
-                                    if needs_space {
-                                        writer.write_all(b" ");
-                                    }
-                                    needs_space = false;
-
-                                    writer.print(format_args!(
-                                        "{}{}{}={}",
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
-                                        prop.trunc(128),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
-                                        pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
-                                    ));
-
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const!(true, "<r><green>").as_bytes(),
-                                            );
-                                        }
-                                    }
-
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, property_value, self.global_this,
-                                    )?;
-
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const!(true, "<r>").as_bytes(),
-                                            );
-                                        }
-                                    }
-
-                                    if
-                                    // count_without_children is necessary to prevent printing an extra newline
-                                    // if there are children and one prop and the child prop is the last prop
-                                    iter_i + 1 < count_without_children
-                                        // 3 is arbitrary but basically
-                                        //  <input type="text" value="foo" />
-                                        //  ^ should be one line
-                                        // <input type="text" value="foo" bar="true" baz={false} />
-                                        //  ^ should be multiple lines
-                                        && iter_i > 3
-                                    {
-                                        writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
-                                    } else if iter_i + 1 < count_without_children {
-                                        writer.write_all(b" ");
-                                    }
-                                }
-                                Ok(())
-                                })();
-                                self.indent = self.indent.saturating_sub(1);
-                                loop_result?;
-                            }
+                            IndentScope::new(this).print_jsx_props::<W, ENABLE_ANSI_COLORS>(
+                                &mut writer,
+                                &props_iter,
+                                props_iter.len - usize::from(children_prop.is_some()),
+                                needs_space,
+                            )?;
 
                             if let Some(children) = children_prop {
-                                let tag = Tag::get(children, self.global_this)?;
+                                let tag = Tag::get(children, this.global_this)?;
 
                                 let print_children =
                                     matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
@@ -2208,7 +2071,7 @@ impl<'a> Formatter<'a> {
                                         match tag.tag {
                                             Tag::String => {
                                                 let children_string =
-                                                    children.to_js_string_view(self.global_this)?;
+                                                    children.to_js_string_view(this.global_this)?;
                                                 if children_string.is_empty() {
                                                     break 'print_children;
                                                 }
@@ -2222,14 +2085,13 @@ impl<'a> Formatter<'a> {
                                                 if children_string.length() < 128 {
                                                     writer.write_string(&children_string);
                                                 } else {
-                                                    self.indent += 1;
                                                     writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
+                                                    IndentScope::new(this)
+                                                        .write_indent(writer.ctx)
                                                         .expect("unreachable");
-                                                    self.indent = self.indent.saturating_sub(1);
                                                     writer.write_string(&children_string);
                                                     writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
+                                                    this.write_indent(writer.ctx)
                                                         .expect("unreachable");
                                                 }
                                             }
@@ -2237,71 +2099,61 @@ impl<'a> Formatter<'a> {
                                                 writer.write_all(b">\n");
 
                                                 {
-                                                    self.indent += 1;
-                                                    let r: JsResult<()> = (|| {
-                                                        self.write_indent(writer.ctx)
-                                                            .expect("unreachable");
-                                                        self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
-                                                            writer.ctx,
-                                                            children,
-                                                            self.global_this,
-                                                        )
-                                                    })();
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
+                                                    let mut indented = IndentScope::new(this);
+                                                    let this = &mut *indented;
+                                                    this.write_indent(writer.ctx)
+                                                        .expect("unreachable");
+                                                    this.format::<W, ENABLE_ANSI_COLORS>(
+                                                        Tag::get(children, this.global_this)?,
+                                                        writer.ctx,
+                                                        children,
+                                                        this.global_this,
+                                                    )?;
                                                 }
 
                                                 writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
+                                                this.write_indent(writer.ctx)
                                                     .expect("unreachable");
                                             }
                                             Tag::Array => {
                                                 let length =
-                                                    children.get_length(self.global_this)? as usize;
+                                                    children.get_length(this.global_this)? as usize;
                                                 if length == 0 {
                                                     break 'print_children;
                                                 }
                                                 writer.write_all(b">\n");
 
                                                 {
-                                                    self.indent += 1;
-                                                    self.write_indent(writer.ctx)
+                                                    let mut indented = IndentScope::new(this);
+                                                    let mut quoting = indented.quoting_strings(false);
+                                                    let this = &mut *quoting;
+                                                    this.write_indent(writer.ctx)
                                                         .expect("unreachable");
-                                                    let _prev_quote_strings = self.quote_strings;
-                                                    self.quote_strings = false;
 
-                                                    let r: JsResult<()> = (|| {
-                                                        let mut j: usize = 0;
-                                                        while j < length {
-                                                            let child = JSObject::get_index(
-                                                                children,
-                                                                self.global_this,
-                                                                u32::try_from(j).unwrap(),
-                                                            )?;
-                                                            self.format::<W, ENABLE_ANSI_COLORS>(
-                                                                Tag::get(child, self.global_this)?,
-                                                                writer.ctx,
-                                                                child,
-                                                                self.global_this,
-                                                            )?;
-                                                            if j + 1 < length {
-                                                                writer.write_all(b"\n");
-                                                                self.write_indent(writer.ctx)
-                                                                    .expect("unreachable");
-                                                            }
-                                                            j += 1;
+                                                    let mut j: usize = 0;
+                                                    while j < length {
+                                                        let child = JSObject::get_index(
+                                                            children,
+                                                            this.global_this,
+                                                            u32::try_from(j).unwrap(),
+                                                        )?;
+                                                        this.format::<W, ENABLE_ANSI_COLORS>(
+                                                            Tag::get(child, this.global_this)?,
+                                                            writer.ctx,
+                                                            child,
+                                                            this.global_this,
+                                                        )?;
+                                                        if j + 1 < length {
+                                                            writer.write_all(b"\n");
+                                                            this.write_indent(writer.ctx)
+                                                                .expect("unreachable");
                                                         }
-                                                        Ok(())
-                                                    })();
-
-                                                    self.quote_strings = _prev_quote_strings;
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
+                                                        j += 1;
+                                                    }
                                                 }
 
                                                 writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
+                                                this.write_indent(writer.ctx)
                                                     .expect("unreachable");
                                             }
                                             _ => unreachable!(),
@@ -2329,25 +2181,15 @@ impl<'a> Formatter<'a> {
                                         writer.write_all(b">");
                                     }
 
-                                    return Ok(true);
+                                    return Ok(());
                                 }
                             }
-                        }
-                        Ok(false)
-                        })();
-
-                        self.quote_strings = prev_quote_strings;
-                        if inner? {
-                            return Ok(());
                         }
                     }
 
                     writer.write_all(b" />");
                 }
                 Tag::Object => {
-                    let prev_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-
                     // We want to figure out if we should print this object
                     // on one line or multiple lines
                     //
@@ -2367,12 +2209,12 @@ impl<'a> Formatter<'a> {
                     //
                     //   Then, we print it each property on a new line, recursively.
                     //
-                    let prev_always_newline_scope = self.always_newline_scope;
                     let always_newline =
                         self.always_newline_scope || self.good_time_for_a_new_line();
                     let global = self.global_this;
+                    let mut quoting = self.quoting_strings(true);
                     let mut iter = PropertyIterator::<W, ENABLE_ANSI_COLORS> {
-                        formatter: self,
+                        formatter: &mut quoting,
                         writer: writer.ctx,
                         i: 0,
                         always_newline,
@@ -2390,10 +2232,7 @@ impl<'a> Formatter<'a> {
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
-                    // `always_newline_scope` / `quote_strings` must be restored on every
-                    // exit — restore before propagating any exception from the property iterator.
-                    self.always_newline_scope = prev_always_newline_scope;
-                    self.quote_strings = prev_quote_strings;
+                    drop(quoting);
                     self.same_as_older_bun &= result?;
 
                     if iter_i == 0 {
@@ -2441,30 +2280,32 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                             }
                             writer.write_all(b"{\n");
-                            self.indent += 1;
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"data\": [");
+                            {
+                                let mut object = IndentScope::new(self);
+                                let _ = object.write_indent(writer.ctx);
+                                writer.write_all(b"\"data\": [");
 
-                            self.indent += 1;
-                            for el in slice {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el));
+                                {
+                                    let data = IndentScope::new(&mut *object);
+                                    for el in slice {
+                                        writer.write_all(b"\n");
+                                        let _ = data.write_indent(writer.ctx);
+                                        writer.print(format_args!("{},", el));
+                                    }
+                                }
+
+                                if !slice.is_empty() {
+                                    writer.write_all(b"\n");
+                                    let _ = object.write_indent(writer.ctx);
+                                    writer.write_all(b"],\n");
+                                } else {
+                                    writer.write_all(b"],\n");
+                                }
+
+                                let _ = object.write_indent(writer.ctx);
+                                writer.write_all(b"\"type\": \"Buffer\",\n");
                             }
-                            self.indent = self.indent.saturating_sub(1);
 
-                            if !slice.is_empty() {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.write_all(b"],\n");
-                            } else {
-                                writer.write_all(b"],\n");
-                            }
-
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"type\": \"Buffer\",\n");
-
-                            self.indent = self.indent.saturating_sub(1);
                             let _ = self.write_indent(writer.ctx);
                             writer.write_all(b"}");
 
@@ -2484,13 +2325,12 @@ impl<'a> Formatter<'a> {
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
                             let slice_with_type = bun_core::Unaligned::<$t>::slice_of(slice);
-                            self.indent += 1;
+                            let this = IndentScope::new(self);
                             for el in slice_with_type {
                                 writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
+                                let _ = this.write_indent(writer.ctx);
                                 writer.print(format_args!("{},", el.get()));
                             }
-                            self.indent = self.indent.saturating_sub(1);
                         }};
                     }
 
@@ -2537,6 +2377,66 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    fn print_jsx_props<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut WrappedWriter<'_, W>,
+        props_iter: &JSPropertyIterator<'_>,
+        count_without_children: usize,
+        mut needs_space: bool,
+    ) -> JsResult<()> {
+        let mut iter_i: usize = 0;
+        while let Some((prop, property_value)) = props_iter.next()? {
+            iter_i += 1;
+            if prop.eq_ascii(b"children") {
+                continue;
+            }
+
+            let tag = Tag::get(property_value, self.global_this)?;
+
+            if tag.cell.is_hidden() {
+                continue;
+            }
+
+            if needs_space {
+                writer.write_all(b" ");
+            }
+            needs_space = false;
+
+            writer.print(format_args!(
+                "{}{}{}={}",
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
+                prop.trunc(128),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
+                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
+            ));
+
+            if tag.cell.is_string_like() {
+                if ENABLE_ANSI_COLORS {
+                    writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
+                }
+            }
+
+            self.format::<W, ENABLE_ANSI_COLORS>(
+                tag, writer.ctx, property_value, self.global_this,
+            )?;
+
+            if tag.cell.is_string_like() {
+                if ENABLE_ANSI_COLORS {
+                    writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
+                }
+            }
+
+            // 3 is arbitrary: an element with few props stays on one line.
+            if iter_i + 1 < count_without_children && iter_i > 3 {
+                writer.write_all(b"\n");
+                self.write_indent(writer.ctx).expect("unreachable");
+            } else if iter_i + 1 < count_without_children {
+                writer.write_all(b" ");
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
@@ -2568,18 +2468,16 @@ impl<'a> Formatter<'a> {
             }
         }
 
-        let prev_global_this = self.global_this;
-        // `self.global_this` is restored to the previous value at the end.
-        self.global_this = global_this;
+        let mut scope = SetForScope::new(self, |this| &mut this.global_this, global_this);
+        let this = &mut *scope;
 
-        if let Some(differs) = self.like_older_bun {
-            self.failed |= differs.get();
+        if let Some(differs) = this.like_older_bun {
+            this.failed |= differs.get();
         } else if matches!(result.tag, Tag::Object | Tag::Array | Tag::JSON) {
-            match super::dom_format::print_in_snapshot(self, writer, value) {
+            match super::dom_format::print_in_snapshot(this, writer, value) {
                 Ok(false) => {}
                 printed => {
-                    self.global_this = prev_global_this;
-                    self.same_as_older_bun = false;
+                    this.same_as_older_bun = false;
                     return printed.map(drop);
                 }
             }
@@ -2588,80 +2486,78 @@ impl<'a> Formatter<'a> {
         // This looks incredibly redundant. Each tag variant dispatches to its
         // own small formatting function; that _should_ limit the stack usage
         // because each version of the function will be relatively small.
-        let r = match result.tag {
-            Tag::StringPossiblyFormatted => self
+        match result.tag {
+            Tag::StringPossiblyFormatted => this
                 .print_as::<W, { Tag::StringPossiblyFormatted }, ENABLE_ANSI_COLORS>(
                     writer, value, result.cell,
                 ),
             Tag::String => {
-                self.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::Undefined => self
+            Tag::Undefined => this
                 .print_as::<W, { Tag::Undefined }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Double => {
-                self.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Integer => {
-                self.print_as::<W, { Tag::Integer }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Integer }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Null => {
-                self.print_as::<W, { Tag::Null }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Null }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Boolean => {
-                self.print_as::<W, { Tag::Boolean }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Boolean }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Array => {
-                self.print_as::<W, { Tag::Array }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Array }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Object => {
-                self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::Function => self
+            Tag::Function => this
                 .print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Class => {
-                self.print_as::<W, { Tag::Class }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Class }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Error => {
-                self.print_as::<W, { Tag::Error }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Error }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::TypedArray => self
+            Tag::TypedArray => this
                 .print_as::<W, { Tag::TypedArray }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Map => {
-                self.print_as::<W, { Tag::Map }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Map }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Set => {
-                self.print_as::<W, { Tag::Set }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Set }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Symbol => {
-                self.print_as::<W, { Tag::Symbol }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Symbol }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::BigInt => {
-                self.print_as::<W, { Tag::BigInt }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::BigInt }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::GlobalObject => self
+            Tag::GlobalObject => this
                 .print_as::<W, { Tag::GlobalObject }, ENABLE_ANSI_COLORS>(
                     writer, value, result.cell,
                 ),
             Tag::Private => {
-                self.print_as::<W, { Tag::Private }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Private }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Promise => {
-                self.print_as::<W, { Tag::Promise }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Promise }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::JSON => {
-                self.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::NativeCode => self
+            Tag::NativeCode => this
                 .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::JSX => {
-                self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
             Tag::Event => {
-                self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
+                this.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-        };
-        self.global_this = prev_global_this;
-        r
+        }
     }
 }
 
@@ -2979,17 +2875,16 @@ impl JestPrettyFormat {
                 writer.write_all(b"StringMatching ");
             }
 
-            let original_quote_strings = *this.amf_quote_strings();
+            let mut this = SetForScope::saving(this, |this| this.amf_quote_strings());
             if test_value.is_reg_exp() {
                 *this.amf_quote_strings() = false;
             }
             this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
             )?;
-            *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
+                &instance, value, this.amf_global_this(), &mut *writer.ctx, true,
             )
             .expect("unreachable");
             if !printed {
@@ -3301,9 +3196,9 @@ pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out
             name(matcher.flags, "StringMatching", "StringNotMatching")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             name(matcher.flags, "NumberCloseTo", "NumberNotCloseTo")
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             "Any"
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             "Anything"
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else { return Ok(false) };
@@ -3357,7 +3252,7 @@ fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, f
 }
 
 fn is_any_or_anything(value: JSValue) -> bool {
-    value.as_class_ref::<expect::ExpectAny>().is_some() || value.as_class_ref::<expect::ExpectAnything>().is_some()
+    value.is::<expect::ExpectAny>() || value.is::<expect::ExpectAnything>()
 }
 
 fn is_text(global: &JSGlobalObject, value: JSValue, text: &[u8]) -> JsResult<bool> {
@@ -3717,10 +3612,8 @@ impl Formatter<'_> {
     }
 
     fn deeper<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {
-        self.depth += 1;
-        let result = print(self);
-        self.depth -= 1;
-        result
+        let depth = self.depth + 1;
+        print(&mut SetForScope::new(self, |this| &mut this.depth, depth))
     }
 
     fn print_indented(
@@ -3729,11 +3622,10 @@ impl Formatter<'_> {
         print_items: &mut dyn FnMut(&mut Self, &mut Vec<u8>) -> JsResult<()>,
     ) -> JsResult<()> {
         let empty = out.len();
-        let items_of_outer = core::mem::take(&mut self.items);
-        self.indent += 1;
-        let result = print_items(self, out);
-        self.indent -= 1;
-        self.items = items_of_outer;
+        let result = {
+            let mut indented = IndentScope::new(self);
+            print_items(&mut SetForScope::new(&mut *indented, |this| &mut this.items, 0), out)
+        };
         if out.len() != empty {
             self.new_line(out);
         }
@@ -4289,14 +4181,14 @@ impl Formatter<'_> {
                 }
             }
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
+        } else if value.is::<expect::ExpectAny>() {
             let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");
             let name = constructor.get_class_name(global)?;
             let name = name.to_utf8();
             out.extend_from_slice(if name.slice().is_empty() { b"<anonymous>" } else { name.slice() });
             out.push(b'>');
-        } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
+        } else if value.is::<expect::ExpectAnything>() {
             out.extend_from_slice(b"Anything");
         } else {
             return Ok(false);
@@ -4408,8 +4300,7 @@ impl Formatter<'_> {
             return Ok(());
         }
         out.extend_from_slice(b" {");
-        self.depth += 1;
-        let result = self.print_indented(out, &mut |this, out| {
+        self.deeper(|this| this.print_indented(out, &mut |this, out| {
             let mut i = 0;
             // The plugin re-reads `_keys` and its length on every iteration, so don't hoist them.
             while i < length_of(global, member(global, record, "_keys")?)? {
@@ -4428,9 +4319,7 @@ impl Formatter<'_> {
                 this.end_item(out);
             }
             Ok(())
-        });
-        self.depth -= 1;
-        result?;
+        }))?;
         out.push(b'}');
         Ok(())
     }
@@ -4449,9 +4338,9 @@ impl Formatter<'_> {
         out.extend_from_slice(tag);
 
         let after_tag = out.len();
-        self.indent += 1;
-        let printed_props = props.map_or(Ok(()), |props| {
-            for_each_sorted_property(global, props, self.snapshot_format, &mut |key, value| {
+        if let Some(props) = props {
+            let mut this = IndentScope::new(self);
+            for_each_sorted_property(global, props, this.snapshot_format, &mut |key, value| {
                 if !key.is_string() || value.is_undefined() {
                     return Ok(());
                 }
@@ -4459,40 +4348,39 @@ impl Formatter<'_> {
                 if skip_children_prop && key.eq_ascii(b"children") {
                     return Ok(());
                 }
-                if self.snapshot_format == SnapshotFormat::Vitest
+                if this.snapshot_format == SnapshotFormat::Vitest
                     && value.is_string_literal()
                     && is_hidden_by_vitest(value.to_bun_string(global)?.to_utf8().slice())
                 {
                     return Ok(());
                 }
-                self.new_line(out);
+                this.new_line(out);
                 out.extend_from_slice(key.to_utf8().slice());
                 out.push(b'=');
                 // Print it on its own line inside the braces, then drop that line break if it fit on one line.
                 let braces = !value.is_string_literal();
                 let open = out.len() + 1;
-                self.indent += 1;
-                if braces {
-                    out.push(b'{');
-                    self.new_line(out);
-                }
-                let start = out.len();
-                let result = self.print_child(out, value);
-                self.indent -= 1;
-                result?;
+                let start = {
+                    let mut this = IndentScope::new(&mut *this);
+                    if braces {
+                        out.push(b'{');
+                        this.new_line(out);
+                    }
+                    let start = out.len();
+                    this.print_child(out, value)?;
+                    start
+                };
                 if braces {
                     if strings::contains_char(&out[start..], b'\n') {
-                        self.new_line(out);
+                        this.new_line(out);
                     } else {
                         out.drain(open..start);
                     }
                     out.push(b'}');
                 }
                 Ok(())
-            })
-        });
-        self.indent -= 1;
-        printed_props?;
+            })?;
+        }
         let has_props = out.len() != after_tag;
         if has_props {
             self.new_line(out);
@@ -4501,14 +4389,12 @@ impl Formatter<'_> {
         let end_of_open_tag = out.len();
         out.push(b'>');
         if let Some(children) = children {
-            self.indent += 1;
-            let result = if skip_children_prop {
-                self.print_flattened_children(out, children)
+            let mut this = IndentScope::new(self);
+            if skip_children_prop {
+                this.print_flattened_children(out, children)?;
             } else {
-                self.print_mapped_children(out, children)
-            };
-            self.indent -= 1;
-            result?;
+                this.print_mapped_children(out, children)?;
+            }
         }
         if out.len() == end_of_open_tag + 1 {
             out.truncate(end_of_open_tag);
@@ -4665,9 +4551,7 @@ impl JestPrettyFormat {
         }
 
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(()) };
 
         let is_of_file = expect::Expect::is_called_by_test_file(global);
         let serializers = JSValue::create_empty_array(global, 0)?;
@@ -4691,10 +4575,8 @@ impl JestPrettyFormat {
     #[optimize(size)]
     fn serializers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
-        let file = super::jest::Jest::file_generation(global);
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(&utils_value) else { return Ok(None) };
+        let file = super::jest::Jest::file_generation();
         let is_same_file = utils.serializers_file.replace(file) == file;
         let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);

@@ -50,7 +50,7 @@ function mockToolchain(): Toolchain {
 test("the feature files load", () => {
   expect(featureNamed(model, "JIT").index).toBe(0);
   expect(featureNamed(model, "Tools").index).toBe(128);
-  expect(model.trimFeatures.length).toBe(73);
+  expect(model.trimFeatures.length).toBe(74);
   expect(model.trimFeatures.slice(0, 2).map(trimFeature => trimFeature.name)).toEqual(["cli", "lint"]);
   const classes = new Set<string>(icuItemClasses);
   expect(model.icuData.map(line => line.itemClass).filter(itemClass => !classes.has(itemClass))).toEqual([]);
@@ -104,7 +104,7 @@ test("Bun.Build.TrimFeature lists every trim feature", () => {
   );
 });
 
-test("docs/compiler/size.mdx lists every trim feature with its description and its sizes", () => {
+test("docs/compiler/size.mdx lists every trim feature", () => {
   const page = readFileSync(join(root, "docs", "compiler", "size.mdx"), "utf8");
   const start = page.indexOf("### Feature names\n");
   expect(start).toBeGreaterThanOrEqual(0);
@@ -118,11 +118,12 @@ test("docs/compiler/size.mdx lists every trim feature with its description and i
         .split(/(?<!\\)\|/)
         .map(cell => cell.trim().replaceAll("\\|", "|")),
     );
-  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "< 0.1 MB" : `${megabytes.toFixed(1)} MB`);
+  const firstSentence = (text: string) => text.slice(0, text.indexOf(". ") + 1 || text.length);
+  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "" : `${megabytes.toFixed(1)} MB`);
   expect(rows).toEqual(
-    model.trimFeatures.map(({ name, about, also, saves }) => [
+    model.trimFeatures.map(({ name, about, saves }) => [
       `\`${name}\``,
-      also.length > 0 ? `${about} Also needs it: ${also.join("; ")}.` : about,
+      firstSentence(about),
       sizeOf(saves!.linux),
       sizeOf(saves!.macos),
     ]),
@@ -151,6 +152,7 @@ const neverOffered: Record<string, string> = {
     "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
   "its built-ins still work when the features used with it are removed":
     "ElementsToLocaleString ProcessListeners ProcessListenerRemoval",
+  "--aot-record-order alone asks for it": "OrderRecorder",
   "the image of a compiled program lists what it calls of it, and nothing else can": model.features
     .filter(feature => feature.enteredFrom === "compiled-code")
     .map(feature => feature.name)

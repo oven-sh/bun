@@ -1,0 +1,141 @@
+# f3 = pastGroup
+# f4 = countMarks
+# -- source: a-typed-build-that-is-left-at-a-call-is-made-again-with-the-call-in-it.ts
+# // A scan over a text. Where it meets a mark it calls a helper that has a loop of its own, and goes on where the helper says. The scan is handed out, so nothing is known of `text`: to Link the helper calls unknown code and gives a number or a text.
+# declare function print(...values: unknown[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# const mark = 34, opens = 123, closes = 125, escapes = 92, odd = 94;
+# let bias = 0;
+# let hook: ((at: number) => unknown) | null = null;
+# function pastMark(text: string, from: number): number {
+#   let at = from;
+#   for (;;) {
+#     const found = text.indexOf('"', at + 1);
+#     if (found === -1) return -1;
+#     let slashes = 0;
+#     while (text.charCodeAt(found - 1 - slashes) === escapes) slashes++;
+#     if ((slashes & 1) === 0) return found + 1;
+#     at = found;
+#   }
+# }
+# function pastOdd(text: string, from: number): any {
+#   if (hook) hook(from);
+#   const kind = text.charCodeAt(from + 1);
+#   if (kind === 49) return String(from + 2);
+#   if (kind === 50) return from + 2.5;
+#   if (kind === 51) return from + 4294967296;
+#   if (kind === 52) return NaN;
+#   if (kind === 53) return { valueOf() { return from + 2; } };
+#   if (kind === 54) return -0;
+#   if (kind === 55) return undefined;
+#   if (kind === 56) return BigInt(from + 2);
+#   return from + 2;
+# }
+# function pastGroup(text: string, from: number): string {
+#   let depth = 0;
+#   let seen = 0;
+#   let at: any = from;
+#   while (at < text.length) {
+#     const unit = text.charCodeAt(at);
+#     seen += bias;
+#     if (unit === mark) {
+#       at = pastMark(text, at);
+#       if (at === -1) return "open mark " + seen;
+#       continue;
+#     }
+#     if (unit === odd) {
+#       at = pastOdd(text, at);
+#       if (seen > 400) return "too long " + typeof at;
+#       seen++;
+#       continue;
+#     }
+#     if (unit === opens) depth++;
+#     else if (unit === closes) {
+#       depth--;
+#       if (depth === 0) return typeof at + " " + String(at + 1) + " " + seen;
+#     }
+#     at++;
+#   }
+#   return "end " + typeof at + " " + String(at) + " " + seen + " " + depth;
+# }
+# function countMarks(text: string): string {
+#   let marks = 0;
+#   let at: any = 0;
+#   while (at < text.length) {
+#     const unit = text.charCodeAt(at);
+#     if (unit === mark) {
+#       at = pastMark(text, at);
+#       if (at === -1) return "open mark " + marks;
+#       marks++;
+#       continue;
+#     }
+#     if (unit === odd) {
+#       at = pastOdd(text, at);
+#       if (marks > 400) return "too long " + typeof at;
+#       marks++;
+#       continue;
+#     }
+#     at++;
+#   }
+#   return typeof at + " " + String(at) + " " + marks;
+# }
+# const handedOut: (text: unknown, from: unknown) => unknown = unseen(pastGroup);
+# const counts: (text: unknown) => unknown = unseen(countMarks);
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# const plain = 'xx{"kind":"note","stamp":12,"body":{"lines":["a","b\\"c","def"],"open":true},"weight":3.5}yy';
+# for (let round = 0; round < 3; round++) {
+#   for (const from of [2, 0, 5, 90, -1, 2.5, NaN, 4294967298, "2", "", "x", true, null, undefined, 3n, [2], {}]) {
+#     attempt("plain from " + typeof from + " " + String(from), () => handedOut(plain, from));
+#     for (const kind of "0123456789") attempt("odd " + kind + " from " + String(from), () => handedOut('{ab^' + kind + 'cd"e"^' + kind + 'f{}g}h', from));
+#   }
+#   attempt("marks", () => counts(plain));
+#   for (const kind of "0123456789") attempt("marks, odd " + kind, () => counts('{ab^' + kind + 'cd"e"^' + kind + 'f{}g}h'));
+#   attempt("marks, open", () => counts('{"abc'));
+#   attempt("marks, no text", () => counts(undefined));
+#   attempt("an open mark", () => handedOut('{"abc', 0));
+#   attempt("no text", () => handedOut(null, 0));
+#   attempt("a list for the text", () => handedOut(["{", "}"], 0));
+#   attempt("a record for the text", () => handedOut({ length: 3, charCodeAt() { return 125; } }, 0));
+#   attempt("the helper's other code lays another bias", () => {
+#     bias = 0;
+#     hook = (at) => { bias += at; };
+#     try { return handedOut('{a^0b^0c^0d}', 0); } finally { hook = null; bias = 0; }
+#   });
+#   attempt("the helper's other code throws", () => {
+#     hook = (at) => { if (at > 4) throw new RangeError("made up"); };
+#     try { return handedOut('{a^0b^0c^0d}', 0); } finally { hook = null; }
+#   });
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# Each loop is built twice: the dead zones of the constants are asked in front, `at` goes round as a number. The typed build was walked as if its turns were quiet, so at the first mark the turn began again in the other copy, and every later turn of the scan ran there, with `at` in a box.
+# The purchase is kept and its typed build is left at a call on the usual way: the builds are made again, the typed one under all that the loop does. Both calls stand in it as well as in the other copy.
+# RUN(CALLS): walk f3 mechanisms=all
+# CALLS-COUNT-2: = CallDirect {{*}} function=f1
+# CALLS-NOT: = CallDirect {{*}} function=f1
+# RUN(ODD): walk f3 mechanisms=all
+# ODD-COUNT-2: = CallDirect {{*}} function=f2
+# ODD-NOT: = CallDirect {{*}} function=f2
+# The start of pastGroup arrives as a number. It is asked for an int32 in front of the loop though two ways round bring what a call gives: those ways are asked where they come round, and `at` goes round as an int32.
+# RUN(START): walk f3 mechanisms=all
+# START: i32 @Int32) isInLoop=true isLoopHead=true
+# In countMarks the other copy is closed and `at` starts as an integer. What a call gives comes round as a number or a text, or as anything: it is asked for an int32 on that edge, and the head of the typed build keeps `at` as an int32; what fails goes to the head of the other copy, which takes the turn.
+# RUN(ASKED): walk f4 mechanisms=all
+# ASKED: frequency=Rare isLoopHead=true
+# ASKED: = CallDirect {{*}} function=f1
+# ASKED: = CallDirect {{*}} function=f2
+# ASKED: i32 @Int32) isInLoop=true isLoopHead=true
+# ASKED: = CallDirect {{*}} function=f1
+# ASKED: = TypeTest {{*}} testedType=i32
+# ASKED: = CallDirect {{*}} function=f2
+# ASKED: = TypeTest {{*}} testedType=i32
+# The helper gives texts, fractions, numbers past every int32, NaN, an object, -0, nothing and a big integer; its other code lays another value into a variable that every turn reads, and throws; the scan starts at what is no int32 and no number; the text is no text.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 618 lines 2393670306

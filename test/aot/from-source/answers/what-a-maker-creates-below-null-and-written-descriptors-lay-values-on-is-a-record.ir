@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const names = Object.create(null);
+# Object.defineProperty(names, "add", { value: add });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = names.add(s, i); return s; }
+# print(called(5), called(6));
+# -- end of source
+# f1 = add, f2 = called
+# `Object.create(null)` with stores by name behind it is a record of the program; a definition by a descriptor kept it a plain object of the engine (a GETTER on a record cost more than on a plain object).
+# So a name laid by `{ value: add }` made everything generic: the object was `Object`, the descriptor left at the call, add counted as handed to unseen code and its body ran without types: x49 of plain Bun.
+# A definition whose key is a written text and whose descriptor is a literal that lays a VALUE alone (value, writable, enumerable, configurable) counts for the maker as a store does. It adds no name to the record's list: Link appends it in the descriptor's form.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "add" appended proven=f1 writers-known form=read-only.not-enumerable.not-configurable.
+# RUN(FUNCTION): link functions mechanisms=all
+# FUNCTION: function f1 callers-known
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: callee=f1
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11 16
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 11 16
+# CHECKED-NEXT: exited with 0

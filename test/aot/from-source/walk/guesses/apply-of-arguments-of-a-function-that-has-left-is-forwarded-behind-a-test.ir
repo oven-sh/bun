@@ -5,11 +5,11 @@
 # function known(x) { return target.call(null, x, 2) + 1; }
 # sink(forwards, forwardsBehindParameter, known, target);
 # -- end of source
-# target has been handed to code that nobody knows, which may give it an `apply` of its own. So what the read finds is tested, and the other arm has the call as written.
+# target has been handed to code that nobody knows, which may give it an `apply` of its own. So the function is asked whether it is as made, and the other arm has the call as written.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: b0([[this]]: anything{{*}}, [[count]]: int{{*}}, [[came]]: Array
-# CHECK: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
+# CHECK: = IsPristine {{*}} builtinClass=Function aspects=[Storage, Names]
 # CHECK-NEXT: Branch
 # CHECK: [[a]]: {{*}} = GetArrayElement {{*}} level=Proven
 # CHECK: [[b]]: {{*}} = GetArrayElement {{*}} level=Proven
@@ -22,5 +22,5 @@
 # ONCE-NOT: NewArgumentList
 # RUN(KNOWN): walk f4 mechanisms=all
 # KNOWN-LABEL: code f4:Body
-# KNOWN: = TypeTest {{*}} testedType=builtin(FunctionPrototypeCall)
+# KNOWN: = IsPristine {{*}} builtinClass=Function aspects=[Storage, Names]
 # KNOWN: calleeName="sink"

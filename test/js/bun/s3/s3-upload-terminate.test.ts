@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// The S3 client fails new requests synchronously once the VM is shutting down. terminate() has to land while a worker
+// The S3 client refuses new requests once the VM is shutting down. terminate() has to land while a worker
 // is enqueuing a part, so several workers each start several uploads.
 const WORKERS = 4;
 const UPLOADS_PER_WORKER = 8;

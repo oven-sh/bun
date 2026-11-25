@@ -26,7 +26,15 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // syscall used to succeed silently and never fire. ssl_loop_buffer is an
   // allocation, so it has no byte count either.
   test("set() rejects 'short' for syscalls that cannot clamp a byte count", () => {
-    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer", "ssl_write"] as const) {
+    for (const syscall of [
+      "sendmsg",
+      "recvmsg",
+      "connect",
+      "accept",
+      "ssl_loop_buffer",
+      "ssl_write",
+      "byte_stream_buffer",
+    ] as const) {
       expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
     }
     expect(fault.set({ syscall: "recv", action: "short", bytes: 1 })).toBe(true);
@@ -37,7 +45,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
   // A zero return only means something for the data syscalls (EOF on the read
   // side, backpressure on the write side); connect's wrapper returns errno.
   test("set() rejects 'zero' for syscalls with no zero-return semantics", () => {
-    for (const syscall of ["connect", "accept", "ssl_loop_buffer", "ssl_write"] as const) {
+    for (const syscall of ["connect", "accept", "ssl_loop_buffer", "ssl_write", "byte_stream_buffer"] as const) {
       expect(() => fault.set({ syscall, action: "zero" })).toThrow(/only supported for syscall/);
     }
     for (const syscall of ["recv", "send", "writev", "sendmsg", "recvmsg"] as const) {
@@ -64,6 +72,12 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(fault.set({ syscall: "ssl_loop_buffer", action: "errno", errno: "ENOMEM", fd: -1 })).toBe(true);
     // Descriptor-pinned rules still work for the real syscalls.
     expect(fault.set({ syscall: "recv", action: "errno", errno: "ECONNRESET", fd: 3 })).toBe(true);
+  });
+
+  test.each(["session_buffer", "byte_stream_buffer"] as const)("set() rejects 'fd' for %s, too", syscall => {
+    expect(() => fault.set({ syscall, action: "errno", errno: "ENOMEM", fd: 3 })).toThrow(
+      `rule.fd is not supported for syscall "${syscall}"`,
+    );
   });
 
   test("set() rejects unknown errno name", () => {
@@ -116,7 +130,7 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     }
   });
 
-  // These have enum slots but no bsd.c hooks; arming them used to "succeed"
+  // These have enum slots but no bsd.cpp hooks; arming them used to "succeed"
   // and then never fire.
   test("set() rejects syscalls that have no fault hook", () => {
     for (const sc of ["socket", "close", "shutdown"]) {

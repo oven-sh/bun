@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 import { join } from "path";
 
 // dirInfoForResolution stored DirInfo.abs_path as a slice into the threadlocal

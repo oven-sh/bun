@@ -1,0 +1,18 @@
+# -- source: main.ts
+# interface Pair { kind: string; left: number[]; right: number[] }
+# declare function print(value: unknown): void;
+# function lengths(pair: Pair): number { return pair.left.length * 10 + pair.right.length; }
+# function lay(other: any): any { Object.defineProperty(other, "left", { value: [1, 2], enumerable: true }); Object.defineProperty(other, "right", { value: [3], enumerable: true }); return other; }
+# const listeners: any[] = [{ kind: "idle", run: lengths }];
+# print(listeners[0].run(JSON.parse('{"kind":"pair","left":[1,2,3],"right":[4]}')));
+# print(listeners[0].run(lay({ kind: "laid" })));
+# -- end of source
+# Both names that nobody stores are laid by descriptors under written keys: the program itself makes such pairs, so the record keeps the family that it had (L1 = the literal on which they are laid): the parameter's type names that layout, and what it says is tested:
+# the pair out of JSON and the pair that was laid both answer as plain.
+# f1 = lengths
+# RUN: print
+# CHECK: function f1 name="lengths" {{*}}parameters=[{type=undefined|null|L1 
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 31
+# RIGHT-NEXT: 21
+# RIGHT-NEXT: exited with 0

@@ -1,7 +1,6 @@
 //! A `ResetEvent` is a thread-safe bool that threads can block on until it
 //! becomes "set". Statically initializable, at most `size_of::<u32>()` of
-//! state. Replaces the hand-rolled `Mutex<bool> + Condvar` shim in
-//! `BundleThread.rs`.
+//! state.
 //!
 //! Only the multi-threaded `FutexImpl` is ported — Bun never builds
 //! single-threaded.
@@ -9,7 +8,6 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Futex;
-use crate::futex::TimeoutError;
 
 pub struct ResetEvent {
     state: AtomicU32,
@@ -44,23 +42,14 @@ impl ResetEvent {
     /// Blocks the calling thread until [`set`](Self::set) is called.
     /// Effectively an efficient `while !is_set() {}`.
     pub fn wait(&self) {
-        match self.wait_inner(None) {
-            Ok(()) => {}
-            Err(TimeoutError::Timeout) => unreachable!(), // no timeout provided so we shouldn't have timed-out
-        }
-    }
-
-    #[inline]
-    fn wait_inner(&self, timeout: Option<u64>) -> Result<(), TimeoutError> {
         // Outline the slow path to allow is_set() to be inlined.
         if !self.is_set() {
-            return self.wait_until_set(timeout);
+            self.wait_until_set();
         }
-        Ok(())
     }
 
     #[cold]
-    fn wait_until_set(&self, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    fn wait_until_set(&self) {
         // Try to set the state from `UNSET` to `WAITING` to indicate to set()
         // that threads are blocked. Avoid strict barriers until we know the
         // event is actually set.
@@ -78,23 +67,12 @@ impl ResetEvent {
         }
 
         // Wait until the ResetEvent is set since the state is WAITING.
-        if state == WAITING {
-            let mut futex_deadline = Futex::Deadline::init(timeout);
-            loop {
-                let wait_result = futex_deadline.wait(&self.state, WAITING);
-
-                // Check if the ResetEvent was set before possibly reporting Timeout below.
-                state = self.state.load(Ordering::Acquire);
-                if state != WAITING {
-                    break;
-                }
-
-                wait_result?;
-            }
+        while state == WAITING {
+            Futex::wait_forever(&self.state, WAITING);
+            state = self.state.load(Ordering::Acquire);
         }
 
         debug_assert!(state == IS_SET);
-        Ok(())
     }
 
     /// Marks the event "set" and wakes all threads blocked in
@@ -111,5 +89,27 @@ impl ResetEvent {
         if self.state.swap(IS_SET, Ordering::Release) == WAITING {
             Futex::wake(&self.state, u32::MAX);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_returns_once_it_is_set() {
+        let event = ResetEvent::new();
+        std::thread::scope(|scope| {
+            for _ in 0..3 {
+                scope.spawn(|| {
+                    event.wait();
+                    assert!(event.is_set());
+                });
+            }
+            while event.state.load(Ordering::Relaxed) != WAITING {
+                std::thread::yield_now();
+            }
+            event.set();
+        });
     }
 }

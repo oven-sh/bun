@@ -1,0 +1,20 @@
+# f1 = drain
+# -- source: array-pop-until-empty-two-storage-kinds.ts
+# function drain(stack: number[]): number {
+#   let sum = 0;
+#   while (stack.length > 0) sum += stack.pop()!;
+#   return sum;
+# }
+# declare const input: any;
+# const whole: number[] = [];
+# whole.push(input | 0);
+# const fractions: number[] = [];
+# fractions.push(input / 2);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = drain(turn & 1 ? whole : fractions);
+# -- end of source
+# The compiler before this one: 8 instructions, 1 of them patches ; 12 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 32, patches 2, moves 2, unlikely 21.
+# RUN(X64): loops most:34 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 34

@@ -1,0 +1,12 @@
+// Elements that a loop moves between lists that nobody typed: storages of every kind, holes, NaN, -0, frozen lists, views, getters.
+"use strict";
+const made = () => { const lists = [JSON.parse("[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"), JSON.parse("[0.5, 1, 2.5, 3, 4.5, 5, 6, 7, 8.25, 9]"), [0.5, , 2, NaN, -0, Infinity, 7, , 9, 1e300], ["a", 1, 2.5, null, undefined, {}, [], true, "b", 9], JSON.parse("[1, 2, 3]"), [], Object.freeze([1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10]), new Float64Array([0.5, NaN, -0, 3, 4, 5, 6, 7, 8, 9]), new Uint32Array([4294967295, 1, 2, 3, 4, 5, 6, 7, 8, 9]), { 0: 1.5, 1: 2, length: 2 }, "abcdefghijkl", [1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10n], Array.from({ length: 10 }, (_, i) => i * 4294967296)];
+  const withGetter = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5]; Object.defineProperty(withGetter, 3, { get() { return "got"; }, set(v) { got = v; } }); lists.push(withGetter); const long = []; for (let i = 0; i < 40; i++) long.push(i + 0.5); lists.push(long); return lists; };
+let got = null; const keys = JSON.parse("[3, 1, 2, 0, 5, 4, 7, 6, 9, 8, 1, 2]"), starts = JSON.parse("[0, 1, 2.5, -1, 4]");
+class Holder { constructor() { this.last = 0; } }
+function move(list, out, other, rows, start, n, h) { let s = 0; for (let k = start; k < n; k++) { out[k & 7] = list[k]; } return s; }
+const show = v => Object.is(v, -0) ? "-0" : typeof v === "bigint" ? v + "n" : typeof v === "object" && v !== null ? Array.isArray(v) ? "[" + Array.from(v, show).join(",") + "]" : v.constructor.name + "{" + Object.keys(v).map(k => k + ":" + show(v[k])).join(",") + "}" : String(v);
+const lines = [];
+for (let a = 0; a < made().length; a++) for (let b = 0; b < made().length; b++) for (const start of starts) { const lists = made(), list = lists[a], out = made()[b], other = made()[(a + b) % lists.length], rows = [made()[b], []], h = new Holder(); got = null; let said; try { said = show(move(list, out, other, rows, start, 9, h)); } catch (e) { said = e.constructor.name; } let after; try { after = [show(list), show(out), show(rows), show(h.last), show(got), list.length, out.length].join(" "); } catch (e) { after = e.constructor.name; } lines.push(a + " " + b + " " + start + " " + said + " " + after); }
+for (let r = 0; r < 300; r++) { const lists = made(); try { lines.push(show(move(lists[r % 2], lists[(r >> 1) % 3 + 10] ?? [], lists[0], [[], []], 0, 9, new Holder()))); } catch (e) { lines.push(e.constructor.name); } }
+console.log(lines.join("\n"));

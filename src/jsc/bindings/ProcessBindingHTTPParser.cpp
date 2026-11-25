@@ -1,48 +1,27 @@
 #include "ProcessBindingHTTPParser.h"
 #include "ZigGlobalObject.h"
-#include "llhttp/llhttp.h"
+
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__HTTPParser__createMethods(JSC::JSGlobalObject*);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__HTTPParser__createAllMethods(JSC::JSGlobalObject*);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bun__HTTPParser__createConstructor(JSC::JSGlobalObject*);
 
 namespace Bun {
 
 using namespace JSC;
 
-#define METHOD_NAME_LITERAL(num, name, string) #string ""_s,
-static constexpr ASCIILiteral httpMethodNames[] = { HTTP_METHOD_MAP(METHOD_NAME_LITERAL) };
-static constexpr ASCIILiteral httpAllMethodNames[] = { HTTP_ALL_METHOD_MAP(METHOD_NAME_LITERAL) };
-#undef METHOD_NAME_LITERAL
-
-static JSValue methodNamesArray(VM& vm, JSObject* binding, std::span<const ASCIILiteral> names)
+template<auto create>
+static JSValue createInRust(VM& vm, JSObject* binding)
 {
     // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSGlobalObject* globalObject = binding->globalObject();
-    JSArray* methods = constructEmptyArray(globalObject, nullptr, names.size());
+    JSValue value = JSValue::decode(create(defaultGlobalObject(binding->globalObject())));
     RETURN_IF_EXCEPTION(scope, {});
-    for (unsigned i = 0; i < names.size(); ++i) {
-        methods->putDirectIndex(globalObject, i, jsString(vm, String(names[i])));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return methods;
+    return value;
 }
 
-static JSValue ProcessBindingHTTPParser_methods(VM& vm, JSObject* binding)
-{
-    static_assert(std::size(httpMethodNames) == 35);
-    return methodNamesArray(vm, binding, httpMethodNames);
-}
-
-static JSValue ProcessBindingHTTPParser_allMethods(VM& vm, JSObject* binding)
-{
-    static_assert(std::size(httpAllMethodNames) == 47);
-    return methodNamesArray(vm, binding, httpAllMethodNames);
-}
-
-static JSValue ProcessBindingHTTPParser_HTTPParser(VM& vm, JSObject* binding)
-{
-    auto* lexicalGlobalObject = binding->globalObject();
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    return globalObject->m_JSHTTPParserClassStructure.constructor(lexicalGlobalObject);
-}
+static constexpr auto ProcessBindingHTTPParser_methods = createInRust<Bun__HTTPParser__createMethods>;
+static constexpr auto ProcessBindingHTTPParser_allMethods = createInRust<Bun__HTTPParser__createAllMethods>;
+static constexpr auto ProcessBindingHTTPParser_HTTPParser = createInRust<Bun__HTTPParser__createConstructor>;
 
 static JSValue ProcessBindingHTTPParser_ConnectionsList(VM& vm, JSObject* binding)
 {

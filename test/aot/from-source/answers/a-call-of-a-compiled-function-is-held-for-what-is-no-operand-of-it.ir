@@ -17,15 +17,15 @@
 # NET-NEXT: 104
 # NET-NEXT: went on
 # What emitted code stores into a variable of a module is counted, and the counts hold a call that runs no unknown code.
-# RUN(VARIABLE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f1/ModuleVariables mechanisms=all
-# VARIABLE: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ModuleVariables, and under it compiled code has stored into a variable of a module. This is a bug in Bun.
+# RUN(VARIABLE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f1/ModuleVariables mechanisms=all
+# VARIABLE: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ModuleVariables, but compiled code stored to a module variable
 # VARIABLE-NOT: went on
 # VARIABLE: crashed
 # VARIABLE: with
 # What the variables of modules hold that the caller's unit reads is hashed round the call: the callee reaches the object without an operand.
-# RUN(OBJECT): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Callee/f2/ObjectFields mechanisms=all
+# RUN(OBJECT): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f2/ObjectFields mechanisms=all
 # OBJECT: 104
-# OBJECT: the rows of effects of operation:CallDirect and of what Link says of the callee say that the call will not write ObjectFields, and those words of what the variable g{{*}} of a module holds, no operand of the call, are others behind it. This is a bug in Bun.
+# OBJECT: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ObjectFields, but the value of module variable g{{*}} (not an operand of the call) changed there
 # OBJECT-NOT: went on
 # OBJECT: crashed
 # OBJECT: with

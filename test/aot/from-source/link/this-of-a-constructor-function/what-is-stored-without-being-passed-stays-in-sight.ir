@@ -1,0 +1,19 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base() { this.held = o; }
+# class A extends Base { constructor() { super(); this.y = 2; } }
+# const a = new A();
+# print(a.y, o.m(), a.held === o);
+# -- end of source
+# Nothing is passed to `Base`: it stores a value of its own file into `this`. The store alone used to let the value go.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS: parameter 0 expected=L1 declared proven=L1
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 2 1 true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 2 1 true
+# CHECKED-NEXT: exited with 0

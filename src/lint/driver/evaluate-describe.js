@@ -15,6 +15,13 @@ function look(find) {
   }
 }
 
+// src/runtime/defer_require.js
+const notLoaded = Symbol();
+const ifLoaded =
+  typeof $Bun_lazy === "function"
+    ? (object, key) => $Bun_lazy.ifLoaded(object, key, notLoaded)
+    : (object, key) => object[key];
+
 // `name@version` of a parser, a plugin or a processor: ESLint's `getObjectId`.
 function objectId(object) {
   const name = object.name ?? object.meta?.name;
@@ -30,6 +37,8 @@ const located = new Map();
 const exportedBy = new Map();
 // The modules that have been looked at.
 const scanned = new Set();
+// Those of them that may have more to show next time.
+const unfinished = new Set();
 // What the module that is the configuration file can be called: its path as the system writes it, and that without links.
 let ownNames;
 // Of the modules that export an object the one counts that exports nothing else, in whatever order they were loaded.
@@ -46,8 +55,15 @@ function scan() {
   }
   for (const [module, { exports }] of Object.entries(require.cache)) {
     // What only the configuration file has is not to be had without running it.
-    if (scanned.has(module) || ownNames.includes(module) || untouched.has(exports)) continue;
+    if (scanned.has(module) && !unfinished.delete(module)) continue;
+    if (ownNames.includes(module) || untouched.has(exports)) continue;
     scanned.add(module);
+    const entriesOf = object => {
+      const all = Object.keys(object ?? {}).map(key => [key, ifLoaded(object, key)]);
+      const loaded = all.filter(it => it[1] !== notLoaded);
+      if (loaded.length < all.length) unfinished.add(module);
+      return loaded;
+    };
     const note = (value, path) => {
       if (value === null || typeof value !== "object") return;
       const [before, found] = [located.get(value), { module, export: path }];
@@ -61,10 +77,10 @@ function scan() {
       note(exports, []);
       // Until ESLint 8 a rule can be a function.
       if (typeof exports === "function" && !located.has(exports)) located.set(exports, { module, export: [] });
-      for (const [name, value] of Object.entries(exports ?? {})) {
+      for (const [name, value] of entriesOf(exports)) {
         note(value, [name]);
         if (name === "default" && !untouched.has(value))
-          for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
+          for (const [inner, it] of entriesOf(value)) note(it, [name, inner]);
       }
     } catch {}
   }
@@ -120,9 +136,10 @@ function searchIn(plugin) {
     if (value === plugin) return [];
     if (depth === 0 || value === null || typeof value !== "object" || untouched.has(value)) return null;
     const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null && !Array.isArray(value)) return null;
+    const isPlain = prototype === Object.prototype || prototype === null || Array.isArray(value);
+    if (!isPlain && value[Symbol.toStringTag] !== "Module") return null;
     for (const key of Object.keys(value)) {
-      const inner = pathIn(value[key], depth - 1);
+      const inner = pathIn(ifLoaded(value, key), depth - 1);
       if (inner !== null) return [key, ...inner];
     }
     return null;
@@ -185,13 +202,16 @@ function stringify(value) {
 
 // What the linter has to know of a plugin before any of its rules runs, as JSON: `plugin_of` in `js_plugin/host.rs` reads it.
 // The rules are in the order in which a worker numbers them. `at`: the module that exports the very rule, if there is one. A worker
-// loads that, and not the plugin with all its other rules.
-function describe(name, plugin) {
+// loads that, and not the plugin with all its other rules. `isLazy`: a worker says the rest, if it comes to that.
+function describe(name, plugin, isWanted = () => true) {
   const names = Object.keys(plugin.rules ?? {}).sort();
+  const waits = new Set(names.filter(it => !isWanted(it) && ifLoaded(plugin.rules, it) === notLoaded));
+  for (const it of names) if (!waits.has(it)) void plugin.rules[it];
   locateDeep(plugin);
   look(scan);
   const original = wrapped.get(plugin) ?? plugin;
   const rules = names.map(ruleName => {
+    if (waits.has(ruleName)) return { name: ruleName, isLazy: true };
     const meta = plugin.rules[ruleName]?.meta;
     return {
       name: ruleName,

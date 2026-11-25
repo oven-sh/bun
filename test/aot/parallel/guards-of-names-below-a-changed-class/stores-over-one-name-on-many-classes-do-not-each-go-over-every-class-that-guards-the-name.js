@@ -1,7 +1,7 @@
 // 60 rows of two classes, every upper class with a method of the same name, called behind the guard of that name at the lower class; code that nobody sees stores over the name on every upper class.
 // The name has 60 entries and each changed class one class below it: the way down is through after that one class, before any entry is climbed from: two looks a store; 60 stores x 60 entries would be the square of the other side.
-// COUNTER: ClassGuardBitsEnded = 60
-// COUNTER: ClassesLookedAtToEndGuardsOfNames = 120
+// COUNTER: ClassGuardBitsInvalidated = 60
+// COUNTER: ClassesVisitedForGuardInvalidation = 120
 const replaceAll = (0, eval)('(classes) => { for (const one of classes) one.prototype.m = () => 2; }');
 class P0 { m() { return 1; } } class Q0 extends P0 { } function r0(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m(); return t; } const o0 = new Q0();
 class P1 { m() { return 1; } } class Q1 extends P1 { } function r1(o) { let t = 0; for (let i = 0; i < 2; i++) t += o.m(); return t; } const o1 = new Q1();

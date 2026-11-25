@@ -315,7 +315,6 @@ Object.assign(cases, {
       },
     ]),
   ),
-  // TODO(bun): `differs`: as one program the next test file runs the body again where the original was taken by a mock without a factory, or by vi.importActual().
   "a mock without a factory, then a test file that mocks nothing": {
     files: {
       ...countedDep,
@@ -324,7 +323,6 @@ Object.assign(cases, {
     },
     said: ["SAID the body runs 1", "SAID a real,function,,true", "SAID z real,function,1,0"],
     words: "TestRunLayers:0",
-    differs: true,
   },
   "vi.importActual(), then a test file that mocks nothing": {
     files: {
@@ -334,7 +332,6 @@ Object.assign(cases, {
     },
     said: ["SAID the body runs 1", "SAID a mock,real,1", "SAID z real,function,1,1"],
     words: "TestRunLayers:0",
-    differs: true,
   },
   "a package imports what a mock without a factory stands for, over two layers": {
     files: {

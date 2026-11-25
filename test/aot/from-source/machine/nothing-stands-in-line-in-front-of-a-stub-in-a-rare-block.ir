@@ -27,16 +27,12 @@
 # console.log(said);
 # -- end of source
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: frequency=Rare
 # CHECK: = BitAnd {{*}}form=Generic
 # RUN(BYTES): bytes f1:Body mechanisms=all
-# REQUIRES(BYTES): entries-of-bun
 # BYTES: BinaryOperation.BitAnd
 # RUN(NEVER): bytes f1:Body mechanisms=all
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: BinaryOperation.BitAndAfterInt32Check
 # RUN(MAIN): bytes f2:Body mechanisms=all
-# REQUIRES(MAIN): entries-of-bun
 # MAIN: BinaryOperation.LessAfterInt32Check

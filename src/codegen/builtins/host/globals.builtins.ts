@@ -24,10 +24,10 @@ import {
   answering,
   comparedDeeply,
   deepComparison,
-  handedOver,
   matchedDeeply,
   mayAnswerWrapperKeptIn,
   promiseOf,
+  retainedByNativeCode,
 } from "./native-code.ts";
 import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
 
@@ -182,12 +182,14 @@ const listenerRegistration = (eventTarget: b.TableType) =>
       type: b.inspected,
       listener: [
         b.retained,
-        // dispatchEvent hands the listener the event that it was handed.
+        // dispatchEvent hands the listener the event that it was handed. What native code dispatches on a signal, and `open` and `close` elsewhere, is an Event. The events of the classes below Event are made by
+        // MessagePort.cpp, BroadcastChannel.cpp, WebSocket.cpp, Worker.cpp, WorkerMessagingProxy.cpp and src/runtime/webview/ChromeBackend.cpp alone. Worker says so in its rows (eventsOfWorker). WHOEVER GIVES MessageChannel,
+        // BroadcastChannel, WebSocket, Bun.WebView OR THE BINDINGS createNodeWorkerConstructor, createNodeWorkerThreadsBinding, createWebSocketBindingForWs ROWS SAYS THERE WHICH EVENTS THEY MAKE.
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
           times: "PerEvent",
           this: eventTarget,
-          args: [b.object],
+          args: [b.anyMadeOf("Event")],
           result: "Escapes",
         }),
         b.runs(b.calls("handleEvent")),
@@ -255,7 +257,7 @@ const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
 
 // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
-// What stands for the global object there is an object of the host.
+// What stands for the global object there has the members of the global object, and is not identical to `globalThis`. Native code makes no other object for it.
 const eventDispatch = (eventTarget: b.TableType) =>
   ({
     args: { event: b.object },
@@ -293,6 +295,20 @@ const cloned = [
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone)),
 ];
 const transferList = [b.runsTransitively(b.named("transfer"), "Iterate"), b.writesContents()];
+const classesOfViews = [
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+] as const;
 const optionsWithClonedDetail = (...names: readonly string[]) => [
   b.readsContents(),
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...membersReadByClone, ...names)),
@@ -808,7 +824,9 @@ const bundlerOptionNames = [
   "aotCheck",
   "aotExplain",
   "aotHarden",
+  "aotOrder",
   "aotOut",
+  "aotRecordOrder",
   "aotTesting",
   "asset",
   "assets",
@@ -1005,7 +1023,7 @@ const serverMembers = {
         }),
       ],
       request: [b.readsContents(), b.writesContents(), ...converted],
-      options: handedOver,
+      options: retainedByNativeCode,
     },
   },
   // Closing a connection runs the close handler of its WebSocket before the call returns.
@@ -1144,7 +1162,7 @@ const cron: b.FunctionField[] = [
     returns: b.instance("CronJob").fresh,
     throws: true,
     uses: {
-      schedule: converted,
+      schedule: [b.retained, ...converted],
       handler: [
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
@@ -1161,11 +1179,15 @@ const cron: b.FunctionField[] = [
     implementation: b.generic,
   },
   {
-    args: { path: stringOrStringObject, schedule: stringOrStringObject, title: stringOrStringObject },
+    args: {
+      path: b.union(stringOrStringObject, b.instance("URL")),
+      schedule: stringOrStringObject,
+      title: stringOrStringObject,
+    },
     returns: settledWithAnyReason(b.undefined),
     ...operandCodeOnly,
     throws: true,
-    uses: { path: converted, schedule: converted, title: converted },
+    uses: { path: [...converted, b.readsContents()], schedule: converted, title: converted },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,
@@ -1423,6 +1445,7 @@ const plainObjects = [
   "Bun.TOML",
   "Bun.XML",
   "Bun.YAML",
+  "Bun.diff",
   "Bun.dns",
   "Bun.markdown",
   "Bun.password",
@@ -1738,7 +1761,7 @@ export default b.declarations(
     closeCallback: {
       args: { callback: b.any.optional },
       capability: "heap",
-      uses: { callback: [...handedOver, b.definesName(["ptr"], b.strictNull)] },
+      uses: { callback: [...retainedByNativeCode, b.definesName(["ptr"], b.strictNull)] },
       reads: externalState,
       writes: externalState,
       implementation: b.generic,
@@ -1770,7 +1793,7 @@ export default b.declarations(
         toString: b.builtin("%NativeFunctions%.ErrorCodeCppNodeError_proto_toString"),
       },
       capability: "heap",
-      uses: { view: [...handedOver, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
+      uses: { view: [...retainedByNativeCode, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
       reads: viewHeaps,
       writes: externalState,
       implementation: b.generic,
@@ -2148,6 +2171,18 @@ export default b.declarations(
       throws: true,
       implementation: b.hostCall,
     },
+    // The clone of a view is of the built-in class, whatever class below it the view is of: a Buffer comes back as a Uint8Array. It follows a buffer as the view does.
+    ...classesOfViews.map(name => ({
+      args: { value: b.instance(name), options: b.any.optional },
+      returns: b.instance(name).unaliased,
+      capability: "js" as const,
+      throws: true,
+      runsOnlyOperandCode: true,
+      uses: { value: cloned, options: transferList },
+      reads: heapsReadByClone,
+      writes: heapsWrittenByTransfer,
+      implementation: b.hostCall,
+    })),
     {
       args: { value: b.any.optional, options: b.any.optional },
       returns: b.any.fresh,

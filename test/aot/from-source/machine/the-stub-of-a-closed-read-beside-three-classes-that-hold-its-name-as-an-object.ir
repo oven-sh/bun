@@ -20,7 +20,7 @@
 # three hold an object and one an integer, or one and three. The read calls the same stub in both. It went by the form that MOST layouts of the program hold the name in: two classes in another file changed which stub a function ran
 # (that makes testing impossible: the behavior of an application would change with the size of its code).
 # RUN(CODE): bytes f1:Body mechanisms=all
-# CODE: Call Stub ReadAtSite.OfAnyValueUnderNameWithColumn
+# CODE: Call Stub ReadAtSite.OfAnyValue
 # RUN: run-in-shell
 # CHECK: 3
 # CHECK-NEXT: 14

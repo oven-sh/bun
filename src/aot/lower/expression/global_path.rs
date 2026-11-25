@@ -110,7 +110,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let global = self.builder.builtin(BuiltinId::GlobalThis, false);
         self.file.fragment.note_write(key);
         self.builder
-            .prop_set(global, key, mode, value, is_free_name);
+            .prop_set(global, key, mode, value, None, is_free_name);
     }
 
     pub(in crate::lower) fn emit_free_name_delete(&mut self, name: Atom) -> ValueId {

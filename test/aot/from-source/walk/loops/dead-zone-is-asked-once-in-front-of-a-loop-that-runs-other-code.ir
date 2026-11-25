@@ -2,11 +2,12 @@
 # declare function id(x: any): any;
 # function run(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { id(i); sum = (sum + step + steps) | 0; steps = steps + 1; } return sum; }
 # function attempt(n: number): number { try { return run(n); } catch (error) { return -1; } }
+# const turns: number = JSON.parse("3");
 # const withNoTurn = attempt(0);
-# const withTurns = attempt(3);
+# const withTurns = attempt(turns);
 # const step = id(3) | 0;
 # let steps = id(10) | 0;
-# print(withNoTurn, withTurns, attempt(0), attempt(3), steps);
+# print(withNoTurn, withTurns, attempt(0), attempt(turns), steps);
 # declare function print(...values: unknown[]): void;
 # -- end of source
 # Each turn calls what nobody knows, which may run anything. It cannot put a variable back into its dead zone, so both are asked in front of the loop, and no turn of the typed copy checks.
@@ -21,7 +22,7 @@
 # CHECK: = CheckInitialized {{*}}name="steps"
 # CHECK: isInLoop=true isLoopHead=true
 # CHECK-NOT: = CheckInitialized
-# CHECK: = GetModuleVariable {{*}}followsItsStore
+# CHECK: = GetModuleVariable {{*}}isKnownInitialized
 # CHECK-NOT: = CheckInitialized
 # CHECK: Return
 # RUN(ANSWERS): run-in-shell

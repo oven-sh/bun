@@ -9,17 +9,19 @@
 # function run(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new Holder(i); total += made._z.n + made._w.n; } return total; }
 # print(run(10));
 # -- end of source
-# Two constants hold descriptors of the same names, which are one layout: what that layout is seen to hold under `value` is what either lays. What each lays is what the body that defines stores THROUGH THAT CONSTANT:
-# `_z` is expected to hold an Inner and `_w` an Other, and the reads behind them are tested for that. Both have the name `n`, so the name alone says nothing. f6 = run
+# Two constants hold descriptors of the same names, which are one layout. The built-in only reads a descriptor: descriptor, object and what is laid stay in sight, and what that LAYOUT holds under `value` lies under both names: `_z` and `_w` are proven to hold an Inner, an Other or undefined.
+# A LOSS STANDS HERE. What each constant lays is what the body that defines stores THROUGH THAT CONSTANT: `_z` an Inner, `_w` an Other. While object and descriptor went to unseen code that was the expectation under each name, and the reads behind them were `GetSlot key="n" receivers=[L0]` and `receivers=[L1]` behind a test. The wider proof drowns it: the field's node holds both, and the walk builds the reads as written. Both have the name `n`, so the name alone says nothing. f6 = run
 # RUN: link fields mechanisms=all
-# CHECK-NOT: "_z" proven
-# RUN(HELD): link held fields mechanisms=all
-# HELD: "_z" proven={{*}}|L0 writers-known
-# HELD: "_w" proven={{*}}|L1 writers-known
+# CHECK: "_z" proven=undefined|L0|L1 writers-known
+# CHECK: "_w" proven=undefined|L0|L1 writers-known
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# LAYOUTS: layout L1 changes=[] stays-with-compiled-code
+# LAYOUTS: layout L2 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
 # RUN(WALK): walk f6 mechanisms=all
 # WALK-LABEL: code f6:Body
-# WALK: GetSlot {{*}}key="n" receivers=[L0]
-# WALK: GetSlot {{*}}key="n" receivers=[L1]
+# WALK: PropGet {{*}}key="n"
+# WALK: PropGet {{*}}key="n"
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 1090
 # ANSWERS-NEXT: exited with 0

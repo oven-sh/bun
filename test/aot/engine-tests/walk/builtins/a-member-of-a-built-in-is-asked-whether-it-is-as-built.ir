@@ -1,0 +1,60 @@
+# $findsDeclaredMember(process, "nextTick") || process.nextTick === installed
+# The library asks three to nine times a request whether process.nextTick is still its own function. Where nobody can write the member it is locked, and the answer is a yes at the build.
+# Where the program writes it (f3 of OPEN) no lock is laid: each ask read the member by name. The run time keeps a byte for each member of a built-in object, felled by a store, a definition or a deletion:
+# the question loads it. A no says nothing: the text reads by name then.
+# RUN(LOCKED): walk f1 mechanisms=all
+# LOCKED-LABEL: code f1:Body
+# LOCKED-NOT: IsMemberAsBuilt
+# LOCKED-NOT: FindsDeclaredMember
+# LOCKED-NOT: PropGet
+# LOCKED: Return
+# RUN(OPEN): walk f2 mechanisms=all
+# OPEN-LABEL: code f2:Body
+# OPEN-NOT: FindsDeclaredMember
+# OPEN: IsMemberAsBuilt builtin=ProcessEmitWarning
+# OPEN: PropGet {{*}}key="emitWarning"
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/internal/asks.ts" displayPath="/$bun/js/internal/asks.ts" flags=[IsLibrary]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = NewClosure function=f2
+    v3 = Call v2, -
+    v4 = NewClosure function=f3
+    v5 = Call v4, -
+    Return v5
+}
+function f1 name="asksLockedMember" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = FindsDeclaredMember v0 key="nextTick"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Return v2
+  b2():
+    v3 = PropGet v0 key="nextTick"
+    Return v3
+}
+function f2 name="asksOpenMember" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = FindsDeclaredMember v0 key="emitWarning"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Boolean boolean=true
+    Return v2
+  b2():
+    v3 = PropGet v0 key="emitWarning"
+    Return v3
+}
+function f3 name="writesMember" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Undefined
+    PropSet v0, v1 key="emitWarning"
+    Return v1
+}

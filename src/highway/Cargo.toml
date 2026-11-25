@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# For tests that link without the C++ objects: plain loops stand in for the kernels of zstd.
+test_support = []
+
 [lints]
 workspace = true
 

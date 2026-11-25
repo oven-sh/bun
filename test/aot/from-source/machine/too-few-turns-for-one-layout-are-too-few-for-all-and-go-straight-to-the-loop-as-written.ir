@@ -1,0 +1,22 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var s = 0; for (var i = 0; i < d.length; i++) s += d[i]; return s; } };
+# var said = [];
+# for (var kind of [Int8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array]) for (var length of [0, 1, 3, 4, 5, 7, 8, 9, 11]) said.push(T[key](new kind(length).fill(3)));
+# print(said.join());
+# -- end of source
+# The turns of one loop are laid out several times in a row: once for each kind of a view, or for each pair of kinds of storage. Each layout ended in the front of the next: so a run of fewer turns than a layout holds,
+# and the rest behind the turns laid out, were asked "are four left" once a layout: eight times for a view. All layouts of a row hold the same number of turns: too few for one are too few for all: they go straight to the
+# loop as written. Only a failed question for the kind, and a turn that is left, lead to the next front. A call over 4 doubles 181 > 155 instructions, over 12 Int16 252 > 235; no kernel of 48 slower by more than x1.002.
+# Eight layouts: the rest of seven passes the others by.
+# RUN: compile UnrolledLoopRemaindersShared mechanisms=all
+# CHECK: statistic UnrolledLoopRemaindersShared 7
+# No turn over a view is ever left for the next front (no hole, no store that changes a kind): a front is come to from the front before it alone, where the count was asked. So the first front asks it for all eight.
+# RUN(ONCE): compile UnrolledLoopTripChecksReused mechanisms=all
+# ONCE: statistic UnrolledLoopTripChecksReused 7
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33,0,3,9,12,15,21,24,27,33
+# NONE-NEXT: exited with 0

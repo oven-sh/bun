@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# class Visitor { constructor() { this.count = 0; } visit(node, path) { this.count++; let sum = path.depth; for (let i = 0; i < node.children.length; i++) sum += this.step(node.children[i], path); return sum; } step(child, path) { return child.value + path.depth; } }
+# class DeepVisitor extends Visitor { step(child, path) { return this.visit(child, { depth: path.depth + 1 }); } }
+# const leaf = { value: 1, children: [] };
+# const tree = { value: 0, children: [leaf, { value: 2, children: [leaf, leaf] }] };
+# const visitors = [new Visitor(), new DeepVisitor()];
+# for (let i = 0; i < visitors.length; i++) print(visitors[i].visit(tree, { depth: 1 }), visitors[i].count);
+# -- end of source
+# The loop may copy both step methods. That of DeepVisitor calls visit(), which still takes the types that its callers pass.
+# f2 = Visitor.prototype.visit
+# RUN: link functions
+# CHECK: function f2 callers-known one-callee{{*}}takes-arrivals
+# RUN(ANSWER): run-in-shell
+# ANSWER: 6 1
+# ANSWER: 11 5

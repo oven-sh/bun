@@ -13,8 +13,7 @@
 //!
 //! Every public entry that drives the `SslWrapper` (`start`, `receive`, `on_writable`,
 //! `write`, `shutdown`) forms a `&SslWrapper` over the `wrapper` field and then
-//! synchronously re-enters this struct through the `ctx` backref via
-//! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
+//! synchronously re-enters this struct through its `ssl_wrapper::Handler` impl.
 //!
 //! All state mutated after construction lives in `Cell`/`JsCell` fields, and
 //! `wrapper` is a write-once `OnceCell` set in `start()` before it is first
@@ -26,11 +25,11 @@
 use core::cell::{Cell, OnceCell};
 
 use bun_io::StreamBuffer;
-use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
+use bun_ptr::{CellExt, JsCell, RefPtr, RefPtrCellExt as _};
+use bun_uws::ssl_wrapper::{self, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
-use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
+use crate::websocket_client::{CloseMode, ErrorCode};
 
 use bun_http::ssl_config::SslConfig;
 
@@ -38,62 +37,55 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 
 use super::websocket_upgrade_client::{HttpUpgradeClient, HttpsUpgradeClient};
 
-/// Back-reference to the upgrade client (either transport). The client clears
-/// it (`detach_upgrade_client`, from `clear_data`) before it can be freed.
-///
-/// `Copy` so callbacks can snapshot the value and dispatch on the copy without
-/// holding a borrow of the tunnel across the re-entrant call.
-#[derive(Clone, Copy)]
+/// The upgrade client (either transport), until its `WebSocketProxy` drops.
+#[derive(Clone)]
 pub enum UpgradeClientRef {
-    Http(BackRef<HttpUpgradeClient, Root>),
-    Https(BackRef<HttpsUpgradeClient, Root>),
+    Http(RefPtr<HttpUpgradeClient>),
+    Https(RefPtr<HttpsUpgradeClient>),
 }
 
 /// Builds the [`UpgradeClientRef`] variant for a concrete `HTTPClient<SSL>`.
-pub trait IntoUpgradeClientRef: Sized {
-    fn upgrade_client_ref(this: ThisPtr<Self>) -> UpgradeClientRef;
+pub trait IntoUpgradeClientRef: bun_ptr::AnyRefCounted {
+    fn upgrade_client_ref(self: RefPtr<Self>) -> UpgradeClientRef;
 }
 impl IntoUpgradeClientRef for HttpUpgradeClient {
-    fn upgrade_client_ref(this: ThisPtr<Self>) -> UpgradeClientRef {
-        UpgradeClientRef::Http(this.into())
+    fn upgrade_client_ref(self: RefPtr<Self>) -> UpgradeClientRef {
+        UpgradeClientRef::Http(self)
     }
 }
 impl IntoUpgradeClientRef for HttpsUpgradeClient {
-    fn upgrade_client_ref(this: ThisPtr<Self>) -> UpgradeClientRef {
-        UpgradeClientRef::Https(this.into())
+    fn upgrade_client_ref(self: RefPtr<Self>) -> UpgradeClientRef {
+        UpgradeClientRef::Https(self)
     }
 }
 
 impl UpgradeClientRef {
     fn dispatch(
         self,
-        http: impl FnOnce(ThisPtr<HttpUpgradeClient>),
-        https: impl FnOnce(ThisPtr<HttpsUpgradeClient>),
+        http: impl FnOnce(&HttpUpgradeClient),
+        https: impl FnOnce(&HttpsUpgradeClient),
     ) {
         match self {
-            UpgradeClientRef::Http(client) => http(client.this_ptr()),
-            UpgradeClientRef::Https(client) => https(client.this_ptr()),
+            UpgradeClientRef::Http(client) => http(&client),
+            UpgradeClientRef::Https(client) => https(&client),
         }
     }
 
     fn handle_decrypted_data(self, data: &[u8]) {
         self.dispatch(
-            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
-            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+            |c| c.handle_decrypted_data(data),
+            |c| c.handle_decrypted_data(data),
         );
     }
 
     fn terminate(self, code: ErrorCode) {
-        self.dispatch(
-            |c| HttpUpgradeClient::terminate(c, code),
-            |c| HttpsUpgradeClient::terminate(c, code),
-        );
+        self.dispatch(|c| c.terminate(code), |c| c.terminate(code));
     }
 
     fn fail_tls(self, ssl_error: us_bun_verify_error_t, completed: bool) {
         self.dispatch(
-            |c| HttpUpgradeClient::fail_tls(c, ssl_error, completed),
-            |c| HttpsUpgradeClient::fail_tls(c, ssl_error, completed),
+            |c| c.fail_tls(ssl_error, completed),
+            |c| c.fail_tls(ssl_error, completed),
         );
     }
 
@@ -110,12 +102,8 @@ impl UpgradeClientRef {
         hostname: &[u8],
     ) -> bun_boringssl::ServerIdentity {
         match self {
-            UpgradeClientRef::Http(client) => {
-                HttpUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
-            }
-            UpgradeClientRef::Https(client) => {
-                HttpsUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
-            }
+            UpgradeClientRef::Http(client) => client.tunnel_server_identity(ssl, hostname),
+            UpgradeClientRef::Https(client) => client.tunnel_server_identity(ssl, hostname),
         }
     }
 
@@ -126,18 +114,12 @@ impl UpgradeClientRef {
         hostname: &[u8],
     ) -> bool {
         match self {
-            UpgradeClientRef::Http(client) => HttpUpgradeClient::accepts_tunnel_peer(
-                client.this_ptr(),
-                ssl,
-                chain_verified,
-                hostname,
-            ),
-            UpgradeClientRef::Https(client) => HttpsUpgradeClient::accepts_tunnel_peer(
-                client.this_ptr(),
-                ssl,
-                chain_verified,
-                hostname,
-            ),
+            UpgradeClientRef::Http(client) => {
+                client.accepts_tunnel_peer(ssl, chain_verified, hostname)
+            }
+            UpgradeClientRef::Https(client) => {
+                client.accepts_tunnel_peer(ssl, chain_verified, hostname)
+            }
         }
     }
 }
@@ -149,12 +131,10 @@ pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
     upgrade_client: Cell<Option<UpgradeClientRef>>,
-    /// Back-reference to the connected WebSocket client - used after
-    /// successful upgrade. The client clears it (`clear_connected_web_socket`)
-    /// before it can be freed.
-    connected_websocket: Cell<Option<BackRef<WebSocketClient, Root>>>,
+    /// The connected client, until it drops its `Attached` in `clear_data`.
+    connected_websocket: Cell<Option<RefPtr<WebSocketClient>>>,
     /// SSL wrapper for TLS inside tunnel; set once in `start()`.
-    wrapper: OnceCell<SslWrapperType>,
+    wrapper: OnceCell<SslWrapper>,
     /// The proxy connection, until the upgrade client that owns it lets go.
     socket: Cell<SocketUnion>,
     /// Write buffer for encrypted data (maintains TLS record ordering)
@@ -166,8 +146,6 @@ pub struct WebSocketProxyTunnel {
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
-
-type SslWrapperType = SslWrapper<ThisPtr<WebSocketProxyTunnel>>;
 
 impl WebSocketProxyTunnel {
     /// Initialize a new proxy tunnel with all required parameters
@@ -200,12 +178,8 @@ impl WebSocketProxyTunnel {
 
     /// Start TLS handshake inside the tunnel
     /// The ssl_options should contain all TLS configuration including CA certificates.
-    ///
-    /// Takes `ThisPtr<Self>` because `start*()` synchronously invokes
-    /// `on_open(ctx)` / `on_handshake(ctx)`, which may terminate the upgrade
-    /// client.
     pub(crate) fn start(
-        this: ThisPtr<Self>,
+        self: &RefPtr<Self>,
         ssl_options: &SslConfig,
         reject_unauthorized: bool,
         initial_data: &[u8],
@@ -218,27 +192,11 @@ impl WebSocketProxyTunnel {
         // tier-neutral `init_from_options` takes the lowered
         // `BunSocketContextOptions` (= what `SSLConfig.asUSockets()` produces);
         // the `SSLConfig`-taking `init` lives in bun_runtime.
-        let wrapper = SslWrapperType::init_from_options(
-            &options.as_usockets(),
-            true,
-            SslHandlers {
-                ctx: this,
-                on_open: Self::on_open,
-                on_data: Self::on_data,
-                on_handshake: Self::on_handshake,
-                on_close: Self::on_close,
-                write: Self::write_encrypted,
-                // No JS TLSSocket fronts the tunnel; opting out keeps the
-                // SSL off the parked session/keylog queues entirely.
-                on_session: None,
-                on_keylog: None,
-                server_identity: Some(Self::server_identity),
-            },
-        )
-        .map_err(|_| crate::Error::InvalidOptions)?;
+        let wrapper = SslWrapper::init_from_options(&options.as_usockets(), true)
+            .map_err(|_| crate::Error::InvalidOptions)?;
 
-        debug_assert!(this.wrapper.get().is_none(), "start() called twice");
-        let wrapper = this.wrapper.get_or_init(|| wrapper);
+        debug_assert!(self.wrapper.get().is_none(), "start() called twice");
+        let wrapper = self.wrapper.get_or_init(|| wrapper);
         // The inner connection's form of the `set_inline_reject` call in
         // `WebSocketUpgradeClient::handle_open`.
         if reject_unauthorized {
@@ -255,7 +213,7 @@ impl WebSocketProxyTunnel {
         // BoringSSL is identical: SNI is set on the `SSL*` before the handshake
         // is driven.
         if let Some(ssl_ptr) = ssl {
-            if let Some(hostname) = this.sni_hostname.as_deref() {
+            if let Some(hostname) = self.sni_hostname.as_deref() {
                 if !bun_core::ip_address::is_ip_host(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
@@ -274,22 +232,22 @@ impl WebSocketProxyTunnel {
             }
         }
 
-        // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`
-        // / etc.; those callbacks mutate only `Cell`/`JsCell` fields.
         if !initial_data.is_empty() {
-            wrapper.start_with_payload(initial_data);
+            wrapper.start_with_payload(&mut &**self, initial_data);
         } else {
-            wrapper.start();
+            wrapper.start(&mut &**self);
         }
         Ok(())
     }
+}
 
+impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
     /// SSLWrapper callback: the name check inside the handshake. The WebSocket decides.
     fn server_identity(
-        this: ThisPtr<Self>,
+        &mut self,
         ssl: &mut bun_boringssl::c::SSL,
     ) -> bun_boringssl::ServerIdentity {
-        match (this.upgrade_client.get(), this.sni_hostname.as_deref()) {
+        match (self.upgrade_client(), self.sni_hostname.as_deref()) {
             (Some(upgrade_client), Some(hostname)) => {
                 upgrade_client.tunnel_server_identity(ssl, hostname)
             }
@@ -298,16 +256,13 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called before TLS handshake starts
-    fn on_open(this: ThisPtr<Self>) {
-        let _guard = RefPtr::from_this(this);
+    fn on_open(&mut self) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven.
     }
 
     /// SSLWrapper callback: Called with decrypted data from the network
-    fn on_data(this: ThisPtr<Self>, decrypted_data: &[u8]) {
-        let _guard = RefPtr::from_this(this);
-
+    fn on_data(&mut self, decrypted_data: &[u8]) {
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
             "onData: {} bytes",
@@ -317,35 +272,27 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Snapshot backref pointers; the dispatch below may re-enter
-        // `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
-        // so no borrow of `*this` may be live across it.
-        let (connected_websocket, upgrade_client) =
-            (this.connected_websocket.get(), this.upgrade_client.get());
-
         // If we have a connected WebSocket client, forward data to it
-        if let Some(ws) = connected_websocket {
-            WebSocketClient::handle_tunnel_data(ws.this_ptr(), decrypted_data);
+        if let Some(ws) = self.connected_websocket.cloned() {
+            ws.handle_data(decrypted_data);
             return;
         }
 
         // Otherwise, forward to the upgrade client for WebSocket response processing
-        if let Some(client) = upgrade_client {
+        if let Some(client) = self.upgrade_client() {
             client.handle_decrypted_data(decrypted_data);
         }
     }
 
     /// SSLWrapper callback: Called after TLS handshake completes
-    fn on_handshake(this: ThisPtr<Self>, success: bool, ssl_error: us_bun_verify_error_t) {
-        let _guard = RefPtr::from_this(this);
-
+    fn on_handshake(&mut self, success: bool, ssl_error: us_bun_verify_error_t) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
-        // Snapshot the fields we need; `fail_tls()` / `on_proxy_tls_handshake_complete()`
-        // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
-        // `*this` may span the dispatch.
-        let Some(upgrade_client) = this.upgrade_client.get() else {
-            this.renegotiation_ended.set(success);
+        let Some(upgrade_client) = self.upgrade_client() else {
+            self.renegotiation_ended.set(success);
+            if !success && let Some(ws) = self.connected_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             return;
         };
 
@@ -354,7 +301,7 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        let ssl = this
+        let ssl = self
             .wrapper
             .get()
             .and_then(|w| w.ssl.get())
@@ -362,10 +309,10 @@ impl WebSocketProxyTunnel {
         let accepted = upgrade_client.accepts_tunnel_peer(
             ssl,
             ssl_error.error_no == 0,
-            this.sni_hostname.as_deref().unwrap_or_default(),
+            self.sni_hostname.as_deref().unwrap_or_default(),
         );
         // `tls.checkServerIdentity` may have closed the WebSocket, which detaches the client.
-        let Some(upgrade_client) = this.upgrade_client.get() else {
+        let Some(upgrade_client) = self.upgrade_client() else {
             return;
         };
         if !accepted {
@@ -378,25 +325,17 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called when connection is closing
-    fn on_close(this: ThisPtr<Self>) {
-        let _guard = RefPtr::from_this(this);
-
+    fn on_close(&mut self) {
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
-        // Snapshot backref pointers; `handle_tunnel_close()`/`terminate()` re-enter
-        // `tunnel.clear_connected_web_socket()` / `tunnel.shutdown()` /
-        // `tunnel.detach_upgrade_client()`, so no borrow of `*this` may span them.
-        let (connected_websocket, upgrade_client) =
-            (this.connected_websocket.get(), this.upgrade_client.get());
-
         // If we have a connected WebSocket client, notify it of the close
-        if let Some(ws) = connected_websocket {
-            WebSocketClient::handle_tunnel_close(ws.this_ptr());
+        if let Some(ws) = self.connected_websocket.cloned() {
+            ws.handle_tunnel_close();
             return;
         }
 
         // Check if upgrade client is already cleaned up (prevents re-entrancy during cleanup)
-        let Some(upgrade_client) = upgrade_client else {
+        let Some(upgrade_client) = self.upgrade_client() else {
             return;
         };
 
@@ -404,13 +343,58 @@ impl WebSocketProxyTunnel {
         upgrade_client.terminate(ErrorCode::Ended);
     }
 
-    /// Clear the connected WebSocket reference. Called before tunnel shutdown so the
+    /// SSLWrapper callback: Called with encrypted data to send to network
+    fn write(&mut self, encrypted_data: &[u8]) {
+        bun_core::scoped_log!(
+            WebSocketProxyTunnel,
+            "writeEncrypted: {} bytes",
+            encrypted_data.len()
+        );
+
+        // If data is already buffered, queue this to maintain TLS record ordering
+        if self.write_buffer.get().is_not_empty() {
+            bun_core::handle_oom(self.write_buffer.with_mut(|b| b.write(encrypted_data)));
+            return;
+        }
+
+        // Try direct write to socket
+        let written = self.socket.get().write(encrypted_data);
+        if written < 0 {
+            // Write failed - buffer data for retry when socket becomes writable
+            bun_core::handle_oom(self.write_buffer.with_mut(|b| b.write(encrypted_data)));
+            return;
+        }
+
+        // Buffer remaining data
+        let written_usize = usize::try_from(written).expect("int cast");
+        if written_usize < encrypted_data.len() {
+            bun_core::handle_oom(
+                self.write_buffer
+                    .with_mut(|b| b.write(&encrypted_data[written_usize..])),
+            );
+        }
+    }
+}
+
+impl bun_ptr::Detach for WebSocketProxyTunnel {
+    /// Clear the connected WebSocket reference before tunnel shutdown so the
     /// tunnel's onClose callback doesn't call into a client that already finished.
     ///
     /// Can be reached from inside an SSLWrapper callback while the driving
     /// frame holds `&SslWrapper`; the `Cell` write covers only this field.
-    pub(crate) fn clear_connected_web_socket(&self) {
+    fn detach(&self) {
         self.connected_websocket.set(None);
+        self.shutdown();
+    }
+}
+
+impl WebSocketProxyTunnel {
+    fn upgrade_client(&self) -> Option<UpgradeClientRef> {
+        self.upgrade_client.with_taken(|client| client.clone())
+    }
+
+    pub(crate) fn connected_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.connected_websocket.cloned()
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
@@ -421,61 +405,22 @@ impl WebSocketProxyTunnel {
         self.socket.set(SocketUnion::None);
     }
 
-    /// SSLWrapper callback: Called with encrypted data to send to network
-    fn write_encrypted(this: ThisPtr<Self>, encrypted_data: &[u8]) {
-        bun_core::scoped_log!(
-            WebSocketProxyTunnel,
-            "writeEncrypted: {} bytes",
-            encrypted_data.len()
-        );
-
-        // If data is already buffered, queue this to maintain TLS record ordering
-        if this.write_buffer.get().is_not_empty() {
-            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
-            return;
-        }
-
-        // Try direct write to socket
-        let written = this.socket.get().write(encrypted_data);
-        if written < 0 {
-            // Write failed - buffer data for retry when socket becomes writable
-            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
-            return;
-        }
-
-        // Buffer remaining data
-        let written_usize = usize::try_from(written).expect("int cast");
-        if written_usize < encrypted_data.len() {
-            bun_core::handle_oom(
-                this.write_buffer
-                    .with_mut(|b| b.write(&encrypted_data[written_usize..])),
-            );
-        }
-    }
-
     /// Called when the socket becomes writable - flush buffered encrypted data
-    ///
-    /// Takes `ThisPtr<Self>` because `flush()` fires `write_encrypted(ctx)` and
-    /// `handle_tunnel_writable()` re-enters `tunnel.write()`, either of which
-    /// can reach a close path that drops a ref on the tunnel.
-    pub(crate) fn on_writable(this: ThisPtr<Self>) {
-        let _guard = RefPtr::from_this(this);
-
-        // Flush the SSL state machine; no borrow of `*this` other than
-        // `wrapper` spans the synchronous `write_encrypted` re-entry.
-        if let Some(w) = this.wrapper.get() {
-            let _ = w.flush();
+    pub(crate) fn on_writable(self: RefPtr<Self>) {
+        // Flush the SSL state machine
+        if let Some(w) = self.wrapper.get() {
+            w.flush(&mut &*self);
         }
 
-        // Send buffered encrypted data (`write_encrypted` above may have
+        // Send buffered encrypted data (`flush` above may have
         // appended to it). A raw uws socket write does not re-enter the tunnel.
-        let still_backpressured = this.write_buffer.with_mut(|buf| {
+        let still_backpressured = self.write_buffer.with_mut(|buf| {
             let to_send = buf.slice();
             if to_send.is_empty() {
                 return false;
             }
             let to_send_len = to_send.len();
-            let written = this.socket.get().write(to_send);
+            let written = self.socket.get().write(to_send);
             if written < 0 {
                 return true;
             }
@@ -489,74 +434,54 @@ impl WebSocketProxyTunnel {
             }
         });
         if still_backpressured {
-            if let Some(ws) = this.connected_websocket.get() {
-                ws.this_ptr().restart_close_timeout_while_sending();
+            if let Some(ws) = self.connected_websocket.cloned() {
+                ws.restart_close_timeout_while_sending();
             }
             return;
         }
 
         // Tunnel drained - let the connected WebSocket flush its send_buffer.
-        // `handle_tunnel_writable()` re-enters `tunnel.write()`; snapshot the pointer
-        // into a local so no borrow of `*this` is active across the dispatch.
-        if let Some(ws) = this.connected_websocket.get() {
-            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
+        if let Some(ws) = self.connected_websocket.cloned() {
+            ws.handle_tunnel_writable();
         }
     }
 
     /// Feed encrypted data from the network to the SSL wrapper for decryption
-    ///
-    /// Takes `ThisPtr<Self>` because `receive_data()` synchronously dispatches
-    /// `on_data`/`on_handshake`/`on_close`/`write_encrypted`, which can reach a
-    /// close path that drops a ref on the tunnel.
-    pub(crate) fn receive(this: ThisPtr<Self>, data: &[u8]) {
-        let _guard = RefPtr::from_this(this);
-
-        if let Some(w) = this.wrapper.get() {
-            w.receive_data(data);
+    pub(crate) fn receive(self: RefPtr<Self>, data: &[u8]) {
+        if let Some(w) = self.wrapper.get() {
+            w.receive_data(&mut &*self, data);
         }
-        // Only now, so that what this read decrypted is delivered first, like openssl.c's `ssl_write_wants_read`.
-        if this.renegotiation_ended.take()
-            && let Some(ws) = this.connected_websocket.get()
+        // Only now, so that what this read decrypted is delivered first, like openssl.cpp's `ssl_write_wants_read`.
+        if self.renegotiation_ended.take()
+            && let Some(ws) = self.connected_websocket.cloned()
         {
-            WebSocketClient::handle_tunnel_writable(ws.this_ptr());
+            ws.handle_tunnel_writable();
         }
     }
 
     /// Write application data through the tunnel (will be encrypted)
-    ///
-    /// Takes `ThisPtr<Self>` because `write_data()` fires `write_encrypted(ctx)`
-    /// and may fire `on_handshake(ctx)`/`on_close(ctx)`.
-    pub(crate) fn write(this: ThisPtr<Self>, data: &[u8]) -> crate::Result<usize> {
-        // The caller's ref (the client's `proxy`/`proxy_tunnel` field) can be
-        // released from inside `write_data` via `on_close`; keep `w` alive.
-        let _guard = RefPtr::from_this(this);
-        if let Some(w) = this.wrapper.get() {
+    #[cold]
+    pub(crate) fn write(self: RefPtr<Self>, data: &[u8]) -> crate::Result<usize> {
+        if let Some(w) = self.wrapper.get() {
             return w
-                .write_data(data)
+                .write_data(&mut &*self, data)
                 .map_err(|_| crate::Error::ConnectionClosed);
         }
         Err(crate::Error::ConnectionClosed)
     }
 
-    /// Gracefully shutdown the TLS connection
-    ///
-    /// Takes `ThisPtr<Self>` because `shutdown()` may fire
-    /// `on_close(ctx)`/`write_encrypted(ctx)`.
-    pub(crate) fn shutdown(this: ThisPtr<Self>) {
-        let _guard = RefPtr::from_this(this);
-        if let Some(w) = this.wrapper.get() {
-            let _ = w.shutdown(true); // Fast shutdown
+    /// Gracefully shutdown the TLS connection. The caller holds a ref.
+    pub(crate) fn shutdown(&self) {
+        if let Some(w) = self.wrapper.get() {
+            let _ = w.shutdown(&mut &*self, true); // Fast shutdown
         }
     }
 
     /// Half-close the TLS session inside the tunnel. Sends our close_notify and keeps reading
     /// until the peer's arrives, which fires `on_close`. The proxy connection stays open.
-    ///
-    /// Takes `ThisPtr<Self>` for the same reason as `shutdown()`.
-    pub(crate) fn end(this: ThisPtr<Self>) {
-        let _guard = RefPtr::from_this(this);
-        if let Some(w) = this.wrapper.get() {
-            let _ = w.shutdown(false);
+    pub(crate) fn end(self: RefPtr<Self>) {
+        if let Some(w) = self.wrapper.get() {
+            let _ = w.shutdown(&mut &*self, false);
         }
     }
 
@@ -566,10 +491,10 @@ impl WebSocketProxyTunnel {
         !matches!(self.socket.get(), SocketUnion::None)
     }
 
-    pub(crate) fn remote_address(&self) -> Option<(core::net::IpAddr, u16)> {
+    pub(crate) fn remote_address(&self) -> Option<core::net::SocketAddr> {
         match self.socket.get() {
-            SocketUnion::Tcp(s) => remote_address_of(s),
-            SocketUnion::Ssl(s) => remote_address_of(s),
+            SocketUnion::Tcp(s) => s.remote_endpoint(),
+            SocketUnion::Ssl(s) => s.remote_endpoint(),
             SocketUnion::None => None,
         }
     }
@@ -599,7 +524,8 @@ impl WebSocketProxyTunnel {
         }
     }
 
-    pub(crate) fn resume_stream(&self) -> bool {
+    /// Closes the socket if it cannot register the poll again.
+    pub(crate) fn resume_stream(self: RefPtr<Self>) -> bool {
         match self.socket.get() {
             SocketUnion::Tcp(s) => s.resume_stream(),
             SocketUnion::Ssl(s) => s.resume_stream(),
@@ -617,7 +543,7 @@ impl WebSocketProxyTunnel {
     }
 
     /// Runs the upgrade client's `handle_close`, which drops its ref on the tunnel.
-    pub(crate) fn close_socket(&self, mode: CloseMode) {
+    pub(crate) fn close_socket(self: RefPtr<Self>, mode: CloseMode) {
         match self.socket.replace(SocketUnion::None) {
             SocketUnion::Tcp(s) => mode.close(s),
             SocketUnion::Ssl(s) => mode.close(s),
@@ -629,10 +555,10 @@ impl WebSocketProxyTunnel {
 // HOST_EXPORT(WebSocketProxyTunnel__setConnectedWebSocket, c)
 pub fn set_connected_web_socket(
     tunnel: &crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel,
-    ws: bun_ptr::ThisPtr<crate::websocket_client::WebSocketClient>,
+    ws: RefPtr<crate::websocket_client::WebSocketClient>,
 ) {
     bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
-    tunnel.connected_websocket.set(Some(BackRef::from(ws)));
+    tunnel.connected_websocket.set(Some(ws));
     // Clear the upgrade client reference since we're now in connected phase
     tunnel.upgrade_client.set(None);
 }

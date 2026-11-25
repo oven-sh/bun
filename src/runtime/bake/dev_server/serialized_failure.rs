@@ -114,7 +114,7 @@ impl Packed {
 
 const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 
-/// Stored in `dev.bundling_failures` keyed by its `OwnerPacked`.
+/// Stored in `Graphs::bundling_failures` keyed by its `OwnerPacked`.
 ///
 /// PERF: `data` is an owned `Box<[u8]>`, so `Clone` deep-copies between
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —
@@ -134,13 +134,6 @@ impl SerializedFailure {
                 .expect("infallible: size matches"),
         );
         Packed::from_bits(raw).decode()
-    }
-
-    /// Releases `data`. `Box<[u8]>` drop suffices; the signature keeps a
-    /// `_dev` parameter so call sites read uniformly.
-    pub(crate) fn deinit<D>(&self, _dev: &D) {
-        // Drop happens via owner; nothing to do for the borrow form used by
-        // `index_failures` (which iterates `&SerializedFailure`).
     }
 
     /// `SerializedFailure.initFromLog`.

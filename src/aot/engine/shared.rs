@@ -24,7 +24,17 @@ pub enum RegExpLiteralCreation {
     DependsOnStack,
 }
 
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum StoredStringsForm {
+    /// Each string as UTF-8, followed by a zero byte.
+    ZeroTerminated,
+    /// An object for each string, with its place in the file, and for each run of bytes outside the strings.
+    JsonLines,
+}
+
 pub struct StoredStrings {
+    /// 0: nothing but zeros lies beside the strings. 1: a byte that no string covers is not zero. 2: the file can't be read.
     pub verdict: u32,
     pub strings: Vec<u8>,
     pub report: Vec<u8>,
@@ -34,7 +44,8 @@ pub fn has_compiler() -> bool {
     Bun__AOT__hasCompiler()
 }
 
-pub fn read_stored_strings(file: &[u8]) -> StoredStrings {
+/// The strings that the compiled images in `file`, a finished executable, store.
+pub fn read_stored_strings(file: &[u8], form: StoredStringsForm) -> StoredStrings {
     unsafe extern "C" fn take(
         stored: *mut core::ffi::c_void,
         strings: *const u8,
@@ -58,7 +69,13 @@ pub fn read_stored_strings(file: &[u8]) -> StoredStrings {
     };
     // SAFETY: the engine reads `file.len()` bytes and calls `take` once, with `stored`, before it returns.
     stored.verdict = unsafe {
-        Bun__AOT__readStoredStrings(file.as_ptr(), file.len(), (&raw mut stored).cast(), take)
+        Bun__AOT__readStoredStrings(
+            file.as_ptr(),
+            file.len(),
+            form as u8,
+            (&raw mut stored).cast(),
+            take,
+        )
     };
     stored
 }
@@ -158,6 +175,7 @@ unsafe extern "C" {
     fn Bun__AOT__readStoredStrings(
         file: *const u8,
         size: usize,
+        form: u8,
         stored: *mut core::ffi::c_void,
         take: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize, *const u8, usize),
     ) -> u32;

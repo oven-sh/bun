@@ -1,0 +1,14 @@
+# `scaled[i] = prices[i] * 0.5 + shift`, both lists out of JSON.parse: nothing is known of either. A store spoke for a list of numbers where an operator that makes numbers made what is stored, or a sum of two elements: a sum of a product and a number did not,
+# so `scaled` was never asked for a list, the store could run other code, every turn of the typed copy left, and the copy was dropped: 70 instructions a turn for 17. A sum whose text can only add numbers speaks as a product does. A guess: the list is asked in front of the loop.
+# LIBRARY: own
+# -- source: main.js
+# const prices = JSON.parse("[1.5,2.5,3.5,4.5]"), scaled = JSON.parse("[0,0,0,0]");
+# function run(count, seed) { const shift = seed & 7; for (let i = 0; i < count; i++) scaled[i] = prices[i] * 0.5 + shift; return scaled.join(); }
+# publish(run);
+# -- end of source
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP: PutContiguousIndex
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2, 0)); print(run(4, 3)); };
+# SHELL: 0.75,1.25,0,0
+# SHELL-NEXT: 3.75,4.25,4.75,5.25

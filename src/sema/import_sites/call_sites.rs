@@ -12,7 +12,7 @@ use super::made_requires::{
 };
 use super::named_paths::{
     add_forwarding_functions, collect_candidates, find_database_read, find_named_paths,
-    find_paths_created, is_relative_path,
+    find_paths_created, is_passed_to_package, is_relative_path,
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
@@ -911,6 +911,7 @@ pub(super) struct ScannedCalls {
     pub(super) folders_entered: Vec<(ExprId, Atom)>,
     pub(super) reads_below_working_folder: Vec<(ExprId, Atom)>,
     pub(super) named_paths: Vec<NamedPath>,
+    pub(super) folders_passed_to_packages: Vec<ExprId>,
     pub(super) paths_created: Vec<Atom>,
     pub(super) web_assembly_names: Vec<(ExprId, Atom)>,
     pub(super) reading_functions: Vec<SymbolId>,
@@ -982,6 +983,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut candidates = Vec::new();
     let mut known_operands: FxHashSet<ExprId> = FxHashSet::default();
     let mut named_paths = Vec::new();
+    let mut folders_passed_to_packages = Vec::new();
     let mut created_operands = Vec::new();
     let mut paths_created = Vec::new();
     let mut web_assembly_names = Vec::new();
@@ -1273,7 +1275,10 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     .is_some_and(|path| known_operands.contains(&path)),
                 _ => false,
             };
-            own_folder_arguments.extend(candidate.find_argument().filter(|it| !is_text_read(it)));
+            let handed = candidate.find_argument().filter(|it| !is_text_read(it));
+            let is_passed = handed.is_some() && is_passed_to_package(inputs, candidate);
+            folders_passed_to_packages.extend(handed.filter(|_| is_passed).map(|it| it.0));
+            own_folder_arguments.extend(handed);
             let texts = texts_of_file.get_or_insert_with(create_texts);
             find_named_paths(inputs, texts, candidate, &mut named_paths);
         }
@@ -1332,6 +1337,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         folders_entered,
         reads_below_working_folder,
         named_paths,
+        folders_passed_to_packages,
         paths_created,
         web_assembly_names,
         reading_functions,

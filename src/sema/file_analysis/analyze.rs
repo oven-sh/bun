@@ -159,6 +159,7 @@ fn create_analysis<'s>(
         folders_entered: scan.folders_entered,
         reads_below_working_folder: scan.reads_below_working_folder,
         named_paths: scan.named_paths,
+        folders_passed_to_packages: scan.folders_passed_to_packages,
         paths_created: scan.paths_created,
         web_assembly_names: scan.web_assembly_names,
         reading_functions: scan.reading_functions,

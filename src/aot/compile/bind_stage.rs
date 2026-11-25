@@ -506,12 +506,20 @@ fn embed_files_asked_by_name(
         FxHashMap::default();
     let mut files_that_hand_on = Vec::new();
     for &file in files_that_name_paths {
-        let Some(package) = find_package_folder(files.module(file).file_name()) else {
+        let package = find_package_folder(files.module(file).file_name());
+        let mut passed = files
+            .analysis(file)
+            .folders_passed_to_packages
+            .iter()
+            .copied();
+        let handed_on = match package {
+            Some(_) => find_forwarded_folder(files, graph, left_out, file),
+            None => passed.find(|&it| !is_in_left_out_code(files, left_out, file, it)),
+        };
+        files_that_hand_on.extend(handed_on.map(|argument| (file, package, argument)));
+        let Some(package) = package else {
             continue;
         };
-        if let Some(argument) = find_forwarded_folder(files, graph, left_out, file) {
-            files_that_hand_on.push((file, package, argument));
-        }
         let mut unknown = files.analysis(file).unknown_path_reads.iter();
         if unknown.any(|&it| !is_in_left_out_code(files, left_out, file, it)) {
             let names = list_file_names(files, file, |_| true).collect();
@@ -528,10 +536,11 @@ fn embed_files_asked_by_name(
         });
         // What the file itself reads is known of its own text.
         let mut asked: Vec<&FxHashSet<&[u8]>> = Vec::new();
-        for package in loaded.chain([package]) {
+        for package in loaded.chain(package) {
             let named = names_by_package.get(package).into_iter().flatten();
             asked.extend(named.filter(|it| it.0 != file).map(|it| &it.1));
         }
+        let asks_for_manifest = asked.iter().any(|it| it.contains(&b"package.json"[..]));
         // `find(__dirname, "a.json")`, and the names in a variable.
         let (hir, bound) = (files.hir(file), files.bound(file));
         let mut beside = Vec::new();
@@ -553,6 +562,26 @@ fn embed_files_asked_by_name(
         asked.push(&named_beside);
         let module = to_native(files.module(file).file_name());
         let mut folder = parent_directory(files.module(file).file_name());
+        let Some(package) = package else {
+            // `readPackageUp({ cwd: import.meta.dirname })`
+            let mut above = Some(folder);
+            while let Some(current) = above.filter(|_| asks_for_manifest) {
+                let manifest = to_native(&from_argument(current, b"package.json")).to_vec();
+                if provider.embed_file_implicitly(entry, module, &manifest, false) {
+                    named.add(file, argument, manifest);
+                    break;
+                }
+                above = Some(parent_directory(current)).filter(|it| it.len() < current.len());
+            }
+            continue;
+        };
+        embed_files_named_below(
+            (files, sources, provider),
+            (entry, file),
+            &names_by_package,
+            argument,
+            named,
+        );
         while folder.len() >= package.len() && asked.iter().any(|it| !it.is_empty()) {
             for listed in provider.list_files_to_embed(to_native(folder), false) {
                 let name = bun_paths::basename(&listed);
@@ -563,6 +592,52 @@ fn embed_files_asked_by_name(
                 }
             }
             folder = parent_directory(folder);
+        }
+    }
+}
+
+/// A package that goes down from its own folder, as in `read(path.join(folder, "data"))`. Of the files below it, those come along of which its code names each folder and the file.
+fn embed_files_named_below(
+    (files, sources, provider): (&Files<'_>, &Sources, &dyn SourceProvider),
+    (entry, file): (&[u8], FileId),
+    names_by_package: &FxHashMap<&[u8], Vec<(FileId, FxHashSet<&[u8]>)>>,
+    argument: ExprId,
+    named: &mut NamedFiles,
+) {
+    let module = files.module(file).file_name();
+    let of_package = find_package_folder(module).and_then(|it| names_by_package.get(it));
+    let asking = of_package.into_iter().flatten();
+    let mut texts: FxHashSet<&[u8]> = FxHashSet::default();
+    for (asking, _) in asking {
+        for written in files.hir(*asking).exprs.iter() {
+            if let ExprKind::String(text) = written.kind {
+                texts.extend(bun_core::strings::split(files.atoms.bytes(text), b"/"));
+            }
+        }
+    }
+    if texts.is_empty() {
+        return;
+    }
+    let folder = parent_directory(module);
+    let mut names: Vec<&[u8]> = texts.iter().copied().collect();
+    names.retain(|it| !it.is_empty() && !it.starts_with(b".") && *it != b"node_modules");
+    names.sort_unstable();
+    let below = names.iter().flat_map(|name| {
+        let below = from_argument(folder, name);
+        provider.list_files_to_embed(to_native(&below), true)
+    });
+    for listed in below {
+        let path = from_native(&listed);
+        let below = path
+            .strip_prefix(folder)
+            .and_then(|it| it.strip_prefix(b"/"));
+        let is_named = below.is_some_and(|below| {
+            let steps = || bun_core::strings::split(below, b"/");
+            steps().count() > 1 && steps().all(|it| texts.contains(it))
+        });
+        let from = (entry, to_native(module));
+        if is_named && embed_unless_code(files, sources, provider, from, &listed, false) {
+            named.add(file, argument, listed);
         }
     }
 }
@@ -925,7 +1000,7 @@ fn warn_about_unembedded_reads(
                 continue;
             }
             let from = (entry, path_of(file));
-            let below = pattern.names_folder;
+            let below = pattern.names_folder || pattern.end.contains(&b'/');
             for found in provider.list_files_to_embed(to_native(&pattern.folder), below) {
                 if pattern.matches(&found)
                     && embed_unless_code(files, sources, provider, from, &found, is_query)

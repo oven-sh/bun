@@ -186,6 +186,12 @@ fn is_handed_on(inputs: &ScanInputs<'_, '_>, e: ExprId) -> bool {
     true
 }
 
+pub(super) fn is_passed_to_package(inputs: &ScanInputs<'_, '_>, candidate: Candidate) -> bool {
+    !candidate.is_named_by_arguments
+        && find_receiver(inputs, candidate)
+            .is_some_and(|it| comes_from_package(inputs, it, LONGEST_CHAIN))
+}
+
 pub(super) fn find_named_paths(
     inputs: &ScanInputs<'_, '_>,
     texts: &TextsOfFile<'_, '_>,
@@ -196,8 +202,7 @@ pub(super) fn find_named_paths(
         true => None,
         false => find_receiver(inputs, candidate),
     };
-    let is_passed_to_package =
-        receiver.is_some_and(|it| comes_from_package(inputs, it, LONGEST_CHAIN));
+    let is_passed_to_package = is_passed_to_package(inputs, candidate);
     let is_needed_on_disk =
         candidate.is_needed_on_disk || receiver.is_some_and(|it| needs_paths_on_disk(inputs, it));
     let becomes_working_folder = is_needed_on_disk && becomes_working_folder(inputs, candidate);

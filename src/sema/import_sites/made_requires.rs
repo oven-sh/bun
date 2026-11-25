@@ -776,6 +776,45 @@ fn find_value_written_under(hir: &File<'_>, object: ExprId, key: Atom) -> Option
     }
 }
 
+/// `require` of `held.load` behind `const held = { load: require }`.
+fn find_value_written_in_holder(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    member: ExprId,
+) -> Option<ExprId> {
+    let (holder, MemberKey::Name(key)) = hir.member_key(member)? else {
+        return None;
+    };
+    find_value_written_under(hir, settled_initializer(hir, bound, holder)?, key)
+}
+
+/// Whether the file does nothing with the holder of `member` but read that member.
+fn is_holder_only_read_for(hir: &File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
+    let Some((holder, MemberKey::Name(key))) = hir.member_key(member) else {
+        return false;
+    };
+    let (Some(ExprKind::Ident(name)), Some(symbol)) =
+        (expr_kind(hir, holder), settled_symbol(hir, bound, holder))
+    else {
+        return false;
+    };
+    let is_read = |mention: ExprId| {
+        let Parent::Expr(read) = bound.parent_of_expr(mention) else {
+            return false;
+        };
+        let is_deleted = || {
+            matches!(bound.parent_of_expr(read), Parent::Expr(above)
+                if matches!(expr_kind(hir, above), Some(ExprKind::Unary { op: UnOp::Delete, .. })))
+        };
+        matches!(hir.member_key(read), Some((object, MemberKey::Name(it)))
+            if object == mention && it == key)
+            && bound.get_assignment_target(hir, read).is_none()
+            && !is_deleted()
+    };
+    let mentions = find_mentions_of(hir, bound, symbol, name);
+    !is_exported(bound, symbol) && mentions.into_iter().all(is_read)
+}
+
 fn find_require_made_for_choice(
     text: Text<'_, '_, '_, '_>,
     call: ExprId,
@@ -1765,6 +1804,12 @@ fn follow_each_side_once(
                 CommonJsVariable::Module,
             )
             && !may_be_modified(hir, bound, CommonJsVariable::Module)
+        {
+            return Some(OwnRequire::OfFile);
+        }
+        if let Some(value) = find_value_written_in_holder(hir, bound, e)
+            && is_free_common_js(hir, bound, value, CommonJsVariable::Require)
+            && is_holder_only_read_for(hir, bound, e)
         {
             return Some(OwnRequire::OfFile);
         }

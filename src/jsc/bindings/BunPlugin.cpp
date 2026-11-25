@@ -7952,7 +7952,12 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
         JSC::AOT::setReplacedTestFile(globalObject, file);
         auto retainedModules = mockingModules;
         for (auto& key : mockingModules) {
-            if (auto module = key != testFile ? Bun::compiledModuleForPath(key) : std::nullopt; module && JSC::AOT::evaluatedBy(globalObject, *module) != JSC::AOT::LoadedBy::Preload && JSC::AOT::releaseModuleAndImporters(globalObject, *module, std::nullopt))
+            auto module = key != testFile ? Bun::compiledModuleForPath(key) : std::nullopt;
+            if (!module || JSC::AOT::evaluatedBy(globalObject, *module) == JSC::AOT::LoadedBy::Preload)
+                continue;
+            // Another test file may have loaded this test file before its own turn.
+            bool runsAgain = JSC::AOT::didEndMocksOfTestFile(globalObject, *module);
+            if (JSC::AOT::releaseModuleAndImporters(globalObject, *module, std::nullopt) || runsAgain)
                 retainedModules.remove(key);
         }
         JSC::AOT::setReplacedTestFile(globalObject, std::nullopt);

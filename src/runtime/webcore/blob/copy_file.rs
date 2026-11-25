@@ -745,7 +745,11 @@ impl CopyFileWindows {
         buf: &'b mut Path,
     ) -> bun_sys::Result<Option<&'b bun_core::ZStr>> {
         let fd = match &store.data.as_file().pathlike {
-            PathOrFileDescriptor::Path(path) => return Ok(Some(path.slice_z(buf))),
+            PathOrFileDescriptor::Path(path) => {
+                let path = path.slice_z(buf);
+                bun_sys::sys_uv::check_len(path.as_bytes(), bun_sys::Tag::copyfile)?;
+                return Ok(Some(path));
+            }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
         match bun_sys::File::borrow(&fd).kind()? {

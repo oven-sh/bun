@@ -1730,6 +1730,9 @@ mod spawn_process_body {
     impl OpenedFiles {
         fn open(&mut self, path: &[u8], flag: c_int) -> Result<Maybe<uv::uv_file>, crate::Error> {
             let path_z = bun_sys::to_posix_path(path).map_err(crate::Error::Sys)?;
+            if let Err(err) = bun_sys::sys_uv::check_len(path, bun_sys::Tag::open) {
+                return Ok(Err(err));
+            }
             let mut req = uv::fs_t::uninitialized();
             // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
             // `path_z` is NUL-terminated and outlives the call (sync).

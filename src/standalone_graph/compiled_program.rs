@@ -10,7 +10,7 @@ use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
 use bun_core::strings;
 use bun_core::{StringBuilder, StringPointer, bytes_of, slice_as_bytes};
-use bun_paths::{Path, path_buffer_pool, to_portable};
+use bun_paths::{MAX_PATH_BYTES, Path, path_buffer_pool, to_portable};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
     CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
@@ -2013,6 +2013,10 @@ impl StandaloneModuleGraph {
     fn traverses_non_directory(&self, name: &[u8]) -> bool {
         if cfg!(windows) {
             return false;
+        }
+        // The disk fails a path this long whatever it traverses, and each `..` of one costs a walk over all the `..` before it.
+        if name.len() >= MAX_PATH_BYTES {
+            return true;
         }
         let is_folder = |path: &[u8]| {
             self.find_dir(path)

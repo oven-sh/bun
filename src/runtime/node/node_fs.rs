@@ -1278,12 +1278,31 @@ mod _async_tasks {
                     unsafe { &*(&*task.args as *const A as *const $Args) }
                 }};
             }
+            // For an answer that needs no request. It reaches the caller as the answer of a request does.
+            macro_rules! answer_now {
+                ($Ret:ty, $answer:expr) => {{
+                    // SAFETY: identity write — `R == $Ret` for this `F`.
+                    unsafe {
+                        core::ptr::write(
+                            &mut task.result as *mut Maybe<R> as *mut Maybe<$Ret>,
+                            $answer,
+                        )
+                    };
+                    // SAFETY (R-2): single-JS-thread `JsCell` projection, and no path is borrowed from the scratch any more.
+                    unsafe { binding.node_fs.get_mut() }.release_long_path();
+                    let task_ptr: *mut Self = task;
+                    task.global_object()
+                        .bun_vm()
+                        .event_loop()
+                        .enqueue_task(bun_jsc::Task::init(task_ptr));
+                    return task.completion.value();
+                }};
+            }
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
                     let named = &args.path;
                     let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
-                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         bun_core::zstr!("\\\\.\\NUL")
                     } else {
@@ -1293,20 +1312,13 @@ mod _async_tasks {
                         // never across a JS re-entry point.
                         named.slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
+                    let too_long = || {
+                        let refused = Syscall::check_len(path.as_bytes(), sys::Tag::open).err()?;
+                        Some(refused.with_path(named.slice()))
+                    };
+                    let answer: Option<Maybe<ret::Open>> = refusal.or_else(too_long).map(Err);
                     if let Some(answer) = answer {
-                        // SAFETY: identity write — `R == ret::Open` for this `F`.
-                        unsafe {
-                            core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                answer,
-                            )
-                        };
-                        let task_ptr: *mut Self = task;
-                        task.global_object()
-                            .bun_vm()
-                            .event_loop()
-                            .enqueue_task(bun_jsc::Task::init(task_ptr));
-                        return task.completion.value();
+                        answer_now!(ret::Open, answer);
                     }
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -1469,6 +1481,10 @@ mod _async_tasks {
                     let path = path_for_statfs(&args.path, unsafe {
                         &mut binding.node_fs.get_mut().sync_error_buf
                     });
+                    if let Err(refused) = Syscall::check_len(path.as_bytes(), sys::Tag::statfs) {
+                        let answer: Maybe<ret::StatFS> = Err(refused.with_path(args.path.slice()));
+                        answer_now!(ret::StatFS, answer);
+                    }
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -5027,6 +5043,13 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'stati
 }
 
 impl NodeFS {
+    /// Frees the scratch if the failed call left a path in it that no syscall takes. A VM keeps the scratch for as long as it lives.
+    pub(crate) fn release_long_path(&mut self) {
+        if self.sync_error_buf.len() >= paths::MAX_PATH_BYTES {
+            self.sync_error_buf = Path::new();
+        }
+    }
+
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         let p = args.path.slice();
         let mode = args.mode.as_int();
@@ -6129,6 +6152,7 @@ impl NodeFS {
         {
             let _ = flavor;
             let template = template();
+            Syscall::check_len(ZStr::from_slice_with_nul(&template).as_bytes(), sys::Tag::mkdtemp)?;
             let mut req = uv::fs_t::uninitialized();
             // SAFETY: `template` is NUL-terminated. Without a callback, the request is over when this returns.
             let rc = unsafe {
@@ -7534,14 +7558,13 @@ impl NodeFS {
     ) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            if let Err(err) = Syscall::check_len(path.as_bytes(), sys::Tag::realpath) {
+                return Err(err.with_path(args.path.slice()));
+            }
             let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
-                uv::uv_fs_realpath(
-                    bun_io::Loop::get(),
-                    &raw mut req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
-                    None,
-                )
+                uv::uv_fs_realpath(bun_io::Loop::get(), &raw mut req, path.as_ptr(), None)
             };
             if let Some(err) = rc.to_error(sys::Tag::realpath) {
                 if err.get_errno() == E::ENOENT
@@ -8016,12 +8039,16 @@ impl NodeFS {
         }
         #[cfg(windows)]
         {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            if let Err(err) = Syscall::check_len(path.as_bytes(), sys::Tag::utime) {
+                return Err(err.with_path(args.path.slice()));
+            }
             let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
                     &raw mut req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
+                    path.as_ptr(),
                     args.atime,
                     args.mtime,
                     None,
@@ -8050,12 +8077,16 @@ impl NodeFS {
         }
         #[cfg(windows)]
         {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            if let Err(err) = Syscall::check_len(path.as_bytes(), sys::Tag::lutime) {
+                return Err(err.with_path(args.path.slice()));
+            }
             let mut req = uv::fs_t::uninitialized();
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
                     &raw mut req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
+                    path.as_ptr(),
                     args.atime,
                     args.mtime,
                     None,

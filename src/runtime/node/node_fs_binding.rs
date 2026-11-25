@@ -3,7 +3,6 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys::Maybe;
-use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
@@ -49,8 +48,10 @@ where
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
     run_sync_with::<R, A>(cx, args, |args| {
-        this.node_fs
-            .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
+        this.node_fs.with_mut(|nfs| {
+            NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync)
+                .inspect_err(|_| nfs.release_long_path())
+        })
     })
 }
 
@@ -67,6 +68,7 @@ where
         crate::jsc_hooks::with_node_fs(vm, |node_fs| {
             node_fs.vm = Some(vm);
             NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+                .inspect_err(|_| node_fs.release_long_path())
         })
     })
 }
@@ -152,7 +154,7 @@ fn run_async<A: FsArgument>(
 
 enum ParsedAsyncArgs<A> {
     Args(ThreadIsolated<A>),
-    /// The operation fails without being scheduled (an aborted signal, a path that is too long).
+    /// The operation fails without being scheduled (an aborted signal).
     Rejected(JSValue),
 }
 
@@ -172,9 +174,6 @@ fn parse_async_args<A: FsArgument>(
         {
             return Ok(ParsedAsyncArgs::Rejected(abort_error));
         }
-    }
-    if let Some(err) = slice.deferred_error.take() {
-        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
     }
     Ok(ParsedAsyncArgs::Args(args))
 }

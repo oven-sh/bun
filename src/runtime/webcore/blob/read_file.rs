@@ -385,7 +385,11 @@ impl ReadFileUV {
 
     fn open(self: Box<Self>) {
         let mut buf = bun_paths::Path::new();
-        let path = self.file_store.pathlike.path().slice_z(&mut buf).as_ptr();
+        let path = self.file_store.pathlike.path().slice_z(&mut buf);
+        if bun_sys::sys_uv::check_len(path.as_bytes(), bun_sys::Tag::open).is_err() {
+            return self.on_open_error(bun_sys::E::ENAMETOOLONG);
+        }
+        let path = path.as_ptr();
 
         let loop_ = self.loop_;
         let this = bun_core::heap::into_raw(self);

@@ -423,15 +423,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
-
-                let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
-                } else {
-                    find_source_mapping_url_u16(source.utf16())
-                };
-
-                let Some(found_url) = maybe_found_url else {
+                let Some(found_url) = find_source_mapping_url(&source) else {
                     break 'try_inline;
                 };
 
@@ -505,6 +497,10 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     }
                 }
 
+                if bun_core::strings::contains_char(source_filename, 0) {
+                    break 'try_external;
+                }
+
                 let mut load_path = bun_paths::Path::from(source_filename);
                 load_path.extend_from_slice(b".map");
                 let load_path: &bun_core::ZStr = &load_path;
@@ -572,20 +568,20 @@ impl SourceProvider for [u8] {
     }
 }
 
-/// The map of the file at `path`, and the path and the text of each source whose text it has.
+/// The map of the file at `path`, and the path and the text of each source.
 pub fn load_with_sources(
     path: &[u8],
     text: &[u8],
 ) -> Option<(
     std::sync::Arc<ParsedSourceMap>,
-    Vec<Option<(bun_paths::Path, Box<[u8]>)>>,
+    Vec<(bun_paths::Path, Option<Box<[u8]>>)>,
 )> {
     let hint = ParseUrlResultHint::MappingsAndSources;
     let parsed = get_source_map_impl(text, path, SourceMapLoadHint::None, hint)?;
     let map = parsed.map?;
     let sources = (map.external_source_names.iter())
         .zip(parsed.contents_of_all_sources)
-        .map(|(name, text)| Some((mapping::path_of_source(path, name), text?)))
+        .map(|(name, text)| (mapping::path_of_source(path, name), text))
         .collect();
     Some((map, sources))
 }
@@ -1127,6 +1123,15 @@ pub fn append_source_map_chunk<'a>(
     // Then append everything after that without modification.
     j.push_static(source_map);
     Ok(())
+}
+
+fn find_source_mapping_url(source: &bun_core::String) -> Option<bun_core::Utf8Bytes<'_>> {
+    debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
+    if source.is_8bit() {
+        find_source_mapping_url_u8(source.latin1())
+    } else {
+        find_source_mapping_url_u16(source.utf16())
+    }
 }
 
 /// Always returns UTF-8.

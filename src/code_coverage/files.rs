@@ -3,7 +3,8 @@ use std::sync::{Arc, OnceLock};
 use bun_ast::Loader;
 use bun_ast::coverage::{Event, Role};
 use bun_collections::StringArrayHashMap;
-use bun_core::strings::BOM;
+use bun_core::strings::{BOM, contains_char};
+use bun_paths::Path;
 use bun_sys::{Fd, File};
 
 use crate::find_anchors;
@@ -41,10 +42,26 @@ impl Text {
 
     /// What the file has now stays.
     pub(crate) fn update(old: &mut Arc<Text>, new: Arc<Text>) {
-        if old.bytes != new.bytes && !read(&old.path).is_ok_and(|now| *now == *old.bytes) {
+        if old.bytes != new.bytes && old.read_again().as_deref() != Some(&old.bytes) {
             *old = new;
         }
     }
+
+    fn read_again(&self) -> Option<Vec<u8>> {
+        is_file(&self.path).then(|| read(&self.path).ok())?
+    }
+}
+
+/// Plugins and source maps make up names.
+pub(crate) fn can_be_on_disk(path: &[u8]) -> bool {
+    bun_paths::is_absolute(path) && !contains_char(path, 0)
+}
+
+/// Not a pipe, which would block.
+pub(crate) fn is_file(path: &[u8]) -> bool {
+    can_be_on_disk(path)
+        && bun_sys::stat(&Path::from(path))
+            .is_ok_and(|it| bun_sys::is_regular_file(it.st_mode as _))
 }
 
 /// As the module loader reads it.
@@ -93,7 +110,7 @@ impl Files {
     pub(crate) fn reported(&self) -> impl Iterator<Item = &Counts> {
         self.0.values().iter().filter_map(|versions| {
             let (last, others) = versions.split_last()?;
-            let now = others.first().and_then(|it| read(&it.text.path).ok());
+            let now = others.first().and_then(|it| it.text.read_again());
             let is_current = |it: &&Counts| now.as_deref() == Some(&it.text.bytes);
             versions.iter().rfind(is_current).or(Some(last))
         })

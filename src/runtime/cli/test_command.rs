@@ -2292,6 +2292,7 @@ extern "C" fn BunTest__codeCoverageForFile(
 }
 
 /// `bun test --aot`
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn BunTest__countCompiledFile(
     vm: &VirtualMachine,

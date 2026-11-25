@@ -7053,28 +7053,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// For data that is not written in this file, which coverage would take for what is.
-    pub(crate) fn forget_locs_inside(&self, data: Expr) {
-        if !self.options.features.code_coverage {
-            return;
-        }
-        let mut parts = vec![data];
-        while let Some(part) = parts.pop() {
-            let forget = |it: &mut Expr| {
-                if !core::mem::replace(&mut it.loc, bun_ast::Loc::EMPTY).is_empty() {
-                    parts.push(*it);
-                }
-            };
-            match part.data {
-                js_ast::ExprData::EArray(mut it) => it.items.iter_mut().for_each(forget),
-                js_ast::ExprData::EObject(mut it) => (it.properties.iter_mut())
-                    .flat_map(|it| it.key.iter_mut().chain(&mut it.value))
-                    .for_each(forget),
-                _ => {}
-            }
-        }
-    }
-
     #[cold]
     #[inline(never)]
     pub(crate) fn wrap_inlined_enum(&mut self, value: Expr, comment: &'a [u8]) -> Expr {

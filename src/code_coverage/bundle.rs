@@ -2,20 +2,20 @@
 
 use std::sync::Arc;
 
-use bun_ast::Loader;
 use bun_ast::coverage::{Anchor, Anchors, MAX_COUNTERS};
 use bun_sema::check::spans::token_end;
 use bun_sourcemap::{Ordinal, ParsedSourceMap};
 
-use crate::files::Text;
+use crate::files::{Text, is_file};
+use crate::filter::Filter;
 use crate::find_anchors;
 use crate::locs::token_after;
 use crate::positions::Positions;
 
 pub(crate) struct Bundle {
     map: Arc<ParsedSourceMap>,
-    /// By the index in the map. `None` if there is no such file.
-    sources: Vec<Option<(bun_paths::Path, Box<[u8]>)>>,
+    /// By the index in the map. `None` if it is not reported.
+    sources: Vec<Option<Arc<Text>>>,
 }
 
 /// Several files as if they were one. A `loc` counts UTF-16 code units.
@@ -34,24 +34,31 @@ fn member_after(text: &[u8], name: u32) -> Option<u32> {
 }
 
 impl Bundle {
-    /// `None` if the files that it was made from are not known, or are not here.
-    pub(crate) fn find(path: &[u8], text: &[u8]) -> Option<Bundle> {
-        let (map, sources) = bun_sourcemap::load_with_sources(path, text)?;
+    /// `None` if code of the project would be missing from the report, with nothing in its place.
+    pub(crate) fn find(path: &[u8], text: &[u8], filter: &Filter) -> Option<Bundle> {
+        let path = bun_paths::Path::resolve(&[filter.root(), path]);
+        let (map, sources) = bun_sourcemap::load_with_sources(&path, text)?;
+        let mut is_any_gone = sources.is_empty();
         let sources: Vec<_> = (sources.into_iter())
-            .map(|it| it.filter(|(path, _)| bun_sys::exists_z(path)))
+            .map(|(path, text)| {
+                if !filter.is_source_file(&path) || filter.is_ignored(&path) {
+                    return None;
+                }
+                let loader = filter.loader_by_extension(&path);
+                let text = text.filter(|_| loader.is_javascript_like() && is_file(&path));
+                is_any_gone |= text.is_none();
+                let text = text.filter(|_| filter.is_selected(&path))?;
+                Some(Text::new(&path, loader, &text))
+            })
             .collect();
-        (sources.iter().any(Option::is_some)).then_some(Bundle { map, sources })
+        (!is_any_gone || sources.iter().any(Option::is_some)).then_some(Bundle { map, sources })
     }
 
-    pub(crate) fn join<'a>(
-        &'a self,
-        text: &'a [u8],
-        loader_if_covered: impl Fn(&[u8]) -> Option<Loader>,
-    ) -> (Joined<'a>, Anchors) {
+    pub(crate) fn join<'a>(&'a self, text: &'a [u8]) -> (Joined<'a>, Anchors) {
         let (mut all, mut texts, mut end) = (Anchors::default(), Vec::new(), 0u32);
-        let mut join = |(path, text): &'a (bun_paths::Path, Box<[u8]>)| {
-            let loader = loader_if_covered(path)?;
-            let anchors = find_anchors(loader, text)?;
+        let mut join = |source: &'a Arc<Text>| {
+            let text = &*source.bytes;
+            let anchors = find_anchors(source.loader, text)?;
             let (positions, start, first) = (Positions::new(text), end, all.counters);
             end = end.checked_add(text.len() as u32)?.checked_add(1)?;
             all.counters = Some(first + anchors.counters).filter(|&it| it <= MAX_COUNTERS)?;
@@ -64,7 +71,7 @@ impl Bundle {
                 }));
             }
             (all.statements).extend(anchors.statements.iter().map(|it| (first + it.0, it.1)));
-            texts.push((Text::new(path, loader, text), anchors.counters));
+            texts.push((Arc::clone(source), anchors.counters));
             Some((positions, start))
         };
         let sources = (self.sources.iter())

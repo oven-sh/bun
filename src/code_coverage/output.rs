@@ -80,7 +80,7 @@ impl<'a> Job<'a> {
             Some(Err(NoReport::CannotBeParsed)) | None => return Err(Failure::CannotBeParsed),
         };
         let mut row = Row {
-            name: (Path::relative(collector.filter.root(), self.path).as_bytes()).into(),
+            name: collector.filter.name_of(self.path).as_bytes().into(),
             summary: report.summary(),
             thresholds: collector.options.thresholds,
             uncovered_lines: Vec::new(),

@@ -32,6 +32,11 @@ test/cli/test/coverage.test.ts: a file with ? in its name is not left out of cov
 # A compiled run names a module by its real path, also with --preserve-symlinks.
 test/cli/test/coverage.test.ts: coverageInclude > real ["--preserve-symlinks"], for a file that is loaded through a link
 # A compiled run does not read the source map of a bundle, as docs/compiler/debugging.mdx says.
+test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: ../outside.ts
+test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: gone.ts
+test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: node_modules/dependency.ts
+test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: node_modules/gone.ts
+test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: source.ts
 test/cli/test/coverage.test.ts: both braces of an object are listed and no brace of a block is: // @bun with a source map
 test/cli/test/coverage.test.ts: coverageInclude > a file that is bundled with its test
 test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with ""
@@ -53,7 +58,10 @@ test/cli/test/coverage.test.ts: what is counted > a file that runs though TypeSc
 test/cli/test/coverage.test.ts: the braces of an object are listed when the file comes from the transpiler cache
 test/cli/test/coverage.test.ts: what is counted > from the transpiler cache, by import
 test/cli/test/coverage.test.ts: what is counted > from the transpiler cache, by require()
+# The next one cannot pass: the compile cache is disabled in standalone executables.
+test/cli/test/coverage.test.ts: what is counted > with the bytecode of a run without coverage in NODE_COMPILE_CACHE
 # These import a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
+test/cli/test/coverage.test.ts: an error in the value of a macro has its position
 test/cli/test/coverage.test.ts: objects that are not in the file do not move the lines that are listed
 test/cli/test/coverage.test.ts: what is counted > the values of macros and of --define
 # The next one cannot pass: it waits until `isolatedModuleCacheSourceType()` of bun:internal-for-testing finds a file in the cache of sources that --isolate keeps, and a compiled file never gets there. Its child run never ends.

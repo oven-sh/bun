@@ -2338,9 +2338,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
 
                 if !matches!(macro_result.data, Data::ECall(..)) {
-                    p.forget_locs_inside(macro_result);
                     *e = macro_result;
                     p.visit_expr(e);
+                    if p.options.features.code_coverage {
+                        forget_locs_inside(*e);
+                    }
                     return;
                 }
             }
@@ -2810,6 +2812,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 == 0
         {
             e_.class_name = None;
+        }
+    }
+}
+
+/// For data that is not written in this file, which coverage would take for what is.
+#[cold]
+fn forget_locs_inside(data: Expr) {
+    let mut parts = vec![data];
+    while let Some(part) = parts.pop() {
+        let forget = |it: &mut Expr| {
+            if !core::mem::replace(&mut it.loc, js_ast::Loc::EMPTY).is_empty() {
+                parts.push(*it);
+            }
+        };
+        match part.data {
+            Data::EArray(mut it) => it.items.iter_mut().for_each(forget),
+            Data::EObject(mut it) => (it.properties.iter_mut())
+                .flat_map(|it| it.key.iter_mut().chain(&mut it.value))
+                .for_each(forget),
+            _ => {}
         }
     }
 }

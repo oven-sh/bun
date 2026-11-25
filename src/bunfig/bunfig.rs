@@ -296,6 +296,7 @@ impl<'a> Parser<'a, '_> {
                     continue;
                 }
                 pattern if is_group => {
+                    self.expect_no_null_byte(key)?;
                     let mut group = (pattern.into(), CoverageThresholds::default());
                     self.parse_coverage_thresholds(value, &mut group.1, true)?;
                     (self.ctx.test_options.coverage.thresholds_by_pattern).push(group);
@@ -308,6 +309,20 @@ impl<'a> Parser<'a, '_> {
             };
             self.expect(value, ExprTag::ENumber)?;
             *threshold = value.as_number();
+        }
+        Ok(())
+    }
+
+    /// In a string or an array of strings.
+    fn expect_no_null_byte(&mut self, expr: &Expr) -> crate::Result<()> {
+        let items = match &expr.data {
+            ExprData::EArray(array) => array.items.slice(),
+            _ => core::slice::from_ref(expr),
+        };
+        for item in items {
+            if bun_core::strings::contains_char(item.as_string(self.bump).unwrap_or(b""), 0) {
+                return self.add_error(item.loc, b"expected a string without null bytes");
+            }
         }
         Ok(())
     }
@@ -693,6 +708,7 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
+                    self.expect_no_null_byte(&expr)?;
                     self.ctx.test_options.coverage.reports_directory = estring_to_path(
                         expr.data
                             .e_string()
@@ -709,6 +725,7 @@ impl<'a> Parser<'a, '_> {
                 }
 
                 if let Some(expr) = test.get(b"coverageInclude") {
+                    self.expect_no_null_byte(&expr)?;
                     self.ctx.test_options.coverage.include_patterns = self.strings(
                         &expr,
                         b"coverageInclude must be a string or array of strings",

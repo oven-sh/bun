@@ -1861,6 +1861,25 @@ describe.concurrent("what is counted", () => {
     expect(written()).toEqual(entries);
   });
 
+  test("with the bytecode of a run without coverage in NODE_COMPILE_CACHE", async () => {
+    const programs = {
+      "branches/lib.mjs": `export const pick = v => (v ? «1»1 : «0»2);`,
+      "branches/lib.cjs": `exports.pick = v => (v ? «1»1 : «0»2);`,
+    };
+    using dir = tempDir("cov-compile-cache", {
+      ...mapValues(programs, unmarked),
+      "a.test.ts": each(programs, it => `require(${it}).pick(1);`),
+    });
+    const env = { NODE_COMPILE_CACHE: path.join(String(dir), "cache"), NODE_DEBUG_NATIVE: "COMPILE_CACHE" };
+    const without = await bun(String(dir), ["test"], env);
+    expect(messagesOf(without.stderr)).toEqual([]);
+    expect(without.exitCode).toBe(0);
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-reporter=json"], env);
+    expect(stderr.match(/lib\.\w+(?= was accepted)/g)).toEqual(["lib.mjs", "lib.cjs"]);
+    expect(reported(String(dir), programs)).toEqual(programs);
+    expect(exitCode).toBe(0);
+  });
+
   // The bundler drops what has no effect.
   const withEffects = Object.fromEntries(Object.entries(javascript).filter(([name]) => !/hints|lines/.test(name)));
 
@@ -1909,6 +1928,18 @@ describe.concurrent("what is counted", () => {
           await Bun.write("bundle.js", ["// @bun", ...sourcesContent].join("\\n"));
           await import(process.cwd() + "/bundle.js?" + names);
         }`,
+    });
+  });
+
+  test("from a bundle that has no file", () => {
+    const programs = { "branches/lib.js": `export const pick = v => (v ? «1»1 : «1»2);` };
+    return check(programs, {
+      "a.test.ts": `
+        const built = await Bun.build({ entrypoints: ["branches/lib.js"], target: "bun", sourcemap: "inline" });
+        const contents = await built.outputs[0].text();
+        Bun.plugin({ setup: build => void build.module("made-up", () => ({ contents, loader: "js" })) });
+        process.chdir("branches");
+        require("made-up").pick(0), require("./branches/lib.js").pick(1);`,
     });
   });
 
@@ -2175,14 +2206,20 @@ export const never = (v: number) => (v ? 1 : 2);
 
   test("process.chdir() does not move them", async () => {
     using dir = tempDir("cov-chdir", {
-      "bunfig.toml": bunfig(`coveragePathIgnorePatterns = "src/ignored.ts"`),
+      "bunfig.toml": bunfig(`coveragePathIgnorePatterns = ["src/ignored.ts", "ignored"]`),
       "src/lib.ts": "",
       "src/ignored.ts": "",
-      "a.test.ts": `process.chdir("src"); require("./src/lib.ts"); require("./src/ignored.ts");`,
+      "a.test.ts": `
+        process.chdir("src");
+        require("./src/lib.ts"), require("./src/ignored.ts");
+        for (const name of ["made-up", "ignored"]) {
+          Bun.plugin({ setup: build => void build.module(name, () => ({ contents: "Object();", loader: "js" })) });
+          require(name);
+        }`,
     });
     const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
     const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
-    expect(lcov.match(/^SF:.*$/gm)).toEqual([`SF:${path.join("src", "lib.ts")}`]);
+    expect(lcov.match(/^SF:.*$/gm)).toEqual([`SF:${path.join("src", "lib.ts")}`, "SF:made-up"]);
     expect(exitCode).toBe(0);
   });
 
@@ -2954,25 +2991,54 @@ test.concurrent.each(["istanbul", "c8", "v8"])("%s ignore file", async tool => {
 });
 
 describe.concurrent("a // @bun file is reported as it is", () => {
-  const map = (source: string, mappings: string) =>
-    JSON.stringify({ version: 3, sources: [source], sourcesContent: ["export {};"], mappings, names: [] });
+  const map = (sources: string[], mappings = ";AAAA", text: string | null = "export {};") =>
+    JSON.stringify({ version: 3, sources, sourcesContent: sources.map(() => text), mappings, names: [] });
 
-  test.each<[string, string, string]>([
-    ["the files that it was made from are not there", map("gone.ts", ";AAAA"), ""],
-    ["its source map is not JSON", "{", ""],
-    ["its mappings cannot be decoded", map("source.ts", ";!"), ""],
-    ["source maps are ignored", map("source.ts", ";AAAA"), "coverageIgnoreSourcemaps = true"],
-  ])("if %s", async (_, sourceMap, option) => {
+  async function rowsWith(sourceMap: string, option: string) {
     using dir = tempDir("cov-bundle", {
-      "bunfig.toml": bunfig(option),
-      "source.ts": "export {};",
-      "bundle.js": "// @bun\nexport function f() {\n  return 1;\n}\n",
-      "bundle.js.map": sourceMap,
-      "a.test.ts": `import "./bundle.js";`,
+      "outside.ts": "export {};",
+      "app/bunfig.toml": bunfig(option),
+      "app/source.ts": "export {};",
+      "app/source.svelte": "export {};",
+      "app/data.json": "{}",
+      "app/folder.ts/file.txt": "",
+      "app/node_modules/dependency.ts": "export {};",
+      "app/bundle.js": "// @bun\nexport function f() {\n  return 1;\n}\n",
+      "app/bundle.js.map": sourceMap,
+      "app/a.test.ts": `import "./bundle.js";`,
     });
-    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
-    expect(rowsOf(stderr).slice(1)).toEqual(["bundle.js|0.00|0.00|0.00|100.00|2-3"]);
-    expect(exitCode).toBe(0);
+    const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", "--coverage"]);
+    return { rows: rowsOf(stderr).slice(1), exitCode };
+  }
+
+  test.each<[string, string, string?]>([
+    ["the files that it was made from are not there", map(["gone.ts"])],
+    ["they were outside of the project", map(["../gone.ts"])],
+    ["only a dependency is there", map(["gone.ts", "node_modules/dependency.ts"])],
+    ["only data is there", map(["gone.ts", "data.json"])],
+    ["only a file outside of the project is there", map(["gone.ts", "../outside.ts"])],
+    ["only a test file is there", map(["gone.ts", "a.test.ts"])],
+    ["the name of a file is there up to a null byte", map(["source.ts\0.ts"])],
+    ["the name is that of a folder", map(["folder.ts"])],
+    ["the name is empty", map([""])],
+    ["it was made from another language", map(["source.svelte"])],
+    ["its source map names no file", map([])],
+    ["its source map does not have the text", map(["source.ts"], ";AAAA", null)],
+    ["its source map is not JSON", "{"],
+    ["its mappings cannot be decoded", map(["source.ts"], ";!")],
+    ["source maps are ignored", map(["source.ts"]), "coverageIgnoreSourcemaps = true"],
+  ])("if %s", async (_, sourceMap, option = "") => {
+    expect(await rowsWith(sourceMap, option)).toEqual({ rows: ["bundle.js|0.00|0.00|0.00|100.00|2-3"], exitCode: 0 });
+  });
+
+  test.each<[string, string?]>([
+    ["node_modules/dependency.ts"],
+    ["node_modules/gone.ts"],
+    ["../outside.ts"],
+    ["source.ts", `coveragePathIgnorePatterns = "*.ts"`],
+    ["gone.ts", `coveragePathIgnorePatterns = "*.ts"`],
+  ])("unless all that it was made from is left out: %s", async (source, option = "") => {
+    expect(await rowsWith(map([source]), option)).toEqual({ rows: [], exitCode: 0 });
   });
 
   test("without the function around CommonJS, and from its text if it has bytecode", async () => {
@@ -3074,16 +3140,83 @@ test.concurrent.each(["--coverage", "--coverage-include=.", "--coverage-include=
   },
 );
 
-test.concurrent("a module that a plugin makes up is listed", async () => {
+test.concurrent.each([
+  ["--coverage", "made-up.js|100.00|100.00|100.00|100.00|"],
+  ["--coverage-include=.", "made-up.js|100.00|0.00|0.00|100.00|1"],
+])("%s: a module that a plugin makes up is not the file of that name", async (flag, row) => {
   using dir = tempDir("cov-virtual", {
     "bunfig.toml": bunfig(),
+    "made-up.js": "Object();",
     "a.test.ts": `
-      Bun.plugin({ setup: build => void build.module("made-up", () => ({ contents: "Object();", loader: "js" })) });
-      require("made-up");`,
+      Bun.plugin({ setup: build => void build.module("made-up.js", () => ({ contents: "Object();", loader: "js" })) });
+      require("made-up.js");`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", flag]);
+  expect(rowsOf(stderr).slice(1)).toEqual([row]);
+  expect(exitCode).toBe(0);
+});
+
+// Windows doesn't allow `?` and `:` in a file name.
+test.concurrent.skipIf(isWindows).each<[string, string[]]>([
+  ["--coverage", ["lib.js?\0", "lib.js?\0bundle", "source.js", "made-up:\0", "made-up:\0bundle"]],
+  ["--coverage-include=*.js", ["lib.js?\0", "lib.js?\0bundle", "source.js"]],
+  ["--coverage-include=lib.js?", []],
+])("%s: a name does not end at a null byte", async (flag, listed) => {
+  const map = (source: string) =>
+    JSON.stringify({ version: 3, sources: [source], sourcesContent: ["Object();"], mappings: ";AAAA", names: [] });
+  const test = (code: string) => `
+    const texts = {
+      "": "${code}",
+      "bundle": "// @bun\\n${code}",
+      "mapped": "// @bun\\nObject();\\n//# sourceMappingURL=data:application/json;base64,${btoa(map("source.js"))}",
+    };
+    const load = ({ path }) => ({ contents: texts[path.split("\\0")[1]], loader: "js" });
+    for (const namespace of ["file", "made-up"])
+      Bun.plugin({ setup: build => void build.onLoad({ filter: /\\0/, namespace }, load) });
+    for (const name of ["./lib.js?\\0", "made-up:\\0"]) await import(name), await import(name + "bundle");
+    await import("./lib.js?\\0mapped");`;
+  using dir = tempDir("cov-null-byte", {
+    "bunfig.toml": bunfig(),
+    "lib.js": "Object();",
+    "source.js": "Object();",
+    "lib.js?": map("lib.js"),
+    "made-up:": map("lib.js"),
+    "a.test.ts": test("Object();"),
+    "b.test.ts": test("Array();"),
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--isolate", flag]);
+  expect(rowsOf(stderr).slice(1)).toEqual(listed.map(it => `${it}|100.00|100.00|100.00|100.00|`));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(isWindows).each(["Array();", "Object(); Object();"])(
+  "a module with the name of a pipe is loaded again as %s",
+  async again => {
+    const test = (contents: string) => `
+      const name = process.cwd() + "/pipe.js";
+      Bun.plugin({ setup: build => void build.module(name, () => ({ contents: "${contents}", loader: "js" })) });
+      require(name);`;
+    using dir = tempDir("cov-pipe", {
+      "bunfig.toml": bunfig(),
+      "a.test.ts": test("Object();"),
+      "b.test.ts": test(again),
+    });
+    mkfifo(path.join(String(dir), "pipe.js"));
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--isolate", "--coverage"]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["pipe.js|100.00|100.00|100.00|100.00|"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("an error in the value of a macro has its position", async () => {
+  using dir = tempDir("cov-macro", {
+    "macro.ts": `export function cyclic() { const a = {}; return (a.a = a); }`,
+    "lib.ts": `import { cyclic } from "./macro.ts" with { type: "macro" };\nexport const a = cyclic();`,
+    "a.test.ts": `import "./lib.ts";`,
   });
   const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
-  expect(rowsOf(stderr).slice(1)).toEqual(["made-up|100.00|100.00|100.00|100.00|"]);
-  expect(exitCode).toBe(0);
+  expect(stderr).toMatch(/error: Maximum call stack size exceeded\s+at .*lib\.ts:2:18/);
+  expect(exitCode).toBe(1);
 });
 
 test.concurrent.each([[[]], [["--parallel=2"]]])("the flags override bunfig.toml: %j", async parallel => {
@@ -3115,6 +3248,10 @@ test.concurrent.each<[string, string[], string]>([
   [`coverageThreshold = { branches = "1" }`, [], `expected number but received string`],
   [`coverageThreshold = { src = { branches = "1" } }`, [], `expected number but received string`],
   [`coverageThreshold = { perFile = 1 }`, [], `expected boolean but received number`],
+  [`coverageDir = "a.test.ts\\u0000"`, ["--coverage-reporter=lcov"], `expected a string without null bytes`],
+  [`coverageInclude = "a\\u0000"`, [], `expected a string without null bytes`],
+  [`coverageInclude = ["a", "b\\u0000"]`, [], `expected a string without null bytes`],
+  [`coverageThreshold = { "a\\u0000" = { lines = 1 } }`, [], `expected a string without null bytes`],
 ])("%s %j is an error", async (option, flags, message) => {
   using dir = tempDir("cov-invalid", { "bunfig.toml": bunfig(option), "a.test.ts": "" });
   const { stderr, exitCode } = await bun(String(dir), ["test", ...flags]);

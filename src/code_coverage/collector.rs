@@ -124,15 +124,15 @@ impl Collector {
     }
 
     #[inline(never)]
-    pub fn will_print(&'static self, path: &[u8], loader: Loader, text: &[u8]) -> Transpiling {
+    pub fn will_print(&'static self, path: &[u8], loader: Loader, contents: &[u8]) -> Transpiling {
         removable_definition!(TestCommand, Collector::will_print);
         let anchors = match self.ignores_source_maps() {
             true => None,
-            false => find_anchors(loader, text),
+            false => find_anchors(loader, contents),
         };
         Transpiling {
             collector: self,
-            text: Text::new(path, loader, text),
+            text: Text::new(path, loader, contents),
             can_be_cached: anchors.is_some(),
             printing: Printing {
                 placement: Placement::new(anchors.unwrap_or_default()),
@@ -162,41 +162,39 @@ impl Collector {
         }
     }
 
-    /// JavaScriptCore gets a character for each byte of `text`.
+    /// JavaScriptCore gets a character for each byte of `code`.
     #[inline(never)]
-    pub fn count_as_written(&'static self, path: &[u8], text: &[u8]) -> Box<CountedText> {
+    pub fn count_as_written(&'static self, path: &[u8], code: &[u8]) -> Box<CountedText> {
         removable_definition!(TestCommand, Collector::count_as_written);
-        let anchors = find_anchors(Loader::Js, text).unwrap_or_default();
-        let placed = place_as_written(text, anchors, |loc| [loc]);
-        self.count(Text::new(path, Loader::Js, text), placed)
+        let anchors = find_anchors(Loader::Js, code).unwrap_or_default();
+        let placed = place_as_written(code, anchors, |loc| [loc]);
+        self.count(Text::new(path, Loader::Js, code), placed)
     }
 
     /// If its sources are reported in its place.
     pub(crate) fn find_bundle(&self, path: &[u8], text: &[u8]) -> Option<Bundle> {
         find_transpiled_mark(text).filter(|_| !self.ignores_source_maps())?;
-        Bundle::find(path, text)
+        Bundle::find(path, text, &self.filter)
     }
 
     /// `// @bun`
     #[inline(never)]
-    pub fn count_bundle(&'static self, path: &[u8], text: &[u8]) -> Option<Box<CountedText>> {
+    pub fn count_bundle(&'static self, path: &[u8], code: &[u8]) -> Option<Box<CountedText>> {
         removable_definition!(TestCommand, Collector::count_bundle);
         if self.options.include_patterns.is_empty()
             && (!self.filter.is_source_file(path) || self.filter.is_ignored(path))
         {
             return None;
         }
-        let Some(bundle) = self.find_bundle(path, text) else {
-            return (self.covers(path, Loader::Js)).then(|| self.count_as_written(path, text));
+        let Some(bundle) = self.find_bundle(path, code) else {
+            return (self.covers(path, Loader::Js)).then(|| self.count_as_written(path, code));
         };
-        let (joined, anchors) = bundle.join(text, |path| {
-            Some(self.filter.loader_by_extension(path)).filter(|&it| self.covers(path, it))
-        });
+        let (joined, anchors) = bundle.join(code);
         (!joined.texts.is_empty()).then(|| {
             Box::new(CountedText {
                 collector: self,
                 path: path.into(),
-                placed: place_as_written(text, anchors, |loc| joined.locs_of(loc)),
+                placed: place_as_written(code, anchors, |loc| joined.locs_of(loc)),
                 sources: joined.texts,
                 counts: None,
             })
@@ -313,6 +311,7 @@ struct Counters {
 }
 
 /// On the thread that runs the module. The pointers are valid as long as `this`.
+#[inline(never)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__CountedText__start(this: &mut CountedText) -> Counters {
     removable_definition!(TestCommand, Bun__CountedText__start);

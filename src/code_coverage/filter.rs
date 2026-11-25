@@ -9,7 +9,9 @@ use bun_core::{strings, warn};
 use bun_glob::{BunGlobWalker, Prepared, walk};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::Path;
-use bun_sys::{Fd, FileKind};
+use bun_sys::Fd;
+
+use crate::files::{can_be_on_disk, is_file};
 
 pub struct Project {
     pub root: &'static [u8],
@@ -48,6 +50,9 @@ pub(crate) enum Selection {
 }
 
 fn real_path(path: &[u8]) -> Option<Path> {
+    if !can_be_on_disk(path) {
+        return None;
+    }
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(Path::from(
         bun_sys::realpath(&Path::from(path), &mut buffer).ok()?,
@@ -126,11 +131,7 @@ impl Pattern {
         };
         let glob = self.glob.pattern();
         if glob.is_empty() {
-            let kind = bun_sys::stat(start).map(|it| bun_sys::kind_from_mode(it.st_mode as _));
-            return match kind {
-                Ok(FileKind::File) => vec![start.as_bytes().into()],
-                _ => Vec::new(),
-            };
+            return Vec::from_iter(is_file(start).then(|| start.as_bytes().into()));
         }
         let globs = core::iter::once(glob).chain(self.inside.as_ref().map(Prepared::pattern));
         // On Windows the walker takes it for a separator.
@@ -217,6 +218,13 @@ impl Filter {
         self.project.root
     }
 
+    pub(crate) fn name_of(&self, path: &[u8]) -> Path {
+        match bun_paths::is_absolute(path) {
+            true => Path::relative(self.project.root, path),
+            false => Path::from(path),
+        }
+    }
+
     pub(crate) fn select(&self, written: &[u8]) -> Selection {
         match Pattern::negated_by(written, self.project.root) {
             Some(pattern) => Selection::AllBut(pattern),
@@ -265,7 +273,7 @@ impl Filter {
     }
 
     fn matches_any(&self, patterns: &[Pattern], path: &[u8]) -> bool {
-        let relative = LazyCell::new(|| Path::relative(self.project.root, path));
+        let relative = LazyCell::new(|| self.name_of(path));
         let real = LazyCell::new(|| real_path_or_same(path));
         patterns.iter().any(|it| it.matches(&relative, &real))
             || split_at_query(path).is_some_and(|it| self.matches_any(patterns, it.0))

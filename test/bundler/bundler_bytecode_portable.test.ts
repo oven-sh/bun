@@ -508,21 +508,21 @@ describe("bytecode cache portability", () => {
           "js": "62afdf7895d0bf1ada5b0a9d3d5db79b9e68be7c593740b7beed57cf9beaf382",
           "jsc": {
             "bytes": 2218656,
-            "sha256": "59d27e07d0b24116c0a53b900d54b700e4a2a93ee51200be6472741c26458c88",
+            "sha256": "c79d03e52c8565c7110ee61dc159d4516b4a77fe7423941417a2412fb5507882",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
           "js": "d011b6c5105dad96f17aaf541c848b8d2be1b2e65a1de050112380352979bb6b",
           "jsc": {
             "bytes": 239072,
-            "sha256": "bab6554a10062e2a1c1a827a727a375415c9a0def514c8f5fb8cf6f1c701a1ab",
+            "sha256": "79dc0589cc314bae752cc5037cc2d62fbb88b8488cef28484c39473cf2ec7cb7",
           },
         },
         "bun build --bytecode libraries.js": {
           "js": "0dfadfbf64ade596820ae6768247f9d068a6cceb198b725f8fa9ebc0afba6efc",
           "jsc": {
             "bytes": 21201024,
-            "sha256": "a72991863d53de646d15fa87cd01ca2f86948d2952fabaacdb36e67df803462a",
+            "sha256": "b82ffe8509e92e81e25cfc6ab95698db815bc21bf89a19ae399ef81d4322b4ea",
           },
         },
         "bun build --bytecode lodash/lodash.js": {
@@ -557,14 +557,14 @@ describe("bytecode cache portability", () => {
           "js": "13a72d109260dd6a6a473644f13bd7fe148dffdc92af6d394cb99b3946f61b1c",
           "jsc": {
             "bytes": 1822984,
-            "sha256": "9828160e3d70be2930ebaf50c99769b3742e7b0080e6a7c180d97aefc3cfa5db",
+            "sha256": "2d18197d389548b2c20ccc23adfa725c429d7ddfcd4d60c9a4dc75f84da8b1f3",
           },
         },
         "bun build --bytecode undici/index.js": {
           "js": "3f3ae90a994abc857ad1296cc2167697e57bb9e5980cce919a4297c435bff7b9",
           "jsc": {
             "bytes": 852296,
-            "sha256": "0992752c314165ae6d3e42bf2c5374b8c8819cfe8b33c4dfc1f8a9bf110773ec",
+            "sha256": "8a0b0df6234cde0f2826cfabf5e5395d541773444fe38967e6978c05e944f022",
           },
         },
         "vm.Script big.js": {

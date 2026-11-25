@@ -16,6 +16,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include "BunBuiltinNames.h"
+#include "ErrorCode.h"
 
 RefPtr<JSC::CachedBytecode> ResolvedSourceBytecode::take()
 {
@@ -438,6 +439,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckCoverageCounters, (JSC::JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     String path = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (path.contains('\0'))
+        return ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, callFrame->argument(0), "must be a string without null bytes"_s);
 
     BunString specifier = Bun::toString(path);
     ErrorableResolvedSource resolved;

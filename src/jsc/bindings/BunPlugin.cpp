@@ -3821,8 +3821,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
 #if ENABLE(AOT)
-            // A CommonJS file that required a module that isn't compiled.
-            auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
+            // A CommonJS file that required a module that isn't compiled. The original of a compiled file is compiled.
+            auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key.endsWith("?actual"_s) ? key.left(key.length() - "?actual"_s.length()) : key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
             if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer)) {
                 // Like any other patched-in-place module that requires an evicted one.
                 bool stayed = staysInRegistry.remove(importer);

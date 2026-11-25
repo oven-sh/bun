@@ -5667,15 +5667,17 @@ impl Follower<'_, '_, '_> {
         let looks_beside_spreads = self.follows_fields && self.keeps_known_alternatives;
         for object in objects {
             let read = match object {
-                Held::Object(literal)
-                    if looks_beside_spreads
+                Held::Object(literal) => match self.read_property(*literal, keys) {
+                    Some(read) => read,
+                    None if looks_beside_spreads
                         && keys.is_some()
-                        && self.values_under_key(*literal, b"").is_none() =>
-                {
-                    beside_spreads.push(*literal);
-                    continue;
-                }
-                Held::Object(literal) => self.read_property(*literal, keys)?,
+                        && !self.lists_what_it_writes(*literal) =>
+                    {
+                        beside_spreads.push(*literal);
+                        continue;
+                    }
+                    None => return None,
+                },
                 Held::List(places) => read_place(places, keys)?,
                 Held::ListOf(held) => {
                     let read = read_place(std::slice::from_ref(held), None)?;
@@ -5894,6 +5896,12 @@ impl Follower<'_, '_, '_> {
         )
     }
 
+    fn lists_what_it_writes(&mut self, literal: ExprId) -> bool {
+        self.list_written(literal).is_some_and(|written| {
+            written.computed.is_empty() || self.values_under_key(literal, b"").is_some()
+        })
+    }
+
     fn list_written(&mut self, literal: ExprId) -> Option<Rc<WrittenByKey>> {
         let known_as = (literal, self.is_following_passed);
         if let Some(known) = self.findings.written_by_key.get(&known_as) {
@@ -5951,12 +5959,16 @@ impl Follower<'_, '_, '_> {
             let values = self.values_of_any(written.iter().map(|it| it.1))?;
             return Some(with_undefined(values));
         };
-        if keys.is_empty() {
+        let written = self.list_written(literal)?;
+        if keys.is_empty() && !written.computed.is_empty() {
             self.values_under_key(literal, b"")?;
         }
+        let may_have_others =
+            !written.computed.is_empty() || self.findings.stored_under_keys.contains_key(&literal);
         let mut values = Distinct::new();
         for key in keys {
-            match !self.values_under_key(literal, key)?.is_empty() {
+            let may_be_there = may_have_others || written.by_key.contains_key(key);
+            match may_be_there && !self.values_under_key(literal, key)?.is_empty() {
                 true => {
                     let key = self.inputs.atoms.intern(key);
                     for value in self.values_of_property_once(literal, key)? {

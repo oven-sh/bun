@@ -670,8 +670,8 @@ describe("destroy()", () => {
     "read(n)": `stdin.read(1);`,
   };
   const held = kinds.filter(kind => kind !== "file");
-  // [title, stdin kinds, code, events]
-  const releases: [string, readonly Kind[], string, string[]][] = [
+  // [title, stdin kinds, code, events, the events on Node where they differ]
+  const releases: [string, readonly Kind[], string, string[], string[]?][] = [
     [
       "on('data') then destroy()",
       held,
@@ -708,11 +708,23 @@ describe("destroy()", () => {
       `stdin.on("data", onData); stdin.destroy(); stdin.removeAllListeners(); done();`,
       [],
     ],
-    // A net.Socket emits 'close' also after an 'error' that no listener took.
+    [
+      "destroy(err) with an 'error' listener and a 'close' listener",
+      held,
+      `stdin.on("error", err => events.push("error " + err.message));
+       stdin.on("close", onClose);
+       stdin.on("data", onData);
+       stdin.destroy(new Error("mine"));
+       done();`,
+      ["error mine", "close true"],
+    ],
+    // A net.Socket emits 'close' from its handle, also after an 'error' that only an uncaughtException
+    // listener took. Bun emits the two in one tick, so no 'close' listener runs after a fatal error.
     [
       "destroy(err) that nothing handles, with a 'close' listener",
       held,
       `stdin.on("close", onClose); stdin.on("data", onData); stdin.destroy(new Error("mine")); done();`,
+      ["uncaught mine"],
       ["uncaught mine", "close true"],
     ],
     [
@@ -763,8 +775,8 @@ describe("destroy()", () => {
       ["flowing=null"],
     ],
   );
-  const rows = releases.flatMap(([title, rowKinds, body, events]) =>
-    rowKinds.map(kind => [kind, title, body, events] as const),
+  const rows = releases.flatMap(([title, rowKinds, body, events, nodeEvents = events]) =>
+    rowKinds.map(kind => [kind, title, body, events, nodeEvents] as const),
   );
   const released = (events: readonly string[]): Report => ({
     events: [...events],
@@ -778,26 +790,111 @@ describe("destroy()", () => {
     expect(await run(kind, body)).toEqual(released(events));
   });
 
+  // destroy() is final, in the turn that first touches stdin and in every later one: nothing takes the reader back.
+  // [title, stdin kinds, code, steps, events]
+  const finality: [string, readonly Kind[], string, Step[], string[]][] = [
+    [
+      "a prompt that destroys stdin after its answer, then a second prompt in a later turn",
+      ["pipe"],
+      `const readline = require("node:readline");
+       async function ask(tag) {
+         const rl = readline.createInterface({ input: stdin });
+         console.log("READY" + tag);
+         const [line] = await require("node:events").once(rl, "line");
+         rl.close();
+         stdin.destroy();
+         return line;
+       }
+       (async () => {
+         events.push("first " + (await ask(1)));
+         await new Promise(resolve => setImmediate(resolve));
+         ask(2).then(line => events.push("second " + line));
+         done();
+       })();`,
+      [
+        ["READY1", io => io.feed("one\n")],
+        ["READY2", io => io.feed("two\n")],
+      ],
+      ["first one"],
+    ],
+    [
+      "pause(), removeAllListeners() and destroy(), then resume(), on('data'), pipe() and readline a tick later",
+      held,
+      `stdin.on("data", onData);
+       stdin.pause();
+       stdin.removeAllListeners();
+       stdin.destroy();
+       process.nextTick(() => {
+         const { Writable } = require("node:stream");
+         stdin.resume();
+         stdin.on("data", onData);
+         stdin.pipe(new Writable({ write(chunk, encoding, callback) { events.push("piped"); callback(); } }));
+         require("node:readline").createInterface({ input: stdin }).on("line", () => events.push("line"));
+         console.log("READY");
+         done();
+       });`,
+      [["READY", io => io.feed("hello\n")]],
+      [],
+    ],
+    [
+      "pause(), destroy() in a later turn, then on('data') and resume()",
+      ["pipe"],
+      `stdin.pause();
+       setImmediate(() => {
+         stdin.destroy();
+         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); done(); });
+       });`,
+      [["READY", io => io.feed("hello")]],
+      [],
+    ],
+    [
+      "destroy() of a stdin that never read, in a later turn, then on('data') and resume()",
+      ["pipe"],
+      `setImmediate(() => {
+         stdin.destroy();
+         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); done(); });
+       });`,
+      [["READY", io => io.feed("hello")]],
+      [],
+    ],
+  ];
+  const finalRows = finality.flatMap(([title, rowKinds, body, steps, events]) =>
+    rowKinds.map(kind => [kind, title, body, steps, events] as const),
+  );
+
+  test.concurrent.each(finalRows)("%s stdin: %s reads nothing more", async (kind, _title, body, steps, events) => {
+    expect(await run(kind, body, steps)).toEqual(released(events));
+  });
+
   // Node's resume() returns for a destroyed stream since v26.1.
   const node = nodeExeAtLeast("26.1.0");
   test.skipIf(!node)("node gives the same reports", async () => {
     // Newer versions of Node close fd 0 when a file stream is destroyed.
-    const reports = await Promise.all(rows.map(([kind, , body]) => run(kind, body, [], node!)));
+    const cases = [
+      ...rows.map(([kind, , body, , events]) => [kind, body, [], events] as const),
+      ...finalRows.map(([kind, , body, steps, events]) => [kind, body, steps, events] as const),
+    ];
+    const reports = await Promise.all(cases.map(([kind, body, steps]) => run(kind, body, steps, node!)));
     expect(reports.map(({ fd0: _fd0, ...rest }) => rest)).toEqual(
-      rows.map(([, , , events]) => {
+      cases.map(([, , , events]) => {
         const { fd0: _fd0, ...rest } = released(events);
         return rest;
       }),
     );
   });
 
-  test.concurrent("destroy(err) with no 'error' listener and no uncaughtException handler is fatal", async () => {
+  // Node exits at a fatal error. A 'close' listener that ran after it could turn exit code 1 into 0.
+  test.concurrent.each([
+    ["in the first turn", `process.stdin.destroy(new Error("mine"));`],
+    ["in a later turn", `setImmediate(() => process.stdin.destroy(new Error("mine")));`],
+  ])("destroy(err) %s with no 'error' listener and no uncaughtException handler is fatal", async (_turn, destroy) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `process.stdin.on("data", () => {});
-        process.stdin.destroy(new Error("mine"));
+        process.stdin.on("close", () => { console.log("close"); process.exit(0); });
+        ${destroy}
         process.on("exit", code => console.log("exit " + code));`,
       ],
       stdin: "pipe",
@@ -962,9 +1059,10 @@ describe("destroy()", () => {
   });
 
   // process.stdin and Bun.stdin.stream() read through one native source. A stdin that never
-  // read holds nothing of it, so the next reader gets all of stdin. pause() and destroy() once
-  // stopped a source that had not started, and a Readable over it then read through a reader
-  // that had no parent.
+  // read holds nothing of it, so the next reader gets all of stdin and holds the event loop
+  // for it. pause() and destroy() once stopped a source that had not started, and a Readable
+  // over it then read before the source had its descriptor. pause() lets go a tick later: a
+  // reader taken in the turn of pause() was taken for one that held the source before.
   const doors = {
     "pause()": [`stdin.pause();`, false, []],
     "destroy()": [`stdin.destroy();`, true, []],
@@ -977,26 +1075,81 @@ describe("destroy()", () => {
       for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) text += Buffer.from(chunk.value);`,
     "Readable.fromWeb(Bun.stdin.stream())": `
       for await (const chunk of require("node:stream").Readable.fromWeb(Bun.stdin.stream())) text += chunk;`,
+    "the console iterator": `
+      for await (const line of console) text += line;`,
+  };
+  const turns = {
+    "in the same turn": (code: string) => code,
+    // process.stdin has let go of all that it lets go of.
+    "two turns later": (code: string) => `setImmediate(() => setImmediate(() => { ${code} }));`,
   };
   test.concurrent.each(
     Object.entries(doors).flatMap(([door, [code, destroyed, events]]) =>
-      Object.entries(nextReaders).map(([reader, read]) => [reader, door, code, read, destroyed, events] as const),
+      Object.entries(nextReaders).flatMap(([reader, read]) =>
+        Object.entries(turns).map(([turn, wrap]) => [reader, turn, door, code, wrap, read, destroyed, events] as const),
+      ),
     ),
-  )("%s after %s reads stdin to its end", async (_reader, _door, code, read, destroyed, events) => {
+  )(
+    "%s taken %s after %s reads stdin to its end",
+    async (_reader, _turn, _door, code, wrap, read, destroyed, events) => {
+      const body = `
+        ${code}
+        ${wrap(`
+          (async () => {
+            let text = "";
+            ${read}
+            events.push("read " + text);
+          })();
+          // Nothing is written yet. Only the pending read holds the event loop.
+          setImmediate(() => {
+            events.push("held=" + require("bun:internal-for-testing").getEventLoopStats().loopActive);
+            console.log("READY");
+          });
+        `)}
+      `;
+      expect(await run("pipe", body, [["READY", io => (io.feed("one"), io.end())]])).toEqual({
+        ...released([...events, "held=true", "read one"]),
+        destroyed,
+      });
+    },
+  );
+
+  // destroy() is final for process.stdin. A program that reads fd 0 after it takes a reader of its own.
+  test.concurrent.each([
+    [
+      "pipe",
+      "Bun.file(0).stream()",
+      `const reader = Bun.file(0).stream().getReader();
+       reader.read().then(({ value }) => { events.push("fresh " + Buffer.from(value).toString().trim()); reader.cancel(); done(); });`,
+    ],
+    ...(isPosix
+      ? ([
+          [
+            "tty",
+            "new tty.ReadStream(0)",
+            `const fresh = new (require("node:tty").ReadStream)(0);
+             fresh.once("data", chunk => { events.push("fresh " + String(chunk).trim()); fresh.destroy(); done(); });`,
+          ],
+        ] as const)
+      : []),
+  ] as const)("%s stdin: %s reads fd 0 after removeAllListeners() and destroy()", async (kind, _name, fresh) => {
     const body = `
-      ${code}
-      // Two turns later, process.stdin has let go of all that it lets go of.
-      setImmediate(() => setImmediate(async () => {
-        console.log("READY");
-        let text = "";
-        ${read}
-        events.push("read " + text);
-      }));
+      stdin.once("data", chunk => {
+        events.push("data " + String(chunk).trim());
+        stdin.removeAllListeners();
+        stdin.destroy();
+        setImmediate(() => {
+          ${fresh}
+          console.log("READY2");
+        });
+      });
+      console.log("READY1");
     `;
-    expect(await run("pipe", body, [["READY", io => (io.feed("one"), io.end())]])).toEqual({
-      ...released([...events, "read one"]),
-      destroyed,
-    });
+    const steps: Step[] = [
+      ["READY1", io => io.feed("one\n")],
+      ["READY2", io => io.feed("two\n")],
+    ];
+    expect(await run(kind, body, steps)).toEqual(released(["data one", "fresh two"]));
   });
 
   // A reader of Bun.stdin.stream() holds the source when process.stdin, which never read, is

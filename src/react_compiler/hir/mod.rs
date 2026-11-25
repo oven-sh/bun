@@ -261,18 +261,6 @@ pub enum BlockKind {
     Catch,
 }
 
-impl std::fmt::Display for BlockKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BlockKind::Block => write!(f, "block"),
-            BlockKind::Value => write!(f, "value"),
-            BlockKind::Loop => write!(f, "loop"),
-            BlockKind::Sequence => write!(f, "sequence"),
-            BlockKind::Catch => write!(f, "catch"),
-        }
-    }
-}
-
 /// A basic block in the CFG
 #[derive(Debug, Clone)]
 pub struct BasicBlock {
@@ -561,16 +549,6 @@ pub enum LogicalOperator {
     And,
     Or,
     NullishCoalescing,
-}
-
-impl std::fmt::Display for LogicalOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LogicalOperator::And => write!(f, "&&"),
-            LogicalOperator::Or => write!(f, "||"),
-            LogicalOperator::NullishCoalescing => write!(f, "??"),
-        }
-    }
 }
 
 // =============================================================================
@@ -953,35 +931,6 @@ pub enum BinaryOperator {
     InstanceOf,
 }
 
-impl std::fmt::Display for BinaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BinaryOperator::Equal => write!(f, "=="),
-            BinaryOperator::NotEqual => write!(f, "!="),
-            BinaryOperator::StrictEqual => write!(f, "==="),
-            BinaryOperator::StrictNotEqual => write!(f, "!=="),
-            BinaryOperator::LessThan => write!(f, "<"),
-            BinaryOperator::LessEqual => write!(f, "<="),
-            BinaryOperator::GreaterThan => write!(f, ">"),
-            BinaryOperator::GreaterEqual => write!(f, ">="),
-            BinaryOperator::ShiftLeft => write!(f, "<<"),
-            BinaryOperator::ShiftRight => write!(f, ">>"),
-            BinaryOperator::UnsignedShiftRight => write!(f, ">>>"),
-            BinaryOperator::Add => write!(f, "+"),
-            BinaryOperator::Subtract => write!(f, "-"),
-            BinaryOperator::Multiply => write!(f, "*"),
-            BinaryOperator::Divide => write!(f, "/"),
-            BinaryOperator::Modulo => write!(f, "%"),
-            BinaryOperator::Exponent => write!(f, "**"),
-            BinaryOperator::BitwiseOr => write!(f, "|"),
-            BinaryOperator::BitwiseXor => write!(f, "^"),
-            BinaryOperator::BitwiseAnd => write!(f, "&"),
-            BinaryOperator::In => write!(f, "in"),
-            BinaryOperator::InstanceOf => write!(f, "instanceof"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Minus,
@@ -990,19 +939,6 @@ pub enum UnaryOperator {
     BitwiseNot,
     TypeOf,
     Void,
-}
-
-impl std::fmt::Display for UnaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UnaryOperator::Minus => write!(f, "-"),
-            UnaryOperator::Plus => write!(f, "+"),
-            UnaryOperator::Not => write!(f, "!"),
-            UnaryOperator::BitwiseNot => write!(f, "~"),
-            UnaryOperator::TypeOf => write!(f, "typeof"),
-            UnaryOperator::Void => write!(f, "void"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1241,15 +1177,6 @@ pub enum ObjectPropertyKey {
 pub enum ObjectPropertyType {
     Property,
     Method,
-}
-
-impl std::fmt::Display for ObjectPropertyType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ObjectPropertyType::Property => write!(f, "property"),
-            ObjectPropertyType::Method => write!(f, "method"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

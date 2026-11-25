@@ -3805,10 +3805,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #if ENABLE(AOT)
             // A CommonJS file that required a module that isn't compiled.
             auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
-            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer) && evicted.add(importer).isNewEntry) {
-                JSC::AOT::releaseModuleAndImporters(globalObject, *requirer, std::nullopt);
-                evictReleased();
-                continue;
+            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer)) {
+                // Like any other patched-in-place module that requires an evicted one.
+                bool stayed = staysInRegistry.remove(importer);
+                stayed |= staysInRequireCache.remove(importer);
+                if (evicted.add(importer).isNewEntry || stayed) {
+                    JSC::AOT::releaseModuleAndImporters(globalObject, *requirer, std::nullopt);
+                    evictReleased();
+                    if (stayed)
+                        keys.append(importer);
+                    continue;
+                }
             }
             if (auto compiled = vm.hasCompiledCode() && importer != key && !loader->registryEntry(JSC::Identifier::fromString(vm, importer)) ? Bun::compiledModuleForPath(importer) : std::nullopt; compiled && JSC::AOT::isESModule(*compiled) && JSC::AOT::hasInstances(globalObject, *compiled)) {
                 auto loadedBy = JSC::AOT::evaluatedBy(globalObject, *compiled);

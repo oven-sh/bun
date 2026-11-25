@@ -1,8 +1,8 @@
 // https://github.com/oven-sh/bun/issues/31865
 // NativeBrotli/NativeZstd estimatedSize runs on JSC's concurrent GC marking
-// thread, so it must not touch the `stream` JsCell. The external footprint is
+// thread, so it must not touch the `stream` cell. The external footprint is
 // fixed at construction, so estimateShallowMemoryUsageOf(handle) stays constant
-// across the stream's lifetime, including after close() mutates the mode on the
+// across the stream's lifetime, including after close() drops the stream on the
 // JS thread: `after === before` is the contract.
 
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
@@ -41,10 +41,9 @@ test("zstd decompress: estimated size stays tied to construction mode across clo
   checkFootprintStableAcrossClose(() => zlib.createZstdDecompress(), 90000);
 });
 
-// GC-safety guard: drive a write so the JS thread enters with_mut, then force
-// GC so estimatedSize/visitChildren fires on the marking thread against a live
-// stream. Asserts the stream still works and the process exits cleanly (this
-// build has ASAN under `bun bd`).
+// GC-safety guard: drive a write, then force GC so estimatedSize/visitChildren
+// fires on the marking thread against a live stream. Asserts the stream still
+// works and the process exits cleanly (this build has ASAN under `bun bd`).
 const brotliGcFixture = /* js */ `
   const zlib = require("zlib");
   const buf = Buffer.alloc(256 * 1024, "abcdefgh");

@@ -1,0 +1,26 @@
+# globalThis[given]; String.prototype[Symbol.iterator] = fake
+# the global object is asked for a member under a key that nobody knows: the flow lets it go, and `String` is open. `String.prototype` is a read in a test run: no path of members that never change leads to it
+# the warning goes by what the text spells: the store throws if it runs
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks open
+# CHECK: open String holder-let-go-by-program
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = ElemGet v0, v1
+    v3 = PropGet v0 key="String" [isFreeName]
+    v4 = PropGet v3 key="prototype"
+    v5 = NewClosure function=f1
+    PropSet v4, v5 key=@@iterator
+    Return v2
+}
+function f1 name="fake" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

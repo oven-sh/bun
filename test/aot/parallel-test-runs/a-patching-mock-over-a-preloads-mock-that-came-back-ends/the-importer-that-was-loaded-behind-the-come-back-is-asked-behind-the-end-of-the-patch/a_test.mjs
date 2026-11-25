@@ -1,0 +1,15 @@
+import { mock, test, vi } from "bun:test";
+test("t", async () => {
+  const said = [require("./g.cjs").word];
+  vi.doMock("./g.cjs", () => ({ word: "own" }));
+  delete require.cache[require.resolve("./g.cjs")];
+  said.push(require("./g.cjs").word);
+  vi.doUnmock("./g.cjs");
+  const h = await import("./h.mjs");
+  said.push(h.read());
+  mock.module("./g.cjs", () => ({ word: "patch" }));
+  said.push(h.read());
+  vi.doUnmock("./g.cjs");
+  said.push(h.read(), (await import("./later.mjs")).read(), h.read());
+  console.log("SAID " + said.join(" ") + " " + (globalThis.runs ?? 0));
+});

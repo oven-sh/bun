@@ -1,0 +1,26 @@
+// The keys of an object that got them in another order than its layout declares are seen by Object.keys of what has met an object of another kind in a list.
+// Under: --aot-testing=CheckProofsAtRunTime: a proof that nobody sees the order of these keys would be false
+function make(flip) {
+  const o = { kind: "point" };
+  if (flip) {
+    o.y = 2;
+    o.x = 1;
+  } else {
+    o.x = 1;
+    o.y = 2;
+  }
+  return o;
+}
+function deed(o) {
+  const either = [o, { other: 1, more: 2 }];
+  return Object.keys(either[either.length - 2]).join();
+}
+console.log(deed(make(true)));
+console.log(deed(make(false)));
+function through(o) {
+  return deed(o);
+}
+console.log(through(make(true)), through(make(false)));
+let last = "";
+for (let i = 0; i < 300; i++) last = deed(make(i % 2 === 0)) + "|" + deed(make(i % 2 === 1));
+console.log(last);

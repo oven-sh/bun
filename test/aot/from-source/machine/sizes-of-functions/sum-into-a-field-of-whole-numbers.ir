@@ -1,0 +1,15 @@
+# f1 = deposit
+# -- source: sum-into-a-field-of-whole-numbers.ts
+# class Account { balance = 0; }
+# function deposit(account: Account, amount: number): void { account.balance += amount; }
+# declare const input: any;
+# const account = new Account();
+# deposit(account, input | 0);
+# (globalThis as any).answer = account;
+# -- end of source
+# The compiler before this one: 10 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 17, patches 1, moves 1, unlikely or rare 6.
+# RUN(X64): steps most:18 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 18

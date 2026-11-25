@@ -1,0 +1,11 @@
+# -- source: what-a-function-that-calls-its-parameter-writes-in-its-own-text-is-counted-given-its-arguments.js
+# function outer() { let seen = 0; function turns(step, n) { let sum = 0; for (let i = 0; i < n; i++) { sum += step(i); seen = seen + 1; } return sum; } return turns((i) => i * 2, 3) * 10 + seen; }
+# print(outer());
+# -- end of source
+# turns() calls its parameter and stores into a slot of outer()'s scope in its own text. Link counts that store in its effects given its arguments, and the verifier of the unit (EffectsNotCounted) passes.
+# OPTIONS: check=Validate
+# RUN(LINK): link functions mechanisms=all
+# LINK: given-arguments called=[1] {{*}}mayWriteObservableState
+# RUN: walk f2 mechanisms=all
+# CHECK: code f2:Body
+# CHECK: = PutEnvironmentField

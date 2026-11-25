@@ -1,0 +1,13 @@
+# f1 = append
+# -- source: main.cjs
+# var size = 0, most = 12;
+# function append(d, s, n) { for (var at = 0; at < n && size < most;) d[size++] = s[at++]; return at; }
+# const d = JSON.parse('[0,0,0,0,0,0,0,0,0,0,0,0,0,0]'), s = new Float64Array([1, 2, 3, 4, 5, 6, 7, 8]);
+# print(append(d, s, 8), size, append(d, s, 8), size, d.join());
+# -- end of source
+# The variable goes forward by what was copied.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = CopyElements
+# CHECK: PutModuleVariable {{*}} variable=
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 8 8 4 12 1,2,3,4,5,6,7,8,1,2,3,4,0,0

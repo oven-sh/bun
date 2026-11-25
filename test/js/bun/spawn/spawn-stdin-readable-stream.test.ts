@@ -923,14 +923,18 @@ describe("spawn stdin ReadableStream", () => {
       ],
       [
         // The stream is another child's stdout, so attaching it would steal the native source from the reader.
+        // That child waits for its stdin to end: the bytes of a child that has ended are taken ahead of the getter.
         "a reader that a later option getter acquires on a child's stdout",
         "hello 0",
         `
-          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          const writes = "await Bun.stdin.bytes(); await Bun.write(Bun.stdout, 'hello')";
+          const source = Bun.spawn({ cmd: [exe, "-e", writes], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+          const stream = source.stdout;
           let reader, refused;
           try {
             refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
           } catch (error) { threw(error); }
+          source.stdin.end();
           (async () => {
             let text = "";
             for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);
@@ -1257,7 +1261,7 @@ describe("spawn stdin ReadableStream", () => {
   // drains stdout concurrently and samples the child's progress while the
   // stderr reader is deliberately stalled.
   //
-  // Windows: WindowsBufferedReader::on_read discards the on_read_chunk return
+  // Windows: WindowsBufferedReader::read_chunks discards the on_read_chunk return
   // value, so FileReader's highwater mark never propagates to uv_read_stop and
   // the pipe drains at socket speed regardless of JS demand. Same limitation as
   // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.

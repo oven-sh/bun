@@ -4235,6 +4235,22 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(exitCode).toBe(0);
 });
 
+it("verbose fetch logging keeps the quotes of a header value in the curl command", async () => {
+  using server = Bun.serve({ port: 0, fetch: () => new Response() });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await fetch(process.env.SERVER_URL, { verbose: "curl", headers: { "If-Match": '"a"' } });`],
+    env: { ...bunEnv, SERVER_URL: server.url.href },
+    stdout: "inherit",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(String.raw`-H "If-Match: \"a\""`);
+  expect(exitCode).toBe(0);
+});
+
 it("verbose fetch logging escapes control characters coming from the peer", async () => {
   // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns
   // the rest of the line red. HTTP/1.1 lets a server put any byte >= 0x80 in a reason phrase or

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "../harness/commands";
+import "../harness/real-executables";
 import { describe, test } from "../supported";
 import { runCopy, type SpawnResult } from "./edited-executable";
 

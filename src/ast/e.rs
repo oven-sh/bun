@@ -258,7 +258,7 @@ pub struct Call {
     pub target: ExprNodeIndex,
     pub args: ExprNodeList,
     pub optional_chain: Option<OptionalChain>,
-    pub is_direct_eval: bool,
+    pub kind: CallKind,
     pub close_paren_loc: crate::Loc,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -280,13 +280,37 @@ impl Default for Call {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
-            is_direct_eval: false,
+            kind: CallKind::AsPrinted,
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
         }
     }
 }
+
+/// How the target of a call, or the tag of a template, was written.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallKind {
+    /// "a.b()", or generated code: the callee means what it looks like.
+    AsPrinted,
+    /// "a()", "(0, a.b)()"
+    Plain,
+    /// "eval()"
+    DirectEval,
+}
+
+impl CallKind {
+    #[inline]
+    pub fn of(callee: &ExprNodeIndex) -> Self {
+        if callee.has_value_for_this_in_call() {
+            Self::AsPrinted
+        } else {
+            Self::Plain
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
@@ -992,11 +1016,6 @@ pub struct JsonTape {
     pub encoding: StrEncoding,
 }
 
-// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
-unsafe impl Send for JsonTape {}
-// SAFETY: see the `Send` impl.
-unsafe impl Sync for JsonTape {}
-
 impl JsonTape {
     const STR_CHUNK: usize = 4096;
 
@@ -1297,43 +1316,24 @@ impl Default for Object {
 
 /// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
-/// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena. Segments are bulk-freed at arena reset.
-pub struct Rope {
+/// Segments live in the bump arena and are bulk-freed at arena reset.
+pub struct Rope<'a> {
     pub head: Expr,
-    pub next: *mut Rope,
+    pub next: Option<&'a mut Rope<'a>>,
 }
-impl Rope {
-    pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
+impl<'a> Rope<'a> {
+    pub fn append(&mut self, expr: Expr, bump: &'a Bump) {
         // Walk to the tail iteratively: recursing once per node overflows the
         // native stack on adversarially deep ropes (e.g. an `.npmrc` section
         // header with thousands of dot-separated segments).
-        //
-        // Arena-allocated Rope nodes are uniquely owned by the chain at this
-        // point; route through `StoreRef::DerefMut` (the arena-backed handle
-        // whose deref is centralised in `nodes.rs`).
-        let mut tail = StoreRef::from_bump(self);
-        while let Some(next) = core::ptr::NonNull::new(tail.next).map(StoreRef::from_non_null) {
-            tail = next;
+        let mut tail = &mut self.next;
+        while let Some(next) = tail {
+            tail = &mut next.next;
         }
-        let rope: *mut Rope = bump.alloc(Rope {
+        *tail = Some(bump.alloc(Rope {
             head: expr,
-            next: core::ptr::null_mut(),
-        });
-        tail.next = rope;
-        Ok(rope)
-    }
-
-    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
-    /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
-    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
-    #[inline]
-    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
-        // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset. Read-only borrow; no `&mut` alias is
-        // outstanding at any caller (the chain is fully built before walking).
-        unsafe { self.next.cast_const().as_ref() }
+            next: None,
+        }));
     }
 }
 
@@ -1350,15 +1350,6 @@ bun_core::oom_from_alloc!(SetError);
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // Sort helpers stay in the gated impl below.
 impl Object {
-    pub const EMPTY: Object = Object {
-        properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: crate::Loc::EMPTY,
-        is_single_line: false,
-        is_parenthesized: false,
-        was_originally_macro: false,
-        close_brace_loc: crate::Loc::EMPTY,
-    };
-
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
         self.as_property(key).map(|q| q.expr)
     }
@@ -1422,7 +1413,7 @@ impl Object {
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(&mut self, rope: &Rope<'_>, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1430,7 +1421,7 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::expr::Data::EArray(array) => {
-                    let Some(next) = rope.next_ref() else {
+                    let Some(next) = rope.next.as_deref() else {
                         return Err(SetError::Clobber);
                     };
                     if let Some(last) = array.items.last() {
@@ -1442,7 +1433,7 @@ impl Object {
                     return Err(SetError::Clobber);
                 }
                 crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
+                    if let Some(next) = rope.next.as_deref() {
                         return object.get_or_put_object(next, _bump);
                     }
                     return Ok(existing);
@@ -1451,7 +1442,7 @@ impl Object {
             }
         }
 
-        if let Some(next) = rope.next_ref() {
+        if let Some(next) = rope.next.as_deref() {
             let obj = Expr::init(Object::default(), rope.head.loc);
             let out = match obj.data {
                 crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
@@ -1756,7 +1747,7 @@ impl EString {
 
 // ── live EString accessor surface ──────────────────────────────────────────
 // Subset of the gated impl below adapted to the current `bun_core` API
-// (`eql_long::<CHECK_LEN>`, no bump-arena `to_utf8_alloc`). Heavy
+// (no bump-arena `to_utf8_alloc`). Heavy
 // transcode/rope-clone paths stay gated.
 impl EString {
     #[inline]
@@ -1785,7 +1776,7 @@ impl EString {
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
-            strings::eql_long(&self.data, other, true)
+            strings::eql_long(&self.data, other)
         } else {
             strings::utf16_eql_string(self.slice16(), other)
         }
@@ -1810,7 +1801,7 @@ impl EString {
         let mut i = 0usize;
         let mut next: Option<&EString> = Some(self);
         while let Some(cur) = next {
-            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()], false) {
+            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()]) {
                 return false;
             }
             i += cur.data.len();
@@ -1927,7 +1918,7 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long(&self.data, &other.data, true)
+                strings::eql_long(&self.data, &other.data)
             } else {
                 strings::utf16_eql_string(other.slice16(), &self.data)
             }
@@ -2037,8 +2028,24 @@ pub struct TemplatePart {
     pub tail: TemplateContents,
 }
 
+#[derive(Clone, Copy)]
+pub struct TemplateTag {
+    pub expr: ExprNodeIndex,
+    pub kind: CallKind,
+}
+
+impl TemplateTag {
+    #[inline]
+    pub fn new(expr: ExprNodeIndex) -> Self {
+        Self {
+            kind: CallKind::of(&expr),
+            expr,
+        }
+    }
+}
+
 pub struct Template {
-    pub tag: Option<ExprNodeIndex>,
+    pub tag: Option<TemplateTag>,
     /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use

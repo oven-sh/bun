@@ -249,13 +249,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && let Some(close) =
                 super::skipped_blocks::find_end_of_block(self.lx.src, open as usize)
         {
+            self.f.rare_syntax |= rare::LEFT_OUT;
             self.lx.start_at(close as u32);
         }
         // `None` only for a block that recovery parses without its `{`.
         let open_at = self.expect(T::OpenBrace).then_some(open);
-        if self.token() == T::String
-            && (!self.options.compiles || self.options.keeps_function_directives)
-        {
+        if self.token() == T::String {
             self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
         }
         self.open_function();
@@ -769,7 +768,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     // ───────────────────────────── arrow functions ─────────────────────────────
 
     /// `tryParseParenthesizedArrowFunctionExpression` and
-    /// `tryParseAsyncSimpleArrowFunctionExpression`, at a `(`, a `<` or `async`.
+    /// `tryParseAsyncSimpleArrowFunctionExpression`, at a `(`, a `<` or `async`. Kept out of line because every nested
+    /// expression goes through the caller.
+    #[inline(never)]
     pub(crate) fn try_arrow_function(&mut self, allow_return_type: bool) -> Option<ExprId> {
         // For `() =>`, checking the text gives the same answer as scanning the tokens.
         let arrow_lookahead = match self.token() == T::OpenParen && self.is_followed_by(b") =>") {
@@ -1131,6 +1132,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `parseSimpleArrowFunctionExpression`, at the `=>`. `name` is the parameter's name, followed by its start, end
     /// and full start.
+    #[inline(never)]
     pub(crate) fn simple_arrow_function(
         &mut self,
         name: Atom,

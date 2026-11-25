@@ -1,4 +1,5 @@
 use super::*;
+use crate::token::T;
 use bun_sema::atom::known;
 
 fn tags_and_flags(file: &FileBuilder) -> Vec<(ExprTag, ExprFlags)> {
@@ -303,6 +304,198 @@ fn checker_owns_strict_mode_target_errors() {
         let strict_text = format!("\"use strict\"; {text}");
         let found = errors_with_codes(&strict_text, compiled_javascript(), &[1100, 1102]);
         assert!(found.is_empty(), "{strict_text}");
+    }
+}
+
+const BINARY_OPERATORS: [(&str, T); 25] = [
+    ("??", T::QuestionQuestion),
+    ("||", T::BarBar),
+    ("&&", T::AmpersandAmpersand),
+    ("|", T::Bar),
+    ("^", T::Caret),
+    ("&", T::Ampersand),
+    ("==", T::EqualsEquals),
+    ("!=", T::ExclamationEquals),
+    ("===", T::EqualsEqualsEquals),
+    ("!==", T::ExclamationEqualsEquals),
+    ("<", T::LessThan),
+    (">", T::GreaterThan),
+    ("<=", T::LessThanEquals),
+    (">=", T::GreaterThanEquals),
+    ("instanceof", T::InstanceOf),
+    ("in", T::In),
+    ("<<", T::LessThanLessThan),
+    (">>", T::GreaterThanGreaterThan),
+    (">>>", T::GreaterThanGreaterThanGreaterThan),
+    ("+", T::Plus),
+    ("-", T::Minus),
+    ("*", T::Asterisk),
+    ("/", T::Slash),
+    ("%", T::Percent),
+    ("**", T::AsteriskAsterisk),
+];
+
+fn climb(words: &[&str]) -> String {
+    let mut waiting: Vec<(String, u8)> = Vec::new();
+    let mut left = words[0].to_string();
+    let (mut at, mut precedence) = (1, 0);
+    loop {
+        let operator = words.get(at).copied().unwrap_or_default();
+        let new_precedence = match BINARY_OPERATORS.iter().find(|it| it.0 == operator) {
+            Some(found) => found.1.binary_precedence(),
+            None => T::As.binary_precedence(),
+        };
+        let consumes = match operator {
+            "" => false,
+            "**" => new_precedence >= precedence,
+            _ => new_precedence > precedence,
+        };
+        if !consumes {
+            let Some((outer, entered_with)) = waiting.pop() else {
+                return left;
+            };
+            left = format!("({outer} {left})");
+            precedence = entered_with;
+        } else if matches!(operator, "as" | "satisfies") {
+            at += 2;
+            left = format!("[{left}]");
+        } else {
+            waiting.push((left, precedence));
+            left = words[at + 1].to_string();
+            at += 2;
+            precedence = new_precedence;
+        }
+    }
+}
+
+enum Part {
+    Expression(ExprId),
+    Text(&'static str),
+}
+
+fn shape_of(file: &FileBuilder, text: &str, root: ExprId) -> String {
+    let mut shape = String::new();
+    let mut parts = vec![Part::Expression(root)];
+    while let Some(part) = parts.pop() {
+        let expression = match part {
+            Part::Expression(expression) => expression,
+            Part::Text(text) => {
+                shape.push_str(text);
+                continue;
+            }
+        };
+        let Expr { kind, pos, end } = file.exprs[expression.idx()];
+        match kind {
+            ExprKind::Binary { left, right, .. } => {
+                shape.push('(');
+                parts.push(Part::Text(")"));
+                parts.push(Part::Expression(right));
+                parts.push(Part::Text(" "));
+                parts.push(Part::Expression(left));
+            }
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => {
+                shape.push('[');
+                parts.push(Part::Text("]"));
+                parts.push(Part::Expression(expr));
+            }
+            _ => shape.push_str(&text[pos as usize..end as usize]),
+        }
+    }
+    shape
+}
+
+#[test]
+fn an_operator_behind_a_cast_binds_as_in_typescript() {
+    let compiled = Options {
+        compiles: true,
+        ..typescript()
+    };
+    let mut count = 0;
+    for (first, _) in BINARY_OPERATORS {
+        for (second, _) in BINARY_OPERATORS {
+            for (third, _) in BINARY_OPERATORS {
+                if matches!(third, "|" | "&") {
+                    continue;
+                }
+                let operators = [first, second, third];
+                if operators.contains(&"??")
+                    && (operators.contains(&"||") || operators.contains(&"&&"))
+                {
+                    continue;
+                }
+                for cast in ["as", "satisfies"] {
+                    let words = [
+                        "x", first, "a", second, "b!", cast, "number", third, "c", "+", "d",
+                    ];
+                    let text = words.join(" ");
+                    let expected = climb(&words);
+                    let (file, _) = parsed(&text, compiled);
+                    let mut statements = file.stmts.iter();
+                    let root = statements.find_map(|it| match it.kind {
+                        StmtKind::Expr(root) => Some(root),
+                        _ => None,
+                    });
+                    let root = root.expect("the text is one expression");
+                    assert_eq!(shape_of(&file, &text, root), expected, "{text}");
+                    count += 1;
+                }
+            }
+        }
+    }
+    assert!(count > 25_000);
+}
+
+#[test]
+fn only_the_checker_reports_a_cast_that_cannot_be_erased() {
+    let reported = [
+        "1 + 1 as number * 2",
+        "1 + 1 as any as number * 2",
+        "1 >> 1 as number + 2",
+        "1 >> 1 as any as number + 2",
+        "1 + 1 satisfies number * 2",
+        "1 + 1 satisfies any satisfies number * 2",
+        "1 >> 1 satisfies number + 2",
+        "1 >> 1 satisfies any satisfies number + 2",
+    ];
+    let taken = [
+        "1 as number * 2",
+        "1 as any as number * 2",
+        "1 as number + 1 * 2",
+        "1 * 1 as number + 2",
+        "1 as number * 1 + 2",
+        "(1 + 1 as number) * 2",
+        "(1 as number + 1) * 2",
+        "1 + 1 as number === 2",
+        "1 + 1 as number > 2",
+        "1 + 1 as number >= 2",
+        "1 + 1 as number >> 2",
+        "1 + 1 satisfies any satisfies number >> 2",
+    ];
+    let checked = Options {
+        recovers: true,
+        ..typescript()
+    };
+    let compiled = Options {
+        compiles: true,
+        ..checked
+    };
+    let count = |text: &str, options: Options| {
+        let text = format!("export const x = {text};");
+        errors_with_codes(&text, options, &[1005]).len()
+    };
+    for text in reported {
+        assert_eq!(
+            (count(text, checked), count(text, compiled)),
+            (1, 0),
+            "{text}"
+        );
+    }
+    for text in taken {
+        assert_eq!(
+            (count(text, checked), count(text, compiled)),
+            (0, 0),
+            "{text}"
+        );
     }
 }
 

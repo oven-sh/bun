@@ -515,6 +515,26 @@ void create_object_with_holder_accessor(
   info.GetReturnValue().Set(obj_t->NewInstance(context).ToLocalChecked());
 }
 
+void fill_templates_and_isolate(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> name = String::NewFromUtf8Literal(isolate, "name");
+
+  Local<Template> templates[] = {ObjectTemplate::New(isolate),
+                                 FunctionTemplate::New(isolate)};
+  for (Local<Template> t : templates) {
+    t->Set(name, name);
+    t->SetNativeDataProperty(name, holder_getter, holder_setter);
+  }
+
+  isolate->AddGCEpilogueCallback(
+      [](Isolate *, GCType, GCCallbackFlags, void *) {}, nullptr);
+  isolate->GetHeapProfiler();
+  Global<String> weak(isolate, name);
+  weak.SetWeak(
+      isolate, [](const WeakCallbackInfo<Isolate> &) {},
+      WeakCallbackType::kParameter);
+}
+
 void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Number> nums[1000];
@@ -2231,6 +2251,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_object_with_holder_accessor);
   NODE_SET_METHOD(exports, "create_objects_with_internal_fields",
                   create_objects_with_internal_fields);
+  NODE_SET_METHOD(exports, "fill_templates_and_isolate",
+                  fill_templates_and_isolate);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

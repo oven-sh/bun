@@ -104,8 +104,9 @@ static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& paramet
     if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) <= 0)
         return Exception { OperationError };
 
+    // No signature has a salt that long.
     if (setSaltLength(ctx.get(), parameters.saltLength) <= 0)
-        return Exception { OperationError };
+        return false;
 
     if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
         return Exception { OperationError };

@@ -117,9 +117,9 @@ fn position(list: &[SymbolId], symbol: SymbolId) -> usize {
 }
 
 fn eval_symbols(s: &Analyzed<'_>) -> Vec<SymbolId> {
-    s.bound
-        .ids(s.bound.runtime.eval_scopes()[0].1.symbols)
-        .collect()
+    let scope = s.bound.runtime.eval_scopes()[0].1;
+    let names_of_file = s.bound.ids(scope.file_symbols);
+    s.bound.ids(scope.symbols).chain(names_of_file).collect()
 }
 
 fn analyzed_classic_jsx(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
@@ -144,6 +144,34 @@ fn analyzed_hoist(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>, AnnexBFun
         assert_eq!(hoists.len(), 1, "{text}");
         test(s, hoists[0]);
     });
+}
+
+#[test]
+fn function_expression_finds_itself() {
+    for (text, finds_itself) in [
+        ("(function f() { return f; })();", true),
+        ("(function f(a = f) {})();", true),
+        ("(function f() { return () => [1].map(() => f); })();", true),
+        ("(function f() { function g() { f(); } })();", true),
+        ("(function f() {})();", false),
+        ("f(function f() {});", false),
+        ("(function f() { let f = 1; return f; })();", false),
+        ("(function f(f) { return f; })();", false),
+        ("(function f() { var f; f = 1; })();", false),
+        ("(function f() { return { f: 1 }.f; })();", false),
+        ("(function () { return f; })(); function f() {}", false),
+        ("(function f() { return arguments; })();", true),
+        ("(function f() { return eval('f'); })();", true),
+    ] {
+        analyzed("/a.js", text, |s| {
+            let function = first_function(s, FnKind::Expr);
+            assert_eq!(
+                s.bound.finds_itself(&s.hir, function),
+                finds_itself,
+                "{text}"
+            );
+        });
+    }
 }
 
 #[test]
@@ -313,6 +341,14 @@ fn annex_b_blocked() {
     analyzed("a.cjs", "{ let f; { function f() {} } }", |s| {
         assert_eq!(s.bound.runtime.annex_b_functions(), []);
     });
+    for text in [
+        "import f = require('x'); { function f() {} } f;",
+        "namespace N { export const b = 1; } import f = N.b; { function f() {} } f;",
+    ] {
+        analyzed("a.cts", text, |s| {
+            assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
+        });
+    }
     analyzed(
         "a.cjs",
         "function g(f) { { function f() {} } return f; }",
@@ -321,6 +357,37 @@ fn annex_b_blocked() {
             assert_eq!(s.binding("f", 0), Symbol(parameter(s, "f", 0)));
         },
     );
+    for &(name, binding) in COMMONJS_NAMES {
+        let Binding::CommonJs(variable) = binding else {
+            continue;
+        };
+        for text in [
+            format!("{name}; {{ function {name}() {{}} }}"),
+            format!("{name}; if (a) function {name}() {{}}"),
+            format!("{name}; switch (0) {{ case 0: function {name}() {{}} }}"),
+            format!("{name}; {{ function {name}() {{}} }} {{ function {name}() {{}} }}"),
+        ] {
+            analyzed("a.cjs", &text, |s| {
+                let runtime = &s.bound.runtime;
+                let Symbol(parameter) = s.binding(name, 0) else {
+                    panic!("{text}");
+                };
+                assert_eq!(runtime.annex_b_functions(), [], "{text}");
+                let redeclared = runtime.redeclared_commonjs_variables();
+                assert_eq!(redeclared, [(parameter, variable)], "{text}");
+            });
+        }
+        let text = format!("var {name}; {{ function {name}() {{}} }}");
+        analyzed("a.cjs", &text, |s| {
+            let redeclared = s.bound.runtime.redeclared_commonjs_variables();
+            assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
+            assert_eq!(redeclared, [(s.variable(name, 0), variable)], "{text}");
+        });
+        let text = format!("function o() {{ {{ function {name}() {{}} }} return {name}; }}");
+        analyzed_hoist(&text, |s, hoist| {
+            assert_eq!(s.binding(name, 0), Symbol(hoist.var_symbol), "{text}");
+        });
+    }
     for text in [
         r#"function s() { "use strict"; { function f() {} } return f; }"#,
         r#"function s() { "use strict"; if (a) { function f() {} } return f; }"#,
@@ -342,6 +409,37 @@ fn annex_b_blocked() {
         analyzed("a.cjs", text, |s| {
             assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
             assert_eq!(s.binding("f", 0), Symbol(function_symbol(s, "f")), "{text}");
+        });
+    }
+}
+
+#[test]
+fn annex_b_leaves_the_arguments_object() {
+    for text in [
+        "function g() { { function arguments() {} } return arguments; }",
+        "function g(x) { { function arguments() {} } return arguments; }",
+        "function g(...x) { { function arguments() {} } return arguments; }",
+        "function g() { var arguments; { function arguments() {} } return arguments; }",
+        "function g() { if (g) function arguments() {} return arguments; }",
+        "const o = { g() { { function arguments() {} } return arguments; } };",
+    ] {
+        analyzed("a.cjs", text, |s| {
+            let owner = CodeUnit::Function(s.function("g"));
+            assert_eq!(s.bound.runtime.annex_b_functions(), [], "{text}");
+            assert_eq!(s.binding("arguments", 0), Arguments(owner), "{text}");
+        });
+    }
+    analyzed("a.cjs", "{ function arguments() {} } arguments;", |s| {
+        assert_eq!(s.bound.runtime.annex_b_functions(), []);
+        assert_eq!(s.binding("arguments", 0), Arguments(CodeUnit::File));
+    });
+    for text in [
+        "const g = () => { { function arguments() {} } return arguments; };",
+        "function g() { function arguments() {} { function arguments() {} } return arguments; }",
+    ] {
+        analyzed_hoist(text, |s, hoist| {
+            let hoisted = Symbol(hoist.var_symbol);
+            assert_eq!(s.binding("arguments", 0), hoisted, "{text}");
         });
     }
 }
@@ -811,14 +909,58 @@ fn direct_and_indirect_eval() {
 fn eval_visible_symbols() {
     let text = r#"var g; function f(a) { let b; { let a; eval(""); } }"#;
     analyzed("a.cjs", text, |s| {
-        let scope = s.bound.runtime.eval_scopes()[0].1;
-        let symbols: Vec<SymbolId> = s.bound.ids(scope.symbols).collect();
+        let symbols = eval_symbols(s);
         let inner_a = position(&symbols, s.variable("a", 1));
         let b = position(&symbols, s.variable("b", 0));
         let g = position(&symbols, s.variable("g", 0));
         assert!(inner_a < b && b < g, "{symbols:?}");
         assert!(symbols.contains(&function_symbol(s, "f")), "{symbols:?}");
         assert!(!symbols.contains(&parameter(s, "a", 0)), "{symbols:?}");
+    });
+}
+
+#[test]
+fn member_of_a_namespace_hides_no_name_from_evaluated_text() {
+    let text = r#"const x = 1; namespace N { export const x = 2; eval(""); }"#;
+    analyzed("a.ts", text, |s| {
+        let (outer, member) = (s.variable("x", 0), s.variable("x", 1));
+        let symbols = eval_symbols(s);
+        assert!(symbols.contains(&outer), "{symbols:?}");
+        assert!(!symbols.contains(&member), "{symbols:?}");
+        assert!(s.bound.is_visible_to_eval(outer));
+    });
+    let text = r#"const x = 1; namespace N { const x = 2; eval(""); }"#;
+    analyzed("a.ts", text, |s| {
+        let (outer, local) = (s.variable("x", 0), s.variable("x", 1));
+        let symbols = eval_symbols(s);
+        assert!(!symbols.contains(&outer), "{symbols:?}");
+        assert!(symbols.contains(&local), "{symbols:?}");
+    });
+}
+
+#[test]
+fn every_eval_of_a_file_has_one_list_of_the_names_of_the_file() {
+    let text = r#"let a, h; function f(a, h) { eval(""); } function g(h) { let b; eval(""); } { let h; eval(""); }"#;
+    analyzed("a.js", text, |s| {
+        let scopes = s.bound.runtime.eval_scopes();
+        assert_eq!(scopes.len(), 3);
+        let names_of_file: Vec<SymbolId> = s.bound.ids(scopes[0].1.file_symbols).collect();
+        let expected = [
+            s.variable("a", 0),
+            function_symbol(s, "f"),
+            function_symbol(s, "g"),
+        ];
+        assert_eq!(names_of_file.len(), expected.len(), "{names_of_file:?}");
+        for symbol in expected {
+            assert!(names_of_file.contains(&symbol), "{names_of_file:?}");
+        }
+        assert!(!s.bound.is_visible_to_eval(s.variable("h", 0)));
+        for (_, scope) in scopes {
+            assert_eq!(scope.file_symbols, scopes[0].1.file_symbols);
+            for symbol in s.bound.ids(scope.symbols) {
+                assert!(!names_of_file.contains(&symbol), "{names_of_file:?}");
+            }
+        }
     });
 }
 
@@ -873,7 +1015,7 @@ fn eval_symbols_behind_simple_catch_parameters() {
 fn eval_dynamic_lookups() {
     analyzed(
         "a.cjs",
-        r#"var x; function f() { eval(""); return x; }"#,
+        r#"var x; function f() { eval(t); return x; }"#,
         |s| {
             let x = NodeData::Expr(s.ident("x", 0));
             let scope = s.bound.dynamic_lookup_scope(x).unwrap();
@@ -883,20 +1025,20 @@ fn eval_dynamic_lookups() {
             );
         },
     );
-    let strict = r#""use strict"; var x; function f() { eval(""); return x; }"#;
+    let strict = r#""use strict"; var x; function f() { eval(t); return x; }"#;
     analyzed("a.cjs", strict, |s| {
         let x = NodeData::Expr(s.ident("x", 0));
         assert_eq!(s.bound.dynamic_lookup_scope(x), None);
     });
     analyzed(
         "a.cjs",
-        r#"function f() { var y; eval(""); return y; }"#,
+        r#"function f() { var y; eval(t); return y; }"#,
         |s| {
             let y = NodeData::Expr(s.ident("y", 0));
             assert_eq!(s.bound.dynamic_lookup_scope(y), None);
         },
     );
-    analyzed("a.cjs", r#"eval(""); require("a"); other;"#, |s| {
+    analyzed("a.cjs", r#"eval(t); require("a"); other;"#, |s| {
         let lookup = |name| {
             s.bound
                 .dynamic_lookup_scope(NodeData::Expr(s.ident(name, 0)))
@@ -904,122 +1046,157 @@ fn eval_dynamic_lookups() {
         assert_eq!(lookup("require"), None);
         assert_eq!(lookup("other"), Some(ScopeId(0)));
     });
-    analyzed(
-        "a.cjs",
-        r#"function f() { eval(""); require("a"); }"#,
-        |s| {
-            let require = NodeData::Expr(s.ident("require", 0));
-            let scope = s.bound.dynamic_lookup_scope(require).unwrap();
-            assert_eq!(
-                s.bound.scopes[scope.idx()].kind,
-                ScopeKind::Fn(s.function("f"))
-            );
-        },
-    );
+    analyzed("a.cjs", r#"function f() { eval(t); require("a"); }"#, |s| {
+        let require = NodeData::Expr(s.ident("require", 0));
+        let scope = s.bound.dynamic_lookup_scope(require).unwrap();
+        assert_eq!(
+            s.bound.scopes[scope.idx()].kind,
+            ScopeKind::Fn(s.function("f"))
+        );
+    });
+}
+
+#[test]
+fn member_of_a_namespace_is_no_name_that_evaluated_text_can_take() {
+    let lookup_of_x = |s: &Analyzed<'_>| {
+        let scope = s
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(s.ident("x", 0)));
+        scope.map(|scope| s.bound.scopes[scope.idx()].kind)
+    };
+    let text = r#"namespace N { export var x = 1; function f(t) { eval(t); x; } }"#;
+    analyzed("a.cts", text, |s| assert_eq!(lookup_of_x(s), None));
+    let text = r#"namespace N { var x = 1; function f(t) { eval(t); x; } }"#;
+    analyzed("a.cts", text, |s| {
+        assert!(matches!(lookup_of_x(s), Some(ScopeKind::Fn(_))));
+    });
+    let text = r#"namespace N { export var x = 1; function f(t, o) { with (o) { (() => { eval(t); x; })(); } } }"#;
+    analyzed("a.cts", text, |s| {
+        assert!(matches!(lookup_of_x(s), Some(ScopeKind::With(_))));
+    });
+    let text = r#"function one() { return 1; } enum E { x = one(), y = ((t) => { eval(t); return x; })("") }"#;
+    analyzed("a.cts", text, |s| assert_eq!(lookup_of_x(s), None));
+}
+
+#[test]
+fn members_of_an_enum_take_the_variables_of_evaluated_text() {
+    let lookup_of_q = |s: &Analyzed<'_>| {
+        let scope = s
+            .bound
+            .dynamic_lookup_scope(NodeData::Expr(s.ident("q", 0)));
+        scope.map(|scope| s.bound.scopes[scope.idx()].kind)
+    };
+    let text = r#"var q; enum E { A = (eval(t), q) }"#;
+    analyzed("a.cts", text, |s| {
+        assert!(matches!(lookup_of_q(s), Some(ScopeKind::Enum(_))));
+    });
+    let text = r#"var q; enum E { A = eval(t) } q;"#;
+    analyzed("a.cts", text, |s| assert_eq!(lookup_of_q(s), None));
+    let text = r#""use strict"; var q; enum E { A = (eval(t), q) }"#;
+    analyzed("a.cts", text, |s| assert_eq!(lookup_of_q(s), None));
 }
 
 #[test]
 fn eval_variables_between_body_and_parameters() {
-    // (text, name, which mention, whether the lookup searches the variables of the function)
     let cases = [
         (
-            r#"function f(a, b = 2) { eval(""); return a; }"#,
+            r#"function f(a, b = 2) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return b; }"#,
+            r#"function f(a, b = 2) { eval(t); return b; }"#,
             "b",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return arguments; }"#,
+            r#"function f(a, b = 2) { eval(t); return arguments; }"#,
             "arguments",
             0,
             true,
         ),
         (
-            r#"function f(a, b = 2) { eval(""); return () => a; }"#,
+            r#"function f(a, b = 2) { eval(t); return () => a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f({ [k]: a }) { eval(""); return a; }"#,
+            r#"function f({ [k]: a }) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
-        (r#"var f = (a, b = 2) => [eval(""), a];"#, "a", 0, true),
-        (r#"function f(a, b = a) { eval(""); }"#, "a", 0, false),
-        (r#"function f(a, b = () => a) { eval(""); }"#, "a", 0, false),
-        (r#"var f = (a, b = a) => eval("");"#, "a", 0, false),
+        (r#"var f = (a, b = 2) => [eval(t), a];"#, "a", 0, true),
+        (r#"function f(a, b = a) { eval(t); }"#, "a", 0, false),
+        (r#"function f(a, b = () => a) { eval(t); }"#, "a", 0, false),
+        (r#"var f = (a, b = a) => eval(t);"#, "a", 0, false),
         (
-            r#"function f(a, b = 2) { var a; eval(""); return a; }"#,
+            r#"function f(a, b = 2) { var a; eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, b = 2) { var arguments; eval(""); return arguments; }"#,
+            r#"function f(a, b = 2) { var arguments; eval(t); return arguments; }"#,
             "arguments",
             0,
             false,
         ),
         (
-            r#"function f(a, b = 2) { let c; eval(""); return c; }"#,
+            r#"function f(a, b = 2) { let c; eval(t); return c; }"#,
             "c",
             0,
             false,
         ),
-        (r#"function f(a, b) { eval(""); return a; }"#, "a", 0, false),
+        (r#"function f(a, b) { eval(t); return a; }"#, "a", 0, false),
         (
-            r#"function f(a, ...b) { eval(""); return a; }"#,
+            r#"function f(a, ...b) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, { b }) { eval(""); return a; }"#,
+            r#"function f(a, { b }) { eval(t); return a; }"#,
             "a",
             0,
             true,
         ),
         (
-            r#"function f(a, ...b) { eval(""); return arguments; }"#,
+            r#"function f(a, ...b) { eval(t); return arguments; }"#,
             "arguments",
             0,
             true,
         ),
         (
-            r#"function f(a, ...b) { var a; eval(""); return a; }"#,
+            r#"function f(a, ...b) { var a; eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, ...b) { function a() {} eval(""); return a; }"#,
+            r#"function f(a, ...b) { function a() {} eval(t); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#"function f(a, ...b) { var arguments; eval(""); return arguments; }"#,
+            r#"function f(a, ...b) { var arguments; eval(t); return arguments; }"#,
             "arguments",
             0,
             false,
         ),
         (r#"function f(a, b = 2) { return a; }"#, "a", 0, false),
         (
-            r#"function f(a, b = 2) { (() => eval(""))(); return a; }"#,
+            r#"function f(a, b = 2) { (() => eval(t))(); return a; }"#,
             "a",
             0,
             false,
         ),
         (
-            r#""use strict"; function f(a, b = 2) { eval(""); return a; }"#,
+            r#""use strict"; function f(a, b = 2) { eval(t); return a; }"#,
             "a",
             0,
             false,
@@ -1035,7 +1212,7 @@ fn eval_variables_between_body_and_parameters() {
             assert_eq!(end != function_scope, expected, "{text}");
         });
     }
-    let text = r#"function f(a, b = 2) { eval(""); with (b) { return a; } }"#;
+    let text = r#"function f(a, b = 2) { eval(t); with (b) { return a; } }"#;
     analyzed("a.cjs", text, |s| {
         let with = first_stmt(s, |kind| matches!(kind, StmtKind::With { .. }));
         let ident = s.ident("a", 0);
@@ -1059,20 +1236,26 @@ fn eval_variables_of_parameters_and_of_body() {
     }
     use Start::{Function, Parameter, Static};
     let cases = [
-        (r#"function f(a, b = x) { eval(""); }"#, Static),
-        (r#"function f(a, b = () => x) { eval(""); }"#, Static),
-        (r#"var f = (a, b = () => x) => eval("");"#, Static),
-        (r#"function f(a, b = 2) { eval(""); return x; }"#, Function),
-        (r#"function f(a, b = eval("")) { return x; }"#, Function),
-        (r#"function f(a, b = eval(""), c = x) {}"#, Parameter),
+        (r#"function f(a, b = x) { eval(t); }"#, Static),
+        (r#"function f(a, b = () => x) { eval(t); }"#, Static),
+        (r#"var f = (a, b = () => x) => eval(t);"#, Static),
+        (r#"function f(a, b = 2) { eval(t); return x; }"#, Function),
+        // A written text declares the names that it spells.
+        (r#"function f(a, b = 2) { eval(""); return x; }"#, Static),
         (
-            r#"function f(a, b = eval(""), c = () => x) { eval(""); }"#,
+            r#"function f(a, b = 2) { eval("var x"); return x; }"#,
+            Function,
+        ),
+        (r#"function f(a, b = eval(t)) { return x; }"#, Function),
+        (r#"function f(a, b = eval(t), c = x) {}"#, Parameter),
+        (
+            r#"function f(a, b = eval(t), c = () => x) { eval(t); }"#,
             Parameter,
         ),
-        (r#"var f = (a, b = eval(""), c = () => x) => 0;"#, Function),
-        (r#"var f = (a, b = eval("")) => x;"#, Function),
+        (r#"var f = (a, b = eval(t), c = () => x) => 0;"#, Function),
+        (r#"var f = (a, b = eval(t)) => x;"#, Function),
         (
-            r#""use strict"; function f(a, b = eval(""), c = x) {}"#,
+            r#""use strict"; function f(a, b = eval(t), c = x) {}"#,
             Static,
         ),
     ];
@@ -1123,6 +1306,123 @@ fn stores() {
 }
 
 #[test]
+fn members_stored_to() {
+    let is_stored_to = |text: &str| {
+        let mut answer = false;
+        analyzed("a.ts", text, |s| {
+            let [member] = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Dot { .. }))[..]
+            else {
+                panic!("{text}");
+            };
+            answer = s.bound.is_stored_to(&s.hir, member);
+        });
+        answer
+    };
+    for text in [
+        "a.b = 1;",
+        "(a.b) = 1;",
+        "(a.b as any) = 1;",
+        "(<any>a.b) = 1;",
+        "(a.b satisfies any) = 1;",
+        "a.b! = 1;",
+        "((a.b as any)! as unknown) = 1;",
+        "(a.b as any) += 1;",
+        "(a.b as any) ??= 1;",
+        "(a.b as any)++;",
+        "--(a.b as any);",
+        "[a.b] = c;",
+        "[(a.b as any)] = c;",
+        "[...a.b] = c;",
+        "[...(a.b as any)] = c;",
+        "[(a.b as any) = 1] = c;",
+        "({ ...a.b } = c);",
+        "({ x: (a.b as any) } = c);",
+        "({ x: [(a.b as any)] } = c);",
+        "for ((a.b as any) of c);",
+        "for ((a.b as any) in c);",
+        "for ([a.b!] of c);",
+    ] {
+        assert!(is_stored_to(text), "{text}");
+    }
+    for text in [
+        "a.b;",
+        "(a.b as any);",
+        "c = a.b;",
+        "c = (a.b as any);",
+        "[a.b];",
+        "[...a.b];",
+        "({ ...a.b });",
+        "c[a.b] = 1;",
+        "[c = a.b] = d;",
+        "delete (a.b as any);",
+        "(a.b as any)();",
+        "for (c of a.b);",
+    ] {
+        assert!(!is_stored_to(text), "{text}");
+    }
+}
+
+#[test]
+fn targets_deep_in_literals() {
+    use std::ops::ControlFlow;
+    let all_layers = [
+        ("[", "]"),
+        ("{ x: ", " }"),
+        ("[...", "]"),
+        ("{ ...", " }"),
+        ("[0, ", "!]"),
+        ("[", " = 1]"),
+        ("{ x: ", " = 1 }"),
+    ];
+    let describe = |target: Option<AssignmentTarget>| match target {
+        None => String::from("none"),
+        Some(AssignmentTarget::Assign(operator)) => format!("{operator:?}"),
+        Some(AssignmentTarget::Unary) => String::from("unary"),
+        Some(AssignmentTarget::ForInOrOf) => String::from("for"),
+    };
+    let (mut targets, mut others) = (0, 0);
+    let families = [&all_layers[..], &all_layers[..5]];
+    let nests = families.into_iter().flat_map(|layers| {
+        (0..layers.len() * layers.len()).map(move |number| {
+            let (first, stride) = (number / layers.len(), number % layers.len());
+            (0..12).fold(String::from("a.b"), |nest, depth| {
+                let (open, close) = layers[(first + depth * stride) % layers.len()];
+                format!("{open}{nest}{close}")
+            })
+        })
+    });
+    for nest in nests {
+        for text in [
+            format!("({nest} = c);"),
+            format!("for ({nest} of c);"),
+            format!("(({nest}) = c);"),
+            format!("c = {nest};"),
+            format!("c({nest});"),
+            format!("c = [{nest}, {nest} = d];"),
+        ] {
+            let mut is_target = false;
+            analyzed("a.ts", &text, |s| {
+                for e in (0..s.hir.exprs.len() as u32).map(ExprId) {
+                    let mut at = e;
+                    let climbed = loop {
+                        at = match s.bound.get_assignment_target_or_pattern_around(&s.hir, at) {
+                            ControlFlow::Continue(pattern) => pattern,
+                            ControlFlow::Break(target) => break target,
+                        };
+                    };
+                    let found = s.bound.get_assignment_target(&s.hir, e);
+                    assert_eq!(describe(found), describe(climbed), "{text}");
+                }
+                let members = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Dot { .. }));
+                is_target = s.bound.get_assignment_target(&s.hir, members[0]).is_some();
+            });
+            *(if is_target { &mut targets } else { &mut others }) += 1;
+        }
+    }
+    assert!(targets > 100 && others > 50, "{targets} {others}");
+}
+
+#[test]
 fn unbound_name_stores() {
     analyzed("a.cjs", "y = 1; module = 2; exports = {}; [z] = a;", |s| {
         let expected = [
@@ -1161,6 +1461,18 @@ fn exports() {
             Symbol(import_spec(s, 0))
         );
     });
+    for clause in [
+        "declare namespace N { export { x }; }",
+        "export declare namespace N { export { x as y }; }",
+        r#"declare module "n" { export { x }; }"#,
+        "declare namespace N { namespace M { export { x }; } }",
+        "namespace N { export declare namespace M { export { x }; } }",
+    ] {
+        let text = format!(r#"import {{ x }} from "m"; {clause}"#);
+        analyzed("a.ts", &text, |s| {
+            assert_eq!(s.bound.exported_binding(ExportSpecId(0)), Free, "{clause}");
+        });
+    }
     analyzed("a.mjs", r#"import d, * as n from "m"; d; n;"#, |s| {
         let default = s.bound.declared_symbol(Decl::ImportDefault(ImportId(0)));
         let namespace = s.bound.declared_symbol(Decl::ImportNamespace(ImportId(0)));
@@ -1199,6 +1511,75 @@ fn default_exports() {
         let symbol = s.bound.declared_symbol(Decl::ExportExpr(statement));
         assert_eq!(symbol, exported(s, known::export_equals));
     });
+}
+
+#[test]
+fn value_beside_exported_declaration_without_value() {
+    for text in [
+        "export declare class K { static s: number; } namespace K { export const t = 2; } K;",
+        "namespace K { export const t = 2; } export declare class K { static s: number; } K;",
+        "export declare function K(): void; namespace K { export const t = 2; } K;",
+        "export declare enum K { s = 1 } enum K { t = 2 } K;",
+        "export declare namespace K { const s: number; } namespace K { export const t = 2; } K;",
+        "export declare let K: number; var K = 3; K;",
+    ] {
+        analyzed("a.ts", text, |s| {
+            let Symbol(found) = s.binding("K", 0) else {
+                panic!("{text}");
+            };
+            assert_ne!(
+                s.bound.binding_kind(found),
+                BindingKind::NoBinding,
+                "{text}"
+            );
+            for &declaration in s.bound.symbol(found).decls.iter() {
+                assert_eq!(s.bound.exported_variable(declaration), None, "{text}");
+            }
+        });
+    }
+    let both = "export declare class K {} export namespace K { export const t = 2; } K;";
+    analyzed("a.ts", both, |s| {
+        let Symbol(found) = s.binding("K", 0) else {
+            panic!("{both}");
+        };
+        let mut declarations = s.bound.symbol(found).decls.iter();
+        assert!(declarations.all(|&it| s.bound.exported_variable(it) == Some(found)));
+    });
+}
+
+#[test]
+fn default_export_beside_export_under_its_name() {
+    for text in [
+        "export default class K {} export namespace K { export const t = 1; } K;",
+        "export default function K() {} export namespace K { export const t = 1; } K;",
+        "export default class K {} namespace K { export const t = 1; } export namespace K { export const u = 1; } K;",
+        "export default class K {} export namespace K { export type T = number; } K;",
+        "export default class K {} export interface K {} K;",
+        "export default class K {} namespace K { export const t = 1; } export interface K {} K;",
+        "export function K() {} export default interface K {} K;",
+        "export default interface K {} export function K() {} K;",
+        "export const K = 1; export default interface K {} K;",
+        "export enum K { a } export default interface K {} K;",
+    ] {
+        analyzed("a.ts", text, |s| {
+            let Symbol(found) = s.binding("K", 0) else {
+                panic!("{text}");
+            };
+            assert_ne!(
+                s.bound.binding_kind(found),
+                BindingKind::NoBinding,
+                "{text}"
+            );
+            assert!(s.bound.symbol_scope(found).is_some(), "{text}");
+            for &declaration in s.bound.symbol(top_level(s, "K")).decls.iter() {
+                let has_value =
+                    !matches!(declaration, Decl::Interface(_)) && !text.contains("export type");
+                if has_value || matches!(declaration, Decl::Class(_)) {
+                    assert_eq!(s.bound.declared_symbol(declaration), found, "{text}");
+                }
+            }
+        });
+    }
 }
 
 #[test]
@@ -1313,6 +1694,7 @@ fn classic_jsx() {
             kind: JsxFactory,
             name: s.workspace.atom("React"),
             binding: Symbol(react),
+            member: Atom::NONE,
         };
         assert_eq!(s.bound.runtime.implicit_references(), [expected]);
         assert_eq!(s.analysis.unused_import_symbols, []);

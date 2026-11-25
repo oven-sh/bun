@@ -1,0 +1,20 @@
+# the walk calls a helper of the compiler in place of what a program has written, and goes by what it answers. One function cannot keep the word of two entries
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 1
+
+module m0 path="main" displayPath="main"
+entry module=m0
+runtimefunction id=PromiseConstructorPromise function=f0
+runtimefunction id=DisposableStackPrototypeAddDisposableResource function=f0
+runtimefunction id=IteratorConsumersCloseIterator function=f1
+runtimefunction id=IteratorConsumersOpenIterator function=f2
+runtimefunction id=IteratorConsumersStepIterator function=f1
+function f0 name="standsForTwoThatProgramsName" role=Library results=[{type=anything}] {
+    Return
+}
+function f1 name="standsForTwoHelpers" role=Library results=[{type=anything}] {
+    Return
+}
+function f2 name="standsForOneHelper" role=Library results=[{type=anything}] {
+    Return
+}

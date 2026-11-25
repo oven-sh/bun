@@ -5,7 +5,7 @@ use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    StrictModeFeature, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Statements nest arbitrarily deep (e.g. hundreds of `{` blocks), and each
         // level stacks a `visit_stmts` + `s_*` frame, so guard here like
-        // `visit_expr_in_out` does for expressions.
+        // `visit_expr_as` does for expressions.
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(stmt.loc);
             return Ok(());
@@ -535,12 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let should_emit_temp_var = p.options.features.react_fast_refresh
                     && match expr.data {
                         js_ast::ExprData::EArrow(_) => true,
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                id.ref_ == p.react_refresh.latest_signature_ref
-                            }
-                            _ => false,
-                        },
+                        js_ast::ExprData::ECall(_) => p.makes_react_component(*expr),
                         _ => false,
                     };
                 if should_emit_temp_var {
@@ -1253,12 +1248,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: in namespace"),
                     );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
-                    // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
-                    // here so its provenance is a child of the active Unique borrow.
-                    let wrapper = p.to_expr_wrapper_namespace;
-                    let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-                    let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
+                    let lhs =
+                        Binding::to_expr(&d.binding, p.arena, p, Self::wrap_identifier_namespace);
                     stmts.push(p.s(
                         S::SExpr {
                             value: Expr::assign(lhs, val),
@@ -1315,20 +1306,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let Some(val) = decl.value else {
                         break 'try_register;
                     };
-                    match val.data {
-                        // Assigning a component to a local.
-                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
-
-                        // A wrapped component.
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                if id.ref_ != p.react_refresh.latest_signature_ref {
-                                    break 'try_register;
-                                }
-                            }
-                            _ => break 'try_register,
-                        },
-                        _ => break 'try_register,
+                    if !p.makes_react_component(val) {
+                        break 'try_register;
                     }
                     let id = match decl.binding.data {
                         js_ast::binding::Data::BIdentifier(b) => b.r#ref,
@@ -1430,6 +1409,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            p.mark_feature_under_kept_directive(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, data.name.loc),
+                name,
+            );
+        }
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
@@ -1760,6 +1746,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::With,
     ) -> Result<(), Error> {
+        p.mark_feature_under_kept_directive(
+            StrictModeFeature::WithStatement,
+            bun_ast::Range {
+                loc: stmt.loc,
+                len: 4,
+            },
+            b"",
+        );
         p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc)

@@ -139,7 +139,7 @@ describe("seq without stdout", async () => {
 
 // Regression guard: the fd-output path used to build the full output into a
 // local Vec, store it into state, then clone the stored Vec to hand to
-// BuiltinIO::enqueue (which itself copies into IOWriter's buffer). That is a
+// IOWriter::enqueue (which itself copies into its buffer). That is a
 // full-output-sized clone on top of the copy that must exist, so peak RSS was
 // ~3x the output instead of ~2x. ASAN-gated because release mimalloc does not
 // retain freed pages the way ASAN's allocator does.

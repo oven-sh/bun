@@ -38,7 +38,9 @@ void populateESMExports(
     JSC::JSValue result,
     WTF::Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues,
-    bool ignoreESModuleAnnotation);
+    bool ignoreESModuleAnnotation,
+    // See SyntheticSourceProvider::createWithLazyExports.
+    bool mayBeLazy = false);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
@@ -57,8 +59,8 @@ public:
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
     // each module, the children array is constructed internally as a
-    // Vector of pointers. If accessed, deduplication happens and array is
-    // moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
+    // Vector of pointers, one per child (see addChild). createChildrenArray moves them
+    // into a JSArray on the first read of `module.children`, or when a child arrives that is not a JSCommonJSModule.
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
@@ -75,8 +77,18 @@ public:
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.
     // This is the normal state.
     JSC::Weak<JSCommonJSModule> m_parent {};
+    // The filename of m_parent, whose object nothing may hold, e.g. the one behind the require() that jest.requireActual() calls.
+    JSC::WriteBarrier<JSString> m_parentFilename;
     // `module.parent = 7`: from then on nobody asks the compiled program who required the file first.
     bool m_isParentStored { false };
+    // Of the object that createRequire() has made: code of the executable called it. A loader that code from disk makes finds no file of the executable, whatever path it is given.
+    bool isCreatedByImageCode { false };
+    // What else an ahead-of-time executable keeps of a few of these objects lies in a record beside the cell.
+    bool hasRecordBesideCell { false };
+    // For an object that require() created for a compiled file: the parent's `children` already list it.
+    bool isListedAsChild { false };
+    // require() makes an object for a file of the executable at every call: the number of the file that was loaded into this one, where a requirer that is no file of the executable asked.
+    uint32_t compiledModuleLoadedInto { noCompiledModule };
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
@@ -86,17 +98,36 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // False means no parent's m_children holds this module, so addChild need not search. Unlike isListedAsChild, it stays true once set.
+    bool hasBeenAddedAsChild { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };
+    // Of the object behind `import.meta.require` of an ES module of the executable: the number of that module. It is who asks through the object, and the engine lists what it has required.
+    uint32_t requestingCompiledModule() const { return hasRecordBesideCell ? compiledModuleThatAsksByRecord() : noCompiledModule; }
+    void setRequestingCompiledModule(uint32_t);
+    bool areChildrenListedByEngine() const { return compiledModule != noCompiledModule || requestingCompiledModule() != noCompiledModule; }
+    // Among the children of a requirer that is no file of the executable the first object of a file stays, and no other is listed.
+    bool listsAsChild(JSCommonJSModule* loaded) { return loaded->compiledModuleLoadedInto == noCompiledModule || listsCompiledModuleAsChild(loaded->compiledModuleLoadedInto); }
+    void forgetCompiledModulesAmongChildren();
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
     static void destroy(JSC::JSCell*);
+
+private:
+    uint32_t compiledModuleThatAsksByRecord() const;
+    bool listsCompiledModuleAsChild(uint32_t);
+
+public:
     ~JSCommonJSModule();
 
     void finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode);
+
+    void setParent(JSC::VM&, JSCommonJSModule*);
+    void clearParent();
+    JSValue parentFilename() const;
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
@@ -140,6 +171,8 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    void addChild(JSC::VM&, JSCommonJSModule* child);
+    void createChildrenArray(JSC::JSGlobalObject*);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

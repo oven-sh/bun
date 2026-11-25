@@ -31,6 +31,7 @@ export function generate(random: Random) {
   };
   const names = Object.keys(steps) as (keyof typeof steps)[];
   const taken = Array.from({ length: random.weighted([[1, 0], [4, 1], [5, 2]] as const) }, () => random.pick(names)); // prettier-ignore
+  const firstRequires = random.chance(0.65);
 
   const text =
     {
@@ -46,7 +47,7 @@ export function generate(random: Random) {
   const files: Record<string, string> = {
     "first.cjs":
       `module.exports = {};\nconsole.log("first begins");\n` +
-      (random.chance(0.65) ? requires("first", "module.mjs") : imports("first", "module.mjs")) +
+      (firstRequires ? requires("first", "module.mjs") : imports("first", "module.mjs")) +
       `console.log("first ends");\n`,
     "module.mjs":
       {
@@ -65,5 +66,10 @@ export function generate(random: Random) {
     "asks.mjs": imports("asks.mjs", "file.cjs") + `console.log("asks.mjs ends");\nexport {};\n`,
     "back.mjs": `import "./file.cjs";\nconsole.log("back ends");\n`,
   };
-  return { file: "main.mjs", text, files };
+  // module.mjs, and what runs in it, stand under the `require()` in first.cjs.
+  const underFirst = start !== "imports module" && firstRequires;
+  const callsUnderRequireOfModule =
+    taken.includes("throughModule") ||
+    (underFirst && (road === "call" || taken.includes("itself") || taken.includes("throughFile")));
+  return { file: "main.mjs", text, files, callsUnderRequireOfModule };
 }

@@ -6,37 +6,6 @@
 using namespace Bun;
 using namespace JSC;
 
-extern "C" void Bun__DhKeyPairJobCtx__deinit(DhKeyPairJobCtx* ctx)
-{
-    ctx->deinit();
-}
-
-void DhKeyPairJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__DhKeyPairJobCtx__runTask(DhKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
-}
-
-extern "C" void Bun__DhKeyPairJobCtx__runFromJS(DhKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
-
-extern "C" void Bun__DhKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DhKeyPairJobCtx* ctx, EncodedJSValue callback);
-void DhKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, DhKeyPairJobCtx&& ctx, JSValue callback)
-{
-    DhKeyPairJobCtx* ctxCopy = new DhKeyPairJobCtx(WTF::move(ctx));
-    Bun__DhKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
 ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyPointer keyParams;
@@ -119,7 +88,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
         GCOwnedDataScope<WTF::StringView> groupView = groupString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-        auto group = ncrypto::DHPointer::FromGroup(groupView);
+        auto group = ncrypto::DHPointer::FindGroup(groupView);
         if (!group) {
             ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
             return std::nullopt;
@@ -127,6 +96,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
 
         return DhKeyPairJobCtx(
             WTF::move(group),
+            DH_GENERATOR_2,
             config);
     }
 
@@ -182,7 +152,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
     }
 
     return DhKeyPairJobCtx(
-        prime,
+        WTF::move(prime),
         generator,
         config);
 }

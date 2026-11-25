@@ -1,0 +1,16 @@
+# `nodes.push(..)` stands in a loop with its operand made between the read of the method and the call, so the call is closed and the list leaves the walk's sight. Link has followed the pushes by the row of the table:
+# what `nodes[i & 7]` gives is proven an object of the one layout or undefined, so `.v` is read off it with no test of its shape, and the sum that comes round the loop is a number from the first look on.
+# f1 = sums
+# -- source: read-off-a-list-is-typed-by-what-link-has-seen-come-out-of-it.ts
+# declare function sink(...values: unknown[]): void;
+# type N = { v: number };
+# function sums(n: number) { const nodes: N[] = []; for (let i = 0; i < 8; i++) nodes.push(i & 1 ? { v: i } : { v: -i }); let total = 0; for (let i = 0; i < n; i++) total += nodes[i & 7].v; return total; }
+# sink(sums);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|L0 @JSValue = GetArrayElement
+# CHECK-NEXT: fact {{*}} kind=ProvenContents subjectKind=Operation type=undefined|L0
+# CHECK-NOT: = ShapeTest
+# CHECK: = GetSlot {{*}}key="v" receivers=[L0] level=Proven
+# CHECK-NOT: form=Generic

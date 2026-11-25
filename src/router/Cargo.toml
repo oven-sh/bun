@@ -15,7 +15,6 @@ bun_errno.workspace = true
 bun_alloc.workspace = true
 strum.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_ast.workspace = true

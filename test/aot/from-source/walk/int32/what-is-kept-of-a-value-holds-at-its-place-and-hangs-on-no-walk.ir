@@ -1,0 +1,16 @@
+# What is written of a value is kept from one promise of a body to the next. THE LYING CONTROLS: each of the three is reported
+# arms: `a` was asked first behind `a < 100`; behind the join nothing holds it: what is kept is kept for a place . sibling: the same, in the other arm of a test that is no relation
+# turns: `n` is declared nothing: the first walk of the loop knows it as an integer, the last as a number with halves: what hangs on the walk is asked anew
+# THE RIGHT ONES: again: asked first where nothing holds it and reported there, `a` is held behind the test all the same . chain: each step rests on the one in front
+# -- source: what-is-kept-of-a-value-holds-at-its-place-and-hangs-on-no-walk.ts
+# declare function sink(...values: unknown[]): void;
+# function arms(a: Bun.int32): Bun.int32 { let r: Bun.int32 = 0; if (a < 100) r = a + 1; const s: Bun.int32 = a + 1; return r + s | 0; }
+# function sibling(a: Bun.int32, c: boolean): Bun.int32 { let r: Bun.int32 = 0; if (a < 100) { if (c) r = a + 1; } else if (c) r = a + 1; return r; }
+# function turns(to: Bun.int32, a: Bun.int32): Bun.int32 { let at: Bun.int32 = 0; let n = 0; for (let i: Bun.int32 = 0; i < to; i++) { at = Math.min(n, a); n = n + 0.5; } return at; }
+# function again(a: Bun.int32): Bun.int32 { const s: Bun.int32 = a + 1; let r: Bun.int32 = 0; if (a < 100) r = a + 1; return r + s | 0; }
+# function chain(seed: number): Bun.int32 { let at: Bun.int32 = seed & 1; at = at + 1; at = at + 1; at = at + 1; at = at * 2; at = at + 1; return at; }
+# sink(arms, sibling, turns, again, chain);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 4
+# RUN: walk f1 f2 f3 f4 f5 mechanisms=all
+# CHECK: the walk of f1:Body failed

@@ -13,7 +13,7 @@ freed-while-borrowed-frees = ["heap::destroy"]
 # Like the line above, for releases that free only the last reference.
 freed-while-borrowed-releases = ["ThreadSafeRefCount::deref", "RefCount::deref"]
 # Bun's own lock types, for the lock order checks.
-lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard", "StreamBufferGuard"]
+lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard"]
 # The raw mutex locks and unlocks by hand, with no guard.
 lock-methods = ["threading::Mutex::lock"]
 unlock-methods = ["threading::Mutex::unlock"]

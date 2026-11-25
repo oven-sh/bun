@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# class Rows extends Array { constructor(n) { super(n); for (var i = 0; i < n; i++) this[i] = [i, i / 2]; this.rows = n; } get(i, j) { return this[i][j]; } }
+# var m = new Rows(4);
+# function run(k) { var s = 0; for (var i = 0; i < k; i++) s += m.get(i & 3, i & 1); return s; }
+# print(run(64));
+# -- end of source
+# An instance of a class that extends Array is an array: behind the look at its structure an element is read off a list.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: HasStructureOfClass {{*}}layout=L0
+# CHECK: = GetArrayElement
+# RUN(ANSWER): run-in-shell
+# ANSWER: 64
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 64
+# CHECKED-NEXT: exited with 0

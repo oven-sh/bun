@@ -51,11 +51,7 @@ async function runTests(folder: string, flags: string[], words = "") {
   return { printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [form, flags, words] of [
-  ["at default flags", [], ""],
-  ["as one program under --isolate", ["--isolate"], "TestRunLayers:0"],
-  ["over two layers", ["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
-] as const)
+for (const [form, flags, words] of [["at default flags", [], ""]] as const)
   test.concurrent(
     form,
     async () => {

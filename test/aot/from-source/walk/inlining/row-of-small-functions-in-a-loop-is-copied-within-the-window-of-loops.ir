@@ -1,0 +1,74 @@
+# -- source: row-of-small-functions-in-a-loop-is-copied-within-the-window-of-loops.js
+# function a0(x) { return x + 1; }
+# function a1(x) { return a0(x) + 1; }
+# function a2(x) { return a1(x) + 1; }
+# function a3(x) { return a2(x) + 1; }
+# function a4(x) { return a3(x) + 1; }
+# function a5(x) { return a4(x) + 1; }
+# function a6(x) { return a5(x) + 1; }
+# function a7(x) { return a6(x) + 1; }
+# function a8(x) { return a7(x) + 1; }
+# function a9(x) { return a8(x) + 1; }
+# function a10(x) { return a9(x) + 1; }
+# function a11(x) { return a10(x) + 1; }
+# function a12(x) { return a11(x) + 1; }
+# function a13(x) { return a12(x) + 1; }
+# function a14(x) { return a13(x) + 1; }
+# function a15(x) { return a14(x) + 1; }
+# function a16(x) { return a15(x) + 1; }
+# function a17(x) { return a16(x) + 1; }
+# function a18(x) { return a17(x) + 1; }
+# function a19(x) { return a18(x) + 1; }
+# function a20(x) { return a19(x) + 1; }
+# function a21(x) { return a20(x) + 1; }
+# function a22(x) { return a21(x) + 1; }
+# function a23(x) { return a22(x) + 1; }
+# function a24(x) { return a23(x) + 1; }
+# function a25(x) { return a24(x) + 1; }
+# function a26(x) { return a25(x) + 1; }
+# function a27(x) { return a26(x) + 1; }
+# function a28(x) { return a27(x) + 1; }
+# function a29(x) { return a28(x) + 1; }
+# function a30(x) { return a29(x) + 1; }
+# function a31(x) { return a30(x) + 1; }
+# function a32(x) { return a31(x) + 1; }
+# function a33(x) { return a32(x) + 1; }
+# function a34(x) { return a33(x) + 1; }
+# function a35(x) { return a34(x) + 1; }
+# function a36(x) { return a35(x) + 1; }
+# function a37(x) { return a36(x) + 1; }
+# function a38(x) { return a37(x) + 1; }
+# function a39(x) { return a38(x) + 1; }
+# function a40(x) { return a39(x) + 1; }
+# function a41(x) { return a40(x) + 1; }
+# function a42(x) { return a41(x) + 1; }
+# function a43(x) { return a42(x) + 1; }
+# function a44(x) { return a43(x) + 1; }
+# function a45(x) { return a44(x) + 1; }
+# function a46(x) { return a45(x) + 1; }
+# function a47(x) { return a46(x) + 1; }
+# function a48(x) { return a47(x) + 1; }
+# function a49(x) { return a48(x) + 1; }
+# function a50(x) { return a49(x) + 1; }
+# function a51(x) { return a50(x) + 1; }
+# function a52(x) { return a51(x) + 1; }
+# function a53(x) { return a52(x) + 1; }
+# function a54(x) { return a53(x) + 1; }
+# function a55(x) { return a54(x) + 1; }
+# function a56(x) { return a55(x) + 1; }
+# function a57(x) { return a56(x) + 1; }
+# function a58(x) { return a57(x) + 1; }
+# function a59(x) { return a58(x) + 1; }
+# function once(x) { return a59(x); }
+# function often(n) { let total = 0; for (let i = 0; i < n; i++) total += a59(i); return total; }
+# print(once(1), often(3));
+# -- end of source
+# each adds four operations: ten fit into the window of a written call, thirty into that of a call in a loop
+# RUN: walk f61 mechanisms=all
+# CHECK: frame 10 callee=
+# CHECK-NOT: frame 11 callee=
+# RUN(LOOP): walk f62 mechanisms=all
+# LOOP: frame 30 callee=
+# LOOP-NOT: frame 31 callee=
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

@@ -1,0 +1,28 @@
+# process.nextTick(later)
+# The shell has no host, so the holder of the member is not in the realm. The run time says that the program needs the host's member and exits with 4; it died of an assertion.
+# That the read is a watched value is pinned by walk/builtins/first-read-of-a-member-that-the-library-makes-may-run-any-code.ir.
+# RUN: run-in-shell mechanisms=all
+# CHECK: exited with 4
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="later" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="process" [isFreeName]
+    v2 = PropGet v1 key="nextTick"
+    v3 = NewClosure function=f2
+    v4 = Call v2, v1, v3 calleeKey="nextTick"
+    Return v4
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

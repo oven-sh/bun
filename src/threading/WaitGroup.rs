@@ -8,6 +8,7 @@
 //   The MIT license requires this copyright notice to be included in all copies
 //   and substantial portions of the software.
 
+use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{Condition, Mutex};
@@ -28,14 +29,7 @@ impl WaitGroup {
         }
     }
 
-    pub fn init_with_count(count: usize) -> Self {
-        Self {
-            raw_count: AtomicUsize::new(count),
-            ..Self::default()
-        }
-    }
-
-    pub(crate) fn add(&self, n: usize) {
+    pub fn add(&self, n: usize) {
         // Not Acquire because we don't need to synchronize with other tasks (each runs independently).
         // Not Release because there are no side effects that other threads depend on when they see
         // the *start* of a task (only finishing a task has such requirements).
@@ -46,14 +40,7 @@ impl WaitGroup {
         self.add(1);
     }
 
-    /// For a group kept alive past this call by something other than `wait()` returning (a
-    /// `static`, say); otherwise use [`finish_raw`](Self::finish_raw).
-    pub fn finish(&self) {
-        // SAFETY: the group outlives this call (fn contract).
-        unsafe { Self::finish_raw(self) }
-    }
-
-    /// [`finish`](Self::finish) for a group the owner may free as soon as `wait()` returns:
+    /// Instead of [`Pending`], for a group the owner may free as soon as `wait()` returns:
     /// the unlock's releasing store is this thread's last access to the group, which a
     /// `&self` argument would instead assert until the call returned.
     ///
@@ -109,9 +96,47 @@ impl WaitGroup {
     }
 }
 
+/// A task that the group waits for until this is dropped.
+#[must_use]
+pub struct Pending<G: Deref<Target = WaitGroup>>(G);
+
+impl<G: Deref<Target = WaitGroup>> Pending<G> {
+    pub fn new(group: G) -> Self {
+        group.add_one();
+        Self(group)
+    }
+}
+
+impl<G: Deref<Target = WaitGroup>> Drop for Pending<G> {
+    fn drop(&mut self) {
+        // SAFETY: `new` counted this task, and `self.0` keeps the group alive past this call.
+        unsafe { WaitGroup::finish_raw(&raw const *self.0) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_returns_after_the_last_pending_task_is_dropped() {
+        let group = std::sync::Arc::new(WaitGroup::init());
+        let finished = std::sync::Arc::new(AtomicUsize::new(0));
+        let threads = [(); 4].map(|()| {
+            let (pending, finished) = (Pending::new(group.clone()), finished.clone());
+            std::thread::Builder::new()
+                .spawn(move || {
+                    let _pending = pending;
+                    finished.fetch_add(1, Ordering::Relaxed);
+                })
+                .unwrap()
+        });
+        group.wait();
+        assert_eq!(finished.load(Ordering::Relaxed), threads.len());
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
 
     // Miri rejects the `Box` drop if the finisher still holds a reference into the group.
     #[test]
@@ -123,7 +148,9 @@ mod tests {
         const ITERATIONS: usize = 10_000;
 
         for _ in 0..ITERATIONS {
-            let wg = Box::into_raw(Box::new(WaitGroup::init_with_count(1)));
+            let wg = Box::new(WaitGroup::init());
+            wg.add_one();
+            let wg = Box::into_raw(wg);
             struct SendPtr(*const WaitGroup);
             // SAFETY: `WaitGroup` is `Sync`; only dereferenced via `finish_raw` below.
             unsafe impl Send for SendPtr {}

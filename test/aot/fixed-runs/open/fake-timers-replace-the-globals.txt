@@ -1,0 +1,40 @@
+useFakeTimers() puts the runner's functions in the place of the timers on the global object and of process.nextTick: a function kept before the call is the real one; vi.stubGlobal() is a store to the global object.
+#### kept.test.js
+import { afterEach, jest, test, vi } from "bun:test";
+const kept = { setTimeout, setImmediate, nextTick: process.nextTick, queueMicrotask };
+const macrotask = setImmediate;
+afterEach(() => jest.useRealTimers());
+test("a function kept before the call is the real one", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate", "nextTick", "queueMicrotask"] });
+  console.log("| CASE the same", kept.setTimeout === setTimeout, macrotask === globalThis.setImmediate, kept.nextTick === process.nextTick, kept.queueMicrotask === queueMicrotask);
+  await new Promise(resolve => macrotask(resolve));
+  await new Promise(resolve => kept.setTimeout(resolve, 1));
+  await new Promise(resolve => kept.nextTick(resolve));
+  console.log("| CASE they ran", jest.getTimerCount());
+});
+test("what is called by name is counted by the clock", () => {
+  jest.useFakeTimers({ toFake: ["setTimeout", "nextTick", "queueMicrotask"] });
+  const ran = [];
+  setTimeout(() => ran.push("timeout"), 1000);
+  process.nextTick(() => ran.push("tick"));
+  queueMicrotask(() => ran.push("microtask"));
+  console.log("| CASE counted", jest.getTimerCount(), ran.join());
+  jest.runAllTicks();
+  jest.advanceTimersByTime(1000);
+  console.log("| CASE ran", ran.join());
+});
+test("behind useRealTimers() the names are what they were", () => {
+  console.log("| CASE back", kept.setTimeout === setTimeout, macrotask === setImmediate, kept.nextTick === process.nextTick, kept.queueMicrotask === queueMicrotask);
+});
+#### stub.test.js
+import { test, vi } from "bun:test";
+import { pathToFileURL } from "node:url";
+const names = ["Headers"];
+test("a stubbed global is read by the run's own code", () => {
+  vi.stubGlobal("fetch", () => 7);
+  vi.stubGlobal("URL", class { href = "stub"; });
+  for (const name of names) vi.stubGlobal(name, name);
+  console.log("| CASE stubbed", fetch(), globalThis.fetch(), new URL("x").href, Headers, pathToFileURL("/a").protocol);
+  vi.unstubAllGlobals();
+  console.log("| CASE back", typeof fetch, new URL("http://a/").href, typeof Headers);
+});

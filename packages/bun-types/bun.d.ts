@@ -2549,7 +2549,7 @@ declare module "bun" {
      * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
-     * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
+     * - `c-ares` - Uses Bun's own asynchronous resolver, which is modeled on the c-ares library. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
      * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *
@@ -2604,8 +2604,7 @@ declare module "bun" {
          * `"system"` uses the same API underneath (except non-blocking).
          *
          * On Windows, libuv's non-blocking DNS resolver is used by default, and
-         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
-         * backend isn't supported on Windows.
+         * when specifying backends "system", "libc", or "getaddrinfo".
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
@@ -3267,6 +3266,7 @@ declare module "bun" {
       | "xml"
       | "glob"
       | "semver"
+      | "diff"
       | "color"
       | "cookie"
       | "csrf"
@@ -3859,9 +3859,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
-
-  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms" | "statistics";
 
   interface TrimOptions {
     /**
@@ -3955,7 +3953,7 @@ declare module "bun" {
      *
      * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
      * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
-     * `obfuscate` implies `false`.
+     * `obfuscate` and `sourcemap: "external"` imply `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *
@@ -3963,8 +3961,9 @@ declare module "bun" {
      */
     functionSource?: boolean;
     /**
-     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
-     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     * With `aot`: let a dynamic `import()`, `require()` or `new Worker()` load code that isn't in the
+     * executable from disk when the program runs, such as a plugin or a config file. Bun interprets
+     * that code.
      *
      * Without it, the executable only runs code that was compiled into it, and such a load throws.
      * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
@@ -4010,17 +4009,16 @@ declare module "bun" {
     autoloadPackageJson?: boolean;
     /**
      * Compile the program's JavaScript and TypeScript to machine code at build time.
-     * `bytecode` has no effect with it.
+     * It cannot be combined with `bytecode`.
      *
      * The executable has no JIT. Code that only exists at run time, such as a string passed to
      * `eval()` or `new Function()`, runs in the interpreter.
      *
      * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
-     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
-     * sloppy mode. Breakpoints aren't available.
+     * the executable. Assigning to one throws a `TypeError`. Breakpoints aren't available.
      *
-     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
-     * and Bun version running the build.
+     * Requires a `target` that matches the platform and Bun version running the build. `format` has
+     * no effect: each file keeps the module format it is written in.
      *
      * Equivalent CLI flag: `--aot`
      *
@@ -4029,7 +4027,8 @@ declare module "bun" {
     aot?: boolean;
     /**
      * With `aot`: strip function names and file names from the executable and write a source map
-     * next to it. `sourcemap: "external"` does the same.
+     * next to it. `sourcemap: "external"` does the same for stack traces and leaves the `name` of
+     * functions and classes alone. With `obfuscate` it is `""`.
      *
      * Equivalent CLI flag: `--obfuscate`
      *
@@ -4049,19 +4048,6 @@ declare module "bun" {
      */
     inspector?: boolean;
     /**
-     * With `aot`: log every value that doesn't match its declared type.
-     *
-     * A mismatch never changes what the program does: the function falls back to its slow path and
-     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
-     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
-     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
-     *
-     * Equivalent CLI flag: `--aot-log-type-mismatches`
-     *
-     * @default false
-     */
-    aotLogTypeMismatches?: boolean;
-    /**
      * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
      *
      * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
@@ -4070,44 +4056,53 @@ declare module "bun" {
      *   and how to fix it
      * - `"guards-json"`: the same, one JSON object per line
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
-     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
      * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
+     * - `"statistics"`: what the build counted, one name and number per line
      *
      * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
     /**
-     * With `aot`: build without some steps of the compiler. The program behaves the same. The
-     * executable can be larger and slower.
+     * With `aot`: add run-time checks, so that a bug in the compiler is harder to turn into a memory
+     * bug. Each name costs speed, and none is on unless it is listed here.
      *
-     * When the compiler can't finish a build, the error names the step to list here, such as
-     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     * - `"proof-checks"`: check the type that the compiler has proven of a value again at each read,
+     *   and check again what the compiler remembers from earlier code. Objects stay on the heap, not
+     *   on the stack. The build also runs the compiler's own verifier.
+     * - `"ignore-told-ranges"`: check every index against the length, where the index is used.
      *
-     * - `"pass:<name>"`: one optimization pass
-     * - `"flow:<name>"`: one kind of result of the whole-program analysis
-     * - `"flow-results"`: the whole-program analysis and all its results
+     * A check that fails aborts the process.
      *
-     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
-     * the compiler doesn't know a name.
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
+     * name that it doesn't know.
      *
-     * Equivalent CLI flag: `--aot-disable`
+     * Equivalent CLI flag: `--aot-harden`
      */
-    aotDisable?: string | string[];
+    aotHarden?: string | string[];
     /**
-     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
-     * program behaves the same. The option is for working on the compiler.
+     * Lay the executable out by the order in which a run of it entered its functions. Requires `aot: true`.
      *
-     * The compiler makes code that it expects to run often fast, and the rest small.
+     * Run an executable built with `aotRecordOrder: true` with `BUN_AOT_ORDER_OUT=<path>` to record a
+     * start, then build again with that file. A file from an older build of the app still applies.
      *
-     * - `"everything-is-hot"`: all code runs often
-     * - `"everything-is-cold"`: all code runs rarely
-     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
-     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
-     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
+     * With several files, list the most important one first. A function lies where the first file that
+     * lists it places it.
      *
-     * Equivalent CLI flag: `--aot-heat`
+     * `false` and `null` mean no file, so `aotOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--aot-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/compiler/aot#order-the-executable-by-a-recorded-start
      */
-    aotHeat?: AotHeat;
+    aotOrder?: string | string[] | false | null;
+    /**
+     * Build an executable that writes what `aotOrder` takes when it runs with `BUN_AOT_ORDER_OUT=<path>`.
+     * Other executables have no recorder. Requires `aot: true`.
+     *
+     * Equivalent CLI flag: `--aot-record-order`
+     */
+    aotRecordOrder?: boolean;
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
@@ -4811,6 +4806,11 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
+        /**
+         * The strings whose characters are only in the machine code of this executable, such as the labels of
+         * a `switch`. A search of the file's bytes doesn't find them. Only for builds with `compile.aot`.
+         */
+        inlinedStrings?: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
@@ -6000,6 +6000,239 @@ declare module "bun" {
     function order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
 
+  /**
+   * Compare text and arrays, and create, parse and apply unified diffs.
+   *
+   * @see https://bun.com/docs/runtime/diff
+   *
+   * @category Utilities
+   */
+  namespace diff {
+    /**
+     * A run of tokens that were kept, removed or added.
+     */
+    interface Change<T = string> {
+      /** The tokens of the run: joined for text, an array for {@link arrays}. */
+      value: T;
+      /** The run is only in the new input. */
+      added: boolean;
+      /** The run is only in the old input. */
+      removed: boolean;
+      /** The number of tokens (lines, words, characters or elements) in `value`. */
+      count: number;
+    }
+
+    interface Options {
+      /**
+       * Return `undefined` when the diff adds and removes more than this many tokens in total.
+       * An integer from 0, or `Infinity`.
+       *
+       * @default Infinity
+       */
+      maxEditLength?: number | undefined;
+    }
+
+    interface TextOptions extends Options {
+      /**
+       * Tokens match if they are equal after `toLowerCase()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreCase?: boolean | undefined;
+    }
+
+    interface LinesOptions extends TextOptions {
+      /**
+       * Lines match if they are equal after `trim()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreWhitespace?: boolean | undefined;
+      /**
+       * Replace each `\r\n` with `\n` in both texts first, like `diff --strip-trailing-cr`.
+       *
+       * @default false
+       */
+      stripTrailingCr?: boolean | undefined;
+    }
+
+    interface HunksOptions extends LinesOptions {
+      /**
+       * The number of unchanged lines before and after each change, like `diff -U`.
+       * An integer from 0, or `Infinity` for the whole file.
+       *
+       * @default 3
+       */
+      context?: number | undefined;
+    }
+
+    interface PatchOptions extends HunksOptions {
+      /**
+       * The name in the `---` line. Defaults to `newFileName`.
+       * Without either name, the patch has no `---` and `+++` lines.
+       */
+      oldFileName?: string | undefined;
+      /** The name in the `+++` line. Defaults to `oldFileName`. */
+      newFileName?: string | undefined;
+      /** Text after the name in the `---` line, such as a timestamp. It needs a file name and has to be one line. */
+      oldHeader?: string | undefined;
+      /** Text after the name in the `+++` line, such as a timestamp. It needs a file name and has to be one line. */
+      newHeader?: string | undefined;
+    }
+
+    /**
+     * One `@@` section of a unified diff.
+     */
+    interface Hunk {
+      /** The first line of the hunk in the old text, from 1. If `oldLines` is 0, the line after the hunk. */
+      oldStart: number;
+      /** The number of lines the hunk keeps or removes. */
+      oldLines: number;
+      /** The first line of the hunk in the new text, from 1. If `newLines` is 0, the line after the hunk. */
+      newStart: number;
+      /** The number of lines the hunk keeps or adds. */
+      newLines: number;
+      /**
+       * Each line without its `\n`, after `" "` (kept), `"-"` (removed) or `"+"` (added).
+       * `"\\ No newline at end of file"` follows a line that has no `\n`.
+       */
+      lines: string[];
+    }
+
+    /**
+     * What a patch changes in one file. A property is absent when the patch does not say.
+     */
+    interface FilePatch {
+      /** The name in an `Index:` or `diff -r` line. */
+      index?: string;
+      oldFileName?: string;
+      /** The text after the name in the `---` line. */
+      oldHeader?: string;
+      newFileName?: string;
+      /** The text after the name in the `+++` line. */
+      newHeader?: string;
+      /** The file mode before the change, in octal, like `"100644"`. Git only. */
+      oldMode?: string;
+      /** The file mode after the change, in octal, like `"100755"`. Git only. */
+      newMode?: string;
+      /** The section starts with `diff --git`. */
+      isGit?: boolean;
+      isRename?: boolean;
+      isCopy?: boolean;
+      isCreate?: boolean;
+      isDelete?: boolean;
+      /** Git reports a change to a binary file, which has no hunks. */
+      isBinary?: boolean;
+      hunks: Hunk[];
+    }
+
+    /**
+     * Compare two strings line by line. A line includes its `\n` or `\r\n`.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     *
+     * @example
+     * ```ts
+     * Bun.diff.lines("a\nb\n", "a\nc\n");
+     * // [
+     * //   { value: "a\n", added: false, removed: false, count: 1 },
+     * //   { value: "b\n", added: false, removed: true, count: 1 },
+     * //   { value: "c\n", added: true, removed: false, count: 1 },
+     * // ]
+     * ```
+     */
+    function lines(oldText: string, newText: string, options?: LinesOptions & { maxEditLength?: undefined }): Change[];
+    function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
+
+    /**
+     * Compare two strings word by word. A token is a word of letters, digits and `_`, a run of spaces,
+     * a line ending, or any other single character. In scripts without spaces between words,
+     * like Chinese, Japanese and Thai, each character is a token.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function words(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function words(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
+
+    /**
+     * Compare two strings by Unicode code point.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function chars(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function chars(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
+
+    /**
+     * Compare two arrays element by element, with `===`.
+     *
+     * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function arrays<T>(
+      oldArray: readonly T[],
+      newArray: readonly T[],
+      options?: Options & { maxEditLength?: undefined },
+    ): Change<T[]>[];
+    function arrays<T>(oldArray: readonly T[], newArray: readonly T[], options?: Options): Change<T[]>[] | undefined;
+
+    /**
+     * Compare two strings line by line and group the changes into the hunks of a unified diff.
+     *
+     * @returns The hunks, or `undefined` if there are more than `maxEditLength` edits
+     */
+    function hunks(oldText: string, newText: string, options?: HunksOptions & { maxEditLength?: undefined }): Hunk[];
+    function hunks(oldText: string, newText: string, options?: HunksOptions): Hunk[] | undefined;
+
+    /**
+     * Compare two strings line by line and format the result as a unified diff, like `diff -u`.
+     *
+     * @returns The patch, `""` if the strings are equal, or `undefined` if there are more than `maxEditLength` edits
+     *
+     * @example
+     * ```ts
+     * Bun.diff.createPatch("a\nb\n", "a\nc\n", { oldFileName: "file.txt" });
+     * // --- file.txt
+     * // +++ file.txt
+     * // @@ -1,2 +1,2 @@
+     * //  a
+     * // -b
+     * // +c
+     * ```
+     */
+    function createPatch(
+      oldText: string,
+      newText: string,
+      options?: PatchOptions & { maxEditLength?: undefined },
+    ): string;
+    function createPatch(oldText: string, newText: string, options?: PatchOptions): string | undefined;
+
+    /**
+     * Parse a unified diff, as written by `diff -u`, `git diff`, `git format-patch`, `svn diff` or `hg diff`.
+     *
+     * @returns One entry for each file
+     * @throws SyntaxError if a hunk or a file header is malformed
+     */
+    function parsePatch(patch: string): FilePatch[];
+
+    /**
+     * Apply a patch for one file to `source`.
+     *
+     * The lines that a hunk keeps and removes have to match exactly. If they don't match at
+     * `oldStart`, Bun uses the nearest line where they do, within a limit on the steps of that search.
+     * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
+     * is converted first.
+     *
+     * @param patch A unified diff, a file from {@link parsePatch}, or hunks
+     * @returns The patched text
+     * @throws Error with the code `ERR_PATCH_DOES_NOT_APPLY` if a hunk does not match
+     * @throws SyntaxError if `patch` is not a unified diff, or is malformed
+     * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
+     */
+    function applyPatch(
+      source: string,
+      patch: string | Pick<FilePatch, "hunks" | "isBinary"> | Pick<Hunk, "oldStart" | "lines">[],
+    ): string;
+  }
+
   namespace unsafe {
     /**
      * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
@@ -6306,7 +6539,7 @@ declare module "bun" {
     /**
      * Finalize the hash
      *
-     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time. It must hold at least {@link byteLength} bytes. `shake128` and `shake256` fill all of it.
      */
     digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
 
@@ -9107,7 +9340,7 @@ declare module "bun" {
      * - **Windows headless/CI:** registration fails if the current user's SID can't be
      *   resolved (typical under service accounts). Run as a regular user or create the
      *   task manually with `schtasks /create /ru SYSTEM`.
-     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     * - **macOS:** stdout/stderr are written to `$(getconf DARWIN_USER_TEMP_DIR)bun.cron.<title>.{stdout,stderr}.log`.
      *
      * ### Idempotency & removal
      *
@@ -9115,7 +9348,8 @@ declare module "bun" {
      * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
      * different users can register jobs with the same title independently.
      *
-     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param path Path to the module to run, resolved relative to the calling file. It can also be a
+     *   `file://` URL, as a string (what `import.meta.resolve()` returns) or a `URL`.
      * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
      * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
      *   used directly in crontab markers, launchd service labels, and schtasks task names.
@@ -9137,7 +9371,7 @@ declare module "bun" {
      * @see {@link Bun.cron.remove} to unregister.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    (path: string | URL, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *
@@ -9770,15 +10004,15 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
-     *   path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a path or
+     *   `Bun.file()` input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
-     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
-     *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
-     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
-     *   before its last row, or inside the data of the `IDAT` chunk that holds
-     *   it, rejects.
+     *   A JPEG with stray bytes, a missing end marker or truncated scan data
+     *   usually does not reject. If it is Huffman-coded, blocks with no data
+     *   come back flat grey, but for some color at their edges. A JPEG with
+     *   more than 100 scans rejects. A PNG with a wrong CRC or Adler-32 does
+     *   not reject: Bun verifies neither. A PNG that ends before its last row,
+     *   or inside the data of the `IDAT` chunk that holds it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
      *   that its decode or encode needs.
@@ -9862,9 +10096,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG and WebP via
-   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
-   * and rotate are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships its own JPEG, PNG and
+   * WebP codecs; resize and rotate are SIMD kernels — no native module
+   * install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
@@ -10702,7 +10936,9 @@ declare module "bun" {
      *
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
-     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz). If it was gzipped more
+     *     than once, `files()` and `extract()` reject once the inner layers decompress to more than 1,032 times
+     *     its size. Up to 64 MiB are always read.
      * @param options - Archive options, including compression settings
      *
      * @example

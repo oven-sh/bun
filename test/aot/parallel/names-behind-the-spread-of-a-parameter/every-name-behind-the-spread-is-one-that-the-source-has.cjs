@@ -1,0 +1,3 @@
+function reducer(state, action) { switch (action.type) { case "add": return { ...state, items: [...state.items, action.item], count: state.count + 1 }; case "clear": return { ...state, items: [], count: 0 }; case "rename": return { ...state, name: action.name }; default: return state; } }
+function run(n) { let state = { name: "s", items: [], count: 0 }, total = 0; const actions = [{ type: "add", item: 1 }, { type: "add", item: 2 }, { type: "rename", name: "t" }, { type: "clear" }, { type: "noop" }]; for (let i = 0; i < n; i++) { state = reducer(state, actions[i % 5]); total += state.count + state.items.length; } return total; }
+console.log(run((+process.argv[2]) * 5));

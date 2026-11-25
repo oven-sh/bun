@@ -49,10 +49,10 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
 
     bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
+    JSC::ScriptExecutable* executable = stackFrame.executable();
     if (!isStrictFrame) {
-        if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
+        if (executable) {
+            isStrictFrame = executable->isInStrictContext();
         }
     }
 
@@ -62,7 +62,6 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
 #if ENABLE(AOT)
     if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction) {
-        JSC::AOT::ImageOfTraceFrameScope imageOfFrame(frame.compiledFrame());
         isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
     }
 #endif
@@ -89,6 +88,9 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
     m_sourceID = stackFrame.sourceID();
+#if ENABLE(AOT)
+    m_compiledModule = stackFrame.compiledModule();
+#endif
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
@@ -104,7 +106,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !stackFrame.codeBlock()) {
+    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !executable) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {
@@ -196,8 +198,15 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         if (!mySourceURL || mySourceURL->length() == 0) {
             sb.append("unknown"_s);
         } else {
-            sb.append(mySourceURL->getString(globalObject));
+            String url = mySourceURL->getString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+            if (m_compiledModule)
+                url = JSC::AOT::displayPathOf(m_compiledModule);
+            else if (Zig::hasExternalSourceMap() && url == Zig::externalSourceMapFileURL())
+                url = Zig::externalSourceMapDisplayPath();
+#endif
+            sb.append(url);
         }
 
         if (line && column) {

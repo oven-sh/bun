@@ -90,13 +90,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-bool isImportOfMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
+bool isMainModuleImport(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
 {
     void* bunVM = defaultGlobalObject(lexicalGlobalObject)->bunVM();
     return Bun__VM__shouldLookForServer(bunVM) && compiledModuleForPath(Bun__VM__entryRootKey(bunVM).toWTFString(BunString::ZeroCopy)) == module;
 }
 
-void runMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID entryPoint)
+void didEvaluateMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID entryPoint)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);

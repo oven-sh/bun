@@ -1,7 +1,6 @@
 use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::{platform_to_posix_in_place, relative_platform};
+use bun_paths::Path;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::declaration_imports::name_imported_files;
 
@@ -50,7 +49,7 @@ pub(crate) fn add_declaration_files(
 ) -> Result<(), OutsideRootDirectory> {
     // Without bundling, only the entry points are written.
     let has_javascript =
-        |source: &[u8]| is_bundled || output_files.iter().any(|file| file.src_path.text == source);
+        |source: &[u8]| is_bundled || output_files.iter().any(|file| &*file.src_path == source);
     let mut placed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for declaration in declarations {
         if !has_javascript(&declaration.source) {
@@ -77,24 +76,14 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = relative_platform::<Auto, false>(root_directory, source);
-    if leaves_its_directory(relative) {
+    let relative = Path::relative(root_directory, source).into_portable();
+    if bun_paths::climbs_out(&relative) {
         return None;
     }
     let (stem, extension) = DECLARATION_EXTENSIONS
         .iter()
         .find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
-    let mut path = [stem, extension].concat();
-    platform_to_posix_in_place::<u8>(&mut path);
-    Some(path)
-}
-
-fn leaves_its_directory(relative: &[u8]) -> bool {
-    match relative {
-        b".." => true,
-        [b'.', b'.', separator, ..] if bun_paths::is_sep_any(*separator) => true,
-        _ => bun_paths::is_absolute(relative),
-    }
+    Some([stem, extension].concat())
 }
 
 fn declaration_output_file(path: Vec<u8>, text: Vec<u8>) -> OutputFile {

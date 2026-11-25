@@ -7,17 +7,18 @@ export const tsconfig = JSON.stringify({
 
 const importsUndeclaredModule = /\bfrom "(?:bun|(?:bun|node):[^"]*)"|\b(?:import|require)\("(?:bun|(?:bun|node|http):[^"]*)"\)/;
 
-export async function runtimeUse(files: Record<string, string>, command = ["check", "--aot", "--no-pretty"], entryPoint = "main.ts", env: Record<string, string> = {}) {
+export async function runtimeUse(files: Record<string, string>, command = ["check", "--aot", "--no-pretty"], entryPoint = "main.ts", env: Record<string, string> = {}, inFolder?: (folder: string) => Promise<unknown>) {
   const hasUndeclaredModule = Object.values(files).some(text => importsUndeclaredModule.test(text));
   using dir = tempDir("aot-runtime-use", { "tsconfig.json": tsconfig, ...Object.fromEntries(Object.entries(files).map(([path, text]) => [path, hasUndeclaredModule && path.endsWith(".ts") ? "// @ts-nocheck\n" + text : text])) });
   const { stdout, stderr, exitCode } = await run([bunExe(), ...command, "--explain=trim", entryPoint], String(dir), { ...bunEnv, NO_COLOR: "1", ...env });
+  const answer = await inFolder?.(String(dir));
   const prefix = "aot: trim: ";
   const lines = stderr
     .split("\n")
     .filter(line => line.startsWith(prefix))
     .map(line => line.slice(prefix.length).replace(/^uses /, ""));
   const whyOpen = lines.filter(line => line.startsWith("blocked by ")).map(line => line.slice("blocked by ".length));
-  return { lines, whyOpen, stdout, stderr, exitCode };
+  return { lines, whyOpen, stdout, stderr, exitCode, answer };
 }
 
 export const declared = `declare const HTMLRewriter: any, Bun: any, process: any, console: any, require: any, module: any, Worker: any, addEventListener: any;\n`;

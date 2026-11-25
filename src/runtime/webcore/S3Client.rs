@@ -274,8 +274,8 @@ impl S3Client {
         let env_creds = crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
-                .as_mut()
                 .transpiler
+                .get()
                 .env_mut()
                 .get_s3_credentials(),
         );
@@ -405,16 +405,7 @@ impl S3Client {
             }
         };
         let options = opt_js(options.to_js());
-        // `Blob::new` heap-promotes and marks `ref_count = 1` so
-        // the JSS3File wrapper's `finalize` knows to free the blob.
-        let blob = crate::webcore::blob::Blob::new(self.construct_blob(global, path, options)?);
-        // `to_js` runs `calculate_estimated_byte_size()`
-        // before wrapping the heap Blob in a JSS3File so JSC sees the correct
-        // GC pressure. Route through `BlobExt::to_js` (the `&self` impl, which
-        // hands the heap pointer to the wrapper), same as `S3File::construct_internal_js`.
-        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
-        // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        Ok(self.construct_blob(global, path, options)?.into_js(global))
     }
 
     pub(crate) fn presign(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
@@ -711,8 +702,8 @@ impl S3Client {
         let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
-                .as_mut()
                 .transpiler
+                .get()
                 .env_mut()
                 .get_s3_credentials(),
         );

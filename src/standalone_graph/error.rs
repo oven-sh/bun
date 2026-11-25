@@ -20,16 +20,12 @@ pub enum Error {
     ImageMisaligned,
     #[error("Corrupted module graph: invalid compiled program record")]
     CorruptedCompiledProgram,
-    #[error("BUN_AOT_START_AT names no entry point of the executable")]
-    NoEntryPointToStartAt,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
     Http(#[from] bun_http::Error),
-    #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
     #[error(transparent)]
     Options(#[from] bun_options_types::Error),
 }
@@ -58,13 +54,9 @@ impl Error {
             }
             Self::ImageMisaligned => "ImageMisaligned",
             Self::CorruptedCompiledProgram => "CorruptedCompiledProgram",
-            Self::NoEntryPointToStartAt => {
-                "BUN_AOT_START_AT names no entry point of the executable"
-            }
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::Options(e) => e.name(),
         }
     }

@@ -1,0 +1,91 @@
+# import * as path from "node:path"; import { join } from "node:path"; keep = path;  import { parse } from "node:url"; import("node:url");  import { format } from "node:util", which a test may replace;  require("node:os").hostname("a");
+# Four public files in one program, each reached by written requests alone. Three of the roads hand out more than the flow follows, and each sends its own file out and no other:
+# m1: the namespace object is handed on . m2: a call of import answers with the namespace object . m3: the variable of an export may be replaced from outside. m4: a require is a value in the flow: it stays.
+# Since an import statement no longer sends its target out by itself, m1 and m2 hang on what the scan lists as handed out.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link variables modules mechanisms=all
+# CHECK-NOT: variable g0 proven
+# CHECK-NOT: variable g1 proven
+# CHECK-NOT: variable g2 proven
+# CHECK-NOT: module m1 value-stays-with-compiled-code
+# CHECK-NOT: module m2 value-stays-with-compiled-code
+# CHECK-NOT: module m3 value-stays-with-compiled-code
+# CHECK: module m4 value-stays-with-compiled-code
+
+layout L0 module=m1 fields=[{key="join" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m2 fields=[{key="parse" declared={type=anything} flags=[IsRequired]}]
+layout L2 module=m3 fields=[{key="format" declared={type=anything} flags=[IsRequired]}]
+layout L3 module=m4 fields=[{key="hostname" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="join" module=m1 declared={type=anything}
+variable g1 name="parse" module=m2 declared={type=anything}
+variable g2 name="format" module=m3 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m1 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1 syntheticExports=[{name="join" variable=g0 isKnownMember=true}]
+module m2 path="node:url" displayPath="node:url" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUrl body=f3 syntheticExports=[{name="parse" variable=g1 isKnownMember=true}]
+module m3 path="node:util" displayPath="node:util" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f5 syntheticExports=[{name="format" variable=g2 isKnownMember=true isReplaceable=true}]
+module m4 path="node:os" displayPath="node:os" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeOs body=f7
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="join"
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, -, v0 calleeName="parse"
+    v5 = GetModuleVariable variable=g2
+    v6 = Call v5, -, v0 calleeName="format"
+    v7 = ModuleNamespace module=m1
+    v8 = Builtin builtin=GlobalThis
+    PropSet v8, v7 key="keep" mode=Strict
+    v10 = ImportModule module=m2 referrer=m0
+    v11 = RequireModule module=m4 referrer=m0 specifier="node:os"
+    v12 = PropGet v11 key="hostname"
+    v13 = Call v12, v11, v0 calleeKey="hostname" calleeName="os.hostname"
+    v14 = Undefined
+    Return v14
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="join" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f4 name="parse" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m3 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f6 name="format" module=m3 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 module=m4 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f8 name="hostname" module=m4 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

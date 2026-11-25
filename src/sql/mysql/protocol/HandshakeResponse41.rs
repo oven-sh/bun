@@ -1,118 +1,93 @@
 // Client authentication response
 
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
-use super::new_writer::NewWriter;
+use super::packet_writer::PacketWriter;
 use crate::mysql::auth_method::AuthResponse;
 use crate::mysql::capabilities::{Capabilities, MariaDBCapabilities};
-use crate::shared::data::Data;
-use bun_collections::StringHashMap;
 
-bun_core::declare_scope!(MySQLConnection, hidden);
+const UTF8MB4_GENERAL_CI: u8 = 45;
 
-pub struct HandshakeResponse41<'a> {
-    pub capability_flags: Capabilities,
-    pub mariadb_capability_flags: MariaDBCapabilities,
-    pub max_packet_size: u32,        // default: 0xFFFFFF (16MB)
-    pub character_set: CharacterSet, // default: CharacterSet::default()
-    pub username: Data,
-    pub auth_response: AuthResponse<'a>,
-    pub database: Data,
-    pub auth_plugin_name: Data,
-    pub connect_attrs: StringHashMap<Box<[u8]>>, // default: empty
-    pub sequence_id: u8,
+const CONNECT_ATTRIBUTES: [&[u8]; 4] = [
+    b"_client_version",
+    bun_core::Global::package_json_version_with_revision.as_bytes(),
+    b"_client_name",
+    b"Bun",
+];
+
+/// https://mariadb.com/kb/en/connection/#handshake-response-packet
+fn start(
+    capability_flags: Capabilities,
+    mariadb_capability_flags: MariaDBCapabilities,
+    sequence_id: u8,
+    out: &mut Vec<u8>,
+) -> PacketWriter<'_> {
+    let mut packet = PacketWriter::start(out, sequence_id);
+    packet.int4(capability_flags.to_int());
+    packet.int4(0); // max packet size
+    packet.int1(UTF8MB4_GENERAL_CI);
+    // 23 bytes of filler, of which MariaDB reads the last 4.
+    packet.write(&[0u8; 19]);
+    packet.int4(mariadb_capability_flags.to_int());
+    packet
+}
+
+/// https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
+pub(crate) fn write_ssl_request(
+    capability_flags: Capabilities,
+    mariadb_capability_flags: MariaDBCapabilities,
+    out: &mut Vec<u8>,
+) {
+    start(capability_flags, mariadb_capability_flags, 1, out).end();
+}
+
+pub(crate) struct HandshakeResponse41<'a> {
+    pub(crate) capability_flags: Capabilities,
+    pub(crate) mariadb_capability_flags: MariaDBCapabilities,
+    pub(crate) username: &'a [u8],
+    pub(crate) auth_response: AuthResponse<'a>,
+    pub(crate) database: &'a [u8],
+    pub(crate) auth_plugin_name: &'a [u8],
+    pub(crate) sequence_id: u8,
 }
 
 impl HandshakeResponse41<'_> {
-    pub(crate) fn write_internal<Context: super::new_writer::WriterContext>(
-        &mut self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        let mut packet = writer.start(self.sequence_id)?;
-
-        self.capability_flags.CLIENT_CONNECT_ATTRS = self.connect_attrs.len() > 0;
-
-        // Write client capabilities flags (4 bytes)
-        let caps = self.capability_flags.to_int();
-        writer.int4(caps)?;
-        bun_core::scoped_log!(
-            MySQLConnection,
-            "Client capabilities: [{}] 0x{:08x} sequence_id: {}",
+    pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<(), AnyMySQLError> {
+        let mut packet = start(
             self.capability_flags,
-            caps,
-            self.sequence_id
+            self.mariadb_capability_flags,
+            self.sequence_id,
+            out,
         );
+        packet.write_z(self.username);
 
-        // Write max packet size (4 bytes)
-        writer.int4(self.max_packet_size)?;
-
-        // Write character set (1 byte)
-        writer.int1(self.character_set.to_int())?;
-
-        // 23 bytes of padding; the last 4 carry the MariaDB extended client
-        // capabilities (zero for MySQL servers, identical to plain filler).
-        // https://mariadb.com/kb/en/connection/#handshake-response-packet
-        writer.write(&[0u8; 19])?;
-        writer.int4(self.mariadb_capability_flags.to_int())?;
-
-        // Write username (null terminated)
-        writer.write_z(self.username.slice())?;
-
-        // Write auth response based on capabilities
-        let auth_response_len = self.auth_response.len();
-        if self.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
-            writer.write_length_encoded_int(auth_response_len as u64)?;
-            self.auth_response.write(writer)?;
-        } else if self.capability_flags.CLIENT_SECURE_CONNECTION {
-            writer.int1(u8::try_from(auth_response_len).map_err(|_| AnyMySQLError::Overflow)?)?;
-            self.auth_response.write(writer)?;
+        if self.capability_flags.CLIENT_SECURE_CONNECTION {
+            packet
+                .int1(u8::try_from(self.auth_response.len()).map_err(|_| AnyMySQLError::Overflow)?);
+            self.auth_response.write(&mut packet);
         } else {
-            self.auth_response.write(writer)?;
-            writer.int1(0)?;
+            self.auth_response.write(&mut packet);
+            packet.int1(0);
         }
 
-        // Write database name if requested
-        if self.capability_flags.CLIENT_CONNECT_WITH_DB && self.database.slice().len() > 0 {
-            writer.write_z(self.database.slice())?;
+        if self.capability_flags.CLIENT_CONNECT_WITH_DB {
+            packet.write_z(self.database);
         }
 
-        // Write auth plugin name if supported
         if self.capability_flags.CLIENT_PLUGIN_AUTH {
-            writer.write_z(self.auth_plugin_name.slice())?;
+            packet.write_z(self.auth_plugin_name);
         }
 
-        // Write connect attributes if enabled
-        if self.capability_flags.CLIENT_CONNECT_ATTRS {
-            let mut total_length: usize = 0;
-            for (key, value) in self.connect_attrs.iter() {
-                total_length += encode_length_int(key.len() as u64).len();
-                total_length += key.len();
-                total_length += encode_length_int(value.len() as u64).len();
-                total_length += value.len();
-            }
-
-            writer.write_length_encoded_int(total_length as u64)?;
-
-            for (key, value) in self.connect_attrs.iter() {
-                writer.write_length_encoded_string(key)?;
-                writer.write_length_encoded_string(value)?;
-            }
+        let attributes_length: usize = CONNECT_ATTRIBUTES
+            .iter()
+            .map(|text| encode_length_int(text.len() as u64).len() + text.len())
+            .sum();
+        packet.write_length_encoded_int(attributes_length as u64);
+        for text in CONNECT_ATTRIBUTES {
+            packet.write_length_encoded_string(text);
         }
 
-        if self.capability_flags.CLIENT_ZSTD_COMPRESSION_ALGORITHM {
-            // writer.write_int::<u8>(self.zstd_compression_algorithm)?;
-            debug_assert!(false, "zstd compression algorithm is not supported");
-        }
-
-        packet.end()?;
+        packet.end();
         Ok(())
-    }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &mut self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        self.write_internal(writer)
     }
 }

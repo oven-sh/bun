@@ -1,0 +1,908 @@
+#### require-again-after-throw/main.cjs
+const seen = [], errors = [];
+for (let i = 0; i < 3; i++) {
+  try { require("./thrower.cjs"); seen.push("returned"); } catch (error) { errors.push(error); seen.push(error.message); }
+}
+console.log("SEEN", JSON.stringify(seen), "runs", globalThis.runsOfThrower, "same error", errors[0] === errors[1]);
+#### require-again-after-throw/thrower.cjs
+globalThis.runsOfThrower = (globalThis.runsOfThrower ?? 0) + 1;
+exports.half = "set before the throw";
+throw new Error("boom " + globalThis.runsOfThrower);
+#### require-again-after-throw prints
+SEEN ["boom 1","boom 2","boom 3"] runs 3 same error false
+#### thrower-two-files-below/main.cjs
+const seen = [], errors = [];
+for (let i = 0; i < 3; i++) { try { require("./a.cjs"); seen.push("returned"); } catch (error) { errors.push(error); seen.push(error.message); } }
+console.log(JSON.stringify(seen), "runs", globalThis.runs, "same error", errors[0] === errors[1]);
+console.log(globalThis.a, globalThis.b);
+#### thrower-two-files-below/a.cjs
+globalThis.a = (globalThis.a ?? 0) + 1;
+module.exports = require("./b.cjs");
+#### thrower-two-files-below/b.cjs
+globalThis.b = (globalThis.b ?? 0) + 1;
+module.exports = require("./t.cjs");
+#### thrower-two-files-below/t.cjs
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+exports.half = "run " + globalThis.runs;
+throw new Error("boom " + globalThis.runs);
+#### thrower-two-files-below prints
+["boom 1","boom 2","boom 3"] runs 3 same error false
+3 3
+#### thrower-required-back/main.cjs
+const seen = [], errors = [];
+for (let i = 0; i < 3; i++) { try { require("./t.cjs"); seen.push("returned"); } catch (error) { errors.push(error); seen.push(error.message); } }
+console.log(JSON.stringify(seen), "runs", globalThis.runs, "same error", errors[0] === errors[1]);
+console.log("helper", globalThis.helper, JSON.stringify(globalThis.sawOfThrower));
+#### thrower-required-back/helper.cjs
+globalThis.helper = (globalThis.helper ?? 0) + 1;
+(globalThis.sawOfThrower ??= []).push(require("./t.cjs").early);
+#### thrower-required-back/t.cjs
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+exports.early = globalThis.runs;
+require("./helper.cjs");
+throw new Error("boom " + globalThis.runs);
+#### thrower-required-back prints
+["boom 1","boom 2","boom 3"] runs 3 same error false
+helper 1 [1]
+#### module-parent-of-each-run/main.cjs
+for (let i = 0; i < 2; i++) { try { require("./t.cjs"); } catch {} }
+try { require("./other.cjs"); } catch {}
+globalThis.succeed = true;
+require("./t.cjs");
+console.log(globalThis.parents.map(p => p && require("node:path").basename(p.filename)).join(), module.children.map(c => require("node:path").basename(c.filename)).join());
+#### module-parent-of-each-run/other.cjs
+require("./t.cjs");
+#### module-parent-of-each-run/t.cjs
+(globalThis.parents ??= []).push(module.parent);
+if (!globalThis.succeed) throw new Error("boom");
+#### module-parent-of-each-run prints
+main.cjs,main.cjs,other.cjs,main.cjs t.cjs
+#### require-skipped-by-if/main.cjs
+if (process.env.NEVER_SET_BY_ANYBODY) require("./m.cjs");
+function load() { try { return require("./m.cjs"); } catch (e) { console.log("caught " + e.message); return null; } }
+setTimeout(() => {
+  const first = load(), m = load();
+  console.log("first " + first);
+  console.log("runs " + globalThis.runs + " value " + (m && m.value) + " bump " + (m && m.bump && m.bump()) + " " + globalThis.trail);
+}, 1);
+#### require-skipped-by-if/m.cjs
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+globalThis.trail = (globalThis.trail ?? "") + "[top of m, run " + globalThis.runs + "]";
+let inner = 0;
+exports.bump = function () { return ++inner; };
+if (globalThis.runs < (globalThis.failures ?? 1) + 1) throw new Error("boom " + globalThis.runs);
+exports.value = "ok" + globalThis.runs;
+globalThis.trail += "[end of m, run " + globalThis.runs + "]";
+#### require-skipped-by-if prints
+caught boom 1
+first null
+runs 2 value ok2 bump 1 [top of m, run 1][top of m, run 2][end of m, run 2]
+#### require-of-one-of-two-names/main.cjs
+const chosen = process.env.NEVER_SET_BY_ANYBODY ? require("./m.cjs") : require("./other.cjs");
+function load() { try { return require("./m.cjs"); } catch (e) { console.log("caught " + e.message); return null; } }
+const first = load(), m = load();
+console.log("first " + first + " chosen " + chosen.name);
+console.log("runs " + globalThis.runs + " value " + (m && m.value) + " bump " + (m && m.bump && m.bump()) + " " + globalThis.trail);
+#### require-of-one-of-two-names/m.cjs
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+globalThis.trail = (globalThis.trail ?? "") + "[top of m, run " + globalThis.runs + "]";
+let inner = 0;
+exports.bump = function () { return ++inner; };
+if (globalThis.runs < (globalThis.failures ?? 1) + 1) throw new Error("boom " + globalThis.runs);
+exports.value = "ok" + globalThis.runs;
+globalThis.trail += "[end of m, run " + globalThis.runs + "]";
+#### require-of-one-of-two-names/other.cjs
+exports.name = "other";
+#### require-of-one-of-two-names prints
+caught boom 1
+first null chosen other
+runs 2 value ok2 bump 1 [top of m, run 1][top of m, run 2][end of m, run 2]
+#### import-call-of-removed-reexport/main.mjs
+import { C } from "./p/index.mjs";
+console.log("start", C);
+const m = await import("./p/b.mjs");
+console.log(typeof m.K1);
+#### import-call-of-removed-reexport/p/b.mjs
+export { K1 } from "./c.cjs";
+#### import-call-of-removed-reexport/p/c.cjs
+exports.K1 = class {};
+#### import-call-of-removed-reexport/p/c2.mjs
+export const C = 1;
+#### import-call-of-removed-reexport/p/index.mjs
+export * from "./c2.mjs";
+export * from "./b.mjs";
+#### import-call-of-removed-reexport/p/package.json
+{ "name": "p", "sideEffects": false }
+#### import-call-of-removed-reexport alone
+#### import-call-of-removed-reexport prints
+start 1
+function
+#### require-of-removed-reexport/main.mjs
+import { C } from "./p/index.mjs";
+console.log("start", C);
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+function get() { return require("./p/b.mjs"); }
+console.log(typeof get().K1);
+#### require-of-removed-reexport/p/b.mjs
+export { K1 } from "./c.cjs";
+#### require-of-removed-reexport/p/c.cjs
+exports.K1 = class {};
+#### require-of-removed-reexport/p/c2.mjs
+export const C = 1;
+#### require-of-removed-reexport/p/index.mjs
+export * from "./c2.mjs";
+export * from "./b.mjs";
+#### require-of-removed-reexport/p/package.json
+{ "name": "p", "sideEffects": false }
+#### require-of-removed-reexport alone
+#### require-of-removed-reexport prints
+start 1
+function
+#### resolve-exports-key-from-list/main.mjs
+const say = name => { try { console.log(import.meta.resolve(name).split("/").slice(-3).join("/")); } catch (error) { console.log("throws", error.name, error.code); } };
+say(["sub/a"][0]);
+#### resolve-exports-key-from-list/b.mjs
+export const v = "b";
+#### resolve-exports-key-from-list/node_modules/sub/index.js
+exports.which = "index";
+#### resolve-exports-key-from-list/node_modules/sub/lib/a.js
+exports.which = "a";
+#### resolve-exports-key-from-list/node_modules/sub/package.json
+{ "name": "sub", "version": "1.0.0", "exports": { ".": "./index.js", "./a": "./lib/a.js" } }
+#### resolve-exports-key-from-list prints
+sub/lib/a.js
+#### resolve-exports-key-joined/main.mjs
+const say = name => { try { console.log(import.meta.resolve(name).split("/").slice(-3).join("/")); } catch (error) { console.log("throws", error.name, error.code); } };
+say(["sub","a"].join(process.argv.length > 99 ? "-" : "/"));
+#### resolve-exports-key-joined/b.mjs
+export const v = "b";
+#### resolve-exports-key-joined/node_modules/sub/index.js
+exports.which = "index";
+#### resolve-exports-key-joined/node_modules/sub/lib/a.js
+exports.which = "a";
+#### resolve-exports-key-joined/node_modules/sub/package.json
+{ "name": "sub", "version": "1.0.0", "exports": { ".": "./index.js", "./a": "./lib/a.js" } }
+#### resolve-exports-key-joined prints
+sub/lib/a.js
+#### require-replaced-by-made-one/entry.cjs
+const { createRequire } = require("node:module");
+require = createRequire(__filename);
+let binding = null;
+const errors = [];
+function load() {
+  try { return require("./missing.linux-x64-gnu.node"); } catch (error) { errors.push(error); }
+  try { return require("dep"); } catch (error) { errors.push(error); }
+}
+binding = load();
+if (!binding) throw new Error("Cannot find native binding", { cause: errors });
+console.log(binding.dep, errors.length);
+#### require-replaced-by-made-one/loader.cjs
+const { createRequire } = require("node:module");
+require = createRequire(__filename);
+exports.loaded = require("./other.cjs").other + ", " + require("dep").dep;
+#### require-replaced-by-made-one/node_modules/dep/index.js
+module.exports = { dep: "the package" };
+#### require-replaced-by-made-one/node_modules/dep/package.json
+{ "name": "dep", "version": "1.0.0", "main": "index.js" }
+#### require-replaced-by-made-one/other.cjs
+exports.other = "the other file";
+#### require-replaced-by-made-one/sub/other.cjs
+exports.other = "the file of the folder below";
+#### require-replaced-by-made-one prints
+the package 1
+#### driver-loaded-by-spelled-name/main.mjs
+import byThis from "by-this";
+    import byStatic from "by-static";
+    console.log(byThis.connect(), byThis.doors(), byThis.absent());
+    console.log(byStatic.connect({}), await byStatic.doors());
+#### driver-loaded-by-spelled-name/node_modules/by-static/index.js
+"use strict";
+    const tools_1 = require("./tools");
+    exports.connect = options => (options.driver ?? tools_1.Tools.load("for-static")).which;
+    exports.doors = async () => (await tools_1.Tools.bring("two-doors")).which;
+#### driver-loaded-by-spelled-name/node_modules/by-static/package.json
+{ "name": "by-static", "version": "1.0.0", "main": "index.js" }
+#### driver-loaded-by-spelled-name/node_modules/by-static/tools.js
+"use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.Tools = void 0;
+    class Tools {
+      static load(name) { return require(name); }
+      static async bring(name) { return await import(name); }
+    }
+    exports.Tools = Tools;
+#### driver-loaded-by-spelled-name/node_modules/by-this/index.js
+class Manager {
+      _load(name) { try { return require(name); } catch (error) { throw new Error("Please install " + name + " package manually"); } }
+    }
+    class Special extends Manager { constructor() { super(); this.lib = this._load("for-this"); } }
+    class Absent extends Manager { constructor() { super(); this.lib = this._load("never-installed"); } }
+    class Doors extends Manager { constructor() { super(); this.lib = this._load("two-doors"); } }
+    exports.connect = () => new Special().lib.which;
+    exports.doors = () => new Doors().lib.which;
+    exports.absent = () => { try { return new Absent().lib.which; } catch (error) { return error.message; } };
+#### driver-loaded-by-spelled-name/node_modules/by-this/package.json
+{ "name": "by-this", "version": "1.0.0", "main": "index.js" }
+#### driver-loaded-by-spelled-name/node_modules/for-static/index.js
+exports.which = "for-static";
+#### driver-loaded-by-spelled-name/node_modules/for-static/package.json
+{ "name": "for-static", "version": "1.0.0", "main": "index.js" }
+#### driver-loaded-by-spelled-name/node_modules/for-this/index.js
+exports.which = "for-this";
+#### driver-loaded-by-spelled-name/node_modules/for-this/package.json
+{ "name": "for-this", "version": "1.0.0", "main": "index.js" }
+#### driver-loaded-by-spelled-name/node_modules/two-doors/door.cjs
+exports.which = "required";
+#### driver-loaded-by-spelled-name/node_modules/two-doors/door.mjs
+export const which = "imported";
+#### driver-loaded-by-spelled-name/node_modules/two-doors/package.json
+{ "name": "two-doors", "version": "1.0.0", "exports": { ".": { "import": "./door.mjs", "require": "./door.cjs" } } }
+#### driver-loaded-by-spelled-name/package.json
+{ "name": "drivers" }
+#### driver-loaded-by-spelled-name alone
+#### driver-loaded-by-spelled-name prints
+for-this required Please install never-installed package manually
+for-static imported
+#### resolve-of-external-package/main.js
+const { basename } = require("node:path");
+    const probe = ask => { try { return basename(ask()); } catch (error) { return error.constructor.name + " " + error.code; } };
+    console.log("there", probe(() => require.resolve("two")));
+    console.log("there, as a URL", probe(() => import.meta.resolve("two")));
+    console.log("absent", probe(() => require.resolve("three")));
+#### resolve-of-external-package/node_modules/two/index.js
+module.exports = 2;
+#### resolve-of-external-package/node_modules/two/package.json
+{ "name": "two", "version": "1.0.0", "main": "index.js" }
+#### resolve-of-external-package/package.json
+{ "name": "probe" }
+#### resolve-of-external-package flags --external two --external three
+#### resolve-of-external-package prints
+there index.js
+there, as a URL index.js
+absent ResolveMessage MODULE_NOT_FOUND
+#### broken-files-behind-computed-name/main.js
+// Plain Bun says what is wrong with a broken file in the words of the loader that reads it at run time ("BuildMessage: Unexpected ;", "JSON Parse error: Unrecognized token '/'"): an earlier compiler embedded the raw text to say the same. An executable has no such loader now: a program that does not parse throws what the build's parser said; a file of data that does not parse throws an error of plain Bun's class (SyntaxError for JSON, BuildMessage for the others) with a sentence of the build's own: nothing of the file is in the executable.
+const tried = async (label, load) => {
+  try {
+    console.log(label, JSON.stringify((await load()).default));
+  } catch (error) {
+    const message = String(error.message).split("\n")[0];
+    console.log(label, "threw", error.constructor.name + ":", message.replace(/'[^']*[\\/]([a-z]+\.js)'/, "'$1'"));
+  }
+};
+const unknown = process.argv[2] ?? "node:path";
+await tried("a name nobody knows", async () => ({ default: typeof (await import(unknown)).join }));
+await tried("required", async () => ({ default: typeof require(unknown).join }));
+for (const name of ["good.json", "good.js", "commented.json", "broken.js", "broken.ts", "broken.toml", "lacks.js", "hands-on.js", "torn.js"]) {
+  await tried(name, () => import("./data/" + name));
+  await tried(name + " once more", () => import("./data/" + name));
+  await tried(name + " required", async () => ({ default: typeof require("./data/" + name) }));
+}
+for (const name of ["base"]) {
+  await tried("of a package", () => import("pkg/configs/" + name));
+  await tried("of a package, required", async () => ({ default: typeof require("pkg/configs/" + name) }));
+}
+#### broken-files-behind-computed-name/data/broken.js
+const b = ;
+#### broken-files-behind-computed-name/data/broken.toml
+a = [
+#### broken-files-behind-computed-name/data/broken.ts
+const c: = 1;
+#### broken-files-behind-computed-name/data/commented.json
+{
+  // a comment
+  "a": 2
+}
+#### broken-files-behind-computed-name/data/good.js
+export default "good";
+export const twice = 1;
+#### broken-files-behind-computed-name/data/good.json
+{ "a": 3 }
+#### broken-files-behind-computed-name/data/hands-on.js
+export { nope } from "./good.js";
+#### broken-files-behind-computed-name/data/lacks.js
+import { nope } from "./good.js";
+console.log(nope);
+#### broken-files-behind-computed-name/data/other.js
+export const twice = 2;
+#### broken-files-behind-computed-name/data/stars.js
+export * from "./good.js";
+export * from "./other.js";
+#### broken-files-behind-computed-name/data/torn.js
+import { twice } from "./stars.js";
+console.log(twice);
+#### broken-files-behind-computed-name/node_modules/pkg/configs/base.json
+{
+  // a comment
+  "a": 1
+}
+#### broken-files-behind-computed-name/node_modules/pkg/fixtures/broken.js
+const a = ;
+#### broken-files-behind-computed-name/node_modules/pkg/index.js
+module.exports = { name: "pkg" };
+#### broken-files-behind-computed-name/node_modules/pkg/package.json
+{ "name": "pkg", "version": "1.0.0", "exports": { ".": "./index.js", "./configs/*": "./configs/*.json" } }
+#### broken-files-behind-computed-name/package.json
+{ "name": "p", "type": "module" }
+#### broken-files-behind-computed-name/spelled.js
+import data from "./data/commented.json";
+console.log(data);
+#### broken-files-behind-computed-name alone
+#### broken-files-behind-computed-name prints
+a name nobody knows "function"
+required "function"
+good.json {"a":3}
+good.json once more {"a":3}
+good.json required "object"
+good.js "good"
+good.js once more "good"
+good.js required "object"
+commented.json threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
+commented.json once more threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
+commented.json required threw SyntaxError: "broken-files-behind-computed-name/data/commented.json" could not be parsed as json
+broken.js threw SyntaxError: Expression expected. (1:11)
+broken.js once more threw SyntaxError: Expression expected. (1:11)
+broken.js required threw SyntaxError: Expression expected. (1:11)
+broken.ts threw SyntaxError: Type expected. (1:10)
+broken.ts once more threw SyntaxError: Type expected. (1:10)
+broken.ts required threw SyntaxError: Type expected. (1:10)
+broken.toml threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
+broken.toml once more threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
+broken.toml required threw BuildMessage: "broken-files-behind-computed-name/data/broken.toml" could not be parsed as toml
+lacks.js threw SyntaxError: Export named 'nope' not found in module 'good.js'.
+lacks.js once more threw SyntaxError: Export named 'nope' not found in module 'good.js'.
+lacks.js required threw SyntaxError: Export named 'nope' not found in module 'good.js'.
+hands-on.js threw SyntaxError: export 'nope' not found in 'good.js'
+hands-on.js once more threw SyntaxError: export 'nope' not found in 'good.js'
+hands-on.js required threw SyntaxError: export 'nope' not found in 'good.js'
+torn.js threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
+torn.js once more threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
+torn.js required threw SyntaxError: Export named 'twice' cannot be resolved due to ambiguous multiple bindings in module 'stars.js'.
+of a package threw SyntaxError: "broken-files-behind-computed-name/node_modules/pkg/configs/base.json" could not be parsed as json
+of a package, required threw SyntaxError: "broken-files-behind-computed-name/node_modules/pkg/configs/base.json" could not be parsed as json
+#### this-at-the-top-of-a-module/main.mjs
+// The language says `undefined` at the top of a module. `bun run` writes `exports` there in a file without ES module syntax, whatever its name, and `null` in a file with it: an object either way.
+console.log("entry alone", typeof this);
+await import("./alone.mjs");
+await import("./typed.mts");
+await import("./beside-import-meta.mjs");
+await import("./with-an-export.mjs");
+await import("./tested.mjs");
+await import("./in-an-arrow.mjs");
+await import("module-package/alone.js");
+console.log("by default", JSON.stringify((await import("module-package/through-this.cjs")).default));
+await import("plain-package/alone.js");
+await import("./names-exports.mjs");
+await import("./alone.cjs");
+#### this-at-the-top-of-a-module/alone.cjs
+console.log("commonjs by name", typeof this, this === exports);
+#### this-at-the-top-of-a-module/alone.mjs
+console.log("alone", typeof this);
+#### this-at-the-top-of-a-module/beside-import-meta.mjs
+console.log("beside import.meta", typeof import.meta.url, typeof this);
+#### this-at-the-top-of-a-module/in-an-arrow.mjs
+const own = () => typeof this; console.log("in an arrow", own());
+#### this-at-the-top-of-a-module/names-exports.mjs
+exports.a = 1; console.log("names exports", typeof this, this === exports);
+#### this-at-the-top-of-a-module/node_modules/module-package/alone.js
+console.log("a package of modules", typeof this);
+#### this-at-the-top-of-a-module/node_modules/module-package/package.json
+{"name":"module-package","type":"module"}
+#### this-at-the-top-of-a-module/node_modules/module-package/through-this.cjs
+this.length = 2; this[0] = "stored through this"; console.log("commonjs by name in a package of modules", typeof this);
+#### this-at-the-top-of-a-module/node_modules/plain-package/alone.js
+console.log("a package that says nothing", typeof this);
+#### this-at-the-top-of-a-module/node_modules/plain-package/package.json
+{"name":"plain-package"}
+#### this-at-the-top-of-a-module/tested.mjs
+console.log("tested", this ? "something" : "nothing", this === undefined, (function () { return typeof this; })());
+#### this-at-the-top-of-a-module/typed.mts
+console.log("typed", typeof this);
+#### this-at-the-top-of-a-module/with-an-export.mjs
+export {}; console.log("with an export", typeof this);
+#### this-at-the-top-of-a-module prints
+entry alone object
+alone object
+typed object
+beside import.meta string object
+with an export object
+tested something false object
+in an arrow object
+a package of modules object
+commonjs by name in a package of modules object
+by default {"0":"stored through this","length":2}
+a package that says nothing object
+names exports object true
+commonjs by name object true
+#### kind-of-a-file-behind-defines/main.js
+if (process.env.NODE_ENV !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("main " + typeOfThis() + " " + stored);
+import("./all.mjs").then(() => console.log(globalThis.kinds.sort().join("\n")));
+#### kind-of-a-file-behind-defines/all.mjs
+import "./module-00.js";
+import "./module-01.js";
+import "./module-02.js";
+import "./module-03.js";
+import "./module-04.js";
+import "./module-05.js";
+import "./module-06.js";
+import "./module-07.js";
+import "./module-08.js";
+import "./module-09.js";
+import "./module-10.js";
+import "./module-11.js";
+import "./module-12.js";
+import "./module-13.js";
+import "./module-14.js";
+import "./module-15.js";
+import "./module-16.js";
+import "./module-17.js";
+import "./module-18.js";
+import "./module-19.js";
+import "./module-20.js";
+import "./module-21.js";
+import "./module-22.js";
+import "./module-23.js";
+import "./module-24.js";
+import "./module-25.js";
+import "./module-26.js";
+import "./module-27.js";
+import "./module-28.js";
+import "./module-29.js";
+import "./module-30.js";
+import "./module-31.js";
+import "./module-32.js";
+import "./module-33.js";
+import "./module-34.js";
+import "./module-35.js";
+import "./module-36.js";
+import "./module-37.js";
+import "./module-38.js";
+import "./module-39.js";
+import "./script-00.js";
+import "./script-01.js";
+import "./script-02.js";
+import "./script-03.js";
+import "./script-04.js";
+import "./script-05.js";
+import "./script-06.js";
+import "./script-07.js";
+import "./script-08.js";
+import "./script-09.js";
+import "./script-10.js";
+import "./script-11.js";
+import "./script-12.js";
+import "./script-13.js";
+import "./script-14.js";
+import "./script-15.js";
+import "./script-16.js";
+import "./script-17.js";
+import "./script-18.js";
+import "./script-19.js";
+#### kind-of-a-file-behind-defines/module-00.js
+if (process.env.NODE_ENV !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-00 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-01.js
+if (process.env.NODE_ENV != "production") require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-01 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-02.js
+process.env.NODE_ENV === "production" || require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-02 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-03.js
+process.env.NODE_ENV !== "production" && require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-03 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-04.js
+const path = process.env.NODE_ENV === "production" ? null : require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-04 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-05.js
+const mode = process.env.NODE_ENV; if (mode !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-05 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-06.js
+function f() { if (process.env.NODE_ENV !== "production") { return require("node:path"); } } f();
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-06 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-07.js
+const f = () => process.env.NODE_ENV !== "production" && module.exports; f();
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-07 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-08.js
+if (typeof process.env.NODE_ENV !== "string") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-08 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-09.js
+if ("a" + process.env.NODE_ENV !== "aproduction") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-09 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-10.js
+process.env.NODE_ENV ?? require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-10 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-11.js
+if (process.env.NODE_ENV !== "production") { module.exports = 1; }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-11 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-12.js
+if (process.env.NODE_ENV !== "production") { exports.a = 1; }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-12 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-13.js
+if (process.env.NODE_ENV !== "production") { this.a = 1; }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-13 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-14.js
+if (process.env.NODE_ENV !== "production") { console.log(__dirname, __filename); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-14 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-15.js
+if (process.env.NODE_ENV !== "production") { var a = require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-15 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-16.js
+if (Math.random() > 2 && process.env.NODE_ENV !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-16 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-17.js
+if (OFF) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-17 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-18.js
+if (!ON) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-18 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-19.js
+OFF && module.exports;
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-19 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-20.js
+ON || module.exports;
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-20 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-21.js
+OFF ? exports.a = 1 : 0;
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-21 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-22.js
+if (OFF == 1) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-22 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-23.js
+if (typeof OFF === "undefined") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-23 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-24.js
+const a = OFF, b = a; if (b) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-24 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-25.js
+const a = OFF ? 1 : 2; if (a === 1) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-25 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-26.js
+function f() { const a = OFF; if (a) { require("node:path"); } } f();
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-26 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-27.js
+if (LEVEL - 3) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-27 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-28.js
+if (LEVEL > 4) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-28 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-29.js
+if (NOTHING != null) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-29 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-30.js
+if (ABSENT !== undefined) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-30 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-31.js
+if (NAME === "b") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-31 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-32.js
+if (settings.debug) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-32 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-33.js
+if (process.platform !== "plan9") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-33 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-34.js
+if (OFF && process.arch === "x64") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-34 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-35.js
+if (process.arch === "x64" && OFF) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-35 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-36.js
+if (!CONFIG) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-36 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-37.js
+CONFIG || require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-37 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-38.js
+CONFIG ?? require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-38 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/module-39.js
+if (!LIST) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("module-39 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-00.js
+if (process.env.NODE_ENV === "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-00 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-01.js
+if (process.env.NODE_ENV !== "production") { require("node:path"); } else { require("node:fs"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-01 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-02.js
+if (process.env?.NODE_ENV !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-02 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-03.js
+if (globalThis.process.env.NODE_ENV !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-03 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-04.js
+let mode = process.env.NODE_ENV; if (mode !== "production") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-04 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-05.js
+f(); const mode = process.env.NODE_ENV; if (mode !== "production") { require("node:path"); } function f() {}
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-05 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-06.js
+function f(process) { if (process.env.NODE_ENV !== "production") { require("node:path"); } } f({ env: {} });
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-06 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-07.js
+if (ON) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-07 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-08.js
+var OFF; if (OFF) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-08 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-09.js
+if (globalThis.OFF) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-09 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-10.js
+ABSENT ?? require("node:path");
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-10 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-11.js
+if (typeof settings === "undefined") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-11 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-12.js
+if (typeof RUNTIME === "undefined") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-12 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-13.js
+if (!RUNTIME) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-13 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-14.js
+if (process.env.BUN_ENV === "nowhere") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-14 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-15.js
+if (process.arch === "nothing") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-15 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-16.js
+if (!process.versions.bun) { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-16 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-17.js
+if (typeof Bun === "undefined") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-17 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-18.js
+if (OFF || process.arch === "nothing") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-18 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines/script-19.js
+if (ON && process.arch === "nothing") { require("node:path"); }
+function typeOfThis() { return typeof this; }
+let stored;
+try { undeclared = 1; stored = "stored"; delete globalThis.undeclared; } catch (error) { stored = error.name; }
+(globalThis.kinds ??= []).push("script-19 " + typeOfThis() + " " + stored);
+#### kind-of-a-file-behind-defines flags --define=process.env.NODE_ENV="production" --define=OFF=false --define=ON=true --define=LEVEL=3 --define=NOTHING=null --define=ABSENT=undefined --define=NAME="a" --define=CONFIG={"a":1} --define=LIST=[1,0] --define=settings.debug=false --define=process.platform="plan9" --define=RUNTIME=Bun
+#### kind-of-a-file-behind-defines prints
+main undefined ReferenceError
+module-00 undefined ReferenceError
+module-01 undefined ReferenceError
+module-02 undefined ReferenceError
+module-03 undefined ReferenceError
+module-04 undefined ReferenceError
+module-05 undefined ReferenceError
+module-06 undefined ReferenceError
+module-07 undefined ReferenceError
+module-08 undefined ReferenceError
+module-09 undefined ReferenceError
+module-10 undefined ReferenceError
+module-11 undefined ReferenceError
+module-12 undefined ReferenceError
+module-13 undefined ReferenceError
+module-14 undefined ReferenceError
+module-15 undefined ReferenceError
+module-16 undefined ReferenceError
+module-17 undefined ReferenceError
+module-18 undefined ReferenceError
+module-19 undefined ReferenceError
+module-20 undefined ReferenceError
+module-21 undefined ReferenceError
+module-22 undefined ReferenceError
+module-23 undefined ReferenceError
+module-24 undefined ReferenceError
+module-25 undefined ReferenceError
+module-26 undefined ReferenceError
+module-27 undefined ReferenceError
+module-28 undefined ReferenceError
+module-29 undefined ReferenceError
+module-30 undefined ReferenceError
+module-31 undefined ReferenceError
+module-32 undefined ReferenceError
+module-33 undefined ReferenceError
+module-34 undefined ReferenceError
+module-35 undefined ReferenceError
+module-36 undefined ReferenceError
+module-37 undefined ReferenceError
+module-38 undefined ReferenceError
+module-39 undefined ReferenceError
+script-00 object stored
+script-01 object stored
+script-02 object stored
+script-03 object stored
+script-04 object stored
+script-05 object stored
+script-06 object stored
+script-07 object stored
+script-08 object stored
+script-09 object stored
+script-10 object stored
+script-11 object stored
+script-12 object stored
+script-13 object stored
+script-14 object stored
+script-15 object stored
+script-16 object stored
+script-17 object stored
+script-18 object stored
+script-19 object stored

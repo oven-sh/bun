@@ -1,0 +1,17 @@
+# f2 = areaOfSquare
+# -- source: call-with-an-object-literal.ts
+# function areaOf(size: { width: number; height: number }): number {
+#   return size.width * size.height;
+# }
+# function areaOfSquare(side: number): number {
+#   return areaOf({ width: side, height: side }) + 1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = areaOfSquare(+input);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 2, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:11 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 11

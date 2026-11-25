@@ -228,7 +228,7 @@ mod tests {
         let mut types = TypeTable::new();
         let key = operand_kind_type(&mut types, OperandKind::PropertyKey).unwrap();
         let expected = Type::primitives(Primitives::STRING | Primitives::SYMBOL);
-        assert_eq!(*types.get(key), expected);
+        assert_eq!(types.get(key), expected);
     }
 
     #[test]

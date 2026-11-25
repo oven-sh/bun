@@ -1,0 +1,26 @@
+# -- source: main.js
+# function flagged(x, y) { if (typeof x !== "number") return x; const h = x * 0.5; const t = y === 3; let s = 0; for (let i = 0; i < 9; i++) s = s + (h & t); return s; }
+# function either(x, y) { if (typeof x !== "number") return x; const h = x * 0.5; let t = y === 3; if (y === 4) t = 5; let s = 0; for (let i = 0; i < 9; i++) s = s + (t | h); return s; }
+# globalThis.flagged = flagged; globalThis.either = either;
+# for (let k = 0; k < 3; k++) print(flagged(7 + k, 3 + k), either(7 + k, 3 + k));
+# -- end of source
+# In a loop the conversion of a number under a bit operator is an operation of its own, and the operator is built anew on what it gives. The other operand may be a boolean, which counts as 0 or 1:
+# by that the form Numbers is chosen, and its code takes a number, undefined or null. So the boolean is converted in front as well. The walk stopped the build here without a word.
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers
+# CHECK-LABEL: code f1:Body
+# CHECK: = ToInt32
+# CHECK: = ToNumber {{*}}form=Booleans
+# CHECK: = BitAnd {{*}}form=Integers
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: = BitAnd {{*}}form=Integers
+# a boolean or an integer, on the left
+# RUN(EITHER): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers
+# EITHER-LABEL: code f2:Body
+# EITHER: = ToNumber {{*}}form=NullableNumber
+# EITHER: = BitOr {{*}}form=Numbers
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH-LABEL: code f2:Body
+# BOTH: = BitOr {{*}}form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

@@ -376,21 +376,13 @@ fn host_uses_nix_store_interpreter() -> bool {
             // 4 KiB is enough: PT_INTERP on a glibc-linked binary points into
             // the first page. Read just the leading bytes to avoid slurping
             // the whole bun binary.
-            use bun_sys::FdExt as _;
             let mut buf = [0u8; 4096];
-            let fd = match bun_sys::open(bun_core::zstr!("/proc/self/exe"), bun_sys::O::RDONLY, 0) {
-                Ok(fd) => fd,
-                Err(_) => return false,
+            let exe = bun_core::zstr!("/proc/self/exe");
+            let Ok(n) = bun_sys::File::open(exe, bun_sys::O::RDONLY, 0)
+                .and_then(|file| file.read(&mut buf))
+            else {
+                return false;
             };
-            // close moved up; fd not needed after read (was `defer fd.close()`).
-            let n = match bun_sys::read(fd, &mut buf) {
-                Ok(n) => n,
-                Err(_) => {
-                    fd.close();
-                    return false;
-                }
-            };
-            fd.close();
             let data = &buf[..n];
             if validate_elf64_le(data).is_err() {
                 return false;

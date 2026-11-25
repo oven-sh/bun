@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![warn(unused_must_use)]
 
 pub mod ansi_renderer;

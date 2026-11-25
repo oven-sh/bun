@@ -1,0 +1,23 @@
+# an error that a constructor of the engine makes for another new.target leaves out the frames down to the function that is new.target. `Old` is called, not constructed, and Reflect.construct, by its
+# name, is its last call: its frame stays while Reflect.construct constructs. The fast version calls the built-in by its row and returns. The slow version calls the value: it left by a tail call, its frame
+# was gone, every frame was left out and the error had no stack at all. A body written straight has kept its frame since it was found there: a callee that names a built-in enters native code, and who
+# enters native code stays. The walk holds the same.
+# f1 = Old
+# -- source: a-slow-version-stays-while-a-built-in-that-it-names-runs-as-its-last-call.ts
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# function Old(tag: Tag, text: string): Error { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return Reflect.construct(Error, [text + work], Old); }
+# Old.prototype = Object.create(Error.prototype);
+# const real = new Tag(), liar = unseen({ n: 1, m: 2 });
+# const first = Old(real, "a"), second = Old(liar, "b");
+# print(typeof first.stack, typeof second.stack, first instanceof Old, second instanceof Old, first.message + second.message);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1:SlowBody mechanisms=all
+# CHECK-LABEL: code f1:SlowBody
+# CHECK: [[made]]: {{*}} = Call {{*}}calleeName="Reflect.construct"
+# CHECK: Return [[made]]
+# RUN(STAYS): walk f1:SlowBody mechanisms=all
+# STAYS-NOT: ReturnCall
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: string string true true a6b6

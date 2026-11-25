@@ -5,7 +5,6 @@ import * as Constants from "./Constants";
 import * as Elements from "./Elements";
 import * as Imports from "./Imports";
 import * as LeftAlone from "./LeftAlone";
-import * as Macros from "./Macros";
 import * as Statements from "./Statements";
 
 type Component = (props: { a: number }) => unknown;
@@ -20,7 +19,6 @@ const files: Record<string, Record<string, unknown>> = {
   Statements,
   Imports,
   Elements,
-  Macros,
   LeftAlone,
   main: { MainOfEntry },
 };

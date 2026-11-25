@@ -5,8 +5,6 @@
 //! For in-depth details on the fields, most of these are documented
 //! inside of `js_parser`
 
-use core::mem::MaybeUninit;
-
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
@@ -133,7 +131,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         path: &'static [u8],
         identifiers_to_import: [&'static [u8]; N],
     ) -> Result<[Expr; N], OOM> {
-        let mut out: [MaybeUninit<Expr>; N] = [const { MaybeUninit::uninit() }; N];
+        let mut out = [Expr::EMPTY; N];
 
         let record = self.add_import_record(path, ImportKind::Stmt)?;
 
@@ -164,10 +162,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         ..Default::default()
                     }));
             }
-            out_ref.write(self.new_expr(E::ImportIdentifier {
+            *out_ref = self.new_expr(E::ImportIdentifier {
                 ref_,
                 ..Default::default()
-            }));
+            });
             *clause = ClauseItem {
                 name: LocRef {
                     loc: Loc::EMPTY,
@@ -187,10 +185,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         })?;
 
-        // SAFETY: every element of `out` was written in the loop above (loop
-        // runs exactly N times). `Expr` is `Copy`, so by-value `assume_init`
-        // per element is equivalent to `MaybeUninit::array_assume_init`.
-        Ok(out.map(|e| unsafe { e.assume_init() }))
+        Ok(out)
     }
 
     pub(crate) fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
@@ -412,7 +407,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             ),
                             Expr::init(
                                 E::Object {
-                                    properties: G::PropertyList::move_from_list(export_props),
+                                    properties: bun_alloc::AstAlloc::vec_from_iter(export_props),
                                     ..Default::default()
                                 },
                                 Loc::EMPTY,
@@ -490,9 +485,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
 
         parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts[1].import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
-            core::mem::take(&mut self.import_records_for_current_part),
-        );
+        parts[1].import_record_indices = bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
+            &mut self.import_records_for_current_part,
+        ));
 
         Ok(crate::BundledAst {
             parts,
@@ -520,10 +515,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             top_level_await_keyword: Range::NONE,
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
+            directives: bun_ast::StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
-            css: None,
             url_for_css: b"",
-            require_ref: Ref::NONE,
             tla_check: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: u32::MAX,

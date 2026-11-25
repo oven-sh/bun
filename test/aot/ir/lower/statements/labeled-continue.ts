@@ -4,12 +4,7 @@
 // CHECK-NOT: Increment
 // CHECK-LABEL: function {{*}}name="continueOuter"
 // CHECK-COUNT-2: LoopHint
-// CHECK: Jump -> next [[body]]()
-// CHECK-NEXT: [[body]]():
-// CHECK-NEXT: Jump -> next [[update]](
-// CHECK: [[update]]({{*}}):
-// CHECK-NOT: LoopHint
-// CHECK: Increment
+// CHECK-NEXT: Increment
 
 declare const flag: boolean;
 

@@ -8,7 +8,7 @@
 // CHECK-NEXT: Return [[number]]
 // CHECK-LABEL: function {{*}}name="isObject"
 // CHECK: [[callable]] = TypeTest [[x]] testedType=function
-// CHECK-NEXT: Branch [[callable]] -> taken [[isFunction]](| 0), notTaken [[notFunction]](| 0)
+// CHECK-NEXT: Branch [[callable]] -> taken [[isFunction]](), notTaken [[notFunction]](| 0)
 // CHECK: [[notFunction]]([[rest]]):
 // CHECK-NEXT: = TypeTest [[rest]] testedType=null|object
 // CHECK: [[one]] = Boolean

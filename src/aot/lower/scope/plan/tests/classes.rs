@@ -2,7 +2,7 @@ use bun_sema::bind::{BindingKind, FnOwner};
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ClassId, FnId, FnKind, MemberId};
 
-use super::{Probe, analyze_source, first_field, is_field};
+use super::{Probe, analyze_source, analyze_source_that_runs_again, first_field, is_field};
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{ClassSlot, FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
@@ -24,7 +24,7 @@ fn initializer_and_constructor(class: ClassRef) -> [FunctionKey; 2] {
 
 #[test]
 fn member_captures_what_it_needs() {
-    let source = "export function f() { const a = 1, b = 2; \
+    let source = "export function f() { const a = {}, b = {}; \
         class C { m() { return a; } n() { return b; } k() {} } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let [first, second, third] = probe.functions(FnKind::Method)[..] else {
@@ -39,7 +39,7 @@ fn member_captures_what_it_needs() {
 
 #[test]
 fn constructor_supplies_initializer() {
-    let source = "export function f() { const a = 1; class C { x = a; } return C; }";
+    let source = "export function f() { const a = {}; class C { x = a; } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let copy = [probe.copy_of("a")];
         let class = probe.class(0);
@@ -62,7 +62,7 @@ fn constructor_captures_nothing_for_constant_field() {
 
 #[test]
 fn later_method_copies_private_method() {
-    let source = "export function f() { const a = 1; \
+    let source = "export function f() { const a = {}; \
         class C { #m() { return a; } n() { return this.#m(); } } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let [private_method, caller] = probe.functions(FnKind::Method)[..] else {
@@ -79,8 +79,24 @@ fn later_method_copies_private_method() {
 }
 
 #[test]
-fn earlier_method_reads_private_method_from_environment() {
+fn method_in_front_of_private_method_copies_it() {
     let source = "export function f() { class C { n() { return this.#m(); } #m() {} } return C; }";
+    analyze_source("main.mjs", source, |probe| {
+        let [caller, private_method] = probe.functions(FnKind::Method)[..] else {
+            panic!("the class has two methods");
+        };
+        let method_slot = ClassSlot::PrivateMethod(member_of(probe, private_method));
+        let expected = [
+            Capture::Value(probe.class_slot(0, ClassSlot::ClassToken)),
+            Capture::Value(probe.class_slot(0, method_slot)),
+        ];
+        assert_eq!(probe.captures(caller), expected);
+    });
+}
+
+#[test]
+fn earlier_private_method_reads_later_one_from_environment() {
+    let source = "export function f() { class C { #n() { return this.#m(); } #m() {} } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let [caller, private_method] = probe.functions(FnKind::Method)[..] else {
             panic!("the class has two methods");
@@ -231,7 +247,7 @@ fn class_slots_at_top_level_are_variables() {
 #[test]
 fn class_slots_of_commonjs_are_captured() {
     let source = "module.exports = class C { #p = 1; r() { return this.#p; } };";
-    analyze_source("main.cjs", source, |probe| {
+    analyze_source_that_runs_again("main.cjs", source, |probe| {
         let token = probe.class_slot(0, ClassSlot::ClassToken);
         assert_eq!(probe.placement(token).storage, Storage::Local);
         assert_eq!(
@@ -305,7 +321,7 @@ fn class_expression_name_is_outside_class_scope() {
 
 #[test]
 fn home_object_is_an_entry_capture() {
-    let source = "export function f() { const a = 1; return { m() { return super.x + a; } }; }";
+    let source = "export function f() { const a = {}; return { m() { return super.x + a; } }; }";
     analyze_source("main.mjs", source, |probe| {
         let method = probe.only_function(FnKind::Method);
         let expected = [

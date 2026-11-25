@@ -3,11 +3,11 @@
 // CHECK: NewClass {{*}}layout=[[Empty]]
 // CHECK-LABEL: function {{*}}name="empty"
 // CHECK: [[emptyInstance]] = Construct {{*}}calleeName="Empty"
-// CHECK-NEXT: [[convertedEmpty]] = Convert [[emptyInstance]] declared={type=undefined|null|boolean|number|string|symbol|bigint|[[Empty]] site=w{{*}}}
+// CHECK-NEXT: [[convertedEmpty]] = Convert [[emptyInstance]] declared={type=undefined|null|boolean|number|string|symbol|bigint|[[Empty]] flags={{*}}}
 // CHECK-NEXT: Return [[convertedEmpty]]
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[instance]] = Construct [[callee]] calleeName="C"
-// CHECK-NEXT: [[converted]] = Convert [[instance]] declared={type=undefined|null|[[C]] site=w{{*}}}
+// CHECK-NEXT: [[converted]] = Convert [[instance]] declared={type=undefined|null|[[C]] flags={{*}}}
 // CHECK-NEXT: Return [[converted]]
 
 class C {

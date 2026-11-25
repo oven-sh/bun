@@ -175,7 +175,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
+        if (jwk.hasDuplicateKeyOps) {
             exceptionCallback(DataError, "Duplicate key operation"_s);
             return;
         }

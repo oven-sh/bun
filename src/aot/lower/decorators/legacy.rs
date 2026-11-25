@@ -1,5 +1,7 @@
-use bun_sema::bind::decorator_metadata::is_legacy_decorated_member;
-use bun_sema::hir::{self, ClassId, Flags, FnId, MemberId, MemberKind, ModifierId, PropKey, Span};
+use bun_sema::bind::decorator_metadata::{
+    is_field_moved_by_legacy_decorators, is_legacy_decorated_member,
+};
+use bun_sema::hir::{self, ClassId, Flags, FnId, MemberId, MemberKind, ModifierId, Span};
 use smallvec::SmallVec;
 
 use crate::builtins::id::BuiltinId;
@@ -7,44 +9,38 @@ use crate::ir::{TypeTable, ValueId};
 use crate::lower::FunctionLowering;
 use crate::lower::class::{
     ClassElement, ClassEvaluation, ClassPlan, FieldValue, decorators_of, find_member_value,
-    has_decorators, is_auto_accessor,
+    has_decorators,
 };
 
 type DecoratorList = SmallVec<[ValueId; 8]>;
 
-fn is_moved_field(hir: &hir::File<'_>, member: MemberId) -> bool {
-    let field = hir[member];
-    let has_private_key = match hir.runtime_member_key(member) {
-        PropKey::Private(_) => true,
-        PropKey::None | PropKey::Name(_) | PropKey::Computed(_) => false,
-    };
-    field.kind == MemberKind::Property
-        && !is_auto_accessor(hir, member)
-        && !has_private_key
-        && has_decorators(hir, field.modifiers)
+fn take_decorated_fields(
+    hir: &hir::File<'_>,
+    elements: &mut Vec<ClassElement>,
+) -> Vec<ClassElement> {
+    let mut assigned = Vec::new();
+    elements.retain(|element| {
+        let ClassElement::Field { member, value } = *element else {
+            return true;
+        };
+        if !is_field_moved_by_legacy_decorators(hir, member) {
+            return true;
+        }
+        match value {
+            FieldValue::Initializer => assigned.push(ClassElement::AssignedField { member }),
+            FieldValue::Undefined => {}
+            FieldValue::Decorated { .. } => {
+                unreachable!("only standard decorators plan a decorated field")
+            }
+        }
+        false
+    });
+    assigned
 }
 
 pub(in crate::lower) fn move_decorated_fields(hir: &hir::File<'_>, plan: &mut ClassPlan) {
-    for elements in [&mut plan.instance_elements, &mut plan.static_elements] {
-        let mut assigned = SmallVec::<[ClassElement; 4]>::new();
-        elements.retain(|element| {
-            let ClassElement::Field { member, value } = *element else {
-                return true;
-            };
-            if !is_moved_field(hir, member) {
-                return true;
-            }
-            match value {
-                FieldValue::Initializer => assigned.push(ClassElement::AssignedField { member }),
-                FieldValue::Undefined => {}
-                FieldValue::Decorated { .. } => {
-                    unreachable!("only standard decorators plan a decorated field")
-                }
-            }
-            false
-        });
-        elements.extend(assigned);
-    }
+    plan.injected_elements = take_decorated_fields(hir, &mut plan.instance_elements);
+    plan.elements_behind_class = take_decorated_fields(hir, &mut plan.static_elements);
 }
 
 pub(in crate::lower) fn has_legacy_decorators(hir: &hir::File<'_>, class: ClassId) -> bool {
@@ -111,6 +107,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
+fn emit_key_as_written(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    evaluation: &ClassEvaluation,
+    member: MemberId,
+) -> ValueId {
+    if let Some(unconverted) = find_member_value(&evaluation.unconverted_keys, member) {
+        return unconverted;
+    }
+    if let Some(constant) = lowering.file.find_constant_written_as_key(member) {
+        return lowering.emit_constant(constant);
+    }
+    let name = match find_member_value(&evaluation.member_names, member) {
+        Some(name) => name,
+        None => lowering.lower_property_name(lowering.file.hir.runtime_member_key(member)),
+    };
+    lowering.emit_name_value(name)
+}
+
 fn decorate_member(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     evaluation: &ClassEvaluation,
@@ -137,11 +151,7 @@ fn decorate_member(
     let decorators = lowering.builder.new_array(TypeTable::ANYTHING, &[], &list);
     let is_static = node.flags.contains(Flags::STATIC);
     let target = lowering.emit_holder(evaluation.class_object, is_static);
-    let name = match find_member_value(&evaluation.member_names, member) {
-        Some(name) => name,
-        None => lowering.lower_property_name(hir.runtime_member_key(member)),
-    };
-    let key = lowering.emit_name_value(name);
+    let key = emit_key_as_written(lowering, evaluation, member);
     let helper = if is_method_or_accessor {
         BuiltinId::CompilerHelpersDecorateMethod
     } else {

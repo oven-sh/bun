@@ -1,0 +1,11 @@
+A .cjs file whose text uses nothing of CommonJS is loaded by import() alone: it is an ES module, strict.
+#### a.test.ts
+import { test } from "bun:test";
+test("t", async () => { await import("./bare.cjs"); await import("./uses.cjs"); });
+#### bare.cjs
+function mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
+console.log("| CASE bare.cjs", mode(), (() => { try { globalThis.undefined = 1; return "no throw"; } catch (e) { return e.constructor.name; } })());
+#### uses.cjs
+function mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
+console.log("| CASE uses.cjs", mode(), (() => { try { globalThis.undefined = 1; return "no throw"; } catch (e) { return e.constructor.name; } })());
+exports.used = true;

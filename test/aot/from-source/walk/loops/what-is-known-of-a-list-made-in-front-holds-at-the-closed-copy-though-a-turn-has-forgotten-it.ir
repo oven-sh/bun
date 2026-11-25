@@ -1,0 +1,21 @@
+# -- source: what-is-known-of-a-list-made-in-front-holds-at-the-closed-copy-though-a-turn-has-forgotten-it.js
+# function raise(counts, least) {
+#   const raised = [];
+#   for (let i = 0; i < counts.length; i++) {
+#     do { counts[i] = counts[i] + 1; } while (counts[i] < least);
+#   }
+#   raised.push(counts.length);
+#   return raised;
+# }
+# const counts = JSON.parse("[0,5,2]");
+# print(raise(counts, 3).join(), counts.join());
+# -- end of source
+# The loop inside is built twice. Its closed copy is entered first and believes what is known of `raised` in front. In a turn of the open copy the walk forgets that. At the back edge
+# of the open copy every fresh object was made to leave for it, and the arm behind the store then arrived at the closed copy against the belief: no try names that entry, the walk failed, and because the edge brings
+# no argument nobody looked: the compiler died in Code::endWithJump(). The loops do not name `raised` and it has not left: nothing in them can have written it: what was believed still holds.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3 3,6,3
+# CHECK-NEXT: exited with 0
+# RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 4
+# COUNT: statistic LoopVersioningAttemptsFailed 0

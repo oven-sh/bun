@@ -1,0 +1,22 @@
+# f1 = step, f2 = go, f3 = once
+# -- source: in-a-loop-the-failing-side-of-a-guess-at-a-record-keeps-its-sites-behind-its-branch-too.ts
+# declare function sink(...values: unknown[]): void;
+# function step(n: number) { return { done: n > 3, value: n }; }
+# function go(c: any): number { const it = c.values(); let s = 0, r = it.next(); while (!r.done) { s += r.value; r = it.next(); } return s; }
+# function once(c: any): number { const r: ReturnType<typeof step> = c.next(); return r.done ? 0 : r.value; }
+# sink(step, go, once);
+# -- end of source
+# RUN(FIRST): walk f2 mechanisms=all
+# FIRST: ShapeTest {{*}}layouts=[L0]
+# FIRST: frequency=Rare isInLoop=true keepsSitesThoughRare=true:
+# FIRST: PropGet {{*}}key="done"
+# RUN(BEHIND): walk f2 mechanisms=all
+# BEHIND: frequency=Rare keepsSitesThoughRare=true:
+# BEHIND: PropGet {{*}}key="value"
+# BEHIND: PropGet {{*}}key="next"
+# RUN(OUTSIDE): walk f3 mechanisms=all
+# OUTSIDE: ShapeTest {{*}}layouts=[L0]
+# OUTSIDE: frequency=Rare
+# RUN(UNMARKED): walk f3 mechanisms=all
+# UNMARKED: code f3:Body
+# UNMARKED-NOT: keepsSitesThoughRare

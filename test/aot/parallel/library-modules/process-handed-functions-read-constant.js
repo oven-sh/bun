@@ -1,5 +1,5 @@
 // `process` is handed to functions of the program, which read constant names off their parameters and hand it on to each other, and it is kept in a variable. Every use of it is in sight, so the executable holds what those members need and no more.
-// STATISTIC: FunctionsLowered <= 600
+// STATISTIC: FunctionsLowered <= 600 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 function describes(source, separator) {
   return join(source, separator).length > 0;
 }

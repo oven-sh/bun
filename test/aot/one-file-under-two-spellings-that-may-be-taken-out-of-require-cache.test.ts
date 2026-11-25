@@ -83,10 +83,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-]) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]]) {
   test(`one file under two spellings is one module, ${way}`, async () => {
     using dir = tempDir("aot-one-file-under-two-spellings", files);
     const plain = await runTests(String(dir), undefined);

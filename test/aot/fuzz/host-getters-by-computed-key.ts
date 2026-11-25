@@ -76,11 +76,7 @@ const reads: readonly Named[] = [
 
 const crossed = subjects.flatMap(subject => hands.flatMap(hand => reads.map(read => ({ subject, hand, read }))));
 
-const laidOut = [[], ["--aot-testing=DelayFlowRules"], ["--aot-testing=DelayOtherFlowRules"]];
-export const programs = laidOut.length * crossed.length;
-
-/** The build flags of the program with that index. */
-export const flagsOf = (index: number): string[] => laidOut[Math.floor(index / crossed.length)];
+export const programs = crossed.length;
 
 export function programOf(index: number): { file: string; text: string } {
   // Neighbors in the table differ only in how they read, so a stride coprime with the table's length spreads

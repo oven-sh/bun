@@ -1,0 +1,14 @@
+# The control of raw-template-is-the-join-of-its-texts-and-what-stands-between-them.ir: an object between the texts is converted by its own code and a symbol throws, each in its turn: the built-in is called as before.
+# -- source: main.ts
+# declare function print(value: any): void;
+# function texts(between: any): string { return String.raw`<${between}|${between}>`; }
+# let turns = 0;
+# print(texts({ toString() { turns++; return "t" + turns; } }));
+# try { print(texts(Symbol("s"))); } catch (error) { print((error as Error).name); }
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: NewTemplateObject
+# CHECK: StringRaw/0
+# RUN(CALL): run-in-shell
+# CALL: <t1|t2>
+# CALL: TypeError

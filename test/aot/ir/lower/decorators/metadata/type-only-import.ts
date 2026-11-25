@@ -6,10 +6,8 @@
 // CHECK: Branch [[test]] -> taken
 // CHECK: [[global]] = PropGet {{*}}key="Object" [isFreeName]
 // CHECK: [[object]] = Convert [[global]] declared={type=builtin(Object) flags=[IsExpected]}
-// CHECK: Jump -> next [[join]]([[object]])
-// CHECK: [[join]]([[type]]):
 // CHECK: [[define]] = Builtin builtin=CompilerHelpersDefineMetadata
-// CHECK: = Call [[define]], -, {{*}}, [[type]] @
+// CHECK: = Call [[define]], -, {{*}}, [[object]] @
 // CHECK: builtin=CompilerHelpersDecorateProperty
 
 // RUN(IMPORT): lower

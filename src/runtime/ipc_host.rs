@@ -10,7 +10,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_ptr::RefPtr;
+use bun_ptr::Attached;
 
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
@@ -160,17 +160,14 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
+        if let Some(listener) = Listener::from_js(&handle) {
             log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
+            match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),
@@ -185,9 +182,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(&handle) {
+            let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()
@@ -276,10 +272,11 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
         // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, pause_target)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
@@ -331,14 +328,13 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                     }
                 }
             }
-            let vm = global_this.bun_vm().as_mut();
-            let Some(ipc) = get_ipc_instance(vm) else {
+            let vm = global_this.bun_vm();
+            if get_ipc_instance(vm).is_none() {
                 // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
                 Process__emitMessageEvent(global_this, message, handle);
                 return Ok(());
-            };
-            // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-            unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
+            }
+            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
         }
     }
     Ok(())
@@ -353,10 +349,8 @@ pub(crate) fn send<'a>(
 ) -> JsResult<bool> {
     bun_jsc::mark_binding!();
     let global = cx.global();
-    let vm = global.bun_vm().as_mut();
-    // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
-    // `None`); the instance is heap-allocated, not embedded in `vm`.
-    let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
+    let vm = global.bun_vm();
+    let ipc = get_ipc_instance(vm).map(IPCInstance::data);
     #[cfg(windows)]
     let peer_pid = {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
@@ -393,49 +387,23 @@ unsafe extern "C" {
 
 /// Child-side IPC channel: the send queue for the inherited channel fd.
 pub(crate) struct IPCInstance {
-    pub data: RefPtr<SendQueue>,
+    pub data: Attached<SendQueue>,
 }
 
-/// One channel per JS thread (a VM is thread-bound; workers re-detect their
-/// own inherited fd).
+/// One channel per JS thread; a `Worker`'s VM records no `PendingIpc`, so its thread's stays `None`.
 #[thread_local]
-static CHANNEL: core::cell::Cell<Option<core::ptr::NonNull<IPCInstance>>> =
-    core::cell::Cell::new(None);
+static CHANNEL: core::cell::Cell<Option<&'static IPCInstance>> = core::cell::Cell::new(None);
 
 impl IPCInstance {
-    pub(crate) fn new(v: IPCInstance) -> core::ptr::NonNull<IPCInstance> {
-        bun_core::heap::alloc_nn(v)
-    }
-
     #[inline]
     pub(crate) fn data(&self) -> &SendQueue {
         &self.data
     }
 
-    /// Only reached from the `get_ipc_instance` error path.
-    ///
-    /// # Safety
-    /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
-    /// not yet freed or aliased.
-    pub(crate) unsafe fn deinit(this: *mut IPCInstance) {
-        // SAFETY: caller contract — `this` is a live heap::alloc'd box; the
-        // SendQueue ref is owned by it and released with it after detaching.
-        unsafe {
-            (*this).data.detach();
-            drop(bun_core::heap::take(this));
-        }
-    }
-
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub(crate) fn handle_ipc_message(
-        &self,
-        message: &DecodedIPCMessage,
-        handle: JSValue,
-    ) -> JsResult<()> {
-        // SAFETY: VM singleton + its event loop are process-lifetime.
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
+    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
-        let event_loop = vm.event_loop_mut();
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -443,9 +411,8 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
+                let _entered = vm.enter_event_loop_scope();
                 Process__emitMessageEvent(global_this, data, handle);
-                event_loop.exit();
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
@@ -461,15 +428,14 @@ impl IPCInstance {
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close(&self) {
+    pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
-        // SAFETY: VM singleton is process-lifetime.
-        let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
-        let event_loop = vm.event_loop_mut();
+        let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         crate::jsc_hooks::ipc_child_singleton_deinit();
-        event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
-        event_loop.exit();
+        {
+            let _entered = vm.enter_event_loop_scope();
+            Process__emitDisconnectEvent(vm.global());
+        }
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
         vm.channel_ref.disable();
@@ -479,10 +445,10 @@ impl IPCInstance {
 /// Returns the initialized IPC instance, lazily creating it from the VM's
 /// recorded `PendingIpc`.
 pub(crate) fn get_ipc_instance(
-    vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-) -> Option<*mut IPCInstance> {
+    vm: &bun_jsc::virtual_machine::VirtualMachine,
+) -> Option<&'static IPCInstance> {
     if let Some(inst) = CHANNEL.get() {
-        return Some(inst.as_ptr());
+        return Some(inst);
     }
     if bun_removable_features::is_removed(bun_removable_features::Feature::Ipc)
         && bun_removable_features::is_removed(bun_removable_features::Feature::Spawn)
@@ -498,79 +464,61 @@ pub(crate) fn get_ipc_instance(
     };
     bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
-    vm.event_loop_mut().ensure_waker();
+    vm.event_loop().ensure_waker();
 
     #[cfg(not(windows))]
-    let instance: *mut IPCInstance = {
+    let data = {
         let loop_ = vm.uws_loop();
-        let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
+        let group = vm.rare_data().spawn_ipc_group(loop_);
 
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance.as_ptr()).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe { (*send_queue).set_owner(IPC::SendQueueOwner::Instance(instance)) };
-        CHANNEL.set(Some(instance));
+        let data = SendQueue::new(
+            mode,
+            Some(IPC::SendQueueOwner::Instance),
+            IPC::SocketUnion::Uninitialized,
+        );
 
-        // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
-        // the freshly-allocated SendQueue (root raw pointer, stored in the
-        // socket ext slot for the socket's lifetime).
-        let socket = unsafe {
-            IPC::Socket::from_fd::<SendQueue>(
-                &mut *group,
-                bun_uws::SocketKind::SpawnIpc,
-                fd,
-                send_queue,
-                true,
-            )
-        };
-        let Some(socket) = socket else {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance.as_ptr()) };
-            CHANNEL.set(None);
+        let Some(socket) = IPC::Socket::from_fd::<SendQueue>(
+            group,
+            bun_uws::SocketKind::SpawnIpc,
+            fd,
+            data.as_ptr(),
+            true,
+        ) else {
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
         socket.set_timeout(0);
 
-        // SAFETY: `send_queue` is live (owned by `instance`).
-        unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
+        data.socket.set(IPC::SocketUnion::Open(socket));
 
-        instance.as_ptr()
+        data
     };
 
     #[cfg(windows)]
-    let instance: *mut IPCInstance = {
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance.as_ptr()).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe { (*send_queue).set_owner(IPC::SendQueueOwner::Instance(instance)) };
-        CHANNEL.set(Some(instance));
+    let data = {
+        let data = SendQueue::new(
+            mode,
+            Some(IPC::SendQueueOwner::Instance),
+            IPC::SocketUnion::Uninitialized,
+        );
+        let send_queue: *mut SendQueue = data.as_ptr();
 
         // `windows_configure_client` STORES the `*mut SendQueue` in
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
         // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
+        // SAFETY: `send_queue` is the live SendQueue owned by `data`.
         if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance.as_ptr()) };
-            CHANNEL.set(None);
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }
 
-        instance.as_ptr()
+        data
     };
 
-    // SAFETY: `instance` is the live boxed IPCInstance.
-    unsafe { (*instance).data().write_version_packet(vm.global()) };
+    let instance: &'static IPCInstance = Box::leak(Box::new(IPCInstance { data }));
+    CHANNEL.set(Some(instance));
+
+    instance.data().write_version_packet(vm.global());
 
     Some(instance)
 }
@@ -578,16 +526,15 @@ pub(crate) fn get_ipc_instance(
 // HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)
 pub(crate) fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
     if let Some(inst) = CHANNEL.get() {
-        // SAFETY: `CHANNEL` holds the live boxed instance until deinit.
-        return unsafe { inst.as_ref().data().is_connected() };
+        return inst.data().is_connected();
     }
-    global.bun_vm().as_mut().pending_ipc.is_some()
+    global.bun_vm().pending_ipc.get().is_some()
 }
 
 // HOST_EXPORT(Bun__GlobalObject__hasIPC, c)
 pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     // JSGlobalObject::bun_vm contract.
-    CHANNEL.get().is_some() || global.bun_vm().as_mut().pending_ipc.is_some()
+    CHANNEL.get().is_some() || global.bun_vm().pending_ipc.get().is_some()
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -595,5 +542,5 @@ pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
 /// we open the socket. This is to avoid missing messages at the start of the program.
 // HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
-    let _ = get_ipc_instance(global.bun_vm().as_mut());
+    let _ = get_ipc_instance(global.bun_vm());
 }

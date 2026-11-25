@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
+#include <memory>
 #include <mimalloc.h>
 #include <mutex>
 
@@ -80,19 +81,15 @@ struct Syms {
     CFRef (*CFDictionaryCreate)(CFRef, const void**, const void**, long, const void*, const void*);
     // CoreGraphics
     CFRef (*CGColorSpaceCreateDeviceRGB)();
-    void (*CGColorSpaceRelease)(CFRef);
     CFRef (*CGImageCreate)(size_t, size_t, size_t, size_t, size_t, CFRef, uint32_t, CFRef, const double*, bool, int32_t);
     size_t (*CGImageGetWidth)(CFRef);
     size_t (*CGImageGetHeight)(CFRef);
     uint32_t (*CGImageGetAlphaInfo)(CFRef);
     CFRef (*CGImageGetDataProvider)(CFRef);
-    void (*CGImageRelease)(CFRef);
     CFRef (*CGDataProviderCreateWithData)(void*, const void*, size_t, void*);
     CFRef (*CGDataProviderCopyData)(CFRef);
-    void (*CGDataProviderRelease)(CFRef);
     CFRef (*CGBitmapContextCreate)(void*, size_t, size_t, size_t, size_t, CFRef, uint32_t);
     void (*CGContextDrawImage)(CFRef, BunRect, CFRef);
-    void (*CGContextRelease)(CFRef);
     // ImageIO
     CFRef (*CGImageSourceCreateWithData)(CFRef, CFRef);
     CFRef (*CGImageSourceCreateImageAtIndex)(CFRef, size_t, CFRef);
@@ -149,19 +146,15 @@ constexpr struct {
     SYM(CFNumberCreate),
     SYM(CFDictionaryCreate),
     SYM(CGColorSpaceCreateDeviceRGB),
-    SYM(CGColorSpaceRelease),
     SYM(CGImageCreate),
     SYM(CGImageGetWidth),
     SYM(CGImageGetHeight),
     SYM(CGImageGetAlphaInfo),
     SYM(CGImageGetDataProvider),
-    SYM(CGImageRelease),
     SYM(CGDataProviderCreateWithData),
     SYM(CGDataProviderCopyData),
-    SYM(CGDataProviderRelease),
     SYM(CGBitmapContextCreate),
     SYM(CGContextDrawImage),
-    SYM(CGContextRelease),
     SYM(CGImageSourceCreateWithData),
     SYM(CGImageSourceCreateImageAtIndex),
     SYM(CGImageDestinationCreateWithData),
@@ -248,6 +241,10 @@ struct Pool {
     ~Pool() { s->objc_autoreleasePoolPop(p); }
 };
 
+// For the CoreGraphics types too: their own release functions only add a null check.
+using CFPtr = std::unique_ptr<void, void (*)(CFRef)>;
+inline CFPtr adopt(const Syms* s, CFRef ref) { return { ref, s->CFRelease }; }
+
 // `id`/`SEL` are already typedef'd via the PCH's objc headers; we erase to
 // CFRef everywhere else, so cast objc_msgSend per-site through this template.
 template<class R, class... A>
@@ -301,7 +298,15 @@ enum : int32_t { CG_OK = 0,
     CG_UNAVAILABLE = 1,
     CG_DECODE_FAILED = 2,
     CG_ENCODE_FAILED = 3,
-    CG_TOO_MANY_PIXELS = 4 };
+    CG_TOO_MANY_PIXELS = 4,
+    CG_NO_IMAGE = 5 };
+
+// backend_coregraphics.rs. `data` goes back to bun_coregraphics_release().
+struct OwnedData {
+    CFRef data;
+    const uint8_t* bytes;
+    size_t length;
+};
 
 // Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
 // Two-phase: pass `out=nullptr` to get dimensions; then call again with a
@@ -314,29 +319,15 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (!s) return CG_UNAVAILABLE;
     Pool pool(s);
 
-    CFRef data = s->CFDataCreateWithBytesNoCopy(nullptr, bytes, static_cast<long>(len), *s->kCFAllocatorNull);
+    auto data = adopt(s, s->CFDataCreateWithBytesNoCopy(nullptr, bytes, static_cast<long>(len), *s->kCFAllocatorNull));
     if (!data) return CG_DECODE_FAILED;
-    struct R {
-        const Syms* s;
-        CFRef d, src, img, cs, ctx, px;
-        ~R()
-        {
-            if (px) s->CFRelease(px);
-            if (ctx) s->CGContextRelease(ctx);
-            if (cs) s->CGColorSpaceRelease(cs);
-            if (img) s->CGImageRelease(img);
-            if (src) s->CFRelease(src);
-            if (d) s->CFRelease(d);
-        }
-    } r { s, data, nullptr, nullptr, nullptr, nullptr, nullptr };
+    auto src = adopt(s, s->CGImageSourceCreateWithData(data.get(), nullptr));
+    if (!src) return CG_DECODE_FAILED;
+    auto img = adopt(s, s->CGImageSourceCreateImageAtIndex(src.get(), 0, nullptr));
+    if (!img) return CG_DECODE_FAILED;
 
-    r.src = s->CGImageSourceCreateWithData(data, nullptr);
-    if (!r.src) return CG_DECODE_FAILED;
-    r.img = s->CGImageSourceCreateImageAtIndex(r.src, 0, nullptr);
-    if (!r.img) return CG_DECODE_FAILED;
-
-    size_t w = s->CGImageGetWidth(r.img);
-    size_t h = s->CGImageGetHeight(r.img);
+    size_t w = s->CGImageGetWidth(img.get());
+    size_t h = s->CGImageGetHeight(img.get());
     if (w == 0 || h == 0) return CG_DECODE_FAILED;
     if (static_cast<uint64_t>(w) * h > max_pixels) return CG_TOO_MANY_PIXELS;
     if (!out) {
@@ -350,26 +341,26 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     // *out_w × *out_h from phase 1; refuse to draw past it.
     if (w != *out_w || h != *out_h) return CG_DECODE_FAILED;
 
-    r.cs = s->CGColorSpaceCreateDeviceRGB();
-    if (!r.cs) return CG_UNAVAILABLE;
+    auto cs = adopt(s, s->CGColorSpaceCreateDeviceRGB());
+    if (!cs) return CG_UNAVAILABLE;
     // vImage converts directly to the requested format — including
     // non-premultiplied alpha, which CGBitmapContext refuses — so the result
     // is straight RGBA with no premul→unpremul quantisation. kvImageNoAllocate
     // makes it write into the caller's bun.default_allocator buffer.
     VBuf buf { out, h, w, w * 4 };
-    VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
-    auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
+    VFmt fmt { 8, 32, cs.get(), kBunCGImageAlphaLast, 0, nullptr, 0 };
+    auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, img.get(), kBunVImageNoAllocate);
     if (rc == 0 && buf.data != out) return CG_DECODE_FAILED;
     if (rc != 0) {
         // vImage rejects the packed 10-bit layout ImageIO returns for 10-bit HEVC; CoreGraphics still draws it.
         std::memset(out, 0, w * h * 4);
-        r.ctx = s->CGBitmapContextCreate(out, w, h, 8, w * 4, r.cs, kBunCGImageAlphaPremultipliedLast);
-        if (!r.ctx) return CG_DECODE_FAILED;
-        s->CGContextDrawImage(r.ctx, BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, r.img);
+        auto ctx = adopt(s, s->CGBitmapContextCreate(out, w, h, 8, w * 4, cs.get(), kBunCGImageAlphaPremultipliedLast));
+        if (!ctx) return CG_DECODE_FAILED;
+        s->CGContextDrawImage(ctx.get(), BunRect { 0, 0, static_cast<double>(w), static_cast<double>(h) }, img.get());
         if (s->vImageUnpremultiplyData_RGBA8888(&buf, &buf, kBunVImageDoNotTile) != 0) return CG_DECODE_FAILED;
     }
     // ImageIO decodes lazily and a codec failure (eg HEVC) draws every byte as 0 without an error.
-    uint32_t alpha = s->CGImageGetAlphaInfo(r.img);
+    uint32_t alpha = s->CGImageGetAlphaInfo(img.get());
     bool opaque = alpha == kBunCGImageAlphaNone || alpha == kBunCGImageAlphaNoneSkipLast || alpha == kBunCGImageAlphaNoneSkipFirst;
     uint8_t all = 0xFF, any = 0;
     for (size_t i = 3, n = w * h * 4; i < n; i += 4) {
@@ -379,38 +370,17 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     if (opaque) return all == 0xFF ? CG_OK : CG_DECODE_FAILED;
     if (any) return CG_OK;
     // Fully transparent output from an alpha source: only the provider copy tells "all clear" from "failed".
-    r.px = s->CGDataProviderCopyData(s->CGImageGetDataProvider(r.img));
-    return r.px ? CG_OK : CG_DECODE_FAILED;
+    return adopt(s, s->CGDataProviderCopyData(s->CGImageGetDataProvider(img.get()))) ? CG_OK : CG_DECODE_FAILED;
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.
-// Quality 1-100. Two-phase like decode: pass `out=nullptr` to get the encoded
-// size into `*out_len`; the encoded bytes are held in a static-thread-local
-// CFData until the next call so the second call can copy them out without
-// re-encoding. (One encode, one memcpy — same allocation count as the static
-// codecs after the recent Encoded refactor.)
+// Quality 1-100.
 int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t height,
-    int32_t format, int32_t quality, uint8_t* out, size_t* out_len)
+    int32_t format, int32_t quality, OwnedData* out)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
     Pool pool(s);
-    // Thread-local pending result so the size-probe and the copy-out share one
-    // encode. Safe: each WorkPool thread runs at most one PipelineTask at a
-    // time, and the two calls are back-to-back in backend_coregraphics.rs encode().
-    thread_local CFRef pending = nullptr;
-    if (out && pending) {
-        long n = s->CFDataGetLength(pending);
-        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
-        *out_len = static_cast<size_t>(n);
-        s->CFRelease(pending);
-        pending = nullptr;
-        return CG_OK;
-    }
-    if (pending) {
-        s->CFRelease(pending);
-        pending = nullptr;
-    }
 
     static const char* kUti[] = {
         "public.jpeg", "public.png", "org.webmproject.webp",
@@ -419,71 +389,54 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     if (static_cast<unsigned>(format) >= sizeof(kUti) / sizeof(kUti[0])) return CG_UNAVAILABLE;
     const char* uti = kUti[format];
 
-    struct R {
-        const Syms* s;
-        CFRef cs, prov, img, ustr, sink, dest, num, props;
-        ~R()
-        {
-            if (props) s->CFRelease(props);
-            if (num) s->CFRelease(num);
-            if (dest) s->CFRelease(dest);
-            // sink is NOT released here on success — it becomes `pending`.
-            if (ustr) s->CFRelease(ustr);
-            if (img) s->CGImageRelease(img);
-            if (prov) s->CGDataProviderRelease(prov);
-            if (cs) s->CGColorSpaceRelease(cs);
-        }
-    } r {};
-    r.s = s;
-
-    r.cs = s->CGColorSpaceCreateDeviceRGB();
-    if (!r.cs) return CG_UNAVAILABLE;
+    auto cs = adopt(s, s->CGColorSpaceCreateDeviceRGB());
+    if (!cs) return CG_UNAVAILABLE;
 
     // Wrap the pipeline's straight-alpha RGBA directly — CGImageCreate (unlike
     // CGBitmapContext) accepts kCGImageAlphaLast, so no premultiply scratch
     // copy and no ±1 quantisation. The provider has a NULL release callback
     // since `rgba` outlives this call.
     size_t n = static_cast<size_t>(width) * height * 4;
-    r.prov = s->CGDataProviderCreateWithData(nullptr, rgba, n, nullptr);
-    if (!r.prov) return CG_UNAVAILABLE;
-    r.img = s->CGImageCreate(width, height, 8, 32, static_cast<size_t>(width) * 4,
-        r.cs, kBunCGImageAlphaLast, r.prov, nullptr, false, 0);
-    if (!r.img) return CG_ENCODE_FAILED;
+    auto prov = adopt(s, s->CGDataProviderCreateWithData(nullptr, rgba, n, nullptr));
+    if (!prov) return CG_UNAVAILABLE;
+    auto img = adopt(s, s->CGImageCreate(width, height, 8, 32, static_cast<size_t>(width) * 4, cs.get(), kBunCGImageAlphaLast, prov.get(), nullptr, false, 0));
+    if (!img) return CG_ENCODE_FAILED;
 
-    r.ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
-    if (!r.ustr) return CG_UNAVAILABLE;
-    r.sink = s->CFDataCreateMutable(s->mimallocAllocator, 0);
-    if (!r.sink) return CG_UNAVAILABLE;
-    r.dest = s->CGImageDestinationCreateWithData(r.sink, r.ustr, 1, nullptr);
-    if (!r.dest) {
-        s->CFRelease(r.sink);
-        return CG_UNAVAILABLE; // format not supported by this ImageIO (eg WebP on old macOS)
-    }
+    auto ustr = adopt(s, s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8));
+    if (!ustr) return CG_UNAVAILABLE;
+    auto sink = adopt(s, s->CFDataCreateMutable(s->mimallocAllocator, 0));
+    if (!sink) return CG_UNAVAILABLE;
+    auto dest = adopt(s, s->CGImageDestinationCreateWithData(sink.get(), ustr.get(), 1, nullptr));
+    if (!dest) return CG_UNAVAILABLE; // format not supported by this ImageIO (eg WebP on old macOS)
 
-    CFRef props = nullptr;
+    auto props = adopt(s, nullptr);
     if (format != 1) { // quality only for lossy
         double q = static_cast<double>(quality < 1 ? 1 : quality > 100 ? 100
                                                                        : quality)
             / 100.0;
-        r.num = s->CFNumberCreate(nullptr, kBunCFNumberDoubleType, &q);
+        auto num = adopt(s, s->CFNumberCreate(nullptr, kBunCFNumberDoubleType, &q));
         const void* k = *s->kCGImageDestinationLossyCompressionQuality;
-        const void* v = r.num;
+        const void* v = num.get();
         // CFType callbacks (NOT null) so CF retains/hashes the CFString key
         // properly — null callbacks mean raw-pointer semantics and ImageIO's
         // lookup would miss.
-        r.props = s->CFDictionaryCreate(nullptr, &k, &v, 1, s->kCFTypeDictionaryKeyCallBacks, s->kCFTypeDictionaryValueCallBacks);
-        props = r.props;
+        props.reset(s->CFDictionaryCreate(nullptr, &k, &v, 1, s->kCFTypeDictionaryKeyCallBacks, s->kCFTypeDictionaryValueCallBacks));
     }
 
-    s->CGImageDestinationAddImage(r.dest, r.img, props);
-    if (!s->CGImageDestinationFinalize(r.dest)) {
-        s->CFRelease(r.sink);
-        return CG_ENCODE_FAILED;
-    }
+    s->CGImageDestinationAddImage(dest.get(), img.get(), props.get());
+    if (!s->CGImageDestinationFinalize(dest.get())) return CG_ENCODE_FAILED;
 
-    *out_len = static_cast<size_t>(s->CFDataGetLength(r.sink));
-    pending = r.sink; // released on the copy-out call
+    out->bytes = s->CFDataGetBytePtr(sink.get());
+    out->length = static_cast<size_t>(s->CFDataGetLength(sink.get()));
+    out->data = sink.release();
     return CG_OK;
+}
+
+void bun_coregraphics_release(CFRef data)
+{
+    auto s = load();
+    Pool pool(s);
+    s->CFRelease(data);
 }
 
 // ── Geometry via vImage ────────────────────────────────────────────────────
@@ -511,11 +464,9 @@ int32_t bun_coregraphics_scale(const uint8_t* src, uint32_t sw, uint32_t sh,
     constexpr uint32_t flags = kBunVImageEdgeExtend | kBunVImageDoNotTile;
     long scratchSize = s->vImageScale_ARGB8888(&in, &out, nullptr, flags | kBunVImageGetTempBufferSize);
     if (scratchSize < 0) return CG_UNAVAILABLE;
-    void* scratch = scratchSize ? mi_malloc(static_cast<size_t>(scratchSize)) : nullptr;
+    std::unique_ptr<void, decltype([](void* block) { mi_free(block); })> scratch { scratchSize ? mi_malloc(static_cast<size_t>(scratchSize)) : nullptr };
     if (scratchSize && !scratch) return CG_UNAVAILABLE;
-    long result = s->vImageScale_ARGB8888(&in, &out, scratch, flags);
-    mi_free(scratch);
-    return result == 0 ? CG_OK : CG_UNAVAILABLE;
+    return s->vImageScale_ARGB8888(&in, &out, scratch.get(), flags) == 0 ? CG_OK : CG_UNAVAILABLE;
 }
 
 // `quarters` is in CW quarter-turns (matching Sharp/CSS); vImage's constant is
@@ -557,52 +508,33 @@ int32_t bun_coregraphics_reflect(const uint8_t* src, uint32_t w, uint32_t h,
 // safe to *read*; we still call it on the JS thread (via the static
 // `fromClipboard` accessor), not the WorkPool.
 //
-// Two-phase like encode: `out=nullptr` → probe (returns length, 0 = no image),
-// stashes the matched NSData in a thread-local; second call copies and
-// releases it. `probe_only` skips the data fetch entirely for the cheap
-// `hasClipboardImage()` check.
+// `out=nullptr` only asks whether there is an image.
 
-int32_t bun_coregraphics_clipboard(uint8_t* out, size_t* out_len, int32_t probe_only)
+int32_t bun_coregraphics_clipboard(OwnedData* out)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
     Pool pool(s);
-    thread_local CFRef pending = nullptr;
-
-    if (out && pending) {
-        long n = s->CFDataGetLength(pending);
-        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
-        *out_len = static_cast<size_t>(n);
-        s->CFRelease(pending);
-        pending = nullptr;
-        return CG_OK;
-    }
-    if (pending) {
-        s->CFRelease(pending);
-        pending = nullptr;
-    }
 
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;
     CFRef dataForType = s->sel_registerName("dataForType:");
 
     for (auto uti : kImageUti) {
-        CFRef ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
+        auto ustr = adopt(s, s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8));
         if (!ustr) continue;
-        CFRef nsdata = msg<CFRef>(s, pb, dataForType, ustr);
-        s->CFRelease(ustr);
+        CFRef nsdata = msg<CFRef>(s, pb, dataForType, ustr.get());
         if (!nsdata) continue;
         long n = s->CFDataGetLength(nsdata); // NSData is toll-free bridged
         if (n <= 0) continue;
-        *out_len = static_cast<size_t>(n);
-        if (probe_only) return CG_OK;
-        // dataForType: returns autoreleased; retain so it survives the pool
-        // drain between the two calls.
-        pending = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+        if (!out) return CG_OK;
+        out->bytes = s->CFDataGetBytePtr(nsdata);
+        out->length = static_cast<size_t>(n);
+        // dataForType: returns autoreleased; retain so it survives the pool drain.
+        out->data = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
         return CG_OK;
     }
-    *out_len = 0;
-    return CG_OK; // no image present — not an error
+    return CG_NO_IMAGE;
 }
 
 // `[[NSPasteboard generalPasteboard] changeCount]` — increments on every
@@ -624,10 +556,11 @@ int64_t bun_coregraphics_clipboard_change_count()
 // Non-Apple: stubs so the link succeeds; callers only reference these on
 // macOS so they're dead code, but LTO needs the definitions.
 extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
-extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*) { return 1; }
+extern "C" void bun_coregraphics_release(void*) {}
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
-extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
+extern "C" int bun_coregraphics_clipboard(void*) { return 1; }
 extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
 #endif

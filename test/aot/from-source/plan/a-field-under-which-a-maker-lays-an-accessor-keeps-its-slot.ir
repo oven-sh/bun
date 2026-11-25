@@ -1,0 +1,18 @@
+# -- source: getter-under-an-optional-field.ts
+# interface Holder { row?: Row }
+# interface Row { id: number; extra?: Extra; other?: string }
+# interface Extra { label: string }
+# function plain(id: number): Row { return { id }; }
+# function deferred(id: number, label: string): Row { return { id, get extra() { return { label }; } }; }
+# function holding(row: Row): Holder { return { row }; }
+# function look(holders: Holder) { const picked = holders.row; const extra = picked?.extra; return extra?.label; }
+# console.log(String(look(holding(plain(1)))) + " " + String(look(holding(deferred(2, "b")))) + " " + String(look(holding(plain(3)))) + " " + String(look(holding(deferred(4, "c")))));
+# -- end of source
+# `{ id, get extra() { .. } }`: a maker that lays an accessor under a name gives the field. What no maker gives lies out of line, as `other` does. `extra` keeps its slot in the cell, and the slot holds the pair of the functions:
+# the mark says so, and no read takes what lies there for a value. Without the mark `picked?.extra` was GetSlotOrUndefined and handed out the pair: a cell that is no value, and the next read off it aborted.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.0 "extra" {{*}}filled-by-accessors-alone
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK-NEXT: slot 0 "extra" JSValue Inline {{*}} accessor
+# CHECK: slot 2 "other" JSValue OutOfLine

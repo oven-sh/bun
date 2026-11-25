@@ -156,7 +156,7 @@ pub(crate) fn save(
     *end_pos = stream.get_pos()?;
     stream.write_int_le(0u64)?;
 
-    if cfg!(debug_assertions) {
+    if cfg!(all(windows, debug_assertions)) {
         for res in this.packages.items_resolution() {
             let path = match res.tag {
                 ResolutionTag::Folder => res.folder(),
@@ -165,10 +165,7 @@ pub(crate) fn save(
                 ResolutionTag::Workspace => res.workspace(),
                 _ => continue,
             };
-            debug_assert!(!strings::contains_char(
-                this.str(path),
-                bun_paths::SEP_WINDOWS
-            ));
+            debug_assert!(!strings::contains_char(this.str(path), b'\\'));
         }
     }
 
@@ -316,12 +313,7 @@ fn fill_map<V: Copy>(
         return Err(crate::Error::InvalidLockfile);
     }
     map.ensure_total_capacity(values.len())?;
-    // SAFETY: capacity reserved above; both columns are fully
-    // overwritten by `copy_from_slice` before `re_index` reads them.
-    unsafe { map.set_entries_len(values.len()) };
-    map.keys_mut().copy_from_slice(keys);
-    map.values_mut().copy_from_slice(values);
-    map.re_index()?;
+    map.set_entries(keys, values.iter().copied());
     Ok(())
 }
 

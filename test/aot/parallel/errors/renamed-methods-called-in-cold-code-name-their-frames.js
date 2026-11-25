@@ -1,4 +1,3 @@
-// Flags: --aot-heat=everything-is-cold
 // A method that was renamed shows its new name in a frame where the call stands in cold code, from the first object of its class on: the call enters the function object that was renamed.
 const rename = (f, name) => Object.defineProperty(f, "name", { value: name });
 const top = stack => stack.split("\n")[1].trim().split(" ").slice(0, 2).join(" ");

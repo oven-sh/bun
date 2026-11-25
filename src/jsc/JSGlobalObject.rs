@@ -9,8 +9,8 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
 
@@ -48,12 +48,6 @@ impl GlobalRef {
     #[inline(always)]
     pub fn new(global: &JSGlobalObject) -> Self {
         Self(bun_ptr::BackRef::new(global))
-    }
-
-    /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
-    #[inline(always)]
-    pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0.as_ptr()
     }
 }
 
@@ -690,15 +684,32 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: crate::virtual_machine::ResolveMode,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnResolvePlugins(
+                self,
+                ns,
+                path,
+                source,
+                source_namespace,
+                resolve_dir,
+                mode as u8,
+            )
+        })?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
         Ok(Some(result))
+    }
+
+    /// Whether a module is loaded under `key`, as ESM or as CommonJS.
+    pub(crate) fn is_key_of_loaded_module(&self, key: &BunString) -> JsResult<bool> {
+        crate::from_js_host_call_generic(self, || Bun__isKeyOfLoadedModule(self, key))
     }
 
     /// Whether an `onResolve` or `onLoad` is registered.
@@ -790,19 +801,13 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
+    pub fn throw_sys_error(&self, code: NodeErrorCode, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
         err.put(
             self,
             b"code",
-            EncodedSlice::latin1(<&'static str>::from(opts.code).as_bytes()).to_js(self),
+            EncodedSlice::latin1(<&'static str>::from(code).as_bytes()).to_js(self),
         );
-        if let Some(name) = opts.name {
-            err.put(self, b"name", EncodedSlice::latin1(name).to_js(self));
-        }
-        if let Some(errno) = opts.errno {
-            err.put(self, b"errno", JSValue::from(errno));
-        }
         self.throw_value(err)
     }
 
@@ -1024,35 +1029,12 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self)
     }
 
-    /// What [`Self::bun_vm`] and [`Self::bun_vm_ptr`] assert: this global object
+    /// What [`Self::bun_vm`] asserts: this global object
     /// names `vm`, the calling thread's VM. Not asked once teardown has gone on
     /// to destroy the JSC VM: finalizers still come here, and the global object
     /// goes in no particular order with them.
-    fn names_bun_vm(&self, vm: *mut VirtualMachine) -> bool {
-        // SAFETY: the calling thread's VM, which outlives its JSC VM.
-        let global_is_going = unsafe { (*vm).regular_event_loop.global_is_going() };
-        global_is_going || self.bun_vm_unsafe() == vm.cast::<c_void>()
-    }
-
-    /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
-    /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
-    /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
-    /// Borrows).
-    ///
-    /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
-    /// `JSC__JSGlobalObject__bunVM`: cross-language LTO does not inline that
-    /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
-    /// release binary), and
-    /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. JS thread only; another thread reaches a VM
-    /// through its [`VmHandle`](crate::VmHandle), never through a global.
-    #[inline]
-    pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
-        debug_assert!(
-            self.names_bun_vm(VirtualMachine::get_mut_ptr()),
-            "bun_vm_ptr called off the JS thread",
-        );
-        VirtualMachine::get_mut_ptr()
+    fn names_bun_vm(&self, vm: &VirtualMachine) -> bool {
+        vm.regular_event_loop.global_is_going() || core::ptr::eq(self.bun_vm_unsafe().cast(), vm)
     }
 
     /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
@@ -1065,19 +1047,15 @@ impl JSGlobalObject {
     /// Returns the Bun `VirtualMachine` owning this global as a safe
     /// `&'static`. The VM is a per-thread singleton allocated once in
     /// `VirtualMachine::init` and never freed while a global exists, so the
-    /// `'static` lifetime is sound. Mutation goes through
-    /// [`JsCell`](crate::JsCell)-wrapped fields or
-    /// [`VirtualMachine::as_mut`]; legacy raw-pointer paths use
-    /// [`Self::bun_vm_ptr`].
+    /// `'static` lifetime is sound.
     ///
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). JS thread only (see [`Self::bun_vm_ptr`]).
+    /// debug builds). JS thread only; another thread uses a [`VmHandle`](crate::VmHandle).
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
-        #[cfg(debug_assertions)]
-        {
+        if cfg!(debug_assertions) {
             // if this fails
             // you most likely need to run
             //   make clean-jsc-bindings
@@ -1117,12 +1095,6 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || {
-            ZigGlobalObject__readableStreamToJSONSource(self, value)
-        })
-    }
-
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
@@ -1137,10 +1109,9 @@ impl JSGlobalObject {
         })
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
+    /// Returns a freshly-created `napi_env` on which C++ leaks a ref, for use by
     /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
+    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
@@ -1267,11 +1238,8 @@ impl JSGlobalObject {
         }
     }
 
-    pub(crate) fn create_for_test_isolation(
-        old_global: &JSGlobalObject,
-        console: *mut c_void,
-    ) -> *mut JSGlobalObject {
-        Zig__GlobalObject__createForTestIsolation(old_global, console)
+    pub(crate) fn create_for_test_isolation(old_global: &JSGlobalObject) -> *mut JSGlobalObject {
+        Zig__GlobalObject__createForTestIsolation(old_global)
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
@@ -1292,14 +1260,6 @@ impl JSGlobalObject {
 // `bun_jsc::GregorianDateTime` and `bun_jsc::js_global_object::GregorianDateTime`
 // see one nominal type (the previous local duplicate diverged from lib.rs).
 pub use crate::GregorianDateTime;
-
-// No `Default` derive — `code` has no default (only `errno`/`name` are
-// optional). Callers must always supply `code`.
-pub struct SysErrOptions {
-    pub code: NodeErrorCode,
-    pub errno: Option<i32>,
-    pub name: Option<&'static [u8]>,
-}
 
 // Unified with the crate-root definitions (lib.rs) — re-exported here so
 // `bun_jsc::js_global_object::{IntegerRange, ValidateObjectOpts}` keep
@@ -1373,7 +1333,17 @@ extern "C" fn Bun__importMetaResolve(
         source,
         specifier
     );
-    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::EsmResolve,
+    ) {
+        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Err(value)) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
 }
 
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
@@ -1402,7 +1372,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         specifier_path.as_ref().unwrap_or(specifier),
         source_path.as_ref().unwrap_or(source),
         Some(query),
-        crate::virtual_machine::ResolveMode::Esm,
+        crate::virtual_machine::ResolveMode::EsmResolve,
         true,
     ) {
         Ok(None) => return false,
@@ -1411,16 +1381,6 @@ extern "C" fn Bun__resolveWithOnResolve(
         Err(_) => debug_assert!(global.has_exception()),
     }
     true
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
 #[unsafe(no_mangle)]
@@ -1470,8 +1430,12 @@ unsafe extern "C" {
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: u8,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__isKeyOfLoadedModule(global: &JSGlobalObject, key: &BunString) -> bool;
     safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
@@ -1527,10 +1491,6 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToJSONSource(
-        this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,
@@ -1555,11 +1515,9 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
-    // stores into the new global (never dereferenced as Rust data here).
+    // ABI-identical to non-null `*const`).
     safe fn Zig__GlobalObject__createForTestIsolation(
         old_global: &JSGlobalObject,
-        console: *mut c_void,
     ) -> *mut JSGlobalObject;
 }
 

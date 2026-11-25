@@ -1,0 +1,20 @@
+# The image keeps the 255 most frequent function records in a table of their own. A function with another record is marked, and the runtime looks up its record by the function's number.
+# Here the runtime does that for the frames of an error's stack.
+# Fault injection, testing=MisnumberFunctionRecords: all records except the most frequent one are listed by function, each under the number after its own.
+# In every build the runtime checks that the entry it found exists and carries the requested number. Otherwise the process crashes.
+# AS-USERS-BUILD: the run time asks the row in every build.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: has frames string
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=MisnumberFunctionRecords
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function fails(depth: number): number { if (depth === 0) throw new Error("down"); return fails(depth - 1) + 1; }
+# class Thing { get answer(): number { return fails(id(1)); } static make(): Thing { return new Thing(); } }
+# async function later(): Promise<number> { return Thing.make().answer; }
+# let told = "";
+# try { told = String(Thing.make().answer); } catch (error) { told = String((error as Error).stack).split("\n").length > 1 ? "has frames" : "has none"; }
+# later().catch((error: Error) => print(told, typeof error.stack));
+# -- end of source

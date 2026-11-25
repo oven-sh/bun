@@ -1,0 +1,37 @@
+# -- source: main.js
+# function Counter() { }
+# function one(n) { var made = new Counter(); made.extra = n; return made.step() + made.size(); }
+# function two(n) { return one(n) + 1; }
+# Counter.prototype.step = function () { return 1; };
+# Counter.prototype.size = function () { return 2; };
+# publish(Counter);
+# print(two(1));
+# print(two(2));
+# print(one(3));
+# print(report());
+# -- end of source
+# f2 = one
+# Nobody keeps the object that one() makes: the two methods are copied and do not touch it, and the store goes with it. Where the look fails in the copy of one() that two() holds, the copy is left for a call, which names no object either.
+# So the object may never be made, and then nothing begins the guards of Counter: a word of several guards would leave out its names for ever. The guard of the whole side is in the word from the start.
+# RUN(LOOK): walk f2 mechanisms=all
+# LOOK: = NewObject
+# LOOK: AreMembersUnchanged conditions=[{{*}}kind=ClassEvaluatedOnce
+# RUN: run-in-shell globalThis.hits = 0; globalThis.publish = () => { }; globalThis.report = () => globalThis.hits;
+# CHECK: 4
+# CHECK-NEXT: 4
+# CHECK-NEXT: 3
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+# In the run CHANGED a setter lies under `extra` and another function under `step` ahead of the first object.
+# RUN(CHANGED): run-in-shell globalThis.hits = 0; globalThis.publish = (constructor) => { Object.defineProperty(constructor.prototype, "extra", { set(value) { globalThis.hits++; }, configurable: true }); constructor.prototype.step = () => 5; }; globalThis.report = () => globalThis.hits;
+# CHANGED: 8
+# CHANGED-NEXT: 8
+# CHANGED-NEXT: 7
+# CHANGED-NEXT: 3
+# CHANGED-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hits = 0; globalThis.publish = (constructor) => { Object.defineProperty(constructor.prototype, "extra", { set(value) { globalThis.hits++; }, configurable: true }); constructor.prototype.step = () => 5; }; globalThis.report = () => globalThis.hits;
+# CHECKED: 8
+# CHECKED-NEXT: 8
+# CHECKED-NEXT: 7
+# CHECKED-NEXT: 3
+# CHECKED-NEXT: exited with 0

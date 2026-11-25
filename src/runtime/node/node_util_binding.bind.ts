@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::node_util_binding" });
 
@@ -17,6 +18,12 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
   returns: b.array(b.string).optional,
 });
 
+/** Of two `Uint32Array`s. For each replacement, where it starts and ends in `actual`, then in `expected`. */
+export const diffNumbers = b.fn({
+  args: { actual: b.bytes({ from: ["buffer"] }), expected: b.bytes({ from: ["buffer"] }) },
+  returns: b.array(b.i32),
+});
+
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
   returns: b.any,
@@ -30,10 +37,11 @@ export const assertEncodingValid = b.fn({
   rustPath: "crate::node::types::assert_encoding_valid",
 });
 
+/** A new object below Object.prototype with a text under each name of the content. */
 export const parseEnv = b.fn({
   args: { content: b.string.utf8 },
   expected: { content: ["string"] },
-  returns: b.any,
+  returns: b.any.returning(table.plainData.fresh.spec),
   capability: "heap",
   throws: true,
 });

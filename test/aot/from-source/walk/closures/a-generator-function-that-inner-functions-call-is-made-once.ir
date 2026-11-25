@@ -1,0 +1,43 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function owner(k: number): boolean {
+#   function* steps() { yield k; }
+#   const first = () => steps(), second = () => steps();
+#   return Object.getPrototypeOf(first()) === Object.getPrototypeOf(second());
+# }
+# function ownerOfAsync(k: number): boolean {
+#   async function* waits() { yield k; }
+#   const third = () => waits(), fourth = () => waits();
+#   return Object.getPrototypeOf(third()) === Object.getPrototypeOf(fourth());
+# }
+# function plain(k: number): number {
+#   function add() { return k + 1; }
+#   const fifth = () => add(), sixth = () => add();
+#   return fifth() + sixth();
+# }
+# print(owner(3));
+# print(ownerOfAsync(3));
+# print(plain(3));
+# -- end of source
+# f1 = owner, f4 = steps, f5 = first, f6 = second, f2 = ownerOfAsync, f7 = waits, f8 = third, f9 = fourth
+# A call of a generator function reads the prototype of the function that is called, and the object it makes has that prototype. So a generator function that inner functions alone call is one function a run of its owner: no inner function makes it anew where it reads its name. An async generator function is one too. A plain function that is only called may still be made where it is read: nobody can tell.
+# RUN: walk f5 mechanisms=none
+# CHECK-LABEL: code f5:Body
+# CHECK-NOT: = NewClosure {{*}}function=f4
+# RUN(SECOND): walk f6 mechanisms=none
+# SECOND-LABEL: code f6:Body
+# SECOND-NOT: = NewClosure {{*}}function=f4
+# RUN(THIRD): walk f8 mechanisms=none
+# THIRD-LABEL: code f8:Body
+# THIRD-NOT: = NewClosure {{*}}function=f7
+# RUN(FOURTH): walk f9 mechanisms=none
+# FOURTH-LABEL: code f9:Body
+# FOURTH-NOT: = NewClosure {{*}}function=f7
+# RUN(OWNER): walk f1 mechanisms=all
+# OWNER-LABEL: code f1:Body
+# OWNER: = NewClosure {{*}}function=f4
+# OWNER-NOT: = NewClosure {{*}}function=f4
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: true
+# ANSWER: true
+# ANSWER: 8

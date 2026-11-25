@@ -1,0 +1,13 @@
+# -- source: switch-of-many-cases-is-no-leaf-that-weighs-nothing.js
+# function kindOf(n) { switch (n) { case 0: return 0; case 1: return 7; case 2: return 1; case 3: return 8; case 4: return 2; case 5: return 9; case 6: return 3; case 7: return 10; case 8: return 4; case 9: return 11; case 10: return 5; case 11: return 12; case 12: return 6; case 13: return 0; case 14: return 7; case 15: return 1; case 16: return 8; case 17: return 2; case 18: return 9; case 19: return 3; case 20: return 10; case 21: return 4; case 22: return 11; case 23: return 5; case 24: return 12; case 25: return 6; case 26: return 0; case 27: return 7; case 28: return 1; case 29: return 8; case 30: return 2; case 31: return 9; case 32: return 3; case 33: return 10; case 34: return 4; case 35: return 11; case 36: return 5; case 37: return 12; case 38: return 6; case 39: return 0; case 40: return 7; case 41: return 1; case 42: return 8; case 43: return 2; case 44: return 9; case 45: return 3; case 46: return 10; case 47: return 4; case 48: return 11; case 49: return 5; case 50: return 12; case 51: return 6; case 52: return 0; case 53: return 7; case 54: return 1; case 55: return 8; case 56: return 2; case 57: return 9; case 58: return 3; case 59: return 10; case 60: return 4; case 61: return 11; case 62: return 5; case 63: return 12; case 64: return 6; case 65: return 0; case 66: return 7; case 67: return 1; case 68: return 8; case 69: return 2; case 70: return 9; case 71: return 3; case 72: return 10; case 73: return 4; case 74: return 11; case 75: return 5; case 76: return 12; case 77: return 6; case 78: return 0; case 79: return 7; default: return -1; } }
+# function small(n) { switch (n) { case 1: case 2: case 3: case 5: case 8: case 13: case 21: case 34: case 55: case 89: case 144: case 233: return true; default: return false; } }
+# function ask(n) { if (n < 0) return 0; return kindOf(n) + (small(n) ? 1 : 0) + ask(n - 40); }
+# print(ask(3), ask(79), ask(100));
+# -- end of source
+# If constants weighed nothing and the cases of a switch did not count, a switch of ten thousand cases that each return a constant would be a leaf of no weight, and every call would hold a copy of it
+# four cases weigh as much as an operation: the switch of twelve cases is copied, the one of eighty is called
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f2
+# CHECK: CallDirect {{*}} function=f1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout {{*}}kind=Instance name="C" {{*}}fields=[{key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+// CHECK: layout {{*}}kind=Instance name="C" {{*}}fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
 
 // RUN(ACCESSOR): link
 // ACCESSOR-NOT: layout {{*}}name="C"{{*}}key="a"

@@ -40,10 +40,8 @@ pub(in crate::lower) struct CaptureInput<'x> {
 pub(in crate::lower) struct CapturePlan {
     pub(in crate::lower) captures: Vec<CaptureList>,
     pub(in crate::lower) fields: Vec<BindingRef>,
-    pub(in crate::lower) functions_over_limit: Vec<WalkedFunctionId>,
 }
 
-/// What a closure has room for where no limit is lowered.
 #[cfg(test)]
 pub(in crate::lower) fn max_captures() -> usize {
     let limit = crate::ir::generated::LimitId::MaxCaptures;

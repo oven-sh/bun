@@ -19,7 +19,6 @@
 
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)
-#include "wtf/Scope.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -40,6 +39,22 @@ using namespace JSC;
 
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
+
+template<typename T, void (*freeItems)(T*, int)>
+struct UVList {
+    WTF_MAKE_NONCOPYABLE(UVList);
+    UVList() = default;
+    ~UVList()
+    {
+        if (items)
+            freeItems(items, count);
+    }
+
+    T& operator[](int index) const { return items[index]; }
+
+    T* items { nullptr };
+    int count { 0 };
+};
 
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
@@ -157,14 +172,11 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
 
         // CPU info using libuv
-        uv_cpu_info_t* cpu_infos;
-        int count;
-        if (uv_cpu_info(&cpu_infos, &count) == 0) {
-            auto freeCpuInfos = WTF::makeScopeExit([&] { uv_free_cpu_info(cpu_infos, count); });
-            JSArray* cpuArray = constructEmptyArray(globalObject, nullptr, count);
+        if (UVList<uv_cpu_info_t, uv_free_cpu_info> cpu_infos; uv_cpu_info(&cpu_infos.items, &cpu_infos.count) == 0) {
+            JSArray* cpuArray = constructEmptyArray(globalObject, nullptr, cpu_infos.count);
             RETURN_IF_EXCEPTION(scope, {});
 
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < cpu_infos.count; i++) {
                 JSObject* cpu = constructEmptyObject(globalObject);
                 Bun::putDirectNamed(vm, cpu, "model"_s, jsString(vm, String::fromUTF8(cpu_infos[i].model)));
                 Bun::putDirectNamed(vm, cpu, "speed"_s, jsNumber(cpu_infos[i].speed));
@@ -185,13 +197,11 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         RETURN_IF_EXCEPTION(scope, {});
 
         // Network interfaces using libuv
-        uv_interface_address_t* interfaces;
-        if (uv_interface_addresses(&interfaces, &count) == 0) {
-            auto freeInterfaces = WTF::makeScopeExit([&] { uv_free_interface_addresses(interfaces, count); });
-            JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, count);
+        if (UVList<uv_interface_address_t, uv_free_interface_addresses> interfaces; uv_interface_addresses(&interfaces.items, &interfaces.count) == 0) {
+            JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, interfaces.count);
             RETURN_IF_EXCEPTION(scope, {});
 
-            for (int i = 0; i < count; i++) {
+            for (int i = 0; i < interfaces.count; i++) {
                 JSObject* iface = constructEmptyObject(globalObject);
                 Bun::putDirectNamed(vm, iface, "name"_s, jsString(vm, String::fromUTF8(interfaces[i].name)));
                 Bun::putDirectNamed(vm, iface, "internal"_s, jsBoolean(interfaces[i].is_internal));

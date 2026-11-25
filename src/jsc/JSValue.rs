@@ -8,13 +8,16 @@
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
+    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, host_fn,
 };
+
+const DOUBLE_ENCODE_OFFSET: i64 = 1 << 49;
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
 /// encoded 64-bit word, `Copy`, `!Send`).
@@ -473,7 +476,6 @@ impl JSValue {
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
     pub fn js_double_number(n: f64) -> JSValue {
-        const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
@@ -540,52 +542,27 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
-    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
-    /// allocation: OOM, or a termination request landing in it.
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; slice ptr/len describe a valid range whose
-        // ownership is transferred to JSC (freed via the deallocator).
+    /// A Node `Buffer` that owns `bytes`. Fails like any JS allocation: OOM, or a termination.
+    pub fn create_buffer(global: &JSGlobalObject, bytes: Vec<u8>) -> JsResult<JSValue> {
+        let is_allocated = bytes.capacity() > 0;
+        let bytes = bytes.leak();
+        // SAFETY: a block of the default allocator, which the deallocator frees, or nothing at all.
         host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
-                slice.as_mut_ptr(),
-                slice.len(),
+                bytes.as_mut_ptr(),
+                bytes.len(),
                 core::ptr::null_mut(),
-                if slice.is_empty() {
-                    None
-                } else {
+                if is_allocated {
                     Some(MarkedArrayBuffer_deallocator)
+                } else {
+                    None
                 },
             )
         })
     }
-    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
-    /// `Buffer` without copying. Ownership transfers to JSC; freed via
-    /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
-    /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
     pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
-        let len = bytes.len();
-        // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
-        // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
-        // `Box<[u8]>` has no backing allocation, so the `None` arm leaks
-        // nothing.
-        let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
-        // SAFETY: `global` is live; `ptr`/`len` describe the just-released
-        // mimalloc allocation whose ownership is transferred to JSC.
-        host_fn::from_js_host_call(global, || unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global,
-                ptr,
-                len,
-                core::ptr::null_mut(),
-                if len == 0 {
-                    None
-                } else {
-                    Some(MarkedArrayBuffer_deallocator)
-                },
-            )
-        })
+        Self::create_buffer(global, bytes.into_vec())
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
@@ -667,7 +644,7 @@ impl JSValue {
     pub fn as_double(self) -> f64 {
         debug_assert!(self.is_double());
         // Subtract DoubleEncodeOffset, bitcast to f64.
-        f64::from_bits((self.0 as i64).wrapping_sub(ffi::DOUBLE_ENCODE_OFFSET) as u64)
+        f64::from_bits((self.0 as i64).wrapping_sub(DOUBLE_ENCODE_OFFSET) as u64)
     }
     /// Asserts this is a number, undefined, null, or a boolean.
     pub fn as_number(self) -> f64 {
@@ -871,61 +848,26 @@ impl JSValue {
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
-    pub fn as_<T: JsClass>(self) -> Option<*mut T> {
+    pub fn as_class_ref<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         if !self.is_cell() {
             return None;
         }
         T::from_js(self)
     }
-    /// `JSValue.asDirect(T)` — unchecked-prototype downcast.
-    /// Caller must have already verified `is_cell()`; dispatches via
-    /// [`JsClass::from_js_direct`] (skips the prototype-chain walk that `as_`
-    /// performs, so subclasses are *not* matched).
+    /// Whether [`as_class_ref`](Self::as_class_ref) is `Some`. Does not keep the value alive.
     #[inline]
-    pub fn as_direct<T: JsClass>(self) -> Option<*mut T> {
-        debug_assert!(self.is_cell());
+    pub fn is<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js(&self)).is_some()
+    }
+    /// Whether [`as_direct`](Self::as_direct) is `Some`. Does not keep the value alive.
+    #[inline]
+    pub fn is_direct<T: JsClass>(self) -> bool {
+        ManuallyDrop::new(T::from_js_direct(&self)).is_some()
+    }
+    /// Dispatches via [`JsClass::from_js_direct`], so subclasses are *not* matched.
+    #[inline]
+    pub fn as_direct<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         T::from_js_direct(self)
-    }
-    /// Safe shared-borrow downcast — `as_<T>()` followed by `&*ptr`.
-    ///
-    /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
-    /// sound because JSC's conservative stack scanner keeps the cell alive
-    /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
-    /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
-    /// for as long as the caller holds `self`.
-    ///
-    /// The `'static` lifetime is a pragmatic over-approximation (there is no
-    /// stack-root guard type to tie it to); callers MUST NOT stash the
-    /// reference past the point where `self` is last used. This mirrors the
-    /// raw-pointer contract of [`as_`](Self::as_) but lets read-only callers
-    /// drop their `unsafe { &*p }` boilerplate.
-    ///
-    /// There is intentionally **no** `as_class_mut`: re-entry into JS (via a
-    /// getter, `toString`, etc.) can produce a second `JSValue` for the same
-    /// cell and thus a second `&mut T`, which is instant UB. Callers needing
-    /// mutation must keep using [`as_`](Self::as_) and scope the `&mut`
-    /// themselves.
-    #[inline]
-    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
-        // SAFETY: `T::from_js` returns either `None` or a non-null, properly
-        // aligned pointer to the `T` payload owned by the live JSC cell that
-        // `self` encodes. The cell is kept alive by JSC's conservative stack
-        // scan for as long as `self` is reachable on the stack, so the shared
-        // borrow is valid for the caller's frame. We never hand out `&mut`,
-        // so aliasing with other `as_class_ref` borrows is fine.
-        self.as_::<T>().map(|p| unsafe { &*p })
-    }
-
-    /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for payloads that are intrusively refcounted: lets the caller
-    /// take its own ref (`RefPtr::from_this`) or dispatch into a
-    /// `ThisPtr`-taking entry point. Same frame-scoped validity.
-    #[inline]
-    pub fn as_class_this_ptr<T: JsClass>(self) -> Option<bun_ptr::ThisPtr<T>> {
-        // SAFETY: as for `as_class_ref` — the pointer is the live payload of the
-        // cell `self` encodes, which the stack scan keeps alive for this frame.
-        self.as_::<T>().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a
@@ -936,16 +878,6 @@ impl JSValue {
             return None;
         }
         let p = JSC__JSValue__asPromise(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
-    /// Returns a raw pointer; see
-    /// [`as_promise`] for the aliasing rationale.
-    pub(crate) fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
-        if !self.is_cell() {
-            return None;
-        }
-        let p = JSC__JSValue__asInternalPromise(self);
         if p.is_null() { None } else { Some(p) }
     }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
@@ -1649,6 +1581,18 @@ impl JSValue {
         if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
+        self.call_for_running_script(global, this_value, args)
+    }
+
+    /// As [`call`](Self::call), for a host function that calls back before it returns: its caller is listening.
+    #[inline]
+    #[track_caller]
+    pub fn call_for_running_script(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
@@ -1662,7 +1606,7 @@ impl JSValue {
     fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
         let vm = global.bun_vm();
         vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+            || (vm.test_isolation_enabled.get() && self.is_from_retired_test_isolation_realm())
     }
 
     /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
@@ -1679,13 +1623,6 @@ impl JSValue {
 #[must_use = "dropping immediately unprotects; bind to a local"]
 pub struct Protected(JSValue);
 impl Protected {
-    /// Wrap an **already-protected** value so it is unprotected on drop.
-    /// Unlike [`JSValue::protected`], this does *not* bump the protect
-    /// refcount — use when adopting a `protect()` taken elsewhere.
-    #[inline]
-    pub fn adopt(value: JSValue) -> Self {
-        Self(value)
-    }
     #[inline]
     pub fn value(&self) -> JSValue {
         self.0
@@ -2164,10 +2101,11 @@ pub type ForEachCallback =
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
+/// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
+    key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2355,6 +2293,13 @@ impl JSValue {
         }
         JSC__JSValue__isCompiledGenerator(self)
     }
+    /// True for the placeholder that an executable compiled ahead of time hands out for a built-in whose code the build omitted. It has the built-in's name and length; reading any other property throws.
+    pub fn is_placeholder_for_omitted_builtin(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isPlaceholderForOmittedBuiltin(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isPlaceholderForOmittedBuiltin(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
@@ -2378,6 +2323,35 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
+    }
+    /// `for (const item of self) each(item)`, up to the first `Err`. Only a pending exception ends the loop itself.
+    pub fn try_for_each<F: FnMut(JSValue) -> JsResult<()>>(
+        self,
+        global: &JSGlobalObject,
+        each: F,
+    ) -> JsResult<()> {
+        struct Iteration<F> {
+            each: F,
+            result: JsResult<()>,
+        }
+        extern "C" fn next<F: FnMut(JSValue) -> JsResult<()>>(
+            _: *mut crate::VM,
+            _: &JSGlobalObject,
+            iteration: *mut c_void,
+            item: JSValue,
+        ) {
+            // SAFETY: `iteration` is the `Iteration` below, which outlives the `for_each` call.
+            let iteration = unsafe { &mut *iteration.cast::<Iteration<F>>() };
+            if iteration.result.is_ok() {
+                iteration.result = (iteration.each)(item);
+            }
+        }
+        let mut iteration = Iteration {
+            each,
+            result: Ok(()),
+        };
+        self.for_each(global, (&raw mut iteration).cast(), next::<F>)?;
+        iteration.result
     }
     /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
     /// `*mut c_void` directly).
@@ -2481,13 +2455,9 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
-        let mut scope_storage = core::mem::MaybeUninit::uninit();
-        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
+        crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback);
-        let result = scope.return_if_exception();
-        // SAFETY: `scope` was init'd above and is destroyed exactly once.
-        unsafe { crate::TopExceptionScope::destroy(scope) };
-        result
+        scope.return_if_exception()
     }
     /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
     /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.

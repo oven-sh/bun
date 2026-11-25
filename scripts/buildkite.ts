@@ -39,6 +39,29 @@ export function getEnv(name: string): string {
   return value;
 }
 
+/** A secret of the Buildkite cluster. Unlike getSecret(), it stays out of the environment that child processes inherit. */
+export function readSecret(name: string, ...flags: string[]): string {
+  const { status, stdout } = spawnSync("buildkite-agent", ["secret", "get", name, ...flags], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const secret = status === 0 && stdout.trim();
+  if (!secret) {
+    const orgId = process.env.BUILDKITE_ORGANIZATION_SLUG;
+    const clusterId = process.env.BUILDKITE_CLUSTER_ID;
+
+    let hint;
+    if (orgId && clusterId) {
+      hint = `https://buildkite.com/organizations/${orgId}/clusters/${clusterId}/secrets`;
+    } else {
+      hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
+    }
+
+    throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
+  }
+  return secret;
+}
+
 interface SecretOptions {
   required?: boolean;
 }
@@ -54,21 +77,7 @@ export function getSecret(name: string, { required = true }: SecretOptions = {})
   }
 
   if (isBuildkite) {
-    const secret = output(["buildkite-agent", "secret", "get", name])?.trim();
-    if (!secret) {
-      const orgId = process.env.BUILDKITE_ORGANIZATION_SLUG;
-      const clusterId = process.env.BUILDKITE_CLUSTER_ID;
-
-      let hint;
-      if (orgId && clusterId) {
-        hint = `https://buildkite.com/organizations/${orgId}/clusters/${clusterId}/secrets`;
-      } else {
-        hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
-      }
-
-      throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
-    }
-
+    const secret = readSecret(name);
     process.env[name] = secret;
     return secret;
   }
@@ -76,7 +85,7 @@ export function getSecret(name: string, { required = true }: SecretOptions = {})
   return required ? getEnv(name) : undefined;
 }
 
-export function parseGitUrl(url: string | URL): URL | undefined {
+function parseGitUrl(url: string | URL): URL | undefined {
   const string = typeof url === "string" ? url : url.toString();
 
   const githubUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
@@ -90,7 +99,7 @@ export function parseGitUrl(url: string | URL): URL | undefined {
   return undefined;
 }
 
-export function getRepositoryUrl(cwd?: string): URL | undefined {
+function getRepositoryUrl(cwd?: string): URL | undefined {
   if (!cwd) {
     if (isBuildkite) {
       const repository = process.env.BUILDKITE_REPO;
@@ -207,6 +216,14 @@ export function isMainBranch(): boolean {
   return !isFork() && getBranch() === getMainBranch();
 }
 
+/** `X.Y.Z` when this is a build of `release/bun-vX.Y.Z`. */
+export function getReleaseVersion(): string | undefined {
+  if (isFork() || isPullRequest()) {
+    return undefined;
+  }
+  return /^release\/bun-v(\d+\.\d+\.\d+)$/.exec(getBranch() ?? "")?.[1];
+}
+
 /** The fields of the GitHub Actions event payload (`GITHUB_EVENT_PATH`) that are read here. */
 interface GithubEvent {
   pull_request?: {
@@ -215,7 +232,7 @@ interface GithubEvent {
   };
 }
 
-export function isPullRequest(): boolean {
+function isPullRequest(): boolean {
   if (isBuildkite) {
     return !isNaN(parseInt(process.env.BUILDKITE_PULL_REQUEST ?? ""));
   }
@@ -285,30 +302,6 @@ export function isFork(): boolean {
 
 export function isMergeQueue(): boolean {
   return /^gh-readonly-queue/.test(getBranch() ?? "");
-}
-
-function getGithubToken(): string | undefined {
-  const cachedToken = getSecret("GITHUB_TOKEN", { required: false });
-
-  if (typeof cachedToken === "string" || !which(["gh"])) {
-    return cachedToken || undefined;
-  }
-
-  const token = output(["gh", "auth", "token"])?.trim() ?? "";
-
-  process.env.GITHUB_TOKEN = token;
-  return token || undefined;
-}
-
-/** The JSON at `url`, asked for up to three times; GitHub's API gets the token when there is one. */
-export async function getJson(url: string | URL): Promise<{ error: Error | undefined; body: unknown }> {
-  const { hostname, href } = new URL(url);
-  const githubToken = hostname === "api.github.com" ? getGithubToken() : undefined;
-  return request(href, {
-    headers: githubToken ? { Authorization: `Bearer ${githubToken}` } : {},
-    json: true,
-    attempts: 3,
-  });
 }
 
 function getBuildId(): string | undefined {
@@ -392,7 +385,7 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
     }
 
     while (url) {
-      const { error, body } = await getJson(`${url}.json`);
+      const { error, body } = await request(`${url}.json`, { json: true, attempts: 3 });
       if (error) {
         return;
       }

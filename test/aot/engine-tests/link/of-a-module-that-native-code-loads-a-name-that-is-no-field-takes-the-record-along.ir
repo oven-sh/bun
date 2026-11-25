@@ -1,0 +1,73 @@
+# As in of-a-module-that-native-code-loads-what-the-row-lists-leaves.ir, but `whileHooked`, which the row says native code reads, is no field of the record that the body returns: it is laid on it under a key that is computed.
+# Nobody can say what native code finds under the name, so the whole record leaves, and with it all that it holds.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link layouts fields variables modules mechanisms=all
+# CHECK-NOT: layout L0 {{*}}stays-with-compiled-code
+# CHECK-NOT: layout L1 {{*}}stays-with-compiled-code
+# CHECK-NOT: field L0.1 "queueTick1" proven
+# CHECK-NOT: variable g0 proven
+# CHECK-NOT: module m2 value-stays-with-compiled-code
+
+layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]
+layout L2 module=m2 fields=[{key="push" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="queueTick1" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="ring" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+module m2 path="internal:process/next_tick_queue" displayPath="internal:process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = NewClosure function=f5
+    v3 = Call v1, v0, v2 calleeKey="nextTick" calleeName="process.nextTick"
+    v4 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m1 specifier="internal/process/next_tick_queue"
+    v1 = PropGet v0 key="queueTick1"
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v0 key="ring"
+    PutModuleVariable v3 variable=g1
+    v5 = Integer integer=1
+    v6 = Call v1, -, v5 calleeName="queueTick1"
+    v7 = Undefined
+    Return v7
+}
+function f2 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v1, v4 layout=L0 fields=[0, 1, 2]
+    v9 = FinishObject v8
+    v10 = String string="while"
+    v11 = String string="Hooked"
+    v12 = Add v10, v11
+    ElemSet v9, v12, v7
+    Return v9
+}
+function f3 name="nextTick" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="queueTick1" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

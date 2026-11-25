@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="_interopRequireDefault"
 
 // FILE: main.js
 // What Babel emits for `import greet, * as lib from "./lib.js"` and `import plain from "./plain.js"`.
@@ -32,34 +33,3 @@ module.exports = function plain() {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: _interopRequireDefault
-// CHECK-LABEL: function {{*}}name="_interopRequireDefault"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = PropGet v2 key="__esModule"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b4(v5):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Jump -> next b9(v2)
-// CHECK-NEXT: b6(v6):
-// CHECK-NEXT: Jump -> next b8(v2)
-// CHECK-NEXT: b7(v7):
-// CHECK-NEXT: Jump -> next b8(v7)
-// CHECK-NEXT: b8(v8):
-// CHECK-NEXT: v9 = NewObject -, v8 layout=[[L_2]] fields=[0]
-// CHECK-NEXT: v10 = FinishObject v9
-// CHECK-NEXT: Jump -> next b9(v10)
-// CHECK-NEXT: b9(v11):
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

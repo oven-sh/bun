@@ -7,8 +7,7 @@
 //! This is sometimes abbreviated as SCB
 
 use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_collections::multi_array_list;
-use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
+use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 
 use super::base::IndexInt;
 use super::use_directive::UseDirective;
@@ -87,22 +86,6 @@ impl List {
         Ok(())
     }
 
-    /// Use this to improve speed of accessing fields at the cost of
-    /// storing more pointers. Invalidated when input is mutated.
-    pub fn slice(&self) -> Slice<'_> {
-        Slice {
-            list: self.list.slice(),
-            map: &self.map,
-        }
-    }
-}
-
-pub struct Slice<'a> {
-    pub list: multi_array_list::Slice<ServerComponentBoundary>,
-    pub map: &'a Map,
-}
-
-impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
@@ -122,11 +105,8 @@ impl<'a> Slice<'a> {
         Some(self.list.items::<"reference_source_index", IndexInt>()[i])
     }
 
-    pub fn bit_set(
-        &self,
-        input_file_count: usize,
-    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
-        let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
+    pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_alloc::AllocError> {
+        let mut scb_bitset = DynamicBitSet::init_empty(input_file_count)?;
         for &source_index in self.list.items::<"source_index", IndexInt>() {
             scb_bitset.set(source_index as usize);
         }
@@ -134,8 +114,6 @@ impl<'a> Slice<'a> {
     }
 }
 
-// Caches just the `source_index` column the adapter actually needs
-// (`Slice<T>` is not `Copy`).
 pub(crate) struct Adapter<'a> {
     pub source_indices: &'a [IndexInt],
 }

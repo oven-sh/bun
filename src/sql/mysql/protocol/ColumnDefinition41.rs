@@ -1,18 +1,18 @@
 use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::encode_int::decode_length_int;
-use crate::mysql::protocol::stack_reader::PacketReader;
+use crate::mysql::protocol::packet_reader::PacketReader;
 use crate::shared::column_identifier::ColumnIdentifier;
-use crate::shared::data::Data;
 use bstr::BStr;
+use bun_collections::smallvec::SmallVec;
 
 bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
     /// A copy: it is read after the packet is gone.
-    pub table: Data,
+    pub table: SmallVec<[u8; 16]>,
     /// A copy of the name on the wire, which `name_or_index` is made from.
-    name: Option<Data>,
+    name: Option<SmallVec<[u8; 16]>>,
     pub character_set: u16,
     pub column_length: u32,
     pub column_type: FieldType,
@@ -24,14 +24,14 @@ pub struct ColumnDefinition41 {
 impl Default for ColumnDefinition41 {
     fn default() -> Self {
         Self {
-            table: Data::empty(),
+            table: SmallVec::new(),
             name: None,
             character_set: 0,
             column_length: 0,
             column_type: FieldType::MYSQL_TYPE_NULL,
             flags: ColumnFlags::empty(),
             decimals: 0,
-            name_or_index: ColumnIdentifier::Name(Data::empty()),
+            name_or_index: ColumnIdentifier::Name(Vec::new()),
         }
     }
 }
@@ -90,7 +90,7 @@ fn extended_metadata_is_json(mut bytes: &[u8]) -> Result<bool, AnyMySQLError> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Changed {
+pub(crate) enum Changed {
     Nothing,
     /// Table, type, length or flags. MariaDB derives the last three from each execution's values.
     Description,
@@ -109,45 +109,33 @@ impl ColumnDefinition41 {
         self.name = None;
     }
 
-    pub fn decode(
+    pub(crate) fn decode(
         &mut self,
         reader: &mut PacketReader<'_>,
         extended_type_info: bool,
     ) -> Result<Changed, AnyMySQLError> {
         // Length encoded strings
         let catalog = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "catalog: {}",
-            BStr::new(catalog.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "catalog: {}", BStr::new(catalog));
 
         let schema = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(schema.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(schema));
 
         let table = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table.slice()));
-        let mut described_differently = self.table.slice() != table.slice();
+        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table));
+        let mut described_differently = self.table.as_slice() != table;
         if described_differently {
-            self.table = Data::create(table.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            self.table = SmallVec::from_slice(table);
         }
 
         let org_table = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "org_table: {}",
-            BStr::new(org_table.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "org_table: {}", BStr::new(org_table));
 
         let name = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(name.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(name));
 
         let org_name = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "org_name: {}",
-            BStr::new(org_name.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "org_name: {}", BStr::new(org_name));
 
         // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, a lenenc blob of
         // extended metadata sits between org_name and the fixed-length
@@ -155,7 +143,7 @@ impl ColumnDefinition41 {
         let mut json_format = false;
         if extended_type_info {
             let extended = reader.encode_len_string()?;
-            json_format = extended_metadata_is_json(extended.slice())?;
+            json_format = extended_metadata_is_json(extended)?;
         }
 
         reader.encoded_len_int()?; // length of the fixed-length fields
@@ -194,14 +182,10 @@ impl ColumnDefinition41 {
 
         // The server re-sends column definitions on every COM_STMT_EXECUTE, so a
         // reused prepared statement re-decodes into the same slot once per query.
-        let renamed = self
-            .name
-            .as_ref()
-            .is_none_or(|previous| previous.slice() != name.slice());
+        let renamed = self.name.as_deref() != Some(name);
         if renamed {
-            self.name = Some(Data::create(name.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?);
-            self.name_or_index =
-                ColumnIdentifier::init(name).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            self.name = Some(SmallVec::from_slice(name));
+            self.name_or_index = ColumnIdentifier::init(name.into());
         }
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet

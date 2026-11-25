@@ -1,5 +1,5 @@
 use super::{AnythingReason, ShapeKind, TupleElement, TupleElementKind, TypeShape};
-use crate::check::aot::answers::GaveUp;
+use crate::check::aot::answers::{FunctionRef, GaveUp};
 use crate::check::aot::queries::Queries;
 use crate::check::aot::trust::Trust;
 use crate::program::Sym;
@@ -98,27 +98,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 TypeShape::undeclared(ShapeKind::Anything(AnythingReason::Any))
             }
             TypeData::UniqueSymbol { symbol, .. } => self.shape_of_unique_symbol(*symbol),
-            TypeData::TypeParam(file, id, _) => {
+            TypeData::TypeParam(file, ..) => {
                 let kind = ShapeKind::TypeVariable {
                     constraint: self.c.constraint_of_type_param(ty),
-                    parameter: self.compiled_type_parameter(*file, *id),
                 };
                 TypeShape::declared(kind, self.file_trust(*file))
             }
-            TypeData::Marker(_) => TypeShape::undeclared(ShapeKind::TypeVariable {
-                constraint: None,
-                parameter: None,
-            }),
+            TypeData::Marker(_) => {
+                TypeShape::undeclared(ShapeKind::TypeVariable { constraint: None })
+            }
             TypeData::Cond { .. } | TypeData::IndexedAccess { .. } | TypeData::Keyof(_) => {
-                let constraint = match self.has_costly_base_constraint(ty) {
+                let constraint = match self.c.has_costly_base_constraint(ty) {
                     true => None,
                     false => self.c.base_constraint_of(ty),
                 };
                 let constraint = constraint.filter(|&constraint| constraint != ty);
-                TypeShape::undeclared(ShapeKind::TypeVariable {
-                    constraint,
-                    parameter: None,
-                })
+                TypeShape::undeclared(ShapeKind::TypeVariable { constraint })
             }
             TypeData::ThisParam(symbol) => {
                 return Ok(WalkStep::Continue(self.c.declared_type(*symbol)));
@@ -131,9 +126,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 flags, readonly, ..
             } => self.shape_of_tuple(ty, flags, *readonly),
             TypeData::Anon { origin, .. } => self.shape_of_anonymous_type(ty, *origin),
-            TypeData::Fns { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => {
-                self.shape_of_object_type(ty)
-            }
+            TypeData::Synth(shape) => match shape.constructed_by.0 {
+                Some((file, function)) => {
+                    let function = FunctionRef { file, function };
+                    let kind = ShapeKind::ConstructorFunctionInstance(function);
+                    TypeShape::declared(kind, Trust::Untrusted)
+                }
+                None => self.shape_of_object_type(ty),
+            },
+            TypeData::Fns { .. } | TypeData::ReverseMapped { .. } => self.shape_of_object_type(ty),
             TypeData::Template { texts, types } => {
                 TypeShape::undeclared(ShapeKind::TemplateLiteral {
                     texts: self.list(texts),

@@ -1,0 +1,13 @@
+# f1 = lay, f2 = Row
+# -- source: a-name-that-a-helper-defines-on-the-this-that-it-is-handed-has-a-slot.ts
+# declare function sink(...values: unknown[]): void;
+# const descriptor = { value: undefined as unknown, enumerable: false };
+# function lay(target: any, value: unknown) { descriptor.value = value; Object.defineProperty(target, "mark", descriptor); target.seen = 0; }
+# function Row(this: any, value: unknown) { const self = value ? this : new Date(); lay(self, value); }
+# sink(new (Row as any)(1), lay);
+# -- end of source
+# RUN(WIRE): print
+# WIRE: name="Row" {{*}}key="mark" {{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
+# RUN: plan layouts mechanisms=all
+# CHECK: "mark" JSValue Inline
+# CHECK: "seen" JSValue Inline

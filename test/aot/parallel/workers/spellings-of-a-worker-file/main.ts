@@ -1,7 +1,7 @@
 // The ways to spell the file that a Worker starts from. Each spelling has a file of its own, and no file but this one is named when the program is built.
 // Alone: a relative name is looked for from the folder in which the program is built
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
-// STATISTIC: EngineRuns = 21
+// An earlier compiler compiled each file that a Worker starts from as a program by itself, and counted the runs of the engine: EngineRuns = 21. They are entry points of the one program now.
 const start = (how: string, worker: Worker) =>
   new Promise<void>(done => {
     const end = (text: string) => (console.log(how + ": " + text), worker.terminate(), done());

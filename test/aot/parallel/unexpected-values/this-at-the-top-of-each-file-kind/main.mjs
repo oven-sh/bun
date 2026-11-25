@@ -17,6 +17,6 @@ attempt("the main ES module", () => (this === undefined ? "undefined" : this ===
 this file is strict: true
 a sloppy CommonJS file Object{top: "object", isTheExportsObject: true, inAnArrow: "object"}
 a strict CommonJS file Object{top: "object", isTheExportsObject: true, inAnArrow: "object"}
-an ES module Object{inAnArrow: "undefined", top: "undefined"}
-the main ES module "undefined"
+an ES module Object{inAnArrow: "null", top: "null"}
+the main ES module "null"
 */

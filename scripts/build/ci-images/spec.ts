@@ -204,7 +204,7 @@ export const pins = {
       "windows-x64": "88d8258dcf6ae4f7a80c7d1088e1f36fa7025a1cfd1343731b4ee6f385121fc0",
       "windows-aarch64": "de9f7d29ccd39efa59a3dda3ec363b396e09b92681229b9b8f6aaa4c84285e9c",
     },
-    channel: "nightly-2026-09-15",
+    channel: "nightly-2026-11-14",
     components: ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"],
     targets: [
       "aarch64-unknown-linux-gnu",
@@ -213,6 +213,7 @@ export const pins = {
       "x86_64-unknown-linux-musl",
       "aarch64-linux-android",
       "x86_64-linux-android",
+      "aarch64-unknown-freebsd",
       "x86_64-unknown-freebsd",
       "aarch64-apple-darwin",
       "x86_64-apple-darwin",
@@ -302,11 +303,11 @@ export const pins = {
   },
   muslSysroot: { alpineRelease },
   windowsSysroot: {
-    xwin: "0.9.0",
+    xwin: "0.10.0",
     // The .sha256 beside each file of the release.
     xwinSha256: {
-      x64: "31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd",
-      aarch64: "41466ca41e16fe7fc1b82a67babc7c3811021bf32de354b90b34d8c4edb153e2",
+      x64: "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88",
+      aarch64: "6d56d28537a86f37aa3d041318898f25ee3100c6b6ec332ad873c28faf37be23",
     },
     sdk: "10.0.26100",
     crt: "14.44.17.14",
@@ -1567,6 +1568,29 @@ function noTmpfs(): Tool {
   return { name: "no-tmpfs", identity: configuration, steps: [service("tmp.mount", "masked")] };
 }
 
+/** The SSH client without the server that the base image comes with. */
+function sshClient(image: LinuxImage): Tool {
+  const { distro } = image;
+  return {
+    name: "ssh-client",
+    identity: packageDatabase,
+    steps: [
+      ...(distro === "alpine"
+        ? [apkAdd(["openssh-client-default"]), service("sshd", "disabled"), apkDel(["openssh", "openssh-server-pam"])]
+        : [
+            ...(distro === "ubuntu"
+              ? [comment("Its removal restarts the server, so it goes first."), aptPurge(["ec2-instance-connect"])]
+              : []),
+            aptPurge(["openssh-server", "openssh-sftp-server"]),
+          ]),
+      remove(text`/etc/ssh/${glob("ssh_host_*")}`),
+      comment("cloud-init would make the server's host keys and write its configuration."),
+      directory("/etc/cloud/cloud.cfg.d"),
+      writeFile("/etc/cloud/cloud.cfg.d/99-ssh.cfg", ["ssh_genkeytypes: []", "ssh_pwauth: null"]),
+    ],
+  };
+}
+
 /**
  * What a build and a test job would otherwise download each time: dependency
  * sources for scripts/build/download.ts, the Docker images the tests use, and
@@ -1699,6 +1723,16 @@ function cleanup(image: LinuxImage): Tool {
       comment("Tells the disk which blocks are free, so the snapshot does not store them."),
       tolerate(run("fstrim", "--all")),
     ],
+  };
+}
+
+/** Last, so that no tool can bring the server back as a dependency. */
+function noSshServer(image: LinuxImage): Tool {
+  const servers = ["/usr/sbin/sshd", ...(image.distro === "alpine" ? ["/usr/sbin/sshd.pam"] : [])];
+  return {
+    name: "no-ssh-server",
+    identity: configuration,
+    steps: servers.map(server => failIfExists(server, "the SSH server is installed")),
   };
 }
 
@@ -2068,10 +2102,12 @@ export function tools(image: Image): readonly Tool[] {
     age(image),
     coreDumps(image),
     ...(apt ? [noTmpfs()] : []),
+    sshClient(image),
     prefetch(image),
     agentService(),
     recordImage(image),
     cleanup(image),
+    noSshServer(image),
   ];
 }
 
@@ -2431,6 +2467,9 @@ const failUnlessNotEmpty =
       ? [`if (-not ${renderValue(value, c)}) { throw ${renderValue(text`bootstrap: ${message}`, c, true)} }`]
       : [`[ -n ${renderValue(value, c)} ] || { echo ${renderValue(text`bootstrap: ${message}`, c)} >&2; exit 1; }`];
 
+const failIfExists = (path: Value, message: Value): Step =>
+  ifExists(path, [c => [`echo ${renderValue(text`bootstrap: ${message}`, c)} >&2`, "exit 1"]]);
+
 const ifExists =
   (path: Value, steps: Step[]): Step =>
   c =>
@@ -2777,6 +2816,16 @@ const apkAdd =
     `apk add --no-cache --no-interactive --no-progress ${names.join(" ")}`,
   ];
 
+/** Removes the packages with their configuration. */
+const aptPurge =
+  (names: readonly string[]): Step =>
+  () => [`apt-get purge --yes ${names.join(" ")}`];
+
+/** Removes the packages, and what was only there for them. */
+const apkDel =
+  (names: readonly string[]): Step =>
+  () => [`apk del --no-interactive --no-progress ${names.join(" ")}`];
+
 const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
@@ -2843,7 +2892,7 @@ const addUserToGroup =
   (user: string, group: string): Step =>
   c => [isAlpine(c) ? `addgroup ${user} ${group}` : `usermod -aG ${group} ${user}`];
 
-/** `enabled`: starts with the machine. `started`: running now. `masked`, `disabled`: systemd only. */
+/** `enabled`, `disabled`: whether it starts with the machine. `started`: running now. `masked`: systemd only. */
 const service =
   (name: string, state: "enabled" | "started" | "masked" | "disabled"): Step =>
   c => {
@@ -2852,6 +2901,7 @@ const service =
         `systemctl ${{ enabled: "enable", started: "start", masked: "mask", disabled: "disable" }[state]} ${name}`,
       ];
     if (state === "enabled") return [`rc-update add ${name} default`];
+    if (state === "disabled") return [`rc-update del ${name} default`];
     if (state === "started") return [`rc-service ${name} start`];
     throw new Error(`OpenRC has no "${state}"`);
   };

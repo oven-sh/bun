@@ -2,7 +2,6 @@
 // for a Float64Array. The class named in the source may differ: a subclass of a typed array, a subclass of that,
 // Buffer, or a constructor called with another new.target.
 import { join } from "path";
-import { spread } from "./case-files";
 
 type Kind = { name: string; list: string; zero: string; one: string; type: string };
 
@@ -192,7 +191,6 @@ export const everyCase = Object.keys(kinds).flatMap(kind =>
     ),
   ),
 );
-export const sample = (count: number) => spread(everyCase, count);
 
 const options = () =>
   JSON.stringify({

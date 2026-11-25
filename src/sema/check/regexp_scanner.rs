@@ -1572,6 +1572,9 @@ fn decode_rune(text: &[u8]) -> (u32, usize) {
 
 #[inline(never)]
 fn runes_of(text: &[u8]) -> Vec<char> {
+    if text.is_ascii() {
+        return text.iter().map(|&byte| char::from(byte)).collect();
+    }
     let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
     text.utf8_chunks()
         .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
@@ -1678,12 +1681,11 @@ fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64>
             let distance = if c1 == c2 {
                 previous[j - 1]
             } else {
-                let substitution = previous[j - 1]
-                    + if c1.to_lowercase().eq(c2.to_lowercase()) {
-                        0.1
-                    } else {
-                        2.0
-                    };
+                let differs_by_case = match c1.is_ascii() && c2.is_ascii() {
+                    true => c1.eq_ignore_ascii_case(&c2),
+                    false => c1.to_lowercase().eq(c2.to_lowercase()),
+                };
+                let substitution = previous[j - 1] + if differs_by_case { 0.1 } else { 2.0 };
                 (previous[j] + 1.0)
                     .min(current[j - 1] + 1.0)
                     .min(substitution)

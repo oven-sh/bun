@@ -1,6 +1,7 @@
 // Small functions with one number in a variable that at other times holds other kinds of numbers or non-numbers. The
 // number is passed to everything in the language and library that takes a number: the result must depend only on its
-// value, never on its representation.
+// value, never on its representation. Some functions get it through a parameter that may hold anything, out of a copy the
+// engine made of a list of fractions, where a whole number is still a double.
 import type { Random } from "./random";
 
 const prelude = `declare function structuredClone<T>(value: T): T;
@@ -77,6 +78,20 @@ const advances = ["a += 1;", "a += 6;", "a += q;", "a += q;", "a += 0.5;", "a +=
 const others: [string, string][] = [["undefined", "undefined"], ["null", "null"], ["string", '"text"'], ["boolean", "false"], ["bigint", "9n"], ["number[]", "[1]"], ["Point", "new Point(1, 2)"]];
 // A test before the uses.
 const tests = ["N === nine", "N === nine", "N === three", "N === zero", "Number.isInteger(N)", "(N | 0) === N", "N >>> 0 === N", "N >= 0 && N < 10", "N === Math.floor(N)", "N !== 0", "N > 0", "N === N", "N % 1 === 0", "Number.isSafeInteger(N)", "N < 2147483648 && N >= -2147483648", "N !== nine", "N === nine || N === three", "N >= three && N <= nine"];
+// Tests that only a whole number passes.
+const wholeTests = ["(N | 0) === N", "(N | 0) === N", "N >>> 0 === N", "~~N === N", "N << 0 === N", "N >> 0 === N", "Math.trunc(N) === N", "N === Math.floor(N)", "N % 1 === 0", "Number.isInteger(N)", "Number.isSafeInteger(N)"];
+// Whole numbers that a list of fractions holds as doubles.
+const smallWholes = ["3", "9", "0", "60", "-1", "1", "2", "7", "12", "255"];
+const wideWholes = [...smallWholes, "-0", "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967295", "4294967296", "9007199254740991", "1e21"];
+// How the element at `@`, 1 to 5, leaves the list. Each function `#` has a list and givers of its own, so that what one is
+// given says nothing about what another is given.
+const givers = [
+  { weight: 4, made: "function handed#(k: number): unknown {\n  return (function (): unknown {\n    return arguments[k];\n  } as (...all: number[]) => unknown).apply(null, doubles#);\n}", read: "handed#(@)" },
+  { weight: 2, made: 'const joined#: unknown[] = (["x"] as unknown[]).concat(doubles#);', read: "joined#[@ + 1]" },
+  { weight: 2, made: 'const copied#: unknown[] = doubles#.slice(0);\ncopied#[0] = "x";', read: "copied#[@]" },
+  { weight: 2, made: 'const valued#: unknown[] = ["x", ...Object.values(doubles#)];', read: "valued#[@ + 1]" },
+  { weight: 1, made: 'const listed#: unknown[] = Array.from(doubles#);\nlisted#.unshift("x");', read: "listed#[@ + 1]" },
+];
 // The same value obtained another way.
 const roads = ["(N + 1 - 1)", "Number(String(N))", '+("" + N)', "N * 1", "same(N)", "[N][0]", "-(-N)", "N / 1", "Math.max(N, N)", "deep(N, 1)"];
 
@@ -85,8 +100,11 @@ const freshLists = ["[]", "[]", "[1, 2]", "[1, 2, 3]", "[0.5]", "[0.5, 1.5]", "[
 const fullLists = ["[0, 3, 9, 4.5, -1]", "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]", "[NaN, -0, 9]", "[9, 9, 9]", "[0.5, 3, 9]", "[3, 9]", "[N, 3, 9]", "[0, R, 3]"];
 
 // `l` is an array created right there. After these it has few elements.
-const listChanges = ["l.push(N);", "l.push(N);", "l.push(N);", "l.push(N, N);", "l.push(N);\n    l.push(R);", "l.push(1);\n    l.push(N);", "l[0] = N;", "l[1] = N;", "l[l.length] = N;", "l[l.length - 1] = N;", "l.unshift(N);", "l.fill(N);", "l.fill(N, 1);", "l.splice(0, 0, N);", "l.splice(1, 1, N, N);", "l[0] += N;", "l[0] *= N;", "l[0] = l[0] + N;", "l.length = N & 3;", "l.fill(7, N);", "l.fill(7, 0, N);", "l.splice(N, 1);", "l.splice(0, N);", "l.copyWithin(N, 1);", "l.copyWithin(0, N);", "l[N & 3] = 5;", "l[N & 3] = N;", "for (let i = 0; i < 5; i++) l.push(N);", "for (let i = 0; i < 3; i++) l.push(N + i);", "for (let i = 0; i < l.length; i++) l[i] = N;", "for (let i = 0; i < l.length; i++) l[i] += N;", "l.reverse();\n    l.push(N);", "l.pop();\n    l.push(N);", "l.shift();\n    l.push(N);", "l.push(N);\n    l.sort();", "l.push(N);\n    l.sort((x, y) => x - y);"];
-const listReads = ['out += num(l[0]) + "," + num(l[1]) + " ";', 'out += l.length + ":" + num(l[0]) + "," + num(l[l.length - 1]) + " ";', 'out += num(l[0] + l[l.length - 1]) + " ";', 'for (let i = 0; i < l.length; i++) out += num(l[i]) + ",";\n    out += " ";', 'for (const e of l) out += num(e) + ",";\n    out += " ";', '{\n      let s = 0;\n      for (let i = 0; i < l.length; i++) s += l[i];\n      out += num(s) + " ";\n    }', '{\n      const [first, second] = l;\n      out += show(first) + "," + show(second) + " ";\n    }', 'out += show(l.at(0)) + "," + show(l.at(-1)) + " ";', 'out += l.join() + " ";', 'out += show(l) + " ";', 'out += num(l[0] | 0) + "," + num(l[l.length - 1] >>> 0) + " ";', 'out += l.indexOf(N) + "," + l.includes(N) + "," + l.lastIndexOf(R) + " ";', 'out += num(l[l.length - 1] * 2) + "," + num(l[0] / 2) + " ";', 'out += (l[l.length - 1] === N) + "," + Object.is(l[l.length - 1], R) + " ";'];
+const listStores = ["l.push(N);", "l.push(N);", "l.push(N);", "l.push(N, N);", "l.push(N);\n    l.push(R);", "l.push(1);\n    l.push(N);", "l[0] = N;", "l[1] = N;", "l[l.length] = N;", "l[l.length - 1] = N;", "l.unshift(N);", "l.fill(N);", "l.fill(N, 1);", "l.splice(0, 0, N);", "l.splice(1, 1, N, N);"];
+const listChanges = [...listStores, "l[0] += N;", "l[0] *= N;", "l[0] = l[0] + N;", "l.length = N & 3;", "l.fill(7, N);", "l.fill(7, 0, N);", "l.splice(N, 1);", "l.splice(0, N);", "l.copyWithin(N, 1);", "l.copyWithin(0, N);", "l[N & 3] = 5;", "l[N & 3] = N;", "for (let i = 0; i < 5; i++) l.push(N);", "for (let i = 0; i < 3; i++) l.push(N + i);", "for (let i = 0; i < l.length; i++) l[i] = N;", "for (let i = 0; i < l.length; i++) l[i] += N;", "l.reverse();\n    l.push(N);", "l.pop();\n    l.push(N);", "l.shift();\n    l.push(N);", "l.push(N);\n    l.sort();", "l.push(N);\n    l.sort((x, y) => x - y);"];
+// These compute with an element where they read it.
+const computedReads = ['out += num(l[0] + l[l.length - 1]) + " ";', '{\n      let s = 0;\n      for (let i = 0; i < l.length; i++) s += l[i];\n      out += num(s) + " ";\n    }', 'out += num(l[0] | 0) + "," + num(l[l.length - 1] >>> 0) + " ";', 'out += num(l[l.length - 1] * 2) + "," + num(l[0] / 2) + " ";'];
+const listReads = [...computedReads, 'out += num(l[0]) + "," + num(l[1]) + " ";', 'out += l.length + ":" + num(l[0]) + "," + num(l[l.length - 1]) + " ";', 'for (let i = 0; i < l.length; i++) out += num(l[i]) + ",";\n    out += " ";', 'for (const e of l) out += num(e) + ",";\n    out += " ";', '{\n      const [first, second] = l;\n      out += show(first) + "," + show(second) + " ";\n    }', 'out += show(l.at(0)) + "," + show(l.at(-1)) + " ";', 'out += l.join() + " ";', 'out += show(l) + " ";', 'out += l.indexOf(N) + "," + l.includes(N) + "," + l.lastIndexOf(R) + " ";', 'out += (l[l.length - 1] === N) + "," + Object.is(l[l.length - 1], R) + " ";'];
 // After these the array may have the maximum length, so nothing iterates over it.
 const farChanges = ["l[N] = 5;", "l[N] = N;", "l[N + 1] = 5;", "!l.length = N;", "l[N >>> 0] = 5;", "l[N * 2] = 5;", "delete l[N];", "l[-N] = 5;"];
 const farReads = ['out += l.length + ":" + show(l[0]) + "," + show(l[N]) + "," + Object.keys(l).join() + " ";', 'out += l.length + ":" + (N in l) + "," + l.hasOwnProperty(N) + "," + show(l[R]) + " ";'];
@@ -167,7 +185,9 @@ export function generate(random: Random): string {
   for (let id = 1; id <= functions; id++) {
     const form = random.weighted([[7, "function"], [2, "generator"], [2, "async"], [1, "method"], [1, "arrow"]] as const);
     const other = random.chance(0.25) ? random.pick(others) : undefined;
-    const isAnything = !other && random.chance(0.05);
+    const isHanded = !other && random.chance(0.3);
+    const isAnything = isHanded || (!other && random.chance(0.05));
+    const handedOver = (at: string): string => random.weighted(givers.map(each => [each.weight, each.read] as const)).replace("#", String(id)).replace("@", at);
     const isNarrowed = !!other || isAnything;
     const hasClosure = !isNarrowed && random.chance(0.12);
     // If the variable may hold a non-number, a constant replaces it after the number test.
@@ -200,6 +220,7 @@ export function generate(random: Random): string {
     const use = (): string =>
       random.weighted([
         [10, () => statements(["const l: number[] = F;", random.pick(listChanges), random.pick(listReads)])],
+        [isHanded ? 25 : 0, () => statements([`const l: number[] = ${random.pick(["[]", "[1]", "[1, 2]", "[1, 2, 3]", "[N]", "[1, N]", "[N, N]"])};`, random.pick(listStores), random.pick(computedReads)])],
         [3, () => statements(["const l: number[] = F;", random.pick(listChanges), random.pick(listChanges), random.pick(listReads), random.pick(listReads)])],
         [2, () => statements(["const l: number[] = F;", random.pick(farChanges), random.pick(farReads)])],
         [6, () => statements([`const m: number[] = ${random.pick(newLists).replace(/^!/, "")};`, "!", random.pick(listReads).replace(/\bl\b/g, "m")])],
@@ -219,15 +240,15 @@ export function generate(random: Random): string {
       ] as const)();
     const uses = (count: number): string => {
       let all = Array.from({ length: count }, use).join("\n  ");
-      if (random.chance(0.3)) all = `if (${written(random.pick(tests))}) {\n  ${all}\n  } else out += "- ";`;
+      if (random.chance(isHanded ? 0.8 : 0.3)) all = `if (${written(random.pick(isHanded && random.chance(0.7) ? wholeTests : tests))}) {\n  ${all}\n  } else out += "- ";`;
       return isNarrowed ? `if (typeof a === "number") {\n  const n = a;\n  ${all}\n  } else out += typeof a + " ";` : all;
     };
     const advance = (): string => {
-      const step = hasClosure && random.chance(0.5) ? "bump();" : random.pick(advances);
+      const step = hasClosure && random.chance(0.5) ? "bump();" : isHanded && random.chance(0.6) ? `a = ${handedOver("((turns & 3) + 1)")};` : random.pick(advances);
       if (!isNarrowed) return step;
       return `if (typeof a === "number") {\n  ${step}\n  } else a = ${random.pick(["3", "9", "0.5", "p"])};${other && random.chance(0.4) ? `\n  if (turns === ${random.between(2, 4)}) a = ${other[1]};` : ""}`;
     };
-    const start = random.pick(starts);
+    const start = isHanded ? "r" : random.pick(starts);
     const declared = other ? `let a: number | ${other[0]} = p > 1e300 ? ${other[1]} : ${start};` : isAnything ? `let a: unknown = ${start};` : `let a: number = ${start};`;
     const early = !isNarrowed && random.chance(0.35) ? `\n  ${random.pick(["a += 6;", "a += 1;", "a *= 2;", "a -= 3;", "a = a + p;", "a /= 1;", "a = -a;"])}` : "";
     const stop = form === "generator" ? "\n  yield 0;" : form === "async" ? "\n  await null;" : "";
@@ -239,7 +260,7 @@ export function generate(random: Random): string {
       [1, () => ""],
     ] as const)();
     let body = `${declared}${early}${hasClosure ? `\n  const bump = (): void => {\n    ${random.pick(["a += q;", "a += 0.5;", "a *= 2;", "a = a / 2;", "a++;"])}\n  };` : ""}
-  ${random.chance(0.8) ? uses(random.between(1, 3)) : ""}${random.chance(0.3) ? stop : ""}
+  ${random.chance(isHanded ? 1 : 0.8) ? uses(random.between(1, 3)) : ""}${random.chance(0.3) ? stop : ""}
   ${loop}
   ${random.chance(0.6) ? uses(random.between(1, 2)) : ""}
   return out + show(a);`;
@@ -257,20 +278,29 @@ export function generate(random: Random): string {
     body = `let out = "";\n  let turns = 0;\n  ${made.map(each => each[1]).join("\n  ")}${made.length ? "\n  " : ""}${body}`;
 
     const value = () => random.weighted([[10, () => random.pick(["3", "3", "9", "0", "1", "2", "4", "6", "7", "8", "12", "60"])], [3, () => random.pick(["0.5", "4.5", "1.5", "-0.5", "2.25"])], [2, () => random.pick(["-1", "-3", "-9"])], [3, () => random.pick(["2147483640", "2147483647", "-2147483648", "2147483648", "4294967295", "4294967296", "65536", "100000", "1000000000", "9007199254740991", "255", "256", "31", "32", "64"])], [1, () => random.pick(["-0", "NaN", "Infinity", "-Infinity"])], [3, () => `given[${random.below(8)}]`]] as const)();
-    const times = random.weighted([[5, 1], [4, 2], [1, 3]] as const);
-    notes.push(`${form}${other ? "-or-" + other[0] : isAnything ? "-anything" : ""}${hasClosure ? "-closure" : ""}`);
+    // A text and a fraction come in through the same parameter, so that it is not known to hold a number.
+    const whole = () => handedOver(String(random.between(1, 5)));
+    const comesIn = isHanded ? random.shuffled(['"text"', random.pick(["0.5", "4.5"]), whole(), whole(), random.chance(0.5) ? whole() : random.pick(smallWholes)]) : [];
+    const times = isHanded ? comesIn.length : random.weighted([[5, 1], [4, 2], [1, 3]] as const);
+    const parameters = `p: number, q: number${isHanded ? ", r: unknown" : ""}`;
+    if (isHanded) {
+      const wholes = random.sample(random.chance(0.7) ? smallWholes : wideWholes, 5).join(", ");
+      text.push(random.chance(0.7) ? `const doubles${id}: number[] = [0.5, ${wholes}];` : `const doubles${id}: number[] = [0.5];\nfor (const each of [${wholes}]) doubles${id}.push(each);`);
+      for (const each of givers) if ((body + comesIn.join()).includes(each.read.split("#")[0] + id + each.read.split("#")[1][0])) text.push(each.made.replaceAll("#", String(id)));
+    }
+    notes.push(`${form}${other ? "-or-" + other[0] : isHanded ? "-handed" : isAnything ? "-anything" : ""}${hasClosure ? "-closure" : ""}`);
     for (let time = 0; time < times; time++) {
-      const given = `${value()}, ${value()}`;
+      const given = `${value()}, ${value()}${isHanded ? ", " + comesIn[time] : ""}`;
       if (form === "function" || form === "arrow") run.push(`console.log("${id}: " + run${id}(${given}));`);
       else if (form === "method") run.push(`console.log("${id}: " + new Home${id}().run(${given}));`);
       else if (form === "async") run.push(`console.log("${id}: " + (await run${id}(${given})));`);
       else run.push(`{\n  const steps = run${id}(${given});\n  let result = steps.next();\n  for (let i = 0; i < 60 && !result.done; i++) result = steps.next(result.value);\n  console.log("${id}: " + result.value);\n}`);
     }
-    if (form === "function") text.push(`function run${id}(p: number, q: number): string {\n  ${body}\n}`);
-    else if (form === "arrow") text.push(`const run${id} = (p: number, q: number): string => {\n  ${body}\n};`);
-    else if (form === "method") text.push(`class Home${id} {\n  run(p: number, q: number): string {\n  ${body}\n  }\n}`);
-    else if (form === "async") text.push(`async function run${id}(p: number, q: number): Promise<string> {\n  ${body}\n}`);
-    else text.push(`function* run${id}(p: number, q: number): Generator<number, string, unknown> {\n  ${body}\n}`);
+    if (form === "function") text.push(`function run${id}(${parameters}): string {\n  ${body}\n}`);
+    else if (form === "arrow") text.push(`const run${id} = (${parameters}): string => {\n  ${body}\n};`);
+    else if (form === "method") text.push(`class Home${id} {\n  run(${parameters}): string {\n  ${body}\n  }\n}`);
+    else if (form === "async") text.push(`async function run${id}(${parameters}): Promise<string> {\n  ${body}\n}`);
+    else text.push(`function* run${id}(${parameters}): Generator<number, string, unknown> {\n  ${body}\n}`);
   }
   text.push(run.join("\n"));
   return `// ${notes.join(" ")}\n${text.join("\n")}`;

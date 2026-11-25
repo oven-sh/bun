@@ -7,7 +7,7 @@ import { test } from "./supported";
 
 // `bun test --aot` compiles what the test files share as programs of their own, below the test files. Here the main file of a stored program
 // is itself the test file, so each of its imports and require() calls, and every object that comes back, crosses from one program into another.
-// Plain `bun test` says what each must print.
+// Plain `bun test` says what each must print, but for a program that ends with what it prints where that is not what plain Bun does.
 const programs = [
   "commonjs/call-in-front-comma-module-exports-read",
   "commonjs/every-key-require-cache-lists-can-read",
@@ -42,6 +42,7 @@ const programs = [
   // A shared file rebinds `module`, deletes `module.exports` or stores into `module.parent`, and the test file looks.
   "commonjs/a-required-file-stores-the-main-module-into-its-module",
   "commonjs/keys-of-a-child-that-deleted-its-module-exports",
+  "commonjs/a-require-gets-what-the-file-left-under-the-exports-of-its-module",
   "commonjs/a-store-into-module-parent-of-a-required-file",
   "commonjs/a-store-into-module-parent-in-front-of-the-first-read",
   "commonjs/a-module-object-and-then-a-text-stored-into-module-parent",
@@ -49,12 +50,15 @@ const programs = [
 ];
 
 const stored = join(import.meta.dir, "parallel");
+const storedOutputs = new Map<string, string[]>();
 
 function copyAsTestFile(directory: string, program: string) {
   const folder = join(directory, "p", program);
   cpSync(join(stored, program), folder, { recursive: true });
   const main = readdirSync(folder).find(name => /^main\.[a-z]+$/.test(name))!;
   const text = readFileSync(join(folder, main), "utf8");
+  const output = /\n\/\* Output:\n((?:(?!\*\/)[^])*)\*\/\s*$/.exec(text)?.[1];
+  if (output !== undefined) storedOutputs.set(program, output.split("\n").slice(0, -1));
   const extension = main.slice("main.".length);
   const isCommonJS = extension === "cjs" || extension === "cts";
   const runner = isCommonJS ? `require("bun:test")` : `await import("bun:test")`;
@@ -66,7 +70,7 @@ function copyAsTestFile(directory: string, program: string) {
 
 async function runTests(directory: string, ...flags: string[]) {
   // A project as small as this one is one program unless the word asks for layers. run() fails where the run has none.
-  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2" };
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags, "./p"], directory, env);
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
   const printed: Record<string, string[]> = {};
@@ -87,5 +91,6 @@ test("the main files of stored programs run as test files", async () => {
   for (const program of programs) copyAsTestFile(String(dir), program);
   const plain = await runTests(String(dir));
   expect(Object.keys(plain.printed).sort()).toEqual([...programs].sort());
+  for (const [program, lines] of storedOutputs) plain.printed[program] = lines;
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 300_000);

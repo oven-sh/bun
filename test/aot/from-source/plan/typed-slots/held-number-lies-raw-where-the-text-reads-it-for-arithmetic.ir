@@ -1,0 +1,21 @@
+# the objects and their readers are handed to unseen code, so nothing is proven of them: each slot is held to what is written of its field, `number`. Eight raw bytes save nothing against eight boxed ones, and every store pays for them:
+# so such a slot is boxed (`label`, which is only added to what nobody knows, and `kept`, which is only handed on), but where the program's own text reads the field for an operator that takes numbers alone:
+# a product (`r`), a difference (`low`), a relation (`high`), an argument of a function of Math (`side`). There a read is a raw double: no test of the tag, no unboxing. A guess at a form: every form holds every number.
+# -- source: held-number-lies-raw-where-the-text-reads-it-for-arithmetic.ts
+# declare function sink(...values: unknown[]): void;
+# class Shape { r: number; low: number; high: number; side: number; label: number; kept: number; constructor(n: number) { this.r = n; this.low = n; this.high = n; this.side = n; this.label = n; this.kept = n; } }
+# function area(s: Shape) { return s.r * s.r * 3.5; }
+# function span(s: Shape, from: number) { return s.low - from; }
+# function below(s: Shape, limit: number) { return s.high < limit; }
+# function root(s: Shape) { return Math.sqrt(s.side); }
+# function named(s: Shape, more: any) { return s.label + more; }
+# function handsOn(s: Shape) { return s.kept; }
+# sink(Shape, area, span, below, root, named, handsOn, new Shape(0.5));
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "r" OptionalDouble Inline
+# CHECK: "low" OptionalDouble Inline
+# CHECK: "high" OptionalDouble Inline
+# CHECK: "side" OptionalDouble Inline
+# CHECK: "label" JSValue Inline
+# CHECK: "kept" JSValue Inline

@@ -1,0 +1,25 @@
+A helper that the test file imports first calls vi.mock() on a module that is linked and has not run: the real module runs first and once, then the factory. Here: a package.
+#### first.test.ts
+import "./mocks-rates";
+import { test, vi } from "bun:test";
+import * as rates from "rates";
+import { rates as ofInvoice } from "./invoice";
+test("t", async () => {
+  console.log("| CASE answer", rates.base, rates.rate(), ofInvoice(), (await vi.importActual("rates")).rate());
+  console.log("| CASE said", globalThis.said.join(" "));
+});
+#### invoice.ts
+import { rate } from "rates";
+export const rates = () => rate();
+#### mocks-rates.ts
+import { vi } from "bun:test";
+function say(text) { (globalThis.said ??= []).push(text); }
+vi.mock("rates", async importOriginal => { say("factory"); return { ...(await importOriginal()), rate: () => "mock" }; });
+#### node_modules/rates/index.js
+(globalThis.said ??= []).push("rates"); export const base = 0.2; export function rate() { return "real"; }
+#### node_modules/rates/package.json
+{ "name": "rates", "main": "index.js", "type": "module" }
+#### package.json
+{ "name": "p", "type": "module" }
+#### tsconfig.json
+{}

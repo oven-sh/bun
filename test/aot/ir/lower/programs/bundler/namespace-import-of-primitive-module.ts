@@ -3,6 +3,8 @@
 // STATISTIC: SourceFilesChecked = 2
 // STATISTIC: SourceFilesInferred = 2
 // STATISTIC: SourceFilesData = 7
+// CHECK-LABEL: function {{*}}name="keys"
+// CHECK-LABEL: function {{*}}name="length"
 
 // FILE: main.ts
 // `import * as all` of a module whose value is a string, a number, a boolean or null: a text file, a file imported for its path, a JSON file
@@ -68,29 +70,3 @@ export { reexported }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: keys length
-// CHECK-LABEL: function {{*}}name="keys"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Object.keys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = Call v5, v4 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_6]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="default"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_7]]} illTypedCause=Assertion
-// CHECK-NEXT: v3 = PropGet v2 key="length"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_7]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

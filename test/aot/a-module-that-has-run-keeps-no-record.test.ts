@@ -2,7 +2,8 @@ import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // What the loader makes to load, link and run an ES module of the program goes when no graph is being loaded any more:
 // behind a hundred and twenty modules a program holds a handful of records.
@@ -50,6 +51,58 @@ async function later(index: number) {
 for (let index = 0; index < ${n}; index++) sum += await later(index);
 `,
     files: feature,
+    sum: sumOfAll,
+  },
+  "one import() after the other, of modules above one that awaits": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./above${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      [`above${i}.ts`]: `import { low } from "./waits${i}.ts";\nexport function run() { return low; }\n`,
+      [`waits${i}.ts`]: `await null;\nexport const low = ${i};\n`,
+    }),
+    sum: sumOfAll,
+  },
+  "one import() after the other, of cycles with a member that awaits": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./ring${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      [`ring${i}.ts`]: `import { back } from "./back${i}.ts";\nexport function run() { return back(); }\nexport const own = ${i};\n`,
+      [`back${i}.ts`]: `import { own } from "./ring${i}.ts";\nawait null;\nexport function back() { return own; }\n`,
+    }),
+    sum: sumOfAll,
+  },
+  "one import() after the other, behind a load that came to a module whose imports another load had listed": {
+    entry: n => `
+const long = import("./long.ts");
+const short = import("./short.ts");
+sum += (await long).one + (await short).two;
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./feature${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: feature,
+    shared: {
+      "long.ts": `import { first } from "./first.ts";\nexport const one = first;\n`,
+      "first.ts": `import { second } from "./second.ts";\nexport const first = second;\n`,
+      "second.ts": `import { third } from "./third.ts";\nexport const second = third;\n`,
+      "third.ts": `import { met } from "./met.ts";\nexport const third = met;\n`,
+      "short.ts": `import { met } from "./met.ts";\nexport const two = met;\n`,
+      "met.ts": `import { deep } from "./deep.ts";\nexport const met = deep;\n`,
+      "deep.ts": `import file from "./file.cjs";\nexport const deep = file.zero;\n`,
+      "file.cjs": `module.exports = { zero: 0 };\n`,
+    },
     sum: sumOfAll,
   },
   "every import() at once, of modules that share an import": {

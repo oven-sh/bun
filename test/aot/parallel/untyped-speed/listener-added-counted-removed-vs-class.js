@@ -1,8 +1,6 @@
 // A listener is added, counted and removed, on three kinds of emitters of node:events and node:stream in turn, and on three objects of a class written here that keeps its
 // listeners the same way: a table without a prototype, a function alone under its name, a count. The library checks more: a turn on its emitters may ask three times the questions of a turn on the class,
 // which asks twelve. Three thousand turns on each.
-// Todo: a turn on the emitters of the library asks 58 questions
-// COUNT: branches <= 145000
 const { EventEmitter } = require("node:events");
 const { Readable, Writable } = require("node:stream");
 

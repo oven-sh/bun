@@ -1,0 +1,19 @@
+# the callee is read in front of the argument, and the argument runs code, which may change what stands above the generator or put it back: what holds where the call stands need not have held at the read. The call stands as written.
+# -- source: next-written-by-hand-whose-argument-runs-code-is-called.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
+# function touch(walk: object): number { sink(walk); return 1; }
+# function drive(walk: Generator<number, string, number | undefined>) { for (;;) { const step = walk.next(touch(walk)); if (step.done) return step.value; } }
+# function driveWithWhatWasReadFirst(walk: Generator<number, string, number | undefined>) { for (;;) { const sent = touch(walk); const step = walk.next(sent); if (step.done) return step.value; } }
+# sink(drive(count(4)), drive(count(5)), driveWithWhatWasReadFirst(count(4)), driveWithWhatWasReadFirst(count(5)));
+# -- end of source
+# f1 = count, f2 = touch, f3 = drive, f4 = driveWithWhatWasReadFirst
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = Call {{*}}calleeKey="next"
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: = StepGenerator
+# Its twin runs the same code in front of the read of `next`: nothing stands between the read and the call, and the step stands.
+# RUN(TWIN): walk f4 mechanisms=all
+# TWIN-LABEL: code f4:Body
+# TWIN: = StepGenerator

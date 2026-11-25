@@ -12,7 +12,6 @@ struct Element {
     key: Option<PropId>,
 }
 
-// The attribute that the callee takes as an argument of its own, which is evaluated behind the other attributes and the children.
 pub(in crate::lower) fn find_key_argument(
     hir: &hir::File<'_>,
     callee: JsxCallee,

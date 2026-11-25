@@ -1,10 +1,9 @@
 // RUN: link
-// CHECK: layout [[rest]] module=
-// CHECK-NOT: fields=
-// CHECK: layout
 // CHECK: function {{*}}name="rests"
-// CHECK: = NewObject layout=[[rest]] @
-// CHECK: = NewObject layout=[[rest]] @
+// CHECK-NOT: = NewObject
+// CHECK: = CopyObject {{*}}excludedKeys=["a"]
+// CHECK-NOT: = NewObject
+// CHECK: = CopyObject {{*}}excludedKeys=["b"]
 
 // RUN(INFERRED): link
 // INFERRED: layout [[both]] module={{*}}fields=[{key="a" {{*}}{key="b"

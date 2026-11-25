@@ -1,0 +1,23 @@
+`bun test` prints the written value of a leading const in place of every read in its own file, so a mock that is laid over the file later changes nothing for the file's own functions there. A bigint, a text that is joined, what is made when the file runs and a `let` are read and follow the mock, and so does every importer.
+#### values.ts
+export const seven = 7;
+export const text = "written";
+export const nothing = null;
+export const sum = 1 + 2;
+export const again = text;
+export const big = 1n;
+export const joined = "a" + "b";
+export const made = String(7);
+export let counted = 1;
+export const own = () => [seven, text, nothing, sum, again, String(big), joined, made, counted, seven + 1, seven === 7 ? "seven" : "other"];
+export function declared() {
+  return [seven, text, nothing, sum, again, String(big), joined, made, counted, seven + 1, seven === 7 ? "seven" : "other"];
+}
+#### late.test.ts
+import { mock, test } from "bun:test";
+import { again, counted, declared, made, own, seven, text } from "./values";
+test("a mock laid late", () => {
+  console.log("| CASE before", JSON.stringify([seven, text, again, made, counted]), JSON.stringify(own()), JSON.stringify(declared()));
+  mock.module("./values", () => ({ seven: 9, text: "late", nothing: 0, sum: 4, again: "late", big: 2n, joined: "late", made: "mocked", counted: 5, own, declared }));
+  console.log("| CASE behind", JSON.stringify([seven, text, again, made, counted]), JSON.stringify(own()), JSON.stringify(declared()));
+});

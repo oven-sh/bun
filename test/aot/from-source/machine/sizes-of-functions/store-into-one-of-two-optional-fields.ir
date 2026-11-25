@@ -1,0 +1,22 @@
+# f1 = widen
+# -- source: store-into-one-of-two-optional-fields.ts
+# type Style = { color?: number; width?: number };
+# function widen(style: Style, width: number): void {
+#   style.width = width;
+# }
+# function paint(style: Style, color: number): void {
+#   style.color = color;
+# }
+# declare const input: any;
+# const style: Style = {};
+# if (input) widen(style, +input);
+# paint(style, +input);
+# widen(style, +input);
+# (globalThis as any).answer = Object.keys(style).length + (style.color ?? 0) + (style.width ?? 0);
+# -- end of source
+# The compiler before this one: 17 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 4.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

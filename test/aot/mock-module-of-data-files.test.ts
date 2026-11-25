@@ -68,12 +68,14 @@ async function runTests(directory: string, ...flags: string[]) {
   return { stdout: stdout.split("\n").sort(), results: results.sort(), exitCode };
 }
 
-async function expectCompiledToRunAsPlain(files: Record<string, string>) {
+async function expectCompiledToRunAsPlain(files: Record<string, string>, keptAsLoaded: string[] = []) {
   using dir = tempDir("mock-module-of-data-files", files);
   const plain = await runTests(String(dir));
   expect(plain.results.filter(result => result.startsWith("fail"))).toEqual([]);
   expect(plain.results.length).toBe(Object.keys(forms).length);
-  expect(plain.stdout.filter(line => line.includes("mocked")).length).toBe(Object.keys(forms).length);
+  expect(plain.stdout.filter(line => line && !line.startsWith("bun test ") && !line.includes("mocked"))).toEqual(
+    keptAsLoaded,
+  );
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }
 
@@ -88,6 +90,8 @@ test("mock.module replaces what a file of data that is loaded exports", async ()
         mock.module(${JSON.stringify(path)}, () => (${mock}));
         test(${JSON.stringify(name)}, () => { console.log(${JSON.stringify(name)}, before, "|", read()); });`,
     })),
+    // The file is loaded under two types. A patch would reach one of them, so neither is patched.
+    ["text-both-ways orig orig | orig orig"],
   );
 });
 

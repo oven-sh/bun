@@ -1,0 +1,15 @@
+# -- source: a-for-of-around-a-for-of-that-gets-a-list-or-an-iterator-closes-the-iterator.ts
+# declare function print(...values: unknown[]): void;
+# const counting = (n: number): any => ({ i: 0, [Symbol.iterator]() { return this; }, next() { return { done: this.i >= n, value: this.i++ }; }, return() { print("closed"); return {}; } });
+# function sum(outer: Iterable<number>, inner: number[], stop: number): number { let s = 0; for (const a of outer) for (const b of inner) { s += a * 10 + b; if (s === stop) throw s; } return s; }
+# for (const stop of [99, 11]) for (const outer of [[0, 1], counting(2)]) { try { print(sum(outer, [0, 1], stop)); } catch (thrown) { print("thrown", thrown); } }
+# -- end of source
+# LIBRARY: own
+# What the outer loop steps is tested to be a list and may go by the protocol: the body of the inner loop stays under its handler.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 22
+# CHECK-NEXT: 22
+# CHECK-NEXT: thrown 11
+# CHECK-NEXT: closed
+# CHECK-NEXT: thrown 11
+# CHECK-NEXT: exited with 0

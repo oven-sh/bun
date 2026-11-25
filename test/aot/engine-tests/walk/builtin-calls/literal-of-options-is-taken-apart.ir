@@ -1,0 +1,184 @@
+# The row of a built-in may name a function that takes the members of a literal one by one. Where the literal is fresh and holds no other name, its values are handed to that function, undefined for a name that it lacks,
+# and the literal is never made. function taken(body, status, headers) { return new Response(body, { status, headers }); }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[lacking]]: undefined{{*}} = Undefined
+# CHECK-NOT: NewObject
+# CHECK: = CallBuiltin -, v0, v1, [[lacking]], v2 overload=CompilerHelpersNewResponseFromParts
+# The operands go by the names, not by the order of the literal: function turned(body, status, statusText, headers) { return new Response(body, { headers, statusText, status }); }
+# RUN(TURNED): walk f2 mechanisms=all
+# TURNED-LABEL: code f2:Body
+# TURNED-NOT: NewObject
+# TURNED: = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersNewResponseFromParts
+# Native code asks for `method` too, and the function takes none: function other(body, status, method) { return new Response(body, { status, method }); }
+# RUN(OTHER): walk f4 mechanisms=all
+# OTHER-LABEL: code f4:Body
+# OTHER: = NewObject
+# OTHER-NOT: CompilerHelpersNewResponseFromParts
+# OTHER: = CallBuiltin {{*}}overload=Response/
+# Somebody else holds the literal, and may change it while the headers are read: function left(body, status) { const init = { status }; sink(init); return new Response(body, init); }
+# RUN(LEFT): walk f5 mechanisms=all
+# LEFT-LABEL: code f5:Body
+# LEFT: = NewObject
+# LEFT-NOT: CompilerHelpersNewResponseFromParts
+# LEFT: = CallBuiltin {{*}}overload=Response/
+# function third(body, status, more) { return new Response(body, { status }, more); }
+# RUN(THIRD): walk f6 mechanisms=all
+# THIRD-LABEL: code f6:Body
+# THIRD: = NewObject
+# THIRD-NOT: CompilerHelpersNewResponseFromParts
+# What the literal lacks is looked for above it: function below(body, status, above) { return new Response(body, { __proto__: above, status }); }
+# RUN(BELOW): walk f7 mechanisms=all
+# BELOW-LABEL: code f7:Body
+# BELOW: = NewObject
+# BELOW-NOT: CompilerHelpersNewResponseFromParts
+# The same, where the allocation itself takes the object above.
+# RUN(ALLOCATED): walk f3 mechanisms=all
+# ALLOCATED-LABEL: code f3:Body
+# ALLOCATED: = NewObject
+# ALLOCATED-NOT: CompilerHelpersNewResponseFromParts
+# function getter(body) { return new Response(body, { get status() { return 201; } }); }
+# RUN(GETTER): walk f8 mechanisms=all
+# GETTER-LABEL: code f8:Body
+# GETTER: = NewObject
+# GETTER-NOT: CompilerHelpersNewResponseFromParts
+# Another function is new.target: function lower(body, status, target) { return Reflect.construct(Response, [body, { status }], target); } as the engine's own operation
+# RUN(LOWER): walk f9 mechanisms=all
+# LOWER-LABEL: code f9:Body
+# LOWER: = NewObject
+# LOWER-NOT: CompilerHelpersNewResponseFromParts
+# Without the state of fresh objects nobody knows what the literal holds.
+# RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: = NewObject
+# WITHHELD-NOT: CompilerHelpersNewResponseFromParts
+# RUN(CLOSED): walk f1 mechanisms=all-BuiltinCalls
+# CLOSED-LABEL: code f1:Body
+# CLOSED: = NewObject
+# CLOSED-NOT: CompilerHelpersNewResponseFromParts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="headers" declared={type=anything flags=[IsExpected]}}, {key="status" declared={type=undefined|number}}, {key="statusText" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L1 fields=[{key="status" declared={type=anything}}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10
+    Return v11
+}
+function f1 name="taken" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="status"
+    v7 = Convert v2 declared={type=anything flags=[IsExpected]}
+    PropDefine v5, v7 key="headers"
+    v9 = FinishObject v5
+    v10 = Construct v3, -, v0, v9 calleeName="Response"
+    Return v10
+}
+function f2 name="turned" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Builtin builtin=Response
+    v5 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v6 = NewObject layout=L0
+    PropDefine v6, v5 key="headers"
+    v8 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    PropDefine v6, v8 key="statusText"
+    v10 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    PropDefine v6, v10 key="status"
+    v12 = FinishObject v6
+    v13 = Construct v4, -, v0, v12 calleeName="Response"
+    Return v13
+}
+function f3 name="allocatedBelow" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Convert v2 declared={type=anything flags=[IsExpected]}
+    v7 = NewObject v5, v6 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Construct v3, -, v0, v8 calleeName="Response"
+    Return v9
+}
+function f4 name="other" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="status"
+    PropDefine v5, v2 key="method"
+    v8 = FinishObject v5
+    v9 = Construct v3, -, v0, v8 calleeName="Response"
+    Return v9
+}
+function f5 name="left" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = FinishObject v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3 calleeName="sink"
+    v7 = Builtin builtin=Response
+    v8 = Construct v7, -, v0, v3 calleeName="Response"
+    Return v8
+}
+function f6 name="third" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="status"
+    v7 = FinishObject v5
+    v8 = Construct v3, -, v0, v7, v2 calleeName="Response"
+    Return v8
+}
+function f7 name="below" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    SetLiteralPrototype v5, v2
+    PropDefine v5, v4 key="status"
+    v8 = FinishObject v5
+    v9 = Construct v3, -, v0, v8 calleeName="Response"
+    Return v9
+}
+function f8 name="getter" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Response
+    v2 = NewObject layout=L0
+    v3 = NewClosure function=f10
+    DefineGetter v2, v3 key="status"
+    v5 = FinishObject v2
+    v6 = Construct v1, -, v0, v5 calleeName="Response"
+    Return v6
+}
+function f9 name="lower" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=Response
+    v4 = Convert v1 declared={type=undefined|number flags=[IsExpected]}
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="status"
+    v7 = FinishObject v5
+    v8 = Construct v3, v2, v0, v7 calleeName="Response"
+    Return v8
+}
+function f10 name="status" module=m0 kind=Getter thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=201
+    Return v0
+}

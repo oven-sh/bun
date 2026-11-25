@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 4
+// CHECK-LABEL: function {{*}}name="name"
 
 // FILE: main.ts
 // Strings, record types, unions, classes, module variables and functions that several files mention are the same thing in each of them.
@@ -149,44 +150,3 @@ export function tags(): string[] {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: name
-// CHECK-LABEL: function {{*}}name="name"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]] site=[[w_3]] flags=[OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = String string="nothing"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b4(v5):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="Shape"
-// CHECK-NEXT: v8 = InstanceOf v5, v7 writtenExpression="value instanceof Shape"
-// CHECK-NEXT: v9 = ToBoolean v8
-// CHECK-NEXT: Branch v9 -> taken b6(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b6(v10):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v12 = CheckInitialized v11 name="describe"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[f_8]]} illTypedCause=Assertion
-// CHECK-NEXT: v14 = Convert v5 declared={type=undefined|null|[[L_1]]} illTypedCause=Assertion
-// CHECK-NEXT: v15 = Call v13, -, v14 calleeName="describe"
-// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: b8(v16):
-// CHECK-NEXT: Jump -> next b9()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v18 = CheckInitialized v17 name="label"
-// CHECK-NEXT: v19 = Convert v5 declared={type=undefined|null|[[L_2]]} illTypedCause=Assertion
-// CHECK-NEXT: v20 = Call v18, -, v19 calleeName="label"
-// CHECK-NEXT: ReturnCall v20 casts=[{declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }

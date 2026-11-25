@@ -5,6 +5,7 @@ use super::generated::{
     visit_terminator_fields, visit_value_fields,
 };
 
+#[inline]
 fn read_words<const N: usize, W: Words + ?Sized>(words: &W, at: usize) -> [u32; N] {
     core::array::from_fn(|index| words.get(at + index).expect(WELL_FORMED))
 }
@@ -45,13 +46,15 @@ fn walk_value<W: Words + ?Sized>(
     at: usize,
     visit: &mut dyn FnMut(FieldWord, usize),
 ) -> usize {
-    let head = read_words::<{ ValueHead::WORDS }, W>(words, at);
-    let head = ValueHead::from_words(&head).expect(WELL_FORMED);
+    let head = read_words::<{ ValueHead::WORDS }, W>(words, at)[0];
     let marks =
         WRITTEN_POSITION_FOLLOWS | STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_IS_FOR_CALLERS;
-    let opcode = Opcode::from_wire(head.opcode & !marks).expect(WELL_FORMED);
-    let end = visit_value_fields(opcode, words, at + ValueHead::WORDS, visit).expect(WELL_FORMED);
-    end + usize::from(head.opcode & WRITTEN_POSITION_FOLLOWS != 0)
+    let opcode = Opcode::ALL.get((head & !marks) as usize).copied();
+    let opcode = opcode.expect(WELL_FORMED);
+    let mut visit_field = |field, at| visit(field, at);
+    let end = visit_value_fields(opcode, words, at + ValueHead::WORDS, &mut visit_field);
+    let end = end.expect(WELL_FORMED);
+    end + usize::from(head & WRITTEN_POSITION_FOLLOWS != 0)
 }
 
 fn walk_terminator<W: Words + ?Sized>(
@@ -60,11 +63,14 @@ fn walk_terminator<W: Words + ?Sized>(
     visit: &mut dyn FnMut(FieldWord, usize),
 ) -> usize {
     let head = read_words::<{ TerminatorHead::WORDS }, W>(words, at);
-    let head = TerminatorHead::from_words(&head).expect(WELL_FORMED);
-    let kind = TerminatorKind::from_wire(head.kind).expect(WELL_FORMED);
+    let (kind, target_count) = (head[0], head[2]);
+    let kind = TerminatorKind::ALL.get(kind as usize).copied();
+    let kind = kind.expect(WELL_FORMED);
     let first_field = at + TerminatorHead::WORDS;
-    let mut at = visit_terminator_fields(kind, words, first_field, visit).expect(WELL_FORMED);
-    for _ in 0..head.target_count {
+    let mut visit_field = |field, at| visit(field, at);
+    let end = visit_terminator_fields(kind, words, first_field, &mut visit_field);
+    let mut at = end.expect(WELL_FORMED);
+    for _ in 0..target_count {
         at = walk_target(words, at, visit);
     }
     at

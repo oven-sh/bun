@@ -75,11 +75,15 @@ ExceptionOr<bool> CryptoAlgorithmECDSA::platformVerify(const CryptoAlgorithmEcds
         return false;
 
     auto sig = ECDSASigPtr(ECDSA_SIG_new());
-    auto r = BN_bin2bn(signature.begin(), keySizeInBytes, nullptr);
-    auto s = BN_bin2bn(signature.begin() + keySizeInBytes, keySizeInBytes, nullptr);
+    auto r = BIGNUMPtr(BN_bin2bn(signature.begin(), keySizeInBytes, nullptr));
+    auto s = BIGNUMPtr(BN_bin2bn(signature.begin() + keySizeInBytes, keySizeInBytes, nullptr));
 
-    if (!ECDSA_SIG_set0(sig.get(), r, s))
+    if (!ECDSA_SIG_set0(sig.get(), r.get(), s.get()))
         return Exception { OperationError };
+
+    // Ownership transferred to OpenSSL
+    r.release();
+    s.release();
 
     const EVP_MD* md = digestAlgorithm(parameters.hashIdentifier);
     if (!md)

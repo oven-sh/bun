@@ -1,0 +1,24 @@
+# `XS.forEach(x => { s += x; })`, `XS.reduce((a, x) => a + x, 0)` over a list of whole numbers: the library's pair "is an own element at i in a plain vector" | "that element" gave a boxed value of which nothing was known:
+# the tag was asked in every turn, the poll was read in every turn, and the turns stood one by one: fourteen instructions an element where a for-of over the same list has under five.
+# The row for a plain vector of numbers (IsElementPresent | GetArrayElement by the kind of storage that is asked once in front of the loop) was bound to callees that take fractions. It is taken for whole numbers
+# too, in the bodies that store nothing into a list: forEach, reduce, some, every, find, findIndex. The kind is tested in front; a list of another kind goes by the copy beside; a hole leaves the run as before.
+# f1 = total . f2 = often, into whose loop total is copied
+# -- source: main.cjs
+# "use strict";
+# const XS = Array.from({ length: 9 }, (_, i) => i * 3 % 7);
+# function total(t) { let s = t; XS.forEach(x => { s += x; }); return s + XS.reduce((a, x) => a + x, 0); }
+# function often() { let sum = 0; for (let t = 0; t < XS.length; t++) sum += total(t); return sum; }
+# print(often());
+# XS[2] = 4294967296; print(often());
+# XS.length = 4; print(often());
+# XS.push(7); print(often());
+# XS[7] = 1; print(often());
+# -- end of source
+# RUN(OFTEN): walk f2 mechanisms=all
+# OFTEN: = IsElementPresent {{*}}arrayStorage=Double {{*}}admitsInt32Storage
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 468
+# ANSWERS: 77309411688
+# ANSWERS: 34359738414
+# ANSWERS: 42949673090
+# ANSWERS: 68719476972

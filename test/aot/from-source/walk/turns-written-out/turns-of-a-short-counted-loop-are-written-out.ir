@@ -1,0 +1,29 @@
+# A counter that enters with a known integer, is stepped by a known integer on every way round and is held against a known integer at the head stays a known number of times: the turns are walked one behind the other.
+# f1 = four, f2 = ownList, f3 = leavesEarly, f4 = readBehind, f5 = nineTurns, f6 = boundIsNotKnown, f7 = steppedOtherwise
+# -- source: turns-of-a-short-counted-loop-are-written-out.ts
+# declare function sink(...values: unknown[]): void;
+# function four(v: number[]) { let s = 0; for (let i = 0; i < 4; i++) s += v[i]; return s; }
+# function ownList(a: number, b: number) { const list = [a, b, 3]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
+# function leavesEarly(v: number[]) { for (let i = 0; i < 3; i++) { if (v[i] < 0) return i; } return -1; }
+# function readBehind(v: number[]) { let i = 0; let last = 0; for (; i < 3; i += 2) last = v[i]; return last + i; }
+# function nineTurns(v: number[]) { let s = 0; for (let i = 0; i < 9; i++) s += v[i]; return s; }
+# function boundIsNotKnown(v: number[], n: number) { let s = 0; for (let i = 0; i < n; i++) s += v[i]; return s; }
+# function steppedOtherwise(v: number[]) { let s = 0; for (let i = 0; i < 4; i++) { if (v[i] < 0) i++; s += v[i]; } return s; }
+# sink(four, ownList, leavesEarly, readBehind, nineTurns, boundIsNotKnown, steppedOtherwise);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 mechanisms=all
+# CHECK-NOT: isLoopHead=true
+# CHECK-NOT: = LoopHint
+# RUN(LIST): walk f2 mechanisms=all
+# LIST-NOT: = NewArray
+# LIST-NOT: = GetArrayElement
+# RUN(BEHIND): walk f4 mechanisms=all
+# The counter behind the loop is what the last turn has left: 4.
+# BEHIND: : 4 {{*}} = Integer integer=4
+# RUN(LOOPS): walk f5 f6 f7 mechanisms=all
+# LOOPS-LABEL: code f5:Body
+# LOOPS: isLoopHead=true
+# LOOPS-LABEL: code f6:Body
+# LOOPS: isLoopHead=true
+# LOOPS-LABEL: code f7:Body
+# LOOPS: isLoopHead=true

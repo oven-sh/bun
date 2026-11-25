@@ -27,6 +27,7 @@ import {
   normalizeBunSnapshot,
   pack,
   runBunInstall,
+  runCommandMaxRSS,
   substDrive,
   tempDir,
   unprivilegedSpawnOptions,
@@ -651,6 +652,24 @@ describe.concurrent("flags", () => {
     expect(tarballEntries(join(dir, filename))).toEqual(["package/package.json", "package/index.js"]);
   });
 
+  test("a backslash separates in --destination and --filename", async () => {
+    using dir = tempDir("pack-backslash", {
+      "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+
+    const destination = await runPack(dir, ["--destination=de\\st"]);
+    expect(destination.err).toBe("");
+    expect(destination.exitCode).toBe(0);
+    const filename = await runPack(dir, ["--filename=de\\file.tgz"]);
+    expect(filename.err).toBe("");
+    expect(filename.exitCode).toBe(0);
+
+    expect(await sortedNames(dir)).toEqual(["de", "index.js", "package.json"]);
+    expect(await sortedNames(join(dir, "de"))).toEqual(["file.tgz", "st"]);
+    expect(await sortedNames(join(dir, "de", "st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
+  });
+
   test("--filename into a directory that does not exist", async () => {
     using dir = tempDir("pack-filename-missing-dir", {
       "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
@@ -664,6 +683,18 @@ describe.concurrent("flags", () => {
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+  });
+
+  test.skipIf(isWindows)("--filename with a trailing slash is a directory", async () => {
+    using dir = tempDir("pack-filename-trailing-slash", {
+      "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir, ["--filename=out/"]);
+    expect(err).toContain(`failed to open tarball file destination: "<dir>/out/"`);
+    expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+    expect(exitCode).toBe(1);
   });
 
   // The destination used to be opened a second time to hash it, which on a FIFO waits for another writer forever.
@@ -1400,25 +1431,21 @@ test.concurrent("peak memory does not grow with the size of the tarball", async 
 
   async function peakMemory(size: number) {
     await truncate(join(dir, "zeroes.bin"), size);
-    await using proc = spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "pm", "pack", "--quiet", "--gzip-level=0"],
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-      env: bunEnv,
     });
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toBe("");
-    expect(out).toBe("pack-memory-1.0.0.tgz\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("pack-memory-1.0.0.tgz\n");
     expect(exitCode).toBe(0);
     expect(file(join(dir, "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
-    return proc.resourceUsage()!.maxRSS;
+    return maxRSS;
   }
 
   const MiB = 1024 * 1024;
   const small = await peakMemory(1 * MiB);
-  const large = await peakMemory(32 * MiB);
+  // Under ASAN the process that runCommandMaxRSS spawns from peaks some 50 MiB above `bun pm pack`, and hides that much.
+  const large = await peakMemory((isASAN || isDebug ? 128 : 32) * MiB);
   // A release build grows by under 1 MiB. One that holds the tarball in memory grew by 36 to 54 MiB, never under 31.
   expect(large - small).toBeLessThan((isASAN || isDebug ? 16 : 8) * MiB);
   expect(await sortedNames(dir)).toEqual(["pack-memory-1.0.0.tgz", "package.json", "zeroes.bin"]);
@@ -4576,6 +4603,46 @@ describe.concurrent(".gitignore/.npmignore", () => {
 });
 
 describe.concurrent("bins", () => {
+  test.each([
+    [{ files: ["nothing"], bin: "/../secret.txt" }, []],
+    [{ files: ["/../secret.txt"] }, []],
+    [{ files: ["**/*", "!secret.txt\\"] }, ["package/cli.js"]],
+    [{ files: ["cli.js\\"] }, ["package/cli.js"]],
+  ])("%j", async (fields, packed) => {
+    using dir = tempDir("pack-manifest-paths", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", ...fields }),
+      "secret.txt": "",
+      "cli.js": "",
+    });
+
+    const { exitCode } = await runPack(dir);
+    expect(tarballEntries(join(dir, "p-1.0.0.tgz")).sort()).toEqual([...packed, "package/package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test('a backslash separates in "bin" and "files"', async () => {
+    using dir = tempDir("pack-backslash-manifest", {
+      "package.json": JSON.stringify({
+        name: "pack-backslash-manifest",
+        version: "1.0.0",
+        files: ["lib\\a.js"],
+        bin: { x: "bin\\x.js" },
+      }),
+      "lib/a.js": "a",
+      "lib/b.js": "b",
+      "bin/x.js": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-backslash-manifest-1.0.0.tgz")).sort()).toEqual([
+      "package/bin/x.js",
+      "package/lib/a.js",
+      "package/package.json",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("basic", async () => {
     using dir = tempDir("pack-bins", {
       "package.json": JSON.stringify({ name: "pack-bins", version: "1.2.3", bin: "bin.js" }),
@@ -5188,6 +5255,37 @@ describe.concurrent("bins", () => {
     expect(tarballEntries(join(dir, "pack-bins-never-packed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A NUL ends the path that the OS gets. `files` leaves everything but index.js out.
+  test.each([
+    { bin: "cli.js\u0000" },
+    { bin: { a: "cli.js\u0000.js", b: "bins/a.js\u0000" } },
+    { bin: "package.json\u0000" },
+    { bin: ".npmrc\u0000" },
+    { directories: { bin: "bins\u0000" } },
+    { directories: { bin: "..\u0000" } },
+  ])("%j is ignored", async fields => {
+    using dir = tempDir("pack-bins-nul", {
+      "above.js": indexJs,
+      "pkg/package.json": JSON.stringify({ name: "pack-bins-nul", version: "1.0.0", files: ["index.js"], ...fields }),
+      "pkg/index.js": indexJs,
+      "pkg/cli.js": indexJs,
+      "pkg/bins/a.js": indexJs,
+      "pkg/.npmrc": "registry=https://registry.example/",
+    });
+    const pkg = join(dir, "pkg");
+
+    const { err, exitCode } = await runPack(pkg);
+    expect(err).toBe("");
+    const tarball = readTarball(join(pkg, "pack-bins-nul-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/index.js", executable: false },
     ]);
     expect(exitCode).toBe(0);
   });

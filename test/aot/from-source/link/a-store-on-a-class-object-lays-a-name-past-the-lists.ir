@@ -1,0 +1,15 @@
+# `Plain.label = v` makes an own property of the class object. It is listed as an assigned member, and the class does not escape by it. Under a key that is only known at run time no list names it.
+# -- source: main.js
+# class Plain {}
+# class Heir extends Plain {}
+# class Beside {}
+# class Last {}
+# Plain.label = "plain";
+# Beside[JSON.parse('"other"')] = 1;
+# print(Heir.label, new Beside(), new Last());
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L1 {{*}}stays-with-compiled-code
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: plain

@@ -1,0 +1,20 @@
+# arm64: a fence behind late stores of a new object. `Promise.resolve(v)` in line makes a promise by the stub, which has its fence, and then stores the value and the word that says "fulfilled". A fence of its own follows those two stores where the value may be a cell. x86-64 has no fence at all.
+# f1 = made
+# -- source: promise-made-fulfilled-has-a-fence-behind-its-value.ts
+# declare function sink(...values: unknown[]): void;
+# function made(n: number) { return Promise.resolve({ n }); }
+# sink(made);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: TryCallInline {{*}}inlineBuiltin=PromiseResolve
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: = Store({{*}}JSPromise_slot
+# EMIT-NEXT: = Store({{*}}JSPromise_packed
+# EMIT-NEXT: = Load8Z({{*}}collectorState
+# EMIT-NEXT: = Branch(
+# REQUIRES(NONE): x86_64
+# RUN(NONE): emit f1 mechanisms=all
+# NONE-NOT: = Fence(
+# NONE: = Store({{*}}JSPromise_slot
+# NONE-NOT: = Fence(

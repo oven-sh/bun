@@ -28,30 +28,24 @@ exports.later = () => a.early + ":" + a.late;
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsExpected]}
 // CHECK-NEXT: v6 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v7 = PropGet v6 key="console" [isFreeName]
 // CHECK-NEXT: v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]}
 // CHECK-NEXT: v9 = PropGet v8 key="log"
 // CHECK-NEXT: v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: EvaluateModule module=[[m_5]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v15 = Convert v14 declared={type=[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = PropGet v16 key="later"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: v19 = Call v18, v16 calleeKey="later" calleeName="later"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v21 = Call v10, v8, v12, v20 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Return v22
+// CHECK-NEXT: v11 = PropGet v5 key="saw"
+// CHECK-NEXT: EvaluateModule module=[[m_6]] referrer=[[m_0]] [isBare, isCallOfRequire]
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v14 = Convert v13 declared={type=[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = PropGet v14 key="later"
+// CHECK-NEXT: v16 = Call v15, v14 calleeKey="later" calleeName="later"
+// CHECK-NEXT: v17 = Call v10, v8, v11, v16 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v18 = Undefined
+// CHECK-NEXT: Return v18
 // CHECK-NEXT: }

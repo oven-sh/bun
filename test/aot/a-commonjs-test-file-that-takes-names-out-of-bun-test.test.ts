@@ -5,7 +5,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
@@ -41,27 +42,24 @@ const files = {
   "meta.test.mjs": `const { test } = import.meta.require("bun:test");\nconst require = import.meta.require;\ntest${body}`,
 };
 
-const forms = { "one program": "TestRunLayers:0", "two layers": "TestRunLayers:2,TestRunPartFiles:1" };
-
-for (const [title, words] of Object.entries(forms)) {
-  for (const file of Object.keys(files).filter(name => name.includes(".test."))) {
-    test(`${file}: ${title}`, async () => {
-      using dir = tempDir("a-commonjs-test-file-that-takes-names-out-of-bun-test", files);
-      const told = async (...flags: string[]) => {
-        const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: "1" };
-        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, `./${file}`], String(dir), env);
-        expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
-        return {
-          seen: stdout.split("\n").filter(line => line.startsWith("SEEN")),
-          scan: stderr.split("\n").find(line => line.startsWith("AOT test run | scan of ")) ?? "",
-        };
+// What the scan says holds for the whole run, so each test file is a run of its own. The fault showed as one program and over layers alike.
+for (const file of Object.keys(files).filter(name => name.includes(".test."))) {
+  test(`${file}: one program`, async () => {
+    using dir = tempDir("a-commonjs-test-file-that-takes-names-out-of-bun-test", files);
+    const told = async (...flags: string[]) => {
+      const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0", BUN_JSC_logAOTPhaseTimes: "1" };
+      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, `./${file}`], String(dir), env);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return {
+        seen: stdout.split("\n").filter(line => line.startsWith("SEEN")),
+        scan: stderr.split("\n").find(line => line.startsWith("AOT test run | scan of ")) ?? "",
       };
-      const plain = await told();
-      expect(plain.seen).toEqual(["SEEN function false", "SEEN true"]);
-      const compiled = await told("--aot");
-      expect(compiled.seen).toEqual(plain.seen);
-      expect(compiled.scan).toContain("mocks any module false");
-      expect(compiled.scan).toContain("spies on objects from somewhere false");
-    });
-  }
+    };
+    const plain = await told();
+    expect(plain.seen).toEqual(["SEEN function false", "SEEN true"]);
+    const compiled = await told("--aot");
+    expect(compiled.seen).toEqual(plain.seen);
+    expect(compiled.scan).toContain("mocks any module false");
+    expect(compiled.scan).toContain("spies on objects from somewhere false");
+  });
 }

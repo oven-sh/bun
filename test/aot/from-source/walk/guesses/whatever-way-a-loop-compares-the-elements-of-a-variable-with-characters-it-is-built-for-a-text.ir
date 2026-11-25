@@ -1,0 +1,21 @@
+# -- source: whatever-way-a-loop-compares-the-elements-of-a-variable-with-characters-it-is-built-for-a-text.js
+# let held = JSON.parse('"abécabéa"');
+# function named() { let c = 0; for (let i = 0; i < held.length; i++) { const unit = held[i]; if (unit === "a" || unit === "c") c = c + 1; } return c; }
+# function between() { let c = 0; for (let i = 0; i < held.length; i++) if (held[i] >= "a" && held[i] <= "b") c = c + 1; return c; }
+# function switched() { let c = 0; for (let i = 0; i < held.length; i++) { switch (held[i]) { case "a": case "é": c = c + 1; } } return c; }
+# sink(named, between, switched);
+# const ofText = [named(), between(), switched()].join();
+# held = JSON.parse('["a", "é", "c"]');
+# print(ofText, named(), between(), switched());
+# -- end of source
+# Whether a variable of the file that a loop reads anew in each turn is told apart in front of the loop is asked of the loop's own text: does it compare the variable's elements with characters? An element
+# with a name and two comparisons, relations, and a switch say so as one `===` does. A character is a text of one unit, whatever the number of its bytes.
+# f1 = named, f2 = between, f3 = switched
+# RUN(NAMED): walk f1:Body mechanisms=all
+# NAMED: = GetStringCodeUnit
+# RUN(BETWEEN): walk f2:Body mechanisms=all
+# BETWEEN: = GetStringCodeUnit
+# RUN(SWITCHED): walk f3:Body mechanisms=all
+# SWITCHED: = GetStringCodeUnit
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 4,5,5 2 1 2

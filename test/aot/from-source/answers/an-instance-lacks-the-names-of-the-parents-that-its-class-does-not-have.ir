@@ -1,0 +1,24 @@
+# -- source: main.js
+# class Node { #raw; #count = 0; shown = "node"; constructor(raw) { this.#raw = raw; } bump() { return ++this.#count; } static has(value) { return (#raw in value ? 1 : 0) + (#count in value ? 2 : 0); } static rawOf(value) { return value.#raw; } static store(value, raw) { value.#raw = raw; } }
+# class Leaf { #raw = "leaf"; #only = 1.5; shown = "leaf"; only() { return this.#only; } static has(value) { return (#raw in value ? 1 : 0) + (#only in value ? 2 : 0); } static rawOf(value) { return value.#raw; } }
+# function attempt(run, value, more) { try { return String(run(value, more)); } catch (error) { return error instanceof TypeError ? "TypeError" : "other"; } }
+# const pick = typeof print === "string" ? 1 : 0;
+# const parents = [Node, Leaf];
+# class Either extends parents[pick] { extra = 1; }
+# class Other extends parents[1 - pick] { extra = 2; }
+# class Deep extends Either { #deep = 3; deep() { return this.#deep; } }
+# function tell(value) { return [Node.has(value), Leaf.has(value), attempt(Node.rawOf, value), attempt(Leaf.rawOf, value), attempt(Node.store, value, "stored"), attempt(Node.rawOf, value), Object.keys(value).join(), value.shown].join(" "); }
+# let sum = 0;
+# for (let i = 0; i < 300; i++) sum += new Either(i).bump() + new Deep(i).bump() + new Deep(i).deep() + new Other(i).only() + new Node(i).bump() + new Leaf(i).only();
+# print(sum);
+# for (const value of [new Either(7), new Other(7), new Deep(7), new Node(7), new Leaf(7)]) print(tell(value));
+# -- end of source
+# An instance of a class whose parent is one of several has room for the fields of each. What a private name answers does not go by the room: the instance has the names of the parent that its class has, and no other's.
+# RUN: run-in-shell
+# CHECK: 2700
+# CHECK-NEXT: 3 0 7 TypeError undefined stored shown,extra node
+# CHECK-NEXT: 0 3 TypeError leaf TypeError TypeError shown,extra leaf
+# CHECK-NEXT: 3 0 7 TypeError undefined stored shown,extra node
+# CHECK-NEXT: 3 0 7 TypeError undefined stored shown node
+# CHECK-NEXT: 0 3 TypeError leaf TypeError TypeError shown leaf
+# CHECK-NEXT: exited with 0

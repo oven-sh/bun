@@ -1,0 +1,20 @@
+# f1 = make, f3 = Row
+# -- source: a-store-of-undefined-that-creates-a-listed-field-out-of-line-lays-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# class Row {
+#     id: number; first?: object; second?: object; third?: object; fourth?: object; last: number;
+#     constructor(id: number) { this.id = id; this.first = undefined; this.second = undefined; this.third = undefined; this.fourth = undefined; this.last = id; }
+# }
+# function make(id: number) { return new Row(id); }
+# function fill(row: Row, value: object) { row.first = value; row.second = value; row.third = value; row.fourth = value; }
+# sink(make, fill);
+# -- end of source
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: PutSlotOrAdd {{*}}key="first" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="fourth" {{*}}orderWordAfter=
+# RUN(EMIT): emit f3 mechanisms=all
+# EMIT: unit f3:Body
+# EMIT-NOT: Load({{*}}AOTExtension_granuleBits
+# RUN(WORD): emit f3 mechanisms=all
+# WORD: Store({{*}}AOTObject_orderWord
+# WORD-NOT: Store({{*}}AOTObject_orderWord

@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# class Mark { level: number; next: Mark | undefined; constructor(level: number, next?: Mark) { this.level = level; this.next = next; } }
+# function level(mark: Mark | undefined, low: boolean): number { if (mark && low && mark.level < 0) return -1; if (mark && mark.next) return mark.level + mark.next.level; return 0; }
+# (globalThis as any).kept = level;
+# print(level(new Mark(4, new Mark(5)), true) + level(undefined, false));
+# -- end of source
+# The second `mark &&` is answered by the side each way comes from, so no branch on a test of `mark` leads into the block behind it: what is read there is `mark` as it came, under no name that speaks of a test. In a build
+# that checks proofs every name on an edge is built whether it is read or not, and the verifier reads them all.
+# OPTIONS: check=Validate testing=CheckProofsAtRunTime
+# RUN: walk f1 mechanisms=all
+# CHECK: [[answer]]: boolean @Boolean = ToBoolean
+# CHECK: Branch [[answer]] ->
+# CHECK-NOT: Branch [[answer]] ->

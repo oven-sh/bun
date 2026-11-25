@@ -1,0 +1,35 @@
+// Functions that receive a bundle: called again, kept, called in a loop, in a try, later, with arguments, or never.
+const out = [];
+const tell = (f) => { try { out.push(JSON.stringify(f())); } catch (e) { out.push(e.constructor.name + " " + e.message); } };
+const kept = [];
+let runs = 0;
+(function (root, factory) { kept.push(factory()); kept.push(factory()); })(this, () => { return (() => { var e = { 1: (e, t) => { t.value = {}; t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })(); });
+tell(() => [runs, kept[0] === kept[1], kept[0].run, kept[1].run]);
+(function (root, factory) { for (let i = 0; i < 2; i++) kept.push(factory()); })(this, () => (() => { var e = { 1: (e, t) => { t.value = {}; t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => [runs, kept[2] === kept[3], kept[2].run, kept[3].run]);
+let stored;
+(function (root, factory) { stored = factory; kept.push(factory()); })(this, () => (() => { var e = { 1: (e, t) => { t.value = {}; t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => [runs, stored() === kept[4], stored().run, kept[4].run]);
+(function (root, factory) { try { kept.push(factory()); } catch (e) { kept.push(factory()); } })(this, () => (() => { var e = { 1: (e, t) => { t.run = ++runs; if (runs < 9) throw new Error("early"); } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => [runs, kept.length, kept.at(-1).run]);
+(function (root, factory) { kept.push(() => factory()); })(this, () => (() => { var e = { 1: (e, t) => { t.value = {}; t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => { const f = kept.at(-1); return [f().run, f().run, runs]; });
+(function (root, factory) { kept.push(factory({ outer: 5 })); })(this, (outside) => (() => { var e = { 1: (e, t, n) => { t.value = n(2).outer; }, 2: (e) => { e.exports = outside; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => kept.at(-1).value);
+(function (root, factory) { if (out.length > 100) kept.push(factory()); })(this, () => (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => [runs, kept.length]);
+(function (root, factory) { factory = factory.bind(null); kept.push(factory()); })(this, () => (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => kept.at(-1).run);
+(function (factory) { kept.push(arguments[0]()); kept.push(factory()); })(() => (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => kept.slice(-2).map((it) => it.run));
+for (let i = 0; i < 2; i++) (function (factory) { kept.push(factory()); })(() => (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => kept.slice(-2).map((it) => it.run));
+(function (factory) { kept.push(factory()); }).call(null, () => (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })());
+tell(() => kept.at(-1).run);
+(function (factory) { kept.push(factory()); })(function again(more) { if (!more) again(true); return (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1); })(); });
+tell(() => kept.at(-1).run);
+while (runs < 20) { const value = (() => { var e = { 1: (e, t) => { t.run = runs += 3; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1).run; })(); kept.push(value); }
+tell(() => [runs, kept.at(-1)]);
+const either = out.length ? (() => { var e = { 1: (e, t) => { t.run = ++runs; } }, t = {}; function n(r) { var o = t[r]; if (void 0 !== o) return o.exports; var i = t[r] = { exports: {} }; return e[r](i, i.exports, n), i.exports } return n(1).run + n(1).run; })() : 0;
+tell(() => [either, runs]);
+console.log(out.join("\n"));

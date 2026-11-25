@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isWindows } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -34,6 +35,12 @@ describe("basename", async () => {
   TestBuilder.command`basename /catalog`.exitCode(0).stdout("catalog\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`basename /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+
+  TestBuilder.command`basename ${"/a\\b"} ${"c\\"}`
+    .exitCode(0)
+    .stdout(isWindows ? "b\nc\n" : "a\\b\nc\\\n")
+    .stderr("")
+    .runAsTest("backslash");
 });
 
 describe("basename without stdout", async () => {

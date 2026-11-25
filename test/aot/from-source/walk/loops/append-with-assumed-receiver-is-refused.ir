@@ -1,0 +1,10 @@
+# -- source: main.cjs
+# "use strict";
+# function grows() { const q = [1, 2, 3]; let s = 0; for (let i = 0; i < q.length; i++) { s = (s + q[i]) | 0; if (q.length < 300) q.push(q[i] + 1); } return s + " " + q.length; }
+# print(grows());
+# -- end of source
+# A trial visit treats a push onto an untouched literal as a raise of that array's length.
+# Fault injection, testing=AssumeLocalArrayReceivers: the raise is recorded among no objects that are written, so the length from before the loop is remembered all the way around it.
+# The verifier refuses the code: the push writes the length between a ground of an access and the access.
+# DIAGNOSTIC: OpcodeNotInForm
+# RUN: walk f1 mechanisms=all testing=AssumeLocalArrayReceivers

@@ -1,1 +1,1 @@
-{ "features": ["Uint8ClampedArray"], "keptToday": true }
+{ "features": ["Uint8ClampedArray"], "keptToday": ["Uint8ClampedArray"] }

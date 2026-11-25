@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# "use strict";
+# const WHOLE = [[0, 1, 0], [1, -4, 1]];
+# const FRACTIONS = [[0.5, 1], [2, 3.5]];
+# const OTHERS = [[1, "two"], [1, , 3], [NaN, 1]];
+# sink(WHOLE, FRACTIONS, OTHERS);
+# -- end of source
+# A small written tree is not kept as data: the walk expands it into the operations that make it. A list of numbers in it was then born with storage for any value, its numbers boxed, where the engine
+# bears it with storage for int32 or for doubles: every test for the kind of storage in front of a loop over such a row failed for good, and the closed copy ran.
+# Now it is born with the kind that the same list has where it is written alone. A list that holds anything else, a hole or NaN stays as it was.
+# OPTIONS: check=Validate
+# RUN: walk f0:Body mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: = NewArray {{*}}arrayStorage=Int32
+# CHECK: = NewArray {{*}}arrayStorage=Int32
+# CHECK: = NewArray {{*}}arrayStorage=Double
+# CHECK: = NewArray {{*}}arrayStorage=Double
+# CHECK-NOT: = NewArray {{*}}arrayStorage=

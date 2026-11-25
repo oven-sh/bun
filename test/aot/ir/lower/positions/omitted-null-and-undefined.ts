@@ -1,15 +1,16 @@
 // RUN(FIELDS): link
-// FIELDS: layout {{*}}name="Item" {{*}}{key="either" declared={type=undefined|null|string} {{*}}{key="label" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} {{*}}{key="next" declared={type=undefined|null|[[item]] flags=[OmitsUndefined]} {{*}}{key="note" declared={type=undefined|null|string flags=[OmitsNull]}
+// FIELDS: layout {{*}}{key="either" declared={type=undefined|null|string} {{*}}{key="label" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} {{*}}{key="next" declared={type=undefined|null|[[item]] flags=[OmitsUndefined]} {{*}}{key="note" declared={type=undefined|null|string flags=[OmitsNull]}
 
 // RUN: lower
 // The functions come in the order of their names.
-// CHECK: name="both" {{*}}parameters=[{type=undefined|null|string site=[[s0]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[s1]] flags=[OmitsNull, OmitsUndefined]}]
-// CHECK: name="holdsNeither" {{*}}parameters=[{type=number site=[[s2]]}] results=[{type=number site=[[s3]]}]
-// CHECK: name="read" {{*}}parameters=[{type=undefined|null|[[item]] site=[[s4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[s5]] flags=[OmitsNull, OmitsUndefined]}]
-// CHECK: name="saysBoth" {{*}}parameters=[{type=undefined|null|string site=[[s6]]}] results=[{type=undefined|null|string site=[[s7]]}]
-// CHECK: name="saysNothing" {{*}}parameters=[{type=anything}, {type=anything}, {type=undefined|null|[[variable]] site=[[s8]]}]
-// CHECK: name="saysNull" {{*}}parameters=[{type=undefined|null|[[item]] site=[[s9]] flags=[OmitsUndefined]}] results=[{type=undefined|null|[[item]] site=[[s10]] flags=[OmitsUndefined]}]
-// CHECK: name="saysUndefined" {{*}}parameters=[{type=undefined|null|string site=[[s11]] flags=[OmitsNull]}] results=[{type=undefined|null|string site=[[s12]] flags=[OmitsNull]}]
+// CHECK: name="both" {{*}}parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}]
+// CHECK: name="holdsNeither" {{*}}parameters=[{type=number}] results=[{type=number}]
+// CHECK: name="read" {{*}}parameters=[{type=undefined|null|[[item]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}]
+// CHECK: name="saysBoth" {{*}}parameters=[{type=undefined|null|string}] results=[{type=undefined|null|string}]
+// CHECK: name="saysNothing" {{*}}parameters=[{type=anything}, {type=anything}, {type=anything}]
+// CHECK: name="saysNull" {{*}}parameters=[{type=undefined|null|[[item]] flags=[OmitsUndefined]}] results=[{type=undefined|null|[[item]] flags=[OmitsUndefined]}]
+// CHECK: name="saysUndefined" {{*}}parameters=[{type=undefined|null|string flags=[OmitsNull]}] results=[{type=undefined|null|string flags=[OmitsNull]}]
+// CHECK: name="saysWhatBoundSays" {{*}}parameters=[{type=undefined|null|[[item]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[item]] flags=[OmitsUndefined]}]
 
 interface Item {
   label: string;
@@ -42,6 +43,11 @@ export function holdsNeither(count: number): number {
 
 export function saysNothing<T>(anything: any, unknown: unknown, variable: T) {
   return [anything, unknown, variable];
+}
+
+// Whatever a call puts in the place of a type parameter fits the bound, so it lists no more than the bound does.
+export function saysWhatBoundSays<B extends Item, N extends Item | null>(bounded: B, orNull: N) {
+  return [bounded, orNull];
 }
 
 export function read(item: Item) {

@@ -1,5 +1,5 @@
 // Nothing here calls fetch. The table lists every member of the function, so what is asked about it and the printer of console.log find nothing that nobody knows.
-// STATISTIC: ImageFunctionsEmitted <= 8
+// STATISTIC: ImageFunctionsEmitted <= 8 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 console.log(typeof fetch, typeof Bun.fetch, fetch === Bun.fetch);
 if (typeof fetch !== "function") throw new Error("there is no fetch");
 console.log(fetch.name, fetch.length, Bun.fetch.name, Bun.fetch.length);

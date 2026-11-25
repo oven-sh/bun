@@ -38,25 +38,5 @@ try {
   console.log(error instanceof Error);
 }
 
-// GENERATED: Person shout
 // CHECK-LABEL: function {{*}}name="Person"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shout"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="name"
-// CHECK-NEXT: v3 = PropGet v2 key="toUpperCase"
-// CHECK-NEXT: v4 = Call v3, v2 calleeKey="toUpperCase" calleeName="this.name.toUpperCase"
-// CHECK-NEXT: ReturnCall v4
-// CHECK-NEXT: }

@@ -11,6 +11,8 @@ pub enum TrimError {
 pub enum TrimRequestError {
     UnknownName(Box<[u8]>),
     UnknownNames(Vec<Box<[u8]>>),
+    /// Names given to `--trim-without`, which takes the names of `Feature`.
+    UnknownFeatures(Vec<Box<[u8]>>),
     AllowedAndRemoved(TrimFeature),
     UnknownLocale(Box<[u8]>),
     MissingFromTemplate(Feature),
@@ -37,13 +39,7 @@ impl TrimRequestError {
     pub fn for_unknown_names<'a>(
         names: impl IntoIterator<Item = &'a [u8]>,
     ) -> Option<TrimRequestError> {
-        let mut distinct_names: Vec<&[u8]> = Vec::new();
-        for name in names {
-            if !distinct_names.contains(&name) {
-                distinct_names.push(name);
-            }
-        }
-        match distinct_names.as_slice() {
+        match keep_first_occurrences(names).as_slice() {
             [] => None,
             [name] => Some(TrimRequestError::UnknownName(Box::<[u8]>::from(*name))),
             names => Some(TrimRequestError::UnknownNames(
@@ -51,6 +47,24 @@ impl TrimRequestError {
             )),
         }
     }
+
+    pub fn for_unknown_features<'a>(
+        names: impl IntoIterator<Item = &'a [u8]>,
+    ) -> Option<TrimRequestError> {
+        let names = keep_first_occurrences(names);
+        let names: Vec<Box<[u8]>> = names.into_iter().map(Box::from).collect();
+        (!names.is_empty()).then_some(TrimRequestError::UnknownFeatures(names))
+    }
+}
+
+fn keep_first_occurrences<'a>(names: impl IntoIterator<Item = &'a [u8]>) -> Vec<&'a [u8]> {
+    let mut distinct_names: Vec<&[u8]> = Vec::new();
+    for name in names {
+        if !distinct_names.contains(&name) {
+            distinct_names.push(name);
+        }
+    }
+    distinct_names
 }
 
 impl TrimInternalError {
@@ -70,13 +84,25 @@ impl TrimError {
             TrimError::Request(TrimRequestError::UnknownName(name)) => {
                 out.extend_from_slice(b"compile.trim: unknown name ");
                 write_quoted(out, name);
-                match find_closest_name(name) {
-                    Some(closest) => {
-                        out.extend_from_slice(b". Did you mean ");
-                        write_quoted(out, closest.name().as_bytes());
-                        out.push(b'?');
-                    }
+                match find_closest_name(name, TrimFeature::ALL.iter().map(|it| it.name())) {
+                    Some(closest) => write_suggestion(out, closest),
                     None => write_valid_names(out),
+                }
+            }
+            TrimError::Request(TrimRequestError::UnknownFeatures(names)) => {
+                let noun: &[u8] = if names.len() == 1 {
+                    b"feature "
+                } else {
+                    b"features "
+                };
+                out.extend_from_slice(b"--trim-without: unknown ");
+                out.extend_from_slice(noun);
+                write_quoted_list(out, names.iter().map(|name| &**name));
+                let features = Feature::ALL.iter().map(|feature| feature.name());
+                if let [name] = names.as_slice()
+                    && let Some(closest) = find_closest_name(name, features)
+                {
+                    write_suggestion(out, closest);
                 }
             }
             TrimError::Request(TrimRequestError::UnknownNames(names)) => {
@@ -177,12 +203,20 @@ fn edit_distance(a: &[u8], b: &[u8]) -> usize {
     row[b.len()]
 }
 
-fn find_closest_name(name: &[u8]) -> Option<TrimFeature> {
-    let (distance, closest) = TrimFeature::ALL
-        .iter()
-        .map(|&feature| (edit_distance(name, feature.name().as_bytes()), feature))
+fn find_closest_name(
+    name: &[u8],
+    valid_names: impl Iterator<Item = &'static str>,
+) -> Option<&'static str> {
+    let (distance, closest) = valid_names
+        .map(|valid| (edit_distance(name, valid.as_bytes()), valid))
         .min_by_key(|&(distance, _)| distance)?;
     (distance <= (name.len() / 3).max(1)).then_some(closest)
+}
+
+fn write_suggestion(out: &mut Vec<u8>, closest: &str) {
+    out.extend_from_slice(b". Did you mean ");
+    write_quoted(out, closest.as_bytes());
+    out.push(b'?');
 }
 
 fn write_valid_names(out: &mut Vec<u8>) {
@@ -199,6 +233,10 @@ fn write_valid_names(out: &mut Vec<u8>) {
 mod tests {
     use super::*;
     use bun_exe_format::image::ImageError;
+
+    fn public_names() -> impl Iterator<Item = &'static str> {
+        TrimFeature::ALL.iter().map(|feature| feature.name())
+    }
 
     fn message_bytes(error: impl Into<TrimError>) -> Vec<u8> {
         let mut out = Vec::new();
@@ -261,17 +299,35 @@ mod tests {
 
     #[test]
     fn closest_name_is_the_first_of_equally_close_names() {
-        let first_of = |names: &[&str]| {
-            TrimFeature::ALL
-                .iter()
-                .copied()
-                .find(|feature| names.contains(&feature.name()))
-        };
-        assert_eq!(find_closest_name(b"http"), first_of(&["http2", "http3"]));
+        let first_of = |names: &[&str]| public_names().find(|name| names.contains(name));
         assert_eq!(
-            find_closest_name(b"json"),
+            find_closest_name(b"http", public_names()),
+            first_of(&["http2", "http3"])
+        );
+        assert_eq!(
+            find_closest_name(b"json", public_names()),
             first_of(&["json5", "jsonc", "jsonl"])
         );
+    }
+
+    #[test]
+    fn unknown_feature_suggests_the_spelling_of_features() {
+        let unknown = |names: &[&[u8]]| {
+            message(TrimRequestError::for_unknown_features(names.iter().copied()).unwrap())
+        };
+        assert_eq!(
+            unknown(&[b"sqlite"]),
+            "--trim-without: unknown feature \"sqlite\". Did you mean \"Sqlite\"?"
+        );
+        assert_eq!(
+            unknown(&[b"NoSuchFeature", b"NoSuchFeature"]),
+            "--trim-without: unknown feature \"NoSuchFeature\""
+        );
+        assert_eq!(
+            unknown(&[b"sqlite", b"sql"]),
+            "--trim-without: unknown features \"sqlite\" and \"sql\""
+        );
+        assert_eq!(TrimRequestError::for_unknown_features([]), None);
     }
 
     #[test]
@@ -286,7 +342,7 @@ mod tests {
         ];
         for name in names {
             assert_eq!(
-                find_closest_name(name),
+                find_closest_name(name, public_names()),
                 None,
                 "{}",
                 String::from_utf8_lossy(name)

@@ -11,9 +11,9 @@ import {
   computeDepFlags,
   computeFlags,
   computeHardeningFlags,
+  extraFlagsFor,
+  fileOverrides,
   hardeningFlags,
-  safeStackDependencies,
-  safeStackFlags,
 } from "../../scripts/build/flags.ts";
 import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../scripts/build/source.ts";
@@ -274,6 +274,20 @@ test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the 
   }
 });
 
+// -mtune keeps the fortified wrappers out of line. WebKit's .github/scripts/lanes.mjs leaves it out too.
+test("a build for arm64 names no processor to tune for, hardened or not", () => {
+  using dir = tempDir("build-hardened-flags-tune", {});
+  const tunes = (cfg: Config) =>
+    Object.values(everyFlagOf(cfg)).flatMap(list => list.filter(flag => /^-(mtune|Ztune-cpu)=/.test(flag)));
+  const hardened = linuxConfig({ hardened: true, arch: "aarch64" }, String(dir));
+  expect(tunes(hardened)).toEqual([]);
+  for (const list of [everyFlagOf(hardened).c, everyFlagOf(hardened).dependencyCxx]) {
+    expect(list).toContain("-D_FORTIFY_SOURCE=2");
+    expect(list).toContain("-march=armv8-a+crc");
+  }
+  expect(tunes(linuxConfig({ arch: "aarch64" }, String(dir)))).toEqual([]);
+});
+
 test("--hardened=on is refused where nothing can be hardened", () => {
   using dir = tempDir("build-hardened-flags-refused", {});
   for (const partial of [
@@ -293,23 +307,22 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"] as const;
-
-test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
+test("the kernels of zstd, which never call back into JavaScript, keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
   const on = linuxConfig({ hardened: true }, String(dir));
   const off = linuxConfig({}, String(dir));
-  expect(safeStackDependencies).toContain("zlib");
-  for (const name of safeStackDependencies) {
-    expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
-    expect(safeStackFlags(off, name)).toEqual([]);
-  }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
-    expect(safeStackFlags(on, name)).toEqual([]);
-  expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
-  expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");
-  expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");
   const withAddressSanitizer = linuxConfig({ hardened: true, asan: true }, String(dir));
-  expect(safeStackFlags(withAddressSanitizer, "zlib")).toEqual([]);
+  const filesWithIt = (cfg: Config) => [
+    ...new Set(
+      fileOverrides.map(it => it.file).filter(file => extraFlagsFor(cfg, file).includes("-fsanitize=safe-stack")),
+    ),
+  ];
+  expect(filesWithIt(on)).toEqual(["src/jsc/bindings/highway_zstd.cpp"]);
+  expect(filesWithIt({ ...on, debug: true })).toEqual(filesWithIt(on));
+  expect(filesWithIt(off)).toEqual([]);
+  expect(filesWithIt(withAddressSanitizer)).toEqual([]);
+  expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
+  expect(Object.values(everyFlagOf(on)).flat()).not.toContain("-fsanitize=safe-stack");
+  expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(withAddressSanitizer).cxx).not.toContain("-DBUN_SAFE_STACK=1");
 });

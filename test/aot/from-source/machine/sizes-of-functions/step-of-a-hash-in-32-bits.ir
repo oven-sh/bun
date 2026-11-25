@@ -1,0 +1,12 @@
+# f1 = step
+# -- source: step-of-a-hash-in-32-bits.ts
+# function step(hash: number, code: number): number { return (hash * 31 + code) | 0; }
+# declare const input: any;
+# (globalThis as any).answer = step(input | 0, input & 0xffff);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

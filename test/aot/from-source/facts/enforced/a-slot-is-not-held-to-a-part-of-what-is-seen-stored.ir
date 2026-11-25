@@ -1,0 +1,18 @@
+# what is seen stored in `format` is a function of the program and a built-in, and held() leaves the built-in out of its type: a guess may go by the rest. A slot is held to all that arrives or to nothing:
+# held to the one function, it would be left by every object that gets the other. So `format` is held to nothing. `name` beside it is held.
+# -- source: a-slot-is-not-held-to-a-part-of-what-is-seen-stored.js
+# function plain(value) { return String(value); }
+# function Writer(asJson, name) { this.format = asJson ? JSON.stringify : plain; this.name = name; this.next = null; }
+# const one = new Writer(true, "a"), other = new Writer(false, "b");
+# one.next = other;
+# console.log(one.format(1) + other.format(2) + one.name + String(one.next === other));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: "name" source=seen
+# RUN(PART): facts enforced mechanisms=all
+# PART-NOT: "format"
+# the flow has both, and the proving reading names both.
+# RUN(LINKED): link fields mechanisms=all
+# LINKED: "format" proven=f{{*}}|builtin(JSONStringify)
+# RUN(HELD): link held fields mechanisms=all
+# HELD-NOT: builtin(JSONStringify)

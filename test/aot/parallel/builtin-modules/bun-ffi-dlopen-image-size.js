@@ -1,5 +1,5 @@
 // dlopen and calls into libc only pass numbers and pointers, so they must not pull util.inspect into the executable.
-// STATISTIC: ImageFunctionsEmitted <= 100
+// STATISTIC: ImageFunctionsEmitted <= 100 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 import { dlopen, FFIType, ptr } from "bun:ffi";
 
 const names =

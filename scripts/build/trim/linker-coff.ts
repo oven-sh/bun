@@ -16,7 +16,7 @@ import { readAt } from "./binary-reader.ts";
 import { isBitcodeAt, readWeakAliases } from "./bitcode-symbols.ts";
 import {
   findLinkedMembers,
-  findNameMissingFromObjects,
+  findNamesMissingFromObjects,
   namedBytesOfPe,
   readCoffGraph,
   sectionInFile,
@@ -71,20 +71,25 @@ function readNamesOfCompiledObjects(objects: readonly string[], inputs: readonly
     }
   }
   for (const name of defined) wanted.delete(name);
+  return { defined, aliases: readWeakAliasesAmong(wanted, inputs) };
+}
+
+/** Those of `names` that are weak aliases in the bitcode among `inputs` → what each stands for. */
+function readWeakAliasesAmong(names: ReadonlySet<string>, inputs: readonly string[]): Map<string, string> {
   const aliases = new Map<string, string>();
-  if (wanted.size === 0) return { defined, aliases };
+  if (names.size === 0) return aliases;
   for (const input of inputs) {
     if (!existsSync(input)) continue;
     const fd = openSync(input, "r");
     try {
       if (!isArchive(input)) {
         for (const [name, target] of readWeakAliases(fd, 0, statSync(input).size, input))
-          if (wanted.has(name)) aliases.set(name, target);
+          if (names.has(name)) aliases.set(name, target);
         continue;
       }
       const aliasesOfMember = new Map<number, Map<string, string> | undefined>();
       for (const [name, header] of readArchiveIndex(input)) {
-        if (!wanted.has(name)) continue;
+        if (!names.has(name)) continue;
         if (!aliasesOfMember.has(header)) {
           const size = Number(readAt(fd, header + 48, 10).toString("latin1"));
           const isBitcode = isBitcodeAt(fd, header + 60, size);
@@ -97,7 +102,7 @@ function readNamesOfCompiledObjects(objects: readonly string[], inputs: readonly
       closeSync(fd);
     }
   }
-  return { defined, aliases };
+  return aliases;
 }
 
 function weakExternals(aliases: Map<string, string>): string {
@@ -212,15 +217,13 @@ export function coff(linker: Linker): LinkerFormat {
     },
     prepareCompiledObjects(objects, first) {
       const names = readNamesOfCompiledObjects(objects, linker.inputs);
-      // lld-link names what it compiles from a member by the archive and the member's name. Of two members of one name it writes
-      // both to one file, the second over the first.
-      // The map lists an alias where its target lies.
-      const isInObjects = (name: string) => names.defined.has(name) || names.aliases.has(name);
-      const lost = findNameMissingFromObjects(
+      const missing = findNamesMissingFromObjects(
         firstSymbolMap,
         new Set(objects.map(path => basename(path))),
-        isInObjects,
+        name => names.defined.has(name) || names.aliases.has(name),
       );
+      for (const name of readWeakAliasesAmong(new Set(missing.keys()), linker.inputs).keys()) missing.delete(name);
+      const [lost] = Array.from(missing, ([name, object]) => ({ name, object }));
       if (lost !== undefined) {
         console.log(
           `trim: the second link compiles the bitcode again: the first link defined ${lost.name} in ${lost.object}, and the file of that name does not: two members of bitcode of one archive have one name`,

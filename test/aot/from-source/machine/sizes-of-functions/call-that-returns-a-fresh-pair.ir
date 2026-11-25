@@ -1,0 +1,26 @@
+# f2 = roundTrip
+# -- source: call-that-returns-a-fresh-pair.ts
+# function divide(dividend: number, divisor: number): { quotient: number; remainder: number } {
+#   return { quotient: Math.floor(dividend / divisor), remainder: dividend % divisor };
+# }
+# function roundTrip(dividend: number, divisor: number): number {
+#   const result = divide(dividend, divisor);
+#   return result.quotient * divisor + result.remainder;
+# }
+# declare const input: any;
+# (globalThis as any).answer = roundTrip(+input, +input);
+# -- end of source
+# The compiler before this one: 6 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 6, patches 1, moves 3, unlikely or rare 0.
+# Since functions return the fields of a fresh object the two come in two registers: no cell is allocated, and the two loads are two moves more (11).
+# RUN(MADE): walk f1 mechanisms=all-Inlining
+# MADE-NOT: = NewObject
+# RUN(PARTS): walk f2 mechanisms=all-Inlining
+# PARTS: [[pair]]: L0 @Void = CallDirect {{*}} function=f1
+# PARTS: = ResultAt [[pair]]
+# PARTS: = ResultAt [[pair]] index=1
+# PARTS-NOT: = GetSlot
+# RUN(X64): steps most:11 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 11

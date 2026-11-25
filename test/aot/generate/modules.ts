@@ -5,10 +5,6 @@ import { modulesOnCyclesThatThrow } from "./modules-on-cycles-that-throw";
 export const programs = () =>
   programsOf({
     ...modulesOnCyclesThatThrow(),
-    "function-export-read-by-name-through-the-caches.json": text(
-      `{"build": ["--aot-only-passes=AnalyzeFlow"]}
-`,
-    ),
     "function-export-read-by-name-through-the-caches/main.ts": text(
       `// A function that a module exports and nothing is stored over is read by name through the namespace object, at a site with many receivers, again and again: the third read is answered by the caches. numbers.ts fills the memory of the module variables, so that a read from a wrong place there finds something.
 import { bump, total } from "./numbers.ts";

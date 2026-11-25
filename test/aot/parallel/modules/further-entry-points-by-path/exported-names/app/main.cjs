@@ -16,7 +16,7 @@ say("by a pattern, with the extension that the pattern adds", () => load("patter
 say("by a pattern that leads to another folder", () => load("patterns/tools/two.js"));
 say("by a pattern under a condition", () => load("patterns/either/three"));
 say("what no pattern gives", () => load("patterns/dist/tools/two.js"));
-import("patterns/either/" + ["th", "ree"].join(""))
+module.exports = import("patterns/either/" + ["th", "ree"].join(""))
   .then(ns => console.log("imported by a pattern under a condition", ns.name))
   .then(() => import(["two", "fields"].join("-")))
   .then(ns => console.log("imported, a package with main and module", ns.name));

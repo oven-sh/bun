@@ -1,0 +1,27 @@
+# A read by name at a site asks two answers: one by the shape of an object with a layout, one by the Structure. Both stubs ask both, so either is right of every receiver.
+# Which is asked first hangs on the file of the reader alone: the shape where a layout written in that file has a field under the name, else the Structure.
+# parts.js writes the layouts and reads `rank`; elsewhere.js holds the same readers and writes no layout. What another file writes changes neither.
+# f3 = ranksBesideTheLayouts, f1 = asksBesideTheLayouts, f9 = ranksElsewhere, f8 = asksElsewhere
+# -- source: main.js
+# import { make, ranksBesideTheLayouts, asksBesideTheLayouts } from "./parts.js";
+# import { ranksElsewhere, asksElsewhere } from "./elsewhere.js";
+# sink(ranksBesideTheLayouts, asksBesideTheLayouts, ranksElsewhere, asksElsewhere, make(1));
+# -- source: parts.js
+# class Part { constructor(rank) { this.rank = rank; } }
+# class Pair { constructor(rank) { this.left = 0; this.rank = rank; } }
+# class Triple { constructor(rank) { this.left = 0; this.right = 0; this.rank = rank; } }
+# export function make(rank) { return [new Part(rank), new Pair(rank), new Triple(rank)]; }
+# export function ranksBesideTheLayouts(thing) { return thing.rank; }
+# export function asksBesideTheLayouts(thing) { if (thing.rank) return "yes"; return "no"; }
+# -- source: elsewhere.js
+# export function ranksElsewhere(thing) { return thing.rank; }
+# export function asksElsewhere(thing) { if (thing.rank) return "yes"; return "no"; }
+# -- end of source
+# RUN: bytes f3:Body mechanisms=all
+# CHECK: Stub ReadAtSite.OfAnyValue
+# RUN(TRUTH): bytes f1:Body mechanisms=all
+# TRUTH: Stub ReadTruthAtSite.OfAnyValue
+# RUN(ELSEWHERE): bytes f9:Body mechanisms=all
+# ELSEWHERE: Stub ReadAtSiteAskingStructureFirst.OfAnyValue
+# RUN(APART): bytes f8:Body mechanisms=all
+# APART: Stub ReadTruthAtSiteAskingStructureFirst.OfAnyValue

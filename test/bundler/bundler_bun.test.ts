@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -271,6 +272,80 @@ error: Hello World`,
       run: { stdout: "function function function" },
     });
   }
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    for (const [name, base] of Object.entries({ Relative: ".", Absolute: "{{root}}" })) {
+      (isWindows ? itBundled.skip : itBundled)(`bun/External${name}PathWithBackslash-${format}`, {
+        files: {
+          "/entry.js": String.raw`
+            import a from "./lib\\x.js";
+            import b from "./lib/x.js";
+            console.log(a, b, require("./lib\\x.js"), require("./lib/x.js"), require("./lib\\y.js"));
+          `,
+          "/lib/x.js": `module.exports = "bundled";`,
+          "/lib\\x.js": `module.exports = "bundled";`,
+          "/lib\\y.js": `module.exports = "bundled";`,
+        },
+        runtimeFiles: {
+          "/lib/x.js": `module.exports = "nested";`,
+          "/lib\\x.js": `module.exports = "literal";`,
+          "/lib\\y.js": `module.exports = "external";`,
+        },
+        external: [base + "/lib\\x.js"],
+        target: "bun",
+        format,
+        run: { stdout: "nested nested literal nested bundled" },
+      });
+    }
+    itBundled(`bun/ExternalImportWithBackslash-${format}`, {
+      files: {
+        "/entry.js": String.raw`
+          import path from "pkg/sub\\path.js";
+          import data from "data:text/javascript,export default 'a\\tb'";
+          export * from "pkg/sub\\path.js";
+          console.log(JSON.stringify([path, data]));
+        `,
+      },
+      runtimeFiles: { "/node_modules/pkg/sub/path.js": `module.exports = "nested";` },
+      external: ["pkg", "data:*"],
+      target: "bun",
+      format,
+      run: { stdout: JSON.stringify(["nested", "a\tb"]) },
+    });
+  }
+  itBundled("bun/ExternalImportWithBackslashOutsideOfPath", {
+    files: {
+      "/entry.js": String.raw`
+        import "pkg/sub\\a.js?x=\\d";
+        import "@scope\\pkg";
+        import "c#/a\\b.js";
+        import "#key/a\\b";
+        import "virtual:a/b\\c";
+        import "/absolute/a\\b.js";
+        import "C:\\absolute\\a.js";
+        import "\\\\server\\share\\a.js";
+        import "plugin";
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^plugin$/ }, () => ({ path: "./real/a\\b.js", external: true }));
+    },
+    external: ["*"],
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect([...api.readFile("/out.js").matchAll(/require\((".*")\)/g)].map(match => JSON.parse(match[1]))).toEqual([
+        "pkg/sub/a.js?x=\\d",
+        "@scope\\pkg",
+        "c#/a/b.js",
+        "#key/a\\b",
+        "virtual:a/b\\c",
+        "/absolute/a\\b.js",
+        "C:\\absolute\\a.js",
+        "\\\\server\\share\\a.js",
+        "./real/a\\b.js",
+      ]);
+    },
+  });
   itBundled("bun/UnknownBunSpecifierInShebangEntry", {
     // No `target`: the "#!/usr/bin/env bun" line makes the entry point a file for bun.
     files: {

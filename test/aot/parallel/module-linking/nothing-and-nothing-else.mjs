@@ -1,1 +1,0 @@
-globalThis.sink = 1;

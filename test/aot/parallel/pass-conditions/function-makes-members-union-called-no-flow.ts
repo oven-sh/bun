@@ -1,4 +1,3 @@
-// Flags: --aot-disable=flow-results
 // One function makes both members of a union, by the tag it is given. Called on an existing object, it stores both fields there.
 interface Base {
   kind: number;

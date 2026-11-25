@@ -1,0 +1,14 @@
+# A statement lays the prototype object of a constructor function below that of a class, and it may not have run yet: a read off that object may find nothing of the class and go on to Object.prototype. So the method of the class is not all that the read gives, and neither is what its getter answers.
+# f1 = Sub, f2 = read, f3 = size
+# -- source: member-off-the-prototype-object-of-a-function-that-may-not-be-linked-yet.js
+# class Base { hello() { return 1; } get size() { return 7; } }
+# function Sub() { this.a = 1; }
+# function read(p) { return p.hello; }
+# function size(p) { return p.size; }
+# read(Sub.prototype); size(Sub.prototype);
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# read(Sub.prototype); size(Sub.prototype);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2 {{*}} result=undefined|
+# LINK: function f3 {{*}} result=undefined|

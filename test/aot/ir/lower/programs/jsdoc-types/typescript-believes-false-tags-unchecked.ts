@@ -2,6 +2,11 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="size"
+// CHECK-LABEL: function {{*}}name="total"
+// CHECK-LABEL: function {{*}}name="Holder"
+// CHECK-LABEL: function {{*}}name="next"
+// CHECK-LABEL: function {{*}}name="Puppy"
 
 // FILE: main.ts
 // Typescript believes the false tags of an unchecked js module.
@@ -221,83 +226,3 @@ export const Level = { Low: "low", High: 2 };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: size total Holder next Puppy
-// CHECK-LABEL: function {{*}}name="size"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_2]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="length"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_3]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_5]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: Jump -> next b2(v2, v4)
-// CHECK-NEXT: b2(v5: number, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v9 = PropGet v0 key="length"
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: v11 = Less v8, v10
-// CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b3(v12):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v14 = ElemGet v0, v13
-// CHECK-NEXT: v15 = Convert v14 declared={type=number site=[[w_9]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v16 = Add v5, v15
-// CHECK-NEXT: v17 = Convert v16 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v18 = Increment v13
-// CHECK-NEXT: v19 = Convert v18 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: Jump -> next b2(v17, v19)
-// CHECK-NEXT: b6(v20):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v21 = Convert v5 declared={type=number site=[[w_5]]}
-// CHECK-NEXT: Return v21
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_10]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_10]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_10]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_11]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_10]] site=[[w_12]]} results=[{type=number site=[[w_13]]}] {
-// CHECK-NEXT: b0(v0: [[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="n"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Puppy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_14]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_15]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_15]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_16]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

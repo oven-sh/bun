@@ -5,6 +5,7 @@ use super::canonical::{
 use super::find::FindInput;
 use super::published::PUBLISHED_FUNCTIONS;
 use super::{PublishedFunction, Reference, Shape};
+use crate::builtins::ResolvedBuiltins;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
@@ -32,6 +33,8 @@ pub(super) struct Table {
     pub(super) entries: FxHashMap<Box<[u8]>, TableEntry>,
     pub(super) signatures: FxHashSet<Signature>,
     pub(super) max_bytes: usize,
+    /// The keys of `entries`, in ascending order.
+    pub(super) functions: Vec<Box<[u8]>>,
 }
 
 impl Table {
@@ -66,6 +69,7 @@ impl Table {
                     file,
                     max_bytes: MAX_PUBLISHED_BYTES,
                     is_outer_name: &|name| names.contains(&name),
+                    known: None,
                 };
                 let root = find_published_function(hir, statement);
                 let canonical =
@@ -109,6 +113,8 @@ impl Table {
                     .entries
                     .insert(canonical.bytes.into_boxed_slice(), entry);
             }
+            table.functions = table.entries.keys().cloned().collect();
+            table.functions.sort_unstable();
             (table, rejected)
         })
     }
@@ -128,7 +134,7 @@ pub(super) fn analyze<R>(
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(source.as_bytes());
@@ -137,8 +143,10 @@ pub(super) fn analyze<R>(
         runtime: Some(RuntimeBindOptions {
             jsx_factory_root: None,
             jsx_fragment_root: None,
+            jsx_paths: [None; 2],
             emits_decorator_metadata: false,
             hoists_top_level_variables: false,
+            object_prototype_takes_names: false,
         }),
         ..BindOptions::default()
     };
@@ -151,14 +159,19 @@ pub(super) fn analyze<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
+    let builtins = ResolvedBuiltins::default();
     then(&FindInput {
         atoms: &atoms,
         hir: &hir,
         bound: &bound,
+        analysis: &analysis,
         decisions: &analysis.decisions,
+        builtins: &builtins,
         module_format: analysis.module_format,
+        names_added_to_builtins: &[],
         is_held_early: &|| true,
     })
 }

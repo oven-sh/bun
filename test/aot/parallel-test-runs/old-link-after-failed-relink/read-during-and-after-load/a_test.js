@@ -1,0 +1,23 @@
+import { test, vi, afterAll } from "bun:test";
+import { createRequire } from "node:module";
+const log = [], require = createRequire(import.meta.url);
+const tried = async load => { try { return "loaded " + (await load()).member(); } catch (error) { return error.name + " " + String(error.message).slice(0, 22); } };
+const sync = ask => { try { return "answered " + ask(); } catch (error) { return error.name + " " + String(error.message).slice(0, 22); } };
+afterAll(() => console.log("SAID", log.join()));
+const mock = () => ({ round: 10 });
+test("t", async () => {
+  vi.doMock("./shapes.mjs", mock);
+  const first = await import("./user.mjs"), second = await import("./named.mjs");
+  const old = () => log.push("old " + sync(() => first.member() + " " + second.member()).slice(0, 34));
+  old();
+  vi.doUnmock("./shapes.mjs");
+  old();
+  vi.doMock("./beside.mjs", async () => { for (let turn = 0; turn < 8; turn++) await null; throw new Error("the factory"); });
+  const turns = async n => { for (let turn = 0; turn < n; turn++) await null; };
+  const waits = tried(() => import("./both.mjs"));
+  old();
+  await turns(2);
+  old();
+  log.push("both " + await waits);
+  old();
+});

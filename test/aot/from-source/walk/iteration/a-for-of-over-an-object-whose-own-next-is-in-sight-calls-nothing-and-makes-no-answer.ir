@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# class Countdown {
+#   left: number;
+#   constructor(from: number) { this.left = from; }
+#   next() { if (this.left > 0) return { done: false, value: this.left-- }; return { done: true, value: 0 }; }
+#   [Symbol.iterator]() { return this; }
+# }
+# function drain(from: number): number { let sum = 0; for (const value of new Countdown(from)) sum += value; return sum; }
+# sink(drain(3), drain(5));
+# -- end of source
+# f1 = drain
+# What is iterated over is of one proven layout, and [Symbol.iterator] and next are methods that nobody replaces: both are copied in, the two answers of next() meet as one object that is never made,
+# done and value are what its slots would hold, and nothing is found under `return`. The iterator is handed to the steps, which no look at the loop reads: so `left` is read and stored in every turn.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: = GetSlot {{*}}key="left"
+# CHECK: = PutSlot {{*}}key="left"
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = CallDirect
+# NEVER-NOT: = Call v
+# NEVER-NOT: = PropGet
+# NEVER-NOT: key="done"
+# NEVER-NOT: RequireObject
+# NEVER-NOT: fields=[0, 1]
+# RUN(COUNT): compile IteratorMethodsCalledDirectly mechanisms=all
+# COUNT: statistic IteratorMethodsCalledDirectly 1

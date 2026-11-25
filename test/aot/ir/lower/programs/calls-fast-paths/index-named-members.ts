@@ -2,6 +2,13 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="block"
+// CHECK-LABEL: function {{*}}name="readAt"
+// CHECK-LABEL: function {{*}}name="Typed1"
+// CHECK-LABEL: function {{*}}name="0"
+// CHECK-LABEL: function {{*}}name="5"
+// CHECK-LABEL: function {{*}}name="Heir1"
+// CHECK-LABEL: function {{*}}name="viaSuper"
 
 // FILE: main.ts
 // Class members whose names are array indices: setters, getters and methods, on the prototype and on the class, in typed and untyped code.
@@ -94,105 +101,3 @@ module.exports = { all, lines };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: block readAt Typed1 0 5 Heir1 viaSuper
-// CHECK-LABEL: function {{*}}name="block"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: v2 = Call v1 calleeName="body"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v3 = CatchValue
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="said"
-// CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = String string=": THROWS "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Convert v3 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v10 = PropGet v9 key="constructor"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|function site=[[w_5]]} illTypedCause=Assertion
-// CHECK-NEXT: v12 = PropGet v11 key="name"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string site=[[w_5]]} illTypedCause=Assertion
-// CHECK-NEXT: v14 = Add v8, v13
-// CHECK-NEXT: v15 = Call v6, v5, v14 calleeKey="push" calleeName="said.push"
-// CHECK-NEXT: v16 = Convert v15 declared={type=number site=[[w_6]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="readAt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=number site=[[w_7]]}] results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|string|Array flags=[IsExpected]}
-// CHECK-NEXT: v3 = ElemGet v2, v1
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Typed1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_9]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="ReadFirst's getter"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="5"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="said"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = String string="ReflectFirst's setter "
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = Call v3, v2, v5 calleeKey="push" calleeName="said.push"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_12]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Heir1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_13]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_14]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_14]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="viaSuper"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_14]] site=[[w_15]]} results=[{type=undefined|null|string site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_14]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_17]]
-// CHECK-NEXT: v2 = GetSuperBase v1 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = SuperGet v2, v0, v3
-// CHECK-NEXT: v5 = Call v4, v0 calleeName="super[2]"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = String string=" by super"
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }

@@ -1,0 +1,156 @@
+# -- source: main.cjs
+# "use strict";
+# function usedAgain(x) { let c = 0; for (let i = 0; i < 24; i++) { const isConst = x === "const"; if (isConst) c += 2; c += isConst ? 1 : 3; } return c; }
+# function sharesOperand(x) { let c = 0; for (let i = 0; i < 24; i++) { const isConst = x === "const"; if (isConst) c += 2; c += isConst ? 1 : 3; } return c + (x ? 1 : 0); }
+# globalThis.kept = [usedAgain, sharesOperand];
+# console.log(usedAgain("const"), usedAgain("let"), sharesOperand("const"), sharesOperand("let"));
+# -- end of source
+# The other side: where the result has a use more than those, not every use is seen. A proof of an operand is a use of it, so an operand without another use is narrowed by nothing (usedAgain). Where an operand has another use, the answer stays "not known" (sharesOperand).
+# RUN: compile StringLiteralComparisonsHoisted mechanisms=all
+# CHECK: statistic StringLiteralComparisonsHoisted 1
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=3
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Builtin builtin=GlobalThis @340
+    v8 = PropGet v7 key="globalThis" [isFreeName] @340
+    v9 = Convert v8 declared={type=builtin(GlobalThis) flags=[IsExpected]} @340
+    v10 = NewArray v4, v6 contents=anything @358
+    PropSet v9, v10 key="kept" @340
+    v12 = Builtin builtin=GlobalThis @386
+    v13 = PropGet v12 key="console" [isFreeName] @386
+    v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]} @386
+    v15 = PropGet v14 key="log" @386
+    v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @386
+    v17 = String string="const" @408
+    v18 = Call v4, -, v17 calleeName="usedAgain" @398
+    v19 = String string="let" @428
+    v20 = Call v4, -, v19 calleeName="usedAgain" @418
+    v21 = String string="const" @450
+    v22 = Call v6, -, v21 calleeName="sharesOperand" @436
+    v23 = String string="let" @474
+    v24 = Call v6, -, v23 calleeName="sharesOperand" @460
+    v25 = Call v16, v14, v18, v20, v22, v24 calleeKey="log" calleeName="console.log" @394
+    v26 = Undefined @386
+    Return v26 @386
+}
+function f1 name="usedAgain" module=m0 position=14 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @46
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @46
+    v3 = Integer @62
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @62
+    Jump -> next b1(v2, v4) @58
+  b1(v5, v6):
+    LoopHint @58
+    v8 = Integer integer=24 @69
+    v9 = Less v6, v8 @65
+    Branch v9 -> taken b2(), notTaken b8() @65
+  b2():
+    v10 = String string="const" @102
+    v11 = StrictEq v0, v10 @96
+    v12 = ToBoolean v11 @115
+    Branch v12 -> taken b3(| 0), notTaken b4(v5) @115
+  b3(v13):
+    v14 = Integer integer=2 @129
+    v15 = Add v5, v14 @129
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @124
+    Jump -> next b4(v16) @124
+  b4(v17):
+    v18 = ToBoolean v11 @137
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0) @137
+  b5(v19):
+    v20 = Integer integer=1 @147
+    Jump -> next b7(v20) @147
+  b6(v21):
+    v22 = Integer integer=3 @151
+    Jump -> next b7(v22) @151
+  b7(v23):
+    v24 = Add v17, v23 @151
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @132
+    v26 = Increment v6 @73
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @73
+    Jump -> next b1(v25, v27) @73
+  b8():
+    Return v5 @163
+}
+function f2 name="sharesOperand" module=m0 position=168 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @204
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @204
+    v3 = Integer @220
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @220
+    Jump -> next b1(v2, v4) @216
+  b1(v5, v6):
+    LoopHint @216
+    v8 = Integer integer=24 @227
+    v9 = Less v6, v8 @223
+    Branch v9 -> taken b2(), notTaken b8() @223
+  b2():
+    v10 = String string="const" @260
+    v11 = StrictEq v0, v10 @254
+    v12 = ToBoolean v11 @273
+    Branch v12 -> taken b3(| 0), notTaken b4(v5) @273
+  b3(v13):
+    v14 = Integer integer=2 @287
+    v15 = Add v5, v14 @287
+    v16 = Convert v15 declared={type=number flags=[IsExpected]} @282
+    Jump -> next b4(v16) @282
+  b4(v17):
+    v18 = ToBoolean v11 @295
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0) @295
+  b5(v19):
+    v20 = Integer integer=1 @305
+    Jump -> next b7(v20) @305
+  b6(v21):
+    v22 = Integer integer=3 @309
+    Jump -> next b7(v22) @309
+  b7(v23):
+    v24 = Add v17, v23 @309
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @290
+    v26 = Increment v6 @231
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @231
+    Jump -> next b1(v25, v27) @231
+  b8():
+    v28 = ToBoolean v0 @326
+    Branch v28 -> taken b9(| 0), notTaken b10(| 0) @326
+  b9(v29):
+    v30 = Integer integer=1 @330
+    Jump -> next b11(v30) @330
+  b10(v31):
+    v32 = Integer @334
+    Jump -> next b11(v32) @334
+  b11(v33):
+    v34 = Add v5, v33 @321
+    Return v34 @321
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

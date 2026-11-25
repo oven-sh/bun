@@ -1,0 +1,57 @@
+# -- source: main.js
+# function B1() { this.count = 0; }
+# B1.prototype.on = function on1(ev) { this.count += ev; return "base"; };
+# function use1(x) { return B1.prototype.on.call(x, 1); }
+# function B2() { this.count = 0; }
+# B2.prototype.on = function on2(ev) { this.count += ev; return "base"; };
+# function use2(x) { return B2.prototype.on.call(x, 1); }
+# function B3() { this.count = 0; }
+# B3.prototype.on = function on3(ev) { this.count += ev; return "base"; };
+# function use3(x) { return B3.prototype.on.call(x, 1); }
+# function B4() { this.count = 0; }
+# B4.prototype.on = function on4(ev) { this.count += ev; return "base"; };
+# function use4(x) { return B4.prototype.on.call(x, 1); }
+# function B5() { this.count = 0; }
+# B5.prototype.on = function on5(ev) { this.count += ev; return "base"; };
+# function use5(x) { return B5.prototype.on.call(x, 1); }
+# function B6() { this.count = 0; }
+# B6.prototype.on = function on6(ev) { this.count += ev; return "base"; };
+# function use6(x) { return B6.prototype.on.call(x, 1); }
+# function B7() { this.count = 0; }
+# B7.prototype.on = function on7(ev) { this.count += ev; return "base"; };
+# function use7(x) { return B7.prototype.on.call(x, 1); }
+# class K8 { constructor() { this.count = 0; } on(ev) { this.count += ev; return "kind"; } }
+# function use8(x) { return K8.prototype.on.call(x, 1); }
+# function attempt(work) { try { return work(); } catch (error) { return error.constructor.name; } }
+# function turn(label, use, x) { var out = []; for (var i = 0; i < 3; i++) out.push(attempt(() => use(x))); print(label + ": " + out.join() + " " + x.count); }
+# register(B1, B2, B3, B4, B5, B6, B7, K8);
+# var uses = [use1, use2, use3, use4, use5, use6, use7, use8], made = [new B1(), new B2(), new B3(), new B4(), new B5(), new B6(), new B7(), new K8()];
+# for (var k = 0; k < 8; k++) { turn((k + 1) + " as written", uses[k], made[k]); turn((k + 1) + " " + deed(k), uses[k], made[k]); }
+# -- end of source
+# ONE CLASS A DEED (an ended guard of a name stays ended, so a run of deeds on one class asks the guard once). Each function reads its own class's method off the prototype and calls it behind the guard; three calls as written;
+# then code that nobody sees does one deed to that class; three calls more. As plain. f9 = use1 .. f16 = use8
+# RUN(WALK): walk f9 f13 f16 mechanisms=all
+# WALK-LABEL: code f9:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK-LABEL: code f13:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# WALK-LABEL: code f16:Body
+# WALK: AreMembersUnchanged conditions=[{layout=
+# RUN(ANSWERS): run-in-shell globalThis.register = (...all) => { globalThis.deed = k => { const F = all[k], first = F.prototype.on; switch (k) { case 0: F.prototype.on = function other(ev) { this.count += 10; return "replaced"; }; return "the member replaced"; case 1: Object.defineProperty(F.prototype, "on", { get() { return function got(ev) { this.count += 100; return "got"; }; }, configurable: true }); return "an accessor under the name"; case 2: F.prototype.on = first.bind({ count: 0 }); return "a bound function under the name"; case 3: first.call = function () { return "own call"; }; return "a call of its own on the function"; case 4: F.prototype = { on(ev) { this.count += 1000; return "whole"; } }; return "the prototype laid anew, whole"; case 5: delete F.prototype.on; return "the member deleted"; case 6: delete F.prototype.on; Object.setPrototypeOf(F.prototype, { on(ev) { this.count += 7; return "from above"; } }); return "the member deleted, another object laid above"; default: Object.defineProperty(F.prototype, "on", { value: function laid(ev) { this.count += 5; return "laid"; } }); return "a class's member defined anew"; } }; };
+# ANSWERS: 1 as written: base,base,base 3
+# ANSWERS-NEXT: 1 the member replaced: replaced,replaced,replaced 33
+# ANSWERS-NEXT: 2 as written: base,base,base 3
+# ANSWERS-NEXT: 2 an accessor under the name: got,got,got 303
+# ANSWERS-NEXT: 3 as written: base,base,base 3
+# ANSWERS-NEXT: 3 a bound function under the name: base,base,base 3
+# ANSWERS-NEXT: 4 as written: base,base,base 3
+# ANSWERS-NEXT: 4 a call of its own on the function: own call,own call,own call 3
+# ANSWERS-NEXT: 5 as written: base,base,base 3
+# ANSWERS-NEXT: 5 the prototype laid anew, whole: whole,whole,whole 3003
+# ANSWERS-NEXT: 6 as written: base,base,base 3
+# ANSWERS-NEXT: 6 the member deleted: TypeError,TypeError,TypeError 3
+# ANSWERS-NEXT: 7 as written: base,base,base 3
+# ANSWERS-NEXT: 7 the member deleted, another object laid above: from above,from above,from above 24
+# ANSWERS-NEXT: 8 as written: kind,kind,kind 3
+# ANSWERS-NEXT: 8 a class's member defined anew: laid,laid,laid 18
+# ANSWERS-NEXT: exited with 0

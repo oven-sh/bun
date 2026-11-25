@@ -1,0 +1,23 @@
+# f1 = launch, f3 = Barge
+# -- source: the-stores-of-a-birth-behind-one-that-must-be-tested-lean-on-the-guard.ts
+# declare function sink(...values: unknown[]): void;
+# class Barge {
+#     tons: number; river: string; crew?: object[]; locks: number; tow?: Barge; hold?: object; toll?: object; twin?: Barge; loaded?: boolean; depth?: number; berth?: number; flag?: object;
+#     constructor(tons: number, river: string) {
+#         this.tons = tons; this.river = river; this.crew = undefined; this.locks = 3; this.hold = undefined; this.tow = undefined; this.toll = undefined;
+#         this.depth = undefined; this.berth = undefined; this.loaded = undefined; this.twin = undefined; this.flag = undefined;
+#     }
+# }
+# function launch(tons: any, river: any) { return new Barge((tons & 1023) * 2, river); }
+# function sail(barge: Barge, goods: object) { barge.hold = goods; barge.depth = barge.tons / 7; barge.berth = 4; barge.loaded = barge.tons > 9; barge.toll = goods; barge.crew = [goods, barge]; barge.twin = barge; barge.tow = barge; barge.flag = goods; }
+# sink(launch, sail);
+# -- end of source
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f3:ParameterGuard
+# RUN(WALK): walk f3 mechanisms=all
+# WALK: PutSlotOrAdd {{*}}key="river" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="crew" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="flag" {{*}}orderWordAfter=
+# RUN(NONE): walk f3 mechanisms=all
+# NONE: code f3:Body
+# NONE-NOT: TypeTest

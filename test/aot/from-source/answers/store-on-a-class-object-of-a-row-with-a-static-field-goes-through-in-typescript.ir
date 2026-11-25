@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Base { static make() { return 1; } }
+# class Middle extends (Base as any) { static make: any = 2; }
+# class Lowest extends Middle {}
+# function lay(value: number) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; (Lowest as any).make = value; return work; }
+# new Base(); new Middle(); new Lowest();
+# lay(3);
+# print(Base.make(), Middle.make, (Lowest as any).make);
+# -- end of source
+# The first row of stores-on-class-objects-of-a-row-with-a-static-field-go-through.ir with its types written: a right program, and it runs to its end.
+# RUN: run-in-shell
+# CHECK: 1 2 3
+# CHECK-NEXT: exited with 0

@@ -39,7 +39,7 @@ test("ran", () => {});
 `,
 };
 
-test("it says what plain Bun says, as one program and in layers", async () => {
+test("it says what plain Bun says, in a test run", async () => {
   using dir = tempDir("aot-export-statement-finds-nothing-in-a-built-in-module", files);
   const directory = String(dir);
   const said = async (flags: string[], words: string) => {
@@ -57,5 +57,4 @@ test("it says what plain Bun says, as one program and in layers", async () => {
   expect(plain.lines).toContain("another name for a module | SyntaxError export 'absent' not found in 'node:util'");
   expect(plain.lines).toContain("found | loaded read");
   expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
 }, 240_000);

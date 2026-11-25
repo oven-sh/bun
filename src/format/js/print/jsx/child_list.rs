@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 
 /// The separators that can appear between two children.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum Separator {
+pub(crate) enum Separator {
     /// A space. At the end of a line it has to be printed as `{" "}`.
     JsxWhitespace,
     Line,
@@ -34,16 +34,40 @@ impl<'a> Format<'a> for Separator {
 }
 
 #[derive(Copy, Clone)]
-enum Item<'a> {
+pub(crate) enum Item<'a, N> {
     /// One word of a text.
     Word(&'a [u8]),
     /// An element, or something in braces.
-    Node(Expr<'a>),
+    Node(N),
+}
+
+/// A child that isn't text.
+pub(crate) trait ChildNode: Copy {
+    /// An element or a fragment.
+    fn is_tag(self) -> bool;
+    /// `<a />`
+    fn is_self_closing_element(self) -> bool;
+    /// `{e}`
+    fn is_expression_container(self) -> bool;
+}
+
+impl ChildNode for Expr<'_> {
+    fn is_tag(self) -> bool {
+        self.jsx_container_span().is_none()
+    }
+
+    fn is_self_closing_element(self) -> bool {
+        self.is_tag() && matches!(self.kind(), ExprKind::Jsx(jsx) if jsx.is_self_closing())
+    }
+
+    fn is_expression_container(self) -> bool {
+        !self.is_tag() && !matches!(self.kind(), ExprKind::Spread(_))
+    }
 }
 
 /// An entry of Prettier's `children`. Contents and separators alternate, as in a fill.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum Part {
+pub(crate) enum Part {
     /// `items[start..end]`. An empty range is Prettier's `""`.
     Content {
         start: u32,
@@ -53,7 +77,7 @@ enum Part {
 }
 
 impl Part {
-    fn is_empty_content(self) -> bool {
+    pub(crate) fn is_empty_content(self) -> bool {
         matches!(self, Part::Content { start, end } if start == end)
     }
 
@@ -68,16 +92,14 @@ impl Part {
 
 /// A child as ESTree has it, after `{" "}` has been turned into text.
 #[derive(Copy, Clone)]
-enum Child<'a> {
+pub(crate) enum Child<'a, N> {
     Text(&'a [u8]),
-    Node(Expr<'a>),
+    Node(N),
 }
 
-impl Child<'_> {
-    /// `<a />`
+impl<N: ChildNode> Child<'_, N> {
     fn is_self_closing_element(self) -> bool {
-        matches!(self, Child::Node(e) if e.jsx_container_span().is_none()
-            && matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.is_self_closing()))
+        matches!(self, Child::Node(node) if node.is_self_closing_element())
     }
 }
 
@@ -111,30 +133,30 @@ fn split_first_word(text: &[u8]) -> (&[u8], &[u8]) {
 }
 
 #[derive(Copy, Clone, Default)]
-struct ChildrenMeta {
+pub(crate) struct ChildrenMeta {
     /// Has an element or a fragment.
-    contains_tag: bool,
+    pub(crate) contains_tag: bool,
     /// Has more than one `{e}`.
-    contains_multiple_expressions: bool,
+    pub(crate) contains_multiple_expressions: bool,
     /// Has `{" "}`, or text that isn't just whitespace with a line break.
-    contains_text: bool,
+    pub(crate) contains_text: bool,
 }
 
 /// Prettier's `printJsxChildren`, before anything is formatted.
-struct Children<'a> {
-    items: SmallVec<[Item<'a>; 16]>,
-    parts: SmallVec<[Part; 32]>,
+pub(crate) struct Children<'a, N> {
+    items: SmallVec<[Item<'a, N>; 16]>,
+    pub(crate) parts: SmallVec<[Part; 32]>,
     /// `<fbt>`: Facebook's translation tag, which preserves whitespace.
     is_facebook_translation_tag: bool,
     /// See `FormatOptions::is_mdx_jsx`. Prettier then uses `line` for the whitespace, the same as between two words.
     /// Here both are [`Separator::JsxWhitespace`], which is printed as a line.
     is_mdx_block: bool,
     is_oxfmt: bool,
-    meta: ChildrenMeta,
+    pub(crate) meta: ChildrenMeta,
 }
 
-impl<'a> Children<'a> {
-    fn push(&mut self, item: Item<'a>) {
+impl<'a, N: ChildNode> Children<'a, N> {
+    fn push(&mut self, item: Item<'a, N>) {
         self.items.push(item);
         if let Some(Part::Content { end, .. }) = self.parts.last_mut() {
             *end = self.items.len() as u32;
@@ -185,7 +207,7 @@ impl<'a> Children<'a> {
         });
     }
 
-    fn push_text(&mut self, text: &'a [u8], next: Option<Child<'a>>) {
+    fn push_text(&mut self, text: &'a [u8], next: Option<Child<'a, N>>) {
         if !is_meaningful_jsx_text(text) {
             // Keep at most one empty line between two children.
             if bun_core::strings::split_crlf_lines(text).count() > 2 {
@@ -230,122 +252,55 @@ impl<'a> Children<'a> {
         }
     }
 
-    fn push_node(&mut self, node: Expr<'a>, next: Option<Child<'a>>) {
-        if node.jsx_container_span().is_none() {
+    fn push_node(&mut self, node: N, next: Option<Child<'a, N>>) {
+        if node.is_tag() {
             self.meta.contains_tag = true;
         }
         self.push(Item::Node(node));
         match next {
             Some(Child::Text(text)) if is_meaningful_jsx_text(text) => {
                 let first_word = split_first_word(split_leading_whitespace(text).1).0;
-                self.push_separator_no_whitespace(
-                    first_word,
-                    Child::Node(node).is_self_closing_element(),
-                );
+                self.push_separator_no_whitespace(first_word, node.is_self_closing_element());
             }
             _ => self.push_line(Separator::HardLine),
         }
     }
 
-    fn new(jsx: Jsx<'a>, is_mdx_block: bool, f: &Formatter<'a>) -> Self {
+    pub(crate) fn new(
+        iter: impl Iterator<Item = Child<'a, N>>,
+        is_facebook_translation_tag: bool,
+        is_mdx_block: bool,
+        flavor: Flavor,
+    ) -> Self {
         let mut children = Children {
             is_mdx_block,
-            is_oxfmt: f.options().flavor.is_oxfmt(),
+            is_oxfmt: flavor.is_oxfmt(),
             items: SmallVec::new(),
             parts: SmallVec::new(),
-            is_facebook_translation_tag: jsx.tag().is_some_and(|tag| tag.text() == b"fbt"),
+            is_facebook_translation_tag,
             meta: ChildrenMeta::default(),
         };
         children.parts.push(Part::Content { start: 0, end: 0 });
 
-        let (comments, source) = (f.comments(), f.source_text());
         let mut expression_count = 0;
-        let mut iter = jsx
-            .children_with_whitespace()
-            .map(|child| match child {
-                JsxChild::Whitespace(span) => Child::Text(source.text_for(&span)),
-                JsxChild::Expr(e) if e.is_jsx_text() => Child::Text(e.text()),
-                JsxChild::Expr(e) if is_whitespace_jsx_expression(e, comments) => Child::Text(b" "),
-                JsxChild::Expr(e) => Child::Node(e),
-            })
-            .peekable();
+        let mut iter = iter.peekable();
         while let Some(child) = iter.next() {
             let next = iter.peek().copied();
             match child {
                 Child::Text(text) => children.push_text(text, next),
                 Child::Node(node) => {
-                    let is_expression_container = node.jsx_container_span().is_some()
-                        && !matches!(node.kind(), ExprKind::Spread(_));
-                    expression_count += usize::from(is_expression_container);
+                    expression_count += usize::from(node.is_expression_container());
                     children.push_node(node, next);
                 }
             }
         }
         children.meta.contains_multiple_expressions = expression_count > 1;
-        children.remove_redundant_separators();
+        children.parts =
+            without_redundant_separators(&children.parts, children.meta, children.is_mdx_block);
         children
     }
 
-    /// Merges consecutive separators with nothing between them into one, and removes leading and trailing ones.
-    ///
-    /// Prettier walks from the end to the start and splices. Here the kept parts go on a stack, whose top is the part
-    /// after the current one.
-    fn remove_redundant_separators(&mut self) {
-        use Separator::{HardLine, JsxWhitespace, SoftLine};
-        let contains_text = self.meta.contains_text;
-        let mut kept: SmallVec<[Part; 32]> = SmallVec::with_capacity(self.parts.len());
-
-        for &part in self.parts.iter().rev() {
-            let (next, after_next) = match kept[..] {
-                [.., after_next, next] => (Some(next), Some(after_next)),
-                [next] => (Some(next), None),
-                [] => (None, None),
-            };
-            let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) =
-                (part, next, after_next)
-            else {
-                kept.push(part);
-                continue;
-            };
-            if !next.is_empty_content() {
-                kept.push(part);
-                continue;
-            }
-            match (separator, after_next) {
-                (HardLine, HardLine) if !contains_text => kept.push(part),
-                (HardLine, HardLine)
-                | (SoftLine | HardLine, JsxWhitespace)
-                | (JsxWhitespace, JsxWhitespace)
-                | (SoftLine, HardLine)
-                | (HardLine, SoftLine) => {
-                    kept.pop();
-                }
-                (JsxWhitespace, SoftLine | HardLine) => {
-                    kept.pop();
-                    kept.pop();
-                    kept.push(part);
-                }
-                _ => kept.push(part),
-            }
-        }
-        kept.reverse();
-
-        let mut parts = &kept[..];
-        while let [rest @ .., last] = parts
-            && last.is_empty_content_or_any_line(self.is_mdx_block)
-        {
-            parts = rest;
-        }
-        while let [first, second, rest @ ..] = parts
-            && first.is_empty_content_or_any_line(self.is_mdx_block)
-            && second.is_empty_content_or_any_line(self.is_mdx_block)
-        {
-            parts = rest;
-        }
-        self.parts = SmallVec::from_slice(parts);
-    }
-
-    fn items_of(&self, part: Part) -> &[Item<'a>] {
+    pub(crate) fn items_of(&self, part: Part) -> &[Item<'a, N>] {
         match part {
             Part::Content { start, end } => self
                 .items
@@ -354,6 +309,69 @@ impl<'a> Children<'a> {
             Part::Separator(_) => &[],
         }
     }
+}
+
+/// Merges consecutive separators with nothing between them into one, and removes leading and trailing ones.
+///
+/// Prettier walks from the end to the start and splices. Here the kept parts go on a stack, whose top is the part
+/// after the current one.
+fn without_redundant_separators(
+    parts: &[Part],
+    meta: ChildrenMeta,
+    is_mdx_block: bool,
+) -> SmallVec<[Part; 32]> {
+    use Separator::{HardLine, JsxWhitespace, SoftLine};
+    let contains_text = meta.contains_text;
+    let mut kept: SmallVec<[Part; 32]> = SmallVec::with_capacity(parts.len());
+
+    for &part in parts.iter().rev() {
+        let (next, after_next) = match kept[..] {
+            [.., after_next, next] => (Some(next), Some(after_next)),
+            [next] => (Some(next), None),
+            [] => (None, None),
+        };
+        let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) =
+            (part, next, after_next)
+        else {
+            kept.push(part);
+            continue;
+        };
+        if !next.is_empty_content() {
+            kept.push(part);
+            continue;
+        }
+        match (separator, after_next) {
+            (HardLine, HardLine) if !contains_text => kept.push(part),
+            (HardLine, HardLine)
+            | (SoftLine | HardLine, JsxWhitespace)
+            | (JsxWhitespace, JsxWhitespace)
+            | (SoftLine, HardLine)
+            | (HardLine, SoftLine) => {
+                kept.pop();
+            }
+            (JsxWhitespace, SoftLine | HardLine) => {
+                kept.pop();
+                kept.pop();
+                kept.push(part);
+            }
+            _ => kept.push(part),
+        }
+    }
+    kept.reverse();
+
+    let mut parts = &kept[..];
+    while let [rest @ .., last] = parts
+        && last.is_empty_content_or_any_line(is_mdx_block)
+    {
+        parts = rest;
+    }
+    while let [first, second, rest @ ..] = parts
+        && first.is_empty_content_or_any_line(is_mdx_block)
+        && second.is_empty_content_or_any_line(is_mdx_block)
+    {
+        parts = rest;
+    }
+    SmallVec::from_slice(parts)
 }
 
 /// `{/* prettier-ignore */}`. `empty_expression` is the content of the braces.
@@ -384,7 +402,18 @@ pub(super) fn format_children<'a>(
     is_mdx_block: bool,
     f: &mut Formatter<'a>,
 ) -> FormatChildrenResult<'a> {
-    let children = Children::new(jsx, is_mdx_block, f);
+    let (comments, source) = (f.comments(), f.source_text());
+    let children = Children::new(
+        jsx.children_with_whitespace().map(|child| match child {
+            JsxChild::Whitespace(span) => Child::Text(source.text_for(&span)),
+            JsxChild::Expr(e) if e.is_jsx_text() => Child::Text(e.text()),
+            JsxChild::Expr(e) if is_whitespace_jsx_expression(e, comments) => Child::Text(b" "),
+            JsxChild::Expr(e) => Child::Node(e),
+        }),
+        jsx.tag().is_some_and(|tag| tag.text() == b"fbt"),
+        is_mdx_block,
+        f.options().flavor,
+    );
     let meta = children.meta;
     let mut forced_break = forced_break || meta.contains_tag || meta.contains_multiple_expressions;
 
@@ -640,7 +669,7 @@ impl<'a> Format<'a> for FormatFlatChildren {
 /// With only one child, a group with line breaks around the child has the same effect as Prettier's choice between the
 /// two layouts.
 pub(super) struct FormatSingleChild<'a> {
-    item: Item<'a>,
+    item: Item<'a, Expr<'a>>,
     forced_break: bool,
     /// The start of the element that owns the child.
     element: u32,

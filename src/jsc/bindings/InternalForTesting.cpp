@@ -27,6 +27,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #if ENABLE(AOT)
 #include "BunAOTCompile.h"
+#include <JavaScriptCore/AOTBuiltinModules.h>
 #include <JavaScriptCore/AOTBuiltinTable.h>
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTBuiltinTableRealm.h>
@@ -260,6 +261,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_builtinFeatureUses, (JSC::JSGlobalObject * g
     return JSValue::encode(JSC::AOT::BuiltinTable::singleton().describeFeatureUsesForTesting(globalObject, platform));
 #else
     return JSValue::encode(constructEmptyArray(globalObject, nullptr));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_aotRunEveryLibraryModule, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+#if ENABLE(AOT)
+    return JSValue::encode(JSC::AOT::evaluateEveryBuiltinModuleForTesting(globalObject));
+#else
+    return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
 #endif
 }
 

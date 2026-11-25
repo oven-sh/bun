@@ -10,7 +10,7 @@ import { isObject, type DumpedEntry } from "../differential/table-description";
 export type { Opened };
 export type Open = (realm: Realm) => Promise<Opened> | Opened;
 
-const keysFolder = join(import.meta.dir, "../../../js/node/test/fixtures/keys");
+const keysFolder = join(process.env.AOT_BUILTINS_FOLDER ?? join(import.meta.dir, ".."), "../../js/node/test/fixtures/keys");
 const readKey = (name: string) => readFileSync(join(keysFolder, name), "utf8");
 const createTLSOptions = () => ({ cert: readKey("agent1-cert.pem"), key: readKey("agent1-key.pem") });
 const noop = () => {};
@@ -227,7 +227,7 @@ const openFrameParser: Open = realm => {
 };
 
 const openResolver: Open = realm => {
-  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({ timeout: -1, tries: 4 });
+  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({ timeout: -1, tries: 4, maxTimeout: 0 });
   resolver.setServers([[4, "127.0.0.1", 1]]);
   return { value: resolver, close: () => resolver.cancel() };
 };

@@ -42,7 +42,7 @@ class ScriptWrappable {
 
 public:
     JSDOMObject* wrapper() const;
-    void setWrapper(JSDOMObject*, JSC::WeakHandleOwner*, void*);
+    void setWrapper(JSDOMObject*, JSC::WeakHandleOwner*);
     void clearWrapper(JSDOMObject*);
 
 protected:

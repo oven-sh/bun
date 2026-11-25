@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
@@ -39,7 +40,7 @@ test.skipIf(isASAN)(
     const run = async (cmd: string[]) => {
       const { stdout, stderr, exitCode } = await runCommand(cmd, String(dir), {
         ...bunEnv,
-        BUN_CRASH_REPORT_URL: "",
+        ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
         BUN_ENABLE_CRASH_REPORTING: "0",
       });
       return { stdout, stderr, exitCode };

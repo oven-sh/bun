@@ -3,7 +3,15 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
-import { pgCommandComplete, pgDataRow, pgMockServer, pgReadyForQuery, pgRowDescription } from "./wire-frames";
+import type { Socket } from "node:net";
+import {
+  loopbackFence,
+  pgCommandComplete,
+  pgDataRow,
+  pgMockServer,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 const randomName = () => "rc_" + randomUUIDv7("hex").replaceAll("-", "");
 const columnsOf = async (query: PromiseLike<any>) => (await query).columns;
@@ -220,6 +228,40 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     expect(namesOf(await sql`select 1 as user_id`.values())).toEqual(["userId"]);
     expect(namesOf(await sql`select 1 as user_id`.simple())).toEqual(["userId"]);
   });
+});
+
+test.each([0, 3])("postgres: the column transform runs the event loop with %p bytes left of its read", async extra => {
+  const description = pgRowDescription([{ name: "owner", typeOid: 25 }]);
+  const rows = ["A", "B"].map(owner => pgDataRow([Buffer.from(owner)]));
+  const reply = Buffer.concat([description, ...rows, pgCommandComplete("SELECT 2"), pgReadyForQuery()]);
+  const asked = Promise.withResolvers<Socket>();
+  const { port, server } = await pgMockServer((type, _, socket) => void (type === "Q" && asked.resolve(socket)));
+  const write = (socket: Socket, bytes: Buffer) => (socket.write(bytes), loopbackFence());
+  try {
+    let socket: Socket;
+    let built: Promise<unknown> | undefined;
+    await using sql = new SQL({
+      url: `postgres://u@127.0.0.1:${port}/db`,
+      max: 1,
+      transform: {
+        column: name => {
+          // Bun.build() runs the event loop until an async setup() settles.
+          const setup = () => write(socket, reply.subarray(description.length + extra));
+          built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+          return name.toUpperCase();
+        },
+      },
+    });
+    const result = sql.unsafe("A").simple().execute();
+    socket = await asked.promise;
+    await write(socket, reply.subarray(0, 7));
+    // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
+    socket.write(reply.subarray(7, description.length + extra));
+    expect(await result).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
+    await built;
+  } finally {
+    server.close();
+  }
 });
 
 // A server hands out OIDs from 16384 upwards: 2^31 takes two thousand million objects.

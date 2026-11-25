@@ -1,0 +1,23 @@
+# the row asks a list. A text and a view are read by forms of their own, and a list that is read under a fraction or under a text is read by name: none of them is asked for the storage of a list
+# f1 = readsAText, f2 = readsBytes, f3 = readsUnderAFraction, f4 = readsUnderAText
+# -- source: what-is-no-list-or-is-read-under-no-integer-gets-no-row.ts
+# declare function sink(...values: unknown[]): void;
+# function readsAText(text: string) { let n = 0; for (let i = 0; i < text.length; i++) n += text[i] === "a" ? 1 : 0; return n; }
+# function readsBytes(bytes: Uint8Array) { let s = 0; for (let i = 0; i < bytes.length; i++) s += bytes[i]; return s; }
+# function readsUnderAFraction(list: number[]) { let n = 0; for (let x = 0; x < 2; x += 0.5) n += list[x] === undefined ? 1 : 0; return n; }
+# function readsUnderAText(list: number[], key: string) { let n = 0; for (let i = 0; i < 3; i++) n += (list as any)[key] === undefined ? 1 : 0; return n; }
+# sink(readsAText, readsBytes, readsUnderAFraction, readsUnderAText);
+# -- end of source
+# RUN(TEXT): walk f1 mechanisms=all
+# TEXT-NOT: = IsPristine
+# TEXT-NOT: = HasArrayStorage
+# TEXT-NOT: testedType=Array
+# RUN(BYTES): walk f2 mechanisms=all
+# BYTES-NOT: = HasArrayStorage
+# BYTES-NOT: testedType=Array
+# RUN(FRACTION): walk f3 mechanisms=all
+# FRACTION-NOT: = HasArrayStorage
+# FRACTION-NOT: = GetArrayStorage
+# RUN(NAME): walk f4 mechanisms=all
+# NAME-NOT: = HasArrayStorage
+# NAME-NOT: = GetArrayStorage

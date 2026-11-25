@@ -1,0 +1,34 @@
+# -- source: main.js
+# function Inner(n) { this.n = n; }
+# function Holder(n) { this.inner = new Inner(n); }
+# function fill(holder, i) { holder.inner.late = i; }
+# function read(holder) { return holder.inner.late; }
+# function show(holder) { return Object.keys(holder.inner).join() + " " + read(holder) + " " + holder.inner.seen; }
+# function attempt(work) { try { work(); return "done"; } catch (error) { return error.constructor.name; } }
+# register(fill, Inner);
+# var a = new Holder(1); filler(a, 1); print(show(a));
+# layAccessorAbove();
+# var b = new Holder(2); filler(b, 2); print(show(b)); print(show(a));
+# filler(a, 3); print(show(a));
+# takeAccessorAway();
+# var c = new Holder(4); filler(c, 4); print(show(c)); print(show(b));
+# layReadOnlyAbove();
+# var d = new Holder(5); print(attempt(() => filler(d, 5)) + " " + show(d)); print(attempt(() => filler(c, 7)) + " " + show(c));
+# takeAccessorAway();
+# var e = new Holder(6); changeWhatStandsAbove(e.inner); filler(e, 6); print(show(e));
+# -- end of source
+# The name has room in an Inner by an expectation. Code that nobody sees lays an accessor under it on Inner.prototype, takes it away, lays a value that may not be written, lays another object above one Inner:
+# the store runs the setter or throws, the read runs the getter, as plain.
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "late" appended
+# RUN(ANSWERS): run-in-shell globalThis.register = (f, I) => { globalThis.filler = f; globalThis.layAccessorAbove = () => Object.defineProperty(I.prototype, "late", { get() { return "got"; }, set(v) { this.seen = v; }, configurable: true }); globalThis.takeAccessorAway = () => { delete I.prototype.late; }; globalThis.layReadOnlyAbove = () => Object.defineProperty(I.prototype, "late", { value: "fixed", writable: false, configurable: true }); globalThis.changeWhatStandsAbove = o => Object.setPrototypeOf(o, { set late(v) { this.seen = "other " + v; }, get late() { return "other"; } }); };
+# ANSWERS: n,late 1 undefined
+# ANSWERS-NEXT: n,seen got 2
+# ANSWERS-NEXT: n,late 1 undefined
+# ANSWERS-NEXT: n,late 3 undefined
+# ANSWERS-NEXT: n,late 4 undefined
+# ANSWERS-NEXT: n,seen undefined 2
+# ANSWERS-NEXT: TypeError n fixed undefined
+# ANSWERS-NEXT: done n,late 7 undefined
+# ANSWERS-NEXT: n,seen other other 6
+# ANSWERS-NEXT: exited with 0

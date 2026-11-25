@@ -2,6 +2,7 @@
 
 #if OS(LINUX) || OS(FREEBSD)
 
+#include "OutPtr.h"
 #include "Secrets.h"
 #include <dlfcn.h>
 #include <wtf/text/WTFString.h>
@@ -84,11 +85,14 @@ typedef enum {
     SECRET_SEARCH_LOAD_SECRETS = 1 << 3
 } SecretSearchFlags;
 
+using Library = std::unique_ptr<void, decltype([](void* handle) { dlclose(handle); })>;
+using GErrorPtr = std::unique_ptr<GError, void (*)(GError*)>;
+
 class LibsecretFramework {
 public:
-    void* secret_handle;
-    void* glib_handle;
-    void* gobject_handle;
+    Library secret_library;
+    Library glib_library;
+    Library gobject_library;
 
     // GLib function pointers
     void (*g_error_free)(GError* error);
@@ -138,61 +142,35 @@ public:
         void* cancellable,
         GError** error);
 
-    LibsecretFramework()
-        : secret_handle(nullptr)
-        , glib_handle(nullptr)
-        , gobject_handle(nullptr)
-    {
-    }
-
     bool load()
     {
-        if (secret_handle && glib_handle && gobject_handle) return true;
-
         // Load GLib
-        glib_handle = dlopen("libglib-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL);
-        if (!glib_handle) {
+        Library glib { dlopen("libglib-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL) };
+        if (!glib) {
             // Try alternative name
-            glib_handle = dlopen("libglib-2.0.so", RTLD_LAZY | RTLD_GLOBAL);
-            if (!glib_handle) return false;
+            glib.reset(dlopen("libglib-2.0.so", RTLD_LAZY | RTLD_GLOBAL));
+            if (!glib) return false;
         }
 
         // Load GObject (needed for some GLib types)
-        gobject_handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL);
-        if (!gobject_handle) {
-            gobject_handle = dlopen("libgobject-2.0.so", RTLD_LAZY | RTLD_GLOBAL);
-            if (!gobject_handle) {
-                dlclose(glib_handle);
-                glib_handle = nullptr;
-                return false;
-            }
+        Library gobject { dlopen("libgobject-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL) };
+        if (!gobject) {
+            gobject.reset(dlopen("libgobject-2.0.so", RTLD_LAZY | RTLD_GLOBAL));
+            if (!gobject) return false;
         }
 
         // Load libsecret
-        secret_handle = dlopen("libsecret-1.so.0", RTLD_LAZY | RTLD_LOCAL);
-        if (!secret_handle) {
-            dlclose(glib_handle);
-            dlclose(gobject_handle);
-            glib_handle = nullptr;
-            gobject_handle = nullptr;
-            return false;
-        }
+        Library secret { dlopen("libsecret-1.so.0", RTLD_LAZY | RTLD_LOCAL) };
+        if (!secret || !load_functions(glib.get(), secret.get())) return false;
 
-        if (!load_functions()) {
-            dlclose(secret_handle);
-            dlclose(glib_handle);
-            dlclose(gobject_handle);
-            secret_handle = nullptr;
-            glib_handle = nullptr;
-            gobject_handle = nullptr;
-            return false;
-        }
-
+        secret_library = WTF::move(secret);
+        glib_library = WTF::move(glib);
+        gobject_library = WTF::move(gobject);
         return true;
     }
 
 private:
-    bool load_functions()
+    bool load_functions(void* glib_handle, void* secret_handle)
     {
         // Load GLib functions
         g_error_free = (void (*)(GError*))dlsym(glib_handle, "g_error_free");
@@ -236,7 +214,7 @@ static LibsecretFramework* libsecretFramework()
             // Framework failed to load, but object is still constructed
         }
     });
-    return framework->secret_handle ? &framework.get() : nullptr;
+    return framework->secret_library ? &framework.get() : nullptr;
 }
 
 // Define our simple schema for Bun secrets
@@ -252,7 +230,7 @@ static const SecretSchema* get_bun_schema()
     return &schema;
 }
 
-static void updateError(Error& err, GError* gerror)
+static void updateError(Error& err, const GErrorPtr& gerror)
 {
     if (!gerror) {
         err = Error {};
@@ -262,11 +240,6 @@ static void updateError(Error& err, GError* gerror)
     err.message = String::fromUTF8(gerror->message);
     err.code = gerror->code;
     err.type = ErrorType::PlatformError;
-
-    auto* framework = libsecretFramework();
-    if (framework) {
-        framework->g_error_free(gerror);
-    }
 }
 
 Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist)
@@ -291,7 +264,7 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
         return err;
     }
 
-    GError* gerror = nullptr;
+    GErrorPtr gerror { nullptr, framework->g_error_free };
     // Combine service and name for label
     auto label = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto labelUtf8 = label.utf8();
@@ -302,7 +275,7 @@ Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CStri
         labelUtf8.legacyCStringPointer(),
         password.legacyCStringPointer(),
         nullptr, // cancellable
-        &gerror,
+        outPtr(gerror),
         "service", service.legacyCStringPointer(),
         "account", name.legacyCStringPointer(),
         nullptr // end of attributes
@@ -330,16 +303,17 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
         return std::nullopt;
     }
 
-    GError* gerror = nullptr;
+    GErrorPtr gerror { nullptr, framework->g_error_free };
+    std::unique_ptr<gchar, void (*)(gchar*)> raw_password { nullptr, framework->secret_password_free };
 
-    gchar* raw_password = framework->secret_password_lookup_sync(
+    raw_password.reset(framework->secret_password_lookup_sync(
         get_bun_schema(),
         nullptr, // cancellable
-        &gerror,
+        outPtr(gerror),
         "service", service.legacyCStringPointer(),
         "account", name.legacyCStringPointer(),
         nullptr // end of attributes
-    );
+        ));
 
     if (gerror) {
         updateError(err, gerror);
@@ -352,13 +326,12 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
     }
 
     // Convert to Vector for thread safety
-    size_t length = strlen(raw_password);
+    size_t length = strlen(raw_password.get());
     WTF::Vector<uint8_t> result;
-    result.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(raw_password), length));
+    result.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(raw_password.get()), length));
 
     // Clear the password before freeing
-    memset(raw_password, 0, length);
-    framework->secret_password_free(raw_password);
+    memset(raw_password.get(), 0, length);
 
     return result;
 }
@@ -374,12 +347,12 @@ bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& 
         return false;
     }
 
-    GError* gerror = nullptr;
+    GErrorPtr gerror { nullptr, framework->g_error_free };
 
     gboolean result = framework->secret_password_clear_sync(
         get_bun_schema(),
         nullptr, // cancellable
-        &gerror,
+        outPtr(gerror),
         "service", service.legacyCStringPointer(),
         "account", name.legacyCStringPointer(),
         nullptr // end of attributes

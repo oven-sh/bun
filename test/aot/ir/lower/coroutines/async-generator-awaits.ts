@@ -12,8 +12,7 @@
 // CHECK-NOT: = Await
 // CHECK-LABEL: function {{*}}name="yieldValue"
 // CHECK: [[awaited]] = Await
-// CHECK-NEXT: [[request]] = Convert [[awaited]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
-// CHECK-NEXT: = Yield [[request]]
+// CHECK-NEXT: = Yield [[awaited]]
 // CHECK-NOT: = Await
 
 export async function* reachEnd() {}

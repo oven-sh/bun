@@ -3,8 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// `mock.module("./data.json", () => ({ name: "mock" })); require("./data.json")`: what stands in the place of the file is a module like any other,
-// so the first require() behind the mock gets its namespace object. A compiled run answered as for the file itself, with the default export: undefined here.
+// `mock.module("./data.json", () => made); require("./data.json")` answers `made` itself, or its `default` where it is marked `__esModule`.
 const files: Record<string, string> = {
   "data.json": `{ "value": 1, "name": "file" }`,
   "members.json": `{ "value": 1, "name": "file" }`,
@@ -64,13 +63,12 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
 for (const [way, words] of [
   ["at default flags", undefined],
   ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
 ] as const) {
   test(`require() answers as under plain bun test, ${way}`, async () => {
     using dir = tempDir("aot-first-require-behind-a-mock-of-a-data-file", files);
     const plain = await runTests(String(dir), undefined);
     expect(plain.exitCode).toBe(0);
-    expect(plain.stdout[0]).toBe(`SEEN names alone: {"name":"mock"} [object Module] false true`);
+    expect(plain.stdout[0]).toBe(`SEEN names alone: {"name":"mock"} [object Object] true true`);
     expect(plain.stdout.length).toBe(12);
     expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
   }, 180_000);

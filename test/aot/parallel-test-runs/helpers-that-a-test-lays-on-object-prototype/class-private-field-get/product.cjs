@@ -1,0 +1,17 @@
+"use strict";
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _Holder_label;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Holder = void 0;
+class Holder {
+    constructor() {
+        _Holder_label.set(this, "as written");
+    }
+    read() { return __classPrivateFieldGet(this, _Holder_label, "f"); }
+}
+exports.Holder = Holder;
+_Holder_label = new WeakMap();

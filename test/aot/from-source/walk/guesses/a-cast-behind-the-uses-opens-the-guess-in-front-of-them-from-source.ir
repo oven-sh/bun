@@ -1,0 +1,21 @@
+# `v.a = n; v.a + v.b; take(v as Box)`: nothing is declared, held or seen to arrive of `v`, and two classes have the names that are used off it. The cast behind the uses says which is meant: the test for that layout stands in front of the first use.
+# The same body without the cast, and with the plain argument `take(v)` of a value that is written `any` (the front end states nothing there), stays closed.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest {{*}} layouts=[L0]
+# CHECK: = GetSlot {{*}} key="b" receivers=[L0]
+# CHECK: = PutSlot {{*}} key="a" receivers=[L0]
+# RUN(PLAIN): walk f3 mechanisms=all
+# PLAIN-LABEL: code f3:Body
+# PLAIN-NOT: = ShapeTest
+# PLAIN: = PropSet {{*}} key="a"
+# PLAIN-NOT: = ShapeTest
+# -- source: a-cast-behind-the-uses-opens-the-guess-in-front-of-them-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# class Box { a = 1; b = 2; }
+# class Crate { a = 3; b = 4; c = 5; }
+# function take(box: Box): number { return box.b; }
+# function withCast(make: () => any, n: number): number { const v = make(); v.a = n; const sum = v.a + v.b; take(v as Box); return sum; }
+# function withPlainArgument(make: () => any, n: number): number { const v = make(); v.a = n; const sum = v.a + v.b; take(v); return sum; }
+# sink(withCast, withPlainArgument, new Box(), new Crate());
+# -- end of source

@@ -596,12 +596,52 @@ test("error.stack doesnt lose frames", () => {
           at middle (<dir>/inspect.test.ts:<num>:<num>)
           at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
           at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at <dir>/inspect.test.ts:<num>:<num>
+          at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
     "
   `);
 
-  // We allow it to differ by the existence of <anonymous> as a string. But that's it.
-  expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+  expect(no).toBe(yes);
+});
+
+test("a client that leaves before the busy main thread accepts it does not end the process early", async () => {
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "--inspect=ws://127.0.0.1:0/",
+      "-e",
+      `console.error("busy");
+       require("fs").readSync(0, Buffer.alloc(1));
+       setTimeout(() => console.log("timer fired"), 50);`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr.values({ preventCancel: true })) {
+    stderr += decoder.decode(chunk);
+    if (stderr.includes("busy") && /ws:\/\/\S+\s/.test(stderr)) break;
+  }
+  const href = stderr.match(/ws:\/\/\S+/)?.[0];
+  if (!href) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+  const url = new URL(href);
+
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => webSocket.close());
+  webSocket.addEventListener("close", () => resolve());
+  webSocket.addEventListener("error", () => reject(new Error("the inspector socket failed")));
+  await closed;
+  // The inspector's thread answers this after it has handled the close.
+  await fetch(`http://${url.host}/json/version`).then(response => response.text());
+  child.stdin.write("x");
+  await child.stdin.end();
+
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "timer fired\n", exitCode: 0 });
 });
 
 test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {

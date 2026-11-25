@@ -3,4 +3,4 @@ const said = (e) => "THROWS " + (e && e.name) + (e && e.code ? " " + e.code : ""
 const t = (name, f) => { try { console.log(name, show(f())); } catch (e) { console.log(name, said(e)); } };
 const ta = async (name, f) => { try { console.log(name, show(await f())); } catch (e) { console.log(name, said(e)); } };
 const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
-ta("dyn", async () => { const ns = await import("i_primitive"); return typeof ns === "object" ? [keys(ns), ns.named, ns.default, ns.__esModule] : ns; });
+module.exports = ta("dyn", async () => { const ns = await import("i_primitive"); return typeof ns === "object" ? [keys(ns), ns.named, ns.default, ns.__esModule] : ns; });

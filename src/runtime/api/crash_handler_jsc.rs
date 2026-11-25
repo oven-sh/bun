@@ -95,6 +95,24 @@ pub(crate) fn panic() {
     crash_handler::panic_impl(b"invoked crashByPanic() handler", None);
 }
 
+/// Through the hook of `std::panic`, as a failed `unwrap()` goes.
+pub(crate) fn rust_panic() {
+    crash_handler::suppress_core_dumps_if_necessary();
+    panic!("invoked rustPanic() handler");
+}
+
+/// Native code that calls itself until it meets the guard page below the stack of its thread.
+pub(crate) fn stack_overflow() {
+    #[inline(never)]
+    #[allow(unconditional_recursion)]
+    fn deeper(depth: usize) -> usize {
+        let room = core::hint::black_box([depth; 64]);
+        deeper(depth + 1) + room[0]
+    }
+    crash_handler::suppress_core_dumps_if_necessary();
+    core::hint::black_box(deeper(0));
+}
+
 pub(crate) fn abort() {
     crash_handler::suppress_core_dumps_if_necessary();
     // Under ASAN the POSIX signal handlers are not installed; invoke the

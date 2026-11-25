@@ -1,0 +1,35 @@
+A test ends a hoisted mock of a module whose body never ran; a module that is loaded afterwards, and a require(), get the module itself.
+#### a.test.js
+import { test, vi } from "bun:test";
+import * as ns from "./dep.js";
+import * as star from "./star.js";
+import { fn, value } from "./dep.js";
+import { seen } from "./user.js";
+vi.mock("./dep.js", () => { console.log("| CASE factory runs"); return { fn: () => "mock fn", value: "mock value" }; });
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message; } };
+const all = () => [said(() => fn()), said(() => value), said(() => ns.fn()), said(() => ns.value), said(() => star.fn()), said(() => star.value), Object.keys(ns).join("+"), seen()].join(" . ");
+test("the mock ends", async () => {
+  vi.doUnmock("./dep.js");
+  console.log("| CASE ended:", all());
+  console.log("| CASE a late user:", (await import("./late.js")).seen());
+  console.log("| CASE require():", require("./dep.js").value);
+});
+#### dep.js
+console.log("| CASE dep runs");
+export function fn() { return "real fn"; }
+export const value = "real value";
+export let count = 0;
+export const bump = () => ++count;
+#### late.js
+console.log("| CASE late runs");
+import { fn, value } from "./dep.js";
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message; } };
+export const seen = () => said(() => fn() + ", " + value);
+#### package.json
+{}
+#### star.js
+export * from "./dep.js";
+#### user.js
+import { fn, value } from "./dep.js";
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message; } };
+export const seen = () => said(() => fn() + ", " + value);

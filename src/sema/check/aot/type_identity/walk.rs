@@ -10,7 +10,7 @@ use crate::check::aot::trust::Trust;
 use crate::check::aot::type_shape::{ShapeKind, TupleElement};
 use crate::hir::TypeNodeId;
 use crate::program::{FileId, Sym};
-use crate::types::{Origin, TypeData, TypeId};
+use crate::types::{Literalness, Origin, Prop, PropFlags, PropSource, Shape, TypeData, TypeId};
 use crate::util::FxHashMap;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -22,15 +22,26 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub(in crate::check::aot) fn compute_object_origin(&mut self, ty: TypeId) -> ObjectOrigin {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let data = self.c.data(ty);
         if let TypeData::Ref { target, .. } = data {
             return ObjectOrigin::Symbol(self.files().canonical(*target));
         }
-        if let Some((alias, _)) = self.c.alias_of_type(ty)
+        let alias = match self.c.stored_alias(ty) {
+            Some((alias, _)) => Some(*alias),
+            None => self.c.alias_symbol_of_type(ty),
+        };
+        if let Some(alias) = alias
             && is_top_level_alias(self, alias)
         {
             return ObjectOrigin::Symbol(alias);
+        }
+        if let TypeData::Synth(shape) = data
+            && is_made_by_a_check_of_a_literal(shape)
+            && let Some((file, _, expression)) = shape.symbol_declared_at
+            && expression.is_some()
+        {
+            return ObjectOrigin::ObjectLiteral { file, expression };
         }
         let TypeData::Anon { origin, .. } = data else {
             return ObjectOrigin::Computed;
@@ -50,6 +61,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Origin::GlobalThis => ObjectOrigin::Computed,
         }
     }
+}
+
+fn is_made_by_a_check_of_a_literal(shape: &Shape<'_>) -> bool {
+    let is_written_in_literal = |property: &Prop<'_>| {
+        property.flags.contains(PropFlags::DECLARED_IN_LITERAL)
+            || matches!(property.source, PropSource::Literal(..))
+    };
+    let mut properties = shape.props.iter();
+    shape.created_from.is_none()
+        && shape.props.iter().all(is_written_in_literal)
+        && match shape.literal {
+            Literalness::Literal | Literalness::Partial => !shape.props.is_empty(),
+            Literalness::No => properties.any(|property| property.flags.contains(PropFlags::WIDEN)),
+            _ => false,
+        }
 }
 
 fn is_top_level_scope(bound: &Bound<'_>, scope: ScopeId) -> bool {
@@ -106,7 +132,7 @@ impl Walk {
         if queries.c.is_stack_low() {
             return Err(GaveUp::Unresolved);
         }
-        let ty = queries.declared_type_of_this(ty);
+        let ty = queries.resolve_object_type(ty);
         match self.visits.get(&ty) {
             Some(&Visit::Pending { index }) => {
                 self.lowest_reference = lower_reference(self.lowest_reference, Some(index));
@@ -284,10 +310,7 @@ impl Walk {
             ShapeKind::Symbol => Ok(leaf(Tag::Symbol)),
             ShapeKind::AnyObject => Ok(leaf(Tag::AnyObject)),
             ShapeKind::Function(signatures) => {
-                let declaration = match signatures {
-                    &[signature] => queries.signature_declaration(signature),
-                    overloads => queries.first_overload(overloads),
-                };
+                let declaration = queries.declaration_of_signatures(signatures.declared);
                 let mut description = Description::new(Tag::Function);
                 description.word(u64::from(declaration.is_some()));
                 if let Some(declaration) = declaration {
@@ -311,6 +334,12 @@ impl Walk {
             ShapeKind::Class(class) => {
                 let mut description = class_description(queries, Tag::Class, class);
                 description.word(u64::from(queries.accepted_primitives(ty)?.bits()));
+                Ok(description.finish())
+            }
+            ShapeKind::ConstructorFunctionInstance(function) => {
+                let mut description = Description::new(Tag::ConstructorFunctionInstance);
+                description.file(queries, function.file);
+                description.word(u64::from(function.function.0));
                 Ok(description.finish())
             }
             ShapeKind::Object => self.describe_object(queries, ty),

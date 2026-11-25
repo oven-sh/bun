@@ -3,7 +3,7 @@ const store = new Map<string, string>();
 function commandsIn(text: string): string[][] {
   const commands: string[][] = [];
   const lines = text.split("\r\n");
-  for (let at = 0; at < lines.length - 1; ) {
+  for (let at = 0; at < lines.length - 1;) {
     const count = Number(lines[at++]!.slice(1));
     const words: string[] = [];
     for (let word = 0; word < count; word++, at += 2) words.push(lines[at + 1]!);
@@ -19,7 +19,8 @@ function replyTo(words: string[]): string {
     case "SET":
       store.set(words[1]!, words[2]!);
       return "+OK\r\n";
-    case "GET": {
+    case "GET":
+    case "GETEX": {
       const value = store.get(words[1]!);
       return value === undefined ? "_\r\n" : `$${value.length}\r\n${value}\r\n`;
     }
@@ -46,6 +47,10 @@ const server = Bun.listen({
 const client = new Bun.RedisClient(`redis://127.0.0.1:${server.port}`);
 console.log(await client.set("greeting", "hello from the client"));
 console.log(await client.get("greeting"));
+console.log(
+  await client.get("greeting", { buffer: true }),
+  await client.getex("greeting", "PERSIST", { buffer: true }),
+);
 console.log(await client.incr("count"), await client.incr("count"));
 console.log(await client.get("missing"));
 client.close();

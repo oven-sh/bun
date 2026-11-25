@@ -1,0 +1,15 @@
+const unseen = (0, eval)("(x) => x");
+const o = unseen({ p: {} }), a = unseen(1);
+const t = (f) => { try { f(); console.log("no error"); } catch (e) { console.log(JSON.stringify(e.message)); } };
+t(() => new new o.p.X()());
+t(() => new new o.p.X);
+t(() => new new o.p.X(a)(a));
+t(() => new new o.p.q.X()());
+t(() => new new o.x.q.X()(a));
+t(() => new new new o.p.X()()());
+t(() => new new new o.p.q.X);
+t(() => new new Date().nope());
+t(() => new new Date(0).nope(a));
+t(() => new new Date().a.b());
+t(() => new (new o.p.X())());
+t(() => new (new o.p.q.X)());

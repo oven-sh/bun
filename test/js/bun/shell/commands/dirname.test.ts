@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isWindows } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -34,6 +35,12 @@ describe("dirname", async () => {
   TestBuilder.command`dirname /catalog`.exitCode(0).stdout("/\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`dirname /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+
+  TestBuilder.command`dirname ${"C:\\a\\b"} ${"c/d\\e"}`
+    .exitCode(0)
+    .stdout(isWindows ? "C:\\a\nc/d\n" : ".\nc\n")
+    .stderr("")
+    .runAsTest("backslash");
 });
 
 describe("dirname without stdout", async () => {

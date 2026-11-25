@@ -1,0 +1,11 @@
+# -- source: data-descriptor-that-is-kept-is-no-store.js
+# function K(v) { this.v = v; }
+# const kept = { value: function m() { return this.v; }, enumerable: false, configurable: true, writable: true };
+# Object.defineProperty(K.prototype, "m", kept);
+# sink(kept);
+# sink(new K(1).m());
+# -- end of source
+# Whoever else gets the descriptor reads the function off it. So it lies in the field of the descriptor's layout, and goes where that goes.
+# RUN: link members functions mechanisms=all
+# CHECK-NOT: on-prototype L0 "m" function=
+# CHECK-NOT: function f2 callers-known

@@ -1,0 +1,14 @@
+# A base constructor makes its object in its own body, for its new.target. While every construction through it was answered with that one node, `new Square(2)` and `this` behind super() were the whole family of Shape: a store `this.side = ..` was a store into Rect and Disk too, which got `side` as an appended field, and n classes below one base cost n x n fields.
+# A construction whose row of constructors hands back only the object of its construction answers with the instances of the class of its new.target: `new Square(2)` with Square's, a super call that hands its own new.target up the row with those of the classes that arrive there.
+# RUN: link fields mechanisms=all
+# CHECK: "side"
+# RUN(NONE): link fields mechanisms=all
+# NONE-NOT: appended
+# -- source: a-construction-answers-with-what-is-made-for-its-new-target-from-source.ts
+# abstract class Shape { abstract area(): number; }
+# class Square extends Shape { constructor(public side: number) { super(); } area(): number { return this.side * this.side; } }
+# class Rect extends Shape { constructor(public w: number, public h: number) { super(); } area(): number { return this.w * this.h; } }
+# class Disk extends Shape { constructor(public r: number) { super(); } area(): number { return 3 * this.r * this.r; } }
+# function side(s: Square): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return s.side + work; }
+# console.log(side(new Square(2)) + new Rect(2, 3).area() + new Disk(1).area());
+# -- end of source

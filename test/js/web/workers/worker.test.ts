@@ -29,6 +29,15 @@ describe("web worker", () => {
       ).toThrow(/Invalid file URL/);
     });
 
+    test("names the entry that does not resolve", () => {
+      expect(() => new Worker("data:text/javascript,1", { preload: ["./does-not-exist-xyz.js"] })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          message: 'BuildMessage: ModuleNotFound resolving "./does-not-exist-xyz.js" (entry point)',
+        }),
+      );
+    });
+
     // Reaching the real limit needs 2.5 GB, so the child runs with a 64 KiB synthetic allocation limit
     // (2730 24-byte entries).
     test("throws a RangeError for more entries than the native list allows", async () => {
@@ -626,6 +635,21 @@ describe("web worker", () => {
         w.terminate();
         await once(w, "close");
       }
+    });
+
+    // Times out if each waiter is found by a scan of all the others.
+    test("terminate() with many pending Atomics.waitAsync() calls", async () => {
+      const count = isDebug ? 20_000 : 200_000;
+      const src = `const view = new Int32Array(new SharedArrayBuffer(4));
+        let pending = 0;
+        for (let i = 0; i < ${count}; i++) pending += Atomics.waitAsync(view, 0, 0).async;
+        postMessage(pending);
+        setInterval(() => {}, 1000);`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])));
+      const [msg] = await once(w, "message");
+      expect(msg.data).toBe(count);
+      w.terminate();
+      await once(w, "close");
     });
 
     // terminate() mid `import "node:*"`: the native module's export walk stops

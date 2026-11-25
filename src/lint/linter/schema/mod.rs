@@ -251,11 +251,11 @@ pub(crate) fn validate_as_eslint_8(schema: Option<&Json>, options: &[Json]) -> R
 /// Like [`validate`], for a JavaScript plugin's rule. Returns `Ok` with ESLint's `context.options`: `options` merged
 /// with the rule's default options and the schema's defaults.
 pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
-    match &rule.schema {
+    match &rule.about().schema {
         js_plugin::Schema::Any => Ok(with_js_defaults(rule, options)),
-        js_plugin::Schema::None => validate_with(None, &rule.default_options, options),
+        js_plugin::Schema::None => validate_with(None, &rule.about().default_options, options),
         js_plugin::Schema::Json(schema) => {
-            validate_with(Some(schema), &rule.default_options, options)
+            validate_with(Some(schema), &rule.about().default_options, options)
         }
     }
 }
@@ -270,7 +270,7 @@ impl js_plugin::Rule {
 /// `options` merged with a JavaScript plugin rule's default options. That's what ESLint uses for a rule it doesn't
 /// validate.
 pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
-    deep_merge_arrays(&rule.default_options, options)
+    deep_merge_arrays(&rule.about().default_options, options)
 }
 
 /// `schema` is `meta.schema`, if the rule has one, and `defaults` is `meta.defaultOptions`. Returns `Ok` with the

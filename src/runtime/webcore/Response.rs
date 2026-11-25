@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef, HasJsRef as _};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -62,6 +62,12 @@ impl HeadersRef {
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
     }
 
+    #[inline]
+    pub(crate) fn create_from_headers(headers: &bun_http::Headers) -> Self {
+        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
+        unsafe { Self::adopt(FetchHeaders::create_from_headers(headers)) }
+    }
+
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
     pub(crate) fn create_from_js(
@@ -114,7 +120,7 @@ impl Drop for HeadersRef {
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
     abort_handle: bun_jsc::AbortHandle,
-    /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
+    /// `Response` owns `Self`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
     /// The context of the script that fetched: the body's error is reported to it.
@@ -161,28 +167,15 @@ impl BodyAbortListener {
 
 use crate::generated_bindgen::response::js_Response as js;
 
-#[inline]
-pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
-    js::from_js(value).map(|p| p.as_ptr())
-}
-
-/// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
-#[inline]
-pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
-    from_js(value)
-        .and_then(core::ptr::NonNull::new)
-        .map(bun_ptr::ParentRef::from)
-}
-
 impl bun_jsc::JsClass for Response {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        from_js(value)
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Response::make_maybe_pooled(global, bun_core::heap::into_raw(Box::new(self)))
+        RefPtr::new(self).to_js(global)
     }
 }
 
@@ -193,7 +186,7 @@ impl bun_jsc::JsClass for Response {
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Response::destroy)]
+#[ref_count(destroy = bun_ptr::weak_ptr::destroy)]
 pub(crate) struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
@@ -207,13 +200,13 @@ pub(crate) struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
+    abort_listener: JsCell<Option<bun_ptr::AliasableBox<BodyAbortListener>>>,
 }
 
 impl Default for Response {
@@ -232,10 +225,11 @@ impl Default for Response {
     }
 }
 
-impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+// SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
+unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
@@ -442,17 +436,22 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// # Safety
-    /// `this` is a live heap allocation and the caller owns a ref on it, which the wrapper adopts.
-    pub(crate) unsafe fn to_js(this: *mut Self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: fn contract.
-        let response = unsafe { &*this };
-        response.calculate_estimated_byte_size();
-        let js_value = js::to_js(this, global_object);
-        response.js_ref.set(JsRef::init_weak(js_value));
+    /// The wrapper adopts the ref.
+    pub(crate) fn to_js(self: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        self.wrap(global_object).to_js()
+    }
 
-        response.check_body_stream_ref(global_object);
-        js_value
+    /// As `to_js`, for code that goes on to use the struct.
+    pub(crate) fn wrap(
+        self: RefPtr<Self>,
+        global_object: &JSGlobalObject,
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        self.calculate_estimated_byte_size();
+        let this = js::wrap(self, global_object);
+        this.set_js_ref_weak();
+
+        this.check_body_stream_ref(global_object);
+        this
     }
 
     #[inline]
@@ -474,18 +473,15 @@ impl Response {
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
-        let listener = bun_core::heap::into_raw(Box::new(BodyAbortListener {
+        let listener = bun_ptr::AliasableBox::new(BodyAbortListener {
             abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
             context,
-        }));
-        // SAFETY: `listener` is a live heap allocation; both calls keep its provenance.
-        let listener = unsafe {
-            bun_jsc::AbortHandle::follow_owner(listener, signal.ref_());
-            bun_core::heap::take(listener)
-        };
+        });
+        // SAFETY: on the heap until it drops.
+        unsafe { bun_jsc::AbortHandle::follow_owner(listener.as_ptr(), signal.ref_()) };
         // SAFETY: caller contract; `this` is live.
         unsafe { (*this).abort_listener.set(Some(listener)) };
     }
@@ -734,9 +730,8 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            // SAFETY: R-2 `JsCell` escape hatch — `Body::write_format` takes
-            // `&mut self`; single-JS-thread invariant.
-            unsafe { self.body.get_mut() }
+            self.body
+                .get()
                 .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)?;
         }
         writer.write_str("\n")?;
@@ -756,29 +751,16 @@ impl Response {
         self.throw_if_body_unusable(global_this)?;
         let cloned = self.clone(&cx)?;
 
-        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
-        let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
+        let js_wrapper = cloned.to_js(global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
-    /// # Safety
-    /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
-    /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
-    /// JS wrapper.
-    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
-        // SAFETY: caller contract — `ptr` is live and uniquely owned.
-        unsafe { Response::to_js(ptr, global_object) }
-    }
-
     pub(crate) fn clone_value(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Response> {
         let body = Body::new(self.clone_body_value_via_cached_stream(cx)?);
-        // `Body` has NO `Drop`; arm a guard so the
-        // `?` below releases the cloned body payload.
-        let body = scopeguard::guard(body, |b| b.reset());
         let init = self.init.get().clone(cx.global())?;
         Ok(Response {
-            body: JsCell::new(scopeguard::ScopeGuard::into_inner(body)),
+            body: JsCell::new(body),
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
@@ -786,84 +768,30 @@ impl Response {
         })
     }
 
-    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Response> {
-        Ok(bun_core::heap::into_raw(Box::new(self.clone_value(cx)?)))
-    }
-
-    fn destroy(this: *mut Response) {
-        // SAFETY: ref_count hit 0; this is the unique owner
-        unsafe {
-            // We assign safe-empty values rather than `drop_in_place` so the
-            // struct stays in a valid (all-empty) state if `on_finalize()`
-            // returns false and the allocation outlives this call until the
-            // last WeakRef releases it.
-            //
-            // - `Init` field drop glue releases `headers` (HeadersRef::Drop →
-            //   C++ deref) and `status_text` (WTF deref).
-            // - `Body` has NO `Drop`; `reset()` is the explicit cleanup API
-            //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
-            //   would leak refcounted payloads (WTFStringImpl, Blob store).
-            // - `url` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
-            (*this).init.set(Init::default());
-            (*this).body.get_mut().reset();
-            (*this).url.set(BunString::EMPTY);
-            (*this).js_ref.set(JsRef::empty());
-            (*this).abort_listener.set(None);
-
-            // Contents are gone; the allocation itself stays until any outstanding
-            // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
-            // null from here on.
-            if (*this).weak_ptr_data.on_finalize() {
-                // Do NOT use heap::take — that would re-run field drop glue
-                // on init/url/js_ref. They are now safe-empty so the second drop
-                // would be a no-op, but it is still wasted work and fragile under
-                // future field additions; free the allocation with a raw dealloc.
-                let layout = std::alloc::Layout::new::<Response>();
-                std::alloc::dealloc(this.cast::<u8>(), layout);
-            }
-        }
-    }
-
-    pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(|r| r.finalize());
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<RefPtr<Response>> {
+        Ok(RefPtr::new(self.clone_value(cx)?))
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let args = JsLocal::to_js_slice(args);
-        Self::construct_json_response(cx.global(), args, JsonArgument::Value)
-    }
-
-    fn construct_json_response(
-        global_this: &JSGlobalObject,
-        args: &[JSValue],
-        argument: JsonArgument,
-    ) -> JsResult<JSValue> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
 
-        // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
-        // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
-        // stack value in a scopeguard that calls `body.reset()`
-        // on early return; disarmed before `heap::alloc`.
-        let response = scopeguard::guard(
-            Response {
-                body: JsCell::new(Body::new(BodyValue::Empty)),
-                init: JsCell::new(Init {
-                    status_code: 200,
-                    ..Default::default()
-                }),
+        let response = Response {
+            body: JsCell::new(Body::new(BodyValue::Empty)),
+            init: JsCell::new(Init {
+                status_code: 200,
                 ..Default::default()
-            },
-            |r| r.body.get().reset(),
-        );
+            }),
+            ..Default::default()
+        };
 
         if let Some(&json_value) = args.first() {
-            let str = Self::json_text_of(global_this, json_value, argument)?;
+            let str = Self::json_text_of(global_this, json_value)?;
 
-            if !str.is_empty() {
-                debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+            if let Some(str) = str.into_wtf() {
                 let value = &response.body.get().value;
-                value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
+                value.set(BodyValue::WTFStringImpl(str));
                 value.with_mut(|v| v.to_blob_if_possible());
             }
         }
@@ -890,22 +818,37 @@ impl Response {
             &StringView::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
-        // Disarm the body-reset guard: all fallible ops have succeeded.
-        let response = scopeguard::ScopeGuard::into_inner(response);
-        let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
-        Ok(unsafe { Response::to_js(ptr, global_this) })
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
-    fn json_text_of(
+    /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
+    fn json_from_parts(
         global_this: &JSGlobalObject,
         json_value: JSValue,
-        argument: JsonArgument,
-    ) -> JsResult<BunString> {
-        if argument == JsonArgument::Text && json_value.is_string_literal() {
-            return json_value.to_bun_string(global_this);
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        let response = Response {
+            body: JsCell::new(Body::new(BodyValue::Empty)),
+            ..Default::default()
+        };
+        let str = Self::json_text_of(global_this, json_value)?;
+        if let Some(str) = str.into_wtf() {
+            let value = &response.body.get().value;
+            value.set(BodyValue::WTFStringImpl(str));
+            value.with_mut(|v| v.to_blob_if_possible());
         }
+        response.init.set(Init::from_parts(global_this, parts)?);
+        let headers_ref = response.get_or_create_headers(global_this)?;
+        headers_ref.put_default(
+            HTTPHeaderName::ContentType,
+            &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
+            global_this,
+        )?;
+        Ok(RefPtr::new(response).to_js(global_this))
+    }
 
+    #[inline(always)]
+    fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
         // Validate top-level values that are not JSON serializable (Node.js compatibility)
         if json_value.is_undefined()
             || json_value.is_symbol()
@@ -991,24 +934,21 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        let ptr = bun_core::heap::into_raw(Box::new(response));
-        // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
-        Ok(unsafe { Response::to_js(ptr, global_this) })
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
-        let response = bun_core::heap::into_raw(Box::new(Response {
+        let response = RefPtr::new(Response {
             init: JsCell::new(Init {
                 status_code: 0,
                 ..Default::default()
             }),
             body: JsCell::new(Body::new(BodyValue::Null)),
             ..Default::default()
-        }));
+        });
 
-        // SAFETY: `response` is freshly boxed; the wrapper adopts its ref.
-        unsafe { Response::to_js(response, global_this) }
+        response.to_js(global_this)
     }
 
     pub(crate) fn constructor<'a>(
@@ -1018,10 +958,9 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        this.check_body_stream_ref(cx.global());
+        this_value.set_js_ref_weak();
+        Self::wrapped_by(this_value).check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1031,9 +970,6 @@ impl Response {
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
         if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
             if let Some(blob) = body.as_class_ref::<Blob>() {
                 if blob.is_s3() {
                     if !init.is_undefined_or_null() {
@@ -1121,18 +1057,12 @@ impl Response {
             // `Body::extract` is a free fn re-exported as `body::extract`.
             super::body::extract(global_this, body)?
         };
-        // `Body` has NO `Drop`; arm a guard so the
-        // error returns below release the extracted body payload.
-        let body = scopeguard::guard(body, |b| b.reset());
 
         // extract() throws without returning Err; see Blob::from_dom_form_data
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        // Perform the only remaining fallible op BEFORE heap-allocating:
-        // doing it on stack locals lets `?` trigger the scopeguard and
-        // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
             if let Some(headers) = init.headers.as_deref_mut() {
                 let content_type = blob.content_type_slice();
@@ -1146,8 +1076,6 @@ impl Response {
             }
         }
 
-        // Disarm: all fallible ops have succeeded.
-        let body = scopeguard::ScopeGuard::into_inner(body);
         let response = RefPtr::new(Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
@@ -1169,8 +1097,7 @@ impl Response {
         }
         let init = Init::from_parts(global_this, parts)?;
         let response = Self::from_body_and_init(global_this, body, init)?;
-        // SAFETY: the wrapper adopts the new response's only ref.
-        Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
+        Ok(response.to_js(global_this))
     }
 }
 
@@ -1185,14 +1112,12 @@ pub(crate) struct InitParts {
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
 fn Response__createFromParts(
-    global_this: *mut JSGlobalObject,
+    global_this: &JSGlobalObject,
     body: JSValue,
     status: JSValue,
     status_text: JSValue,
     headers: JSValue,
 ) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
     let parts = InitParts {
         status,
         status_text,
@@ -1203,19 +1128,24 @@ fn Response__createFromParts(
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum JsonArgument {
-    Value,
-    Text,
-}
-
-/// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
-pub(crate) fn construct_json_from_text(
-    cx: &mut JsScope<'_>,
-    args: &[JsLocal<'_>],
-) -> JsResult<JSValue> {
-    let args = JsLocal::to_js_slice(args);
-    Response::construct_json_response(cx.global(), args, JsonArgument::Text)
+/// `Response.json(value, { status, statusText, headers })` (`literalPartsForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Response__jsonFromParts(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+) -> JSValue {
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+    };
+    bun_jsc::to_js_host_call(global_this, || {
+        Response::json_from_parts(global_this, value, &parts)
+    })
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
@@ -1279,7 +1209,7 @@ impl Init {
     }
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        // `JSValue::as_class_ref::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
         if let Some(orig) = FetchHeaders::cast(headers) {
             // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
@@ -1333,11 +1263,6 @@ impl Init {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if let Some(req) = response_init.as_direct::<Request>() {
-                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
-                // JS wrapper cell; the wrapper is rooted by `response_init` for
-                // the duration of this call, so no GC can finalize it here.
-                // Everything touched is `&self`.
-                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1347,9 +1272,6 @@ impl Init {
             }
 
             if let Some(resp) = response_init.as_direct::<Response>() {
-                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
-                // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
                 return Ok(Some(resp.init.get().clone(global_this)?));
             }
         }

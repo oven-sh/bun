@@ -1,0 +1,19 @@
+# f1 = weigh
+# -- source: typeof-tells-an-object-from-a-number.ts
+# class Item {
+#   weight: number;
+#   constructor(weight: number) { this.weight = weight; }
+# }
+# function weigh(value: Item | number): number {
+#   if (typeof value === "object") return value.weight;
+#   return value;
+# }
+# declare const input: any;
+# (globalThis as any).answer = weigh(input ? new Item(+input) : +input);
+# -- end of source
+# The compiler before this one: 10 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 13, patches 0, moves 1, unlikely or rare 7.
+# RUN(X64): steps most:14 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 14

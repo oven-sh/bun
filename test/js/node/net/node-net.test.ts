@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -37,7 +38,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -531,10 +532,12 @@ describe("net.Socket write", () => {
 
     async function run() {
       return new Promise((resolve, reject) => {
+        // end() calls back before the socket is closed, and only a closed one connects again.
+        socket.once("close", resolve);
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");
@@ -1028,6 +1031,44 @@ it("should trigger error when aborted even if connection failed, and the signal 
   expect(err.name).toBe("AbortError");
   expect(err.code).toBe("ABORT_ERR");
   expect(err.cause?.name).toBe("TimeoutError");
+});
+
+describe.concurrent("'timeout' is emitted with a write that does not move", () => {
+  it("while the socket is connecting", async () => {
+    const neverAnswers = () => {};
+    const socket = connect({ host: "localhost", port: 1, lookup: neverAnswers });
+    try {
+      socket.write("x");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it.each([
+    ["the TLS handshake gets no answer", tlsConnect as typeof connect, (socket: any) => socket.secureConnecting],
+    ["the peer does not read", connect, (socket: Socket) => socket.writableLength > 0],
+  ])("while %s", async (_, dial, isWaiting) => {
+    const accepted: Socket[] = [];
+    const server = createServer(socket => accepted.push(socket)).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = dial({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    try {
+      await once(socket, "connect");
+      // The kernel takes only so much for a peer that does not read.
+      do socket.write(Buffer.alloc(16 * 1024 * 1024));
+      while (socket.writableLength === 0);
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(isWaiting(socket)).toBe(true);
+    } finally {
+      socket.destroy();
+      for (const socket of accepted) socket.destroy();
+      server.close();
+    }
+  });
 });
 
 // Regression test for #30697: net.connect({ localPort, lookup }) on the
@@ -2011,6 +2052,118 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// The write side goes down with no socket error (the peer closes its fd, or another holder shuts it) behind unread bytes.
+describe.skipIf(isWindows)("unix socket whose write side goes down behind unread data", () => {
+  async function accepted(name: string, size: number, options?: { allowHalfOpen: boolean }) {
+    const path = join(socket_domain, name);
+    const server = createServer(options).listen(path);
+    await once(server, "listening");
+    const peer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("net").connect(process.argv[1]).write(Buffer.alloc(${size}, "x"), () => process.exit(0))`,
+        path,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    const [socket] = (await once(server, "connection")) as [Socket];
+    server.close();
+    const events: string[] = [];
+    socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+    socket.on("end", () => events.push("end"));
+    return { socket, events, exited: peer.exited };
+  }
+  // The bytes and EOF take one poll, the write side's EOF the next; four turns leave a margin.
+  async function pollAFewTimes() {
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+  }
+
+  it("a paused reader gets the bytes and 'end' after resume()", async () => {
+    const { socket, events, exited } = await accepted("closed-paused.sock", 100);
+    socket.pause();
+    socket.read(0);
+    await exited;
+    await pollAFewTimes();
+    let received = 0;
+    const closed = new Promise(resolve => (socket.destroyed ? resolve(null) : socket.once("close", resolve)));
+    socket.on("data", chunk => (received += chunk.length)).resume();
+    await closed;
+    expect({ received, events }).toEqual({ received: 100, events: ["end"] });
+  });
+
+  it("a reader slower than the peer gets every byte", async () => {
+    const size = 1024 * 1024;
+    const { socket, events } = await accepted("closed-slow.sock", size);
+    let received = 0;
+    try {
+      for await (const chunk of socket) {
+        received += chunk.length;
+        await Bun.sleep(1);
+      }
+    } catch {}
+    expect({ received, events }).toEqual({ received: size, events: ["end"] });
+  });
+
+  it("an allowHalfOpen reader gets 'end' and no error", async () => {
+    const { socket, events, exited } = await accepted("closed-half-open.sock", 100, { allowHalfOpen: true });
+    socket.resume();
+    await exited;
+    await pollAFewTimes();
+    socket.destroy();
+    expect(events).toEqual(["end"]);
+  });
+
+  it("reads go on after another holder of the fd shuts its write side down", async () => {
+    const path = join(socket_domain, "shared-fd.sock");
+    const server = createServer().listen(path);
+    await once(server, "listening");
+    const peer = connect({ path, allowHalfOpen: true }).resume();
+    const [socket] = (await once(server, "connection")) as [Socket];
+    server.close();
+    const events: string[] = [];
+    socket.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+    socket.on("end", () => events.push("end"));
+    await Bun.spawn({
+      cmd: [bunExe(), "-e", `Bun.connect({ fd: 3, socket: { data() {} } }).then(s => (s.shutdown(), process.exit(0)))`],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit", (socket as any)._handle.fd],
+    }).exited;
+    // Fill the stream's buffer so that reads stop (on macOS with a byte left in the kernel); resume() polls both ways.
+    socket.pause().read(0);
+    peer.write(Buffer.alloc(socket.readableHighWaterMark + 1));
+    while (socket.readableLength < socket.readableHighWaterMark || peer.writableLength) await pollAFewTimes();
+    let received = 0;
+    const closed = new Promise(resolve => socket.once("close", resolve));
+    socket.on("data", chunk => (received += chunk.length)).resume();
+    await pollAFewTimes();
+    peer.on("error", () => {}).end("tail");
+    await closed;
+    expect({ received, events }).toEqual({ received: socket.readableHighWaterMark + 5, events: ["end"] });
+  });
+
+  it("a reply sent just before the close is read while a write is stuck", async () => {
+    const path = join(socket_domain, "stuck-write.sock");
+    const server = createServer().listen(path);
+    await once(server, "listening");
+    const socket = connect(path);
+    const [peer] = (await once(server, "connection")) as [Socket];
+    server.close();
+    peer.pause();
+    let received = "";
+    socket.on("data", chunk => (received += chunk)).on("error", () => {});
+    const closed = new Promise(resolve => socket.once("close", resolve));
+    socket.write(Buffer.alloc(8 * 1024 * 1024));
+    await pollAFewTimes();
+    // Same tick, so the reply and the close arrive in one poll.
+    peer.write("reply");
+    peer.destroy();
+    await closed;
+    expect(received).toBe("reply");
   });
 });
 

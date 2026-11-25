@@ -51,19 +51,10 @@ pub fn write_metafile(modules: &ModuleList, output: &MetafileOutput<'_>) -> Vec<
             input.code_byte_count
         );
     }
-    json.extend_from_slice(b"\n      },\n      \"imports\": [\n      ],\n      \"exports\": [");
-    for (index, name) in modules.exports.iter().enumerate() {
-        json.extend_from_slice(if index == 0 {
-            b"\n        "
-        } else {
-            b",\n        "
-        });
-        write_string(&mut json, name);
-    }
-    if !modules.exports.is_empty() {
-        json.extend_from_slice(b"\n      ");
-    }
-    json.push(b']');
+    json.extend_from_slice(b"\n      },\n      \"imports\": [\n      ],\n      \"exports\": ");
+    write_strings(&mut json, &modules.exports);
+    json.extend_from_slice(b",\n      \"inlinedStrings\": ");
+    write_strings(&mut json, &modules.inlined_strings);
     if let Some(entry_point) = modules.entry_point {
         json.extend_from_slice(b",\n      \"entryPoint\": ");
         write_string(&mut json, &modules.inputs[entry_point as usize].path);
@@ -162,6 +153,22 @@ fn import_kind(kind: ModuleImportKind) -> ImportKind {
     }
 }
 
+fn write_strings(json: &mut Vec<u8>, strings: &[Vec<u8>]) {
+    json.push(b'[');
+    for (index, string) in strings.iter().enumerate() {
+        json.extend_from_slice(if index == 0 {
+            b"\n        "
+        } else {
+            b",\n        "
+        });
+        write_string(json, string);
+    }
+    if !strings.is_empty() {
+        json.extend_from_slice(b"\n      ");
+    }
+    json.push(b']');
+}
+
 fn write_string(json: &mut Vec<u8>, text: &[u8]) {
     let _ = write!(
         json,
@@ -190,6 +197,7 @@ mod tests {
             inputs: vec![input("a.ts", Vec::new())],
             entry_point: Some(0),
             exports: Vec::new(),
+            inlined_strings: Vec::new(),
         };
         let output = MetafileOutput {
             file_name: b"a",
@@ -215,6 +223,7 @@ mod tests {
       "imports": [
       ],
       "exports": [],
+      "inlinedStrings": [],
       "entryPoint": "a.ts"
     }
   }
@@ -246,6 +255,7 @@ mod tests {
             inputs: vec![input("a.ts", imports), input("\"b\".json", Vec::new())],
             entry_point: Some(0),
             exports: vec![b"first".to_vec(), b"second".to_vec()],
+            inlined_strings: vec![b"one \"quoted\"".to_vec(), b"\xED\xA0\x80".to_vec()],
         };
         let output = MetafileOutput {
             file_name: b"a",
@@ -269,6 +279,12 @@ mod tests {
         ));
         assert!(contains(
             "\"exports\": [\n        \"first\",\n        \"second\"\n      ],"
+        ));
+        assert!(contains(
+            r#""inlinedStrings": [
+        "one \"quoted\"",
+        "\uD800"
+      ],"#
         ));
         assert!(generate_markdown(&json).is_ok());
     }

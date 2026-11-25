@@ -1,0 +1,15 @@
+# the variables of a scope are no members of an object: what nobody reads behind a suspension is let go, as a local is. So the scope of a function that waits and its helpers that are only called stay unmade across the await, where an object that the text makes leaves (aot/tests/walk/escape-analysis/object-read-behind-an-await-is-made.ir). A variable that may hold a FinalizationRegistry is the front end's: the suspension names its scope (test/aot/ir/lower/captures/a-suspended-call-holds-the-registries-of-its-own-scope.ts)
+# f1 = body, f2 = counts, f3 = load, f4 = bump
+# -- source: scope-of-helpers-that-are-only-called-is-not-made-across-an-await.js
+# function body() { return { bytes: [1, 2, 3] }; }
+# async function counts(i, gate) { let request; let count = i; function load() { request = body(); } function bump() { return ++count; } load(); print(request.bytes.length); await gate; return bump(); }
+# counts(1, Promise.resolve()).then(print);
+# -- end of source
+# RUN: walk f2:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f2:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# RUN(NOTHING): walk f2:CoroutineBody mechanisms=all
+# NOTHING-LABEL: code f2:CoroutineBody
+# NOTHING-NOT: env {{*}} = NewObject
+# NOTHING-NOT: EnvironmentField
+# NOTHING-NOT: NewClosure

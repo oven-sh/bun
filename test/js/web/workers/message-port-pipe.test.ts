@@ -479,3 +479,26 @@ describe("Worker postMessage inbox", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("a listening port that is collected before it hears of its peer's close lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `(() => {
+        for (let i = 0; i < 20; i++) {
+          const { port1, port2 } = new MessageChannel();
+          port1.addEventListener("message", () => {});
+          port2.close();
+        }
+      })();
+      Bun.gc(true);
+      if (require("bun:jsc").heapStats().objectTypeCounts.MessagePort >= 40) console.log("nothing was collected");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+});

@@ -1,0 +1,28 @@
+# Five classes that extend one class meet, which is more than a set holds: the store goes through the family, the class with what extends it. None of them lists the name: it becomes a field of the members, and the store adds a property to none of them.
+# -- source: stored-through-a-family.ts
+# class U { k = "u"; }
+# class A extends U { x = 1; }
+# class B extends U { y = 2; }
+# class C extends U { z = 3; }
+# class D extends U { w = 4; }
+# class E extends U { v = 5; }
+# class F extends U { u = 6; }
+# class G extends U { s = 7; }
+# function tag(u: U) { (u as any).t = 1; }
+# const a = new A(), b = new B(), c = new C(), e = new E(), f = new F(), g = new G();
+# const n = Date.now();
+# tag(n > 4 ? a : n > 3 ? b : n > 2 ? e : n > 1 ? f : g);
+# function read(u: C) { return (u as any).t; }
+# read(c as any);
+# -- end of source
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.2 "t" appended proven=int[0, 2147483647] writers-known
+# CHECK: field L2.2 "t" appended proven=int[0, 2147483647] writers-known
+# CHECK: layout L1 {{*}}changes=[]
+# CHECK-NEXT: layout L2 {{*}}changes=[]
+# The members keep the name in one place: "k" lies beside the word of the extra properties, the integer behind it in each, and the cell is 32 bytes.
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L1 CompiledObject size=32 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=24
+# PLAN: layout L2 CompiledObject size=32 shapes
+# PLAN: slot 2 "t" appended {{*}} Inline offset=24

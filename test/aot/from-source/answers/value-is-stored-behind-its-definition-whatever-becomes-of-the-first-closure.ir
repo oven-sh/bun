@@ -1,0 +1,22 @@
+# -- source: main.js
+# function thrown(seed) { const sum = (seed + 1) | 0; try { throw () => sum; } catch { } return () => (sum * 2) | 0; }
+# function inError(seed) { const sum = (seed + 2) | 0; try { throw new Error("no", { cause: () => sum }); } catch { } return () => (sum * 2) | 0; }
+# function unread(seed) { const sum = (seed + 3) | 0; (() => sum); return () => (sum * 2) | 0; }
+# function inFinally(seed) { const sum = (seed + 4) | 0; let read; try { throw { retry: () => sum }; } catch { } finally { read = () => (sum * 2) | 0; } return read; }
+# function midway(seed, kept) { const sum = (seed + 5) | 0; kept.push(() => sum); if (seed) throw new Error("midway"); const late = (seed + 6) | 0; kept.push(() => late); }
+# const seed = JSON.parse("20");
+# const kept = [];
+# try { midway(seed, kept); } catch (error) { kept.push(() => error.message); }
+# print(thrown(seed)(), inError(seed)(), unread(seed)(), inFinally(seed)(), kept[0](), kept[1](), kept.length);
+# -- end of source
+# The walk passes by a closure that only feeds a throw that nobody reads, and the sweep drops one that nobody asks for. The store is no part of a closure:
+# it stands right behind the operation that makes the value, which has a reader in the body as written for as long as any closure over it can come to be.
+# RUN(THROWN): walk f1 mechanisms=all
+# THROWN-LABEL: code f1:Body
+# THROWN: PutModuleVariable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 42 44 46 48 25 midway 2
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 42 44 46 48 25 midway 2
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 42 44 46 48 25 midway 2

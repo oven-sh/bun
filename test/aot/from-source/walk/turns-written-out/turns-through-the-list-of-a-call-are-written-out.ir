@@ -1,0 +1,41 @@
+# `sum(i & 3, 1, 2)` for a function that runs through its other arguments by a counter: the callee is copied, the turns of its loop stand one behind the other, each element is the argument, and the list is never made.
+# f1 = up, f2 = down, f3 = inLoop, f4 = outsideLoops, f5 = byApply, f6 = nine
+# -- source: turns-through-the-list-of-a-call-are-written-out.ts
+# declare function sink(...values: unknown[]): void;
+# function up(...values: number[]): number { let s = 0; for (let i = 0; i < values.length; i++) s += values[i]; return s; }
+# function down(...values: number[]): number { let s = 0; for (let i = values.length - 1; i >= 0; i--) s += values[i]; return s; }
+# function inLoop(n: number) { let total = 0; for (let i = 0; i < n; i++) total += down(i & 3, 1, 2); return total; }
+# function outsideLoops(i: number) { return up(i & 3, 1, 2); }
+# function byApply(i: number) { return up.apply(null, [i & 3, 1, 2]); }
+# function nine(i: number) { return up(i & 3, 1, 2, 3, 4, 5, 6, 7, 8); }
+# sink(inLoop, outsideLoops, byApply, nine);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: frame 1 callee=f2
+# CHECK: [[three]]: 3 {{*}} = Integer integer=3
+# CHECK: isLoopHead=true
+# CHECK: [[masked]]: int[0, 3] {{*}} = BitAnd
+# CHECK: : int[3, 6] {{*}} = Add [[three]], [[masked]] form=Integers
+# RUN(ONE): walk f3 mechanisms=all
+# The one loop is the caller's, and its sum is a number in every turn: a look at that loop knows the list as the walk does.
+# ONE-COUNT-1: isLoopHead=true
+# ONE-NOT: = NewArray
+# ONE-NOT: = CallDirect
+# ONE-NOT: = GetArrayElement
+# ONE-NOT: = TypeTest
+# RUN(OUTSIDE): walk f4 mechanisms=all
+# OUTSIDE-LABEL: code f4:Body
+# OUTSIDE: frame 1 callee=f1
+# OUTSIDE-NOT: isLoopHead=true
+# OUTSIDE-NOT: = NewArray
+# OUTSIDE-NOT: = LoopHint
+# RUN(APPLY): walk f5 mechanisms=all
+# APPLY-LABEL: code f5:Body
+# APPLY: frame 1 callee=f1
+# APPLY-NOT: isLoopHead=true
+# RUN(NINE): walk f6 mechanisms=all
+# More turns than are written out: the list is made, and the loop is a loop.
+# NINE-LABEL: code f6:Body
+# NINE: = NewArray
+# NINE: isLoopHead=true

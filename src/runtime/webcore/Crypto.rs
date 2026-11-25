@@ -61,7 +61,7 @@ impl Crypto {
     pub(crate) fn random_uuid(&self) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        let uuid = VirtualMachine::get().as_mut().rare_data().next_uuid();
+        let uuid = VirtualMachine::get().rare_data().next_uuid();
 
         uuid.print(
             (&mut bytes[0..36])
@@ -157,13 +157,9 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
     };
 
-    let entropy = VirtualMachine::get().as_mut().rare_data().entropy_slice(10);
+    let entropy = VirtualMachine::get().rare_data().entropy();
 
-    let uuid = UUID7::init(
-        timestamp,
-        <[u8; 10]>::try_from(&entropy[0..10]).unwrap(),
-        timestamp_source,
-    );
+    let uuid = UUID7::init(timestamp, entropy, timestamp_source);
 
     match encoding {
         Encoding::Hex => {

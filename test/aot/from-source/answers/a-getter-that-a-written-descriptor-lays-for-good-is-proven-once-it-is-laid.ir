@@ -1,0 +1,36 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const lib = (0, { base: 1 });
+# function early() { try { return lib.add(1, 2); } catch (error) { return error.constructor.name; } }
+# print(typeof lib.add, early());
+# Object.defineProperty(lib, "add", { enumerable: true, get: function () { return add; } });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# print(called(5), called(6), early());
+# -- end of source
+# f1 = add, f2 = early, f3 = called, f4 = the getter
+# How babel and rollup hand out what a file re-exports: a getter laid by a written descriptor, not configurable. The name is not listed on the record: it is appended.
+# An earlier form: the ACCESS of the definition stored "Unknown" into the field beside the change that knew the getter: the field held anything, the call by that name had an unknown callee, and the record left for unseen code.
+# One place decides now, the change's road: a getter that is known flows what it returns into the field; one that is not lets anything arrive there.
+# The cell is written by descriptors alone, in ONE form that is not configurable, by ONE getter and no setter, on a record that written definitions alone redefine: once laid it is that getter for ever
+# (the run time ends the process where a proven half is replaced or leaves its slot). The slot may still be empty: the walk looks whether it is filled and asks nothing else.
+# RUN(ACCESSORS): link accesses mechanisms=all
+# ACCESSORS: accessors L1.1 getter=f4 proven once-laid
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "add" appended proven=undefined|f1 writers-known form=not-configurable.accessor.
+# RUN(LAYOUT): link layouts mechanisms=all
+# LAYOUT: layout L1 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+# RUN(CALLED): walk f3 mechanisms=all
+# CALLED: = IsSlotFilled {{*}}key="add" receivers=[L1] level=Proven
+# RUN(GETTER): walk f3 mechanisms=all
+# GETTER-NOT: testedType=f4
+# RUN(SHAPE): walk f3 mechanisms=all
+# SHAPE-NOT: = ShapeTest
+# RUN(ANSWER): run-in-shell
+# ANSWER: undefined TypeError
+# ANSWER-NEXT: 11 16 3
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: undefined TypeError
+# CHECKED-NEXT: 11 16 3
+# CHECKED-NEXT: exited with 0

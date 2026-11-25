@@ -1,0 +1,11 @@
+type Then = () => void;
+export function lengths(view: Uint8Array, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += view.length + ","; } return said; }
+export function lengthsOfDoubles(view: Float64Array, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += view.length + ","; } return said; }
+export function sum(view: Uint8Array): number { let sum = 0; for (let at = 0; at < view.length; at++) sum += view[at]; return sum; }
+export function sums(view: Uint8Array, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += sum(view) + ","; } return said; }
+export function reads(view: Uint8Array, turns: number): number { let sum = 0; for (let turn = 0; turn < turns; turn++) sum += view[turn & 3]; return sum; }
+export function finds(view: Uint8Array, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += view.indexOf(3) + ","; } return said; }
+export function owns(list: number[], turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += list.hasOwnProperty("length") + ","; } return said; }
+export function ownsOfMap(map: Map<number, number>, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += map.hasOwnProperty("size") + ","; } return said; }
+export function ownsOfText(text: string, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += text.hasOwnProperty("length") + ","; } return said; }
+export function ownsOfNumber(number: number, turns: number, atTurn: number, then: Then): string { let said = ""; for (let turn = 0; turn < turns; turn++) { if (turn === atTurn) then(); said += number.hasOwnProperty("length") + ","; } return said; }

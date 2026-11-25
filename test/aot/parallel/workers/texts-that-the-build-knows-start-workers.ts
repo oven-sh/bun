@@ -1,7 +1,7 @@
 // Texts that are known when the program is built and that reach a Worker as code to evaluate or behind an object URL.
 // Alone: which texts the build compiles for a Worker depends on what else the executable holds
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
-// STATISTIC: EngineRuns = 1
+// An earlier compiler ran the engine again where a first run showed that the load had missed or taken too much, and counted the runs: EngineRuns = 1. A build runs the engine once now.
 import { Worker as NodeWorker } from "node:worker_threads";
 const threads = require("node:worker_threads");
 const Aliased = threads.Worker;

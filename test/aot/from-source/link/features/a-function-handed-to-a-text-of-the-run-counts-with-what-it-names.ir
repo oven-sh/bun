@@ -1,0 +1,13 @@
+# the text can call what the program hands it: that function is the program's own text and what it names counts
+# -- source: a-function-handed-to-a-text-of-the-run-counts-with-what-it-names.ts
+# declare const input: any;
+# function paint() {
+#   return Bun.color("red", "hex");
+# }
+# new Function("paint", input)(paint);
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by BunColor named at f
+# RUN(NEVER): features
+# NEVER-NOT: by BunColor named-at-run-time

@@ -1,0 +1,16 @@
+# -- source: a-direct-call-of-the-closure-that-a-called-parameter-holds-is-left-to-the-caller.js
+# let last = 0;
+# function borrow(value, visit) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; visit(value); return work; }
+# function maker(start) { let count = start; borrow(start, (x) => { count += x & 1; last = count; }); return count; }
+# print(maker(1), maker(2), last);
+# -- end of source
+# borrow() has a loop at its head and is walked by itself. Its parameter holds one closure, which the walk calls directly and does not copy. The closure stores into a variable of the module.
+# Link's effects of borrow() given its arguments do not name that store: the caller adds the effects of the closure that it hands over. So the verifier leaves the call to the caller, as it leaves the copied text.
+# f1 = borrow
+# OPTIONS: check=Validate
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK: given-arguments called=[1]
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallDirect {{*}}mayWriteOutsideObjects

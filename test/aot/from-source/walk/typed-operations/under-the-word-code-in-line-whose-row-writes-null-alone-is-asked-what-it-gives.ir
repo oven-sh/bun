@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function shout(x: number): string { return typeof String(x).toUpperCase(); }
+# print(shout(id(7)));
+# print("went on");
+# -- end of source
+# Fault injection, testing=UnderstateEffects:Builtin/String.prototype.toUpperCase/KindOfResult: the signature of String.prototype.toUpperCase declares null as its only result.
+# A type that is a single marker (null, undefined) needs no register, so the operation of the inline code (CallInline) held no value, and the check that runs on each operation skipped it.
+# `typeof` was folded to "object" at compile time, and the call, which had no user left, was removed.
+# The program printed "object" instead of "string" and did not crash, even with testing=CheckProofsAtRunTime.
+# Now, with that switch, such an operation keeps the result of the inline code, and the result is checked.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.id = (x) => x;
+# RIGHT: string
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(WALK): walk f1 mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/String.prototype.toUpperCase/KindOfResult
+# WALK: [[given]]: null @JSValue = CallInline {{*}} inlineBuiltin=StringToUpperCase
+# WALK-NEXT: {{*}} = CheckProof [[given]] checkedType=null
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/String.prototype.toUpperCase/KindOfResult globalThis.id = (x) => x;
+# ASKED: bun: internal AOT error: type check failed at {{*}} (shout)
+# ASKED-NEXT: found string in the result of a built-in or indirect call
+# ASKED-NOT: went on
+# ASKED: crashed with

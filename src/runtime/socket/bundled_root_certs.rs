@@ -15,18 +15,14 @@ extern "C" fn us_bundled_root_cert_count() -> usize {
 }
 
 /// The `index`th bundled root's DER (in static memory) and its length, or null past the end.
-///
-/// # Safety
-/// `out_len` must be valid for a write.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn us_bundled_root_cert(index: usize, out_len: *mut usize) -> *const u8 {
+extern "C" fn us_bundled_root_cert(index: usize, out_len: &mut usize) -> *const u8 {
     let count = u32_at(0);
     if index >= count {
         return core::ptr::null();
     }
     let data = &BLOB[4 + 4 * (count + 1)..];
     let (start, end) = (u32_at(1 + index), u32_at(2 + index));
-    // SAFETY: caller contract.
-    unsafe { *out_len = end - start };
+    *out_len = end - start;
     data[start..end].as_ptr()
 }

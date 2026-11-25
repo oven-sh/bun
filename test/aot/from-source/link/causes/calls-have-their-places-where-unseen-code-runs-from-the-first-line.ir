@@ -1,0 +1,13 @@
+# a direct eval stands in front, so Link takes no global for a constant: the look at the body names the callees, and each call has its record
+# -- source: calls-have-their-places-where-unseen-code-runs-from-the-first-line.ts
+# declare const input: any;
+# eval(input);
+# new Function(input);
+# Function(input);
+# process.dlopen({ exports: {} }, input);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK-COUNT-2: cause EvaluatesText Function at f0 v
+# RUN(LOADER): causes
+# LOADER: machine-code ProcessDlopen at f0 v

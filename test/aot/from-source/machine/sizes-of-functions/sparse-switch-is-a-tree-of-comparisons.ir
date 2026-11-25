@@ -1,0 +1,23 @@
+# f1 = apply
+# -- source: sparse-switch-is-a-tree-of-comparisons.ts
+# function apply(code: number, left: number, right: number): number {
+#   switch (code) {
+#     case 3: return left + right;
+#     case 70: return left - right;
+#     case 900: return left * right;
+#     case 4000: return left / right;
+#     case 25000: return -left;
+#     case 600000: return left * left;
+#     case 7000000: return right - left;
+#     default: return 0;
+#   }
+# }
+# declare const input: any;
+# (globalThis as any).answer = apply(input | 0, +input, +input);
+# -- end of source
+# The compiler before this one: 28 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 20, patches 0, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:22 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 22

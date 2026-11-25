@@ -1,0 +1,26 @@
+# A function that asks how many arguments came takes them in a buffer, and whoever takes them so was said to borrow nothing: `list.reduce(arrow, first)` by value missed the stub that enters the compiled method, went by name and by value, and its arrow was moved out of the frame: 126 of 553 instructions a call on four elements.
+# Only a rest, written or hidden, lays the arguments where they can be kept. The count alone keeps nothing: what Link says is only called is borrowed, the second argument as the first.
+# f2 = counted, f3 = rest, f4 = kept, f5 = second
+# -- source: a-function-that-only-counts-its-arguments-borrows-the-closure-that-it-only-calls.ts
+# declare function print(...values: unknown[]): void;
+# function counted(callback: (x: number) => number, first?: number): number { let sum = arguments.length > 1 ? first! : 100; for (let i = 0; i < 3; i++) sum += callback(i); return sum; }
+# function rest(callback: (x: number) => number, ...more: number[]): number { let sum = more.length; for (let i = 0; i < 3; i++) sum += callback(i); return sum; }
+# function kept(callback: (x: number) => number, first?: number): number { held = callback; return arguments.length + callback(1); }
+# function second(first: number, callback?: (x: number) => number): number { return arguments.length > 1 ? first + callback!(first) + callback!(1) : first; }
+# let held: ((x: number) => number) | undefined;
+# const table: Record<string, Function> = { counted, rest, kept, second };
+# function hidden(name: string): Function { return table[Date.now() > 0 ? name : "rest"]!; }
+# function uses(by: number): string { let seen = 0; const a = hidden("counted")((x: number) => { seen++; return x * by; }); const b = hidden("counted")((x: number) => { seen++; return x + by; }, 7); const c = hidden("rest")((x: number) => x - by, 1, 2); const d = hidden("kept")((x: number) => x * by + seen, 5); const e = hidden("second")(6, (x: number) => { seen++; return x - by; }) + hidden("second")(6); return [a, b, c, d, e, seen, held!(2)].join(" "); }
+# print(uses(3), uses(4));
+# print([1, 2, 3, 4].reduce((s, x) => s + x * held!(1), 0), [[1], [2, 3]].reduce((s, row) => s + row.reduce((t, x) => t + x), 10), [1, 2, 3].reduceRight((s, x) => s + "" + x, ""));
+# -- end of source
+# RUN: plan units mechanisms=all
+# CHECK: unit f2:GenericCallEntry -> f2:Body only-calls=0
+# CHECK: unit f5:GenericCallEntry -> {{*}} only-calls=1
+# RUN(OTHERS): plan units mechanisms=all
+# OTHERS-NOT: unit f3:GenericCallEntry -> f3:Body only-calls
+# RUN(KEPT): plan units mechanisms=all
+# KEPT: unit f4:GenericCallEntry -> f4:Body only-calls=1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 109 19 -4 11 13 8 14 112 22 -7 12 11 8 16
+# ANSWERS: 120 16 321

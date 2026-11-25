@@ -1,0 +1,18 @@
+# a literal of constants is written as a type whose field it lacks, and has a member that the type does not list: as many members as the layout has fields. The member lies beside the fields, the record does not escape, and the field that it lacks is not filled
+# f1 = deed, f2 = radiusOf
+# -- source: constant-data-with-a-member-that-is-no-field-leaves-what-it-lacks-empty.ts
+# declare function sink(...values: unknown[]): void;
+# type Circle = { kind: string; radius: number };
+# function deed(): Circle { return { kind: "circle", side: 7 } as any; }
+# function radiusOf(c: Circle) { return c.radius; }
+# const whole: Circle = { kind: "whole", radius: 2 };
+# sink(radiusOf(deed()), radiusOf(whole), radiusOf(deed()));
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "kind" {{*}}filled
+# CHECK: field L0.1 "radius" proven=2 writers-known
+# RUN(NEVER): link fields mechanisms=all
+# NEVER-NOT: field L0.1 "radius" {{*}}filled
+# RUN(SHELL): run-in-shell globalThis.sink = (...values) => print(values.map(String).join(" "));
+# SHELL: undefined 2 undefined
+# SHELL-NEXT: exited with 0

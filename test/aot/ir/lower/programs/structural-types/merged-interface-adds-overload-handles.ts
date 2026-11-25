@@ -78,61 +78,6 @@ show("in a typed list", () => {
 });
 show("honest again", () => [calculator.double(4), plusOne(calculator.double(4)), calculator.total([1, 2]), calculator.describe({ x: 1 }), calculator.pick(2.5)]);
 
-// GENERATED: Calculator double total
 // CHECK-LABEL: function {{*}}name="Calculator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="double"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_3]]}] results=[{type=number site=[[w_4]]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Mul v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_1]] site=[[w_6]]} parameters=[{type=undefined|null|Array<number> site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_8]]}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v0 key="base"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_10]]}
-// CHECK-NEXT: Jump -> next b2(v3, v5)
-// CHECK-NEXT: b2(v6: number, v7: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v10 = PropGet v1 key="length"
-// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_11]]} illTypedCause=Assertion
-// CHECK-NEXT: v12 = Less v9, v11
-// CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b3(v13):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v15 = ElemGet v1, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=number site=[[w_12]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v17 = Add v6, v16
-// CHECK-NEXT: v18 = Convert v17 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v19 = Increment v14
-// CHECK-NEXT: v20 = Convert v19 declared={type=number site=[[w_10]]}
-// CHECK-NEXT: Jump -> next b2(v18, v20)
-// CHECK-NEXT: b6(v21):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v22 = Convert v6 declared={type=number site=[[w_8]]}
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: }

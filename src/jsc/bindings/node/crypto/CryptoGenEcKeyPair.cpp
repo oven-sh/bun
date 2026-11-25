@@ -6,37 +6,6 @@
 using namespace Bun;
 using namespace JSC;
 
-extern "C" void Bun__EcKeyPairJobCtx__deinit(EcKeyPairJobCtx* ctx)
-{
-    ctx->deinit();
-}
-
-void EcKeyPairJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__EcKeyPairJobCtx__runTask(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
-}
-
-extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
-
-extern "C" void Bun__EcKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);
-void EcKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, EcKeyPairJobCtx&& ctx, JSValue callback)
-{
-    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(WTF::move(ctx));
-    Bun__EcKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
 ncrypto::EVPKeyCtxPointer EcKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer keyCtx;

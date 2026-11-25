@@ -26,7 +26,6 @@ class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
@@ -68,6 +67,7 @@ struct node_module;
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include "RejectedPromiseQueue.h"
+#include "DiagnosticsHook.h"
 #include <js_native_api.h>
 #include <node_api.h>
 #include "Bindgen/AdditionsToGlobalObject.h"
@@ -83,7 +83,6 @@ class JSMockFunction;
 
 namespace WebCore {
 class GlobalEventScope;
-class SubtleCrypto;
 class EventTarget;
 }
 
@@ -213,7 +212,6 @@ public:
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
-    void setConsole(void* console);
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
@@ -338,7 +336,6 @@ public:
 
     WebCore::EventTarget& eventTarget();
 
-    WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
@@ -363,6 +360,11 @@ public:
     {
         return m_nativeModuleDefaults[static_cast<size_t>(slot)];
     }
+
+    using DiagnosticsHooksArray = std::array<WriteBarrier<JSObject>, static_cast<size_t>(Bun::DiagnosticsHook::Count)>;
+    // Null while nobody is subscribed.
+    JSObject* diagnosticsHook(Bun::DiagnosticsHook hook) const { return m_diagnosticsHooks[static_cast<size_t>(hook)].get(); }
+    void setDiagnosticsHook(Bun::DiagnosticsHook hook, JSObject* function) { m_diagnosticsHooks[static_cast<size_t>(hook)].setMayBeNull(vm(), this, function); }
 
     // Macro for doing something with each member of GlobalObject that has to be visited by the
     // garbage collector. To use, define a macro taking three arguments (visibility, type, and
@@ -422,6 +424,7 @@ public:
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
+    V(private, DiagnosticsHooksArray, m_diagnosticsHooks)                                                    \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
@@ -513,7 +516,6 @@ public:
     V(public, LazyClassStructure, m_JSMIMETypeClassStructure)                                                \
                                                                                                              \
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
-    V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
@@ -671,6 +673,7 @@ public:
 
 private:
     void addBuiltinGlobals(JSC::VM&);
+    static JSC::JSPromise* importModuleWithLoader(GlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>&&, const JSC::SourceOrigin&);
 
     friend class WebCore::JSBuiltinInternalFunctions;
     JSC::WriteBarrier<JSC::Structure> m_domStructures[static_cast<size_t>(WebCore::DOMStructureSlot::Count)];
@@ -715,13 +718,15 @@ public:
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
+
+    // Last, so that its observers among the other members hear of its destruction before their own.
+    const Ref<WebCore::ScriptExecutionContext> m_scriptExecutionContext;
 };
 
 class EvalGlobalObject : public GlobalObject {
@@ -831,7 +836,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 
 #endif

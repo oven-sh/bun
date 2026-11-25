@@ -1,20 +1,26 @@
-use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CommonJsVariable, ScopeId};
+use bun_sema::atom::Atom;
+use bun_sema::bind::{Binding, ScopeId};
 use bun_sema::hir::{ExprId, NodeData, PatId};
 use smallvec::SmallVec;
 
 use super::identifiers::BindingRead;
-use super::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
+use super::lexical_owners::{ScopeObjectSearch, find_container_binding, for_each_scope_object};
 use super::{BindingRef, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
-use crate::ir::generated::ECMAMode;
-use crate::ir::{BlockId, Edge, LocalVariable, TypeTable, ValueId};
+use crate::ir::generated::{ECMAMode, RuntimeErrorKind};
+use crate::ir::{BlockId, Edge, LocalVariable, PropertyKeyId, TypeTable, ValueId, VariableKey};
+use crate::load::test_runner_names::name_asked_of_scope_objects;
 use crate::lower::FunctionLowering;
 use crate::lower::member::PropertyName;
 
 pub(super) struct DynamicBinding {
     pub(super) holder: ValueId,
     pub(super) with_base: ValueId,
+}
+
+pub(super) enum DynamicIdentifier {
+    Name(DynamicBinding),
+    MemberOf(ValueId),
 }
 
 #[derive(Copy, Clone)]
@@ -25,43 +31,44 @@ struct DynamicUse {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(super) fn resolve_dynamic_binding(&mut self, identifier: ExprId) -> Option<DynamicBinding> {
-        let name = self.file.identifier_name(identifier);
-        self.resolve_dynamic_name(identifier, self.file.bound.binding(identifier), name)
+    pub(super) fn resolve_dynamic_identifier(
+        &mut self,
+        identifier: ExprId,
+    ) -> Option<DynamicIdentifier> {
+        let bound = self.file.bound;
+        bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
+        let Some(container) = self.file.find_member_container(identifier) else {
+            let name = self.file.identifier_name(identifier);
+            let binding = bound.binding(identifier);
+            let found = self.resolve_dynamic_name(identifier, binding, name, false)?;
+            return Some(DynamicIdentifier::Name(found));
+        };
+        let symbol = find_container_binding(bound, self.scopes.innermost_scope(), container);
+        let (binding, name) = (Binding::Symbol(symbol), bound.symbol(symbol).name);
+        let found = self.resolve_dynamic_name(identifier, binding, name, true)?;
+        let object = self.get_dynamic_target(binding, name, found.holder);
+        Some(DynamicIdentifier::MemberOf(object))
     }
 
-    // The name is looked for from where `written` stands.
     fn resolve_dynamic_name(
         &mut self,
         written: ExprId,
         binding: Binding,
         name: Atom,
+        asks_with_objects_alone: bool,
     ) -> Option<DynamicBinding> {
         let bound = self.file.bound;
         let start = bound.dynamic_lookup_scope(NodeData::Expr(written))?;
+        name_asked_of_scope_objects(self.file.queries.atom_bytes(name))?;
         let declaring_scope = self.find_declaring_scope(binding);
         let search = ScopeObjectSearch {
             start,
             until: bound.dynamic_lookup_end(written, declaring_scope),
             declaring_scope,
             pos: self.file.hir[written].pos,
+            asks_with_objects_alone,
         };
         Some(self.search_scope_objects(search, name))
-    }
-
-    // The function and the receiver of `module.require(..)`, of which Bun's transpiler prints `require(..)`.
-    pub(in crate::lower) fn lower_require_printed_at(
-        &mut self,
-        module: ExprId,
-    ) -> (ValueId, Option<ValueId>) {
-        let (binding, name) = (Binding::CommonJs(CommonJsVariable::Require), known::require);
-        match self.resolve_dynamic_name(module, binding, name) {
-            Some(found) => {
-                let function = self.get_dynamic_target(binding, name, found.holder);
-                (function, Some(found.with_base))
-            }
-            None => (self.get_binding(binding, name), None),
-        }
     }
 
     pub(super) fn resolve_dynamic_pattern_name(
@@ -77,6 +84,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             until: declaring_scope,
             declaring_scope,
             pos: self.file.hir[pattern].pos,
+            asks_with_objects_alone: false,
         };
         self.search_scope_objects(search, name)
     }
@@ -90,8 +98,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn scope_object_key(&mut self, name: Atom) -> PropertyKeyId {
+        let written = self.file.queries.atom_bytes(name);
+        match name_asked_of_scope_objects(written) {
+            Some(asked) if asked.len() != written.len() => {
+                let asked = self.file.intern_bytes(asked);
+                self.file.text_key(asked)
+            }
+            Some(_) | None => self.file.name_key(name),
+        }
+    }
+
     fn search_scope_objects(&mut self, search: ScopeObjectSearch, name: Atom) -> DynamicBinding {
-        let key = self.file.name_key(name);
+        let key = self.scope_object_key(name);
         let holder = self.builder.create_variable(None);
         let with_base = self.builder.create_variable(None);
         let found = self.create_block();
@@ -103,12 +122,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 objects.push(stored);
             }
         });
+        let missing = self.builder.undefined();
         for stored in objects {
             let is_with = matches!(stored, BindingRef::Slot(_, ScopeSlot::WithObject));
+            let next = self.create_block();
+            if !is_with {
+                // A direct eval of the file that isn't compiled declares the variables of evals.
+                let mark = VariableKey::EvaluationMark(self.file.file);
+                let mark = self.file.ensure_variable(mark);
+                let has_evaluated = self.builder.get_module_variable(mark);
+                let search = self.create_block();
+                self.builder
+                    .branch(has_evaluated, Edge::to(search), Edge::to(next));
+                self.continue_in(search);
+            }
             let object = self.get_stored(stored);
             let has_binding = self.builder.scope_has_binding(object, key);
             let hit = self.create_block();
-            let next = self.create_block();
             self.builder
                 .branch(has_binding, Edge::to(hit), Edge::to(next));
             self.continue_in(hit);
@@ -122,7 +152,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(found);
             self.continue_in(next);
         }
-        let missing = self.builder.undefined();
         self.builder.write_variable(holder, missing);
         self.builder.write_variable(with_base, missing);
         self.jump(found);
@@ -140,7 +169,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         read: BindingRead,
     ) -> ValueId {
         let name = self.file.identifier_name(identifier);
-        let dynamic = self.emit_object_path_get(name, holder);
+        let dynamic = self.emit_object_path_get(name, holder, read);
         let value = self.read_binding(self.file.bound.binding(identifier), name, read);
         let value = match self.file.builtins.of_expr(identifier) {
             Some(Resolved::DynamicGlobal(path))
@@ -160,7 +189,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Atom,
         holder: ValueId,
     ) -> ValueId {
-        let dynamic = self.emit_object_path_get(name, holder);
+        let dynamic = self.emit_object_path_get(name, holder, BindingRead::Value);
         let value = self.read_binding(binding, name, BindingRead::Value);
         self.finish_binding_path(dynamic, value)
     }
@@ -173,9 +202,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
     ) {
         let (object, dynamic) = self.begin_dynamic_use(holder);
-        let key = self.file.name_key(name);
-        // A store to a binding of an object asks once more whether the object still has the name. A proxy sees the question.
-        self.builder.prop_has(object, key);
+        let key = self.scope_object_key(name);
+        let still_has_name = self.builder.prop_has(object, key);
+        if self.mode() == ECMAMode::Strict {
+            self.throw_where_name_is_lost(still_has_name, name);
+        }
         self.emit_set(object, PropertyName::Constant(key), value);
         self.finish_object_path(dynamic, value);
         self.store_binding(binding, name, value, None, true);
@@ -185,11 +216,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn delete_identifier(&mut self, identifier: ExprId) -> ValueId {
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
-        let Some(found) = self.resolve_dynamic_binding(identifier) else {
-            return self.delete_binding(binding, name);
+        let found = match self.resolve_dynamic_identifier(identifier) {
+            Some(DynamicIdentifier::Name(found)) => found,
+            Some(DynamicIdentifier::MemberOf(object)) => {
+                let key = self.file.name_key(name);
+                return self.emit_delete(object, PropertyName::Constant(key));
+            }
+            None => return self.delete_binding(binding, name),
         };
         let (object, dynamic) = self.begin_dynamic_use(found.holder);
-        let key = self.file.name_key(name);
+        let key = self.scope_object_key(name);
         let deleted = self
             .builder
             .prop_delete(object, key, ECMAMode::Sloppy, false);
@@ -211,9 +247,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (split.taken_value, dynamic)
     }
 
-    fn emit_object_path_get(&mut self, name: Atom, holder: ValueId) -> DynamicUse {
+    fn throw_where_name_is_lost(&mut self, still_has_name: ValueId, name: Atom) {
+        let kept = self.create_block();
+        let lost = self.create_block();
+        self.builder
+            .branch(still_has_name, Edge::to(kept), Edge::to(lost));
+        self.continue_in(lost);
+        self.emit_binding_error(RuntimeErrorKind::UnresolvableReference, Binding::Free, name);
+        self.continue_in(kept);
+    }
+
+    fn emit_object_path_get(
+        &mut self,
+        name: Atom,
+        holder: ValueId,
+        read: BindingRead,
+    ) -> DynamicUse {
         let (object, dynamic) = self.begin_dynamic_use(holder);
-        let key = self.file.name_key(name);
+        let key = self.scope_object_key(name);
+        if self.mode() == ECMAMode::Strict && read == BindingRead::Value {
+            let still_has_name = self.builder.prop_has(object, key);
+            self.throw_where_name_is_lost(still_has_name, name);
+        }
         let found = self.emit_get(object, PropertyName::Constant(key));
         self.finish_object_path(dynamic, found);
         dynamic

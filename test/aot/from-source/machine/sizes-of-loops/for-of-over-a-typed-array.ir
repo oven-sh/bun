@@ -1,0 +1,16 @@
+# f1 = total
+# -- source: for-of-over-a-typed-array.ts
+# function total(list: Float64Array): number {
+#   let sum = 0;
+#   for (const value of list) sum += value;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = total(new Float64Array(input));
+# -- end of source
+# The compiler before this one: 10 instructions, 8 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 50, patches 2, moves 8, unlikely 34.
+# RUN(X64): loops most:58 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 58

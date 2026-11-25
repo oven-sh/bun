@@ -1,0 +1,117 @@
+# -- source: main.mjs
+# class Node { constructor(value) { this.value = value; } }
+# var Holder = function Holder(node) { this.node = node; this.depth = 0; };
+# var accessors = { value: { configurable: true }, inside: { configurable: true } };
+# accessors.value.get = function () { return this.node.value };
+# accessors.inside.get = function () { return this.depth > 0 };
+# accessors.inside.set = function (inside) { this.depth = inside ? 1 : 0; };
+# Object.defineProperties(Holder.prototype, accessors);
+# var holder = new Holder(new Node(3));
+# print(holder.value);
+# holder.inside = true;
+# print(holder.inside, holder.depth);
+# -- end of source
+# A map of constants that getters are filled into lays them on the prototype by name: the class and what they read stay in sight.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="main.mjs" displayPath="main.mjs" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f1 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+layout L1 kind=Instance name="Holder" module=m0 position=71 constructor=f2 fields=[{key="node" declared={type=anything} flags=[IsRequired]}, {key="depth" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=71 ownFieldCount=2
+layout L2 kind=Instance module=m0 position=362 constructor=f5 fields=[{key="depth" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=362 ownFieldCount=1
+layout L3 module=m0 position=148 fields=[{key="inside" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}] declaredOrder=[1, 0] place=148 ownFieldCount=2
+layout L4 module=m0 position=157 fields=[{key="configurable" declared={type=anything} flags=[IsRequired]}] place=157 ownFieldCount=1
+data d0 root=Object{layout=L3 members=[{key="value" value=Object{layout=L4 members=[{key="configurable" value=Boolean{value=true}}]}}, {key="inside" value=Object{layout=L4 members=[{key="configurable" value=Boolean{value=true}}]}}]} module=m0
+variable g0 module=m0 declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable] place=30
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @0
+    v2 = NewClass v1 layout=L0 @0
+    PutModuleVariable v2 variable=g0 @0
+    v4 = FinishClass v2 layout=L0 @0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} @0
+    v6 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} @0
+    v7 = NewClosure function=f2 @71
+    v8 = Data data=d0 @148
+    v9 = PropGet v8 key="value" @215
+    v10 = NewClosure function=f3 @237
+    PropSet v9, v10 key="get" @225
+    v12 = PropGet v8 key="inside" @277
+    v13 = NewClosure function=f4 @300
+    PropSet v12, v13 key="get" @287
+    v15 = PropGet v8 key="inside" @339
+    v16 = NewClosure function=f5 @362
+    PropSet v15, v16 key="set" @349
+    v18 = Builtin builtin=Object @414
+    v19 = Builtin builtin=ObjectDefineProperties @414
+    v20 = PropGet v7 key="prototype" @438
+    v21 = Call v19, v18, v20, v8 calleeName="Object.defineProperties" @421
+    v22 = Integer integer=3 @501
+    v23 = Construct v6, -, v22 calleeName="Node" @496 @492
+    v24 = Construct v7, -, v23 calleeName="Holder" @485 @481
+    v25 = Builtin builtin=GlobalThis @506
+    v26 = PropGet v25 key="print" [isFreeName] @506
+    v27 = PropGet v24 key="value" @512
+    v28 = Call v26, -, v27 calleeName="print" @506
+    v29 = Boolean boolean=true @543
+    PropSet v24, v29 key="inside" @527
+    v31 = Builtin builtin=GlobalThis @549
+    v32 = PropGet v31 key="print" [isFreeName] @549
+    v33 = PropGet v24 key="inside" @555
+    v34 = PropGet v24 key="depth" @570
+    v35 = Call v32, -, v33, v34 calleeName="print" @549
+    v36 = Undefined @549
+    Return v36 @549
+}
+function f1 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @24
+    v3 = NewObject v2 layout=L0 @24
+    v4 = Convert v3 declared={type=L0} @24
+    PropSet v4, v1 key="value" @34
+    v6 = Undefined @34
+    v7 = TypeTest v6 testedType=object @34
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @34
+  b1(v8):
+    Jump -> next b2(v8) @34
+  b2(v9):
+    Return v9 @34
+}
+function f2 name="Holder" module=m0 position=71 flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="node" @95
+    v3 = Integer @126
+    PropSet v0, v3 key="depth" @113
+    v5 = Undefined @113
+    Return v5 @113
+}
+function f3 module=m0 position=237 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="node" @258
+    v2 = PropGet v1 key="value" @263
+    Return v2 @258
+}
+function f4 module=m0 position=300 flags=[HasThis] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="depth" @321
+    v2 = Integer @334
+    v3 = Greater v1, v2 @321
+    Return v3 @321
+}
+function f5 module=m0 position=362 flags=[HasThis] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: L2, v1: anything):
+    v2 = ToBoolean v1 @395
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @395
+  b1(v3):
+    v4 = Integer integer=1 @404
+    Jump -> next b3(v4) @404
+  b2(v5):
+    v6 = Integer @408
+    Jump -> next b3(v6) @408
+  b3(v7):
+    PropSet v0, v7 key="depth" @382
+    v9 = Undefined @382
+    Return v9 @382
+}

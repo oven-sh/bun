@@ -1,1 +1,1 @@
-{ "features": ["RuntimeTranspiler"], "keptToday": true }
+{ "features": ["RuntimeTranspiler"], "keptToday": ["RuntimeTranspiler"] }

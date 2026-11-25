@@ -1,6 +1,6 @@
 // A proxy whose handler has a trap for stores alone is read under a key that is computed. The read goes on at the target and may come to the accessor `__proto__` of Object.prototype,
 // which asks the proxy what stands above it: the handler has no trap for that either, so the target answers. Nothing else is done to the proxy, and nothing of the library is compiled for it.
-// STATISTIC: ImageFunctionsEmitted <= 20
+// STATISTIC: ImageFunctionsEmitted <= 20 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 const key = JSON.parse('"count"');
 const stored = [];
 const proxy = new Proxy({ count: 0 }, {

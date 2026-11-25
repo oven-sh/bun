@@ -1,10 +1,9 @@
 use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId, SymbolId};
 use bun_sema::hir::{ClassId, Flags, FnId, FnKind, MemberId, StmtKind};
 
-use super::{analyze_source, is_field};
+use super::{analyze_source, analyze_source_that_runs_again, is_field};
 use crate::ir::FunctionKey;
 use crate::ir::generated::FunctionFlags;
-use crate::lower::captures::Capture;
 use crate::lower::scope::analysis::{GroupedList, find_by_key};
 use crate::lower::scope::lexical_owners::compute_lexical_owners;
 use crate::lower::scope::testing::{source_key, with_scope_input};
@@ -128,7 +127,7 @@ fn bindings_list_symbols_before_slots() {
 #[test]
 fn stored_local_slot_is_loop_carried() {
     let stored = "var i = 0; while (i < 2) { exports = { n: i }; i++; } console.log(exports.n);";
-    analyze_source("main.cjs", stored, |probe| {
+    analyze_source_that_runs_again("main.cjs", stored, |probe| {
         let exports = BindingRef::Slot(probe.file_scope(), EXPORTS);
         assert_eq!(probe.placement(exports).storage, Storage::Local);
         let carried = probe.stored_in_loop(probe.first_statement(is_loop));
@@ -137,7 +136,7 @@ fn stored_local_slot_is_loop_carried() {
 
     let arguments = "function probe() { for (var i = 0; i < 2; i++) { arguments = i; } \
                      return arguments; } module.exports = probe;";
-    analyze_source("main.cjs", arguments, |probe| {
+    analyze_source_that_runs_again("main.cjs", arguments, |probe| {
         let binding = probe.slot(probe.function("probe"), ScopeSlot::ArgumentsBinding);
         assert_eq!(probe.placement(binding).storage, Storage::Local);
         let carried = probe.stored_in_loop(probe.first_statement(is_loop));
@@ -145,14 +144,14 @@ fn stored_local_slot_is_loop_carried() {
     });
 
     let only_read = "var i = 0; while (i < 2) { console.log(exports); i++; }";
-    analyze_source("main.cjs", only_read, |probe| {
+    analyze_source_that_runs_again("main.cjs", only_read, |probe| {
         let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i")]);
     });
 
     let shared = "var i = 0; while (i < 2) { exports = { n: i }; i++; } \
                   module.exports = () => exports;";
-    analyze_source("main.cjs", shared, |probe| {
+    analyze_source_that_runs_again("main.cjs", shared, |probe| {
         let exports = BindingRef::Slot(probe.file_scope(), EXPORTS);
         assert!(is_field(probe.placement(exports).storage));
         let carried = probe.stored_in_loop(probe.first_statement(is_loop));
@@ -166,6 +165,32 @@ fn binding_declared_in_loop_is_not_loop_carried() {
     analyze_source("main.mjs", source, |probe| {
         let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i")]);
+    });
+}
+
+#[test]
+fn store_is_carried_by_every_loop_between_it_and_the_declaration() {
+    let source = "export function g() { let x = 0; \
+        while (x < 1) { let y = 0; do { for (;;) { x = 1; y = 2; let z = 3; z = 4; } } while (y); } }";
+    analyze_source("main.mjs", source, |probe| {
+        let carried_by = |is_wanted: fn(&StmtKind) -> bool| {
+            probe
+                .stored_in_loop(probe.first_statement(is_wanted))
+                .to_vec()
+        };
+        let (x, y) = (probe.binding("x"), probe.binding("y"));
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::While { .. })),
+            [x]
+        );
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::DoWhile { .. })),
+            [x, y]
+        );
+        assert_eq!(
+            carried_by(|kind| matches!(kind, StmtKind::For { .. })),
+            [x, y]
+        );
     });
 }
 
@@ -210,6 +235,23 @@ fn entry_flags_of_source_functions() {
         ("export function f() { return new.target; }", target),
         ("export const g = function f() { return f; };", callee),
         ("export function f() { return arguments; }", arguments_flags),
+        ("export function f() { return arguments.length; }", count),
+        (
+            "export function f() { return arguments[arguments.length - 1]; }",
+            arguments_flags,
+        ),
+        (
+            "export function f() { return () => arguments.length; }",
+            arguments_flags,
+        ),
+        (
+            "export function f() { arguments.length = 0; return arguments.length; }",
+            arguments_flags,
+        ),
+        (
+            "export function* f() { yield arguments.length; }",
+            arguments_flags | this,
+        ),
         (
             "export function f(...rest) { return [arguments, rest]; }",
             count,
@@ -272,7 +314,6 @@ fn entry_flags_of_module_body() {
             probe.entry_flags(FunctionKey::ModuleBody(probe.analysis.file))
         })
     };
-    // `this` at the top of a CommonJS file is the object that the body begins with: nobody passes it.
     assert!(flags_of("main.cjs", "this.a = 1;").is_empty());
     assert!(flags_of("main.cjs", "exports.a = 1;").is_empty());
     assert!(flags_of("main.mjs", "this; export {};").is_empty());
@@ -344,7 +385,6 @@ fn unknown_ids_get_unknown_answers() {
         assert_eq!(analysis.lexical_owner(scope), scope);
         assert!(analysis.captures(key).is_empty());
         assert!(analysis.entry_flags(key).is_empty());
-        assert!(!analysis.has_too_many_captures(key));
     });
 }
 
@@ -362,84 +402,4 @@ fn find_by_key_misses_absent_key() {
     let list = [(1, 'a'), (3, 'b')];
     assert_eq!(find_by_key(&list, 3), Some('b'));
     assert_eq!(find_by_key(&list, 2), None);
-}
-
-// The halves of the accessors of the only object literal with some, in the order of the text, each with the position in that list of the half that it is made behind.
-fn halves_to_stand_behind(members: &str) -> Vec<Option<usize>> {
-    let source = format!(
-        "export function make(v, more, key) {{ let c = 0; const k = v; return {{ {members} }}; }}"
-    );
-    analyze_source("main.js", &source, |probe| {
-        let mut halves = probe.functions(FnKind::Getter);
-        halves.extend(probe.functions(FnKind::Setter));
-        halves.sort_unstable();
-        let position_of = |half: FnId| halves.iter().position(|&other| other == half);
-        let in_front = |&half: &FnId| probe.half_to_stand_behind(probe.key(half));
-        let positions = halves.iter().map(in_front);
-        positions
-            .map(|half| half.map(|half| position_of(half).expect("a half of the literal")))
-            .collect()
-    })
-}
-
-#[test]
-fn half_of_accessor_stands_behind_the_half_in_front() {
-    let rows: [(&str, &[Option<usize>]); 15] = [
-        ("get p() { return 1; }", &[None]),
-        ("get p() { return 1; }, set p(x) {}", &[None, Some(0)]),
-        ("set p(x) {}, q: 1, get p() { return k; }", &[None, Some(0)]),
-        (
-            "set p(x) {}, q: (c = v), get p() { return c; }",
-            &[None, Some(0)],
-        ),
-        (
-            "get p() { return 1; }, q: 1, set p(x) {}, r: 2, get p() { return 2; }",
-            &[None, Some(0), Some(1)],
-        ),
-        (
-            "get p() { return 1; }, q: (c = v), set p(x) { super.p = x; }, r: (c = k), get p() { return c; }",
-            &[None, Some(0), Some(1)],
-        ),
-        (
-            "get p() { return 1; }, get r() { return 2; }, set p(x) {}, set r(x) {}",
-            &[None, None, Some(0), Some(1)],
-        ),
-        (
-            "get p() { return 1; }, __proto__: more, set p(x) {}",
-            &[None, Some(0)],
-        ),
-        (
-            "get p() { return 1; }, q() {}, set ['p'](x) {}",
-            &[None, Some(0)],
-        ),
-        ("get p() { return 1; }, p: 1, set p(x) {}", &[None, None]),
-        ("get p() { return 1; }, p() {}, set p(x) {}", &[None, None]),
-        (
-            "get p() { return 1; }, ['p']: 1, set p(x) {}",
-            &[None, None],
-        ),
-        ("get p() { return 1; }, ...more, set p(x) {}", &[None, None]),
-        (
-            "get p() { return 1; }, [key]: 1, set p(x) {}",
-            &[None, None],
-        ),
-        (
-            "get p() { return 1; }, get [key]() { return 2; }, set p(x) {}",
-            &[None, None, None],
-        ),
-    ];
-    for (members, expected) in rows {
-        assert_eq!(halves_to_stand_behind(members), expected, "{members}");
-    }
-}
-
-#[test]
-fn half_made_behind_another_reads_what_a_member_between_stores_from_the_environment() {
-    let source = "export function make(v) { let c = 0; \
-        return { set p(x) {}, q: (c = v), get p() { return c; } }; }";
-    analyze_source("main.js", source, |probe| {
-        let top = probe.top_of("make");
-        let getter = probe.only_function(FnKind::Getter);
-        assert_eq!(probe.captures(getter), [Capture::Environment(top)]);
-    });
 }

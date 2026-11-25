@@ -1,0 +1,33 @@
+# Buffer.alloc(1); JSON.parse(text).from("hi")
+# `from` is called on a value that nobody knows, and objects of the class Buffer exist. But nobody has come by `Buffer` itself out of sight: it is named, and a member of it is called, in sight.
+# So `from` is not looked for on it, and the function of the library behind Buffer.from is not in the program.
+# The other half: property-found-off-a-value-that-nobody-knows-hands-out-the-built-in-that-its-row-answers.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/JSBufferConstructor.ts" displayPath="/$bun/js/builtins/JSBufferConstructor.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=JSBufferConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Buffer
+    v1 = PropGet v0 key="alloc"
+    v2 = Convert v1 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v3 = Integer integer=1
+    v4 = Call v2, v0, v3 calleeKey="alloc" calleeName="Buffer.alloc"
+    v5 = Builtin builtin=JSON
+    v6 = PropGet v5 key="parse"
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v8 = String string="{}"
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse"
+    v10 = PropGet v9 key="from"
+    v11 = String string="hi"
+    v12 = Call v10, v9, v11 calleeKey="from"
+    Return v12
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=JSBufferConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

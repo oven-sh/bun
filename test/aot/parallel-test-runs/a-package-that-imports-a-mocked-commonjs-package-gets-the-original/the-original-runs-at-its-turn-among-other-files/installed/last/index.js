@@ -1,0 +1,1 @@
+(globalThis.order ??= []).push("last");

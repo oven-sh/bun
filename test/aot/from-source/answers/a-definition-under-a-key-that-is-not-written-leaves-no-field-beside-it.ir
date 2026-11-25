@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# "use strict";
+# const lib = {};
+# function fill(target, key) { target.add = function (a, b) { return a + b; }; Object.defineProperty(target, key, { configurable: true, get() { return (a, b) => a - b; } }); }
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# fill(lib, JSON.parse('"other"'));
+# print(called(5));
+# fill(lib, JSON.parse('"add"'));
+# print(called(5), Object.keys(lib).join());
+# -- end of source
+# The other side of a-plain-field-beside-the-name-that-a-written-descriptor-defines-is-never-redefined.ir: the key of the definition is reckoned: it may be `add`, and the second time it is: no field of the record lies beside what descriptors define.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD-NOT: beside-what-descriptors-define
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11
+# ANSWER-NEXT: -9 add
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 11
+# CHECKED-NEXT: -9 add
+# CHECKED-NEXT: exited with 0

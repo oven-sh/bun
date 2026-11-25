@@ -2,7 +2,6 @@
 
 use core::cell::Cell;
 use core::fmt::{self, Display, Formatter, Write as _};
-use core::ptr::NonNull;
 
 use crate::output as Output;
 // `strings` is the canonical `crate::strings` (lib.rs); `js_printer`/`js_lexer`
@@ -404,9 +403,7 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
-        let encoded = &buf[..count];
+        let encoded = crate::base64::standard_encode(&mut buf, &self.bytes);
         if SHORT {
             write!(
                 f,
@@ -505,70 +502,19 @@ pub fn substitute_named(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
-struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
-impl Drop for SharedTempBufferSlot {
-    fn drop(&mut self) {
-        if let Some(p) = self.0.take() {
-            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
-            // new` and parked here on borrow drop; the thread is exiting so no
-            // outstanding borrow holds it.
-            unsafe { crate::heap::destroy(p.as_ptr()) };
-        }
-    }
-}
-impl core::ops::Deref for SharedTempBufferSlot {
-    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
-        const { SharedTempBufferSlot(Cell::new(None)) };
+    static SHARED_TEMP_BUFFER: Cell<Option<Box<SharedTempBuffer>>> = const { Cell::new(None) };
 }
 
-/// RAII borrow of the thread-local shared temp buffer.
-///
-/// On construction: takes (or allocates) the buffer and nulls the thread-local
-/// cell so any recursive borrow allocates a fresh one instead of aliasing this
-/// one. On drop: restores the buffer to the cell, or frees it if recursion has
-/// already restored a different buffer.
-struct SharedTempBufferBorrow {
-    ptr: NonNull<SharedTempBuffer>,
-}
-
-impl SharedTempBufferBorrow {
-    fn new() -> Self {
-        let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
-            cell.take()
-                .unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
-        });
-        Self { ptr }
-    }
-
-    #[inline]
-    fn chunk(&mut self) -> &mut SharedTempBuffer {
-        // SAFETY: this borrow uniquely owns the buffer for its lifetime; the
-        // thread-local cell was nulled on construction so recursion cannot alias it.
-        unsafe { self.ptr.as_mut() }
-    }
-}
-
-impl Drop for SharedTempBufferBorrow {
-    fn drop(&mut self) {
-        SHARED_TEMP_BUFFER_PTR.with(|c| {
-            if let Some(existing) = c.get() {
-                if existing != self.ptr {
-                    // Recursion restored a different buffer; free ours.
-                    // SAFETY: ptr was allocated via heap::alloc_nn and is uniquely owned by self.
-                    unsafe { crate::heap::destroy(self.ptr.as_ptr()) };
-                }
-            } else {
-                c.set(Some(self.ptr));
-            }
-        });
-    }
+/// Lends `f` the thread's temp buffer. The cell is empty meanwhile, so a recursive call allocates its own.
+fn with_shared_temp_buffer(f: impl FnOnce(&mut SharedTempBuffer) -> fmt::Result) -> fmt::Result {
+    let mut buffer = SHARED_TEMP_BUFFER
+        .with(|cell| cell.take())
+        .unwrap_or_else(crate::boxed_zeroed);
+    let result = f(&mut buffer);
+    // Frees the buffer that a recursive call has put back.
+    SHARED_TEMP_BUFFER.with(|cell| cell.set(Some(buffer)));
+    result
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -576,20 +522,19 @@ impl Drop for SharedTempBufferBorrow {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub(crate) fn format_utf16_type_with_path_options(
@@ -597,37 +542,36 @@ pub(crate) fn format_utf16_type_with_path_options(
     writer: &mut impl fmt::Write,
     opts: PathFormatOptions,
 ) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    let mut slice = slice_;
-
-    while !slice.is_empty() {
-        let result = strings::copy_utf16_into_utf8(chunk, slice);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-
-        let to_write = &chunk[..result.written];
-        if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
-            write_bytes(writer, to_write)?;
-        } else {
-            let mut ptr = to_write;
-            while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = opts.path_sep.apply(ptr[i]);
-                write_bytes(writer, &ptr[..i])?;
-                writer.write_char(sep as char)?;
-                if opts.escape_backslashes && sep == b'\\' {
-                    writer.write_char(sep as char)?;
-                }
-
-                ptr = &ptr[i + 1..];
+        while !slice.is_empty() {
+            let result = strings::copy_utf16_into_utf8(chunk, slice);
+            if result.read == 0 || result.written == 0 {
+                break;
             }
-            write_bytes(writer, ptr)?;
+
+            let to_write = &chunk[..result.written];
+            if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
+                write_bytes(writer, to_write)?;
+            } else {
+                let mut ptr = to_write;
+                while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
+                    let sep = opts.path_sep.apply(ptr[i]);
+                    write_bytes(writer, &ptr[..i])?;
+                    writer.write_char(sep as char)?;
+                    if opts.escape_backslashes && sep == b'\\' {
+                        writer.write_char(sep as char)?;
+                    }
+
+                    ptr = &ptr[i + 1..];
+                }
+                write_bytes(writer, ptr)?;
+            }
+            slice = &slice[result.read..];
         }
-        slice = &slice[result.read..];
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[inline]
@@ -700,6 +644,7 @@ impl Default for PathFormatOptions {
     }
 }
 
+/// Only Windows has two separators, so elsewhere a path is printed as is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathSep {
     /// Keep paths separators as is.
@@ -708,17 +653,14 @@ pub enum PathSep {
     Auto,
     /// Replace all path separators with `/`.
     Posix,
-    /// Replace all path separators with `\`.
-    Windows,
 }
 
 impl PathSep {
     fn apply(self, found: u8) -> u8 {
         match self {
-            PathSep::Windows => b'\\',
-            PathSep::Posix => b'/',
-            PathSep::Auto => crate::SEP,
-            PathSep::Any => found,
+            PathSep::Posix if cfg!(windows) => b'/',
+            PathSep::Auto if cfg!(windows) => b'\\',
+            _ => found,
         }
     }
 }
@@ -813,8 +755,7 @@ pub fn buf_print_z<'a>(
     if n >= c.buf.len() {
         return Err(core::fmt::Error);
     }
-    c.buf[n] = 0;
-    Ok(crate::ZStr::from_buf(c.buf, n))
+    Ok(crate::ZStr::nul_terminate(c.buf, n))
 }
 
 /// [`buf_print`] that panics on overflow. Use when the
@@ -823,16 +764,6 @@ pub fn buf_print_z<'a>(
 #[track_caller]
 pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
     buf_print(buf, args).expect("buf_print: buffer too small")
-}
-
-/// [`buf_print_z`] that panics on overflow.
-#[inline]
-#[track_caller]
-pub fn buf_print_z_infallible<'a>(
-    buf: &'a mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> &'a crate::ZStr {
-    buf_print_z(buf, args).expect("buf_print_z: buffer too small")
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1253,28 +1184,28 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
-    let mut borrow = SharedTempBufferBorrow::new();
-    let chunk = borrow.chunk();
-    let mut slice = slice_;
+    with_shared_temp_buffer(|chunk| {
+        let mut slice = slice_;
 
-    while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
-        if i > 0 {
-            write_bytes(writer, &slice[..i])?;
-            slice = &slice[i..];
+        while let Some(i) = crate::strings::first_non_ascii_usize(slice) {
+            if i > 0 {
+                write_bytes(writer, &slice[..i])?;
+                slice = &slice[i..];
+            }
+            let take = chunk.len().min(slice.len());
+            let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
+            if result.read == 0 || result.written == 0 {
+                break;
+            }
+            write_bytes(writer, &chunk[..result.written])?;
+            slice = &slice[result.read..];
         }
-        let take = chunk.len().min(slice.len());
-        let result = strings::copy_latin1_into_utf8(chunk, &slice[..take]);
-        if result.read == 0 || result.written == 0 {
-            break;
-        }
-        write_bytes(writer, &chunk[..result.written])?;
-        slice = &slice[result.read..];
-    }
 
-    if !slice.is_empty() {
-        write_bytes(writer, slice)?; // write the remaining bytes
-    }
-    Ok(())
+        if !slice.is_empty() {
+            write_bytes(writer, slice)?; // write the remaining bytes
+        }
+        Ok(())
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1965,7 +1896,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                 if self.opts.redact_sensitive_information {
                     return write!(writer, "{}", redacted_source(text));
                 } else {
-                    return write_bytes(writer, text);
+                    return write!(writer, "{}", bstr::BStr::new(text));
                 }
             }
         }
@@ -3509,20 +3440,17 @@ pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
 }
 
 /// NUL-terminated decimal `u64` → ASCII into a caller-owned scratch buffer,
-/// returning a [`CStr`] borrowing the head of `buf`.
+/// returning a [`ZStr`](crate::ZStr) borrowing the head of `buf`.
 ///
 /// Used when handing an integer to a C API that wants a `*const c_char`
-/// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
+/// service/port string (e.g. `getaddrinfo`). 21 bytes
 /// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
 #[inline]
-pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {
+pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &crate::ZStr {
     let mut tmp = ItoaBuf::new();
     let s = tmp.format(n).as_bytes();
     buf[..s.len()].copy_from_slice(s);
-    buf[s.len()] = 0;
-    // SAFETY: itoa output is pure ASCII digits (no interior NUL); we just
-    // wrote a NUL terminator at `s.len()`.
-    unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&buf[..=s.len()]) }
+    crate::ZStr::nul_terminate(buf, s.len())
 }
 
 /// Byte length of `n` formatted with the default `{}` Display. Used by

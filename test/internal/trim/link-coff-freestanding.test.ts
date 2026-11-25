@@ -238,6 +238,29 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       expect(existsSync(join(folder, "work", "aliases.s"))).toBe(false);
     });
 
+    // As `__global_array_delete` is of `__empty_global_delete` in every C++ file. The map lists the name in what was compiled from the file whose copy of the target prevailed.
+    testLink("where only a native object refers to a weak alias that the bitcode has too", async () => {
+      const both = `extern inline __attribute__((noinline)) int target_of_both(int x) { return x + 1; }
+        extern __typeof(target_of_both) alias_of_both __attribute__((weak, alias("target_of_both")));`;
+      using dir = tempDir("trim-coff-freestanding", {
+        ...smallSources,
+        "first.c": `${both} int (*const volatile first_table[])(int) = { target_of_both };`,
+        "native_user.c": `${both} int (*const volatile native_table[])(int) = { alias_of_both };`,
+        "main.c": mainReturning(
+          "extern int (*const volatile first_table[])(int), (*const volatile native_table[])(int);",
+          "first_table[0](argc) + native_table[0](argc)",
+        ),
+      });
+      const folder = String(dir);
+      const result = await wrapped(
+        folder,
+        optionsWith({ objects: ["first", ...defaultObjects, "native_user"], compileFlags: asBitcode(["first"]) }),
+      );
+      expect({ stderr: result.stderr, exitCode: result.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(result.stdout).not.toContain(compilesAgain);
+      expect(existsSync(join(folder, "work", "aliases.s"))).toBe(false);
+    });
+
     // Their names are too long for the header of a member, so the copy of the archive has to keep the table of long names readable.
     testLink("keeps the members of an archive that are no bitcode", async () => {
       const [bitcode, native] = ["a_member_of_bitcode_with_a_long_name", "a_native_member_with_a_long_name"];

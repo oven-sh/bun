@@ -1,0 +1,13 @@
+# -- source: main.js
+# function even(x, d) { return x === 0 || d === 0 ? x : odd(x - 1, d - 1); } function odd(x, d) { return x === 0 || d === 0 ? x : even(x - 1, d - 1); }
+# print(even(20, 30), odd(7, 4), even(-9007199254740990, 5), odd(9007199254740992, 3), even(-2147483647, 4));
+# -- end of source
+# LIBRARY: own
+# Functions that call one another are a loop: the number that they pass round is stepped as an integer, as long as a comparison finds it far from 2 ** 53. There it is stepped as a double.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: TypeTest {{*}} testedType=int[1, 2147483648]
+# CHECK: Sub {{*}} form=Integers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0 3 -9007199254740992 9007199254740989 -2147483651
+# ANSWERS-NEXT: exited with 0

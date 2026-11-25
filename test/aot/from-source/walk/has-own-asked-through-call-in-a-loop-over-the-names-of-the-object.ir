@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# "use strict";
+# var has = Object.prototype.hasOwnProperty;
+# function copy(config) { var props = {}, name; for (name in config) has.call(config, name) && "key" !== name && (props[name] = config[name]); return props; }
+# sink.kept = copy;
+# sink(Object.keys(copy({ key: 1, label: 2, size: 3 })).join());
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = IsEnumeratorCurrent {{*}}@128
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: label,size

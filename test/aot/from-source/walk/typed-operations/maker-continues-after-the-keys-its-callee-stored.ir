@@ -1,0 +1,24 @@
+# -- source: maker-continues-after-the-keys-its-callee-stored.ts
+# declare function report(value: unknown): void;
+# interface Kind { flags: number; checker?: string; id: number; name: string; boxFlags: number; members?: object; size: number; }
+# let count = 0;
+# const tracing: boolean = (globalThis as any).tracing;
+# function Kind(this: Kind, flags: number, checker?: string) { this.flags = flags; if (tracing) this.checker = checker; }
+# function makeKind(flags: number): Kind { const made = new (Kind as any)(flags, "c") as Kind; count++; made.id = count; return made; }
+# function makeNamed(flags: number, name: string): Kind { const made = makeKind(flags); made.name = name; return made; }
+# function makeBoxed(flags: number, name: string): Kind { const made = makeNamed(flags, name); made.boxFlags = flags * 2; made.members = undefined; made.size = 0; return made; }
+# function last(pool: Kind[]): Kind { return pool[pool.length - 1]; }
+# function relabel(pool: Kind[], name: string): Kind { const old = last(pool); old.name = name; return old; }
+# const pool: Kind[] = [];
+# for (let i = 0; i < 8; i++) {
+#   pool.push(i % 2 ? makeBoxed(i, "b" + i) : makeNamed(i, "n" + i));
+#   if (i === 3) relabel(pool, "again");
+#   report(pool[i]);
+#   report(Object.keys(pool[i]).join() + " " + JSON.stringify(pool[i]));
+# }
+# -- end of source
+# f3 = makeNamed
+# RUN: walk f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f3:Body
+# CHECK: HasKeyOrder {{*}}layout=L0 fields=[0, 2] [hasNoFlags]
+# CHECK: PutSlotOrAdd {{*}}key="name" {{*}}orderWordAfter=

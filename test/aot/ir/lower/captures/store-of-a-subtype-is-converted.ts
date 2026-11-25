@@ -2,8 +2,8 @@
 // CHECK: [[failed]] = Convert {{*}}declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: [[error]] = Convert [[failed]] declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: PutEnvironmentField {{*}}, [[error]] layout=
-// CHECK: [[made]] = Convert {{*}}declared={type=undefined|null|[[derived]] site=w{{*}}} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: [[held]] = Convert [[made]] declared={type=undefined|null|[[base]] site=w{{*}}} @
+// CHECK: [[made]] = Convert {{*}}declared={type=undefined|null|[[derived]] flags={{*}}} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: [[held]] = Convert [[made]] declared={type=undefined|null|[[base]] flags={{*}}} @
 // CHECK-NEXT: PutEnvironmentField {{*}}, [[held]] layout=
 
 // What is stored into a captured variable is converted to the type of the variable, as for any other variable. The checker has proven the

@@ -1,0 +1,36 @@
+# -- source: what-is-known-of-a-record-that-came-one-of-two-ways-falls-where-the-loops-name-it.js
+# function work(holder, least, count) {
+#   const workers = [0, 1].map(() => {
+#     let done = 0;
+#     return { step: () => ++done };
+#   });
+#   const front = { n: least };
+#   const mate = count > 1 ? { n: least } : { n: least + 1 };
+#   let i = -1;
+#   while (++i < holder.rows.length) {
+#     while (holder.rows[i] < least) {
+#       holder.rows[i] = holder.rows[i] + workers[i % 2].step();
+#       mate.n += 1;
+#     }
+#   }
+#   const seen = [front.n, mate.n];
+#   front.n += holder.rows.length;
+#   return seen.concat(front.n).join(" ");
+# }
+# const rows = JSON.parse("[0,5,2]");
+# print(work({ rows }, 3, rows.length), rows.join());
+# -- end of source
+# `mate` is one of two records: what names it makes no new cell, so the list of the objects made here that a loop mentions does not speak of it. With the first lock lied away the walk believed on what it knew of `mate.n`
+# though the loops name and write it. Of such a holder neither that list nor the list of what is written speaks, so nothing that a turn has forgotten of it is believed on: also where the question for the names is lied away too.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3 6 6 3,5,5
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(UNLOCKED): run-in-shell mechanisms=all testing=IgnoreLoopEscapes
+# UNLOCKED: 3 6 6 3,5,5
+# UNLOCKED-NEXT: exited with 0
+# UNLOCKED-NEXT: the source prints the same
+# RUN(UNNAMED): run-in-shell mechanisms=all testing=IgnoreLoopEscapes,IgnoreLoopUses
+# UNNAMED: 3 6 6 3,5,5
+# UNNAMED-NEXT: exited with 0
+# UNNAMED-NEXT: the source prints the same

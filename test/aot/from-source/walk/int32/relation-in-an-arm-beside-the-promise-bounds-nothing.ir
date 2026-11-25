@@ -1,0 +1,12 @@
+# THE LYING CONTROL of relation-between-where-a-value-is-made-and-where-it-enters-the-promise.ir: the relation stands in an arm that the way to the promise does not lead through: IT IS REPORTED.
+# f2 = beside
+# -- source: relation-in-an-arm-beside-the-promise-bounds-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function take(n: Bun.int32): Bun.int32 { return n; }
+# function beside(point: Point, key: "x" | "y", list: number[], c: boolean): number { const n = list.length; let r = 0; if (c) { if (n < point[key]) r = 1; } return take(n) + r; }
+# sink(beside);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f2 mechanisms=all
+# CHECK: the walk of f2:Body failed

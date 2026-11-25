@@ -52,17 +52,4 @@ console.log((process as any).on + 1, Object.hasOwn(process, "on"));
 delete (process as any).on;
 console.log(typeof process.on);
 
-// GENERATED: first
 // CHECK-LABEL: function {{*}}name="first"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number site=[[w_1]]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="seen"
-// CHECK-NEXT: v3 = PropGet v2 key="push"
-// CHECK-NEXT: v4 = String string="first "
-// CHECK-NEXT: v5 = Add v4, v0
-// CHECK-NEXT: v6 = Call v3, v2, v5 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=number site=[[w_4]]}}, {declared={type=number site=[[w_1]]}}]
-// CHECK-NEXT: }

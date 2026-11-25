@@ -38,7 +38,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (Box::new(loaded), code, payload)
     }
 
-    // Other files take their types from a file of the types program, so it imports what the type checker finds.
     pub(super) fn answer_types_question_in_types_program(
         &self,
         arena: &'s Arena,
@@ -47,10 +46,11 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         mut code: Box<LoadedCode<'s, 'r>>,
     ) -> (Box<Loaded<'s, 'r>>, Box<LoadedCode<'s, 'r>>) {
         let mut module = loaded.module;
-        let no_tree = hir::File::empty_in(arena, module.hir.lazy.session);
+        let trees = module.trees.get_mut();
+        let no_tree = hir::File::empty_in(arena, trees.hir.lazy.session);
         let parse = Parse {
-            hir: std::mem::replace(&mut module.hir, no_tree),
-            bound: std::mem::replace(&mut module.bound, Bound::empty_in(arena)),
+            hir: std::mem::replace(&mut trees.hir, no_tree),
+            bound: std::mem::replace(&mut trees.bound, Bound::empty_in(arena)),
             is_shared: false,
         };
         code.types_answers.clear();
@@ -124,6 +124,9 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let governing = match code {
             Some(code) if code.analyzed.is_aot_source => {
                 self.projects.governing_aot_source(self, path)
+            }
+            Some(_) if role == FileRole::Checked => {
+                self.projects.governing_checked_code(self, path)
             }
             Some(_) => self.projects.governing_code(self, path),
             None => self.projects.governing(self, path),

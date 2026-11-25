@@ -65,6 +65,18 @@ impl PrintedAst {
             depends_on_more_than_source: ast.depends_on_more_than_source,
         }
     }
+
+    /// For an entry of the transpiler's cache
+    pub fn cached(is_commonjs_module: bool) -> Self {
+        Self {
+            is_commonjs_module,
+            depends_on_more_than_source: false,
+        }
+    }
+
+    pub fn depends_on_more_than_source(self) -> bool {
+        self.depends_on_more_than_source
+    }
 }
 
 impl ResolvedSource {

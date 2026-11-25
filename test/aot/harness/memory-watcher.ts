@@ -1,6 +1,6 @@
 // The thread that watches the memory of child processes for ./memory-limit.ts. It has nothing else to do: however busy the thread is that started a child, somebody looks at the child twenty
 // times a second. What it finds it writes into memory that it shares with that thread, so a watch answers at once, without a turn of anybody's event loop.
-import { availableMemory, describeMemory, processesBelow, residentMemory, type Told } from "./memory-limit";
+import { describeMemory, processesBelow, residentMemory, type Told } from "./memory-limit";
 
 declare var self: Worker;
 
@@ -74,10 +74,7 @@ function look() {
     new Float64Array(group.shared)[0] = sum;
     const most = fattest.get(id);
     if (!most || performance.now() < group.waitsUntil) continue;
-    const left = isLinux ? availableMemory() : Infinity;
-    if (sum <= group.limit && left >= group.limit / 7) continue;
-    const shortage =
-      sum <= group.limit ? `; the machine had ${inMB(left)} left, and ${inMB(group.limit / 7)} have to stay free` : "";
+    if (sum <= group.limit) continue;
     // The kernel takes a moment to take back what a killed process held.
     group.waitsUntil = performance.now() + 250;
     const members = [...watched.values()].filter(each => each.of === id);
@@ -85,7 +82,7 @@ function look() {
       if (!each.isOver)
         end(
           each,
-          `it held ${inMB(each.peak)} of the ${inMB(sum)} that ${members.length} processes held together, which may hold ${inMB(group.limit)}${shortage}`,
+          `it held ${inMB(each.peak)} of the ${inMB(sum)} that ${members.length} processes held together, which may hold ${inMB(group.limit)}`,
         );
   }
 }

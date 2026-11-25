@@ -352,26 +352,18 @@ pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub(crate) tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer.
-    /// Stored as a raw fat pointer
-    /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
-    /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
-    /// `json_stringify`; caller must keep the source buffer alive for that call.
-    pub input: *const [u8],
 
     pub flags: FlagsBitSet,
 }
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer and is
-// only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread, so the whole structure moves
-// between threads as a unit (the lockfile/resolver thread pool relies on this);
-// auto-`!Send` from `NonNull`/`*const` is overly conservative here.
+// by this `Group` (see `or_range`); it never aliases data owned by another
+// thread, so the whole structure moves between threads as a unit (the
+// lockfile/resolver thread pool relies on this). Auto-`!Send` from `NonNull` is
+// overly conservative here.
 unsafe impl Send for Group {}
-// SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
-// to immutable bytes; `&Group` exposes no unsynchronized interior mutability.
+// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range` and
+// `or_range`); `&Group` exposes no unsynchronized interior mutability.
 unsafe impl Sync for Group {}
 
 impl Clone for Group {
@@ -379,7 +371,6 @@ impl Clone for Group {
         let mut out = Group {
             head: self.head.clone(),
             tail: None,
-            input: self.input,
             flags: self.flags,
         };
         if let Some(mut tail) = out.head.next.as_deref_mut() {
@@ -397,7 +388,6 @@ impl Default for Group {
         Self {
             head: List::default(),
             tail: None,
-            input: std::ptr::from_ref::<[u8]>(b""),
             flags: FlagsBitSet::init_empty(),
         }
     }
@@ -470,11 +460,8 @@ impl Group {
     }
 
     /// A group that no version satisfies.
-    fn null_set(input: &[u8]) -> Group {
-        Group {
-            input: std::ptr::from_ref::<[u8]>(input),
-            ..Self::from_comparator(Comparator::null_set())
-        }
+    fn null_set() -> Group {
+        Self::from_comparator(Comparator::null_set())
     }
 
     pub fn is_exact(&self) -> bool {
@@ -767,7 +754,6 @@ pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<
 fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
-        input: std::ptr::from_ref::<[u8]>(input),
         head: List::default(),
         tail: None,
         flags: FlagsBitSet::init_empty(),
@@ -881,7 +867,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             // node-semver rejects the whole range for a number it cannot hold.
             if parse_result.overflow {
-                return Ok(Group::null_set(input));
+                return Ok(Group::null_set());
             }
             if !parse_result.valid {
                 list.flags.set(Flags::SKIPPED);
@@ -945,7 +931,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             let range: Range = if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 if second_parsed.overflow {
-                    return Ok(Group::null_set(input));
+                    return Ok(Group::null_set());
                 }
                 if !second_parsed.valid {
                     list.flags.set(Flags::SKIPPED);

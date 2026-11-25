@@ -75,49 +75,49 @@ exports.n = 1;
 
 // GENERATED: loadLater
 // CHECK-LABEL: function {{*}}name="loadLater"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|[[f_2]] flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: function, v3: anything, v4: int[0, 4294967295], v5: undefined|null|string, v6: Array):
-// CHECK-NEXT: Jump -> next b1()
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsSloppy, HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: function, v2: anything, v3: int[0, 4294967295], v4: undefined|null|string, v5: Array):
+// CHECK-NEXT: v6 = CreateMappedArguments v1, v3, v5, v4
+// CHECK-NEXT: v7 = ToThis v0
+// CHECK-NEXT: v8 = NewObject layout=[[L_1]]
+// CHECK-NEXT: v9 = Null
+// CHECK-NEXT: SetLiteralPrototype v8, v9
+// CHECK-NEXT: v11 = FinishObject v8
+// CHECK-NEXT: v12 = NewObject -, v6 layout=[[L_2]] fields=[0]
+// CHECK-NEXT: v13 = Undefined
+// CHECK-NEXT: v14 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: Branch v14 -> taken b1(), notTaken b3(v13, v13)
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v7 = CreateMappedArguments v2, v4, v6, v5
-// CHECK-NEXT: v8 = ToThis v1
-// CHECK-NEXT: v9 = NewObject layout=[[L_4]]
-// CHECK-NEXT: v10 = Null
-// CHECK-NEXT: SetLiteralPrototype v9, v10
-// CHECK-NEXT: v12 = FinishObject v9
-// CHECK-NEXT: v13 = NewObject -, v7 layout=[[L_5]] fields=[0]
-// CHECK-NEXT: v14 = ScopeHasBinding v12 key="eval"
-// CHECK-NEXT: Branch v14 -> taken b2(), notTaken b3()
+// CHECK-NEXT: v15 = ScopeHasBinding v11 key="eval"
+// CHECK-NEXT: Branch v15 -> taken b2(), notTaken b3(v13, v13)
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Jump -> next b4(v12, v15)
-// CHECK-NEXT: b3():
 // CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Jump -> next b4(v16, v16)
-// CHECK-NEXT: b4(v17, v18):
+// CHECK-NEXT: Jump -> next b3(v11, v16)
+// CHECK-NEXT: b3(v17, v18):
 // CHECK-NEXT: v19 = TypeTest v17 testedType=object
-// CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b5(v20):
+// CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v20):
 // CHECK-NEXT: v21 = PropGet v20 key="eval"
-// CHECK-NEXT: Jump -> next b7(v21)
-// CHECK-NEXT: b6(v22):
+// CHECK-NEXT: Jump -> next b6(v21)
+// CHECK-NEXT: b5(v22):
 // CHECK-NEXT: v23 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v24 = PropGet v23 key="eval" [isFreeName]
 // CHECK-NEXT: v25 = Convert v24 declared={type=builtin(Eval) flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b7(v25)
-// CHECK-NEXT: b7(v26):
-// CHECK-NEXT: v27 = GetMappedArgument v7
+// CHECK-NEXT: Jump -> next b6(v25)
+// CHECK-NEXT: b6(v26):
+// CHECK-NEXT: v27 = GetMappedArgument v6
 // CHECK-NEXT: v28 = Builtin builtin=Eval [isNotReadFromHolder]
 // CHECK-NEXT: v29 = StrictEq v26, v28
-// CHECK-NEXT: Branch v29 -> taken b8(), notTaken b9(| 0)
-// CHECK-NEXT: b8():
-// CHECK-NEXT: v30 = DirectEval v27, v8, v3, v7, v0, v12, v13 evalScope=e3
-// CHECK-NEXT: Jump -> next b10(v30)
-// CHECK-NEXT: b9(v31):
-// CHECK-NEXT: v32 = Call v31, v18, v27 calleeName="eval"
-// CHECK-NEXT: Jump -> next b10(v32)
-// CHECK-NEXT: b10(v33):
-// CHECK-NEXT: v34 = NewClosure v0, v12 function=[[f_6]]
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v35
+// CHECK-NEXT: Branch v29 -> taken b7(), notTaken b8(| 0)
+// CHECK-NEXT: b7():
+// CHECK-NEXT: v30 = Boolean boolean=true
+// CHECK-NEXT: PutModuleVariable v30 variable=[[g_3]]
+// CHECK-NEXT: v32 = DirectEval v27, v7, v2, v6, v11, v12 evalScope=e4
+// CHECK-NEXT: Jump -> next b9(v32)
+// CHECK-NEXT: b8(v33):
+// CHECK-NEXT: v34 = Call v33, v18, v27 calleeName="eval"
+// CHECK-NEXT: Jump -> next b9(v34)
+// CHECK-NEXT: b9(v35):
+// CHECK-NEXT: v36 = NewClosure v11 function=[[f_4]]
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: }

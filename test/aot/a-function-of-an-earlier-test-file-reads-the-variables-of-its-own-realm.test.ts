@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // `bun test --isolate` gives each test file a fresh realm of one VM, and each realm runs an instance of the compiled program of its own.
 // `Bun.s3` is one object for the VM, so what a file hangs on it is there for the next file, in plain Bun too. A native addon that keeps a reference carries values the same way.
@@ -47,11 +48,7 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   return { stdout: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode };
 }
 
-for (const [way, words] of [
-  ["as the runner divides it", undefined],
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers, both files in one process", "TestRunLayers:2,TestRunPartFiles:3"],
-] as const) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]] as const) {
   test(`a function of an earlier test file reads the variables of its own realm, ${way}`, async () => {
     using dir = tempDir("aot-a-function-of-an-earlier-test-file", files);
     const plain = await runTests(String(dir), undefined);

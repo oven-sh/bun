@@ -261,3 +261,8 @@ impl PureGlobalIdentifierValue {
 }
 
 include!("defines_table.generated.rs");
+
+/// Whether the parser leaves a read of the free name out where nothing takes its value.
+pub fn is_pure_global_identifier(name: &[u8]) -> bool {
+    lookup_pure_global_identifier(name).is_some()
+}

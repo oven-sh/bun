@@ -1,0 +1,8 @@
+# the options are texts: the bag stays in sight, so does the constructor, and the locale is the one that is written
+# -- source: constant-beside-a-bag-of-options-at-a-construction.ts
+# new Intl.DisplayNames("ko", { type: "region" });
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "ko" IntlDisplayNames
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown

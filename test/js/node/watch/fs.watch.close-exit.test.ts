@@ -43,7 +43,7 @@ test.concurrent(
     fs.writeFileSync(file, "initial");
 
     const watcher = fs.watch(file, () => {
-      // Inside the callback: drop the watcher (→ unregister_watcher →
+      // Inside the callback: drop the watcher (→ reschedule →
       // enqueue_task_concurrent, which reads self.loop_), then exit
       // (→ close_and_wait → shutdown → enqueue_task_concurrent again while
       // the CF thread is still inside cf_thread_loop).
@@ -58,7 +58,7 @@ test.concurrent(
     const trigger = setInterval(() => fs.writeFileSync(file, "m" + n++), 20);
 
     // Fallback: if the event never fires, still exercise the crash site
-    // (close() → unregister_watcher → enqueue_task_concurrent → reads
+    // (close() → reschedule → enqueue_task_concurrent → reads
     // self.loop_; process.exit → close_and_wait → shutdown → same). We're
     // asserting "does not crash", and that code path is identical whether
     // close() is called from the watch callback or a timer — only the CF

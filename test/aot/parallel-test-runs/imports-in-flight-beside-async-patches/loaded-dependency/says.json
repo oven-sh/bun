@@ -1,0 +1,18 @@
+{
+  "why": "an import() races the import() inside the factory of an async mock: with threads `bun test` now and then loads the first file before the factory's, and on one thread always",
+  "printed": [
+    "SAID fx runs",
+    "SAID tax runs fx",
+    "SAID sale runs tax mock tax",
+    "SAID one tax,mock tax,mock tax",
+    "SAID two tax,mock tax,mock tax mock tax",
+    "SAID tax runs last",
+    "SAID sale runs tax last",
+    "SAID three tax,last,last",
+    "SAID tax runs fx",
+    "SAID sale runs tax fx",
+    "SAID c tax,fx,fx fx"
+  ],
+  "tests": ["(pass) b", "(pass) c"],
+  "exitCode": 0
+}

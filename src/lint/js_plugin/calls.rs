@@ -284,9 +284,7 @@ pub(super) fn listen<'a>(
         let length = (out.len() - tree_start) as u32;
         out[start + 4..start + 8].copy_from_slice(&length.to_le_bytes());
     }
-    if let Some(writer) = writer
-        && nodes.is_none()
-    {
-        *nodes = Some(writer.into_numbered());
+    if let Some(writer) = writer {
+        nodes.get_or_insert(writer.into_numbered());
     }
 }

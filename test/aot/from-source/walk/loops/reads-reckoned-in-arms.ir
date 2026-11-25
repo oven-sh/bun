@@ -1,0 +1,14 @@
+# f1 = push
+# -- source: main.mjs
+# const points = JSON.parse('[{"n":1,"m":2,"k":0},{"n":3,"m":4,"k":0}]'), odd = JSON.parse('[{"n":1,"m":2,"k":0},{"n":"3","m":4,"k":0}]');
+# function push(points) { let sum = 0; for (let i = 0; i < points.length; i++) { const o = points[i]; const n = o.n * 0.5 + o.m; o.k = n; sum += n; } return sum; }
+# print(push(points), push(odd), points[1].k, odd[1].k);
+# -- end of source
+# The turn stores, so it has no version. Its reads go up to the store as one arm: the sites answer without running code, numbers are asked for, and what fails takes the turn as it is written.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="n"
+# CHECK: testedType=number
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="m"
+# CHECK: PropSet {{*}} key="k"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 8 8 5.5 5.5

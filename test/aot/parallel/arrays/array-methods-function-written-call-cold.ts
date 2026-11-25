@@ -1,6 +1,5 @@
 // In a very large program nearly every function is cold. The loop of an array method runs once for each element all the same, so with a function that is written at the call
 // it is compiled as a loop of the caller. What the method does beside the loop stays: holes, what the callback does to the array, `this`, the three arguments, what is thrown, and the trace.
-// Flags: --aot-limit=MaxWarmCodeValues:1 --aot-verify-each-pass
 type Site = { getFunctionName(): string | null; isNative(): boolean };
 (Error as any).prepareStackTrace = (_error: Error, sites: Site[]) =>
   sites.map(site => (site.getFunctionName() ?? "(none)") + (site.isNative() ? "[native]" : "")).join(" < ");

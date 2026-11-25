@@ -1,18 +1,15 @@
-use bun_sema::bind::Binding;
-use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId, StmtId};
-use bun_sema::node::{Node, NodeData, ToNode};
+use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId};
 
 use smallvec::SmallVec;
 
 use super::scope::BindingRef;
 use super::{FileLowering, FunctionLowering, convert};
 use crate::ir::generated::{FunctionFlags, ResumeMode, YieldResult};
-use crate::ir::{DeclaredType, Edge, FunctionKey, ValueId};
+use crate::ir::{DeclaredType, Edge, FunctionKey, PositionFlags, ValueId};
 
 #[derive(Default)]
 pub(crate) struct CoroutineState {
     yielded: Option<DeclaredType>,
-    /// What the function holds until it ends. Every suspension lists the values.
     pub(in crate::lower) held: SmallVec<[BindingRef; 4]>,
 }
 
@@ -21,6 +18,8 @@ pub(in crate::lower) struct Resumption {
     pub(in crate::lower) sent: ValueId,
     pub(in crate::lower) mode: ValueId,
 }
+
+const MOST_VALUES_THAT_WAIT_WHERE_FRAMES_ARE_SAVED: usize = 32;
 
 pub(crate) fn coroutine_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
     let source_flags = hir[function].flags;
@@ -35,6 +34,12 @@ pub(crate) fn coroutine_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFl
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn may_wait_with(&self, waiting: usize) -> bool {
+        let suspends = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
+        waiting < MOST_VALUES_THAT_WAIT_WHERE_FRAMES_ARE_SAVED
+            || !self.builder.function().flags.intersects(suspends)
+    }
+
     pub(in crate::lower) fn is_async_generator(&self) -> bool {
         let flags = self.builder.function().flags;
         flags.contains(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR)
@@ -65,55 +70,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let yielded = self.coroutine.yielded;
         debug_assert!(yielded.is_some(), "InitialYield dominates every Yield");
         yielded.unwrap_or_else(DeclaredType::untyped)
-    }
-
-    /// `bun run` keeps text that only a build removes. A function that is suspended in front of such text holds the locals that it names.
-    pub(in crate::lower) fn hold_names_of_removed_statement(&mut self, statement: StmtId) {
-        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
-        if !in_bun_run.is_dead_stmt(statement) {
-            self.hold_names_under(statement.to_node(self.file.hir));
-        }
-    }
-
-    pub(in crate::lower) fn hold_names_of_removed_expression(&mut self, expression: ExprId) {
-        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
-        if !in_bun_run.is_dead_expr(expression) {
-            self.hold_names_under(expression.to_node(self.file.hir));
-        }
-    }
-
-    fn hold_names_under(&mut self, removed: Node) {
-        let flags = self.builder.function().flags;
-        let can_be_suspended = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
-        if !flags.intersects(can_be_suspended) || !self.builder.is_open() {
-            return;
-        }
-        let hir = self.file.hir;
-        let mut named: SmallVec<[ValueId; 4]> = SmallVec::new();
-        let mut pending: SmallVec<[Node; 16]> = SmallVec::from_slice(&[removed]);
-        while let Some(node) = pending.pop() {
-            if let NodeData::Expr(expression) = hir.data(node)
-                && let ExprKind::Ident(_) = hir[expression].kind
-            {
-                if let Binding::Symbol(symbol) = self.file.bound.binding(expression)
-                    && let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol))
-                {
-                    let value = self.builder.read_variable(local.variable);
-                    if !named.contains(&value) {
-                        named.push(value);
-                    }
-                }
-                continue;
-            }
-            hir.for_each_child(node, &mut |child| {
-                pending.push(child);
-                false
-            });
-        }
-        if named.is_empty() {
-            return;
-        }
-        self.builder.read_scope(&named);
     }
 
     pub(in crate::lower) fn emit_yield(&mut self, value: ValueId) -> Resumption {
@@ -188,22 +144,12 @@ pub(crate) fn lower_yield(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The position takes what the operand is fulfilled with: the operand itself where its type has no promise in it.
-    pub(in crate::lower) fn find_awaited_source(
-        &mut self,
-        operand: ExprId,
-        position: DeclaredType,
-    ) -> Option<ExprId> {
+    fn find_awaited_source(&mut self, operand: ExprId, position: DeclaredType) -> Option<ExprId> {
+        if !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+            return None;
+        }
         let operand_type = self.queries.expression_type(operand).ok()?;
         let fulfilled = self.queries.awaited_type(operand_type).ok()?;
-        if fulfilled == operand_type {
-            return Some(operand);
-        }
-        let target = self
-            .find_position_source(position)
-            .or_else(|| self.find_mapped_source(position.ty))?;
-        let source_position = self.hir[operand].pos;
-        self.record_type_flow(fulfilled, target, source_position);
-        None
+        (fulfilled == operand_type).then_some(operand)
     }
 }

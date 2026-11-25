@@ -110,6 +110,12 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
+it("every reference back to a native object is circular", () => {
+  const glob = new Bun.Glob("a");
+  Object.assign(glob, { a: glob, b: glob });
+  expect(Bun.inspect(glob, { depth: Infinity })).toStartWith("Glob {\n  a: [Circular],\n  b: [Circular],\n");
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);

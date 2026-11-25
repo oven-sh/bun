@@ -1787,8 +1787,8 @@ describe.concurrent("tarball path", () => {
     return tempDir(dirName, { "package.json": JSON.stringify({ name: packageName, version: "1.0.0" }) });
   }
 
-  // The tarball path is resolved against the package directory (`${dir}/${tarballPath}`) into a
-  // buffer of MAX_PATH_BYTES (src/bun_core/util.rs): 4096 bytes on Linux, 1024 on macOS and, on
+  // The tarball path is resolved against the package directory (`${dir}/${tarballPath}`) and has
+  // to fit MAX_PATH_BYTES (src/bun_core/util.rs): 4096 bytes on Linux, 1024 on macOS and, on
   // Windows, the longest possible command line (32767 UTF-16 units) at three UTF-8 bytes per unit.
   const PATH_BUFFER_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
 
@@ -1823,18 +1823,16 @@ describe.concurrent("tarball path", () => {
     expect(exitCode).toBe(1);
   }
 
-  test("one byte longer than the path buffer once resolved fails with ENAMETOOLONG", () =>
-    expectTooLong(dir => nameResolvingTo(PATH_BUFFER_BYTES + 1, dir)));
-
-  // Neither of these works on Windows: an argument longer than the whole buffer does not fit in a
-  // command line, and a path that fills the buffer exactly is refused by the open rather than the
-  // join, which on Windows currently reports it as ENOSYS (it takes ENAMETOOLONG's number from the
-  // C runtime, where it is a different one than in bun's errno table).
-  test.skipIf(isWindows).each([
-    ["longer than the path buffer", () => nameOfBytes(5000)],
+  test.each([
+    ["one byte longer than the path buffer", PATH_BUFFER_BYTES + 1],
     // Leaves no room for the terminating NUL.
-    ["as long as the path buffer once resolved", (dir: string) => nameResolvingTo(PATH_BUFFER_BYTES, dir)],
-  ])("%s fails with ENAMETOOLONG", (_, tarballPathFor) => expectTooLong(tarballPathFor));
+    ["as long as the path buffer", PATH_BUFFER_BYTES],
+  ])("%s once resolved fails with ENAMETOOLONG", (_, bytes) => expectTooLong(dir => nameResolvingTo(bytes, dir)));
+
+  // On Windows an argument longer than the whole buffer does not fit in a command line.
+  test.skipIf(isWindows)("longer than the path buffer fails with ENAMETOOLONG", () =>
+    expectTooLong(() => nameOfBytes(5000)),
+  );
 
   // The resolved path has to fit in the buffer, not the argument as written.
   test("that only fits the path buffer once resolved is read", async () => {
@@ -1847,6 +1845,35 @@ describe.concurrent("tarball path", () => {
     expect(err).not.toContain("error:");
     expect(out).toContain(" + publish-tarball-path-resolved@1.0.0 (dry-run)");
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows).each([".", "<dir>/x/.."])("is what pack wrote for %s\\dist\\a.tgz", async base => {
+    using dir = packageDir("publish-tarball-path-backslash", "publish-tarball-path-backslash");
+    const typed = base.replace("<dir>", () => String(dir)) + "\\dist\\a.tgz";
+    mkdirSync(join(String(dir), "dist"));
+    await pack(String(dir), env, `--filename=${typed}`);
+    expect(existsSync(join(String(dir), "dist", "a.tgz"))).toBeTrue();
+    await write(typed.startsWith("/") ? typed : join(String(dir), typed), "not the tarball");
+
+    const { err, exitCode } = await publish(dryRunEnv, String(dir), typed, "--dry-run");
+
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("with a trailing slash is not read", async () => {
+    using dir = packageDir("publish-tarball-path-slash", "publish-tarball-path-slash");
+    await pack(String(dir), env);
+
+    const { err, exitCode } = await publish(
+      dryRunEnv,
+      String(dir),
+      "publish-tarball-path-slash-1.0.0.tgz/",
+      "--dry-run",
+    );
+
+    expect(err).toContain("ENOTDIR: Not a directory: failed to read tarball");
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -3200,6 +3227,9 @@ describe.concurrent("bin in the published manifest", () => {
     [{ bin: {}, directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
     [{ bin: "", directories: { bin: "missing" } }, {}],
     [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
+    [{ bin: "cli.js\u0000" }, {}],
+    [{ bin: { x: "cli.js", y: "cli.js\u0000", z: "..\u0000" } }, { x: "cli.js" }],
+    [{ directories: { bin: "bins\u0000" } }, undefined],
   ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({
@@ -3233,6 +3263,30 @@ describe.concurrent("bin in the published manifest", () => {
     expect(exitCode).toBe(0);
 
     expect(captured.versions["1.0.0"].bin).toEqual(expected);
+  });
+
+  test.skipIf(isWindows)("names that end with a backslash", async () => {
+    let captured: any = null;
+    using mock = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") captured = await req.json();
+        return new Response("OK", { status: 200 });
+      },
+    });
+    using dir = tempDir("publish-bin-backslash", {
+      "bunfig.toml": `[install.registry]\nurl = "http://localhost:${mock.port}"\ntoken = "unused"\n`,
+      "package.json": JSON.stringify({ name: "bin-pkg", version: "1.0.0", directories: { bin: "bin" } }),
+      bin: { "x\\\\\\\\\\": "", "sub\\": { "b.js": "" } },
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).not.toContain("error:");
+    expect(captured.versions["1.0.0"].bin).toMatchObject({
+      "x\\\\\\\\\\": "bin/x\\\\\\\\\\",
+      "b.js": "bin/sub\\/b.js",
+    });
+    expect(exitCode).toBe(0);
   });
 
   // No matter which folder the command runs in.

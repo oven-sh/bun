@@ -1,0 +1,16 @@
+# `boxed` makes an object and an arrow over it, which `twice` only calls: the arrow lies in the frame, and its code allocates nothing and fences nothing. The sweep has written where the arrow lies before it settles whose fence a later one covers, so the object keeps its own fence: the arrow lays the object in a list.
+# f1 = twice, f2 = boxed
+# -- source: object-made-in-front-of-a-closure-that-is-lent-keeps-its-own-fence.ts
+# declare function sink(...values: unknown[]): void;
+# const kept: object[] = [];
+# function twice(a: number, f: (x: number) => number): number { let t = a; for (let i = 0; i < 2; i++) t = f(t); return t; }
+# function boxed(a: number) { const box = { v: a, w: a + 1 }; const t = twice(a, x => { kept.push(box); return x + box.v; }); return t + 1; }
+# sink(boxed(1), boxed(2), kept);
+# -- end of source
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK: NewObject
+# CHECK-NOT: LaterFenceCovers
+# CHECK: NewClosure {{*}}storage=Frame {{*}}loan=ToFunctionEntered
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit f2 mechanisms=all-Inlining
+# EMIT: Fence

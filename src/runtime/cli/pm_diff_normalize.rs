@@ -1,7 +1,14 @@
 //! Canonical re-printing for `bun pm diff`: parse a JS/CSS/JSON file and print it back in one fixed style so that
 //! formatting-only releases collapse to nothing and minified bundles become line-diffable.
 
+use super::pm_diff_command::Threads;
 use bun_alloc::Arena;
+use bun_ast::Symbol;
+use core::cell::Cell;
+use core::cmp::Ordering;
+use core::ops::Range;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::mpsc;
 
 /// One source-map point: printed (line, col) came from original (line, col); all 0-based.
 #[derive(Clone, Copy)]
@@ -14,7 +21,7 @@ pub(crate) struct MapPoint {
 
 pub(crate) struct Normalized {
     pub text: Vec<u8>,
-    /// Every source-map point in printed order (JS only; empty when the printer gave none).
+    /// Every source-map point in printed order. Empty for CSS and JSON, and without `Options::source_map`.
     pub map: Vec<MapPoint>,
     /// `import`/`require` specifiers, in source order, internal/unused ones dropped.
     pub imports: Vec<Vec<u8>>,
@@ -65,6 +72,8 @@ pub(crate) struct Options {
     pub dce: bool,
     /// One declaration / call per line: undo `var a, b, c` and `a(), b()` chains (the un-minified display).
     pub relayout: bool,
+    /// Fill `Normalized::map` (JS only).
+    pub source_map: bool,
 }
 
 impl Options {
@@ -73,7 +82,15 @@ impl Options {
         minify_syntax: true,
         dce: true,
         relayout: false,
+        source_map: true,
     };
+
+    pub(crate) const fn without_source_map(self) -> Options {
+        Options {
+            source_map: false,
+            ..self
+        }
+    }
 }
 
 pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<Normalized> {
@@ -82,117 +99,194 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     }
     let mut out = match kind_for(path)? {
         Kind::Js(loader) => {
-            let _store = StoreScope::enter();
-            let arena = Arena::new();
-            let source = bun_ast::Source::init_path_string(path, bytes);
-            let ast = parse_js(&arena, &source, loader, options)?;
-            print_js(&arena, ast, &source, options)
+            let printed = {
+                let _store = StoreScope::enter();
+                let arena = Arena::new();
+                let source = bun_ast::Source::init_path_string(path, bytes);
+                let mut ast = parse_js(&arena, &source, loader, options)?;
+                let symbols = take_symbols(&mut ast);
+                print_js(&arena, ast, symbols, &source, options)
+            };
+            printed.map(|printed| printed.decode(bytes))
         }
-        Kind::Css => normalize_css(path, bytes),
+        Kind::Css => normalize_css(bytes),
         Kind::Json => normalize_json(path, bytes),
     }?;
     out.was_minified = looks_minified(bytes);
     Some(out)
 }
 
-/// Both sides of a minified JS file, re-printed with mangled locals renamed in lockstep (see [`plan_names`]).
+pub(crate) enum Pair {
+    Renamed {
+        old: Normalized,
+        new: Normalized,
+        /// The names that were not renamed, such as those of globals and exports, sorted.
+        as_written: Vec<Vec<u8>>,
+    },
+    /// What `normalize` returns for each side, except that `old` may be `None` if `new` is.
+    Apart {
+        old: Option<Normalized>,
+        new: Option<Normalized>,
+    },
+}
+
+/// What to do with two sides whose locals cannot be renamed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Otherwise {
+    PrintApart,
+    /// Both sides of `Pair::Apart` are `None`.
+    GiveUp,
+}
+
+/// Both sides of a minified JS file, re-printed with mangled locals renamed in lockstep (see [`Namer`]).
 pub(crate) fn normalize_minified_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
     options: Options,
-) -> Option<(Normalized, Normalized)> {
-    let Some(Kind::Js(loader)) = kind_for(path) else {
-        return None;
-    };
-    if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
-        return None;
-    }
-    let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
-    let source_o = bun_ast::Source::init_path_string(path, old);
-    let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
-    pin_exports(&mut ast_o);
-    pin_exports(&mut ast_n);
-    let profiles = [
-        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
-        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
-    ];
-    {
-        let mut namer = Namer::new(
-            &arena_o,
-            &arena_n,
-            ast_o.symbols.as_mut_slice(),
-            ast_n.symbols.as_mut_slice(),
-        )
-        .with_profiles(profiles);
-        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
-        if namer.too_deep {
-            return None;
-        }
-    }
-    let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
-    let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
-    o.was_minified = true;
-    n.was_minified = true;
-    Some((o, n))
+    threads: Threads,
+) -> Pair {
+    let (all_names, otherwise) = (false, Otherwise::PrintApart);
+    let threads = Some(threads);
+    print_pair(path, old, new, [options; 2], all_names, otherwise, threads)
 }
 
 /// Both sides of a readable JS file printed as the comparison key: aggressive options plus every local renamed
 /// in lockstep, so a bundler's `utils` → `utils$1` (or any consistent rename) is not a difference. Never displayed.
+/// `options` are `Options::KEY`, with or without a source map.
 pub(crate) fn normalize_key_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
-) -> Option<(Normalized, Normalized)> {
-    key_pair(path, old, new, Options::KEY).map(|(o, n, _)| (o, n))
+    options: Options,
+    otherwise: Otherwise,
+    threads: Threads,
+) -> Pair {
+    let (all_names, threads) = (true, Some(threads));
+    print_pair(path, old, new, [options; 2], all_names, otherwise, threads)
 }
 
-/// Returns the two comparison keys and a sorted list of every name in them that was not renamed,
-/// such as the names of globals and exports.
-fn key_pair(
+/// The two `options` may differ only in `source_map`. On one thread, `new` is parsed first.
+fn print_pair(
     path: &[u8],
     old: &[u8],
     new: &[u8],
-    options: Options,
-) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
-    let Some(Kind::Js(loader)) = kind_for(path) else {
-        return None;
+    options: [Options; 2],
+    all_names: bool,
+    otherwise: Otherwise,
+    threads: Option<Threads>,
+) -> Pair {
+    let prints_apart = otherwise == Otherwise::PrintApart;
+    let one_by_one = || Pair::Apart {
+        old: prints_apart
+            .then(|| normalize(path, old, options[0]))
+            .flatten(),
+        new: prints_apart
+            .then(|| normalize(path, new, options[1]))
+            .flatten(),
     };
-    if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
-        return None;
-    }
-    let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
-    let source_o = bun_ast::Source::init_path_string(path, old);
-    let source_n = bun_ast::Source::init_path_string(path, new);
-    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
-    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
-    pin_exports(&mut ast_o);
-    pin_exports(&mut ast_n);
-    let profiles = [
-        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
-        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
-    ];
-    let as_written = {
-        let mut namer = Namer::new(
-            &arena_o,
-            &arena_n,
-            ast_o.symbols.as_mut_slice(),
-            ast_n.symbols.as_mut_slice(),
-        )
-        .for_key(profiles);
-        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
-        if namer.too_deep {
-            return None;
+    let fits = old.len().max(new.len()) <= MAX_BYTES;
+    let Some(Kind::Js(loader)) = kind_for(path).filter(|_| fits) else {
+        return one_by_one();
+    };
+    let names = Arena::new();
+    let as_written = Cell::new(None);
+    let not_renamed = |side: Locals| prints_apart.then_some(side.symbols);
+    let symbols_for = |o: Locals, n: Locals| {
+        if o.nesting.max(n.nesting) > MAX_NESTING {
+            return [o, n].map(not_renamed);
         }
-        namer.taken
+        let mut namer = Namer::new(&names, [o, n], all_names);
+        namer.plan(Some(0), Some(0), 0);
+        as_written.set(Some(namer.taken));
+        namer.sides.map(|side| Some(side.symbols))
     };
-    let o = print_js(&arena_o, ast_o, &source_o, options)?;
-    let n = print_js(&arena_n, ast_n, &source_n, options)?;
-    Some((o, n, as_written))
+    let on_two_threads = |threads: Threads| {
+        let ((send_locals, locals), (send_symbols, symbols)) = (mpsc::channel(), mpsc::channel());
+        threads.try_join(
+            old.len().min(new.len()),
+            || {
+                let store = StoreScope::enter();
+                let printed = print_with(path, old, loader, options[0], |o| {
+                    let [o, n] = symbols_for(o, locals.recv().ok()?);
+                    send_symbols.send(n).ok()?;
+                    o
+                });
+                drop(store);
+                let printed = printed.map(|printed| printed.decode(old));
+                // If `old` is not parsed, the other thread still waits for its symbols. Otherwise this waits for it to end.
+                if let Ok(n) = locals.recv() {
+                    let _ = send_symbols.send(not_renamed(n));
+                }
+                printed
+            },
+            // Drops `send_locals` when it ends, which ends a wait for them.
+            move || {
+                let store = StoreScope::enter();
+                let printed = print_with(path, new, loader, options[1], |n| {
+                    send_locals.send(n).ok()?;
+                    symbols.recv().ok()?
+                });
+                drop(store);
+                printed.map(|printed| printed.decode(new))
+            },
+        )
+    };
+    let on_this_thread = || {
+        let store = StoreScope::enter();
+        let mut printed_o = None;
+        let printed_n = print_with(path, new, loader, options[1], |n| {
+            let (mut n, mut symbols_n) = (Some(n), None);
+            printed_o = print_with(path, old, loader, options[0], |o| {
+                let [o, n] = symbols_for(o, n.take()?);
+                symbols_n = n;
+                o
+            });
+            symbols_n.or_else(|| n.and_then(not_renamed))
+        });
+        drop(store);
+        (
+            printed_o.map(|printed| printed.decode(old)),
+            printed_n.map(|printed| printed.decode(new)),
+        )
+    };
+    let (o, n) = threads
+        .and_then(on_two_threads)
+        .unwrap_or_else(on_this_thread);
+    let apart = |print: Option<Normalized>, bytes: &[u8]| {
+        print.map(|print| Normalized {
+            was_minified: looks_minified(bytes),
+            ..print
+        })
+    };
+    match (o, n, as_written.into_inner()) {
+        (Some(old), Some(new), Some(as_written)) => Pair::Renamed {
+            old,
+            new,
+            as_written,
+        },
+        (o, n, None) => Pair::Apart {
+            old: apart(o, old),
+            new: apart(n, new),
+        },
+        // The printer gave up after the symbols were renamed.
+        _ => one_by_one(),
+    }
+}
+
+/// Parses a file, and prints it with the symbols that `symbols_for` returns.
+fn print_with(
+    path: &[u8],
+    bytes: &[u8],
+    loader: bun_ast::Loader,
+    options: Options,
+    symbols_for: impl FnOnce(Locals) -> Option<Vec<Symbol>>,
+) -> Option<Printed> {
+    let arena = Arena::new();
+    let source = bun_ast::Source::init_path_string(path, bytes);
+    let mut ast = parse_js(&arena, &source, loader, options)?;
+    let symbols = symbols_for(Locals::take_from(&mut ast))?;
+    print_js(&arena, ast, symbols, &source, options)
 }
 
 /// Returns true if `old` and `shown` have the same comparison key, which makes them the same
@@ -201,11 +295,26 @@ fn key_pair(
 /// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
 /// mismatch there is accepted, because such a line may still use a local's old name.
 pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
-    same_key(path, old, shown, removed, Options::KEY)
+    // No second thread, so that `old` is not parsed if `shown` fails to parse.
+    same_key(path, old, shown, removed, Options::KEY, None)
 }
 
-fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Options) -> bool {
-    let Some((old, shown, as_written)) = key_pair(path, old, shown, options) else {
+fn same_key(
+    path: &[u8],
+    old: &[u8],
+    shown: &[u8],
+    removed: &[u32],
+    options: Options,
+    threads: Option<Threads>,
+) -> bool {
+    let options = [options.without_source_map(), options];
+    let (all_names, otherwise) = (true, Otherwise::GiveUp);
+    let Pair::Renamed {
+        old,
+        new: shown,
+        as_written,
+    } = print_pair(path, old, shown, options, all_names, otherwise, threads)
+    else {
         return false;
     };
     let (a, b) = (old.text.as_slice(), shown.text.as_slice());
@@ -215,6 +324,8 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     let (mut i, mut j) = (0, 0);
     // The line of `b` that `j` is on, and the offset in `b` where that line starts.
     let (mut line, mut line_start) = (0u32, 0);
+    // From `line_start` up to here the line is known to be ASCII.
+    let mut ascii_to = 0;
     loop {
         let same_from = j;
         while i < a.len() && j < b.len() && a[i] == b[j] {
@@ -244,38 +355,40 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
             && b_end > j
             && as_written.binary_search_by(|name| name.as_slice().cmp(&b[j..b_end])).is_ok()
             // The map counts columns in UTF-16 units, which only equal bytes after ASCII text.
-            && b[line_start..j].is_ascii()
+            && b[line_start.max(ascii_to)..j].is_ascii()
             && from.peek().is_some()
             && from.all(|m| removed.binary_search(&m.orig_line).is_ok());
         if !let_through {
             return false;
         }
+        ascii_to = j;
         (i, j) = (a_end, b_end);
     }
 }
 
-/// Returns true if `shown`, a re-print of the file `raw` that's displayed in its place, still
-/// parses as the same file. If `renamed` is set, the names of locals may differ.
-pub(crate) fn stands_for(
+/// Returns true if `shown`, which is displayed in place of a file, still parses as that file.
+/// `print` is what `normalize` returns for the file with `options`.
+pub(crate) fn stands_for(path: &[u8], print: &Normalized, shown: &[u8], options: Options) -> bool {
+    normalize(path, shown, options.without_source_map())
+        .is_some_and(|again| again.text == print.text)
+}
+
+/// Like `stands_for`, for a re-print of the file `raw` in which locals are renamed.
+pub(crate) fn stands_for_renamed(
     path: &[u8],
     raw: &[u8],
     shown: &[u8],
     options: Options,
-    renamed: bool,
+    threads: Threads,
 ) -> bool {
-    if renamed {
-        return same_key(path, raw, shown, &[], options);
-    }
-    let print = |bytes: &[u8]| normalize(path, bytes, options);
-    matches!((print(raw), print(shown)), (Some(a), Some(b)) if a.text == b.text)
-}
-
-/// Keeps exported symbols from being renamed. An export's name is part of the module's interface.
-fn pin_exports(ast: &mut bun_ast::Ast<'_>) {
-    for export in ast.named_exports.values() {
-        let symbol = Namer::root(ast.symbols.as_slice(), export.ref_.inner_index() as usize);
-        ast.symbols.as_mut_slice()[symbol].set_must_not_be_renamed(true);
-    }
+    same_key(
+        path,
+        raw,
+        shown,
+        &[],
+        options.without_source_map(),
+        Some(threads),
+    )
 }
 
 /// Most of the file's bytes sit on very long lines (a banner comment or a trailing source-map line aside).
@@ -287,13 +400,21 @@ pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
     bytes.len() > 256 && long * 2 > bytes.len()
 }
 
-/// The parser allocates nodes from thread-local stores; keep them alive for the ASTs in this scope, reset after.
-struct StoreScope(bun_ast::StoreResetGuard);
+/// The parser allocates AST nodes and vectors from thread-local stores; keep them alive in this scope. Its end frees
+/// the stores, so scopes must not nest.
+struct StoreScope(bun_ast::StoreAstAllocHeap);
 impl StoreScope {
     fn enter() -> StoreScope {
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        StoreScope(bun_ast::StoreResetGuard::new())
+        StoreScope(bun_ast::StoreAstAllocHeap::new())
+    }
+}
+impl Drop for StoreScope {
+    fn drop(&mut self) {
+        // A reset would keep their memory.
+        bun_ast::expr::data::Store::deinit();
+        bun_ast::stmt::data::Store::deinit();
     }
 }
 
@@ -357,12 +478,28 @@ fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
     Some(starts)
 }
 
+fn take_symbols(ast: &mut bun_ast::Ast<'_>) -> Vec<Symbol> {
+    let arena = *ast.symbols.allocator();
+    core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+        .into_iter()
+        .collect()
+}
+
+/// A print whose source map is still encoded, which keeps it small until the AST is freed.
+struct Printed {
+    text: Vec<u8>,
+    map: Option<bun_sourcemap::Chunk>,
+    imports: Vec<Vec<u8>>,
+    hashbang: Vec<u8>,
+}
+
 fn print_js<'a>(
     arena: &'a Arena,
     mut ast: Box<bun_ast::Ast<'a>>,
+    symbols: Vec<Symbol>,
     source: &'a bun_ast::Source<'a>,
     options: Options,
-) -> Option<Normalized> {
+) -> Option<Printed> {
     super::pm_diff_relayout::relayout(arena, &mut ast, options.relayout);
     let imports: Vec<Vec<u8>> = ast
         .import_records
@@ -376,94 +513,103 @@ fn print_js<'a>(
         .map(|r| r.path.text.to_vec())
         .collect();
 
-    let mut chunk = None;
+    let chunk = Cell::new(None);
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-    let sym_arena = *ast.symbols.allocator();
-    let symbols = bun_ast::symbol::Map::init_with_one_list(
-        core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(sym_arena))
-            .into_iter()
-            .collect(),
-    );
+    let symbols = bun_ast::symbol::Map::init_with_one_list(symbols);
     let print_opts = bun_js_printer::Options {
         minify_syntax: options.minify_syntax,
         require_ref: Some(ast.require_ref),
         import_meta_ref: ast.import_meta_ref,
-        source_map_handler: Some(bun_js_printer::SourceMapHandler::for_(&mut chunk)),
+        source_map_handler: Some(&chunk),
         mangled_props: None,
         ..Default::default()
     };
-    bun_js_printer::print_ast::<_, false, true>(
-        &mut printer,
-        arena,
-        &ast,
-        symbols,
-        source,
-        print_opts,
-    )
-    .ok()?;
-    let mut text = printer.ctx.get_written().to_vec();
+    let print_ast = if options.source_map {
+        bun_js_printer::print_ast::<false, true>
+    } else {
+        bun_js_printer::print_ast::<false, false>
+    };
+    print_ast(&mut printer, arena, &ast, symbols, source, print_opts).ok()?;
+    Some(Printed {
+        text: printer.ctx.buffer.list,
+        map: chunk.into_inner(),
+        imports,
+        hashbang: ast.hashbang.slice().to_vec(),
+    })
+}
 
-    let mut map = Vec::new();
-    if let Some(chunk) = chunk {
-        let (printed, original) = (newline_lines(&text), newline_lines(source.contents()));
-        let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
-            let (line, col) = (line as u32, col.max(0) as u32);
-            match lines.as_ref().and_then(|lines| lines.get(line as usize)) {
-                Some(&(line, start)) => (line, start + col),
-                None => (line, col),
-            }
-        };
-        if let Ok(parsed) = bun_sourcemap::mapping::parse(
-            chunk.buffer.list.as_slice(),
-            None,
-            1,
-            bun_sourcemap::mapping::ParseOptions {
-                allow_names: false,
-                sort: true,
-            },
-        ) {
-            let (from, to) = (parsed.mappings.original(), parsed.mappings.generated());
-            map.reserve(to.len());
-            for (g, o) in to.iter().zip(from) {
-                if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
-                    let (gen_line, gen_col) =
-                        place(&printed, g.lines.zero_based(), g.columns.zero_based());
-                    let (orig_line, orig_col) =
-                        place(&original, o.lines.zero_based(), o.columns.zero_based());
-                    map.push(MapPoint {
-                        gen_line,
-                        gen_col,
-                        orig_line,
-                        orig_col,
-                    });
+impl Printed {
+    /// `source` is the text that was parsed.
+    fn decode(self, source: &[u8]) -> Normalized {
+        let Printed {
+            mut text,
+            map: chunk,
+            imports,
+            hashbang,
+        } = self;
+        let mut map = Vec::new();
+        if let Some(chunk) = &chunk {
+            let (printed, original) = (newline_lines(&text), newline_lines(source));
+            let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
+                let (line, col) = (line as u32, col.max(0) as u32);
+                match lines.as_ref().and_then(|lines| lines.get(line as usize)) {
+                    Some(&(line, start)) => (line, start + col),
+                    None => (line, col),
+                }
+            };
+            if let Ok(parsed) = bun_sourcemap::mapping::parse(
+                chunk.buffer.list.as_slice(),
+                None,
+                1,
+                bun_sourcemap::mapping::ParseOptions {
+                    allow_names: false,
+                    sort: true,
+                },
+            ) {
+                let (from, to) = (parsed.mappings.original(), parsed.mappings.generated());
+                map.reserve(to.len());
+                for (g, o) in to.iter().zip(from) {
+                    if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
+                        let (gen_line, gen_col) =
+                            place(&printed, g.lines.zero_based(), g.columns.zero_based());
+                        let (orig_line, orig_col) =
+                            place(&original, o.lines.zero_based(), o.columns.zero_based());
+                        map.push(MapPoint {
+                            gen_line,
+                            gen_col,
+                            orig_line,
+                            orig_col,
+                        });
+                    }
                 }
             }
         }
-    }
-    // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
-    // is kept as the first line of the output.
-    let hashbang = ast.hashbang.slice();
-    if !hashbang.is_empty() {
-        text = [hashbang, b"\n".as_slice(), text.as_slice()].concat();
-        for point in &mut map {
-            point.gen_line += 1;
+        // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
+        // is kept as the first line of the output.
+        if !hashbang.is_empty() {
+            text = [&hashbang, b"\n".as_slice(), text.as_slice()].concat();
+            for point in &mut map {
+                point.gen_line += 1;
+            }
+            if chunk.is_some() {
+                map.insert(
+                    0,
+                    MapPoint {
+                        gen_line: 0,
+                        gen_col: 0,
+                        orig_line: 0,
+                        orig_col: 0,
+                    },
+                );
+            }
         }
-        map.insert(
-            0,
-            MapPoint {
-                gen_line: 0,
-                gen_col: 0,
-                orig_line: 0,
-                orig_col: 0,
-            },
-        );
+        Normalized {
+            text,
+            map,
+            imports,
+            was_minified: false,
+        }
     }
-    Some(Normalized {
-        text,
-        map,
-        imports,
-        was_minified: false,
-    })
 }
 
 /// Renames short (mangled-looking) locals on both sides of a diff so that the same code prints with the same names.
@@ -472,22 +618,56 @@ fn print_js<'a>(
 /// outer and sibling scopes are independent. Within a scope the two sides are aligned (LCS on symbol kind + use
 /// count) and matched symbols share an index, so inserting a function does not renumber everything after it.
 struct Namer<'s> {
-    arenas: [&'s Arena; 2],
-    symbols: [&'s mut [bun_ast::Symbol]; 2],
-    renamed: [Vec<bool>; 2],
+    /// Holds the new names of both sides.
+    names: &'s Arena,
+    sides: [Locals; 2],
+    /// Per side, per symbol: `candidates` has returned it, so no other scope names it too.
+    listed: [Vec<bool>; 2],
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
     /// never given one of these names.
     taken: Vec<Vec<u8>>,
-    /// A scope was nested too deep to be renamed. Its original names were not checked against the
-    /// new names given to the scopes around it, so the renaming cannot be used.
-    too_deep: bool,
+    /// The name for each index and depth that has one.
+    given: BTreeMap<(usize, usize), bun_ast::StoreStr>,
     scratch: Vec<u8>,
-    /// Subtree member counts, computed once per scope.
-    weights: WeightMemo,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
-    /// Per side, per symbol: name-free use-site profile hash (0 = unused / not computed).
-    profiles: [Vec<u64>; 2],
+}
+
+/// `Namer::plan` recurses once per level, so locals are not renamed in files that nest deeper.
+const MAX_NESTING: u32 = 256;
+
+/// What `Namer` needs of one side. The strings in `symbols` live as long as the AST.
+struct Locals {
+    symbols: Vec<Symbol>,
+    /// Per symbol: name-free use-site profile hash (0 = unused / not computed).
+    profiles: Vec<u64>,
+    scopes: Vec<FlatScope>,
+    /// The symbols that each scope declares, in source order. See `FlatScope::members`.
+    members: Vec<u32>,
+    /// 0 if the module's scope is the only one.
+    nesting: u32,
+    /// Exports, which are the module's interface, and what direct eval reads by name. The parser only sees to that in
+    /// nested scopes.
+    pinned: Vec<u32>,
+}
+
+impl Locals {
+    fn take_from(ast: &mut bun_ast::Ast<'_>) -> Locals {
+        let (scopes, members, nesting) = flatten(&ast.module_scope);
+        let exports = ast.named_exports.values().iter();
+        let mut pinned: Vec<u32> = exports.map(|export| export.ref_.inner_index()).collect();
+        if ast.module_scope.contains_direct_eval {
+            pinned.extend((ast.module_scope.members.values()).map(|it| it.ref_.inner_index()));
+        }
+        Locals {
+            pinned,
+            profiles: super::pm_diff_profile::profiles(ast, ast.symbols.len()),
+            symbols: take_symbols(ast),
+            scopes,
+            members,
+            nesting,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -511,59 +691,38 @@ fn count_bucket(n: u32) -> u64 {
 }
 
 impl<'s> Namer<'s> {
-    fn new(
-        arena_o: &'s Arena,
-        arena_n: &'s Arena,
-        old: &'s mut [bun_ast::Symbol],
-        new: &'s mut [bun_ast::Symbol],
-    ) -> Namer<'s> {
-        let mut taken = Vec::new();
-        for sym in old.iter().chain(new.iter()) {
-            if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
-                || sym.original_name.len() > 2
-            {
-                taken.push(sym.original_name.slice().to_vec());
+    fn new(names: &'s Arena, mut sides: [Locals; 2], all_names: bool) -> Namer<'s> {
+        // The printer reads this flag too, so only renamed sides get it.
+        for side in &mut sides {
+            for &pinned in &side.pinned {
+                let symbol = Self::root(&side.symbols, pinned as usize);
+                side.symbols[symbol].set_must_not_be_renamed(true);
             }
         }
+        // Locals the parser pinned (direct eval, `with`) keep their names, as globals do.
+        let mut taken: Vec<&[u8]> = sides
+            .iter()
+            .flat_map(|side| &side.symbols)
+            .filter(|sym| {
+                sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
+                    || (!all_names && sym.original_name.len() > 2)
+            })
+            .map(|sym| sym.original_name.slice())
+            .collect();
         taken.sort_unstable();
         taken.dedup();
         Namer {
-            arenas: [arena_o, arena_n],
-            weights: Default::default(),
-            too_deep: false,
-            all_names: false,
-            profiles: [Vec::new(), Vec::new()],
-            renamed: [vec![false; old.len()], vec![false; new.len()]],
-            symbols: [old, new],
-            taken,
+            names,
+            all_names,
+            listed: sides.each_ref().map(|side| vec![false; side.symbols.len()]),
+            taken: taken.into_iter().map(<[u8]>::to_vec).collect(),
+            sides,
+            given: BTreeMap::new(),
             scratch: Vec::new(),
         }
     }
 
-    /// Key mode: every local is renamed, symbols are matched by how they are used, and any global's name is off limits.
-    fn with_profiles(mut self, profiles: [Vec<u64>; 2]) -> Self {
-        self.profiles = profiles;
-        self
-    }
-
-    fn for_key(mut self, profiles: [Vec<u64>; 2]) -> Self {
-        self.all_names = true;
-        self.profiles = profiles;
-        self.taken.clear();
-        for side in 0..2 {
-            for sym in self.symbols[side].iter() {
-                // Everything that keeps its name — globals and locals the parser pinned (direct eval, `with`) — is taken.
-                if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed {
-                    self.taken.push(sym.original_name.slice().to_vec());
-                }
-            }
-        }
-        self.taken.sort_unstable();
-        self.taken.dedup();
-        self
-    }
-
-    fn root(symbols: &[bun_ast::Symbol], mut i: usize) -> usize {
+    fn root(symbols: &[Symbol], mut i: usize) -> usize {
         for _ in 0..64 {
             let link = symbols[i].link.get();
             if !link.is_valid() || link.is_source_contents_slice() {
@@ -575,32 +734,28 @@ impl<'s> Namer<'s> {
     }
 
     /// Members of `scope` on `side` that should get positional names, in source order.
-    fn candidates(&self, side: usize, scope: &bun_ast::Scope) -> Vec<Candidate> {
-        let symbols = &*self.symbols[side];
-        let mut members: Vec<(i32, u32)> = scope
-            .members
-            .values()
-            .map(|m| (m.loc.start, m.ref_.inner_index()))
-            .collect();
-        members.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
-        members.sort_unstable();
+    fn candidates(&mut self, side: usize, scope: u32) -> Vec<Candidate> {
+        let Locals {
+            symbols,
+            profiles,
+            scopes,
+            members,
+            ..
+        } = &self.sides[side];
+        let Range { start, end } = scopes[scope as usize].members;
+        let members = &members[start as usize..end as usize];
         let mut out = Vec::with_capacity(members.len());
-        for (_, inner) in members {
+        for &inner in members {
             let i = Self::root(symbols, inner as usize);
             let sym = &symbols[i];
-            if self.renamed[side][i]
+            if self.listed[side][i]
                 || (!self.all_names && sym.original_name.len() > 2)
                 || sym.slot_namespace() != bun_ast::symbol::SlotNamespace::Default
             {
                 continue;
             }
-            if out.iter().any(|c: &Candidate| c.symbol == i) {
-                continue;
-            }
-            let profile = self.profiles[side]
-                .get(inner as usize)
-                .copied()
-                .unwrap_or(0);
+            self.listed[side][i] = true;
+            let profile = profiles.get(inner as usize).copied().unwrap_or(0);
             out.push(Candidate {
                 symbol: i,
                 kind: sym.kind as u8,
@@ -613,6 +768,14 @@ impl<'s> Namer<'s> {
     }
 
     fn assign(&mut self, side: usize, symbol: usize, index: usize, depth: usize) {
+        let name = match self.given.get(&(index, depth)) {
+            Some(&name) => name,
+            None => self.new_name(index, depth),
+        };
+        self.sides[side].symbols[symbol].original_name = name;
+    }
+
+    fn new_name(&mut self, index: usize, depth: usize) -> bun_ast::StoreStr {
         const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let out = &mut self.scratch;
         out.clear();
@@ -634,25 +797,13 @@ impl<'s> Namer<'s> {
         {
             out.push(b'_');
         }
-        self.symbols[side][symbol].original_name =
-            bun_ast::StoreStr::new(self.arenas[side].alloc_slice_copy(out));
-        self.renamed[side][symbol] = true;
+        let name = bun_ast::StoreStr::new(self.names.alloc_slice_copy(out));
+        self.given.insert((index, depth), name);
+        name
     }
 
-    /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
-    fn plan(
-        &mut self,
-        old: Option<&bun_ast::Scope>,
-        new: Option<&bun_ast::Scope>,
-        depth: usize,
-        level: usize,
-    ) {
-        // `plan` recurses once per nesting level. Input nested deeper than this is pathological, so
-        // the callers give up on renaming it.
-        if level > 256 {
-            self.too_deep = true;
-            return;
-        }
+    /// `depth` is the naming digit (only scopes that named something bump it).
+    fn plan(&mut self, old: Option<u32>, new: Option<u32>, depth: usize) {
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));
         let cn = new.map_or(Vec::new(), |s| self.candidates(1, s));
         let mut index = 0;
@@ -666,14 +817,10 @@ impl<'s> Namer<'s> {
             }
         };
         let mut aligned = align(&co, &cn, key);
-        rematch_runs(&mut aligned, |i, j| {
-            co[i].fingerprint == cn[j].fingerprint && co[i].name_hash == cn[j].name_hash
-        });
-        rematch_runs(&mut aligned, |i, j| co[i].fingerprint == cn[j].fingerprint);
-        rematch_runs(&mut aligned, |i, j| {
-            co[i].kind == cn[j].kind && co[i].name_hash == cn[j].name_hash
-        });
-        rematch_runs(&mut aligned, |i, j| co[i].kind == cn[j].kind);
+        rematch_runs(&mut aligned, &co, &cn, |c| (c.fingerprint, c.name_hash));
+        rematch_runs(&mut aligned, &co, &cn, |c| c.fingerprint);
+        rematch_runs(&mut aligned, &co, &cn, |c| (c.kind, c.name_hash));
+        rematch_runs(&mut aligned, &co, &cn, |c| c.kind);
         for pair in aligned {
             if let (Some(i), _) = pair {
                 self.assign(0, co[i].symbol, index, depth);
@@ -685,148 +832,184 @@ impl<'s> Namer<'s> {
         }
         // Scopes that declare nothing (arg lists, plain blocks) do not use up a depth digit.
         let child_depth = depth + usize::from(index > 0);
-        let ko: Vec<&bun_ast::Scope> =
-            old.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
-        let kn: Vec<&bun_ast::Scope> =
-            new.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
-        for (o, n) in pair_scopes(&ko, &kn, &mut self.weights) {
-            self.plan(o, n, child_depth, level + 1);
+        for (o, n) in pair_scopes(
+            children(&self.sides[0].scopes, old),
+            children(&self.sides[1].scopes, new),
+        ) {
+            self.plan(o, n, child_depth);
         }
     }
 }
 
-/// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
-/// good answer (small ones name positionally either way), so those are matched by kind and closest member count
-/// first; the rest fall to an in-order alignment on kind.
-type WeightMemo = bun_collections::HashMap<*const bun_ast::Scope, usize>;
+/// A scope in a list of a file's scopes, in which the scopes inside it come directly after it.
+struct FlatScope {
+    /// Its part of `Locals::members`.
+    members: Range<u32>,
+    kind: bun_ast::scope::Kind,
+    /// Its index in the list.
+    at: u32,
+    /// The index of the scope around it. 0 for the root.
+    parent: u32,
+    /// The number of scopes in its subtree, itself included.
+    scopes: u32,
+    /// The number of members in its subtree.
+    weight: u32,
+}
 
-fn pair_scopes<'a>(
-    old: &[&'a bun_ast::Scope],
-    new: &[&'a bun_ast::Scope],
-    memo: &mut WeightMemo,
-) -> Vec<(Option<&'a bun_ast::Scope>, Option<&'a bun_ast::Scope>)> {
-    const BIG: usize = 24;
-    // Post-order fill: every scope's subtree count lands in `memo` the first time any ancestor asks.
-    fn weight(root: &bun_ast::Scope, memo: &mut WeightMemo) -> usize {
-        if let Some(&w) = memo.get(&std::ptr::from_ref(root)) {
-            return w;
-        }
-        let mut order: Vec<&bun_ast::Scope> = Vec::new();
-        let mut stack = vec![root];
-        while let Some(s) = stack.pop() {
-            if memo.contains_key(&std::ptr::from_ref(s)) {
-                continue;
-            }
-            order.push(s);
-            stack.extend(s.children.iter().map(|c| &**c));
-        }
-        for s in order.into_iter().rev() {
-            let w = s.members.len()
-                + s.children
-                    .iter()
-                    .map(|c| memo.get(&std::ptr::from_ref(&**c)).copied().unwrap_or(0))
-                    .sum::<usize>();
-            memo.insert(std::ptr::from_ref(s), w);
-        }
-        memo.get(&std::ptr::from_ref(root)).copied().unwrap_or(0)
+fn flatten(root: &bun_ast::Scope) -> (Vec<FlatScope>, Vec<u32>, u32) {
+    let mut out: Vec<FlatScope> = Vec::new();
+    let (mut members, mut own) = (Vec::new(), Vec::new());
+    let (mut stack, mut nesting) = (vec![(root, 0, 0)], 0);
+    while let Some((scope, parent, level)) = stack.pop() {
+        nesting = nesting.max(level);
+        let at = out.len() as u32;
+        own.extend((scope.members.values()).map(|m| (m.loc.start, m.ref_.inner_index())));
+        own.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
+        own.sort_unstable();
+        let start = members.len() as u32;
+        members.extend(own.drain(..).map(|(_, symbol)| symbol));
+        out.push(FlatScope {
+            members: start..members.len() as u32,
+            kind: scope.kind,
+            at,
+            parent,
+            scopes: 1,
+            weight: scope.members.len() as u32,
+        });
+        stack.extend(scope.children.iter().rev().map(|c| (&**c, at, level + 1)));
     }
-    let wo: Vec<usize> = old.iter().map(|s| weight(s, memo)).collect();
-    let wn: Vec<usize> = new.iter().map(|s| weight(s, memo)).collect();
-    let mut out = Vec::with_capacity(old.len().max(new.len()));
-    let mut old_used = vec![false; old.len()];
-    let mut new_used = vec![false; new.len()];
-    // Heaviest first, so the one scope that matters most gets first pick.
-    let mut order: Vec<usize> = (0..new.len()).filter(|&j| wn[j] >= BIG).collect();
-    order.sort_by_key(|&j| core::cmp::Reverse(wn[j]));
-    for j in order {
-        let best = (0..old.len())
-            .filter(|&i| !old_used[i] && old[i].kind == new[j].kind && wo[i] >= BIG / 2)
-            .min_by_key(|&i| wo[i].abs_diff(wn[j]));
-        if let Some(i) = best {
-            if wo[i].abs_diff(wn[j]) * 2 <= wn[j] {
-                old_used[i] = true;
-                new_used[j] = true;
-                out.push((Some(old[i]), Some(new[j])));
-            }
-        }
+    for at in (1..out.len()).rev() {
+        let (scopes, weight) = (out[at].scopes, out[at].weight);
+        let parent = out[at].parent as usize;
+        out[parent].scopes += scopes;
+        out[parent].weight += weight;
     }
-    let ro: Vec<usize> = (0..old.len()).filter(|&i| !old_used[i]).collect();
-    let rn: Vec<usize> = (0..new.len()).filter(|&j| !new_used[j]).collect();
-    let mut rest = align_by(
-        &ro,
-        &rn,
-        |&i| (old[i].kind as u64) << 32 | wo[i] as u64,
-        |&j| (new[j].kind as u64) << 32 | wn[j] as u64,
-    );
-    rematch_runs(&mut rest, |a, b| old[ro[a]].kind == new[rn[b]].kind);
-    for (a, b) in rest {
-        out.push((a.map(|a| old[ro[a]]), b.map(|b| new[rn[b]])));
+    (out, members, nesting)
+}
+
+fn children(scopes: &[FlatScope], of: Option<u32>) -> Vec<&FlatScope> {
+    let mut out = Vec::new();
+    if let Some(of) = of {
+        let mut at = of + 1;
+        while at < of + scopes[of as usize].scopes {
+            let child = &scopes[at as usize];
+            out.push(child);
+            at += child.scopes;
+        }
     }
     out
 }
 
-/// Between two matched anchors, leftovers whose fingerprint drifted (a use count crossed a bucket) are still
-/// almost certainly the same symbols; pair them off in order when `compatible` agrees.
-fn rematch_runs(
-    aligned: &mut Vec<(Option<usize>, Option<usize>)>,
-    compatible: impl Fn(usize, usize) -> bool,
-) {
-    let mut out = Vec::with_capacity(aligned.len());
-    let mut k = 0;
-    while k < aligned.len() {
-        if aligned[k].0.is_some() && aligned[k].1.is_some() {
-            out.push(aligned[k]);
-            k += 1;
-            continue;
-        }
-        let run_start = k;
-        while k < aligned.len() && !(aligned[k].0.is_some() && aligned[k].1.is_some()) {
-            k += 1;
-        }
-        let olds: Vec<usize> = aligned[run_start..k].iter().filter_map(|p| p.0).collect();
-        let mut news: Vec<Option<usize>> = aligned[run_start..k]
-            .iter()
-            .filter_map(|p| p.1)
-            .map(Some)
+/// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
+/// good answer (small ones name positionally either way), so those are matched by kind and closest member count
+/// first; the rest are aligned in order by kind and member count, and what that leaves by kind alone.
+fn pair_scopes<'a>(
+    mut old: Vec<&'a FlatScope>,
+    mut new: Vec<&'a FlatScope>,
+) -> Vec<(Option<u32>, Option<u32>)> {
+    const BIG: u32 = 24;
+    let mut out = Vec::new();
+    let mut order: Vec<usize> = (0..new.len()).filter(|&j| new[j].weight >= BIG).collect();
+    if !order.is_empty() {
+        // (kind, weight, index) of each old scope that has no pair yet.
+        let mut unpaired: BTreeSet<(u8, u32, usize)> = (0..old.len())
+            .filter(|&i| old[i].weight >= BIG / 2)
+            .map(|i| (old[i].kind as u8, old[i].weight, i))
             .collect();
-        for i in olds {
-            match news
-                .iter_mut()
-                .find(|j| j.is_some_and(|j| compatible(i, j)))
+        let mut old_used = vec![false; old.len()];
+        let mut new_used = vec![false; new.len()];
+        // Heaviest first, so the one scope that matters most gets first pick.
+        order.sort_by_key(|&j| core::cmp::Reverse(new[j].weight));
+        for j in order {
+            let (kind, weight) = (new[j].kind as u8, new[j].weight);
+            let first = |from, to| unpaired.range((kind, from, 0)..(kind, to, 0)).next();
+            let lighter = unpaired.range((kind, 0, 0)..(kind, weight, 0)).next_back();
+            // The closest weight is the next lower or the next higher one. Ties go to the earlier scope.
+            let best = [
+                lighter.and_then(|&(_, lighter, _)| first(lighter, weight)),
+                first(weight, u32::MAX),
+            ]
+            .into_iter()
+            .flatten()
+            .min_by_key(|&&(_, other, i)| (other.abs_diff(weight), i));
+            if let Some(&best @ (_, other, i)) = best
+                && other.abs_diff(weight) * 2 <= weight
             {
-                Some(slot) => out.push((Some(i), slot.take())),
-                None => out.push((Some(i), None)),
+                unpaired.remove(&best);
+                old_used[i] = true;
+                new_used[j] = true;
+                out.push((Some(old[i].at), Some(new[j].at)));
             }
         }
-        out.extend(news.into_iter().flatten().map(|j| (None, Some(j))));
+        for (scopes, used) in [(&mut old, old_used), (&mut new, new_used)] {
+            let mut used = used.into_iter();
+            scopes.retain(|_| used.next() == Some(false));
+        }
+    }
+    let mut rest = align(&old, &new, |s| (s.kind as u64) << 32 | u64::from(s.weight));
+    rematch_runs(&mut rest, &old, &new, |s| s.kind as u8);
+    out.extend(
+        rest.into_iter()
+            .map(|(i, j)| (i.map(|i| old[i].at), j.map(|j| new[j].at))),
+    );
+    out
+}
+
+/// Between two matched anchors, leftovers whose fingerprint drifted (a use count crossed a bucket) are still
+/// almost certainly the same symbols; pair off those with the same `key` in order.
+fn rematch_runs<T, K: Ord>(
+    aligned: &mut Vec<(Option<usize>, Option<usize>)>,
+    a: &[T],
+    b: &[T],
+    key: impl Fn(&T) -> K,
+) {
+    let is_pair = |p: &(Option<usize>, Option<usize>)| p.0.is_some() && p.1.is_some();
+    if aligned.iter().all(is_pair) {
+        return;
+    }
+    let mut out = Vec::with_capacity(aligned.len());
+    for run in aligned.chunk_by(|x, y| is_pair(x) == is_pair(y)) {
+        if run.iter().all(|p| p.0.is_some()) || run.iter().all(|p| p.1.is_some()) {
+            out.extend_from_slice(run);
+            continue;
+        }
+        let mut olds: Vec<usize> = run.iter().filter_map(|p| p.0).collect();
+        let mut news: Vec<usize> = run.iter().filter_map(|p| p.1).collect();
+        olds.sort_by_key(|&i| key(&a[i]));
+        news.sort_by_key(|&j| key(&b[j]));
+        let (run_start, mut o, mut n) = (out.len(), 0, 0);
+        while o < olds.len() || n < news.len() {
+            let order = match (olds.get(o), news.get(n)) {
+                (Some(&i), Some(&j)) => key(&a[i]).cmp(&key(&b[j])),
+                (Some(_), None) => Ordering::Less,
+                (None, _) => Ordering::Greater,
+            };
+            let (take_old, take_new) = (order.is_le(), order.is_ge());
+            out.push((take_old.then(|| olds[o]), take_new.then(|| news[n])));
+            o += usize::from(take_old);
+            n += usize::from(take_new);
+        }
+        // The old side's order, then the new side's for what is only there.
+        out[run_start..].sort_unstable_by_key(|&(i, j)| (i.is_none(), i, j));
     }
     *aligned = out;
 }
 
 /// LCS alignment of two keyed sequences: yields every element of both, matched ones together, in merged order.
-fn align<T>(
-    a: &[T],
-    b: &[T],
-    key: impl Fn(&T) -> u64 + Copy,
-) -> Vec<(Option<usize>, Option<usize>)> {
-    align_by(a, b, key, key)
-}
-
-fn align_by<A, B>(
-    a: &[A],
-    b: &[B],
-    ka: impl Fn(&A) -> u64,
-    kb: impl Fn(&B) -> u64,
-) -> Vec<(Option<usize>, Option<usize>)> {
+fn align<T>(a: &[T], b: &[T], key: impl Fn(&T) -> u64) -> Vec<(Option<usize>, Option<usize>)> {
     let (n, m) = (a.len(), b.len());
     let mut out = Vec::with_capacity(n.max(m));
     // Trim the common head and tail so the quadratic part only sees the churn.
-    let head = a.iter().zip(b).take_while(|(x, y)| ka(x) == kb(y)).count();
+    let head = a
+        .iter()
+        .zip(b)
+        .take_while(|(x, y)| key(x) == key(y))
+        .count();
     let tail = a[head..]
         .iter()
         .rev()
         .zip(b[head..].iter().rev())
-        .take_while(|(x, y)| ka(x) == kb(y))
+        .take_while(|(x, y)| key(x) == key(y))
         .count();
     out.extend((0..head).map(|i| (Some(i), Some(i))));
     let (a2, b2) = (&a[head..n - tail], &b[head..m - tail]);
@@ -840,14 +1023,14 @@ fn align_by<A, B>(
         const WINDOW: usize = 96;
         let (mut i, mut j) = (0, 0);
         while i < n2 && j < m2 {
-            if ka(&a2[i]) == kb(&b2[j]) {
+            if key(&a2[i]) == key(&b2[j]) {
                 out.push((Some(head + i), Some(head + j)));
                 i += 1;
                 j += 1;
                 continue;
             }
-            let da = (1..WINDOW).find(|&d| i + d < n2 && ka(&a2[i + d]) == kb(&b2[j]));
-            let db = (1..WINDOW).find(|&d| j + d < m2 && kb(&b2[j + d]) == ka(&a2[i]));
+            let da = (1..WINDOW).find(|&d| i + d < n2 && key(&a2[i + d]) == key(&b2[j]));
+            let db = (1..WINDOW).find(|&d| j + d < m2 && key(&b2[j + d]) == key(&a2[i]));
             match (da, db) {
                 (Some(da), db) if db.is_none_or(|db| da <= db) => {
                     out.extend((i..i + da).map(|k| (Some(head + k), None)));
@@ -868,24 +1051,39 @@ fn align_by<A, B>(
         out.extend((i..n2).map(|k| (Some(head + k), None)));
         out.extend((j..m2).map(|k| (None, Some(head + k))));
     } else {
-        let w = m2 + 1;
-        let mut dp = vec![0u32; (n2 + 1) * w];
-        for i in (0..n2).rev() {
-            for j in (0..m2).rev() {
-                dp[i * w + j] = if ka(&a2[i]) == kb(&b2[j]) {
-                    dp[(i + 1) * w + j + 1] + 1
-                } else {
-                    dp[(i + 1) * w + j].max(dp[i * w + j + 1])
-                };
+        // Bit-parallel LCS (Crochemore et al., 2001): in row `i`, bit `m2 - 1 - j` is set if `b2[j]` adds nothing to
+        // the LCS of `a2[i..]` and `b2[j..]`.
+        let words = m2.div_ceil(64);
+        let mut keys: Vec<u64> = a2.iter().map(&key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let mut places = vec![0u64; keys.len() * words];
+        for (j, y) in b2.iter().rev().enumerate() {
+            if let Ok(k) = keys.binary_search(&key(y)) {
+                places[k * words + j / 64] |= 1 << (j % 64);
             }
         }
+        let mut same = vec![!0u64; (n2 + 1) * words];
+        for i in (0..n2).rev() {
+            let at = keys.partition_point(|&k| k < key(&a2[i])) * words;
+            let (row, below) = same[i * words..].split_at_mut(words);
+            let mut carry = false;
+            for w in 0..words {
+                let (sum, c) = below[w].carrying_add(below[w] & places[at + w], carry);
+                row[w] = sum | (below[w] & !places[at + w]);
+                carry = c;
+            }
+        }
+        let is_same = |i: usize, j: usize| {
+            same[i * words + (m2 - 1 - j) / 64] >> ((m2 - 1 - j) % 64) & 1 != 0
+        };
         let (mut i, mut j) = (0, 0);
         while i < n2 || j < m2 {
-            if i < n2 && j < m2 && ka(&a2[i]) == kb(&b2[j]) {
+            if i < n2 && j < m2 && key(&a2[i]) == key(&b2[j]) {
                 out.push((Some(head + i), Some(head + j)));
                 i += 1;
                 j += 1;
-            } else if j < m2 && (i == n2 || dp[i * w + j + 1] >= dp[(i + 1) * w + j]) {
+            } else if j < m2 && is_same(i, j) {
                 out.push((None, Some(head + j)));
                 j += 1;
             } else {
@@ -898,24 +1096,13 @@ fn align_by<A, B>(
     out
 }
 
-fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
-    // The CSS parser wants a `'static` arena and this command runs on one thread; a `'static` arena cannot be
-    // reset in safe code, so the total CSS fed through it is capped and anything past that diffs as text.
-    static ARENA: std::sync::LazyLock<Arena> = std::sync::LazyLock::new(Arena::new);
-    static FED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-    const CSS_BUDGET: usize = 64 * 1024 * 1024;
-    if FED.fetch_add(bytes.len(), core::sync::atomic::Ordering::Relaxed) + bytes.len() > CSS_BUDGET
-    {
-        return None;
-    }
-    let alloc: &'static Arena = &ARENA;
-    let mut opts = bun_css::ParserOptions::default(None);
-    opts.filename = alloc.alloc_slice_copy(path);
+fn normalize_css(bytes: &[u8]) -> Option<Normalized> {
+    let alloc = &Arena::new();
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,
         bytes,
-        opts,
+        bun_css::ParserOptions::default(None),
         Some(&mut import_records),
         bun_ast::Index::INVALID,
     )
@@ -966,7 +1153,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     )
     .ok()?;
     Some(Normalized {
-        text: printer.ctx.get_written().to_vec(),
+        text: printer.ctx.buffer.list,
         map: Vec::new(),
         imports: Vec::new(),
         was_minified: false,

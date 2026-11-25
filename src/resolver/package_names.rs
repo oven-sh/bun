@@ -1,13 +1,19 @@
 //! What a build asks so that an executable finds its entry points by the names of their packages.
 
+use core::ops::DerefMut;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, Log};
-use bun_paths::is_sep_native;
+use bun_core::scoped::SetForScope;
+use bun_core::strings;
+use bun_paths::{Path, is_sep, to_portable};
 
-use crate::compiled_program::{compare_source_paths, normalize_separator, public_path_from_root};
+use crate::compiled_program::{
+    ENDS_SEARCH, LEADS_OUTSIDE, LEADS_OUTSIDE_AS_FOLDER, compare_source_paths,
+    public_path_from_root,
+};
 use crate::package_json::Package;
-use crate::resolver::{Resolver, TSConfigRef};
+use crate::resolver::{Resolver, TSConfigRef, rewritten_file_extensions};
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -55,23 +61,15 @@ pub struct FurtherPackageName {
 
 const NODE_MODULES: &[u8] = b"node_modules";
 
-fn native_separator(byte: u8) -> u8 {
-    if cfg!(windows) && byte == b'/' {
-        b'\\'
-    } else {
-        byte
-    }
-}
-
 fn last_component(path: &[u8]) -> &[u8] {
     &path[path
         .iter()
-        .rposition(|&byte| is_sep_native(byte))
+        .rposition(|&byte| is_sep(byte))
         .map_or(0, |separator| separator + 1)..]
 }
 
 fn parent(path: &[u8]) -> Option<&[u8]> {
-    let separator = path.iter().rposition(|&byte| is_sep_native(byte))?;
+    let separator = path.iter().rposition(|&byte| is_sep(byte))?;
     (separator > 0).then_some(&path[..separator])
 }
 
@@ -125,21 +123,19 @@ fn list_places<'a>(folders: &[BuildPaths<'a>]) -> Vec<BuildPaths<'a>> {
 
 fn is_inside_node_modules(folder: &[u8]) -> bool {
     folder
-        .split(|&byte| is_sep_native(byte))
+        .split(|&byte| is_sep(byte))
         .any(|component| component == NODE_MODULES)
 }
 
 /// `path` as a specifier relative to `folder`. Both are absolute.
 fn to_relative_specifier(folder: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let relative = bun_paths::resolve_path::relative_alloc(folder, path).ok()?;
-    if bun_paths::is_absolute(&relative) {
+    let relative: &[u8] = &bun_paths::Path::relative(folder, path).into_portable();
+    if bun_paths::is_absolute(relative) {
         return None;
     }
-    let with_slash = |&byte: &u8| if is_sep_native(byte) { b'/' } else { byte };
-    let relative: Vec<u8> = relative.iter().map(with_slash).collect();
     match relative.starts_with(b"../") || relative == b".." {
-        true => Some(relative),
-        false => Some([b"./", &relative[..]].concat()),
+        true => Some(relative.to_vec()),
+        false => Some([b"./", relative].concat()),
     }
 }
 
@@ -156,9 +152,8 @@ pub fn add_written_names(
         let Some(position) = entry_points.iter().position(is_named) else {
             continue;
         };
-        let public_path = name.public_path.iter().copied();
         names.push(PackageName {
-            public_path: public_path.map(normalize_separator).collect(),
+            public_path: to_portable(name.public_path).into_owned(),
             required: Some(position as u32),
             imported: Some(position as u32),
             hides_other_paths: false,
@@ -169,6 +164,26 @@ pub fn add_written_names(
     names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
     names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
     names
+}
+
+/// What may stand behind the name of a file where a program writes the name without it.
+const SPELLINGS: [&[u8]; 11] = [
+    b"", b".tsx", b".ts", b".mts", b".cts", b".jsx", b".js", b".mjs", b".cjs", b".json", b".node",
+];
+
+/// The names other than its own under which the executable finds a file called `base`: without its extension, and with the extension of JavaScript that its extension of TypeScript stands for.
+fn list_other_names(base: &[u8]) -> Vec<Vec<u8>> {
+    let Some(dot) = strings::last_index_of_char(base, b'.').filter(|&dot| dot > 0) else {
+        return Vec::new();
+    };
+    let (stem, extension) = base.split_at(dot);
+    let written: &[&[u8]] = match extension {
+        b".ts" | b".tsx" => &[b"", b".js", b".jsx"],
+        b".mts" => &[b"", b".js", b".jsx", b".mjs"],
+        b".cts" => &[b"", b".cjs"],
+        _ => &[b""],
+    };
+    written.iter().map(|&it| [stem, it].concat()).collect()
 }
 
 /// `names` and `hidden`, each name once.
@@ -185,6 +200,17 @@ pub fn add_hidden_names(mut names: Vec<PackageName>, hidden: Vec<PackageName>) -
 }
 
 impl Resolver<'_> {
+    #[must_use]
+    fn logging_to<'r>(&'r mut self, log: &'r mut Log) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.log, NonNull::from(log))
+    }
+
+    /// A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
+    #[must_use]
+    fn preferring_main_field(&mut self) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.prefer_module_field, false)
+    }
+
     fn find_entry_point_named(
         &mut self,
         folder: &[u8],
@@ -218,16 +244,13 @@ impl Resolver<'_> {
         packages.sort_unstable();
         packages.dedup();
         // The build may spell the root directory with forward slashes, and `parent()` goes by those of the host.
-        let folder: Vec<u8> = root
-            .source_path
-            .iter()
-            .map(|&byte| native_separator(byte))
-            .collect();
-        let folder = bun_paths::strings::without_trailing_slash(&folder);
-        let public_root = bun_paths::strings::without_trailing_slash(root.public_path);
+        let folder = bun_paths::to_native(root.source_path);
+        let folder = bun_paths::without_trailing_sep(&folder);
+        let public_root = bun_paths::without_trailing_sep(root.public_path);
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut names = Vec::new();
         let separator = &[bun_paths::SEP][..];
         let written_subpaths = |resolver: &mut Self, directory: &[u8]| {
@@ -270,44 +293,318 @@ impl Resolver<'_> {
             }
         };
         for package in &packages {
-            let directory = [folder, separator, NODE_MODULES, separator, package].concat();
-            let subpaths = written_subpaths(self, &directory);
-            add(self, &mut names, package, package, subpaths.is_some());
+            let directory = Path::from_parts(&[folder, NODE_MODULES, package]);
+            let subpaths = written_subpaths(this, &directory);
+            add(this, &mut names, package, package, subpaths.is_some());
             for subpath in subpaths.iter().flatten() {
                 let name = [&package[..], &subpath[..]].concat();
-                add(self, &mut names, &name, &name, false);
+                add(this, &mut names, &name, &name, false);
             }
         }
         // `import "my-app"`, from a plug-in that lies outside the program's package.
         let mut own_folder = Some(folder);
         while let Some(place) = own_folder {
-            let manifest = self
+            let manifest = this
                 .read_dir_info_ignore_error(place)
                 .and_then(|directory| directory.package_json());
             if let Some(manifest) = manifest {
                 let own = manifest.name.to_vec();
                 if !own.is_empty() {
-                    let subpaths = written_subpaths(self, place);
+                    let subpaths = written_subpaths(this, place);
                     match subpaths.is_some() {
-                        true => add(self, &mut names, &own, &own, true),
+                        true => add(this, &mut names, &own, &own, true),
                         false => {
                             let main = [place, separator, b"."].concat();
-                            add(self, &mut names, &own, &main, false);
+                            add(this, &mut names, &own, &main, false);
                         }
                     }
                     for subpath in subpaths.iter().flatten() {
                         let name = [&own[..], &subpath[..]].concat();
-                        add(self, &mut names, &name, &name, false);
+                        add(this, &mut names, &name, &name, false);
                     }
                 }
                 break;
             }
             own_folder = parent(place);
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.path.cmp(&b.path));
         names.dedup_by(|later, earlier| later.path == earlier.path);
+        names
+    }
+
+    /// The names in the cached listing of `folder`, in lower case and in their order.
+    fn list_names_in(&mut self, folder: &[u8]) -> Vec<Vec<u8>> {
+        let Some(directory) = self.read_dir_info_ignore_error(folder) else {
+            return Vec::new();
+        };
+        let _lock = crate::fs::FileSystem::instance()
+            .fs
+            .entries_mutex
+            .lock_guard();
+        let entries = directory.get_entries_ref_locked(self.generation);
+        let mut names: Vec<Vec<u8>> = entries.map_or_else(Vec::new, |entries| {
+            entries.data.keys().map(|name| name.to_vec()).collect()
+        });
+        names.sort_unstable();
+        names
+    }
+
+    /// Where `<place>/node_modules/<package>` leads: packages may be links into a store.
+    fn find_folder_of_package(&mut self, place: &[u8], package: &[u8]) -> Option<Vec<u8>> {
+        let folder = Path::from_parts(&[place, NODE_MODULES, package]);
+        let directory = self.read_dir_info_ignore_error(&folder)?;
+        let real_path = match directory.abs_real_path {
+            b"" => directory.abs_path,
+            real_path => real_path,
+        };
+        Some(bun_paths::without_trailing_sep(real_path).to_vec())
+    }
+
+    /// What an earlier build left at `path`, where this build writes its executable, is no file of the program: `app` beside `app.ts`. No name finds it.
+    pub fn pass_over_outfile(&mut self, path: &[u8]) {
+        self.outfile_of_build = self.fs_ref().dirname_store.append_slice(path).ok();
+    }
+
+    pub fn outfile_of_build(&self) -> Option<&'static [u8]> {
+        self.outfile_of_build
+    }
+
+    /// A mark for each place, a folder with compiled files or one above, whose copy of a package with compiled files is another than that of the next place further up. It is hidden from a kind of load that finds the name of the package outside the copy further up.
+    pub fn find_nearer_packages(&mut self, folders: &[BuildPaths<'_>]) -> Vec<PackageName> {
+        let separator = &[bun_paths::SEP][..];
+        let mut compiled: Vec<(Vec<u8>, Vec<u8>)> = folders
+            .iter()
+            .filter_map(|it| find_name_of_package(&[it.source_path, separator, b"."].concat()))
+            .map(|name| (name.to_ascii_lowercase(), name))
+            .collect();
+        compiled.sort_unstable();
+        compiled.dedup();
+        let mut unread_log = Log::default();
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
+        let mut places = list_places(folders);
+        places.retain(|place| {
+            this.read_dir_info_ignore_error(place.source_path)
+                .is_some_and(|directory| directory.has_node_modules())
+        });
+        let mut names = Vec::new();
+        for place in &places {
+            let above: Vec<&[u8]> = with_folders_above(*place)
+                .skip(1)
+                .map(|it| it.source_path)
+                .filter(|it| {
+                    places
+                        .binary_search_by(|place| place.source_path.cmp(it))
+                        .is_ok()
+                })
+                .collect();
+            if above.is_empty() {
+                continue;
+            }
+            let node_modules = Path::from_parts(&[place.source_path, NODE_MODULES]);
+            let mut installed = this.list_names_in(&node_modules);
+            for scope in installed.clone() {
+                if !scope.starts_with(b"@") {
+                    continue;
+                }
+                let start_of_names = [&scope[..], b"/"].concat();
+                let start = compiled.partition_point(|(lower, _)| lower < &start_of_names);
+                let mut scopes_as_written: Vec<&[u8]> = compiled[start..]
+                    .iter()
+                    .take_while(|(lower, _)| lower.starts_with(&start_of_names))
+                    .map(|(_, written)| &written[..scope.len()])
+                    .collect();
+                scopes_as_written.sort_unstable();
+                scopes_as_written.dedup();
+                for written in scopes_as_written {
+                    let inside = this.list_names_in(&Path::from_parts(&[&node_modules, written]));
+                    installed.extend(
+                        inside
+                            .iter()
+                            .map(|it| [&start_of_names[..], &it[..]].concat()),
+                    );
+                }
+            }
+            let as_written = |listed: &Vec<u8>| {
+                let start = compiled.partition_point(|(lower, _)| lower < listed);
+                let same = compiled[start..].iter();
+                same.take_while(|(lower, _)| lower == listed)
+                    .map(|(_, written)| &written[..])
+                    .collect::<Vec<&[u8]>>()
+            };
+            for package in installed.iter().flat_map(as_written) {
+                let nearer = this.find_folder_of_package(place.source_path, package);
+                let mut further_up = above.iter();
+                let further = further_up.find_map(|it| this.find_folder_of_package(it, package));
+                let (Some(nearer), Some(further)) = (nearer, further) else {
+                    continue;
+                };
+                if nearer == further {
+                    continue;
+                }
+                // The resolver keeps what it is asked for.
+                let store = &this.fs_ref().dirname_store;
+                let Ok(specifier) = store.append_parts(&[package]) else {
+                    continue;
+                };
+                let mut leads_elsewhere = |kind: ImportKind| {
+                    let found = this.resolve(place.source_path, specifier, kind).ok();
+                    found.is_some_and(|found| {
+                        strip_folder(found.path_pair.primary.text(), &further).is_none()
+                    })
+                };
+                let is_hidden_from_require = leads_elsewhere(ImportKind::Require);
+                let is_hidden_from_import = leads_elsewhere(ImportKind::Dynamic);
+                names.push(PackageName {
+                    public_path: to_portable(
+                        &[place.public_path, b"/node_modules/", package, ENDS_SEARCH].concat(),
+                    )
+                    .into_owned(),
+                    required: None,
+                    imported: None,
+                    hides_other_paths: false,
+                    is_hidden_from_require,
+                    is_hidden_from_import,
+                });
+            }
+        }
+        names
+    }
+
+    /// A mark for each name under which the executable finds one of `files`, the compiled files, and `bun run` another file on the disk of the build, which was not compiled.
+    pub fn find_names_that_lead_outside(
+        &mut self,
+        files: &[BuildPaths<'_>],
+        entry_points: &[BuildPaths<'_>],
+    ) -> Vec<PackageName> {
+        let mut compiled: Vec<&[u8]> = files.iter().map(|file| file.source_path).collect();
+        compiled.sort_unstable_by(|a, b| compare_source_paths(a, b));
+        let without_extension = |path: &'_ [u8]| path.len() - bun_paths::extension(path).len();
+        let mut stems_of_entry_points: Vec<&[u8]> = entry_points
+            .iter()
+            .map(|it| &it.source_path[..without_extension(it.source_path)])
+            .collect();
+        stems_of_entry_points.sort_unstable_by(|a, b| compare_source_paths(a, b));
+        let mut asked: Vec<(BuildPaths<'_>, Vec<u8>, bool)> = Vec::new();
+        for file in files {
+            let (Some(source_path), Some(public_path)) =
+                (parent(file.source_path), parent(file.public_path))
+            else {
+                continue;
+            };
+            let folder = BuildPaths {
+                source_path,
+                public_path,
+            };
+            let names = list_other_names(last_component(file.source_path));
+            if let (Some(source_path), Some(public_path)) =
+                (parent(folder.source_path), parent(folder.public_path))
+            {
+                let above = BuildPaths {
+                    source_path,
+                    public_path,
+                };
+                asked.push((above, last_component(folder.source_path).to_vec(), true));
+            }
+            asked.extend(names.into_iter().map(|name| (folder, name, false)));
+        }
+        asked.sort_unstable();
+        asked.dedup();
+        let separator = &[bun_paths::SEP][..];
+        let generation = self.generation;
+        let mut unread_log = Log::default();
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
+        let mut names = Vec::new();
+        let is_compiled = |path: &[u8]| {
+            compiled
+                .binary_search_by(|file| compare_source_paths(file, path))
+                .is_ok()
+        };
+        let mut listed: (&[u8], Vec<Vec<u8>>) = (b"", Vec::new());
+        for (folder, name, is_folder) in &asked {
+            if listed.0 != folder.source_path {
+                listed = (folder.source_path, this.list_names_in(folder.source_path));
+            }
+            let names_main_file = *is_folder
+                && this
+                    .read_dir_info_ignore_error(&Path::from_parts(&[folder.source_path, name]))
+                    .is_some_and(|it| it.get_entry(generation, b"package.json").is_some());
+            let lower = name.to_ascii_lowercase();
+            let start = listed.1.partition_point(|entry| entry[..] < lower[..]);
+            let beside = listed.1[start..].iter();
+            let spellings = beside
+                .take_while(|entry| entry.starts_with(&lower))
+                .map(|entry| &entry[lower.len()..]);
+            let outside = spellings.filter(|spelling| {
+                SPELLINGS[usize::from(*is_folder)..].contains(spelling)
+                    && !is_compiled(&[folder.source_path, separator, &name[..], spelling].concat())
+            });
+            let mark = |written: &[&[u8]], for_require: bool, for_import: bool| PackageName {
+                public_path: to_portable(
+                    &[&[folder.public_path, b"/", &name[..]], written]
+                        .concat()
+                        .concat(),
+                )
+                .into_owned(),
+                required: None,
+                imported: None,
+                hides_other_paths: false,
+                is_hidden_from_require: for_require,
+                is_hidden_from_import: for_import,
+            };
+            // An entry point is embedded under a `.js` name, and the executable finds it under every extension of a source.
+            let is_stem_of_entry_point = !*is_folder
+                && stems_of_entry_points
+                    .binary_search_by(|stem| {
+                        let asked = [folder.source_path, separator, &name[..]].concat();
+                        compare_source_paths(stem, &asked)
+                    })
+                    .is_ok();
+            let mut lies_beside = false;
+            for spelling in outside {
+                lies_beside = true;
+                if is_stem_of_entry_point && !spelling.is_empty() {
+                    names.push(mark(&[spelling, LEADS_OUTSIDE], true, true));
+                }
+            }
+            // `./lib.js` is lib.ts where no file is called lib.js, also where a folder is, and so is `./lib.js/`.
+            let extension = bun_paths::extension(name);
+            let is_written_for_typescript_file = *is_folder
+                && rewritten_file_extensions(extension, || false)
+                    .iter()
+                    .any(|rewritten| {
+                        let file = [&name[..name.len() - extension.len()], rewritten].concat();
+                        listed.1.binary_search(&file.to_ascii_lowercase()).is_ok()
+                            && !is_compiled(&[folder.source_path, separator, &file[..]].concat())
+                    });
+            if !lies_beside && !names_main_file && !is_written_for_typescript_file {
+                continue;
+            }
+            // `./tool/` is the folder, whatever lies beside it.
+            let forms: &[(&[u8], &[u8])] = match names_main_file || is_written_for_typescript_file {
+                true => &[(b"", LEADS_OUTSIDE), (b"/", LEADS_OUTSIDE_AS_FOLDER)],
+                false => &[(b"", LEADS_OUTSIDE)],
+            };
+            for &(end, written) in forms {
+                // The resolver keeps what it is asked for.
+                let store = &this.fs_ref().dirname_store;
+                let Ok(specifier) = store.append_parts(&[b"./", &name[..], end]) else {
+                    continue;
+                };
+                let mut leads_outside = |kind: ImportKind| {
+                    let found = this.resolve(folder.source_path, specifier, kind).ok();
+                    found.is_some_and(|found| !is_compiled(found.path_pair.primary.text()))
+                };
+                let for_require = leads_outside(ImportKind::Require);
+                let for_import = leads_outside(ImportKind::Dynamic);
+                if for_require || for_import {
+                    names.push(mark(&[written], for_require, for_import));
+                }
+            }
+        }
         names
     }
 
@@ -334,22 +631,23 @@ impl Resolver<'_> {
             if is_below_same_tsconfig {
                 continue;
             }
-            let folder: Vec<u8> = place
-                .public_path
-                .iter()
-                .copied()
-                .map(normalize_separator)
-                .collect();
+            let folder = to_portable(place.public_path).into_owned();
             let count_before = aliases.len();
             let base_url = match tsconfig.has_base_url() {
                 true => &tsconfig.base_url,
                 false => &tsconfig.base_url_for_paths,
             };
             let mut add = |resolver: &Self, key: &[u8], target: &[u8], is_base_url: bool| {
-                let mut buffer = bun_paths::path_buffer_pool::get();
-                let parts: [&[u8]; 2] = [base_url, target];
-                let target = resolver.fs_ref().abs_buf_checked(&parts, &mut buffer[..]);
-                let target = target.and_then(|it| to_relative_specifier(place.source_path, it));
+                let parts = [resolver.fs_ref().top_level_dir(), base_url, target];
+                let target = crate::resolve_keeping_sep(&parts);
+                let names_folder = bun_paths::has_trailing_sep(&target);
+                let mut target = to_relative_specifier(place.source_path, &target);
+                if let Some(target) = &mut target
+                    && names_folder
+                    && !target.ends_with(b"/")
+                {
+                    target.push(b'/');
+                }
                 aliases.extend(target.map(|target| PathAlias {
                     folder: folder.clone(),
                     key: key.to_vec(),
@@ -401,9 +699,9 @@ impl Resolver<'_> {
 
         // A name that leads nowhere is no error of the build.
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
-        // A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
-        let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
+        let mut this = self.logging_to(&mut unread_log);
+        let mut this = this.preferring_main_field();
+        let this = &mut *this;
         let mut names = Vec::new();
         // Only a folder above an entry point can lead to one.
         let mut folders_of_entry_points: Vec<BuildPaths<'_>> = entry_points
@@ -419,7 +717,7 @@ impl Resolver<'_> {
         folders_of_entry_points.sort_unstable();
         folders_of_entry_points.dedup();
         for place in &folders_of_entry_points {
-            let names_main_file = self
+            let names_main_file = this
                 .read_dir_info_ignore_error(place.source_path)
                 .and_then(|directory| directory.package_json())
                 .is_some_and(|manifest| manifest.main_fields.count() > 0);
@@ -428,18 +726,14 @@ impl Resolver<'_> {
             }
             let folder = place.source_path;
             names.push(PackageName {
-                public_path: [place.public_path, b"/"]
-                    .concat()
-                    .into_iter()
-                    .map(normalize_separator)
-                    .collect(),
-                required: self.find_entry_point_named(
+                public_path: to_portable(&[place.public_path, b"/"].concat()).into_owned(),
+                required: this.find_entry_point_named(
                     folder,
                     b"./",
                     ImportKind::Require,
                     entry_points,
                 ),
-                imported: self.find_entry_point_named(
+                imported: this.find_entry_point_named(
                     folder,
                     b"./",
                     ImportKind::Dynamic,
@@ -454,16 +748,8 @@ impl Resolver<'_> {
             .iter()
             .flat_map(|place| packages.iter().map(move |package| (place, &package[..])))
         {
-            let separator = &[bun_paths::SEP][..];
-            let directory = [
-                place.source_path,
-                separator,
-                NODE_MODULES,
-                separator,
-                package,
-            ]
-            .concat();
-            let Some(directory) = self.read_dir_info_ignore_error(&directory) else {
+            let directory = Path::from_parts(&[place.source_path, NODE_MODULES, package]);
+            let Some(directory) = this.read_dir_info_ignore_error(&directory) else {
                 continue;
             };
             let exports = directory
@@ -476,16 +762,14 @@ impl Resolver<'_> {
             let mut subpaths = vec![Vec::new()];
             if let Some(exports) = exports {
                 subpaths.extend(exports.written_subpaths().into_iter().map(<[u8]>::to_vec));
-                let real_directory = bun_paths::strings::without_trailing_slash(real_directory);
+                let real_directory = bun_paths::without_trailing_sep(real_directory);
                 let inside = entry_points
                     .iter()
                     .filter_map(|file| strip_folder(file.source_path, real_directory));
-                for path in
-                    inside.filter(|path| path.first().is_some_and(|&byte| is_sep_native(byte)))
-                {
+                for path in inside.filter(|path| path.first().is_some_and(|&byte| is_sep(byte))) {
                     let path: Vec<u8> = path
                         .iter()
-                        .map(|&byte| if is_sep_native(byte) { b'/' } else { byte })
+                        .map(|&byte| if is_sep(byte) { b'/' } else { byte })
                         .collect();
                     subpaths.extend(exports.subpaths_by_pattern(&path));
                     subpaths.push(path);
@@ -495,18 +779,18 @@ impl Resolver<'_> {
             }
             for subpath in &subpaths {
                 // The resolver keeps what it is asked for.
-                let store = &self.fs_ref().dirname_store;
+                let store = &this.fs_ref().dirname_store;
                 let Ok(specifier) = store.append_parts(&[package, &subpath[..]]) else {
                     continue;
                 };
                 let folder = place.source_path;
-                let required = self.find_entry_point_named(
+                let required = this.find_entry_point_named(
                     folder,
                     specifier,
                     ImportKind::Require,
                     entry_points,
                 );
-                let imported = self.find_entry_point_named(
+                let imported = this.find_entry_point_named(
                     folder,
                     specifier,
                     ImportKind::Dynamic,
@@ -516,11 +800,10 @@ impl Resolver<'_> {
                 if required.is_some() || imported.is_some() || hides_other_paths {
                     names.push(PackageName {
                         // The run time joins what it looks for with forward slashes.
-                        public_path: [place.public_path, b"/node_modules/", specifier]
-                            .concat()
-                            .into_iter()
-                            .map(normalize_separator)
-                            .collect(),
+                        public_path: to_portable(
+                            &[place.public_path, b"/node_modules/", specifier].concat(),
+                        )
+                        .into_owned(),
                         required,
                         imported,
                         hides_other_paths,
@@ -530,8 +813,6 @@ impl Resolver<'_> {
                 }
             }
         }
-        self.log = log_of_build;
-        self.prefer_module_field = prefers_module_field;
         names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
         names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
         names
@@ -542,39 +823,34 @@ impl Resolver<'_> {
         &mut self,
         refused: &[RefusedName],
         root: BuildPaths<'_>,
+        levels_above_root: usize,
     ) -> Vec<PackageName> {
-        let root_directory: Vec<u8> = root
-            .source_path
-            .iter()
-            .map(|&byte| native_separator(byte))
-            .collect();
-        let root_directory = bun_paths::strings::without_trailing_slash(&root_directory);
-        let separator = &[bun_paths::SEP][..];
+        let root_directory = bun_paths::to_native(root.source_path);
+        let root_directory = bun_paths::without_trailing_sep(&root_directory);
         let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let mut this = self.logging_to(&mut unread_log);
         let mut names = Vec::new();
         for name in refused {
             let Some(package) = Package::parse_name(&name.specifier) else {
                 continue;
             };
-            let directory = bun_paths::strings::without_trailing_slash(&name.directory);
+            let directory = bun_paths::without_trailing_sep(&name.directory);
             let place = core::iter::successors(Some(directory), |folder| parent(folder))
                 .filter(|folder| last_component(folder) != NODE_MODULES)
                 .find(|&folder| {
-                    let installed = [folder, separator, NODE_MODULES, separator, package].concat();
-                    self.read_dir_info_ignore_error(&installed).is_some()
+                    let installed = Path::from_parts(&[folder, NODE_MODULES, package]);
+                    this.read_dir_info_ignore_error(&installed).is_some()
                 });
             let Some(relative) = place.and_then(|it| to_relative_specifier(root_directory, it))
             else {
                 continue;
             };
-            let place = public_path_from_root(root.public_path, &relative);
+            let place = public_path_from_root(root.public_path, levels_above_root, &relative);
             names.push(PackageName {
-                public_path: [&place[..], b"/node_modules/", &name.specifier]
-                    .concat()
-                    .into_iter()
-                    .map(normalize_separator)
-                    .collect(),
+                public_path: to_portable(
+                    &[&place[..], b"/node_modules/", &name.specifier].concat(),
+                )
+                .into_owned(),
                 required: None,
                 imported: None,
                 hides_other_paths: false,
@@ -582,7 +858,6 @@ impl Resolver<'_> {
                 is_hidden_from_import: !name.is_require,
             });
         }
-        self.log = log_of_build;
         names
     }
 }
@@ -630,6 +905,16 @@ mod tests {
     }
 
     #[test]
+    fn other_names_of_a_file() {
+        let names = |base: &[u8]| list_other_names(base).join(&b" "[..]);
+        assert_eq!(names(b"lib.js"), b"lib");
+        assert_eq!(names(b"mod.ts"), b"mod mod.js mod.jsx");
+        assert_eq!(names(b"a.b.cts"), b"a.b a.b.cjs");
+        assert_eq!(names(b"LICENSE"), b"");
+        assert_eq!(names(b".hidden"), b"");
+    }
+
+    #[test]
     fn path_as_relative_specifier() {
         let relative = |folder, path| to_relative_specifier(folder, path).unwrap();
         assert_eq!(relative(b"/app", b"/app/aliased/*"), b"./aliased/*");
@@ -661,12 +946,12 @@ mod tests {
             expected
         );
         let outside: [&[u8]; 3] = [
-            b"/$bunfs/root/_.._/shared/lib",
-            b"/$bunfs/root/_.._/shared",
-            b"/$bunfs/root/_.._",
+            b"/$bunfs/_.._/_.._/shared/lib",
+            b"/$bunfs/_.._/_.._/shared",
+            b"/$bunfs/_.._/_.._",
         ];
         assert_eq!(
-            above(b"/work/shared/lib", b"/$bunfs/root/_.._/shared/lib"),
+            above(b"/work/shared/lib", b"/$bunfs/_.._/_.._/shared/lib"),
             outside
         );
     }

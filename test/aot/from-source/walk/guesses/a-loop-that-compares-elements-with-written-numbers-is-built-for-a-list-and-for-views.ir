@@ -1,0 +1,23 @@
+# -- source: a-loop-that-compares-elements-with-written-numbers-is-built-for-a-list-and-for-views.js
+# function equal(a) { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] === 3) n++; return n; }
+# function between(a) { let n = 0; for (let i = 0; i < a.length; i++) { const one = a[i]; if (one >= 2 && one < 3.5) n++; } return n; }
+# function switched(a) { let n = 0; for (let i = 0; i < a.length; i++) { switch (a[i]) { case 1: case 3: n++; } } return n; }
+# const table = { equal, between, switched }, names = JSON.parse('["equal", "between", "switched"]');
+# for (const held of [new Uint8Array([1, 2, 3, 3]), [1, 2, 3, , "3"], new Float64Array([3, 2.5, NaN]), "1233", { length: 2, 0: 3, 1: 1 }])
+#   print(table[names[0]](held), table[names[1]](held), table[names[2]](held));
+# -- end of source
+# Nobody is seen to call the three: they are found in a table under names that come from outside. Use writes of `a` no more than "a text or a list". A loop that holds its elements against written numbers, by an equality, a relation or a switch, however it is spelled, says that numbers are looked for:
+# it is built for a list, for bytes and for the other views, as a loop that reckons with the elements is.
+# f1 = equal, f2 = between, f3 = switched
+# RUN(EQUAL): walk f1:Body mechanisms=all
+# EQUAL: = GetTypedArrayElement
+# RUN(BETWEEN): walk f2:Body mechanisms=all
+# BETWEEN: = GetTypedArrayElement
+# RUN(SWITCHED): walk f3:Body mechanisms=all
+# SWITCHED: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 2 3 3
+# ANSWERS: 1 3 2
+# ANSWERS: 1 2 1
+# ANSWERS: 0 3 0
+# ANSWERS: 1 1 2

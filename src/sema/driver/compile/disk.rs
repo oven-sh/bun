@@ -30,7 +30,7 @@ impl Disk {
             experimental_decorators: request.options.experimental_decorators,
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
-            keeps_function_directives: false,
+            ignores_pure_comments: false,
         };
         let file = parse_for_compile(arena, &options, text, atoms);
         let DataModuleTree { file, host_values } = match file.kind {

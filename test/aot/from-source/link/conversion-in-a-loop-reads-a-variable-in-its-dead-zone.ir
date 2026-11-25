@@ -1,0 +1,17 @@
+# The same with a variable: `toString` is entered in the loop, in front of `const late = 5`, so the variable may be read while it holds nothing.
+# g0 = late
+# -- source: conversion-in-a-loop-reads-a-variable-in-its-dead-zone.js
+# const limit = JSON.parse("1");
+# const box = { toString() { return "box" + late; } };
+# let turns = 0;
+# let got = "";
+# for (;;) {
+#   if (turns === limit) break;
+#   turns++;
+#   got = "a" + box;
+# }
+# const late = 5;
+# got = got + box;
+# -- end of source
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=int[0, 2147483647]|absent

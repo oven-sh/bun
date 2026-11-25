@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list = [1, 2, 3, 4];
+# function total(rounds: number): number { let sum = 0; for (let round = 0; round < rounds; round++) list.forEach(value => { sum += value; }); return sum; }
+# print(total(3));
+# print(total(3));
+# -- end of source
+# The program of ..-is-called-once.ir and one call more. The check lines are the same. f1 = total
+# RUN(PROMOTED): compile EnvironmentsPromotedToVariables mechanisms=all
+# PROMOTED: statistic EnvironmentsPromotedToVariables 0
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: EnterBodyThatRunsOnce
+# CHECK-NOT: PutEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 30
+# ANSWERS-NEXT: 30

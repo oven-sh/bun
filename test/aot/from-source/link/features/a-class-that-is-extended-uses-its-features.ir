@@ -1,0 +1,7 @@
+# the class object is more than read
+# -- source: a-class-that-is-extended-uses-its-features.ts
+# class Mine extends WebSocket {}
+# console.log(typeof Mine);
+# -- end of source
+# RUN: features
+# CHECK: by WebSocket named

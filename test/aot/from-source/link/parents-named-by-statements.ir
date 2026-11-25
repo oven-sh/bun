@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# function Base(n) { this.n = n; }
+# Base.prototype.get = function () { return this.n; };
+# function ByLiteral(n) { this.n = n; }
+# ByLiteral.prototype = { __proto__: Base.prototype, own: function () { return this.get(); } };
+# function ByStore(n) { this.n = n; }
+# ByStore.prototype = { own: function () { return this.get(); } };
+# ByStore.prototype.__proto__ = Base.prototype;
+# function ByCall(n) { this.n = n; }
+# ByCall.prototype = { own: function () { return this.get(); } };
+# Object.setPrototypeOf(ByCall.prototype, Base.prototype);
+# print(new ByLiteral(1).own() + new ByStore(2).own() + new ByCall(3).own());
+# -- end of source
+# A literal names its parent, a store under __proto__ names it, and a call names it after a literal that names none: no class leaves.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6

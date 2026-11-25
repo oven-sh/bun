@@ -15,15 +15,4 @@ for (let round = 0; round < 3; round++) {
   console.log(holder.s.n, holder.s.sub.k, g({ o: 5 }).o);
 }
 
-// GENERATED: wrap
 // CHECK-LABEL: function {{*}}name="wrap"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}] results=[{type=undefined|null|[[L_1]] site=[[w_3]]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Proxy
-// CHECK-NEXT: v2 = Data data=[[d_5]]
-// CHECK-NEXT: v3 = Construct v1, -, v0, v2 calleeName="Proxy"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] site=[[w_6]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

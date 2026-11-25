@@ -1,11 +1,10 @@
 use bun_core::pretty_errorln;
-use bun_core::strings;
 use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
-use bun_core::{note, print_errorln};
+use bun_core::{note, print_errorln, strings};
 #[cfg(not(windows))]
-use bun_paths::{platform, resolve_path};
-use bun_sys::{self, E, File};
+use bun_paths::Path;
+use bun_sys::{self, E, Fd, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
@@ -21,11 +20,8 @@ impl InstallCompletionsCommand {
 
     #[cfg(not(windows))]
     fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         // don't install it if it's already there
         if bun_which::which(
-            &mut buf,
             env_var::PATH.get().unwrap_or(cwd),
             cwd,
             Self::BUNX_NAME.as_bytes(),
@@ -37,16 +33,9 @@ impl InstallCompletionsCommand {
 
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
-        let mut link_buf = bun_paths::path_buffer_pool::get();
-        let link_path = buf_print_z(
-            &mut link_buf,
-            format_args!(
-                "{}/{}",
-                bstr::BStr::new(bun_core::dirname(exe).expect("exe has dirname")),
-                Self::BUNX_NAME
-            ),
-        );
-        if bun_sys::symlink(exe, link_path).is_ok() {
+        let mut link_path = Path::from(exe);
+        link_path.set_basename(Self::BUNX_NAME.as_bytes());
+        if bun_sys::symlink(exe, &link_path).is_ok() {
             return Ok(());
         }
 
@@ -56,11 +45,9 @@ impl InstallCompletionsCommand {
             (env_var::HOME.get(), ".local/bin"),
         ] {
             let Some(dir) = dir else { continue };
-            let link_path = buf_print_z(
-                &mut link_buf,
-                format_args!("{}/{}/{}", bstr::BStr::new(dir), bin_dir, Self::BUNX_NAME),
-            );
-            if bun_sys::symlink(exe, link_path).is_ok() {
+            link_path.set(dir);
+            write!(link_path, "/{bin_dir}/{}", Self::BUNX_NAME);
+            if bun_sys::symlink(exe, &link_path).is_ok() {
                 return Ok(());
             }
         }
@@ -82,51 +69,27 @@ impl InstallCompletionsCommand {
 
     #[cfg(windows)]
     fn install_bunx_symlink(_cwd: &[u8]) -> Result<(), crate::Error> {
-        use bun_core::{WStr, w};
         use bun_sys::windows;
 
         // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
         // recreated every time.
-        let image_path: &[u16] = windows::exe_path_w();
-        let last_sep =
-            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
-        let image_dirname = &image_path[..last_sep + 1];
-
-        let mut bunx_path_buf = bun_paths::w_path_buffer_pool::get();
-
-        let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
-            w!("bunx-debug.cmd")
+        let image_path = windows::exe_path_w();
+        let mut bunx = bun_sys::nt_path(image_path, bun_sys::Tag::link)?;
+        bunx.set_basename(if bun_core::env::IS_DEBUG {
+            b"bunx-debug.cmd".as_slice()
         } else {
-            w!("bunx.cmd")
-        };
-        let exe_suffix_z: &[u16] = if bun_core::env::IS_DEBUG {
-            w!("bunx-debug.exe\0")
-        } else {
-            w!("bunx.exe\0")
-        };
+            b"bunx.cmd"
+        });
+        let _ = windows::DeleteFileBun(&bunx, windows::DeleteFileOptions::default());
+        bunx.set_extension(b".exe");
+        let _ = windows::DeleteFileBun(&bunx, windows::DeleteFileOptions::default());
 
-        let delete_path = strings::concat_buf_t::<u16>(
-            &mut bunx_path_buf,
-            &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
-        )?;
-        let _ = windows::DeleteFileBun(delete_path, windows::DeleteFileOptions::default());
-
-        let bunx_path_with_z = strings::concat_buf_t::<u16>(
-            &mut bunx_path_buf,
-            &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
-        )?;
-        let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
-        let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
-
-        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
+        if windows::CreateHardLinkW(&bunx, image_path).is_err() {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 
-            let bunx_cmd = strings::concat_buf_t::<u16>(
-                &mut bunx_path_buf,
-                &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
-            )?;
-            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd)?;
+            bunx.set_extension(b".cmd");
+            let file = File::create_w(bun_sys::Fd::cwd(), &bunx)?;
             file.write_all(SCRIPT)?;
         }
         Ok(())
@@ -139,9 +102,7 @@ impl InstallCompletionsCommand {
 
         // Only for an exe at `bun\bin\<whatever>.exe`, which `install.ps1` has probably installed.
         let image_path: &[u16] = windows::exe_path_w();
-        let last_sep =
-            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
-        let image_dirname = &image_path[..last_sep];
+        let image_dirname = bun_paths::dirname(image_path).unwrap_or_default();
 
         if !image_dirname.ends_with(w!("bun\\bin")) {
             return Ok(());
@@ -149,17 +110,10 @@ impl InstallCompletionsCommand {
 
         const CONTENT: &[u8] = include_bytes!("uninstall.ps1");
 
-        let mut bunx_path_buf = bun_paths::w_path_buffer_pool::get();
-        let uninstaller_path = strings::concat_buf_t::<u16>(
-            &mut bunx_path_buf,
-            &[
-                &windows::NT_OBJECT_PREFIX,
-                &image_dirname[..image_dirname.len() - 3],
-                w!("uninstall.ps1"),
-            ],
-        )?;
+        let mut uninstaller_path = bun_sys::nt_path(image_dirname, bun_sys::Tag::open)?;
+        uninstaller_path.set_basename(b"uninstall.ps1");
 
-        let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
+        let file = File::create_w(bun_sys::Fd::cwd(), &uninstaller_path)?;
         file.write_all(CONTENT)?;
         Ok(())
     }
@@ -173,8 +127,8 @@ impl InstallCompletionsCommand {
     }
 
     /// Exits, unless the write fails on something else than a closed pipe.
-    fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
-        match stdout.write_all(completions) {
+    fn write_and_exit(stdout: Fd, completions: &[u8]) -> Result<(), crate::Error> {
+        match File::borrow(&stdout).write_all(completions) {
             Err(err) if err.get_errno() != E::EPIPE => Err(err.into()),
             _ => Global::exit(0),
         }
@@ -186,7 +140,7 @@ impl InstallCompletionsCommand {
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
-        let stdout = File::stdout();
+        let stdout = Fd::stdout();
 
         let shell = env_var::SHELL
             .platform_get()
@@ -196,10 +150,10 @@ impl InstallCompletionsCommand {
             Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
+                if fail_exit_code == 1 && !bun_sys::isatty(stdout) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        return Self::write_and_exit(&stdout, completions);
+                        return Self::write_and_exit(stdout, completions);
                     }
                 }
 
@@ -238,14 +192,13 @@ impl InstallCompletionsCommand {
                 Shell::Bash => b"bun.completion.bash",
             };
 
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
-                && !bun_sys::isatty(stdout.handle)
-            {
-                return Self::write_and_exit(&stdout, shell.completions());
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) && !bun_sys::isatty(stdout) {
+                return Self::write_and_exit(stdout, shell.completions());
             }
 
+            let mut resolved: Path;
             let mut completions_dir: &[u8];
-            let output_dir: bun_sys::Fd = 'found: {
+            let output_dir = bun_sys::Dir::from_fd('found: {
                 let argv = bun_core::argv();
                 for (i, arg) in argv.iter().enumerate() {
                     if arg == b"completions" {
@@ -253,8 +206,8 @@ impl InstallCompletionsCommand {
                             let input: &[u8] = argv.get(i + 1).expect("len checked").as_bytes();
 
                             if !bun_paths::is_absolute(input) {
-                                completions_dir =
-                                    resolve_path::join_abs::<platform::Auto>(cwd, input);
+                                resolved = Path::resolve(&[cwd, input]);
+                                completions_dir = &resolved;
                             } else {
                                 completions_dir = input;
                             }
@@ -294,8 +247,8 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), config_fish, true),
                         ] {
                             let Some(base) = base else { continue };
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
+                            resolved = Path::resolve(&[cwd, base, dir]);
+                            completions_dir = &resolved;
                             let opened = if is_config {
                                 Self::open_fish_user_completions(completions_dir)
                             } else {
@@ -335,9 +288,8 @@ impl InstallCompletionsCommand {
                         }
 
                         if let Some(data_dir) = env_var::XDG_DATA_HOME.get() {
-                            let paths: [&[u8]; 2] = [data_dir, b"./zsh-completions"];
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
+                            resolved = Path::resolve(&[cwd, data_dir, b"zsh-completions"]);
+                            completions_dir = &resolved;
                             if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                 break 'found d;
                             }
@@ -352,9 +304,8 @@ impl InstallCompletionsCommand {
 
                         if let Some(home_dir) = env_var::HOME.get() {
                             for dir in [b"./.oh-my-zsh/completions".as_slice(), b"./.bun"] {
-                                let paths: [&[u8]; 2] = [home_dir, dir];
-                                completions_dir =
-                                    resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
+                                resolved = Path::resolve(&[cwd, home_dir, dir]);
+                                completions_dir = &resolved;
                                 if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                     break 'found d;
                                 }
@@ -392,8 +343,8 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), b"./.bash_completion.d".as_slice()),
                         ] {
                             let Some(base) = base else { continue };
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
+                            resolved = Path::resolve(&[cwd, base, dir]);
+                            completions_dir = &resolved;
                             if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                 break 'found d;
                             }
@@ -428,11 +379,11 @@ impl InstallCompletionsCommand {
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
-            };
+            });
 
             debug_assert!(!completions_dir.is_empty());
 
-            let output_file: File = match File::create(output_dir, filename, true) {
+            let output_file: File = match File::create(&output_dir, filename, true) {
                 Ok(f) => f,
                 Err(err) => {
                     pretty_errorln!(
@@ -453,16 +404,11 @@ impl InstallCompletionsCommand {
                 Global::exit(fail_exit_code);
             }
 
-            let _ = bun_sys::close(output_dir);
+            drop(output_dir);
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
-                let mut completions_path_buf = bun_paths::path_buffer_pool::get();
-                let completions_path: &[u8] = resolve_path::join_string_buf::<platform::Auto>(
-                    &mut completions_path_buf,
-                    &[completions_dir, filename],
-                );
-                let mut zshrc_filepath = bun_paths::path_buffer_pool::get();
+                let completions_path: &[u8] = &Path::join(&[completions_dir, filename]);
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
                         // https://zsh.sourceforge.io/Intro/intro_3.html
@@ -472,12 +418,10 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), b"/.zshenv".as_slice()),
                         ] {
                             let Some(dir) = dir else { continue };
-                            let len = dir.len() + name.len();
-                            zshrc_filepath[..dir.len()].copy_from_slice(dir);
-                            zshrc_filepath[dir.len()..len].copy_from_slice(name);
-                            zshrc_filepath[len] = 0;
+                            let mut zshrc_filepath = Path::from(dir);
+                            zshrc_filepath.extend_from_slice(name);
                             if let Ok(f) = bun_sys::open_file_absolute_z(
-                                bun_core::ZStr::from_buf(&zshrc_filepath[..], len),
+                                &zshrc_filepath,
                                 bun_sys::OpenFlags::READ_WRITE,
                             ) {
                                 break 'zshrc f;
@@ -553,4 +497,4 @@ impl InstallCompletionsCommand {
 }
 
 #[cfg(not(windows))]
-use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
+use bun_core::fmt::buf_print_infallible as buf_print;

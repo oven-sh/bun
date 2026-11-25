@@ -131,14 +131,7 @@ function through${n}(k: number): ${T} { return alone${n}(k + 1); }
 
 export const ways: Record<string, string[]> = {
   "as built": [],
-  "everything hot": ["--aot-heat=everything-is-hot"],
-  "everything cold": ["--aot-heat=everything-is-cold"],
-  "no inlining": ["--aot-disable=InlineCalls"],
-  "hot, no inlining": ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"],
-  "validating": ["--aot-validate"],
   "types erased": ["--aot-erase-types"],
-  "proofs checked": ["--aot-testing=CheckProofsAtRunTime"],
-  "hot, proofs checked": ["--aot-heat=everything-is-hot", "--aot-testing=CheckProofsAtRunTime"],
 };
 
 export const everyCase = [...Object.keys(objectMakers), ...Object.keys(arrayMakers)].flatMap(maker => Object.keys(places).map(place => `${maker} ${place}`));

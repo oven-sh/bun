@@ -1,0 +1,19 @@
+mock.module() of a CommonJS file that createRequire() loaded first; the next test file imports the file.
+#### a-first.test.mjs
+import { mock, test } from "bun:test";
+import * as reader from "./reader.mjs";
+mock.module("./store.cjs", () => ({ value: "mocked" }));
+test("first", () => { console.log("| CASE first file holds " + reader.held()); });
+#### b-second.test.mjs
+import { test } from "bun:test";
+import * as store from "./store.cjs";
+console.log("| CASE second file sees " + store.value);
+test("second", () => {});
+#### package.json
+{ "type": "module" }
+#### reader.mjs
+import { createRequire } from "node:module";
+const store = createRequire(import.meta.url)("./store.cjs");
+export const held = () => JSON.stringify(store);
+#### store.cjs
+module.exports = { value: "real", other: "real too" };

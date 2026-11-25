@@ -66,6 +66,14 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
+impl From<bun_sys::Error> for Box<SystemError> {
+    #[cold]
+    #[inline(never)]
+    fn from(e: bun_sys::Error) -> Self {
+        Box::new(e.to_system_error().into())
+    }
+}
+
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.

@@ -1,0 +1,22 @@
+# -- source: main.js
+# let work = 0;
+# class Base {
+#   constructor(n, s) { for (let i = 0; i < 2; i++) work = (work + i) | 0; this.n = n; this.s = s; }
+#   static make(n) { for (let i = 0; i < 2; i++) work = (work + i) | 0; return new this(n); }
+#   text() { for (let i = 0; i < 2; i++) work = (work + i) | 0; return typeof this.n + " " + this.n + " " + typeof this.s + " " + this.s; }
+# }
+# class Middle extends Base {}
+# class Leaf extends Middle {}
+# function run() { let last = ""; for (let i = 0; i < 300; i++) last = new Leaf(i, "x").text(); return last; }
+# print(run());
+# print(new Middle(7, "y").text());
+# print(Leaf.make(3).text());
+# -- end of source
+# Two classes without a constructor of their own pass their arguments on by place, so the fields of Base are typed by what stands at each place. The one caller that leaves the second place empty stands behind a static of Base and is found late, through both classes: if the fall of the fewest were lost on the way, the last line would read a text out of a slot that holds `undefined`.
+# RUN: run-in-shell
+# CHECK: number 299 string x
+# CHECK-NEXT: number 7 string y
+# CHECK-NEXT: number 3 undefined undefined
+# CHECK-NEXT: exited with 0
+# RUN(LINK): link functions mechanisms=all
+# LINK: parameter 2 {{*}}proven=undefined|string

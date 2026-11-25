@@ -1,0 +1,19 @@
+# A getter named `__proto__` runs where the name is read off an instance, off the prototype object and off the class object: each is reached, and the read is not answered with the link.
+# f1 = ofInstances, f2 = ofClass, f3 = linkOf
+# -- source: getter-named-proto-is-reached-by-the-read-of-that-name.js
+# class Tagged { get __proto__() { return ofInstances(); } }
+# class Base {}
+# class Below extends Base { static get __proto__() { return ofClass(); } }
+# function ofInstances() { return 7; }
+# function ofClass() { return 8; }
+# function linkOf(o) { return o.__proto__; }
+# linkOf(new Tagged()); linkOf(Below);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NOT: unreached
+# LINK: function f2
+# LINK-NOT: unreached
+# LINK: function f3
+# LINK-NOT: result=
+# LINK: function f4

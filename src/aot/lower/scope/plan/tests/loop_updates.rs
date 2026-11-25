@@ -156,7 +156,8 @@ fn each_variable_of_the_head_is_decided_alone() {
 #[test]
 fn field_of_a_loop_variable_is_not_immutable() {
     let source = "export function g(n, f) { \
-        for (let i = 0; i < n; i++) { function h() { return i; } f(h, () => i); } }";
+        for (let i = 0; i < n; i++) { \
+            function h() { return i; } function k() { return h; } f(h, k, () => i); } }";
     analyze_source("main.mjs", source, |probe| {
         let scope = probe.bound.own_scope(probe.first_statement(is_for_loop));
         let expected = first_field(scope, false);
@@ -170,7 +171,7 @@ fn field_of_a_loop_variable_is_not_immutable() {
 fn closure_over_the_capture_limit_takes_the_environment() {
     let (mut declarations, mut mentions) = (String::new(), String::new());
     for index in 0..max_captures() {
-        let _ = write!(declarations, " const v{index} = {index};");
+        let _ = write!(declarations, " const v{index} = {{}};");
         let _ = write!(mentions, "v{index}, ");
     }
     let source = format!(
@@ -182,7 +183,6 @@ fn closure_over_the_capture_limit_takes_the_environment() {
         let [all, one] = probe.functions(FnKind::Arrow)[..] else {
             panic!("the source has two arrow functions");
         };
-        assert!(probe.has_too_many_captures(probe.key(all)));
         assert!(probe.captures(all).contains(&Capture::Environment(scope)));
         assert_eq!(probe.captures(one), [probe.copy_of("i")]);
         let placement = probe.placement_of("i");

@@ -10,10 +10,11 @@ use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
 use bun_sema::fold::{FoldInputs, FoldOptions};
 use bun_sema::hir::{
     BinOp, CallId, ExprId, ExprKind, File, FnBody, FnId, PatId, PatKind, StmtId, StmtKind, VarDecl,
+    VarKind,
 };
 use bun_sema::hir_from_data::HostValue;
 use bun_sema::import_sites::{AutomaticJsx, JsxMode};
-use bun_sema::module_format::DeclaredModuleType;
+use bun_sema::module_format::{DeclaredModuleType, ModuleFormat};
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{JsxSettings, TranspileSettings};
 use bun_sema::session::Session;
@@ -282,16 +283,36 @@ impl<'s> Tree<'s> {
             });
         let declaration = declarations
             .find(|declaration| self.pattern_name(declaration.pat).as_deref() == Some(name))?;
-        let ExprKind::Call(call) = hir[declaration.init].kind else {
-            return None;
+        assert!(matches!(declaration.kind, VarKind::Var) && declaration.init == ExprId::NONE);
+        let fills = self
+            .reachable_expressions()
+            .filter_map(|it| match hir[it].kind {
+                ExprKind::Assign {
+                    op: Some(BinOp::Nullish),
+                    target,
+                    value,
+                } if self.is_name(target, name) => Some(value),
+                _ => None,
+            });
+        let mut keys: Vec<String> = fills
+            .map(|value| {
+                let ExprKind::Call(call) = hir[value].kind else {
+                    panic!("{name} is not filled by a call");
+                };
+                let path = self.member_path(hir[call].callee);
+                assert_eq!(path, ["globalThis", "Symbol", "for"]);
+                let ExprKind::String(key) = hir[hir.id_at(hir[call].args, 0)].kind else {
+                    panic!("the key of {name} is no text");
+                };
+                self.name_text(key)
+            })
+            .collect();
+        assert_eq!(keys.len(), self.count_names(name));
+        keys.dedup();
+        let [key] = &keys[..] else {
+            panic!("{name} has the keys {keys:?}");
         };
-        if self.member_path(hir[call].callee) != ["globalThis", "Symbol", "for"] {
-            return None;
-        }
-        let ExprKind::String(key) = hir[hir.id_at(hir[call].args, 0)].kind else {
-            return None;
-        };
-        Some(self.name_text(key))
+        Some(key.clone())
     }
 }
 
@@ -358,6 +379,7 @@ impl<'s> Workbench<'s> {
                 package_specifier: self.atoms.intern(&jsx.import_source),
                 is_development: jsx.is_development,
             }),
+            own_name: b"",
         };
         let bind_options = BindOptions {
             runtime: Some(RuntimeBindOptions::default()),
@@ -373,19 +395,14 @@ impl<'s> Workbench<'s> {
         )
     }
 
-    fn transform(
-        &mut self,
-        mode: ReactCompilerMode,
-        bound: &Bound<'s>,
-        analysis: &FileAnalysis<'s>,
-    ) -> (TreeChange, ParsedSource) {
+    fn transform(&mut self, mode: ReactCompilerMode) -> (TreeChange, ParsedSource) {
         let messages = LoadMessages::default();
         let mut source = ParsedSource::new(SourceKind::Program, Loader::Tsx);
-        let mut request = TransformRequest {
+        let mut request = EarlyTransformRequest {
             path: MAIN_PATH,
             hir: &mut self.tree,
-            bound,
-            analysis,
+            module_format: ModuleFormat::Esm,
+            takes_import_statements: true,
             settings: &self.settings,
             import_meta_main: None,
         };
@@ -404,7 +421,7 @@ fn with_workbench<R>(text: &str, then: impl for<'s> FnOnce(&mut Workbench<'s>) -
         experimental_decorators: false,
         every_file_is_a_module: true,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut tree = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     tree.text = Cow::Borrowed(text.as_bytes());

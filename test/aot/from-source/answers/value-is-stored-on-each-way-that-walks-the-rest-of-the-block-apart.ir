@@ -1,0 +1,45 @@
+# -- source: main.js
+# function width(span) { return +span.to - span.from; }
+# function measure(span) {
+#     let turns = 0;
+#     for (let i = 0; i < 2; i++) turns = (turns + i) | 0;
+#     const wide = width(span);
+#     if (wide & 16) kept.push(() => wide * 3);
+#     else kept.push(() => wide + 100);
+#     kept.push(() => wide);
+#     return turns;
+# }
+# function look(key) {
+#     let turns = 0;
+#     for (let i = 0; i < 2; i++) turns = (turns + i) | 0;
+#     const found = table.get(key);
+#     const isText = typeof found === "string";
+#     if (isText) kept.push(() => isText);
+#     else kept.push(() => !isText);
+#     kept.push(() => (isText ? 3 : 4));
+#     return turns;
+# }
+# class Span { constructor(from, to) { this.from = from; this.to = to; } }
+# const parse = (text) => JSON.parse(text);
+# const kept = [];
+# const table = new Map([["a", "text"], ["b", 5]]);
+# const first = width(new Span(2, 9));
+# const span = parse("true") ? new Span(4, 24) : parse('{"from":1,"to":2}');
+# print(first, measure(span), look(parse('"a"')), kept.map((read) => String(read())).join());
+# -- end of source
+# width is copied into measure behind its guard. What the copy gives is an integer and what the slow version gives is a number, and `wide & 16` leans on that:
+# each of the two walks what is left of the block for itself, inside the walk of the call. Each binds the call by hand, so each stores behind its own binding.
+# The closure behind the branches has two stores in front of it and none that stands in front of both ways: the verifier asks by ways.
+# RUN(GUARD): walk f2 mechanisms=all
+# GUARD-LABEL: code f2:Body
+# GUARD: role=SlowBody
+# RUN(WAYS): walk f2 mechanisms=all
+# WAYS-LABEL: code f2:Body
+# WAYS: PutModuleVariable
+# WAYS: PutModuleVariable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 7 1 1 60,20,true,3
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 7 1 1 60,20,true,3
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 7 1 1 60,20,true,3

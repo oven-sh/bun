@@ -1,16 +1,21 @@
 use crate::options::Externals;
 use bun_core::strings::last_index_of_char;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-use bun_paths::{is_absolute, is_package_path, path_buffer_pool};
+use bun_paths::{Path, from_portable, is_absolute, is_package_path};
+use bun_sema::resolve::CodeImportKind;
 
-pub(crate) fn is_external(externals: &Externals, specifier: &[u8], directory: &[u8]) -> bool {
+pub(crate) fn is_external(
+    externals: &Externals,
+    specifier: &[u8],
+    kind: CodeImportKind,
+    directory: &[u8],
+) -> bool {
     if matches_pattern(&externals.patterns, specifier) {
         return true;
     }
     if is_package_path(specifier) {
         return externals.are_all_packages || matches_package(&externals.packages, specifier);
     }
-    matches_path(&externals.paths, specifier, directory)
+    matches_path(&externals.paths, specifier, kind, directory)
 }
 
 fn matches_pattern(patterns: &[(Vec<u8>, Vec<u8>)], specifier: &[u8]) -> bool {
@@ -37,7 +42,12 @@ fn matches_package(packages: &[Vec<u8>], specifier: &[u8]) -> bool {
     }
 }
 
-fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
+fn matches_path(
+    paths: &[Vec<u8>],
+    specifier: &[u8],
+    kind: CodeImportKind,
+    directory: &[u8],
+) -> bool {
     if paths.is_empty() {
         return false;
     }
@@ -47,9 +57,15 @@ fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
     if !is_absolute(directory) {
         return false;
     }
-    let mut buffer = path_buffer_pool::get();
-    join_abs_string_buf_checked::<platform::Auto>(directory, &mut buffer[..], &[specifier])
-        .is_some_and(|path| contains(paths, path))
+    let specifier: &[u8] = match kind {
+        CodeImportKind::Import => &from_portable(specifier),
+        CodeImportKind::EntryPoint | CodeImportKind::Require => specifier,
+    };
+    let mut path = Path::resolve(&[directory, specifier]);
+    if specifier.ends_with(&[bun_paths::SEP]) {
+        path.push_trailing_sep();
+    }
+    contains(paths, &path)
 }
 
 pub(crate) fn contains(sorted_list: &[Vec<u8>], item: &[u8]) -> bool {
@@ -70,14 +86,14 @@ mod tests {
 
     fn assert_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, directory);
+            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
             assert!(is_external, "{} is not external", BStr::new(specifier));
         }
     }
 
     fn assert_not_external(externals: &Externals, directory: &[u8], specifiers: &[&[u8]]) {
         for specifier in specifiers {
-            let is_external = is_external(externals, specifier, directory);
+            let is_external = is_external(externals, specifier, CodeImportKind::Import, directory);
             assert!(!is_external, "{} is external", BStr::new(specifier));
         }
     }

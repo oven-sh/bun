@@ -1,0 +1,13 @@
+# `run` is written in a literal below which nothing is created, in a file that nobody has typed: `this` is expected to be the literal (L0). A member of a literal is borrowed and mixed in more often than a method of a class, and whoever fails a guard of parameters runs the slow body, without any form: so a literal alone is no word of a guard. The body asks where it reads, and a borrowed `this` pays for those reads alone.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 cycle
+# CHECK-NEXT: parameter 0 expected=L0 declared
+# RUN(BODY): walk f1 mechanisms=all
+# BODY: b0(v0: anything?ParameterOfEscapedFunction
+# BODY: = GetSlot v0 key="scale" receivers=[L0] level=Expected [isFilledWhereShapeFits]
+# -- source: meter.js
+# const meter = { scale: 3, bias: 0, run(by) { return by * this.scale + this.bias; } };
+# globalThis.kept = meter;
+# const other = { scale: 2, bias: 1, extra: true, run: meter.run };
+# console.log(meter.run(2), other.run(2));
+# -- end of source

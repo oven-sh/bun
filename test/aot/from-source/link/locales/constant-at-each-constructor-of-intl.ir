@@ -1,0 +1,14 @@
+# a written tag at each constructor of Intl that takes locales, each with a tag of its own
+# -- source: constant-at-each-constructor-of-intl.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# new Intl.NumberFormat("it"); new Intl.DateTimeFormat("es"); new Intl.Collator("fi"); new Intl.PluralRules("pl");
+# new Intl.ListFormat("nl"); new Intl.RelativeTimeFormat("pt-BR"); new Intl.Segmenter("th"); new Intl.Locale("ko");
+# -- end of source
+# REPEAT: name = A B C D E F G H; builtin = IntlNumberFormat IntlDateTimeFormat IntlCollator IntlPluralRules IntlListFormat IntlRelativeTimeFormat IntlSegmenter IntlLocale; tag = it es fi pl nl pt-BR th ko
+# RUN(%(name)): locales
+# %(name): locale constant "%(tag)" %(builtin) at f0
+# END REPEAT
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

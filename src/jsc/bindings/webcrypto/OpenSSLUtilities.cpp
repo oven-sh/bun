@@ -31,7 +31,6 @@
 #include "OpenSSLCryptoUniquePtr.h"
 #include <openssl/bytestring.h>
 #include <openssl/evp.h>
-#include <wtf/Scope.h>
 
 namespace WebCore {
 
@@ -61,14 +60,12 @@ const EVP_MD* digestAlgorithm(CryptoAlgorithmIdentifier hashFunction)
 
 std::optional<Vector<uint8_t>> marshalEVPKey(EVP_PKEY* key, bool isPublic)
 {
-    CBB cbb;
-    CBB_zero(&cbb);
-    auto cleanup = WTF::makeScopeExit([&] { CBB_cleanup(&cbb); });
-    if (!key || !CBB_init(&cbb, 0))
+    OpenSSLCryptoScoped<CBB, CBB_zero, CBB_cleanup> cbb;
+    if (!key || !CBB_init(cbb.get(), 0))
         return std::nullopt;
-    if (isPublic ? !EVP_marshal_public_key(&cbb, key) : !EVP_marshal_private_key(&cbb, key))
+    if (isPublic ? !EVP_marshal_public_key(cbb.get(), key) : !EVP_marshal_private_key(cbb.get(), key))
         return std::nullopt;
-    return Vector<uint8_t>(std::span { CBB_data(&cbb), CBB_len(&cbb) });
+    return Vector<uint8_t>(std::span { CBB_data(cbb.get()), CBB_len(cbb.get()) });
 }
 
 std::optional<Vector<uint8_t>> calculateDigest(const EVP_MD* algorithm, const Vector<uint8_t>& message)

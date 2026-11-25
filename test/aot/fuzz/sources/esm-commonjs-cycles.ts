@@ -1,13 +1,14 @@
 // A list of programs from ../esm-commonjs-cycles.ts, which describes them.
 import { asProgram, type Drawn } from "../family";
-import { program, runsModuleAgain, throwsForModuleThatThrew } from "../esm-commonjs-cycles";
+import { program, throwsForModuleThatThrew } from "../esm-commonjs-cycles";
 
 const drawn: Drawn = (seed, runner) => {
   if (runner.name !== "product") return;
   const awaits = seed % 2 === 1;
   const { entry, files, notes } = program(Math.floor(seed / 2), awaits);
-  // How soon a file is loaded is unspecified, and an await makes it visible.
-  if (awaits && Object.values(files).some(text => /^import\(/m.test(text))) return;
+  // An import() at the top level of an ES module that a require() loads runs its module after that require() returns,
+  // not within it as under plain Bun. And how soon a file is loaded is unspecified, and an await makes it visible.
+  if (Object.values(files).some(text => /^import\(/m.test(text))) return;
   if (awaits && !Object.values(files).some(text => /^(.* )?(for )?await /m.test(text.split("setTimeout(async")[0])))
     return;
   const { [entry]: text, ...others } = files;
@@ -22,11 +23,9 @@ const drawn: Drawn = (seed, runner) => {
       needsOwnBuild: true,
       unstablePlainOutput: "as plain Bun where it reads files on several threads",
       meant: (plain, compiled) =>
-        runsModuleAgain(plain)
-          ? "a CommonJS module that threw runs again under plain Bun"
-          : throwsForModuleThatThrew(plain, compiled, notes)
-            ? "a module that threw is asked for again and the executable throws"
-            : undefined,
+        throwsForModuleThatThrew(plain, compiled, notes)
+          ? "a module that threw is asked for again and the executable throws"
+          : undefined,
     }
   );
 };

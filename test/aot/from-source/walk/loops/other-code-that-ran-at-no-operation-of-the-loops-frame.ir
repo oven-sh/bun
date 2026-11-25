@@ -1,0 +1,22 @@
+# f3 = drive
+# -- source: other-code-that-ran-at-no-operation-of-the-loops-frame.ts
+# declare function print(...values: unknown[]): void;
+# function* inner(): Generator<number> { yield 1; yield 2; }
+# function* pick(): Generator<number> { for (const value of inner()) yield value * 2; }
+# function drive(times: number): number {
+#   let sum = 0;
+#   let text = "";
+#   for (const x of pick()) {
+#     for (let i = 0; i < times; i++) text += "a";
+#     sum = (sum + x + text.length) | 0;
+#   }
+#   return sum;
+# }
+# print(drive(Number(JSON.parse("3"))));
+# -- end of source
+# The for-of steps a generator that itself steps another generator: other code runs while the loop's frame stands at no operation, so the try's list of operations that ran other code holds an empty name.
+# A text grows in the loop, so the walk asks whether it grows in a quiet turn: of a place that nobody can name nothing is known: the text keeps its builder. (The question once asked the body's index for the opcode of the empty name: a trap in the compiler.)
+# RUN: walk f3 mechanisms=all
+# CHECK: isLoopHead=true
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 15

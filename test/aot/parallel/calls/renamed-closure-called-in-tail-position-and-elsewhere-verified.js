@@ -1,5 +1,4 @@
 // A closure that is renamed out of the compiler's sight is called by value in tail position and in the middle of a function.
-// Flags: --aot-check=verify-each-pass --aot-disable=flow:CalleeSets,flow:ExactFunctions,flow:NarrowedTypes
 const hide = value => new CustomEvent("hide", { detail: value }).detail;
 function make(n) {
   return function inner(x) {

@@ -1,0 +1,19 @@
+# f1 = link
+# -- source: store-a-reference-into-an-object-that-was-handed-in.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function link(entry: Entry, follower: Entry): void {
+#   entry.follower = follower;
+# }
+# declare const input: any;
+# const first: Entry = { follower: null, weight: +input };
+# const second: Entry = { follower: null, weight: 1.5 };
+# link(first, second);
+# link(second, input ? first : second);
+# (globalThis as any).answer = first.follower!.follower!.weight;
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 2.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

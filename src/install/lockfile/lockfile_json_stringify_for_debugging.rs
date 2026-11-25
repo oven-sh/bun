@@ -4,10 +4,8 @@ use bun_semver::ExternalString;
 use bun_semver::string::JsonFormatterOptions;
 
 use crate::bin::Tag as BinTag;
-use crate::dependency::Tag as DependencyVersionTag;
-use crate::dependency::{Behavior, NpmInfo, TagInfo, TarballInfo, URI};
+use crate::dependency::{Behavior, URI, Value};
 use crate::integrity::Tag as IntegrityTag;
-use crate::repository::Repository;
 use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
 
 use super::package::scripts::Scripts as PackageScripts;
@@ -35,7 +33,7 @@ where
     w.object_field(b"name")?;
     w.write(dep.name.slice(sb))?;
 
-    if dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias {
+    if dep.version.is_npm_alias() {
         w.object_field(b"is_alias")?;
         w.write(true)?;
     }
@@ -43,13 +41,11 @@ where
     w.object_field(b"literal")?;
     w.write(dep.version.literal.slice(sb))?;
 
-    w.object_field(<&'static str>::from(dep.version.tag).as_bytes())?;
-    match dep.version.tag {
-        DependencyVersionTag::Uninitialized => w.write_null()?,
-        DependencyVersionTag::Npm => {
+    w.object_field(<&'static str>::from(dep.version.tag()).as_bytes())?;
+    match &dep.version.value {
+        Value::Uninitialized => w.write_null()?,
+        Value::Npm(info) => {
             w.begin_object()?;
-
-            let info: &NpmInfo = dep.version.npm();
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -59,10 +55,8 @@ where
 
             let _ = w.end_object();
         }
-        DependencyVersionTag::DistTag => {
+        Value::DistTag(info) => {
             w.begin_object()?;
-
-            let info: TagInfo = *dep.version.dist_tag();
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -72,10 +66,9 @@ where
 
             let _ = w.end_object();
         }
-        DependencyVersionTag::Tarball => {
+        Value::Tarball(info) => {
             w.begin_object()?;
 
-            let info: TarballInfo = *dep.version.tarball();
             let (uri_tag, uri_slice): (&'static str, &[u8]) = match info.uri {
                 URI::Local(ref s) => ("local", s.slice(sb)),
                 URI::Remote(ref s) => ("remote", s.slice(sb)),
@@ -88,19 +81,11 @@ where
 
             let _ = w.end_object();
         }
-        DependencyVersionTag::Folder => {
-            w.write(dep.version.folder().slice(sb))?;
+        Value::Folder(path) | Value::Symlink(path) | Value::Workspace(path) => {
+            w.write(path.slice(sb))?;
         }
-        DependencyVersionTag::Symlink => {
-            w.write(dep.version.symlink().slice(sb))?;
-        }
-        DependencyVersionTag::Workspace => {
-            w.write(dep.version.workspace().slice(sb))?;
-        }
-        DependencyVersionTag::Git => {
+        Value::Git(info) | Value::Github(info) => {
             w.begin_object()?;
-
-            let info: &Repository = dep.version.git();
 
             w.object_field(b"owner")?;
             w.write(info.owner.slice(sb))?;
@@ -115,28 +100,8 @@ where
 
             let _ = w.end_object();
         }
-        DependencyVersionTag::Github => {
+        Value::Catalog(info) => {
             w.begin_object()?;
-
-            let info: &Repository = dep.version.github();
-
-            w.object_field(b"owner")?;
-            w.write(info.owner.slice(sb))?;
-            w.object_field(b"repo")?;
-            w.write(info.repo.slice(sb))?;
-            w.object_field(b"committish")?;
-            w.write(info.committish.slice(sb))?;
-            w.object_field(b"resolved")?;
-            w.write(info.resolved.slice(sb))?;
-            w.object_field(b"package_name")?;
-            w.write(info.package_name.slice(sb))?;
-
-            let _ = w.end_object();
-        }
-        DependencyVersionTag::Catalog => {
-            w.begin_object()?;
-
-            let info = *dep.version.catalog();
 
             w.object_field(b"name")?;
             w.write(dep.name.slice(sb))?;
@@ -229,10 +194,9 @@ where
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
         let mut depth_buf = tree::depth_buf_uninit();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+        let mut path_buf = bun_paths::Path::new();
 
-        for tree_id in 0..this.buffers.trees.as_slice().len() {
+        for tree_id in 0..this.buffers.trees.len() {
             w.begin_object()?;
 
             let tree = this.buffers.trees.as_slice()[tree_id];
@@ -252,16 +216,7 @@ where
                 );
 
             w.object_field(b"path")?;
-            w.print(format_args!(
-                "\"{}\"",
-                bun_fmt::fmt_path(
-                    relative_path,
-                    bun_fmt::PathFormatOptions {
-                        path_sep: bun_fmt::PathSep::Posix,
-                        ..Default::default()
-                    },
-                )
-            ))?;
+            w.write(&*bun_paths::to_portable(relative_path))?;
 
             w.object_field(b"depth")?;
             w.write(depth)?;
@@ -340,10 +295,10 @@ where
                 w.write(res.tag.name().unwrap_or("").as_bytes())?;
 
                 w.object_field(b"value")?;
-                w.print(format_args!("\"{}\"", res.fmt(sb, bun_fmt::PathSep::Posix)))?;
+                w.write(res.fmt(sb, bun_fmt::PathSep::Posix).to_string().as_bytes())?;
 
                 w.object_field(b"resolved")?;
-                w.print(format_args!("\"{}\"", res.fmt_url(sb)))?;
+                w.write(res.fmt_url(sb).to_string().as_bytes())?;
 
                 let _ = w.end_object();
             }

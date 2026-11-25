@@ -21,8 +21,7 @@
 // CHECK-NOT: = TypeOf
 // CHECK-LABEL: function {{*}}name="member"
 // CHECK-NOT: isForTypeOf
-// CHECK: [[read]] = PropGet {{*}}key="missing" [isFreeName]
-// CHECK-NEXT: [[holder]] = Convert [[read]] declared={type={{*}}flags=[IsExpected]}
+// CHECK: [[holder]] = PropGet {{*}}key="missing" [isFreeName]
 // CHECK-NEXT: [[property]] = PropGet [[holder]] key="p"
 // CHECK-NOT: isForTypeOf
 // CHECK: = TypeOf [[property]]

@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const build = (naming: string) => `import plugin, { calls } from "./plugin";
 const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, ${naming} plugins: [plugin], throw: false });
@@ -157,6 +158,17 @@ export { twiceAgain };`,
     prints: "[answer 1] [answer 1] true\n",
     calls: { "once.min.js": 1, "twice.min.js": 1 },
   },
+  "a script with a byte order mark that the plugin passes on keeps its bytes": {
+    files: {
+      "main.ts": `${reads}// @ts-ignore
+import marked from "./marked.min.js" with { type: "file" };
+console.log(Array.from(await Bun.file(marked).bytes(), (byte: any) => byte.toString(16).padStart(2, "0")).join(""));`,
+      "marked.min.js": "﻿ab\n",
+      "plugin.ts": plugin(`  b.onLoad({ filter: /marked\\.min\\.js$/ }, (a: any) => answer(a, undefined));`),
+    },
+    prints: "efbbbf61620a\n",
+    calls: { "marked.min.js": 1 },
+  },
   "a plugin that returns undefined embeds the file from disk": {
     files: {
       "main.ts": `${reads}// @ts-ignore
@@ -268,27 +280,6 @@ console.log(await text(asset), seen);`,
     prints: "made true\n",
     calls: { "asset.bin": 1, "seen.tmpl": 1 },
   },
-  "a macro runs once when a plugin returns code for a file import": {
-    files: {
-      "main.ts": `import { count } from "./count" with { type: "macro" };
-// @ts-ignore
-import later from "./later.bin" with { type: "file" };
-console.log(count(), later);`,
-      "count.ts": `import { appendFileSync, readFileSync } from "fs";
-import { join } from "path";
-export function count(): number {
-  const file = join(import.meta.dir, "count-" + (process.env.PLUGIN_DELAY_MS ?? "0") + ".txt");
-  appendFileSync(file, "x");
-  return readFileSync(file, "utf8").length;
-}`,
-      "later.bin": "",
-      "plugin.ts": plugin(
-        `  b.onLoad({ filter: /later\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`,
-      ),
-    },
-    prints: "1 code\n",
-    calls: { "later.bin": 1 },
-  },
 };
 
 describe.concurrent("compile/aot/assets loaded by plugins", () => {
@@ -297,8 +288,38 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
   const isAlone = (name: string) => cases[name].naming !== undefined || name.includes("Worker");
   for (const name of Object.keys(cases).filter(isAlone))
     test(name, () => slot(() => expectSameExecutable(cases[name])), 600_000);
-  const rest = Object.keys(cases).filter(name => !isAlone(name));
+  // The build has decided what a file is before a plugin is asked for it: docs/compiler/compatibility.mdx, "Not supported".
+  const refused: Record<string, string[]> = {
+    "many assets, and a plugin module that imports a virtual asset": [`"wrapped.tmpl" with the loader "ts"`],
+    "a plugin that returns code for a file import: each callback runs once": [
+      `"late.bin" with the loader "ts"`,
+      `"note.tmpl" with the loader "js"`,
+    ],
+    "a plugin that returns the text loader for a file import": [`"words.bin" with the loader "text"`],
+    "defer() resolves after assets are loaded": [`"seen.tmpl" with the loader "js"`],
+  };
+  const rest = Object.keys(cases).filter(name => !isAlone(name) && !refused[name]);
   test("the other answers", () => slot(() => expectSameExecutable(together(rest.map(name => cases[name])))), 600_000);
+  test.each(Object.keys(refused))("TS100050: %s", name =>
+    slot(async () => {
+      using dir = tempDir("aot-plugin-assets", {
+        "build.ts": build(byName),
+        "helpers.ts": helpers,
+        "tsconfig.json": tsconfig,
+        ...cases[name].files,
+      });
+      const { built } = await buildIn(String(dir), "0");
+      const said = [
+        ...built.stdout.matchAll(
+          /TS100050: --aot does not support a plugin that loads "[^"]*?([^"\\/]+" with the loader "\w+") when the build treats the file as an asset\. Pass --loader /g,
+        ),
+      ];
+      expect({ said: said.map(match => `"${match[1]}`).sort(), exitCode: built.exitCode }).toEqual({
+        said: refused[name],
+        exitCode: 1,
+      });
+    }),
+  );
 
   test(
     "a plugin that throws for an asset fails the build",

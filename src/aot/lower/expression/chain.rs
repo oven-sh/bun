@@ -25,6 +25,10 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+pub(in crate::lower) fn is_link_in_brackets(chain: Chain, has_parent_outside_chain: bool) -> bool {
+    chain != Chain::No && has_parent_outside_chain
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn lower_chain_base(
         &mut self,

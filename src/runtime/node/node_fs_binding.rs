@@ -1,16 +1,15 @@
-use core::ptr::NonNull;
-
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_sys::Maybe;
 use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, move_waiting_descriptors, ret,
 };
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
@@ -21,6 +20,22 @@ use crate::node::fs::{
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
 
+fn run_sync_with<R: FsReturn, A: FsArgument>(
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
+    dispatch: impl FnOnce(&A) -> Maybe<R>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
+    let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    move_waiting_descriptors();
+    match dispatch(&args) {
+        Err(err) => Err(global.throw_value(err.to_js(global))),
+        Ok(res) => res.fs_to_js(global),
+    }
+}
+
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
@@ -30,21 +45,52 @@ fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
 where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
-    let global = cx.global();
-    let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
-    let args = <A as FsArgument>::from_js(global, &mut slice)?;
-
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    let result = this
-        .node_fs
-        .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
-    match result {
-        Err(err) => Err(global.throw_value(err.to_js(global))),
-        Ok(res) => res.fs_to_js(global),
-    }
+    run_sync_with::<R, A>(cx, args, |args| {
+        this.node_fs
+            .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync))
+    })
+}
+
+/// A synchronous `node:fs` function for compiled code. It has no binding object and uses the `NodeFS` of the VM.
+fn run_sync_function<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
+) -> JsResult<JSValue>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
+    let vm = cx.global().bun_vm();
+    run_sync_with::<R, A>(cx, args, |args| {
+        crate::jsc_hooks::with_node_fs(vm, |node_fs| {
+            node_fs.vm = Some(vm);
+            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+        })
+    })
+}
+
+macro_rules! sync_functions {
+    ( $( $name:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
+        $(
+            pub(crate) fn $name(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+                run_sync_function::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(cx, args)
+            }
+        )*
+    };
+}
+
+sync_functions! {
+    append_file_sync => AppendFile, args::AppendFile<'static>, ret::AppendFile;
+    chmod_sync       => Chmod,      args::Chmod<'static>,      ret::Chmod;
+    close_sync       => Close,      args::Close,               ret::Close;
+    exists_sync      => Exists,     args::Exists<'static>,     ret::Exists;
+    fstat_sync       => Fstat,      args::Fstat,               ret::Fstat;
+    lstat_sync       => Lstat,      args::Lstat<'static>,      ret::Lstat;
+    readdir_sync     => Readdir,    args::Readdir<'static>,    ret::Readdir;
+    read_file_sync   => ReadFile,   args::ReadFile<'static>,   ret::ReadFile;
+    stat_sync        => Stat,       args::Stat<'static>,       ret::Stat;
 }
 
 /// Which arm of an async binding was called.
@@ -88,7 +134,7 @@ fn run_async<A: FsArgument>(
         &bun_jsc::JsThread<'_>,
         &Binding,
         ThreadIsolated<A>,
-        &mut VirtualMachine,
+        &VirtualMachine,
         Option<JSValue>,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
@@ -99,7 +145,8 @@ fn run_async<A: FsArgument>(
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
-    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    let vm: &VirtualMachine = global.bun_vm();
+    move_waiting_descriptors();
     Ok(create_task(&cx, this, args, vm, callback))
 }
 
@@ -151,9 +198,15 @@ fn reject_before_schedule(
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`.
-#[derive(Default)]
 pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
+}
+
+impl Drop for Binding {
+    fn drop(&mut self) {
+        let path = &self.node_fs.get().sync_error_buf;
+        bun_core::asan::unregister_root_region((&raw const *path).cast(), size_of_val(path));
+    }
 }
 
 impl Binding {
@@ -176,7 +229,7 @@ impl Binding {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+        let vm: &VirtualMachine = global.bun_vm();
         Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
     }
 
@@ -225,13 +278,13 @@ impl Binding {
                 return reject_before_schedule(global, callback, error);
             }
         };
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+        let vm: &VirtualMachine = global.bun_vm();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
         let is_bunfs = bun_standalone_graph::Graph::get_ref()
             .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                &cx, rd_args, vm, callback,
+                &cx, &rd_args, vm, callback,
             ));
         }
         Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
@@ -250,7 +303,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match self
             .node_fs
-            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -372,13 +425,19 @@ impl Binding {
 }
 
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
-    Binding {
+    let wrapper = Binding {
         node_fs: JsCell::new(NodeFS {
-            vm: NonNull::new(cx.global().bun_vm_ptr()),
+            vm: Some(cx.global().bun_vm()),
             ..Default::default()
         }),
     }
-    .into_js(&cx.heap)
+    .into_js(&cx.heap);
+    // SAFETY: the payload was just written, and nothing else can reach it yet.
+    let binding = unsafe { wrapper.payload_ptr().as_ref() };
+    let path = &binding.node_fs.get().sync_error_buf;
+    // LSAN does not scan the JS heap, and the VM that runs macros is never torn down.
+    bun_core::asan::register_root_region((&raw const *path).cast(), size_of_val(path));
+    wrapper
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
@@ -478,7 +537,7 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
+        match bun_sys::memfd_create(c"my_memfd".into(), bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size as i64);
                 Ok(Some(fd.native() as i32))

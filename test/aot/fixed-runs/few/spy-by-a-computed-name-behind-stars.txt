@@ -1,0 +1,30 @@
+A spy under a computed name on a namespace whose names come through export * from a CommonJS file.
+#### barrel.js
+export * from "./lib.js";
+#### bindings.js
+import { c, f } from "./stars.js"; export const seen = () => [c(1), f(1)].join();
+#### common.cjs
+exports.c = x => x + 2;
+#### lib.js
+export function f(x) { return x + 7; }
+#### starc.js
+export * from "./common.cjs";
+#### stars.js
+export * from "./starc.js"; export * from "./barrel.js";
+#### x.test.js
+import { spyOn, test } from "bun:test";
+import * as starC from "./starc.js";
+import * as stars from "./stars.js";
+import { c, f } from "./stars.js";
+import { seen } from "./bindings.js";
+const made = name => name.split("").join("");
+test("t", () => {
+  console.log("| CASE", f(1), c(1), stars.f(1), Object.keys(stars).join(), seen());
+  const spy = spyOn(starC, made("c")).mockImplementation(() => "fake");
+  console.log("| CASE", starC.c(1), stars.c(1), c(1), f(1), seen());
+  spy.mockRestore();
+  const other = spyOn(stars, made("f")).mockImplementation(() => "fake f");
+  console.log("| CASE", stars.f(1), f(1), seen());
+  other.mockRestore();
+  console.log("| CASE", starC.c(1), stars.c(1), c(1), stars.f(1), f(1), seen());
+});

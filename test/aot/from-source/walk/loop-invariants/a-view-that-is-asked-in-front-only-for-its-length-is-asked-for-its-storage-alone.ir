@@ -1,0 +1,21 @@
+# -- source: main.js
+# class Samples extends Int32Array { get length() { return 2; } }
+# class Plain extends Float64Array {}
+# var key = JSON.parse('"go"');
+# var T = { go(a, b) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i] - b[i]; return s; } };
+# var odd = new Int16Array(9).fill(1); Object.setPrototypeOf(odd, { __proto__: Int16Array.prototype });
+# print(T[key](new Int32Array(11).fill(7), new Samples(11).fill(2)), T[key](new Float64Array(5).fill(0.5), new Plain(5).fill(0.25)), T[key](new Int16Array(9).fill(5), odd), T[key](new Samples(11).fill(7), new Int32Array(11).fill(2)), T[key](new Int32Array(6).fill(7), new Samples(3).fill(2)), T[key](new Int8Array(4).fill(1), new Int8Array(new SharedArrayBuffer(4)).fill(3)));
+# -- end of source
+# Nothing is named off `b`: it is only read under an index. It is asked in front so that the length in its cell may stand there and not in every turn: what that needs is that no other thread grows its memory.
+# It was asked for its names too, which an heir (class Samples extends Int32Array) or a view whose prototype was changed never has: the whole loop took the closed copy: 1,000 elements 179,166 instructions,
+# 37,110 in front of that question, plain Bun 11,520. Its storage alone is asked: 12,174. `a`, whose `length` is named, is asked for both as before: an heir with a length of its own goes by that.
+# f4 = go
+# RUN: walk f4:Body mechanisms=all
+# CHECK: = IsPristine {{*}} builtinClass=TypedArray aspects=[Storage, Names]
+# CHECK: = IsPristine {{*}} builtinClass=TypedArray aspects=[Storage]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 55 1.25 36 10 NaN -8
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 55 1.25 36 10 NaN -8
+# NONE-NEXT: exited with 0

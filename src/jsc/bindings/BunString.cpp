@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #if ENABLE(AOT)
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -58,7 +59,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringI
 extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    *bunString = Bun::toStringRef(globalObject, value);
+    *bunString = Bun::toStringRef(globalObject, value).leak();
     return bunString->tag != BunStringTag::Dead;
 }
 
@@ -133,7 +134,7 @@ static inline void assertStaticStringIsNotCommon(EncodedSlice) {}
 #endif
 }
 
-JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
+JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject) &&
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -168,7 +169,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(bunString->transferToJS(globalObject));
+    return JSValue::encode(WTF::move(*bunString).transferToJS(globalObject));
 }
 
 // `message` for an Error built from a BunString: a WTF-backed string shares
@@ -211,7 +212,7 @@ namespace Bun {
 
 static UniquedStringImpl* nameOfProgram(JSC::VM& vm, const EncodedSlice& text)
 {
-    if (!text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
+    if (!vm.hasCompiledCode() || !text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
         return nullptr;
     return JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(Zig::untag(text.ptr)), text.len });
 }
@@ -281,25 +282,18 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString
 {
     if (str->tag != BunStringTag::WTFStringImpl)
         return;
-    auto* impl = str->impl.wtf;
-    Ref<WTF::StringImpl> shared = makeThreadShareable(*impl);
-    if (shared.ptr() != impl) {
-        str->impl.wtf = &shared.leakRef();
-        impl->deref();
-    }
+    Ref<WTF::StringImpl> impl = adoptRef(*str->impl.wtf);
+    str->impl.wtf = &makeThreadShareable(impl.get()).leakRef();
 }
 
-BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
+OwnedString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
-    }
-    if (str.length() == 0) [[unlikely]] {
-        return { BunStringTag::Empty };
+        return {};
     }
 
-    return { BunStringTag::WTFStringImpl, { .wtf = str.releaseImpl().leakRef() } };
+    return toStringRef(WTF::move(str));
 }
 
 BunString toString(WTF::String& wtfString)
@@ -324,30 +318,12 @@ BunString toString(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString toStringRef(WTF::String& wtfString)
+OwnedString toStringRef(WTF::String wtfString)
 {
     if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
+        return OwnedString::adopt({ BunStringTag::Empty });
 
-    wtfString.impl()->ref();
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
-BunString toStringRef(const WTF::String& wtfString)
-{
-    if (wtfString.isEmpty())
-        return { BunStringTag::Empty };
-
-    wtfString.impl()->ref();
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
-}
-BunString toStringRef(WTF::StringImpl* wtfString)
-{
-    if (wtfString->isEmpty())
-        return { BunStringTag::Empty };
-
-    wtfString->ref();
-
-    return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+    return OwnedString::adopt({ BunStringTag::WTFStringImpl, { .wtf = wtfString.releaseImpl().leakRef() } });
 }
 
 BunString toStringView(StringView view)
@@ -520,6 +496,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
+extern "C" BunString BunString__createSubstringSharingImpl(const BunString* string, size_t offset, size_t length)
+{
+    RELEASE_ASSERT(string->tag == BunStringTag::WTFStringImpl);
+    auto& impl = *string->impl.wtf;
+    RELEASE_ASSERT(length > 0 && offset <= impl.length() && length <= impl.length() - offset);
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::createSubstringSharingImpl(impl, offset, length).leakRef() } };
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
@@ -607,7 +591,7 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
 
 extern "C" BunString URL__getFileURLString(const BunString* filePath)
 {
-    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
+    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier()).leak();
 }
 
 extern "C" size_t URL__originLength(const char* latin1_slice, size_t len)
@@ -651,7 +635,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.string());
+    return Bun::toStringRef(url.string()).leak();
 }
 
 extern "C" BunString URL__getHref(const BunString* input)
@@ -661,7 +645,7 @@ extern "C" BunString URL__getHref(const BunString* input)
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.string());
+    return Bun::toStringRef(url.string()).leak();
 }
 
 extern "C" BunString URL__pathFromFileURL(const BunString* input)
@@ -671,7 +655,7 @@ extern "C" BunString URL__pathFromFileURL(const BunString* input)
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.fileSystemPath());
+    return Bun::toStringRef(url.fileSystemPath()).leak();
 }
 
 extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString* relativeStr)
@@ -682,50 +666,103 @@ extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString*
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
 
-    return Bun::toStringRef(url.string());
+    return Bun::toStringRef(url.string()).leak();
 }
 
-extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
-{
-    const auto& fragment = url->fragmentIdentifier().isEmpty()
-        ? emptyString()
-        : url->fragmentIdentifier().toString();
-    return Bun::toStringRef(fragment);
-}
+// `whatwg::URL` in src/url/lib.rs is the storage.
+static_assert(sizeof(WTF::URL) == 40 && alignof(WTF::URL) == 8);
 
-extern "C" WTF::URL* URL__fromString(const BunString* input)
+// Leaves a URL in `storage` exactly when it returns true.
+extern "C" bool URL__fromString(void* storage, const BunString* input, const WTF::URL* base)
 {
-    auto&& str = input->toWTFString();
-    auto url = WTF::URL(str);
-    if (!url.isValid())
-        return nullptr;
-
-    return new WTF::URL(WTF::move(url));
-}
-
-extern "C" BunString URL__protocol(WTF::URL* url)
-{
-    return Bun::toStringRef(url->protocol().toString());
+    auto string = input->toWTFString();
+    auto* url = base
+        ? new (NotNull, storage) WTF::URL(*base, string.isNull() ? emptyString() : string)
+        : new (NotNull, storage) WTF::URL(WTF::move(string));
+    if (url->isValid())
+        return true;
+    url->~URL();
+    return false;
 }
 
 extern "C" void URL__deinit(WTF::URL* url)
 {
-    delete url;
+    url->~URL();
+}
+
+extern "C" EncodedSlice URL__protocol(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->protocol());
+}
+
+extern "C" EncodedSlice URL__encodedUsername(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->encodedUser());
+}
+
+extern "C" EncodedSlice URL__encodedPassword(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->encodedPassword());
+}
+
+extern "C" EncodedSlice URL__query(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->query());
+}
+
+extern "C" EncodedSlice URL__fragmentIdentifier(const WTF::URL* url)
+{
+    return Zig::toEncodedSlice(url->fragmentIdentifier());
+}
+
+extern "C" bool URL__hasOpaquePath(const WTF::URL* url)
+{
+    return url->hasOpaquePath();
+}
+
+extern "C" void URL__setUsername(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setUser(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setPassword(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setPassword(Zig::toStringView(*value));
+}
+
+extern "C" bool URL__setHost(WTF::URL* url, const EncodedSlice* value)
+{
+    return url->setHost(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setPathname(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setPath(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setQuery(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setQuery(Zig::toStringView(*value));
+}
+
+extern "C" void URL__setFragmentIdentifier(WTF::URL* url, const EncodedSlice* value)
+{
+    url->setFragmentIdentifier(Zig::toStringView(*value));
 }
 
 extern "C" BunString URL__href(WTF::URL* url)
 {
-    return Bun::toStringRef(url->string());
+    return Bun::toStringRef(url->string()).leak();
 }
 
 extern "C" BunString URL__username(WTF::URL* url)
 {
-    return Bun::toStringRef(url->user());
+    return Bun::toStringRef(url->user()).leak();
 }
 
 extern "C" BunString URL__password(WTF::URL* url)
 {
-    return Bun::toStringRef(url->password());
+    return Bun::toStringRef(url->password()).leak();
 }
 
 /// Returns the host WITHOUT the port.
@@ -735,9 +772,9 @@ extern "C" BunString URL__password(WTF::URL* url)
 /// ```
 /// URL("http://example.com:8080").host() => "example.com"
 /// ```
-extern "C" BunString URL__host(WTF::URL* url)
+extern "C" EncodedSlice URL__host(const WTF::URL* url)
 {
-    return Bun::toStringRef(url->host().toString());
+    return Zig::toEncodedSlice(url->host());
 }
 
 /// Returns the host WITH the port.
@@ -749,7 +786,7 @@ extern "C" BunString URL__host(WTF::URL* url)
 /// ```
 extern "C" BunString URL__hostname(WTF::URL* url)
 {
-    return Bun::toStringRef(url->hostAndPort());
+    return Bun::toStringRef(url->hostAndPort()).leak();
 }
 
 extern "C" uint32_t URL__port(WTF::URL* url)
@@ -763,9 +800,9 @@ extern "C" uint32_t URL__port(WTF::URL* url)
     return std::numeric_limits<uint32_t>::max();
 }
 
-extern "C" BunString URL__pathname(WTF::URL* url)
+extern "C" EncodedSlice URL__pathname(const WTF::URL* url)
 {
-    return Bun::toStringRef(url->path().toString());
+    return Zig::toEncodedSlice(url->path());
 }
 
 WTF::String BunString::toWTFString() const
@@ -829,7 +866,7 @@ WTF::String BunString::toWTFString(NonNullTag) const
     return res;
 }
 
-WTF::String BunString::transferToWTFString()
+WTF::String BunString::transferToWTFString() &&
 {
     if (this->tag == BunStringTag::EncodedSlice) {
         if (Zig::isTaggedUTF8Ptr(this->impl.encoded.ptr)) {

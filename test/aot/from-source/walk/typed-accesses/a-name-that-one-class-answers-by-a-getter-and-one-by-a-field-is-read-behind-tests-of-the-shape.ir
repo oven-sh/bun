@@ -1,0 +1,33 @@
+# `this.left.count`: what stands on the left is proven to be a Box or a Crate. A Box answers by a getter, a Crate by a field, so the read has no form over both. It is laid
+# behind tests of the shape, outside of a loop too: the getter is called directly or copied in, the field is read out of its slot, and no read by name is left.
+# f5 = weigh, f3 = the getter of Box, f6 = heavy
+# RUN: walk f5 mechanisms=all-Inlining
+# CHECK-LABEL: code f5:Body
+# CHECK: = ShapeTest
+# CHECK: = CallDirect {{*}} function=f3
+# CHECK: = GetSlot {{*}} key="count"
+# RUN(NONE): walk f5 mechanisms=all-Inlining
+# NONE-LABEL: code f5:Body
+# NONE-NOT: = PropGet {{*}} key="count"
+# RUN(WITHHELD): walk f5 mechanisms=all-Inlining-Guesses
+# WITHHELD-LABEL: code f5:Body
+# WITHHELD: = PropGet {{*}} key="count"
+# Two fields that lie in different slots are left to the read by name outside of a loop.
+# RUN(FIELDS): walk f6 mechanisms=all-Inlining
+# FIELDS-LABEL: code f6:Body
+# FIELDS-NOT: = ShapeTest
+# -- source: a-name-that-one-class-answers-by-a-getter-and-one-by-a-field-is-read-behind-tests-of-the-shape.ts
+# abstract class Shelf { abstract readonly count: number; abstract readonly weight: number; }
+# class Box extends Shelf { weight = 1; constructor(public items: string) { super(); } get count(): number { return this.items.length; } }
+# class Crate extends Shelf {
+#   readonly count: number;
+#   weight = 2;
+#   constructor(readonly left: Shelf, readonly right: Shelf) { super(); this.count = 7; }
+#   weigh(): number { return this.left.count; }
+#   heavy(): number { return this.left.weight; }
+# }
+# declare const input: any;
+# const box = new Box(String(input));
+# const crate = new Crate(box, new Crate(box, box));
+# (globalThis as any).answer = [crate.weigh(), new Crate(crate, box).weigh(), crate.heavy(), new Crate(crate, box).heavy()];
+# -- end of source

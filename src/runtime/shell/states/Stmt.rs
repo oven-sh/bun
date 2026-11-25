@@ -7,6 +7,7 @@ use crate::shell::yield_::Yield;
 
 pub(crate) struct Stmt {
     pub(crate) base: Base,
+    shell: *mut ShellExecEnv,
     pub node: bun_ptr::BackRef<ast::Stmt>,
     pub(crate) idx: usize,
     pub(crate) last_exit_code: Option<ExitCode>,
@@ -23,7 +24,8 @@ impl Stmt {
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             idx: 0,
             last_exit_code: None,
@@ -50,7 +52,7 @@ impl Stmt {
                 Self::expr_count(me),
                 me.base.parent,
                 me.last_exit_code,
-                me.base.shell,
+                me.shell,
             )
         };
         if idx >= len {
@@ -77,7 +79,7 @@ impl Stmt {
             me.currently_executing = None;
         }
         // Async children are *not* freed here (they outlive their parent's
-        // notion of "done"); see `Async`'s empty `deinit`.
+        // notion of "done").
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
         }

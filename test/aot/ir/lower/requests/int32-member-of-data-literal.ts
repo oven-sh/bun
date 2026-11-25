@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[member]] = Integer integer=1
-// CHECK-NEXT: = Convert [[member]] declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: = Convert [[member]] declared={type=i32}
 // CHECK-NOT: Convert
 // CHECK: = Data data=d
 

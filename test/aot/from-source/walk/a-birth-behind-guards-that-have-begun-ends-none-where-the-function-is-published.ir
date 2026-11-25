@@ -1,0 +1,17 @@
+# -- source: main.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# Point.prototype.sum = function () { return this.x + this.y; };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += new Point(i & 7, 1).sum(); return total; }
+# print(publish(run)(10));
+# -- end of source
+# `run` is in the hands of code that nobody has seen, so `count` is anything and the birth in the typed copy of the loop reads the prototype of its new.target and allocates below it.
+# Point is evaluated once and its guards have begun in front of the loop: the class is defined by then, so that birth defines none and ends no guard. The guard of `sum` is asked in front and no turn asks again. f2 = run, L0 = Point
+# RUN(ASKED): walk f2 mechanisms=all
+# ASKED-LABEL: code f2:Body
+# ASKED: BeginMemberGuards layout=L0
+# ASKED-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}, {kind=ClassEvaluatedOnce layout=L0}]
+# ASKED: ) isInLoop=true isLoopHead=true:
+# ASKED-NOT: AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell globalThis.publish = (given) => given;
+# ANSWERS: 39
+# ANSWERS-NEXT: exited with 0

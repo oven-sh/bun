@@ -27,11 +27,13 @@
 //! a name or an attribute value is a string literal, and where the first token of a file or a block starts. The default
 //! library has no text, so checks that depend on the text are skipped for it.
 
+use super::errors_aliases::AliasDeclarations;
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
 use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
+use std::sync::Arc;
 
 /// State that's constant for a whole file.
 struct Cx<'a> {
@@ -54,7 +56,7 @@ struct Cx<'a> {
     /// `getVerbatimModuleSyntaxErrorMessage`
     esm_syntax_code: u32,
     /// `node.Symbol` for the alias declarations.
-    aliases: ArrayHashMap<Decl, Sym>,
+    aliases: Arc<AliasDeclarations>,
 }
 
 /// The node whose body is the statement list being checked.
@@ -335,9 +337,11 @@ impl Checker<'_, '_> {
         let is_at_top = container.module.is_none() && container.is_appropriate_context;
         // `IsModuleAugmentationExternal`
         let adds_to_another = if is_at_top {
-            cx.is_module
+            hir.is_module_for(module.name)
         } else {
-            container.is_ambient_module && container.is_top_level && !cx.is_module
+            container.is_ambient_module
+                && container.is_top_level
+                && !hir.is_module_for(hir[container.module].name)
         };
         let is_augmentation = is_ambient_module && adds_to_another;
         let inner = StatementParent {
@@ -444,7 +448,7 @@ impl Checker<'_, '_> {
             }
         } else if is_global {
             self.error_at((cx.file, name_pos, 0), 2669, &[]);
-        } else if !is_at_top || !cx.is_global_source_file {
+        } else if !is_at_top || !cx.is_global_source_file && !hir.declares_as_script(module.name) {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
             && is_relative(self.atoms().bytes(name))

@@ -1,0 +1,57 @@
+# -- source: main.js
+# class A { k = 1; }
+# class B { k = 2; }
+# class D { k = 4; }
+# class E extends A { m = 8; }
+# function Old() { this.k = 16; }
+# class Thrower { constructor() { throw new Error("thrown"); } }
+# class First { constructor() { this.own = new.target === First; } }
+# class Second { constructor() { this.own = new.target === Second; } }
+# function make(k) { return class { k = k; }; }
+# const Ten = make(10);
+# const Twenty = make(20);
+# function adder(n) { return (x) => x + n; }
+# const twice = (x) => x * 2;
+# const addFive = adder(5);
+# function three(count) { let sum = 0; for (let i = 0; i < count; i++) { const C = i % 3 === 0 ? A : i % 3 === 1 ? B : D; sum += new C().k; } return sum; }
+# function classAndFunction(count) { let sum = 0; for (let i = 0; i < count; i++) { const C = i & 1 ? A : Old; sum += new C().k; } return sum; }
+# function derived(count) { let sum = 0; for (let i = 0; i < count; i++) { const C = i & 1 ? E : B; const o = new C(); sum += o.k + (o.m || 0); } return sum; }
+# function calls(count) { let sum = 0; for (let i = 0; i < count; i++) { const f = i & 1 ? twice : addFive; sum += f(i); } return sum; }
+# function throws(count) { let log = ""; for (let i = 0; i < count; i++) { const C = i & 1 ? Thrower : A; try { log += new C().k; } catch (error) { log += error.message; } } return log; }
+# function stranger(count) { let sum = 0; const given = pick(B); for (let i = 0; i < count; i++) { const C = i & 1 ? A : given; sum += new C().k; } return sum; }
+# function reflected(count) { let sum = 0; for (let i = 0; i < count; i++) { const C = i & 1 ? A : B; sum += Reflect.construct(C, []).k; } return sum; }
+# function targets(count) { let all = true; for (let i = 0; i < count; i++) { const C = i & 1 ? First : Second; all = all && new C().own; } return all; }
+# function twins(count) { let sum = 0; for (let i = 0; i < count; i++) { const C = i % 3 === 0 ? Ten : i % 3 === 1 ? Twenty : A; sum += new C().k; } return sum; }
+# print(three(6));
+# print(classAndFunction(6));
+# print(derived(6));
+# print(calls(6));
+# print(throws(4));
+# print(stranger(6));
+# print(reflected(6));
+# print(targets(6));
+# print(twins(6));
+# -- end of source
+# At each `new C` and each `f(i)` the callee is one of several functions: three classes, a class and a constructor function, a class below another, an arrow with a capture, a constructor that throws, a class that unseen code hands in, and two closures of one class beside another class. new.target is the callee in each arm.
+# RUN(ANSWER): run-in-shell globalThis.pick = () => class { k = 32; };
+# ANSWER: 14
+# ANSWER-NEXT: 51
+# ANSWER-NEXT: 33
+# ANSWER-NEXT: 39
+# ANSWER-NEXT: 1thrown1thrown
+# ANSWER-NEXT: 99
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: true
+# ANSWER-NEXT: 62
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.pick = () => class { k = 32; };
+# CHECKED: 14
+# CHECKED-NEXT: 51
+# CHECKED-NEXT: 33
+# CHECKED-NEXT: 39
+# CHECKED-NEXT: 1thrown1thrown
+# CHECKED-NEXT: 99
+# CHECKED-NEXT: 9
+# CHECKED-NEXT: true
+# CHECKED-NEXT: 62
+# CHECKED-NEXT: exited with 0

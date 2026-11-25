@@ -5,21 +5,20 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 import type { GettersFound } from "./built-ins-alone/getters-and-their-receivers";
-import { findBuiltinTable } from "./harness/builtin-table";
+import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
 
-const table = findBuiltinTable(bunExe());
-
 // The expressions that make the instances name commands and paths of POSIX.
-test.skipIf(table === undefined || isWindows)(
+test.skipIf(isWindows)(
   "a getter of the table of built-ins that adds a name to its receiver has a row that says so",
   () => {
+    const table = builtinTableOf(bunExe());
     const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [
         bunExe(),
         "--expose-internals",
         join(import.meta.dir, "built-ins-alone/getters-and-their-receivers.ts"),
-        table!,
+        table,
       ],
       env: bunEnv,
       stdout: "pipe",

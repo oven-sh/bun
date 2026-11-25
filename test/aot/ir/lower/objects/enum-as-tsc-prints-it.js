@@ -4,11 +4,8 @@
 // RUN(BORN): lower
 // BORN-LABEL: function {{*}}name="born"
 // BORN-NOT: NewClosure
-// BORN: [[head]] = NewObject {{*}}fields=[0, 1, 2]
-// BORN: ElemDefine [[head]]
-// BORN: ElemDefine [[head]]
+// BORN: Data data=
 // BORN-NOT: ElemDefine
-// BORN: FinishObject [[head]]
 // BORN-NOT: Call
 // BORN: Return
 
@@ -16,9 +13,8 @@
 // RUN(RETURNED): lower
 // RETURNED-LABEL: function {{*}}name="returned"
 // RETURNED-NOT: NewClosure
-// RETURNED: [[head]] = NewObject {{*}}fields=[0, 1]
-// RETURNED: ElemDefine [[head]]
-// RETURNED: FinishObject [[head]]
+// RETURNED: Data data=
+// RETURNED-NOT: ElemDefine
 // RETURNED-NOT: Call
 // RETURNED: Return
 
@@ -26,11 +22,18 @@
 // RUN(BARE): lower
 // BARE-LABEL: function {{*}}name="bareLiteral"
 // BARE-NOT: NewClosure
-// BARE: [[head]] = NewObject {{*}}fields=[0]
-// BARE: ElemDefine [[head]]
-// BARE: FinishObject [[head]]
+// BARE: Data data=
+// BARE-NOT: ElemDefine
 // BARE-NOT: Call
 // BARE: Return
+
+// A number that is no index is a name like any other: it keeps its place among the names.
+// RUN(BELOW): lower
+// BELOW-LABEL: function {{*}}name="belowZero"
+// BELOW-NOT: NewClosure
+// BELOW: Data data=
+// BELOW-NOT: Call
+// BELOW: Return
 
 // RUN(NOTHING): lower
 // NOTHING-LABEL: function {{*}}name="returnsNothing"
@@ -84,6 +87,16 @@ export function bareLiteral() {
     E[(E["A"] = 0)] = "A";
     return E;
   })({});
+}
+
+export function belowZero() {
+  var E;
+  (function (E) {
+    E[(E["Low"] = -1)] = "Low";
+    E[(E["Half"] = 0.5)] = "Half";
+    E[(E["High"] = 1)] = "High";
+  })(E || (E = {}));
+  return E;
 }
 
 export function returnsNothing() {

@@ -1,0 +1,20 @@
+# f1 = turn
+# -- source: float64-dot-product.ts
+# const left = new Float64Array(1000);
+# const right = new Float64Array(1000);
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let k = 0; k < left.length; k++) sum += left[k]! * right[k]!;
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 27 instructions, 16 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 50, patches 0, moves 1, unlikely 6 ; loop: operations 8, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:51,8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 51
+# X64-NEXT: loop: at most 8

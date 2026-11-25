@@ -1,0 +1,16 @@
+# A loop over the values of a Map takes no key out of the step, and a loop over its keys no value: what is not taken is neither decoded nor held against Link's word on the contents.
+# RUN(VALUES): walk f1 mechanisms=all
+# VALUES: = MapNext
+# VALUES-NOT: = ResultAt {{*}}index=2
+# VALUES: = ResultAt {{*}}index=3
+# RUN(KEYS): walk f2 mechanisms=all
+# KEYS: = MapNext
+# KEYS: = ResultAt {{*}}index=2
+# KEYS-NOT: = ResultAt {{*}}index=3
+# -- source: only-the-half-that-the-kind-of-iteration-gives-is-taken-out-of-a-step-through-a-map.ts
+# const table = new Map<string, number>();
+# for (let i = 0; i < 8; i++) table.set("k" + i, i);
+# function sum(t: number) { let s = t; for (const value of table.values()) s += value; return s; }
+# function names(t: number) { let s = t; for (const key of table.keys()) s += key.length; return s; }
+# console.log(sum(1), names(2));
+# -- end of source

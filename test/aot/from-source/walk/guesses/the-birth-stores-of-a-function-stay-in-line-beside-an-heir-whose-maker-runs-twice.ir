@@ -1,0 +1,18 @@
+# -- source: main.js
+# const kMark = Symbol("mark");
+# function Base(a) { this.a = a; this[kMark] = 1; }
+# function make() { function Heir(a) { this.a = a; this[kMark] = 2; } Object.setPrototypeOf(Heir.prototype, Base.prototype); Object.setPrototypeOf(Heir, Base); return Heir; }
+# const One = make(), Two = make();
+# const made = new (publish(Base))(5);
+# print(made.a, made[kMark], new One(6)[kMark], new Two(7).a, new One(8) instanceof Two, new Two(9) instanceof Base);
+# -- end of source
+# The function below is declared inside a maker that runs, and runs twice: its class is evaluated again. One of the stores of `Base` goes under a symbol. Neither store may hang on the heir: both are built for the function's own layout. f1 = Base; L0 = Base, L1 = Heir
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK-COUNT-2: PutSlotOrAdd {{*}}receivers=[L0, L2, L3]
+# RUN(ANSWERS): run-in-shell globalThis.publish = (given) => given;
+# ANSWERS: 5 1 2 7 false true
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = (given) => given;
+# CHECKED: 5 1 2 7 false true
+# CHECKED-NEXT: exited with 0

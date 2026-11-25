@@ -1,7 +1,7 @@
 // Nothing but the call of Bun.spawnSync reaches the getter, the traps and the conversions below: they are compiled because the call runs them, and nothing else of the library comes along.
 // STATISTIC: ImageFunctionsEmitted <= 30
 // The child is this program again. It is handed a word and ends at once.
-// Alone: the child gets only the variables that the program makes for it, so in a joined executable it would start at another program
+// Alone: the child gets only the variables that the program makes for it, so beside other programs it would start at the first of them
 if (process.argv.length > 2) process.exit(0);
 let ran = 0;
 const again = [

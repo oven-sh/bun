@@ -1,0 +1,16 @@
+# An async function and a generator go on when their caller has long returned, and what they were handed goes on with them in the saved frame: they are not asked, whatever they do with it. A function that uses `arguments` keeps
+# what arrives in that object.
+# f1 = waits, f2 = readsFirst, f3 = steps, f4 = listed, f5 = caller
+# -- source: a-coroutine-does-not-only-look.ts
+# declare function sink(...values: unknown[]): void;
+# async function waits(o: { a: number }): Promise<number> { await null; return o.a; }
+# async function readsFirst(o: { a: number }): Promise<number> { const a = o.a; await null; return a; }
+# function* steps(o: { a: number }): Generator<number> { yield 1; yield o.a; }
+# function listed(o: { a: number }): number { sink(arguments); return o.a; }
+# function caller(x: number) { sink(waits({ a: x }), readsFirst({ a: x }), steps({ a: x }), listed({ a: x })); }
+# caller(1);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK-NOT: only-looked-at
+# CHECK-LABEL: function f5

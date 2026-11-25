@@ -34,7 +34,7 @@ fn load_with_loader<'s, 'r>(
         context.session.arena(),
         target,
         text,
-        LoadInputs::default(),
+        &LoadInputs::default(),
     )
 }
 

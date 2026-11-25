@@ -1,0 +1,16 @@
+# `this.cells[i] === value` where both sides are a number or undefined and lie in boxes. While nothing was known of them the comparison expected two int32 and compared their bits.
+# Once both were known to be a number or nothing, each box was taken apart into a double with a marker (a test of the tag, a conversion, a marker) and the doubles and the markers were compared: some twenty instructions for three.
+# Both boxes stay as they are held: two int32 are compared by their words; whatever else they hold goes the way it went.
+# -- source: two-boxes-that-hold-a-number-or-nothing-are-compared-as-boxes.ts
+# declare function say(x: string): void;
+# function same(x: number | undefined | null, y: number | undefined | null): boolean { return x === y; }
+# const all = [1, 0, -0, NaN, 0.5, undefined, null, -1, 4294967296, 1.5 - 0.5];
+# let said = "";
+# for (let j = 0; j < 10; j++) { for (let k = 0; k < 10; k++) said += same(all[j], all[k]) ? "1" : "0"; said += " "; }
+# say(said);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: = Unbox
+# CHECK: = StrictEq v0, v1 form=Numbers
+# RUN(SHELL): run-in-shell globalThis.say = (x) => print(String(x));
+# SHELL: 1000000001 0110000000 0110000000 0000000000 0000100000 0000010000 0000001000 0000000100 0000000010 1000000001

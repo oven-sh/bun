@@ -11,11 +11,11 @@ use crate::ir::types::TypeTable;
 const RANDOM_GRAPH_SEED: u64 = 1;
 const RANDOM_GRAPH_COUNT: usize = 300;
 const MIN_BLOCK_COUNT: usize = 2;
-const MAX_BLOCK_COUNT: usize = 12;
+const MAX_BLOCK_COUNT: usize = 40;
 const MAX_VARIABLE_COUNT: usize = 4;
 const MAX_STEP_COUNT: usize = 4;
 const WALK_COUNT: usize = 50;
-const MAX_WALK_LENGTH: usize = 60;
+const MAX_WALK_LENGTH: usize = 200;
 
 #[derive(Copy, Clone, Debug)]
 enum Step {

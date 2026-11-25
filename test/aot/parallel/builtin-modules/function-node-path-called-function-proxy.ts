@@ -1,5 +1,6 @@
 // A loop calls a function that calls path.parse(), and a line that never runs puts a Proxy in that function's place.
 // STATISTIC: NativeFunctionTestsEmitted >= 1
+// STATISTIC: NativeFunctionsCalledDirectly >= 1
 import * as path from "node:path";
 
 function parseNumbered(n: number) {

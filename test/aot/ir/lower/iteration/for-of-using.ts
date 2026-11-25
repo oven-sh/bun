@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="release"
 // CHECK: [[iterator]] = IteratorOpen
 // CHECK: role=IterationCleanup subject=[[iterator]]

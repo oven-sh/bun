@@ -2,7 +2,7 @@
 // CHECK-LABEL: function {{*}}name="and"
 // CHECK: b0([[a]]: anything, [[b]]: anything):
 // CHECK: [[andTest]] = ToBoolean [[a]]
-// CHECK-NEXT: Branch [[andTest]] -> taken [[andRight]](| 0), notTaken [[andKept]](| 0)
+// CHECK-NEXT: Branch [[andTest]] -> taken [[andJoin]]([[b]]), notTaken [[andKept]](| 0)
 // CHECK-NOT: Jump {{*}}([[a]])
 // CHECK: [[andKept]]([[falsy]]):
 // CHECK-NEXT: Jump -> next [[andJoin]]([[falsy]])
@@ -10,7 +10,7 @@
 // CHECK-LABEL: function {{*}}name="nullish"
 // CHECK-NOT: = ToBoolean
 // CHECK: [[nullishTest]] = TypeTest [[a]] testedType=undefined|null
-// CHECK-NEXT: Branch [[nullishTest]] -> taken [[nullishRight]](| 0), notTaken [[nullishKept]](| 0)
+// CHECK-NEXT: Branch [[nullishTest]] -> taken [[nullishJoin]]([[b]]), notTaken [[nullishKept]](| 0)
 // CHECK-NOT: = ToBoolean
 // CHECK-NOT: Jump {{*}}([[a]])
 // CHECK: [[nullishKept]]([[present]]):
@@ -19,7 +19,7 @@
 // CHECK-NOT: Jump {{*}}([[a]])
 // CHECK-LABEL: function {{*}}name="or"
 // CHECK: [[orTest]] = ToBoolean [[a]]
-// CHECK-NEXT: Branch [[orTest]] -> taken [[orKept]](| 0), notTaken [[orRight]](| 0)
+// CHECK-NEXT: Branch [[orTest]] -> taken [[orKept]](| 0), notTaken [[orJoin]]([[b]])
 // CHECK-NOT: Jump {{*}}([[a]])
 // CHECK: [[orKept]]([[truthy]]):
 // CHECK-NEXT: Jump -> next [[orJoin]]([[truthy]])
@@ -28,15 +28,15 @@
 // RUN(RIGHT): lower
 // RIGHT-LABEL: function {{*}}name="and"
 // RIGHT: b0([[a]]: anything, [[b]]: anything):
-// RIGHT: Jump -> next [[andJoin]]([[b]])
+// RIGHT: Branch {{*}} -> taken [[andJoin]]([[b]]),
 // RIGHT: [[andJoin]]([[andValue]]):
 // RIGHT-NEXT: Return [[andValue]]
 // RIGHT-LABEL: function {{*}}name="nullish"
-// RIGHT: Jump -> next [[nullishJoin]]([[b]])
+// RIGHT: Branch {{*}} -> taken [[nullishJoin]]([[b]]),
 // RIGHT: [[nullishJoin]]([[nullishValue]]):
 // RIGHT-NEXT: Return [[nullishValue]]
 // RIGHT-LABEL: function {{*}}name="or"
-// RIGHT: Jump -> next [[orJoin]]([[b]])
+// RIGHT: Branch {{*}}notTaken [[orJoin]]([[b]])
 // RIGHT: [[orJoin]]([[orValue]]):
 // RIGHT-NEXT: Return [[orValue]]
 

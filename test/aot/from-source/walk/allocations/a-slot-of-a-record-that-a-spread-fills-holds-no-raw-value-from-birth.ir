@@ -1,0 +1,19 @@
+# `{ ...flag, state: false }`: every name that the spread brings is listed, so the record gains nothing and its fields are filled at birth. The plan gave `state` a raw slot: a boolean, with no door for undefined or null.
+# The spread's copy runs during the birth and lays what the instance holds, undefined, before the literal's own false comes: the run time stopped (StoreOfOtherType). The slot stays filled at birth and has its doors.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function pick(): boolean;
+# class Flag { state: any; live: any; constructor() { this.state = null; this.live = true; } }
+# function look(never: boolean) {
+#   const flag = new Flag(); flag.state = undefined;
+#   if (never) { const first = { z: 1, ...flag, live: null }; }
+#   const second = { ...flag, state: false };
+#   return String(second.state) + Object.keys(second).join("");
+# }
+# print(look(pick()));
+# -- end of source
+# RUN(PLAN): plan layouts
+# PLAN: "state"{{*}}type=undefined|null|boolean filled-at-birth
+# RUN(ANSWERS): run-in-shell globalThis.pick = () => false;
+# ANSWERS: falsestatelive
+# ANSWERS-NEXT: exited with 0

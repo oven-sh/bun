@@ -1,0 +1,9 @@
+# A loop of over a hundred operations is built twice only where it reckons with its elements. `+` joins texts too: an element that goes into a sum alone says nothing of numbers, and the large loops of ordinary programs are mostly loops that build texts: they are built once, as they were before.
+# -- source: a-large-loop-whose-elements-only-go-into-sums-is-built-once.cjs
+# function join(d) { let s = ""; for (let i = 0; i < d.length; i++) { s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; s = s + d[i]; } return s.length; }
+# print(join(JSON.parse('["a", "bc"]')));
+# -- end of source
+# RUN(COUNT): compile WalkLoopsVersioned mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 0
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 120

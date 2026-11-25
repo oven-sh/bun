@@ -1,0 +1,31 @@
+A helper that the test file imports first calls vi.mock() on a module that is linked and has not run: the real module runs first and once, then the factory. Here: jest.requireActual.
+#### linked.test.ts
+import { price } from "./mocks-tax";
+import { test } from "bun:test";
+import * as tax from "./tax";
+test("t", () => {
+  console.log("| CASE answer", tax.rate, tax.currency, price(10));
+  console.log("| CASE said", globalThis.said.join(" "));
+});
+#### cart.ts
+function say(text) { (globalThis.said ??= []).push(text); }
+import { currency, withTax } from "./tax";
+say("cart");
+export const price = net => withTax(net) + " " + currency;
+#### mocks-tax.ts
+import { jest, vi } from "bun:test";
+function say(text) { (globalThis.said ??= []).push(text); }
+say("helper");
+vi.mock("./tax", () => { say("factory"); return { ...jest.requireActual("./tax"), currency: "USD" }; });
+import { price as priceOfCart } from "./cart";
+export const price = net => priceOfCart(net);
+#### package.json
+{ "name": "p", "type": "module" }
+#### tax.ts
+function say(text) { (globalThis.said ??= []).push(text); }
+say("tax");
+export const rate = 0.2;
+export let currency = "EUR";
+export function withTax(net) { return net * (1 + rate); }
+#### tsconfig.json
+{}

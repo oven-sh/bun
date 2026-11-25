@@ -3,6 +3,9 @@
 
 #![feature(linkage)]
 
+// Defines the `__bun_crash_handler_*` symbols that `bun_alloc` and `bun_core` declare.
+use bun_crash_handler as _;
+
 pub mod native;
 pub mod native_libraries;
 #[cfg(any(test, feature = "test_support"))]
@@ -41,15 +44,8 @@ pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sy
 
 /// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {
-    #[cfg(unix)]
-    {
-        let mut size: libc::winsize = bun_core::ffi::zeroed();
-        // SAFETY: the call fills in `size`.
-        if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) } == 0 {
-            return usize::from(size.ws_col);
-        }
-    }
-    0
+    let size = bun_core::output::File::from(bun_core::Fd::stdout()).winsize();
+    size.map_or(0, |size| usize::from(size.col))
 }
 
 /// Returns the process's peak memory as the operating system accounts for it. Excludes memory that
@@ -101,8 +97,8 @@ fn peak_rss() -> u64 {
 // needs to link (`native`).
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use bun_sema::resolve::{Host, displayed_path, join};
-    use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
+    use bun_sema::resolve::{displayed_path, join};
+    use bun_sema_driver::host::{from_argument, from_native, to_native};
 
     #[test]
     fn directory_in_root_can_be_named_like_a_typescript_root() {
@@ -137,13 +133,5 @@ mod tests {
         );
         assert_eq!(from_argument(&inside, b"b.ts"), from_native(b"/c:/a/b.ts"));
         assert_eq!(from_argument(&inside, b"c:/a"), drive);
-    }
-
-    #[test]
-    fn realpath_under_the_marked_root_stays_under_it() {
-        // A test can't create a directory in `/`. `/usr/lib` already exists and isn't a symlink.
-        let disk = Disk::with_already_read(1, Default::default(), b"/");
-        assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
-        assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }
 }

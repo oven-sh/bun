@@ -1,0 +1,71 @@
+# The other side of symbols-with-a-preparation-are-names-all-together-or-not-at-all.ir: every access that the library writes under a symbol with a preparation goes under that symbol alone, so each goes by name.
+#   const kHeaders = Symbol("kHeaders"), kLenient = Symbol("kLenient"), kOther = Symbol("kOther");
+#   prepareHoldersBeforeLookupsUnder(kHeaders, prepare);  prepareHoldersBeforeLookupsUnder(kLenient, prepare);
+#   o[kHeaders];  o[kLenient];  o[kOther]
+# LIBRARY: own
+# RUN: link accesses mechanisms=all
+# STATISTIC: PreparedSymbolsAccessedByValue = 0
+# CHECK: access f2 v2 under symbol("kHeaders")@m1:0
+# CHECK-NEXT: access f3 v2 under symbol("kLenient")@m1:1
+# CHECK: access f5 v2 under symbol("kOther")@m1:2
+# CHECK-NOT: access
+
+layout L0 module=m1 fields=[{key=symbol("kHeaders")@m1:0 declared={type=anything}}, {key=symbol("kLenient")@m1:1 declared={type=anything}}, {key=symbol("kOther")@m1:2 declared={type=anything}}]
+variable g0 name="kHeaders" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g1 name="kLenient" module=m1 declared={type=anything} flags=[IsImmutable]
+variable g2 name="sometimes" module=m1 declared={type=anything}
+variable g3 name="kOther" module=m1 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kHeaders"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=0
+    PutModuleVariable v2 variable=g0
+    v4 = String string="kLenient"
+    v5 = Call v0, -, v4 calleeName="Symbol" callNumber=1
+    PutModuleVariable v5 variable=g1
+    v7 = Undefined
+    v8 = String string="name"
+    PutModuleVariable v8 variable=g2
+    v10 = String string="kOther"
+    v11 = Call v0, -, v10 calleeName="Symbol" callNumber=2
+    PutModuleVariable v11 variable=g3
+    v13 = NativeBinding builtin=NativeNewCppFunctionBunCompiledModulesCppJsFunctionPrepareHoldersBeforeLookupsUnder
+    v14 = NewClosure function=f6
+    v15 = Call v13, -, v2, v14 calleeName="prepareHoldersBeforeLookupsUnder"
+    v16 = Call v13, -, v5, v14 calleeName="prepareHoldersBeforeLookupsUnder"
+    v17 = NewObject layout=L0 fields=[]
+    v18 = FinishObject v17
+    v19 = NewClosure function=f2
+    v20 = Call v19, -, v18
+    v21 = NewClosure function=f3
+    v22 = Call v21, -, v18
+    v23 = NewClosure function=f4
+    v24 = Call v23, -, v18
+    v25 = NewClosure function=f5
+    v26 = Call v25, -, v18
+    v27 = Undefined
+    Return v27
+}
+# REPEAT: function = 2..5 ; variable = 0..3
+function f%(function) module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g%(variable)
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# END REPEAT
+function f6 name="prepare" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

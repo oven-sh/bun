@@ -1,0 +1,42 @@
+# -- source: numbers-that-would-be-holes.ts
+# declare function print(...values: unknown[]): void;
+# const halves = (n: number): number[] => { const l: number[] = []; for (let i = 0; i < n; i++) l.push(i + 0.5); return l; };
+# const mapped = (l: number[], x: number): number[] => l.map((v, i) => i === 1 ? x : v);
+# const made = (l: number[], x: number): number[] => Array.from({ length: l.length }, (_, i) => i === 1 ? x : i + 0.5);
+# const rows = (x: number) => [{ v: 0.5 }, { v: x }, { v: 2.5 }];
+# const fields = (l: number[], x: number): number[] => rows(x).map(r => r.v);
+# const spliced = (l: number[], x: number): number[] => { l.splice(1, 1, x); return l; };
+# const copied = (l: number[], x: number): number[] => l.with(1, x);
+# const joined = (l: number[], x: number): number[] => l.concat(x);
+# const ways = { mapped, made, fields, spliced, copied, joined };
+# const way = (globalThis as any).way as keyof typeof ways;
+# for (const x of [0.25, NaN]) { const l = ways[way](halves(4), x); print(Object.keys(l).length, l.join()); }
+# -- end of source
+# LIBRARY: own
+# In an array of doubles a NaN marks a hole, so a number is stored raw only after it has passed `x === x`.
+# Fault injection, testing=AssumeNoNaNStores: the test is omitted. In a default build the element would silently disappear.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) each raw store that a built-in makes is checked for that, too.
+# RUN(MAPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.way = "mapped";
+# MAPPED: 4 0.5,0.25,2.5,3.5
+# MAPPED-NEXT: 4 0.5,NaN,2.5,3.5
+# MAPPED-NEXT: exited with 0
+# RUN(MAPPEDLIE): run-in-shell mechanisms=all testing=AssumeNoNaNStores,CheckProofsAtRunTime globalThis.way = "mapped";
+# MAPPEDLIE: bun: internal AOT error: type check failed
+# MAPPEDLIE-NEXT: found an unexpected value in the result of an operation
+# MAPPEDLIE: crashed with
+# RUN(MADE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.way = "made";
+# MADE: 4 0.5,0.25,2.5,3.5
+# MADE-NEXT: 4 0.5,NaN,2.5,3.5
+# MADE-NEXT: exited with 0
+# RUN(MADELIE): run-in-shell mechanisms=all testing=AssumeNoNaNStores,CheckProofsAtRunTime globalThis.way = "made";
+# MADELIE: bun: internal AOT error: type check failed
+# MADELIE-NEXT: found an unexpected value in the result of an operation
+# MADELIE: crashed with
+# RUN(FIELDS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.way = "fields";
+# FIELDS: 3 0.5,0.25,2.5
+# FIELDS-NEXT: 3 0.5,NaN,2.5
+# FIELDS-NEXT: exited with 0
+# RUN(FIELDSLIE): run-in-shell mechanisms=all testing=AssumeNoNaNStores,CheckProofsAtRunTime globalThis.way = "fields";
+# FIELDSLIE: bun: internal AOT error: type check failed
+# FIELDSLIE-NEXT: found an unexpected value in the result of an operation
+# FIELDSLIE: crashed with

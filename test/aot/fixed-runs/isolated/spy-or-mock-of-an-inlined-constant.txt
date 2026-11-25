@@ -1,0 +1,102 @@
+A file reads its own exported constants, which bun run inlines. Under a spy or a mock that names them such a read gives the constant, which bun run has written into the function,
+or what the namespace holds by then, as the language says and compiled code does. All else is held to plain: the namespace, a variable that changes, a constant that is not inlined, a call of an export.
+#### left-out.test.mjs
+import { test, spyOn, mock } from "bun:test";
+const show = value => (typeof value === "function" ? "function" : String(value));
+const names = ["value", "label", "flag", "sum", "changing", "declaredLater"];
+const constants = [1, "text", true, 3, "number"];
+const showConstants = (ns, reads) =>
+  reads.every((read, at) => read === constants[at] || read === [ns.value, ns.label, ns.flag, ns.sum, typeof ns.value][at])
+    ? "each the constant or what the namespace holds"
+    : reads.map(show).join();
+const state = (ns, held) =>
+  [names.map(name => show(ns[name])).join(), showConstants(ns, held.readConstants()), show(held.readChanging()), show(held.readDeclaredLater()), held.callExported()].join(" | ");
+
+test("a spy behind a mock that leaves the names out", async () => {
+  const ns = await import("./src/left-out.mjs");
+  const held = { ...ns };
+  mock.module("./src/left-out.mjs", () => ({ exported: () => "mocked" }));
+  console.log("| CASE", "mocked without the names:", state(ns, held));
+  const spies = names.map(name => spyOn(ns, name));
+  console.log("| CASE", "spied behind the mock:", state(ns, held));
+  for (const spy of spies) spy.mockRestore();
+  console.log("| CASE", "restored behind the mock:", state(ns, held));
+});
+#### named.test.mjs
+import { test, mock } from "bun:test";
+const show = value => (typeof value === "function" ? "function" : String(value));
+const names = ["value", "label", "flag", "sum", "changing", "declaredLater"];
+const constants = [1, "text", true, 3, "number"];
+const showConstants = (ns, reads) =>
+  reads.every((read, at) => read === constants[at] || read === [ns.value, ns.label, ns.flag, ns.sum, typeof ns.value][at])
+    ? "each the constant or what the namespace holds"
+    : reads.map(show).join();
+const state = (ns, held) =>
+  [names.map(name => show(ns[name])).join(), showConstants(ns, held.readConstants()), show(held.readChanging()), show(held.readDeclaredLater()), held.callExported()].join(" | ");
+
+test("a mock that names them", async () => {
+  const ns = await import("./src/named.mjs");
+  const { readImported } = await import("./src/importer.mjs");
+  const held = { ...ns };
+  mock.module("./src/named.mjs", () => ({ value: 10, label: "mocked", flag: false, sum: 30, changing: 20, declaredLater: 70 }));
+  console.log("| CASE", "mocked with the names:", state(ns, held), "|", readImported());
+});
+#### spy.test.mjs
+import { test, spyOn } from "bun:test";
+const show = value => (typeof value === "function" ? "function" : String(value));
+const names = ["value", "label", "flag", "sum", "changing", "declaredLater"];
+const constants = [1, "text", true, 3, "number"];
+const showConstants = (ns, reads) =>
+  reads.every((read, at) => read === constants[at] || read === [ns.value, ns.label, ns.flag, ns.sum, typeof ns.value][at])
+    ? "each the constant or what the namespace holds"
+    : reads.map(show).join();
+const state = (ns, held) =>
+  [names.map(name => show(ns[name])).join(), showConstants(ns, held.readConstants()), show(held.readChanging()), show(held.readDeclaredLater()), held.callExported()].join(" | ");
+
+test("a spy alone", async () => {
+  const ns = await import("./src/spied.mjs");
+  const held = { ...ns };
+  console.log("| CASE", "before:", state(ns, held));
+  const spies = names.map(name => spyOn(ns, name));
+  console.log("| CASE", "spied:", state(ns, held));
+  for (const spy of spies) spy.mockRestore();
+  console.log("| CASE", "restored:", state(ns, held));
+});
+#### src/importer.mjs
+import { value, label } from "./named.mjs"; export const readImported = () => [value, label].join();
+#### src/left-out.mjs
+export const value = 1;
+export const label = "text";
+export const flag = true;
+export const sum = 1 + 2;
+export let changing = 2;
+export function exported() { return "real"; }
+export const declaredLater = 7;
+export const readConstants = () => [value, label, flag, sum, typeof value];
+export const readChanging = () => changing;
+export const readDeclaredLater = () => declaredLater;
+export const callExported = () => exported();
+#### src/named.mjs
+export const value = 1;
+export const label = "text";
+export const flag = true;
+export const sum = 1 + 2;
+export let changing = 2;
+export function exported() { return "real"; }
+export const declaredLater = 7;
+export const readConstants = () => [value, label, flag, sum, typeof value];
+export const readChanging = () => changing;
+export const readDeclaredLater = () => declaredLater;
+export const callExported = () => exported();
+#### src/spied.mjs
+export const value = 1;
+export const label = "text";
+export const flag = true;
+export const sum = 1 + 2;
+export let changing = 2;
+export function exported() { return "real"; }
+export const declaredLater = 7;
+export const readConstants = () => [value, label, flag, sum, typeof value];
+export const readChanging = () => changing;
+export const readDeclaredLater = () => declaredLater;
+export const callExported = () => exported();

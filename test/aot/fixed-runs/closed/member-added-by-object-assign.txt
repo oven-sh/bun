@@ -1,0 +1,8 @@
+A method that Object.assign() adds to Response.prototype.
+#### a.test.mjs
+import { test } from "bun:test";
+const make = () => ({ upper: () => "up" });
+test("t", () => {
+  Object.assign(Response.prototype, make());
+  console.log("| CASE", new Response("").upper());
+});

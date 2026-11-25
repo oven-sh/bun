@@ -32,8 +32,7 @@ impl<'a> Name<'a> {
     fn bytes_slow(self) -> &'a [u8] {
         match KNOWN_TEXTS.get(self.atom.0 as usize) {
             Some(known) => known,
-            None if self.atom.is_some() => self.file.atoms.bytes(self.atom),
-            None => b"",
+            None => self.file.atoms.bytes(self.atom),
         }
     }
 

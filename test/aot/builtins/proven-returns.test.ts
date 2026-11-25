@@ -208,6 +208,8 @@ function partsOutside(type: DumpedType, declared: string, receiverClass: string 
         continue;
     }
     if (part.part === "Instance" && (admitsEveryObject || isInstanceOfOneOf(part.class, instances))) continue;
+    // `this` of the schema is an instance of the receiver's class. A row that says the class says less than the schema, and nothing else.
+    if (part.part === "Instance" && alternatives.includes("this") && part.class === receiverClass) continue;
     outside.push(part.part === "Instance" ? part.class : part.part);
   }
   return outside;

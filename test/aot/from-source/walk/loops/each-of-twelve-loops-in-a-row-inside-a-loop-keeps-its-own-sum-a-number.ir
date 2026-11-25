@@ -1,0 +1,34 @@
+# -- source: each-of-twelve-loops-in-a-row-inside-a-loop-keeps-its-own-sum-a-number.ts
+# declare function sink(value: unknown): void;
+# function tally(rows: number[][]): number {
+#   let a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0, a7 = 0, a8 = 0, a9 = 0, a10 = 0, a11 = 0;
+#   for (let r = 0; r < rows.length; r++) {
+#     const row = rows[r];
+#     for (let i = 0; i < row.length; i++) a0 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a1 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a2 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a3 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a4 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a5 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a6 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a7 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a8 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a9 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a10 += row[i] * 0.5;
+#     for (let i = 0; i < row.length; i++) a11 += row[i] * 0.5;
+#   }
+#   return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11;
+# }
+# sink(tally([[1, 2], [3, 4]]));
+# -- end of source
+# Each sum enters the outer loop as the integer 0 and comes round a number. A walk of an inner loop that does not fit, inside a walk of the outer loop that is undone anyway, is left as walked,
+# so one walk of the outer loop learns all twelve. It used to end at the first loop that did not fit: a walk of the outer loop for each sum, and behind eleven of them the row claimed nothing:
+# every parameter of the outer head was `anything`.
+# f1 = tally
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: LostByWalk
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 60
+# SHELL: exited with 0

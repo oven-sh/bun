@@ -1,0 +1,36 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Base {
+#     static make() { return "base make"; }
+#     static get label() { return "base label"; }
+# }
+# class Open extends Base {
+#     tag = 1;
+#     static weigh() { return "weigh"; }
+# }
+# const kept = new Open();
+# const other: any = {};
+# const tell = () => Open.weigh() + " " + Open.make() + " " + Open.label + " " + (kept instanceof Open) + " " + (other instanceof Open);
+# print(tell());
+# poke(Open);
+# print(tell());
+# -- end of source
+# The green twin of what-hides-a-static-member-above-a-class-object-that-stays-with-compiled-code-ends-the-process.ir: the program hands the class object to `poke`, a free name that each run defines. Link sees it leave, and compiled code looks.
+# OPTIONS: mechanisms=all
+# RUN(SHADOWS): run-in-shell globalThis.poke = given => { given.make = function () { return "own make"; }; };
+# SHADOWS: weigh base make base label true false
+# SHADOWS-NEXT: weigh own make base label true false
+# SHADOWS-NEXT: exited with 0
+# RUN(HIDES): run-in-shell globalThis.poke = given => { Object.defineProperty(given, "label", { value: "own label" }); };
+# HIDES: weigh base make base label true false
+# HIDES-NEXT: weigh base make own label true false
+# HIDES-NEXT: exited with 0
+# RUN(ANSWERS): run-in-shell globalThis.poke = given => { Object.defineProperty(given, Symbol.hasInstance, { value: () => true }); };
+# ANSWERS: weigh base make base label true false
+# ANSWERS-NEXT: weigh base make base label true true
+# ANSWERS-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell globalThis.poke = given => { Object.defineProperty(Object.getPrototypeOf(given), Symbol.hasInstance, { value: () => true }); };
+# ABOVE: weigh base make base label true false
+# ABOVE-NEXT: weigh base make base label true true
+# ABOVE-NEXT: exited with 0

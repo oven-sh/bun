@@ -1,0 +1,32 @@
+# -- source: main.ts
+# function withText(seed: number) { let text = "n" + seed; let count = seed; return { grow: () => { text += "!"; return ++count; }, read: () => text }; }
+# function withObject(seed: number) { const box = { n: seed }; return () => box.n; }
+# function withList(seed: number) { const list = [seed, seed + 1]; return () => list.length; }
+# function withBigInt(seed: number) { const big = BigInt(seed); return () => big + 1n; }
+# function withHolder(seed: number) { const box = { n: seed }; const inner = () => box.n; return () => inner() + 1; }
+# function withNumbers(seed: number) { const twice = seed * 2; const isOdd = (seed & 1) === 1; const none = undefined; return () => (isOdd ? twice : none); }
+# const text = withText(1);
+# print(text.grow(), text.read(), withObject(2)(), withList(3)(), withBigInt(4)(), withHolder(5)(), withNumbers(7)());
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# Each function runs once. A word of the instance lives as long as the program, and what closures have captured dies with them. So a text, an object, a list and a bigint stay where the collector can let them go:
+# one field that holds a text keeps the whole scope, and a closure that holds a word (inner holds box) is kept like the word. Numbers, booleans and undefined are stored.
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT-NOT: statistic EnvironmentsPromotedToVariables 1
+# RUN(TEXT): walk f1 mechanisms=all
+# TEXT-NOT: EnterBodyThatRunsOnce
+# RUN(OBJECT): walk f2 mechanisms=all
+# OBJECT-NOT: PutModuleVariable
+# RUN(LIST): walk f3 mechanisms=all
+# LIST-NOT: PutModuleVariable
+# RUN(BIGINT): walk f4 mechanisms=all
+# BIGINT-NOT: PutModuleVariable
+# RUN(HOLDER): walk f5 mechanisms=all
+# HOLDER-NOT: PutModuleVariable
+# RUN(NUMBERS): walk f6 mechanisms=all
+# NUMBERS: EnterBodyThatRunsOnce
+# NUMBERS: PutModuleVariable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2 n1! 2 2 5 6 14
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 2 n1! 2 2 5 6 14

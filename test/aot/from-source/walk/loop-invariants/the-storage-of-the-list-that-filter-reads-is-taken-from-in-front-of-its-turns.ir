@@ -1,0 +1,41 @@
+# filter's turns store into the list that filter has made: by the masks they write the storage of lists, so the storage of the SOURCE could not be read in front of them:
+# each visit asked the source's kind, loaded its storage and asked its length anew, where map, reduce, some and find do not.
+# The walk knows by object that the turns leave the source as it is: they write what is made here alone and run no other code.
+# Where the function reaches for the source itself (GROWS) nothing is taken from in front.
+# RUN(EVENT): compile ArrayStorageLoadsHoisted mechanisms=all
+# EVENT: statistic ArrayStorageLoadsHoisted 4
+# RUN(TAKEN): walk f1 mechanisms=all
+# TAKEN-LABEL: code f1:Body
+# TAKEN: = HasContiguousIndex {{*}} storage={{*}} [isInBounds]
+# TAKEN: = GetOwnContiguousIndex {{*}} storage=
+# TAKEN: = AppendElement
+# RUN(GROWS): walk f2 mechanisms=all
+# GROWS-LABEL: code f2:Body
+# GROWS-NOT: = HasContiguousIndex {{*}} storage=
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 96 3 27
+# RIGHT-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# type Order = { price: number; open: boolean };
+# function kept(orders: Order[], rounds: number): number {
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++)
+#   {
+#     const open = orders.filter(order => order.open);
+#     total += open.length > 0 ? open.length : 0;
+#   }
+#   return total;
+# }
+# function grown(orders: Order[], rounds: number): number {
+#   let total = 0;
+#   for (let round = 0; round < rounds; round++)
+#     total += orders.filter(order => { if (orders.length < 8) orders.push(order); return order.open; }).length;
+#   return total;
+# }
+# const many: Order[] = [];
+# for (let i = 0; i < 64; i++) many.push({ price: i, open: (i & 1) === 0 });
+# const few: Order[] = [{ price: 1, open: true }, { price: 2, open: false }, { price: 3, open: true }];
+# const rounds: number = JSON.parse("3");
+# print(kept(many, rounds), few.length, grown(few, rounds) + few.length * 2);
+# -- end of source

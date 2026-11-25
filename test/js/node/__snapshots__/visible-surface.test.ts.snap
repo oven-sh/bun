@@ -1551,6 +1551,10 @@ diagnostics_channel[unsubscribe] cew function
 diagnostics_channel[unsubscribe]: function function name="unsubscribe" length=2 above=Function extensible=true
 diagnostics_channel[unsubscribe][length] c-- number
 diagnostics_channel[unsubscribe][name] c-- string
+diagnostics_channel[boundedChannel] cew function
+diagnostics_channel[boundedChannel]: function function name="boundedChannel" length=1 above=Function extensible=true
+diagnostics_channel[boundedChannel][length] c-- number
+diagnostics_channel[boundedChannel][name] c-- string
 diagnostics_channel[Channel] cew function
 diagnostics_channel[Channel]: function class name="Channel" length=1 above=Function extensible=true
 diagnostics_channel[Channel][length] c-- number
@@ -1584,10 +1588,39 @@ diagnostics_channel[Channel][prototype][runStores] c-w function
 diagnostics_channel[Channel][prototype][runStores]: function function name="runStores" length=3 above=Function extensible=true
 diagnostics_channel[Channel][prototype][runStores][length] c-- number
 diagnostics_channel[Channel][prototype][runStores][name] c-- string
+diagnostics_channel[Channel][prototype][withStoreScope] c-w function
+diagnostics_channel[Channel][prototype][withStoreScope]: function function name="withStoreScope" length=0 above=Function extensible=true
+diagnostics_channel[Channel][prototype][withStoreScope][length] c-- number
+diagnostics_channel[Channel][prototype][withStoreScope][name] c-- string
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)] c-w function
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)]: function function name="[Symbol.hasInstance]" length=1 above=Function extensible=true
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)][length] c-- number
 diagnostics_channel[Channel][Symbol(Symbol.hasInstance)][name] c-- string
+diagnostics_channel[BoundedChannel] cew function
+diagnostics_channel[BoundedChannel]: function class name="BoundedChannel" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][length] c-- number
+diagnostics_channel[BoundedChannel][name] c-- string
+diagnostics_channel[BoundedChannel][prototype] --- object
+diagnostics_channel[BoundedChannel][prototype]: object above=Object extensible=true
+diagnostics_channel[BoundedChannel][prototype][constructor] c-w function
+diagnostics_channel[BoundedChannel][prototype][constructor] = diagnostics_channel[BoundedChannel]
+diagnostics_channel[BoundedChannel][prototype][hasSubscribers] c-a accessor get=function set=undefined
+diagnostics_channel[BoundedChannel][prototype][subscribe] c-w function
+diagnostics_channel[BoundedChannel][prototype][subscribe]: function function name="subscribe" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][subscribe][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][subscribe][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][unsubscribe] c-w function
+diagnostics_channel[BoundedChannel][prototype][unsubscribe]: function function name="unsubscribe" length=1 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][unsubscribe][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][unsubscribe][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][withScope] c-w function
+diagnostics_channel[BoundedChannel][prototype][withScope]: function function name="withScope" length=0 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][withScope][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][withScope][name] c-- string
+diagnostics_channel[BoundedChannel][prototype][run] c-w function
+diagnostics_channel[BoundedChannel][prototype][run]: function function name="run" length=3 above=Function extensible=true
+diagnostics_channel[BoundedChannel][prototype][run][length] c-- number
+diagnostics_channel[BoundedChannel][prototype][run][name] c-- string
 events: function function name="EventEmitter" length=1 above=Function extensible=true
 events[length] c-- number
 events[name] c-- string
@@ -4236,7 +4269,7 @@ ReadableState level 0: highWaterMark:cew buffer:cew bufferIndex:cew length:cew p
 ReadableState level 1: objectMode:--a ended:--a endEmitted:--a reading:--a constructed:--a sync:--a needReadable:--a emittedReadable:--a readableListening:--a resumeScheduled:--a errorEmitted:--a emitClose:--a autoDestroy:--a destroyed:--a closed:--a closeEmitted:--a multiAwaitDrain:--a readingMore:--a dataEmitted:--a errored:--a defaultEncoding:--a decoder:--a encoding:--a flowing:--a pipesCount:--a paused:--a Symbol(kOnConstructed):cew
 WritableState level 0: highWaterMark:cew length:cew corked:cew onwrite:cew writelen:cew bufferedIndex:cew pendingcb:cew Symbol(kState):cew Symbol(kBufferedValue):cew
 WritableState level 1: objectMode:--a finalCalled:--a needDrain:--a ending:--a ended:--a finished:--a destroyed:--a decodeStrings:--a writing:--a sync:--a bufferProcessing:--a constructed:--a prefinished:--a errorEmitted:--a emitClose:--a autoDestroy:--a closed:--a closeEmitted:--a allBuffers:--a allNoop:--a errored:--a writable:--a defaultEncoding:--a writecb:--a afterWriteTickInfo:--a buffered:--a getBuffer:cew bufferedRequestCount:--a Symbol(kOnConstructed):cew
-net.Socket level 0: _events:cew _readableState:cew _writableState:cew allowHalfOpen:cew _maxListeners:cew _parent:cew _parentWrap:cew bytesRead:cew connecting:cew _host:cew _port:cew timeout:cew _pendingData:cew _pendingEncoding:cew _hadError:cew isServer:cew _handle:cew server:cew _server:cew _peername:cew _sockname:cew _closeAfterHandlingError:cew _eventsCount:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kupgraded):cew Symbol(kStandaloneWrap):cew Symbol(kOnUpgradedClose):cew Symbol(kOwesRawClose):cew Symbol(kSetNoDelay):cew Symbol(kSetKeepAlive):cew Symbol(kSetKeepAliveInitialDelay):cew Symbol(khandlers):cew Symbol(kDestroyOnRead):cew Symbol(kBytesWritten):cew Symbol(closed):cew Symbol(ended):cew Symbol(::buntlsconnectoptions::):cew Symbol(::buntimeout::):cew Symbol(writeCallback):cew Symbol(ksocket):cew
+net.Socket level 0: _events:cew _readableState:cew _writableState:cew allowHalfOpen:cew _maxListeners:cew _parent:cew _parentWrap:cew bytesRead:cew connecting:cew _host:cew _port:cew timeout:cew _pendingData:cew _pendingEncoding:cew _hadError:cew isServer:cew _handle:cew server:cew _server:cew _peername:cew _sockname:cew _closeAfterHandlingError:cew _eventsCount:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kupgraded):cew Symbol(kStandaloneWrap):cew Symbol(kOnUpgradedClose):cew Symbol(kOwesRawClose):cew Symbol(kSetNoDelay):cew Symbol(kSetKeepAlive):cew Symbol(kSetKeepAliveInitialDelay):cew Symbol(khandlers):cew Symbol(kDestroyOnRead):cew Symbol(kBytesWritten):cew Symbol(closed):cew Symbol(ended):cew Symbol(::buntlsconnectoptions::):cew Symbol(lastWriteQueueSize):cew Symbol(::buntimeout::):cew Symbol(writeCallback):cew Symbol(ksocket):cew
 net.Socket level 1: constructor:c-w address:cew _onTimeout:cew bufferSize:--a _bytesDispatched:--a bytesWritten:--a connect:cew end:cew _destroy:cew _final:cew localAddress:--a localFamily:--a localPort:--a _connecting:--a pending:--a resume:cew pause:cew read:cew _read:cew _reset:cew _getpeername:cew _getsockname:cew readyState:--a ref:cew remotePort:--a remoteAddress:--a remoteFamily:--a resetAndDestroy:cew setKeepAlive:cew setNoDelay:cew setTypeOfService:cew getTypeOfService:cew setTimeout:cew _unrefTimer:cew unref:cew destroySoon:cew _writev:cew _write:cew Symbol(kAttach):cew Symbol(kCloseRawConnection):cew Symbol(kReinitializeHandle):cew Symbol(::bunUpgradeServerTLS::):cew Symbol(kUpgradeClientTLS):cew
 net.Socket level 2: constructor:c-w destroy:cew write:cew cork:cew uncork:cew setDefaultEncoding:cew _write:cew _writev:cew end:cew writable:--a writableHighWaterMark:--a writableObjectMode:--a writableBuffer:--a writableLength:--a writableFinished:--a writableCorked:--a writableEnded:--a writableNeedDrain:--a destroyed:--a
 net.Socket level 3: constructor:c-w destroy:cew _undestroy:cew _destroy:cew push:cew unshift:cew isPaused:cew setEncoding:cew read:cew _read:cew pipe:cew unpipe:cew on:cew addListener:cew removeListener:cew off:cew removeAllListeners:cew resume:cew pause:cew wrap:cew iterator:cew compose:cew readable:--a readableDidRead:--a readableAborted:--a readableHighWaterMark:--a readableBuffer:--a readableFlowing:--a readableLength:--a readableObjectMode:--a readableEncoding:--a errored:--a closed:--a destroyed:--a readableEnded:--a drop:c-w filter:c-w flatMap:c-w map:c-w take:c-w every:c-w forEach:c-w reduce:c-w toArray:c-w some:c-w find:c-w Symbol(nodejs.rejection):cew Symbol(Symbol.asyncDispose):cew Symbol(Symbol.asyncIterator):cew Symbol(Stream.toAsyncStreamable):cew

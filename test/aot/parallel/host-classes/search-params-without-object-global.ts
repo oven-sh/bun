@@ -1,5 +1,5 @@
 // `new URLSearchParams(x)` that is only asked for its size, its text or a parameter, or walked by for..of, is compiled without allocating it. For any input the results and errors are those of plain Bun, also where the object escapes and where `URLSearchParams` is another class. Here nothing ever replaces the global, so the compiler knows the constructor.
-// STATISTIC: URLsLeftUnbuilt >= 8
+// STATISTIC: URLAllocationsElided >= 8 Todo: a URLSearchParams is left unbuilt only for one question about a text that is proven to be a string
 const lines: string[] = [];
 function say(label: string, work: () => unknown) {
   let text: string;

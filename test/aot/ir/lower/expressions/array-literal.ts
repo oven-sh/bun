@@ -2,7 +2,7 @@
 // CHECK-LABEL: function {{*}}name="annotated"
 // CHECK: b0([[element]]: number):
 // CHECK: [[literal]] = NewArray [[element]] contents=number
-// CHECK-NEXT: = Convert [[literal]] declared={type=undefined|null|Array<number> site=w{{*}}} @
+// CHECK-NEXT: = Convert [[literal]] declared={type=undefined|null|Array<number> flags={{*}}} @
 // CHECK-LABEL: function {{*}}name="hole"
 // CHECK: b0([[x]]: anything, [[y]]: anything):
 // CHECK: = NewArray [[x]], [[y]] contents=anything holes=[1]

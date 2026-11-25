@@ -1,0 +1,15 @@
+# `for (..) ({ i, n })` in a method that the host calls: Link has proven that `n` holds int32 alone, so the slot is raw. The captured `n` comes out of the closure, not from the caller, and every closure of the method
+# was made through the door of captures: it arrives as int32, though the callers of the method are not known. So the allocation lists it as it is: no guess in front, no rare arm with a filler, no definition by name behind it.
+# f1 = fresh, f2 = valueOf
+# -- source: value-that-does-not-fit-a-raw-slot-is-defined-behind-its-allocation-in-a-loop.js
+# const fresh = n => ({ valueOf() { let last; for (let i = 0; i < 20000; i++) last = { i, n, text: "t" + i }; return last.n; } });
+# print(Math.max(fresh(1), fresh(2), fresh(3)), Number(fresh(4)));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: b0({{*}}: int[0, 2147483647] @JSValue
+# CHECK-NOT: TypeTest
+# CHECK: = NewObject
+# CHECK-NOT: PropDefine
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3 4

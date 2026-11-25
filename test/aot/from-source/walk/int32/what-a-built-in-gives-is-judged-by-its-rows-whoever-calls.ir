@@ -1,0 +1,21 @@
+# What a built-in that is written as the callee gives is judged by its rows and by what is written of the arguments, whoever calls: each function is called once, with a number for which the walk folds the call to an int32
+# REPORTED ALL THE SAME: root: a square root has a fraction . square: a power leaves the range . size: the size of the least int32 is no int32 . parsed: a text may hold no number . number: Number() of an int32 is written to give a number
+# NOT REPORTED: floor . least . sign . whole . bits . product: the rows say that an int32 comes of an int32
+# -- source: what-a-built-in-gives-is-judged-by-its-rows-whoever-calls.ts
+# declare function sink(...values: unknown[]): void;
+# function root(n: Bun.int32): Bun.int32 { return Math.sqrt(n); }
+# function square(n: Bun.int32): Bun.int32 { return Math.pow(n, 2); }
+# function floor(n: Bun.int32): Bun.int32 { return Math.floor(n / 2); }
+# function least(a: Bun.int32, b: Bun.int32): Bun.int32 { return Math.min(a, b); }
+# function size(n: Bun.int32): Bun.int32 { return Math.abs(n); }
+# function sign(n: Bun.int32): Bun.int32 { return Math.sign(n); }
+# function whole(n: Bun.int32): Bun.int32 { return Math.trunc(n); }
+# function bits(n: Bun.int32): Bun.int32 { return Math.clz32(n); }
+# function product(a: Bun.int32, b: Bun.int32): Bun.int32 { return Math.imul(a, b); }
+# function parsed(text: string): Bun.int32 { return parseInt(text); }
+# function number(n: Bun.int32): Bun.int32 { return Number(n); }
+# sink(root(4), square(46340), floor(4), least(1, 2), size(1), sign(1), whole(1), bits(1), product(1, 2), parsed("1"), number(1));
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 5
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 mechanisms=all
+# CHECK: the walk of f1:Body failed

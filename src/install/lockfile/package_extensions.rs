@@ -264,6 +264,12 @@ impl PackageExtensions {
         self.rules.is_empty() && self.applied.is_empty()
     }
 
+    /// Returns true if a rule adds a dependency that is written as `specifier`.
+    pub(crate) fn has_specifier(&self, specifier: &[u8]) -> bool {
+        (self.rules.iter().flat_map(|rule| &rule.edges))
+            .any(|edge| dependency::trim_literal(&edge.literal) == specifier)
+    }
+
     pub(crate) fn parse(
         &mut self,
         log: &mut bun_ast::Log,
@@ -591,11 +597,12 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
         let resolved =
             (self.packages.items_resolution()).get(self.buffers.resolutions[at] as usize);
-        let is_in_range = version.tag == VersionTag::Npm
-            && resolved.is_none_or(|resolved| {
+        let is_in_range = version.try_npm().is_some_and(|range| {
+            resolved.is_none_or(|resolved| {
                 resolved.tag == ResolutionTag::Npm
-                    && (version.npm().version).satisfies(resolved.npm().version, buf, buf)
-            });
+                    && (range.version).satisfies(resolved.npm().version, buf, buf)
+            })
+        });
         if !is_in_range || (resolved.is_none() && !is_peer) {
             return Ok(());
         }

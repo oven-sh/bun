@@ -94,7 +94,6 @@ function configure(buildDir: string): Configured {
     builtinTableSources: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
-    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
     bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };

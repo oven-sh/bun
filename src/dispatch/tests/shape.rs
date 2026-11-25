@@ -6,6 +6,8 @@ bun_dispatch::link_interface! {
         fn area() -> f64;
         fn scale(k: f64);
         fn name() -> &'static str;
+        #[cfg(any())]
+        fn absent(arg: Undefined) -> Undefined;
         fn label(prefix: &str, out: &mut String);
     }
 }
@@ -22,6 +24,7 @@ link_impl_Shape! {
         area()    => core::f64::consts::PI * (*this).r * (*this).r,
         scale(k)  => (*this).r *= k,
         name()    => "circle",
+        absent(arg) => undefined(arg),
         label(prefix, out) => { out.push_str(prefix); out.push_str("circle"); },
     }
 }
@@ -31,6 +34,7 @@ link_impl_Shape! {
         area()    => (*this).s * (*this).s,
         scale(k)  => (*this).s *= k,
         name()    => "square",
+        absent(arg) => undefined(arg),
         label(prefix, out) => { out.push_str(prefix); out.push_str("square"); },
     }
 }

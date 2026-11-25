@@ -63,7 +63,8 @@ function guardEdges(input: EdgeInput): FeatureEdge[] {
   const isStartupFeature = new Uint8Array(featureIndexLimit);
   const isProgramFeature = new Uint8Array(featureIndexLimit);
   for (const { index, enteredFrom } of model.features) {
-    if (enteredFrom === "startup") isStartupFeature[index] = 1;
+    // What compiled code enters is kept by the list of its image, which names all that the code calls.
+    if (enteredFrom === "startup" || enteredFrom === "compiled-code") isStartupFeature[index] = 1;
     if (enteredFrom === "program") isProgramFeature[index] = 1;
   }
   const nativeSeeds = new Map(findNativeEntries(input).map((entry): [number, number[]] => [entry, seeds.get(entry)!]));

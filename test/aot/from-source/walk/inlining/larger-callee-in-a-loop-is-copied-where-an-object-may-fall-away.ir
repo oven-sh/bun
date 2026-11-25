@@ -1,0 +1,18 @@
+# -- source: larger-callee-in-a-loop-is-copied-where-an-object-may-fall-away.js
+# function short(o) { return o.a + o.b + o.c + o.d + o.e + o.f + o.g; }
+# function long(o) { return o.a + o.b + o.c + o.d + o.e + o.f + o.g + o.h + o.i + o.j + o.k + o.l + o.m + o.n; }
+# function sumOfFields(list) { let total = 0; for (let i = 0; i < list.length; i++) total += short(list[i]) + long(list[i]); return total; }
+# function sumOfLiterals(n) { let total = 0; for (let i = 0; i < n; i++) total += long({ a: i, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14 }); return total; }
+# print(sumOfFields([{ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: 11, l: 12, m: 13, n: 14 }]), sumOfLiterals(3));
+# -- end of source
+# `short` has 13 operations and `long` 27
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: CallDirect {{*}}function=f2
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: callee=f2
+# RUN(LITERAL): walk f4 mechanisms=all
+# LITERAL: frame 1 callee=f2
+# LITERAL-NOT: CallDirect
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

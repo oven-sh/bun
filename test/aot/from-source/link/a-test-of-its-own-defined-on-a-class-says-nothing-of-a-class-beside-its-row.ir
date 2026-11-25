@@ -1,0 +1,17 @@
+# Heir gets a test of its own. `o instanceof Other` does not find it: Other stands above Heir. Heir's class object leaves with the definition and takes its row with it, by the prototype objects; Third stands beside the row and stays in sight.
+# -- source: main.js
+# class Third { constructor() { this.y = 2; } }
+# class Other { constructor() { this.x = 1; } m() { return this.x; } }
+# class Heir extends Other { constructor() { super(); this.z = 3; } }
+# Object.defineProperty(Heir, Symbol.hasInstance, { value: (v) => v === 1 });
+# const o = new Other(), h = new Heir(), t = new Third();
+# print(o instanceof Other, h instanceof Other, 1 instanceof Heir, h instanceof Heir, t instanceof Third, o.m(), h.z, t.y);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "y" proven=int[0, 2147483647]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true true false true 1 3 2
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true true false true 1 3 2
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true true false true 1 3 2

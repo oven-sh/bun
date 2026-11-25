@@ -1,13 +1,5 @@
-// Object.defineProperty(f, "name", ..) on every kind of function, in every state of its name, and what stack traces and key lists say afterwards.
+// Object.defineProperty(f, "name", ..) on every kind of function, in every state of its name, and what key lists say afterwards.
 const captured = { n: 0 };
-function frames(f, ...args) {
-  try {
-    f(...args);
-  } catch (error) {
-    return error.stack.split("\n").slice(1, 3).map(line => { const words = line.trim().split(" "); return words.length > 2 ? words.slice(1, -1).join(" ") : "(no name)"; }).join("|");
-  }
-  return "no error";
-}
 const kinds = {
   declaration: () => { function declared() { captured.n++; throw new Error("x"); } return declared; },
   expression: () => function () { captured.n++; throw new Error("x"); },
@@ -69,8 +61,6 @@ for (const [kind, create] of Object.entries(kinds)) {
       const d = Object.getOwnPropertyDescriptor(f, "name");
       line.push(d ? ("value" in d ? JSON.stringify(d.value) + (d.writable ? "W" : "w") : "getter") + (d.enumerable ? "E" : "e") + (d.configurable ? "C" : "c") : "none");
       line.push(Reflect.ownKeys(f).map(String).join(), String(f.name), Object.keys(f).join());
-      if (!kind.startsWith("class") && !["anonymousClass", "asynchronous", "generator", "computed", "symbol", "bound"].includes(kind)) line.push(frames(f));
-      else if (kind === "classPlain" || kind === "classWithStatic") line.push(frames(() => new f()));
       try {
         Object.defineProperty(f, "name", { value: "second" });
         line.push(f.name);

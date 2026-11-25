@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# function valueOf(x) { if ("v" in x) return x.v; if ("w" in x) return x.w * 2; return 0; }
+# function pick(i) { if (i === 0) return { v: 1 }; if (i === 1) return { w: 2 }; if (i === 2) return { v: 4, w: 3 }; return { z: 1 }; }
+# function run(turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += valueOf(pick(i & 3)); return sum; }
+# print(run(8), run(0));
+# -- end of source
+# Of the layouts that a value may have, those with the name are told from those without it by one test of the shape, and the value is narrowed behind it.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: PropHas
+# CHECK: ShapeTest
+# CHECK-NOT: PropHas
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 18 0

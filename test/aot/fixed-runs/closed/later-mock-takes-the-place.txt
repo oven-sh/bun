@@ -1,0 +1,71 @@
+A later vi.mock() of a module that a mock stands in place of takes its place, for the namespace object too; laid over a module that ran, it keeps what it leaves out.
+#### dep-more.js
+console.error("| CASE", "runs dep-more");
+export const flag = "real";
+export const plain = "real";
+export function fn() {
+  return "real";
+}
+export default "real";
+#### dep-over.js
+console.error("| CASE", "runs dep-over");
+export const flag = "real";
+export const plain = "real";
+export function fn() {
+  return "real";
+}
+export default "real";
+#### dep-user.js
+console.error("| CASE", "runs dep-user");
+export const flag = "real";
+export const plain = "real";
+export function fn() {
+  return "real";
+}
+export default "real";
+#### more.test.js
+import { test, vi } from "bun:test";
+import * as all from "./dep-more.js";
+import byDefault, { flag, fn } from "./dep-more.js";
+const say = (...words) => console.error("| CASE", "more " + words.join(" "));
+vi.mock("./dep-more.js", () => ({ flag: "one", default: "one", plain: "one", fn: () => "one" }));
+test("the second mock names more", async () => {
+  say(1, Object.keys(all), flag, byDefault, fn(), all.plain);
+  vi.mock("./dep-more.js", () => ({ plain: "two", flag: "two", added: "added", fn: () => "two", default: 2 }));
+  say(2, Object.keys(all), flag, byDefault, fn(), all.plain, all.added, "added" in all);
+  const again = await import("./dep-more.js");
+  say(3, again === all, Object.keys(again), again.added);
+  say(4, JSON.stringify(Object.getOwnPropertyDescriptor(all, "added")));
+});
+test("and stands in the next test", () => {
+  say(5, Object.keys(all), flag, all.added);
+});
+#### over.test.js
+import { test, vi } from "bun:test";
+import * as all from "./dep-over.js";
+import { flag, plain } from "./dep-over.js";
+const say = (...words) => console.error("| CASE", "over " + words.join(" "));
+test("two mocks laid over a module that ran", async () => {
+  say(0, Object.keys(all), flag, plain);
+  vi.mock("./dep-over.js", () => ({ flag: "one", plain: "one" }));
+  say(1, Object.keys(all), flag, plain);
+  vi.mock("./dep-over.js", () => ({ flag: "two" }));
+  say(2, Object.keys(all), flag, plain, all.flag, all.plain);
+  say(3, (await import("./dep-over.js")) === all);
+});
+#### package.json
+{ "name": "mock-again" }
+#### user.js
+import * as all from "./dep-user.js";
+import { flag } from "./dep-user.js";
+export const read = () => [Object.keys(all), flag, all.flag, "added" in all ? all.added : "none"].join(" ");
+#### user.test.js
+import { test, vi } from "bun:test";
+import { read } from "./user.js";
+const say = (...words) => console.error("| CASE", "user " + words.join(" "));
+vi.mock("./dep-user.js", () => ({ flag: "one" }));
+test("another module reads the second mock", () => {
+  say(1, read());
+  vi.mock("./dep-user.js", () => ({ added: "added", flag: "two" }));
+  say(2, read());
+});

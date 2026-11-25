@@ -2,15 +2,15 @@
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 
 use core::ffi::c_int;
-use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self, Fd};
-use bun_threading::Futex;
+use bun_sys::{self, CloseOnDrop, Fd};
 
-use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COUNT as max_count, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
+    WatcherThread,
+};
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -24,134 +24,75 @@ bun_core::declare_scope!(watcher, visible);
 // `bun.Watcher` has the same hardcoded `max_count`.
 const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 
-/// Aligned to `align_of::<Event>()` so casts from the buffer base are sound.
-#[repr(C, align(4))]
-pub struct EventListBytes(pub(crate) [u8; EVENTLIST_BYTES_SIZE]);
-const _: () = assert!(align_of::<Event>() == 4);
-// SAFETY: EventListBytes is a `[u8; N]` newtype; the all-zero bit pattern is valid.
-unsafe impl bun_core::Zeroable for EventListBytes {}
-
-#[derive(Clone, Copy)]
-struct ReadPtr {
-    i: u32,
-    len: u32,
-}
-
 pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
-    pub(crate) fd: Fd,
-    pub(crate) loaded: bool,
-
-    // Avoid statically allocating because it increases the binary size.
-    pub(crate) eventlist_bytes: Box<EventListBytes>,
-    /// pointers into the next chunk of events
-    // BACKREF: raw pointers into `eventlist_bytes`; self-referential, never freed individually.
-    pub(crate) eventlist_ptrs: [*const Event; max_count],
-    /// if defined, it means `read` should continue from this offset before asking
-    /// for more bytes. this is only hit under high watching load.
-    /// see `test-fs-watch-recursive-linux-parallel-remove.js`
-    read_ptr: Option<ReadPtr>,
-
-    pub(crate) watch_count: AtomicU32,
+    pub(crate) fd: CloseOnDrop,
+    /// Readable from [`Watcher::wake`] on.
+    eventfd: CloseOnDrop,
     /// nanoseconds
     pub(crate) coalesce_interval: isize,
 }
 
-impl Default for INotifyWatcher {
-    fn default() -> Self {
-        Self {
-            fd: Fd::INVALID,
-            loaded: false,
-            eventlist_bytes: bun_core::boxed_zeroed(),
-            eventlist_ptrs: [core::ptr::null(); max_count],
-            read_ptr: None,
-            watch_count: AtomicU32::new(0),
-            coalesce_interval: 100_000,
-        }
-    }
-}
-
 pub(crate) type EventListIndex = c_int;
 
-#[repr(C)]
-pub struct Event {
+/// An `inotify_event`.
+pub struct Event<'a> {
     pub watch_descriptor: EventListIndex,
     pub mask: u32,
-    pub cookie: u32,
-    /// The name field is present only when an event is returned for a
-    /// file inside a watched directory; it identifies the filename
-    /// within the watched directory.  This filename is null-terminated,
-    /// and may include further null bytes ('\0') to align subsequent
-    /// reads to a suitable address boundary.
-    ///
-    /// The len field counts all of the bytes in name, including the null
-    /// bytes; the length of each inotify_event structure is thus
-    /// sizeof(struct inotify_event)+len.
-    pub name_len: u32,
+    padded_name: &'a [u8],
 }
 
-impl Event {
-    const LARGEST_SIZE: usize = {
-        let n = size_of::<Event>() + MAX_PATH_BYTES;
-        let a = align_of::<Event>();
-        // round up to a multiple of the alignment
-        (n + a - 1) & !(a - 1)
-    };
+impl<'a> Event<'a> {
+    const HEADER_SIZE: usize = size_of::<libc::inotify_event>();
+    const LARGEST_SIZE: usize = Self::HEADER_SIZE + MAX_PATH_BYTES;
 
-    // The kernel pads names so subsequent events are 4-byte aligned. If
-    // unaligned reads are ever observed, switch these to take `*const Event`
-    // + read_unaligned.
-
-    pub(crate) fn name(&self) -> &ZStr {
-        debug_assert!(
-            self.name_len > 0,
-            "INotifyWatcher.Event.name() called with name_len == 0, you should check it before calling this function."
-        );
-        // SAFETY: kernel writes a NUL-terminated name immediately after the
-        // fixed-size header when name_len > 0; the bytes live in eventlist_bytes
-        // which outlives the returned borrow.
-        unsafe {
-            let name_first_char_ptr = (&raw const self.name_len)
-                .cast::<u8>()
-                .add(size_of::<u32>());
-            let len = libc::strlen(name_first_char_ptr.cast());
-            ZStr::from_raw(name_first_char_ptr, len)
-        }
+    /// Only an event for a file inside a watched directory has one.
+    pub fn name(&self) -> Option<&'a [u8]> {
+        (!self.padded_name.is_empty()).then(|| bun_core::slice_to_nul(self.padded_name))
     }
+}
 
-    pub(crate) fn size(&self) -> u32 {
-        u32::try_from(size_of::<Event>()).expect("int cast") + self.name_len
+/// The events in the bytes read from an inotify descriptor.
+pub struct EventIterator<'a>(pub &'a [u8]);
+
+impl<'a> Iterator for EventIterator<'a> {
+    type Item = Event<'a>;
+
+    fn next(&mut self) -> Option<Event<'a>> {
+        let bytes = core::mem::take(&mut self.0);
+        let [wd, mask, _cookie, name_len]: [u32; 4] = bun_core::read_prefix(bytes)?;
+        let (padded_name, rest) =
+            bytes[Event::HEADER_SIZE..].split_at_checked(name_len as usize)?;
+        self.0 = rest;
+        Some(Event {
+            watch_descriptor: wd as EventListIndex,
+            mask,
+            padded_name,
+        })
     }
 }
 
 impl INotifyWatcher {
-    pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_path(&self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
-        debug_assert!(self.loaded);
-        let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
-        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_file_mask);
-        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
-        let result = if rc < 0 {
+        let rc =
+            bun_sys::linux::inotify_add_watch(self.fd.fd().native(), pathname, watch_file_mask);
+        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd.fd(), rc);
+        if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
             Ok(rc)
-        };
-        if old_count == 0 {
-            Futex::wake(&self.watch_count, 10);
         }
-        result
     }
 
-    pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    pub(crate) fn watch_dir(&self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
-        debug_assert!(self.loaded);
-        let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_dir_mask = IN::EXCL_UNLINK
             | IN::DELETE
             | IN::DELETE_SELF
@@ -160,20 +101,16 @@ impl INotifyWatcher {
             | IN::ONLYDIR
             | IN::MOVED_TO
             | IN::MODIFY;
-        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
-        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
-        let result = if rc < 0 {
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.fd().native(), pathname, watch_dir_mask);
+        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd.fd(), rc);
+        if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
             Ok(rc)
-        };
-        if old_count == 0 {
-            Futex::wake(&self.watch_count, 10);
         }
-        result
     }
 
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
@@ -186,21 +123,31 @@ impl INotifyWatcher {
             // init-failed tag.
             return Err(crate::Error::Sys(errno));
         }
-        let fd = Fd::from_native(raw);
-        bun_core::scoped_log!(watcher, "{} init", fd);
+        let fd = CloseOnDrop::new(Fd::from_native(raw));
+        bun_core::scoped_log!(watcher, "{} init", fd.fd());
         Ok(Self {
             fd,
-            loaded: true,
+            eventfd: CloseOnDrop::new(bun_sys::eventfd(0, libc::EFD_CLOEXEC)?),
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
                 .and_then(|v| isize::try_from(v).ok())
                 .unwrap_or(100_000),
-            ..Self::default()
         })
     }
 
-    fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
-        debug_assert!(self.loaded);
+    /// For an event, or for [`Watcher::wake`].
+    fn wait(&self) {
+        use bun_sys::linux::{pollfd, ppoll};
+        let mut fds = [&self.fd, &self.eventfd].map(|file| pollfd {
+            fd: file.fd().native(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        while bun_sys::get_errno(ppoll(&mut fds, None, None)) == bun_sys::E::EINTR {}
+    }
+
+    /// Returns how many bytes it read.
+    fn read(&self, bytes: &mut [u8]) -> bun_sys::Result<usize> {
         // This is what replit does as of Jaunary 2023.
         // 1) CREATE .http.ts.3491171321~
         // 2) OPEN .http.ts.3491171321~
@@ -212,254 +159,149 @@ impl INotifyWatcher {
         // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
         use bun_sys::linux as system;
         use bun_sys::{E, get_errno};
-        let mut i: u32 = 0;
-        // reshaped for borrowck — track length instead of borrowing a sub-slice
-        // of self.eventlist_bytes across the whole function.
-        let read_len: usize = if let Some(ptr) = self.read_ptr {
-            Futex::wait_forever(&self.watch_count, 0);
-            i = ptr.i;
-            ptr.len as usize
-        } else {
-            'outer: loop {
-                Futex::wait_forever(&self.watch_count, 0);
+        loop {
+            let rc = system::read(self.fd.fd().native(), bytes);
+            let errno = get_errno(rc);
+            match errno {
+                E::SUCCESS => {
+                    let read_len = usize::try_from(rc).expect("int cast");
+                    bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd.fd(), read_len);
+                    if read_len == 0 {
+                        return Ok(0);
+                    }
 
-                let rc = system::read(self.fd.native(), &mut self.eventlist_bytes.0);
-                let errno = get_errno(rc);
-                match errno {
-                    E::SUCCESS => {
-                        let mut read_len = usize::try_from(rc).expect("int cast");
-                        bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd, read_len);
-                        if read_len == 0 {
-                            return Ok(&[]);
-                        }
-
-                        // IN_MODIFY is very noisy
-                        // we do a 0.1ms sleep to try to coalesce events better
-                        const DOUBLE_READ_THRESHOLD: usize = Event::LARGEST_SIZE * (max_count / 2);
-                        if read_len < DOUBLE_READ_THRESHOLD {
-                            let mut fds = [system::pollfd {
-                                fd: self.fd.native(),
-                                events: (libc::POLLIN | libc::POLLERR) as _,
-                                revents: 0,
-                            }];
-                            let timespec = libc::timespec {
-                                tv_sec: 0,
-                                tv_nsec: self.coalesce_interval as _,
-                            };
-                            let poll_n = system::ppoll(&mut fds, Some(&timespec), None);
-                            if poll_n > 0 {
-                                'inner: loop {
-                                    let rest = &mut self.eventlist_bytes.0[read_len..];
-                                    debug_assert!(!rest.is_empty());
-                                    let new_rc = system::read(self.fd.native(), rest);
-                                    let e = get_errno(new_rc);
-                                    match e {
-                                        E::SUCCESS => {
-                                            read_len += usize::try_from(new_rc).expect("int cast");
-                                            break 'outer read_len;
-                                        }
-                                        E::EAGAIN | E::EINTR => {
-                                            continue 'inner;
-                                        }
-                                        _ => {
-                                            return Err(bun_sys::Error {
-                                                errno: e as u32 as _,
-                                                syscall: bun_sys::Tag::read,
-                                                ..Default::default()
-                                            });
-                                        }
+                    // IN_MODIFY is very noisy
+                    // we do a 0.1ms sleep to try to coalesce events better
+                    const DOUBLE_READ_THRESHOLD: usize = Event::LARGEST_SIZE * (max_count / 2);
+                    if read_len < DOUBLE_READ_THRESHOLD {
+                        let mut fds = [system::pollfd {
+                            fd: self.fd.fd().native(),
+                            events: (libc::POLLIN | libc::POLLERR) as _,
+                            revents: 0,
+                        }];
+                        let timespec = libc::timespec {
+                            tv_sec: 0,
+                            tv_nsec: self.coalesce_interval as _,
+                        };
+                        let poll_n = system::ppoll(&mut fds, Some(&timespec), None);
+                        if poll_n > 0 {
+                            'inner: loop {
+                                let rest = &mut bytes[read_len..];
+                                debug_assert!(!rest.is_empty());
+                                let new_rc = system::read(self.fd.fd().native(), rest);
+                                let e = get_errno(new_rc);
+                                match e {
+                                    E::SUCCESS => {
+                                        return Ok(
+                                            read_len + usize::try_from(new_rc).expect("int cast")
+                                        );
+                                    }
+                                    E::EAGAIN | E::EINTR => {
+                                        continue 'inner;
+                                    }
+                                    _ => {
+                                        return Err(bun_sys::Error {
+                                            errno: e as u32 as _,
+                                            syscall: bun_sys::Tag::read,
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                             }
                         }
+                    }
 
-                        break 'outer read_len;
+                    return Ok(read_len);
+                }
+                E::EAGAIN | E::EINTR => continue,
+                E::EINVAL => {
+                    if cfg!(debug_assertions) {
+                        Output::err(
+                            "EINVAL",
+                            "inotify read({}, {})",
+                            (self.fd.fd(), bytes.len()),
+                        );
                     }
-                    E::EAGAIN | E::EINTR => continue 'outer,
-                    E::EINVAL => {
-                        if cfg!(debug_assertions) {
-                            Output::err(
-                                "EINVAL",
-                                "inotify read({}, {})",
-                                (self.fd, self.eventlist_bytes.0.len()),
-                            );
-                        }
-                        return Err(bun_sys::Error {
-                            errno: errno as u32 as _,
-                            syscall: bun_sys::Tag::read,
-                            ..Default::default()
-                        });
-                    }
-                    _ => {
-                        return Err(bun_sys::Error {
-                            errno: errno as u32 as _,
-                            syscall: bun_sys::Tag::read,
-                            ..Default::default()
-                        });
-                    }
+                    return Err(bun_sys::Error {
+                        errno: errno as u32 as _,
+                        syscall: bun_sys::Tag::read,
+                        ..Default::default()
+                    });
+                }
+                _ => {
+                    return Err(bun_sys::Error {
+                        errno: errno as u32 as _,
+                        syscall: bun_sys::Tag::read,
+                        ..Default::default()
+                    });
                 }
             }
-        };
-
-        let base: *const Event = core::ptr::from_ref(&*self.eventlist_bytes).cast::<Event>();
-
-        let mut count: u32 = 0;
-        while (i as usize) < read_len {
-            // SAFETY: `base` is the start of the align(4) `EventListBytes` buffer and the
-            // kernel pads each inotify_event so the next header stays 4-byte aligned, so
-            // `base + i` is an aligned, in-bounds (`i < read_len <= EVENTLIST_BYTES_SIZE`)
-            // header written by the kernel.
-            let event: *const Event = unsafe { base.byte_add(i as usize) };
-            self.eventlist_ptrs[count as usize] = event;
-            // SAFETY: event points to a valid header; size() reads name_len which the kernel set.
-            i += unsafe { (*event).size() };
-            count += 1;
-
-            // when under high load with short file paths, it is very easy to
-            // overrun the watcher's event buffer.
-            if count as usize == max_count {
-                self.read_ptr = Some(ReadPtr {
-                    i,
-                    len: u32::try_from(read_len).expect("int cast"),
-                });
-                bun_core::scoped_log!(watcher, "{} read buffer filled up", self.fd);
-                return Ok(&self.eventlist_ptrs[..]);
-            }
-        }
-
-        self.read_ptr = None;
-        Ok(&self.eventlist_ptrs[..count as usize])
-    }
-
-    pub(crate) fn stop(&mut self) {
-        bun_core::scoped_log!(watcher, "{} stop", self.fd);
-        if self.fd != Fd::INVALID {
-            let _ = bun_sys::close(self.fd);
-            self.fd = Fd::INVALID;
         }
     }
 }
 
-/// Repeatedly called by the main watcher until the watcher is terminated.
-pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    use crate::watcher_impl::WatchItemColumns;
-    let _flush = Output::flush_guard();
-
-    let events = this.platform.read()?;
-    if events.is_empty() {
-        return Ok(());
+impl Watcher {
+    pub(crate) fn wake(&self) {
+        let _ = self.platform.eventfd.write_all(&1u64.to_ne_bytes());
     }
+}
 
-    // reshaped for borrowck — copy raw event pointers to a local buffer so
-    // `this.platform` borrow ends before we mutably borrow other `this` fields below.
-    let events_len = events.len();
-    let mut events_buf: [*const Event; max_count] = [core::ptr::null(); max_count];
-    events_buf[..events_len].copy_from_slice(events);
-    let events = &events_buf[..events_len];
-
-    // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
-    // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
-    // evicts the matched file watch). The enqueued reload then re-imports the
-    // module on the JS thread, whose `add_file` re-appends the entry under
-    // `this.mutex`, potentially reallocating the MultiArrayList backing while
-    // this thread is mid-`items_eventlist_index()` on the next cycle. Under
-    // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
-    // 128 `max_count` batch size, so the dir-event-only batch is common) the
-    // unlocked read raced the realloc and the process occasionally died with
-    // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
-    {
-        let _guard = this.mutex.lock_guard();
-        this.eventlist_index_scratch.clear();
-        this.eventlist_index_scratch
-            .extend_from_slice(this.watchlist.items_eventlist_index());
-    }
-
-    let mut event_id: usize = 0;
-    let mut events_processed: usize = 0;
-
-    if events_processed < events.len() {
-        let mut temp_name_list: [Option<&ZStr>; 128] = [None; 128];
-        let mut temp_name_off: u8 = 0;
-
-        // Process events one by one, batching when we hit limits
-        while events_processed < events.len() {
-            // SAFETY: events[i] is a pointer into platform.eventlist_bytes which lives for
-            // the duration of this call (platform is a field of `this`).
-            let event = unsafe { &*events[events_processed] };
-
-            // Check if we're about to exceed the watch_events array capacity
-            if event_id >= this.watch_events.len() {
-                process_inotify_event_batch(
-                    this,
-                    event_id,
-                    &temp_name_list[..temp_name_off as usize],
-                )?;
-                event_id = 0;
-                temp_name_off = 0;
-            }
-
-            // Check if we can fit this event's name in temp_name_list
-            let will_have_name = event.name_len > 0;
-            if will_have_name && (temp_name_off as usize) >= temp_name_list.len() {
-                if event_id > 0 {
-                    process_inotify_event_batch(
-                        this,
-                        event_id,
-                        &temp_name_list[..temp_name_off as usize],
-                    )?;
-                    event_id = 0;
-                    temp_name_off = 0;
-                }
-            }
-
-            let idx = match this
-                .eventlist_index_scratch
-                .iter()
-                .position(|&x| x == event.watch_descriptor)
-            {
-                Some(idx) => WatchItemIndex::try_from(idx).unwrap(),
-                None => {
-                    events_processed += 1;
-                    continue;
-                }
-            };
-            this.watch_events[event_id] = watch_event_from_inotify_event(event, idx);
-
-            // Safely handle event names with bounds checking
-            if event.name_len > 0 && (temp_name_off as usize) < temp_name_list.len() {
-                temp_name_list[temp_name_off as usize] = Some(event.name());
-                this.watch_events[event_id].name_off = temp_name_off;
-                this.watch_events[event_id].name_len = 1;
-                temp_name_off += 1;
-            } else {
-                this.watch_events[event_id].name_off = temp_name_off;
-                this.watch_events[event_id].name_len = 0;
-            }
-
-            event_id += 1;
-            events_processed += 1;
+pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+    this.platform.wait();
+    let mut bytes = vec![0u8; EVENTLIST_BYTES_SIZE].into_boxed_slice();
+    let mut eventlist_index_scratch = Vec::new();
+    while this.running.load() {
+        let len = this.platform.read(&mut bytes)?;
+        let mut events = EventIterator(&bytes[..len]);
+        // More than one batch only under load, see `watch-many-dirs.test.ts`.
+        while !events.0.is_empty() && this.running.load() {
+            process_inotify_event_batch(this, thread, &mut events, &mut eventlist_index_scratch);
         }
-
-        // Process any remaining events in the final batch
-        if event_id > 0 {
-            process_inotify_event_batch(this, event_id, &temp_name_list[..temp_name_off as usize])?;
-        }
+        this.platform.wait();
     }
-
     Ok(())
 }
 
 fn process_inotify_event_batch(
-    this: &mut Watcher,
-    event_count: usize,
-    temp_name_list: &[Option<&'static ZStr>],
-) -> bun_sys::Result<()> {
+    this: &Watcher,
+    thread: &mut WatcherThread,
+    events: &mut EventIterator<'_>,
+    eventlist_index_scratch: &mut Vec<EventListIndex>,
+) {
+    let _flush = Output::flush_guard();
+
+    eventlist_index_scratch.clear();
+    eventlist_index_scratch.extend_from_slice(this.state.lock().watchlist.items_eventlist_index());
+
+    let mut event_count: usize = 0;
+    let mut temp_name_list: [&[u8]; max_count] = [b""; max_count];
+    let mut temp_name_off: u8 = 0;
+
+    for event in events.take(max_count) {
+        let Some(idx) = eventlist_index_scratch
+            .iter()
+            .position(|&x| x == event.watch_descriptor)
+        else {
+            continue;
+        };
+        let watch_event = &mut thread.watch_events[event_count];
+        *watch_event =
+            watch_event_from_inotify_event(&event, WatchItemIndex::try_from(idx).unwrap());
+        watch_event.name_off = temp_name_off;
+        if let Some(name) = event.name() {
+            temp_name_list[temp_name_off as usize] = name;
+            watch_event.name_len = 1;
+            temp_name_off += 1;
+        }
+        event_count += 1;
+    }
     if event_count == 0 {
-        return Ok(());
+        return;
     }
 
+    let mut changed_filepaths: [&[u8]; max_count] = [b""; max_count];
     let mut name_off: u8 = 0;
-    let watch_events = &mut this.watch_events[..event_count];
+    let watch_events = &mut thread.watch_events[..event_count];
     index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
@@ -467,15 +309,10 @@ fn process_inotify_event_batch(
 
     for i in 0..watch_events.len() {
         if watch_events[i].name_len > 0 {
-            // Check bounds before accessing arrays
-            if (name_off as usize) < this.changed_filepaths.len()
-                && (watch_events[i].name_off as usize) < temp_name_list.len()
-            {
-                this.changed_filepaths[name_off as usize] =
-                    temp_name_list[watch_events[i].name_off as usize];
-                watch_events[i].name_off = name_off;
-                name_off += 1;
-            }
+            changed_filepaths[name_off as usize] =
+                temp_name_list[watch_events[i].name_off as usize];
+            watch_events[i].name_off = name_off;
+            name_off += 1;
         }
 
         if watch_events[i].index == last_event_id {
@@ -487,16 +324,15 @@ fn process_inotify_event_batch(
         last_event_index = i;
         last_event_id = watch_events[i].index;
     }
-    if watch_events.is_empty() {
-        return Ok(());
-    }
 
-    // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-    this.dispatch_file_updates(last_event_index + 1, name_off as usize);
-    Ok(())
+    this.dispatch_file_updates(
+        thread,
+        last_event_index + 1,
+        &changed_filepaths[..name_off as usize],
+    );
 }
 
-fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {
+fn watch_event_from_inotify_event(event: &Event<'_>, index: WatchItemIndex) -> WatchEvent {
     use bun_sys::linux::IN;
     let mut op = Op::empty();
     if (event.mask & IN::DELETE_SELF) > 0 || (event.mask & IN::DELETE) > 0 {

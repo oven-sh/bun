@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function dead(i: number) { const o = { lid: i, spout: i + 1 }; return o.lid + o.spout; }
+# function handedBack(i: number) { const o = { lid: i, spout: 1 }; return o; }
+# function left(i: number) { const o = { lid: i, spout: 2 }; sink(o); return i; }
+# sink(dead, handedBack, left);
+# -- end of source
+# f1 = dead, f2 = handedBack, f3 = left
+# the object of dead() is fresh at the Return: under the word it is made, though a build of a program never makes it, and its life is ended there. What is handed back and what has left are let be.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f1 mechanisms=-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: [[made]]: L{{*}} @Cell = NewObject
+# CHECK: EndCellLifetime [[made]]
+# CHECK: Return
+# RUN(BACK): walk f2 f3 mechanisms=-Inlining
+# BACK-NOT: EndCellLifetime

@@ -1,4 +1,5 @@
 #include "CryptoDhJob.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "JSKeyObject.h"
 #include "ErrorCode.h"
@@ -8,42 +9,15 @@ using namespace ncrypto;
 
 namespace Bun {
 
-extern "C" void Bun__DhJobCtx__deinit(DhJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void DhJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__DhJobCtx__runTask(DhJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ctx->runTask(globalObject);
-}
 void DhJobCtx::runTask(JSGlobalObject* globalObject)
 {
     // A failed derive must not leave its OpenSSL errors on the thread's error queue, where a
     // later unrelated operation would pick them up.
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
-    auto dp = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
-    if (!dp) {
-        return;
-    }
-
-    WTF::Vector<uint8_t> result;
-    if (!result.tryGrow(dp.size())) {
-        return;
-    }
-
-    m_result = ByteSource::allocated(dp.release());
+    m_result = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
 }
 
-extern "C" void Bun__DhJobCtx__runFromJS(DhJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
 JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -61,13 +35,21 @@ JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     return { jsNull(), result };
 }
 
-extern "C" void Bun__DhJob__createAndSchedule(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
-void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
+static KeyObject keyFromOption(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, CryptoKeyType type, ASCIILiteral name)
 {
-    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
-    Bun__DhJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
+    auto prepared = type == CryptoKeyType::Private
+        ? KeyObject::preparePrivateKey(globalObject, scope, value, name)
+        : KeyObject::preparePublicOrPrivateKey(globalObject, scope, value, name);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (prepared.keyData) {
+        return KeyObject::create(type, WTF::move(*prepared.keyData));
+    }
+
+    RELEASE_AND_RETURN(scope, KeyObject::getPublicOrPrivateKey(globalObject, scope, prepared.keyDataView, type, prepared.formatType, prepared.encodingType, prepared.cipher, WTF::move(prepared.passphrase)));
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/diffiehellman.js#L289-L343
 std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScope& scope, JSC::JSObject* options)
 {
     VM& vm = globalObject->vm();
@@ -77,43 +59,51 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
     JSValue publicKeyValue = options->get(globalObject, Identifier::fromString(vm, "publicKey"_s));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    JSKeyObject* privateKeyObject = dynamicDowncast<JSKeyObject>(privateKeyValue);
-    if (!privateKeyObject) {
+    if (privateKeyValue.isUndefinedOrNull()) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue);
         return std::nullopt;
     }
 
-    JSKeyObject* publicKeyObject = dynamicDowncast<JSKeyObject>(publicKeyValue);
-    if (!publicKeyObject) {
+    if (publicKeyValue.isUndefinedOrNull()) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.publicKey"_s, publicKeyValue);
         return std::nullopt;
     }
 
-    const KeyObject& privateKey = privateKeyObject->handle();
-    const KeyObject& publicKey = publicKeyObject->handle();
-
-    if (privateKey.type() != CryptoKeyType::Private) {
-        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, privateKey.type(), "private"_s);
+    JSKeyObject* privateKeyObject = dynamicDowncast<JSKeyObject>(privateKeyValue);
+    if (privateKeyObject && privateKeyObject->handle().type() != CryptoKeyType::Private) {
+        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, privateKeyObject->handle().type(), "private"_s);
         return std::nullopt;
     }
 
-    if (publicKey.type() != CryptoKeyType::Public && publicKey.type() != CryptoKeyType::Private) {
-        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKey.type(), "private or public"_s);
+    JSKeyObject* publicKeyObject = dynamicDowncast<JSKeyObject>(publicKeyValue);
+    if (publicKeyObject && publicKeyObject->handle().type() == CryptoKeyType::Secret) {
+        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKeyObject->handle().type(), "private or public"_s);
         return std::nullopt;
     }
 
-    static constexpr auto supportedKeyTypes = std::to_array<int>({ EVP_PKEY_DH,
-        EVP_PKEY_EC,
-        EVP_PKEY_X448,
-        EVP_PKEY_X25519 });
+    if (privateKeyObject && publicKeyObject) {
+        static constexpr auto supportedKeyTypes = std::to_array<int>({ EVP_PKEY_DH,
+            EVP_PKEY_EC,
+            EVP_PKEY_X448,
+            EVP_PKEY_X25519 });
 
-    int privateKeyType = privateKey.asymmetricKey().id();
-    int publicKeyType = publicKey.asymmetricKey().id();
+        int privateKeyType = privateKeyObject->handle().asymmetricKey().id();
+        int publicKeyType = publicKeyObject->handle().asymmetricKey().id();
 
-    if (privateKeyType != publicKeyType || std::ranges::find(supportedKeyTypes, privateKeyType) == supportedKeyTypes.end()) {
-        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue, "must be a supported key type"_s);
-        return std::nullopt;
+        if (privateKeyType != publicKeyType || std::ranges::find(supportedKeyTypes, privateKeyType) == supportedKeyTypes.end()) {
+            auto privateName = privateKeyObject->handle().asymmetricKeyType(globalObject).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            auto publicName = publicKeyObject->handle().asymmetricKeyType(globalObject).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY, makeString("Incompatible key types for Diffie-Hellman: "_s, privateName, " and "_s, publicName));
+            return std::nullopt;
+        }
     }
+
+    KeyObject publicKey = keyFromOption(globalObject, scope, publicKeyValue, CryptoKeyType::Public, "options.publicKey"_s);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    KeyObject privateKey = keyFromOption(globalObject, scope, privateKeyValue, CryptoKeyType::Private, "options.privateKey"_s);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     return DhJobCtx(privateKey.data(), publicKey.data());
 }
@@ -139,7 +129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        DhJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<DhJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 

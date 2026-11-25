@@ -6,14 +6,15 @@
 // We hand-roll Display via `IntoStaticStr` so the message == the variant name,
 // and impl `std::error::Error` manually.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, strum::EnumString)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum AnyPostgresError {
+    ChannelBindingFailed,
+    ChannelBindingRequired,
     ConnectionClosed,
     ConnectionFailed,
     ConnectionRefused,
     CopyNotSupported,
     ExpectedRequest,
-    ExpectedStatement,
     InvalidBackendKeyData,
     InvalidBinaryData,
     InvalidByteSequence,
@@ -28,6 +29,7 @@ pub enum AnyPostgresError {
     SASL_SIGNATURE_MISMATCH,
     SASL_SIGNATURE_INVALID_BASE64,
     SASLIterationCountOutOfRange,
+    SASLNoKnownMechanism,
     ShortRead,
     TLSNotAvailable,
     TLSUpgradeFailed,
@@ -42,16 +44,6 @@ pub enum AnyPostgresError {
 }
 
 bun_core::impl_tag_error!(AnyPostgresError);
-
-// Reverse of the above: `crate::Error` is just an interned name; recover the
-// matching variant by name (or `JSError` as a catch-all). Needed because the
-// protocol `write_internal` helpers were widened to `crate::Error` while
-// callers (e.g. `PostgresRequest`) still propagate `AnyPostgresError`.
-impl From<crate::Error> for AnyPostgresError {
-    fn from(e: crate::Error) -> Self {
-        e.name().parse().unwrap_or(AnyPostgresError::JSError)
-    }
-}
 
 /// Options for creating a PostgresError
 // These slices borrow from the parsed wire buffer for the duration of

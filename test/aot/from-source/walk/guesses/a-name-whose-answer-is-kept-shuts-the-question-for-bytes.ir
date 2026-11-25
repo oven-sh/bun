@@ -1,0 +1,12 @@
+# The answer of `slice` is kept, read and stored into in the loop: the name shuts the question for bytes on `s`, so that the loop asks what it stores into, v2, in front. Where the answer is dropped, as behind `fill`, the question on `s` stays open.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest v2 testedType=Array<number>
+# RUN(DROPPED): walk f2:Body mechanisms=all
+# DROPPED-LABEL: code f2:Body
+# DROPPED: = TypeTest v0 testedType=Buffer|Uint8Array
+# -- source: main.js
+# function copied(s) { const b = s.slice(); for (let i = 0; i < s.length; i++) b[i] = b[i] - s[i] * 1; return b[5]; }
+# function filled(s) { s.fill(1); let n = 0; for (let i = 0; i < s.length; i++) n += s[i] * 1; return n; }
+# globalThis.kept = [copied, filled];
+# -- end of source

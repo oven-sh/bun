@@ -39,10 +39,12 @@ private:
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
         /* Swap current deferQueue */
-        loopData->deferMutex.lock();
-        int oldDeferQueue = loopData->currentDeferQueue;
-        loopData->currentDeferQueue = (loopData->currentDeferQueue + 1) % 2;
-        loopData->deferMutex.unlock();
+        int oldDeferQueue;
+        {
+            std::lock_guard lock(loopData->deferMutex);
+            oldDeferQueue = loopData->currentDeferQueue;
+            loopData->currentDeferQueue = (loopData->currentDeferQueue + 1) % 2;
+        }
 
         /* Drain the queue */
         for (auto &x : loopData->deferQueues[oldDeferQueue]) {
@@ -54,9 +56,7 @@ private:
     static void preCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        for (auto &p : loopData->preHandlers) {
-            p.second((Loop *) loop);
-        }
+        postCb(loop);
 
         /* Drain any leftover corks. Two slots max. */
         for (int i = 0; i < 2; i++) {
@@ -74,8 +74,8 @@ private:
     static void postCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        for (auto &p : loopData->postHandlers) {
-            p.second((Loop *) loop);
+        for (auto [key, handler] : loopData->tickHandlers) {
+            handler(key);
         }
     }
 
@@ -167,35 +167,17 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
-    /* Runs the pre handlers and drains leftover corks. For callers that won't tick the loop again. */
+    /* Runs the tick handlers and drains leftover corks. For callers that won't tick the loop again. */
     void flushPendingWrites() {
         preCb((us_loop_t *) this);
     }
 
-    void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->postHandlers.emplace(key, std::move(handler));
+    void addTickHandler(const void *key, void (*handler)(const void *)) {
+        data((us_loop_t *) this)->tickHandlers.emplace(key, handler);
     }
 
-    /* Bug: what if you remove a handler while iterating them? */
-    void removePostHandler(void *key) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->postHandlers.erase(key);
-    }
-
-    void addPreHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->preHandlers.emplace(key, std::move(handler));
-    }
-
-    /* Bug: what if you remove a handler while iterating them? */
-    void removePreHandler(void *key) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        loopData->preHandlers.erase(key);
+    void removeTickHandler(const void *key) {
+        data((us_loop_t *) this)->tickHandlers.erase(key);
     }
 
     /* Defer this callback on Loop's thread of execution */
@@ -203,9 +185,10 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 
         //if (std::thread::get_id() == ) // todo: add fast path for same thread id
-        loopData->deferMutex.lock();
-        loopData->deferQueues[loopData->currentDeferQueue].emplace_back(std::move(cb));
-        loopData->deferMutex.unlock();
+        {
+            std::lock_guard lock(loopData->deferMutex);
+            loopData->deferQueues[loopData->currentDeferQueue].emplace_back(std::move(cb));
+        }
 
         us_wakeup_loop((us_loop_t *) this);
     }

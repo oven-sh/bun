@@ -1,0 +1,15 @@
+# `super.size = v` in a class below a constructor function, a setter in the class above the function: until the function is linked below that class the store finds no setter and lays a property on the receiver. So the layout of the receiver may gain a property, and what the getter answers is not all that a read gives.
+# f1 = Sub, f2 = read, f7 = put
+# -- source: store-through-super-below-a-function-that-may-not-be-linked-yet-lands-on-the-receiver.js
+# class Base { get size() { return "got"; } set size(v) { } }
+# function Sub() { this.a = 1; }
+# class Top extends Sub { put(v) { super.size = v; return this; } }
+# function read(o) { return o.size; }
+# const early = new Top().put(5);
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# read(early);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2
+# LINK-NOT: result=string
+# LINK: function f3

@@ -1,0 +1,6 @@
+// An untyped package and a program of it (against): an expression engine by hand: parsed to a tree, compiled to instructions, run by backtracking threads with captures
+const lib = require("./index.js");
+function say() {
+  console.log(Array.prototype.join.call(arguments, " "));
+}
+const sources = ['a*b', '(a|ab)(c|bcd)(d*)', '^(\\w+)\\s+(\\d+)$', '(a+)+b', '[^abc-e]+', '(?<y>\\d{4})-(?<m>\\d\\d)', '(.)\\1', 'x{2,3}?', '(?:ab){2}|c', '\\bfoo\\b', 'a(?=b)', 'a(?!b).', '(a*)*', '(a?)(b)??c', '[\\w.]+@[\\w.]+', '', 'A[b-d]', '((a)|b)*']; const texts = ['', 'aaab', 'abcd', 'word 42', 'fghabc', 'on 2026-11 and 1999-01', 'book aa', 'xxxx', 'ababc', 'a foo b', 'ab ac', 'aab', 'abc', 'me@x.example', 'AbaCad', 'bab']; let differ = 0; for (const flags of ['', 'i']) for (const src of sources) { const mine = new lib(src, flags), real = new RegExp(src, flags); const row = texts.map(t => { const a = mine.exec(t), b = real.exec(t); const x = a && JSON.stringify([...a].map(v => v === undefined ? null : v)) + a.index, y = b && JSON.stringify(Array.from(b, v => v === undefined ? null : v)) + b.index; if (x !== y) differ++; return x; }); say(flags, src, row.join(' '), mine.code.length, mine.steps); } say('differ', differ); for (const bad of ['(', 'a)', '*', 'a**', '[a', '[z-a]', 'a{3,1}', '\\']) try { new lib(bad); say('fine', bad); } catch (e) { say(e.message); }

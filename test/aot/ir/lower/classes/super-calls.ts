@@ -3,13 +3,13 @@
 // CHECK: [[valuesParent]] = GetSuperBase [[valuesCallee]] @
 // CHECK: = Call {{*}}calleeName="f"
 // CHECK: [[valuesThis]] = SuperConstruct [[valuesParent]], {{*}}layout=[[values]]
-// CHECK-NEXT: [[valuesReceiver]] = Convert [[valuesThis]] declared={type=[[values]] flags=[IsFromCompiler]}
+// CHECK-NEXT: [[valuesReceiver]] = Convert [[valuesThis]] declared={type=[[values]]}
 // CHECK: = CallDirect [[valuesReceiver]] function=
 // CHECK-LABEL: function {{*}}name="Spread" {{*}}kind=DerivedConstructor
 // CHECK: [[spreadParent]] = GetSuperBase [[spreadCallee]] @
 // CHECK: AppendSpread
 // CHECK: [[spreadThis]] = SuperConstructList [[spreadParent]], {{*}}layout=[[spread]]
-// CHECK-NEXT: [[spreadReceiver]] = Convert [[spreadThis]] declared={type=[[spread]] flags=[IsFromCompiler]}
+// CHECK-NEXT: [[spreadReceiver]] = Convert [[spreadThis]] declared={type=[[spread]]}
 // CHECK: = CallDirect [[spreadReceiver]] function=
 
 declare function f(): number;

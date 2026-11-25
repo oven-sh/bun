@@ -1,0 +1,1 @@
+import { word, bump } from "./barrel.mjs"; export const read = () => [word, bump()].join(); export const space = null;

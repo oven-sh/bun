@@ -1,0 +1,17 @@
+# -- source: a-name-laid-in-a-loop-on-the-created-object-above-is-found-by-the-next-read.js
+# const shelf = { get label() { return this._label; }, set label(value) { this._label = value; } };
+# function makeMiddle(tag) { const middle = Object.create(shelf); middle.tag = tag; return middle; }
+# function makeLeaf(above, tag) { const leaf = Object.create(above); leaf.tag = tag; return leaf; }
+# function decorate(target) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; target.zebra = work; }
+# function watch(leaf, middle, turns, when) { let found = 0; for (let turn = 0; turn < turns; turn++) { if (leaf._label !== undefined) found++; if (turn === when) middle._label = "late"; } return found; }
+# const spare = makeMiddle("spare"), middle = makeMiddle("middle");
+# spare.label = "text";
+# decorate(middle);
+# const first = makeLeaf(middle, 1), second = makeLeaf(middle, 2), third = makeLeaf(middle, 3);
+# print(String(watch(second, middle, 20, 5)), String(watch(third, middle, 20, 99)), String(second.label), String(first.tag), Object.keys(middle).join());
+# -- end of source
+# A created object stands above a created object, and both layouts have a slot for `_label`, which the setter of the literal lays late. The slot of the object above is empty when the first object below it is linked.
+# The guard "nothing above answers for `_label`" may not begin there, with extra properties on the object above or without: a store in compiled code fills that slot, and a test of the guard that stands in front of the loop is not asked again.
+# RUN: run-in-shell
+# CHECK: 14 20 late 1 tag,zebra,_label
+# CHECK: the source prints the same

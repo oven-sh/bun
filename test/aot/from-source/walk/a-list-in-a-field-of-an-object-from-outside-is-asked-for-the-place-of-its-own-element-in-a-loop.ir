@@ -1,0 +1,9 @@
+# Kin of a-list-is-asked-for-the-place-of-its-own-element-in-a-loop.ir: the place is a field of an object out of JSON.parse.
+# LIBRARY: own
+# -- source: main.js
+# const box = JSON.parse('{"items":[1.5,2.5,3.5,2.5]}');
+# function run() { let seen = 0; for (let i = 0; i < box.items.length; i++) seen += box.items.indexOf(box.items[i]); return seen; }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 4

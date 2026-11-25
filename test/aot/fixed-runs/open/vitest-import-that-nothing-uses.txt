@@ -1,0 +1,69 @@
+Whose test, describe and hooks a test file gets goes by its imports of "vitest", used or not, but not by imports of types alone.
+#### c00.test.ts
+import { vi } from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c00", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c01.test.tsx
+import { vi } from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c01", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c02.test.ts
+import { Mock } from "vitest"; let mock: Mock;
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c02", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c03.test.ts
+import * as all from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c03", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c04.test.ts
+import { suite as unused, type Mock } from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c04", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c05.test.ts
+import { vi } from "vitest"; import { mock } from "bun:test"; mock;
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c05", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c06.test.ts
+import { vi } from "vitest"; vi.fn();
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c06", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c07.test.ts
+import type { Mock } from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c07", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c08.test.ts
+import { type Mock } from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c08", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c09.test.ts
+import type * as all from "vitest";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c09", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### c10.test.ts
+import { vi } from "bun:test";
+import * as modules from "./modules";
+const of = (name, value) => name + ":" + (["vitest", "bun"].filter(module => modules[module][name] === value).join("+") || "neither");
+console.log("| CASE c10", of("test", test), of("it", it), of("describe", describe), of("beforeAll", beforeAll), of("beforeEach", beforeEach), of("afterEach", afterEach), of("afterAll", afterAll), typeof jest, typeof xit, typeof suite);
+test("test", () => {});
+#### modules.ts
+import * as vitest from "vitest"; import * as bun from "bun:test"; export { vitest, bun };

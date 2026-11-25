@@ -1,0 +1,10 @@
+import { round, makeThings, tell, Crate, Parcel, Stranger } from "./the-questions.mjs";
+const things = makeThings();
+await round("as made", things);
+Object.setPrototypeOf(things.crate, Parcel.prototype);
+Object.setPrototypeOf(things.parcel, Crate.prototype);
+Object.setPrototypeOf(things.letter, null);
+Object.setPrototypeOf(things.pallet, Object.create(Crate.prototype));
+Object.setPrototypeOf(things.stranger, new Proxy(Object.create(Parcel.prototype), {}));
+await round("each below another", things);
+tell();

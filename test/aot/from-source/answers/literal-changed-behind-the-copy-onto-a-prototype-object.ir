@@ -1,0 +1,16 @@
+# -- source: main.js
+# function mixin(target, source) { Object.getOwnPropertyNames(source).forEach(function (name) { if (name !== "constructor") Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }); return target; }
+# var Sized = { size: function () { return this.items.length; }, first: function () { return this.items[0]; } };
+# function Bag(a, b) { this.items = [a, b]; }
+# mixin(Bag.prototype, Sized);
+# Sized.size = function () { return 100 + this.items.length; };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var bag = new Bag(i & 7, 1); total += bag.size() + bag.first(); } return total; }
+# print(run(10), Sized.size.call(new Bag(1, 2)));
+# -- end of source
+# A copy is no link: what is stored in the literal behind the copy does not reach the prototype object. The objects go on finding the function that was copied.
+# RUN: run-in-shell
+# CHECK: 49 102
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 49 102
+# CALLED-NEXT: exited with 0

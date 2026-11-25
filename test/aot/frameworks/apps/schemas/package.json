@@ -1,0 +1,21 @@
+{
+  "name": "schemas",
+  "private": true,
+  "dependencies": {
+    "@sinclair/typebox": "0.34.52",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "arktype": "2.2.9",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.15.1",
+    "fp-ts": "2.16.11",
+    "io-ts": "2.2.22",
+    "joi": "18.3.1",
+    "json-schema-to-ts": "3.1.1",
+    "reflect-metadata": "0.2.2",
+    "valibot": "1.5.0",
+    "yup": "1.7.1",
+    "zod": "4.6.7",
+    "zod3": "npm:zod@3.25.76"
+  }
+}

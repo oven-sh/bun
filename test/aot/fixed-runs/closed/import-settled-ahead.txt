@@ -1,0 +1,61 @@
+vi.dynamicImportSettled() hears of an import ahead of the program: a timer that a reaction to the import starts has not run when it settles.
+#### then.js
+export const name = "then";
+#### awaited.js
+export const name = "awaited";
+#### later.js
+export const name = "later";
+#### twice.js
+export const name = "twice";
+#### settled.js
+export const name = "settled";
+#### waits.js
+await new Promise(done => setTimeout(done, 20));
+export const name = "waits";
+#### throws.js
+throw new Error("thrown");
+#### m.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+test("t", async () => {
+  const ran = {};
+  const start = name => () => setTimeout(() => (ran[name] = "ran"), 0);
+
+  import("./then.js").then(start("then"));
+  await vi.dynamicImportSettled();
+  say("then", ran.then);
+
+  (async () => {
+    await import("./awaited.js");
+    start("awaited")();
+  })();
+  await vi.dynamicImportSettled();
+  say("awaited", ran.awaited);
+
+  const later = import("./later.js");
+  const settled = vi.dynamicImportSettled();
+  later.then(start("later"));
+  await settled;
+  say("a reaction laid behind the call", ran.later);
+
+  const order = [];
+  import("./twice.js").then(() => order.push("import"));
+  await Promise.all([
+    vi.dynamicImportSettled().then(() => order.push("first")),
+    vi.dynamicImportSettled().then(() => order.push("second")),
+  ]);
+  say("two calls", order.join());
+
+  await import("./settled.js");
+  start("settled")();
+  await vi.dynamicImportSettled();
+  say("settled before the call", ran.settled);
+
+  import("./waits.js").then(start("waits"));
+  await vi.dynamicImportSettled();
+  say("a module that waits", ran.waits);
+
+  import("./throws.js").catch(start("throws"));
+  await vi.dynamicImportSettled();
+  say("rejected", ran.throws);
+});

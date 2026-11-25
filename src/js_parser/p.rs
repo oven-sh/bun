@@ -22,8 +22,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit,
-    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FindSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse,
+    FnOrArrowDataVisit, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -7128,15 +7128,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Inlining may have removed the declaration that a path begins at.
     pub(crate) fn can_write_define(&mut self, loc: bun_ast::Loc, define: &'a DefineData) -> bool {
         match &define.value {
-            Replacement::Path { root, .. } if self.is_revisit_for_substitution => {
+            Replacement::Path { root, members } if self.is_revisit_for_substitution => {
                 (self.find_symbol_with_record_usage::<false>(loc, root)).is_ok_and(|found| {
                     found.r#ref.is_empty()
+                        || self.is_variable_of_output(&found, members)
                         || self.symbols[found.r#ref.inner_index() as usize].kind
                             == js_ast::symbol::Kind::Unbound
                 })
             }
             _ => true,
         }
+    }
+
+    /// "module.hot" and "require.resolve" are those of the output, and no sign of CommonJS.
+    fn is_variable_of_output(&self, found: &FindSymbolResult, members: &[Box<[u8]>]) -> bool {
+        !members.is_empty()
+            && [self.module_ref, self.exports_ref, self.require_ref].contains(&found.r#ref)
+            && found.declare_loc == Some(bun_ast::Loc::EMPTY)
     }
 
     fn value_for_defined_path(
@@ -7148,11 +7156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let root_used_as = used_as.of_object_before(members.len());
         let (mut id, found) = self.resolve_name(loc, root, root_used_as);
-        // "module.hot" and "require.resolve" are those of the output, and no sign of CommonJS.
-        if !members.is_empty()
-            && [self.module_ref, self.exports_ref, self.require_ref].contains(&id.ref_)
-            && found.declare_loc == Some(bun_ast::Loc::EMPTY)
-        {
+        if self.is_variable_of_output(&found, members) {
             self.ignore_usage(id.ref_);
             id.ref_ = self.new_symbol(js_ast::symbol::Kind::Unbound, root);
         }

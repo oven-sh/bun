@@ -3677,6 +3677,22 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "true 1" },
   });
+  itBundled("edgecase/DefinePathBeginsAtCommonJSVariableAfterInlining", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function a() { const env = process.env; return env.HOT === 1; }
+        function b() { const env = process.env; return env.NAMED === 2; }
+        function c() { const module = 1; const env = process.env; return env.HOT === undefined; }
+        module.hot = 1;
+        exports.named = 2;
+        console.log(a(), b(), c());
+      `,
+    },
+    define: { "process.env.HOT": "module.hot", "process.env.NAMED": "exports.named" },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "true true true" },
+  });
   itBundled("edgecase/DefinePathBeginsAtOwnModuleVariable", {
     files: {
       "/entry.js": /* js */ `

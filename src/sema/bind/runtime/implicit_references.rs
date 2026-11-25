@@ -6,7 +6,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BoundBuilder, Parent, ScopeId};
 use crate::fold::{DefineRoot, PathInPlace, is_hot_of_import_meta};
 use crate::hir::*;
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::identifier::is_identifier;
 
 fn is_operand_of_delete(hir: &File<'_>, bound: &BoundBuilder, e: ExprId) -> bool {
@@ -67,6 +67,7 @@ impl ReferencePass<'_, '_> {
             return;
         }
         let scopes_of_names: FxHashMap<ExprId, ScopeId> = self.idents.iter().copied().collect();
+        let mut roots_with_room_taken = FxHashSet::default();
         for index in 0..hir.exprs.len() {
             let e = ExprId(index as u32);
             let last = match (hir[e].kind, hir.member_key(e)) {
@@ -114,17 +115,15 @@ impl ReferencePass<'_, '_> {
                     || hir.member_key(e).is_some_and(|(object, _)| {
                         is_hot_of_import_meta(hir, hir.skip_type_assertions(object))
                     });
-                let places = &self.references.places_of_defined_paths;
-                let is_room_taken = places.last().is_some_and(|inner| inner.0 >= root);
                 if is_free
                     && !hir.is_written_by_define(root)
                     && bound.parent_of_expr(e) != Parent::None
                     && (last.is_none() || self.is_member_replaced(e, may_be_in_brackets))
-                    && !is_room_taken
                     && !self.is_inside_longer_path(e, in_place)
                     && self.is_first_name_at_hand(scope, in_place)
                     && hir.has_room_in_front(root, in_place.members.len())
                     && !(in_place.members.is_empty() && is_operand_of_delete(hir, bound, e))
+                    && roots_with_room_taken.insert(root)
                 {
                     self.references.places_of_defined_paths.push((e, index));
                     break;

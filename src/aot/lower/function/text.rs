@@ -304,6 +304,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut paths: Vec<ReplacedText> = Vec::new();
         for path in expressions.filter(|&it| hir.is_path_of_define(it)) {
             if let Parent::Expr(parent) = bound.parent_of_expr(path)
+                && matches!(hir[parent].kind, ExprKind::Dot { .. })
                 && (hir[parent].pos, hir[parent].end) == (hir[path].pos, hir[path].end)
             {
                 continue;

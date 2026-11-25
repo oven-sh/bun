@@ -8,7 +8,7 @@ use crate::bind::{Binding, Bound, CommonJsVariable, Decl, Parent, SymbolId};
 use crate::file_analysis::has_written_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
 use crate::hir::{
-    ExprId, File, Flags, FnBody, NodeData, PatId, PatKind, StmtId, StmtKind, VarKind,
+    ExprId, ExprKind, File, Flags, FnBody, NodeData, PatId, PatKind, StmtId, StmtKind, VarKind,
     find_transpiled_mark, is_marked_as_commonjs,
 };
 use crate::import_sites::{ImportScan, is_runtime_import};
@@ -90,7 +90,9 @@ pub(crate) fn decide_module_format(
 
 fn begins_path_of_define(hir: &File<'_>, bound: &Bound<'_>, name: ExprId) -> bool {
     hir.is_path_of_define(name)
-        && matches!(bound.parent_of_expr(name), Parent::Expr(path) if (hir[path].pos, hir[path].end) == (hir[name].pos, hir[name].end))
+        && matches!(bound.parent_of_expr(name), Parent::Expr(path)
+            if matches!(hir[path].kind, ExprKind::Dot { .. })
+                && (hir[path].pos, hir[path].end) == (hir[name].pos, hir[name].end))
 }
 
 fn find_variable_uses(

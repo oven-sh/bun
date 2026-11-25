@@ -363,11 +363,6 @@ impl<'s> Task<'s> {
         (self.is_first_in_component).set(is_first_in_component);
     }
 
-    /// True if `close_cycle` discards the task, whatever the cycle.
-    pub(super) fn discards_every_cycle(&self) -> bool {
-        self.commits() && !self.is_trusted_about_every_cycle() && !self.is_first_in_component.get()
-    }
-
     pub(super) fn is_trusted_about_every_cycle(&self) -> bool {
         self.is_first_in_order.get() || self.is_trusted
     }

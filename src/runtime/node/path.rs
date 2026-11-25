@@ -3,12 +3,13 @@
 use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::JSString;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
+use crate::jsc::js_string::FlatCharacters;
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
 use bun_node_path::{
-    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
+    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathCharCwd, PathParsed, RelativePosixLatin1,
     basename_posix_latin1, basename_posix_t, basename_windows_t,
     basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
     extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
@@ -276,13 +277,29 @@ by_form_of_operands!(extname, extname_of_other, extname_of_latin1, extname_of_ut
 
 #[inline(always)]
 fn is_absolute<const WINDOWS: bool>(path: Text<'_>) -> bool {
-    let Some(text) = path.flat_latin1() else {
-        return is_absolute_by_first_characters::<WINDOWS>(path);
-    };
+    match path.flat_characters() {
+        Some(FlatCharacters::Latin1(characters)) => is_absolute_t::<WINDOWS, _>(characters),
+        Some(FlatCharacters::Utf16(_)) => is_absolute_of_flat_utf16::<WINDOWS>(path),
+        None => is_absolute_by_first_characters::<WINDOWS>(path),
+    }
+}
+
+#[inline(always)]
+fn is_absolute_t<const WINDOWS: bool, T: PathCharCwd>(characters: &[T]) -> bool {
     if WINDOWS {
-        is_absolute_windows_t(text.characters())
+        is_absolute_windows_t(characters)
     } else {
-        is_absolute_posix_t(text.characters())
+        is_absolute_posix_t(characters)
+    }
+}
+
+/// Out of line and given the string, not its characters: an 8-bit string then takes the instructions it took when this was not here.
+#[cold]
+#[inline(never)]
+fn is_absolute_of_flat_utf16<const WINDOWS: bool>(path: Text<'_>) -> bool {
+    match path.flat_characters() {
+        Some(FlatCharacters::Utf16(characters)) => is_absolute_t::<WINDOWS, _>(characters),
+        _ => is_absolute_by_first_characters::<WINDOWS>(path),
     }
 }
 
@@ -291,11 +308,7 @@ fn is_absolute<const WINDOWS: bool>(path: Text<'_>) -> bool {
 fn is_absolute_by_first_characters<const WINDOWS: bool>(path: Text<'_>) -> bool {
     let mut first = [0u16; 3];
     let count = path.first_characters(&mut first);
-    if WINDOWS {
-        is_absolute_windows_t(&first[..count])
-    } else {
-        is_absolute_posix_t(&first[..count])
-    }
+    is_absolute_t::<WINDOWS, _>(&first[..count])
 }
 
 #[inline(always)]

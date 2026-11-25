@@ -65,6 +65,13 @@ pub struct Latin1Characters<'a> {
     pub characters: &'a [u8],
 }
 
+/// The characters of a string that is no rope, in the width it holds them.
+#[derive(Clone, Copy)]
+pub enum FlatCharacters<'a> {
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
 impl JSString {
     pub fn to_js(&self) -> JSValue {
         JSValue::from_cell(self)
@@ -129,6 +136,23 @@ impl JSString {
             let characters = text.m_ptr.latin1;
             core::hint::assert_unchecked(!characters.is_null());
             core::slice::from_raw_parts(characters, text.length() as usize)
+        })
+    }
+
+    /// The characters of a string that is no rope, of either width, read in place.
+    #[inline(always)]
+    pub fn flat_characters(&self) -> Option<FlatCharacters<'_>> {
+        // SAFETY: every JSString has `m_fiber`.
+        let fiber: usize = unsafe { self.read_at(layout::FIBER) };
+        if fiber & layout::IS_ROPE != 0 {
+            return None;
+        }
+        // SAFETY: the fiber of a string that is no rope is its StringImpl, never null.
+        let text = unsafe { &*(fiber as *const bun_core::WTFStringImplStruct) };
+        Some(if text.is_8bit() {
+            FlatCharacters::Latin1(text.latin1_slice())
+        } else {
+            FlatCharacters::Utf16(text.utf16_slice())
         })
     }
 

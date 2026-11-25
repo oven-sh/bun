@@ -653,6 +653,12 @@ impl<'a> JsLocal<'a, JSString> {
         })
     }
 
+    /// The characters of a string that is no rope, of either width, where they are.
+    #[inline(always)]
+    pub fn flat_characters(self) -> Option<crate::js_string::FlatCharacters<'a>> {
+        self.cell().flat_characters()
+    }
+
     /// As [`flat_latin1`](Self::flat_latin1), and of a substring too.
     #[inline]
     pub fn latin1(self) -> Option<JsLatin1<'a>> {

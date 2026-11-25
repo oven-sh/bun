@@ -176,6 +176,8 @@ pub(crate) struct ParserSnapshot<'a> {
     scopes_in_order_len: usize,
     scopes_in_order_for_enum_len: usize,
     symbols_len: usize,
+    span_uses_len: usize,
+    slot_notes: usize,
     allocated_names_len: usize,
     import_records_len: usize,
 }
@@ -8309,6 +8311,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scopes_in_order_len: self.scopes_in_order.len(),
             scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
             symbols_len: self.symbols.len(),
+            span_uses_len: self.span_uses.len(),
+            slot_notes: self.slot_notes.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
         }
@@ -8366,6 +8370,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.ref_to_ts_namespace_member.remove(&ref_);
             }
         }
+        // Both hold indices of symbols, which the real parse creates again.
+        self.span_uses.truncate(snapshot.span_uses_len);
+        self.slot_notes.truncate(snapshot.slot_notes);
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
     }

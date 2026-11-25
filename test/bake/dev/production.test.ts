@@ -442,6 +442,16 @@ export default function () {
   // around it, as in the output of `bun build --minify` since then.
   test("--minify does not change the names that the module loader of the build prints", async () => {
     using dir = tempDir("bake-production-minify-loader-names", {
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
       "app.ts": `
         function outer(alpha, beta) {
           alpha(beta);
@@ -450,27 +460,24 @@ export default function () {
           };
         }
         console.log("NAMES:" + outer.toString());
-        export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
-      `,
-      "routes/index.ts": `
-        export default function () {
-          return new Response("Hello");
-        }
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
       `,
     });
 
-    // The build stops later: the minimal framework renders no static pages.
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--app", "--minify", "./app.ts", "--outdir", "./dist"],
+      cmd: [bunExe(), "build", "--app", "--minify", "./app.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "ignore",
+      stderr: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const names = stdout.match(/NAMES:function \w+\((\w+),(\w+)\)\{[^{}]*return function\((\w+),(\w+)\)/);
-    expect(names?.slice(1)).toHaveLength(4);
-    expect(new Set(names?.slice(1)).size).toBe(4);
+    expect({ distinctNames: new Set(names?.slice(1)).size, exitCode }, stderr).toEqual({
+      distinctNames: 4,
+      exitCode: 0,
+    });
   });
 
   test('a framework entry point that a "browser" map disables is reported', async () => {

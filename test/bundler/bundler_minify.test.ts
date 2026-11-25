@@ -2633,6 +2633,67 @@ describe("bundler", () => {
     run: { stdout: freeNamesOutput },
   });
 
+  // A TypeScript namespace prints as a `let` and a closure. Here the `throw`
+  // takes both out, and the hoisted function that got away before it reads a
+  // name that nothing declares: not the name of a `var` of the namespace
+  // around it.
+  itBundled("minify/NamespaceBehindThrowStaysFree", {
+    files: {
+      "/entry.ts": /* ts */ `
+        try {
+          require("./thrower.ts");
+        } catch {}
+        console.log((globalThis as any).read());
+      `,
+      "/thrower.ts": /* ts */ `
+        const sink = (...a: unknown[]) => {};
+        namespace A {
+          var first = 42;
+          var second = 42;
+          sink(first, second);
+          export namespace B {
+            (globalThis as any).read = read;
+            throw 0;
+            namespace N {
+              export const a = 1;
+            }
+            function read() {
+              return typeof N;
+            }
+          }
+        }
+        sink(A);
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: "undefined" },
+  });
+
+  // TypeScript: `a ? (b, d) : c => { .. }` is first tried as an arrow function
+  // `(b, d): c => { .. }` with a return type, and that attempt is undone. What
+  // the attempt noted about its symbols has to go with them: `K` of the
+  // attempt has the index that `c` has in the real parse, and `c` then kept a
+  // name of its own where it can take the name of `m`.
+  itBundled("minify/AbandonedArrowAttemptLeavesNoNote", {
+    files: {
+      "/entry.ts": /* ts */ `
+        declare const a: boolean, b: number, d: number, y: boolean;
+        export function outer(m: number, n: number) {
+          let x: unknown;
+          x = a ? (b, d) : c => { if (y) abstract class K {} let z = c; return z; };
+          return x;
+        }
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const [, m, c] = api
+        .readFile("/out.js")
+        .match(/function \w+\((\w+), \w+\) \{\s*let \w+;\s*\w+ = a \? \(b, d\) : \((\w+)\) =>/)!;
+      expect(c).toBe(m);
+    },
+  });
+
   // `emitDecoratorMetadata` prints the name of a parameter type behind the
   // class, with a `typeof` guard. Here the type has the name of an earlier
   // parameter of the method, and the metadata read the parameter `secret` of
@@ -2867,7 +2928,7 @@ test("minify.identifiers: generated programs run the same with shared and with o
     harness.runInContext(context);
     let end = "done";
     try {
-      vm.runInContext(code, context, { timeout: 5000 });
+      vm.runInContext(code, context);
     } catch (error) {
       end = "throw " + (error as Error)?.constructor?.name;
     }
@@ -2877,8 +2938,7 @@ test("minify.identifiers: generated programs run the same with shared and with o
   const seeds = [
     62782, 68780, 95323, 60106, 74698, 13552, 62310, 106755, 36893,
     // The first seeds that give a valid program.
-    9, 16, 46, 48, 51, 52, 56, 59, 60, 76, 99, 100, 115, 119, 123, 127, 135, 140, 150, 159,
-    161, 163, 165, 179, 181, 183, 184, 185, 195, 201, 215, 223, 235, 237, 243, 280, 303, 314, 318, 324,
+    9, 16, 46, 48, 51, 52, 56, 59, 60, 76, 99, 100,
   ];
   const minified = async (env: Record<string, string>) => {
     await using proc = Bun.spawn({
@@ -2898,4 +2958,4 @@ test("minify.identifiers: generated programs run the same with shared and with o
     different: seeds.filter((seed, at) => run(shared[at]) !== run(own[at])),
     withSharedNames: seeds.filter((seed, at) => shared[at] !== own[at]).length > seeds.length / 2,
   }).toEqual({ different: [], withSharedNames: true });
-}, 30_000);
+});

@@ -737,6 +737,14 @@ pub mod renamer {
             self.unique.push(symbol);
         }
 
+        pub(crate) fn len(&self) -> usize {
+            self.unique.len()
+        }
+
+        pub(crate) fn truncate(&mut self, len: usize) {
+            self.unique.truncate(len);
+        }
+
         /// Takes the marks out of `uses`. Returns, by symbol, which need a slot that no enclosing scope holds.
         fn finish(
             &self,
@@ -1106,6 +1114,11 @@ pub mod renamer {
         }
     }
 
+    /// A TypeScript enum or namespace prints as a `let` that no `slot_mark::DECLARED` announces.
+    fn declared_outside_statement_marks(kind: SymbolKind) -> bool {
+        matches!(kind, SymbolKind::TsEnum | SymbolKind::TsNamespace)
+    }
+
     impl SlotReuse<'_> {
         /// `slot`: the label and private name counts of the enclosing scopes.
         fn assign(
@@ -1145,9 +1158,9 @@ pub mod renamer {
                     continue;
                 }
                 let kind = symbol.kind;
-                // A `var` here is held only by a catch binding of its name, but binds in the function. An enum's name can print before its declaration.
+                // A `var` here is held only by a catch binding of its name, but binds in the function.
                 let unique = (kind == SymbolKind::Hoisted && !scope.kind_stops_hoisting())
-                    || kind == SymbolKind::TsEnum
+                    || declared_outside_statement_marks(kind)
                     || self.liveness.is_unique(member)
                     || self.liveness.is_unique(inner_index);
                 let mut found = None;

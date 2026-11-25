@@ -215,7 +215,6 @@ static bool reloadsFilesFromDisk()
 extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 extern "C" BunString Bun__AOT__pathOfDefaultForm(const BunString* path);
-extern "C" bool Bun__AOT__isParsedAsData(const BunString* path);
 extern "C" BunString Bun__AOT__nodeModuleNamedWithoutPrefix(const BunString* name);
 extern "C" BunString Bun__AOT__pathInExecutable(const BunString* path);
 extern "C" bool Bun__AOT__isFileInExecutable(const BunString* path);
@@ -2263,12 +2262,6 @@ static bool isLoadingUnderVitest(JSGlobalObject* globalObject)
     return Bun__AOT__isLoadingUnderVitest(defaultGlobalObject(globalObject)->bunVM());
 }
 
-static bool isParsedAsData(const String& path)
-{
-    BunString pathString = Bun::toString(path);
-    return Bun__AOT__isParsedAsData(&pathString);
-}
-
 static bool printsDataFileAsJavaScript(JSGlobalObject* globalObject, const String& path)
 {
     BunString pathString = Bun::toString(path);
@@ -2468,7 +2461,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isLoadingUnderVitest,
     &evictCachedSource,
     &printsDataFileAsJavaScript,
-    &isParsedAsData,
+    nullptr,
     &didDiscardModuleEvaluation,
     &isPatchPending,
     &hasRunningFactory,

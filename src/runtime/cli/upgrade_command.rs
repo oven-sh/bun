@@ -201,6 +201,14 @@ static Bun__githubURL: SyncCStr = SyncCStr(
 
 pub(crate) struct UpgradeCommand;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Lookup {
+    /// Prints what went wrong, and exits when the answer names no version.
+    Loud,
+    /// Prints no error, never exits, and gives up after `SILENT_LOOKUP_DEADLINE`.
+    Silent,
+}
+
 impl UpgradeCommand {
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
@@ -208,14 +216,14 @@ impl UpgradeCommand {
         "repos/Jarred-Sumner/bun-releases-for-updater/releases/latest";
     const CANARY_RELEASE_PATH: &'static str = "repos/oven-sh/bun/releases/tags/canary";
 
-    /// A `silent` lookup prints no error, never exits, and gives up after `SILENT_LOOKUP_DEADLINE`.
     pub(crate) fn get_latest_version(
         env_loader: &mut DotEnv::Loader,
         mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
         release_path: &str,
-        silent: bool,
+        lookup: Lookup,
     ) -> crate::Result<Option<Version>> {
+        let silent = lookup == Lookup::Silent;
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
@@ -531,9 +539,9 @@ impl UpgradeCommand {
         let version = Self::get_latest_version(
             env_loader,
             Some(&mut *refresher),
-            false,
+            use_profile,
             Self::CANARY_RELEASE_PATH,
-            true,
+            Lookup::Silent,
         );
         refresher.end();
         refresher.refresh();
@@ -666,7 +674,7 @@ impl UpgradeCommand {
                 Some(&mut *refresher),
                 use_profile,
                 Self::STABLE_RELEASE_PATH,
-                false,
+                Lookup::Loud,
             )?
             else {
                 return Ok(0);

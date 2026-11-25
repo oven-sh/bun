@@ -1848,7 +1848,8 @@ it.skipIf(!isLinux).each([true, false])(
 
 // https://github.com/oven-sh/bun/issues/49604
 describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000])("Bun.write() to a path of %d bytes", length => {
-  const written = start => (start + Buffer.alloc(length, "a" + path.sep).toString()).slice(0, length - 2) + path.sep + "b";
+  const written = start =>
+    (start + Buffer.alloc(length, "a" + path.sep).toString()).slice(0, length - 2) + path.sep + "b";
   // On Windows the operation that refuses the path differs with what is written.
   const failedAt = path => (isWindows ? { code: "ENAMETOOLONG" } : { code: "ENAMETOOLONG", syscall: "open", path });
   const failure = promise =>
@@ -1857,32 +1858,35 @@ describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000])("Bun.write() to a path 
       ({ code, syscall, path }) => (isWindows ? { code } : { code, syscall, path }),
     );
 
-  it.each([{}, { createPath: true }, { createPath: false }])("rejects and creates no folder, options: %p", async options => {
-    using dir = tempDir("bun-write-long-path", { from: "hello" });
-    const to = written(String(dir) + path.sep);
-    const failed = failedAt(to);
-    expect({
-      string: await failure(Bun.write(to, "hello", options)),
-      bytes: await failure(Bun.write(to, new Uint8Array(70_000), options)),
-      empty: await failure(Bun.write(to, "", options)),
-      file: await failure(Bun.write(to, Bun.file(join(String(dir), "from")), options)),
-      response: await failure(Bun.write(to, new Response("hello"), options)),
-      bunFile: await failure(Bun.write(Bun.file(to), "hello", options)),
-      buffer: await failure(Bun.write(Buffer.from(to), "hello", options)),
-      url: await failure(Bun.write(Bun.pathToFileURL(to), "hello", options)),
-      left: fs.readdirSync(String(dir)),
-    }).toEqual({
-      string: failed,
-      bytes: failed,
-      empty: failed,
-      file: failed,
-      response: failed,
-      bunFile: failed,
-      buffer: failed,
-      url: failed,
-      left: ["from"],
-    });
-  });
+  it.each([{}, { createPath: true }, { createPath: false }])(
+    "rejects and creates no folder, options: %p",
+    async options => {
+      using dir = tempDir("bun-write-long-path", { from: "hello" });
+      const to = written(String(dir) + path.sep);
+      const failed = failedAt(to);
+      expect({
+        string: await failure(Bun.write(to, "hello", options)),
+        bytes: await failure(Bun.write(to, new Uint8Array(70_000), options)),
+        empty: await failure(Bun.write(to, "", options)),
+        file: await failure(Bun.write(to, Bun.file(join(String(dir), "from")), options)),
+        response: await failure(Bun.write(to, new Response("hello"), options)),
+        bunFile: await failure(Bun.write(Bun.file(to), "hello", options)),
+        buffer: await failure(Bun.write(Buffer.from(to), "hello", options)),
+        url: await failure(Bun.write(Bun.pathToFileURL(to), "hello", options)),
+        left: fs.readdirSync(String(dir)),
+      }).toEqual({
+        string: failed,
+        bytes: failed,
+        empty: failed,
+        file: failed,
+        response: failed,
+        bunFile: failed,
+        buffer: failed,
+        url: failed,
+        left: ["from"],
+      });
+    },
+  );
 
   it("as the source, rejects and leaves the destination as it was", async () => {
     using dir = tempDir("bun-write-long-path", { to: "kept" });

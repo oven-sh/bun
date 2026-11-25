@@ -1889,8 +1889,8 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   const fixture = /* js */ `
     const fs = require("node:fs");
 
-    // Longest relative path that still passes the per-platform raw-path length
-    // validation (MAX_PATH_BYTES); once joined with the cwd the normalized result
+    // Longest relative path that is under the per-platform length limit
+    // (MAX_PATH_BYTES) as written; once joined with the cwd the normalized result
     // no longer fits in the destination path buffer.
     const maxPathBytes = { linux: 4096, darwin: 1024, win32: 32767 * 3 + 1 }[process.platform] ?? 1024;
     const segment = "a/";

@@ -204,7 +204,8 @@ test.concurrent.each([
 // https://github.com/oven-sh/bun/issues/49604
 // No folder name is over NAME_MAX, so only the length of the whole path is at fault.
 describe.each([MAX_PATH_BYTES, MAX_PATH_BYTES + 70_000, 1 << 20])("Bun.file() with a path of %d bytes", length => {
-  const written = (start: string) => (start + Buffer.alloc(length, "a" + sep).toString()).slice(0, length - 2) + sep + "b";
+  const written = (start: string) =>
+    (start + Buffer.alloc(length, "a" + sep).toString()).slice(0, length - 2) + sep + "b";
   const absolute = written(isWindows ? "C:\\" : "/");
   const paths: [string, () => string | Uint8Array | URL, string][] = [
     ["a string", () => absolute, absolute],
@@ -267,7 +268,11 @@ test.skipIf(isWindows)("a path one byte under the limit still reaches the disk",
   const path = (String(dir) + Buffer.alloc(MAX_PATH_BYTES, folder).toString()).slice(0, MAX_PATH_BYTES - 3) + "/b";
   expect(path.length).toBe(MAX_PATH_BYTES - 1);
   expect(await Bun.file(path).exists()).toBe(false);
-  expect(await Bun.file(path).stat().catch(e => e.code)).toBe("ENOENT");
+  expect(
+    await Bun.file(path)
+      .stat()
+      .catch(e => e.code),
+  ).toBe("ENOENT");
   expect(await Bun.write(path, "under the limit")).toBe(15);
   expect(await Bun.file(path).text()).toBe("under the limit");
 });

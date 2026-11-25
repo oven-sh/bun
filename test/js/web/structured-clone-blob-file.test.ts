@@ -574,7 +574,7 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
-    test("file-backed Blob path longer than PATH_MAX is rejected at deserialize", () => {
+    test("file-backed Blob path longer than PATH_MAX deserializes to a file that no read opens", async () => {
       const probe = Buffer.alloc(16, 0x5a);
       const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
       const at = good.indexOf(probe);
@@ -582,13 +582,21 @@ describe("structuredClone with Blob and File", () => {
       expect(good.readUInt32LE(at - 4)).toBe(probe.length);
 
       // Longer than MAX_PATH_BYTES on every platform (Windows is ~96 KiB).
-      const long = Buffer.concat([Buffer.from("/"), Buffer.alloc(100_000, "a")]);
+      const long = Buffer.concat([Buffer.from(isWindows ? "C:\\" : "/"), Buffer.alloc(100_000, "a")]);
       const len = Buffer.alloc(4);
       len.writeUInt32LE(long.length);
       const bad = Buffer.concat([good.subarray(0, at - 4), len, long, good.subarray(at + probe.length)]);
 
-      expect(() => deserialize(bad)).toThrow("Unable to deserialize data.");
-      expect(() => v8.deserialize(bad)).toThrow("Unable to deserialize data.");
+      // `Bun.file()` takes such a path too, and the syscall of each read refuses it.
+      for (const blob of [deserialize(bad), v8.deserialize(bad)]) {
+        const code = (e: NodeJS.ErrnoException) => e.code;
+        expect({
+          name: blob.name,
+          exists: await blob.exists(),
+          stat: await blob.stat().catch(code),
+          text: await blob.text().catch(code),
+        }).toEqual({ name: long.toString(), exists: false, stat: "ENAMETOOLONG", text: "ENAMETOOLONG" });
+      }
     });
 
     test("in-process: offset at store boundary yields empty view", async () => {

@@ -6152,7 +6152,10 @@ impl NodeFS {
         {
             let _ = flavor;
             let template = template();
-            Syscall::check_len(ZStr::from_slice_with_nul(&template).as_bytes(), sys::Tag::mkdtemp)?;
+            Syscall::check_len(
+                ZStr::from_slice_with_nul(&template).as_bytes(),
+                sys::Tag::mkdtemp,
+            )?;
             let mut req = uv::fs_t::uninitialized();
             // SAFETY: `template` is NUL-terminated. Without a callback, the request is over when this returns.
             let rc = unsafe {

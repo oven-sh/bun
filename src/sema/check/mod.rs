@@ -172,6 +172,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
+            instantiated_symbol_types
             union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
@@ -509,6 +510,12 @@ pub struct Program<'s> {
     /// See `cached_optional_property`.
     optional_properties: ById<TypeId, TypeId, buffered!(optional_properties), &'s Session>,
     intersected_props: ByKey<(TypeId, Atom), TypeId, buffered!(intersected_props), &'s Session>,
+    /// `links.resolvedType` of instantiated symbols, by target and mapper, where `getTypeOfSymbol(links.target)` returned
+    /// another type than it had assigned in the meantime. With the identity, it's that type, for a target that has any.
+    instantiated_symbol_types:
+        ByKey<(Sym, MapperId), TypeId, buffered!(instantiated_symbol_types), &'s Session>,
+    /// Set before the first entry of `instantiated_symbol_types`.
+    has_instantiated_symbol_types: std::sync::atomic::AtomicBool,
     /// `UnionOrIntersectionType.propertyCache`. The property is wrapped in a synthetic type.
     union_properties:
         ByKey<(TypeId, Atom), Option<TypeId>, buffered!(union_properties), &'s Session>,
@@ -769,6 +776,8 @@ impl<'s> Program<'s> {
             reverse_mapped_cache: ByKey::new_in(session),
             optional_properties: ById::new_in(session),
             intersected_props: ByKey::new_in(session),
+            instantiated_symbol_types: ByKey::new_in(session),
+            has_instantiated_symbol_types: Default::default(),
             union_properties: ByKey::new_in(session),
             never_intersections: ById::new_in(session),
             mapped_targets: ById::new_in(session),

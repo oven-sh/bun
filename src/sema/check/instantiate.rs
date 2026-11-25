@@ -3,6 +3,7 @@
 use super::alias::NewAlias;
 use super::links::FixedMapper;
 use super::*;
+use crate::bind::{Decl, MemberOwner};
 use smallvec::SmallVec;
 
 /// `Checker::type_parameters_in` of each type asked about and of each type under one. A type never changes, and refers only
@@ -1175,6 +1176,13 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// False if `link_of_instantiated_symbol` has nothing for any symbol.
+    #[inline]
+    pub(super) fn has_instantiated_symbol_links(&self) -> bool {
+        !self.instantiated_symbol_links.is_empty()
+            || (self.p.has_instantiated_symbol_types).load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Returns `links.resolvedType` of the symbol that `instantiateSymbol` creates from `sym` for `prop`, if
     /// `assign_resolved_type_of_instantiated_symbol` has stored one.
     pub(super) fn link_of_instantiated_symbol(
@@ -1183,15 +1191,56 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
         outer: MapperId,
     ) -> Option<TypeId> {
-        if !self.instantiated_symbol_links.contains_key(&sym) {
+        let of_target = (sym, MapperId::IDENTITY);
+        if !self.instantiated_symbol_links.contains_key(&sym)
+            && (self.p.instantiated_symbol_types.get(&self.task, &of_target)).is_none()
+        {
             return None;
         }
+        let mapper = self.mapper_of_instantiated_symbol(prop, sym, outer);
+        // `sym` itself, not a symbol instantiated from it.
+        if mapper == MapperId::IDENTITY {
+            return None;
+        }
+        let links = self.instantiated_symbol_links.get(&sym);
+        let link = links.and_then(|links| links.iter().find(|link| link.0 == mapper));
+        match link {
+            Some(link) => Some(link.1),
+            None => (self.p.instantiated_symbol_types).get(&self.task, &(sym, mapper)),
+        }
+    }
+
+    /// The mapper of the symbol that `instantiateSymbol` creates from `sym` for `prop`. `resolveObjectTypeMembers` creates it
+    /// once for each reference to the class or interface that declares `sym`, so only the arguments of that reference count.
+    /// A composed mapper also has those of the heirs on the way.
+    fn mapper_of_instantiated_symbol(
+        &mut self,
+        prop: &Prop,
+        sym: Sym,
+        outer: MapperId,
+    ) -> MapperId {
         let mapper = self.compose(prop.mapper, outer);
-        let links = self.instantiated_symbol_links.get(&sym)?;
-        links
-            .iter()
-            .find(|link| link.0 == mapper)
-            .map(|link| link.1)
+        let Some((file, Decl::Member(member))) = self.files().value_declaration(sym) else {
+            return mapper;
+        };
+        let bound = self.bound(file);
+        let owner = match bound.member_owner[member.idx()] {
+            MemberOwner::Class(class) => bound.class_symbol[class.idx()],
+            MemberOwner::Interface(interface) => bound.interface_symbol[interface.idx()],
+            MemberOwner::TypeLiteral(_) | MemberOwner::None => return mapper,
+        };
+        if owner.is_none() {
+            return mapper;
+        }
+        let owner = self.files().sym(file, owner);
+        let this_param = self.intern(TypeData::ThisParam(owner));
+        let params = self.all_type_params_of_symbol(owner);
+        let pairs: SmallVec<[(TypeId, TypeId); 8]> = (params.iter().copied())
+            .chain([this_param])
+            .filter_map(|param| Some((param, self.types().map(mapper, param)?)))
+            .filter(|pair| pair.0 != pair.1)
+            .collect();
+        self.types().mapper_of(&pairs)
     }
 
     /// The assignment in `getTypeOfInstantiatedSymbol`, after a `getTypeOfSymbol(links.target)`
@@ -1205,17 +1254,32 @@ impl<'p, 's> Checker<'p, 's> {
         outer: MapperId,
         target_type: TypeId,
     ) {
-        let is_unassigned = self.found_cycle
-            && self.is_resolving(Query::Symbol(sym))
-            && self.p.symbol_types.get(&self.task, &sym).is_none();
-        if !is_unassigned && !self.instantiated_symbol_links.contains_key(&sym) {
+        let assigned = self.p.symbol_types.get(&self.task, &sym);
+        let is_unassigned =
+            self.found_cycle && self.is_resolving(Query::Symbol(sym)) && assigned.is_none();
+        // `getTypeOfVariableOrParameterOrProperty` assigns nothing over what a nested request has assigned, and returns its own.
+        let is_another = target_type != TypeId::UNRESOLVED
+            && assigned.is_some_and(|it| it != target_type)
+            && !self.is_innermost_tainted();
+        if !is_unassigned && !is_another && !self.instantiated_symbol_links.contains_key(&sym) {
             return;
         }
         if prop.flags.contains(PropFlags::THISLESS) {
             return;
         }
-        let mapper = self.compose(prop.mapper, outer);
+        let mapper = self.mapper_of_instantiated_symbol(prop, sym, outer);
         if mapper == MapperId::IDENTITY || self.is_thisless_for_this_mapper(sym) {
+            return;
+        }
+        if is_another {
+            let resolved_type = self.instantiate(target_type, mapper);
+            let has_any = &self.p.has_instantiated_symbol_types;
+            has_any.store(true, std::sync::atomic::Ordering::Relaxed);
+            let of_target = (sym, MapperId::IDENTITY);
+            let types = &self.p.instantiated_symbol_types;
+            // The entries of a commit are stored in this order, and before any for a symbol.
+            types.insert(&self.task, (sym, mapper), resolved_type, Stored::new());
+            types.insert(&self.task, of_target, target_type, Stored::new());
             return;
         }
         // If `sym`'s type is assigned, the link is just its instantiation, so drop whatever a

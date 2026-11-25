@@ -14,6 +14,7 @@ const files = {
   "package.json": `{ "name": "box", "private": true }`,
   "a.ts": `globalThis.ran = (globalThis.ran ?? 0) + 1;\nconsole.log("a.ts runs");\nexport default "code";\n`,
   "box.json": `{ "name": "box" }\n`,
+  "crate.toml": `lid = "oak"\n`,
 };
 
 const load = (path: string, kind = "text") => `import("./${path}", { with: { type: ${kind} } })`;
@@ -42,6 +43,13 @@ const cases: Record<string, string[]> = {
     `show(await imported);`,
     show(load("box.json")),
   ],
+  "the type that the file has anyway, and a require behind it": [
+    show(load("crate.toml", "toml")),
+    `delete require.cache[require.resolve("./crate.toml")];`,
+    show(load("crate.toml", "toml")),
+    `show(require("./crate.toml"));`,
+    show(load("crate.toml", "toml")),
+  ],
   "without a reset": [show(load("box.json")), show(load("box.json")), show(`import("./box.json")`)],
   "JSON of a JSON file": [show(load("box.json", "json")), reset, show(load("box.json", "json"))],
 };
@@ -56,6 +64,7 @@ for (const [name, steps] of Object.entries(cases)) {
           import { test, vi } from "bun:test";
           const text = globalThis.never ?? "text";
           const json = globalThis.never ?? "json";
+          const toml = globalThis.never ?? "toml";
           const show = space => console.log(typeof space.default, JSON.stringify(space.default), "ran", globalThis.ran ?? 0);
           test("a", async () => {
             ${steps.join("\n            ")}

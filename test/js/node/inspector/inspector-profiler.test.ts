@@ -686,7 +686,7 @@ describe("node:inspector", () => {
             } catch {}
           }).length;
         function during() {
-          while (!count());
+          for (const end = performance.now() + 3000; !count(); ) if (performance.now() > end) process.exit(1);
         }
         ${statements}
         for (const end = performance.now() + 3000; count() && performance.now() < end; Bun.gc(true)) await sleep(1);

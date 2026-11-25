@@ -19,14 +19,16 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsNumber(Bun::startCPUProfiler(globalObject->vm(), callFrame->argument(0).asUInt32AsAnyInt())));
+    JSValue interval = callFrame->argument(0);
+    return JSValue::encode(jsNumber(Bun::startCPUProfiler(globalObject->vm(), interval.isUInt32AsAnyInt() ? interval.asUInt32AsAnyInt() : 0)));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
-    return JSValue::encode(jsString(vm, Bun::stopCPUProfiler(vm, callFrame->argument(0).asUInt32AsAnyInt())));
+    JSValue id = callFrame->argument(0);
+    return JSValue::encode(jsString(vm, Bun::stopCPUProfiler(vm, id.isUInt32AsAnyInt() ? id.asUInt32AsAnyInt() : 0)));
 }
 
 // Precise code coverage via JSC's control-flow profiler. Unlike V8 (which

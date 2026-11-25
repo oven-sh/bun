@@ -5,7 +5,7 @@ declare const self: Omit<typeof globalThis, "onmessage"> & {
 type WebWorker = InstanceType<typeof globalThis.Worker> & {
   getHeapSnapshot(options: unknown): Promise<string>;
   getHeapStatistics(): Promise<Record<string, number | boolean>>;
-  startCpuProfileInternal(intervalMicroseconds: number): Promise<number>;
+  startCpuProfileInternal(intervalMicroseconds: number, sampleLimit: number): Promise<number>;
   stopCpuProfileInternal(id: number): Promise<string>;
   cpuUsageInternal(): Promise<{ user: number; system: number }>;
 };
@@ -812,6 +812,15 @@ function moveMessagePortToContext(port, _context) {
 
 const workerThreadsChannel = builtinChannel("worker_threads");
 
+function makeProfileHandle(stop: () => Promise<string>) {
+  return {
+    stop,
+    async [Symbol.asyncDispose]() {
+      await stop();
+    },
+  };
+}
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -1112,21 +1121,24 @@ class Worker extends EventEmitter {
   }
 
   startCpuProfile(options?: { sampleInterval?: number; maxBufferSize?: number }) {
-    // node validates synchronously before starting; maxBufferSize is ignored but the range check must still match.
     let intervalMicroseconds = 0;
-    if (options !== undefined && options !== null) {
+    let sampleLimit = 0xffffffff;
+    if (options !== undefined) {
       validateObject(options, "options");
-      const { maxBufferSize, sampleInterval } = options;
-      if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
+      const { sampleInterval, maxBufferSize } = options;
       if (sampleInterval !== undefined) {
         validateNumber(sampleInterval, "options.sampleInterval", 0, 0x7fffffff / 1000);
         if (sampleInterval > 0) intervalMicroseconds = Math.max(1, Math.floor(sampleInterval * 1000));
       }
+      if (maxBufferSize !== undefined) {
+        validateNumber(maxBufferSize, "options.maxBufferSize", 1, 0xffffffff);
+        sampleLimit = Math.floor(maxBufferSize);
+      }
     }
-    return this.#worker.startCpuProfileInternal(intervalMicroseconds).then(id => {
+    return this.#worker.startCpuProfileInternal(intervalMicroseconds, sampleLimit).then(id => {
       if (!id) throw $ERR_CPU_PROFILE_TOO_MANY("There are too many CPU profiles");
       let profile: Promise<string> | undefined;
-      return { stop: () => (profile ??= this.#worker.stopCpuProfileInternal(id)) };
+      return makeProfileHandle(() => (profile ??= this.#worker.stopCpuProfileInternal(id)));
     });
   }
 
@@ -1175,7 +1187,7 @@ class Worker extends EventEmitter {
     // v8 sampling-heap-profile so the handle/stop() shape matches node.
     const empty =
       '{"head":{"callFrame":{"functionName":"(root)","scriptId":"0","url":"","lineNumber":-1,"columnNumber":-1},"selfSize":0,"id":1,"children":[]},"samples":[]}';
-    return Promise.$resolve({ stop: () => Promise.$resolve(empty) });
+    return Promise.$resolve(makeProfileHandle(() => Promise.$resolve(empty)));
   }
 
   #onClose(e) {

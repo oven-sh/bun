@@ -982,6 +982,89 @@ test("startCpuProfile() allows 100 profiles at a time", async () => {
   }
 });
 
+test("startCpuProfile() lists the first maxBufferSize samples and counts all of them", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const hits = profile => profile.nodes.reduce((sum, node) => sum + node.hitCount, 0);
+  try {
+    let profile;
+    // This timer is the wait being profiled.
+    for (let ms = 50; !profile || hits(profile) < 10; ms *= 2) {
+      const handle = await worker.startCpuProfile({ maxBufferSize: 3.9 });
+      await Bun.sleep(ms);
+      profile = JSON.parse(await handle.stop());
+    }
+    expect(profile.samples).toHaveLength(3);
+    expect(profile.timeDeltas).toHaveLength(3);
+
+    for (const maxBufferSize of [0.9, 2 ** 32, NaN]) {
+      expect(() => worker.startCpuProfile({ maxBufferSize })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    expect(() => worker.startCpuProfile(null as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("the handles of startCpuProfile() and startHeapProfile() can be disposed", async () => {
+  await using worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  for (let i = 0; i < 101; i++) {
+    await using _ = await worker.startCpuProfile({ sampleInterval: 60_000 });
+  }
+  await using _ = await worker.startHeapProfile();
+});
+
+test("a handle of startCpuProfile() rejects once the worker has exited", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const handle = await worker.startCpuProfile();
+  await worker.terminate();
+  expect(await handle.stop().catch(error => error)).toMatchObject({
+    name: "Error",
+    code: "ERR_WORKER_NOT_RUNNING",
+    message: "Worker instance not running",
+  });
+});
+
+test.if(isLinux)("the profiles of a worker share the thread that samples it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { once } = require("events");
+       const { readdirSync, readFileSync } = require("fs");
+       const { Worker } = require("worker_threads");
+       const worker = new Worker(
+         'const { parentPort } = require("worker_threads"); parentPort.on("message", () => { for (const end = performance.now() + 50; performance.now() < end; ); parentPort.postMessage(0); });',
+         { eval: true },
+       );
+       const handles = [];
+       for (let i = 0; i < 20; i++) handles.push(await worker.startCpuProfile());
+       worker.postMessage(0);
+       await once(worker, "message");
+       // What is left of "jsc.sampling-profiler.thread".
+       const samplers = readdirSync("/proc/self/task").filter(thread => {
+         try {
+           return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+         } catch {}
+       }).length;
+       const profiles = new Set(await Promise.all(handles.map(handle => handle.stop()))).size;
+       console.log(JSON.stringify({ samplers, profiles }));
+       await worker.terminate();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ samplers: 1, profiles: 20 });
+  expect(exitCode).toBe(0);
+});
+
 test.if(isLinux)("the thread that samples a worker ends with the worker and gives its stack back", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include <JavaScriptCore/SamplingProfiler.h>
+#include <limits>
 #include <utility>
 #include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
@@ -16,8 +17,10 @@ namespace Bun {
 // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.h#L597
 static constexpr size_t maximumSimultaneousCPUProfiles = 100;
 
+static constexpr uint32_t noCPUProfileSampleLimit = std::numeric_limits<uint32_t>::max();
+
 // Returns what to pass to stopCPUProfiler(). Never 0.
-uint32_t startCPUProfiler(JSC::VM&, uint32_t intervalMicroseconds);
+uint32_t startCPUProfiler(JSC::VM&, uint32_t intervalMicroseconds, uint32_t sampleLimit = noCPUProfileSampleLimit);
 
 // Returns JSON, or a null string if there is no such profile.
 WTF::String stopCPUProfiler(JSC::VM&, uint32_t id);
@@ -40,6 +43,7 @@ public:
     };
 
     static ASCIILiteral functionName(ThreadState);
+    static WTF::String functionName(JSC::VM&, JSC::SamplingProfiler::StackFrame&);
 
     SampleTimeline(JSC::SamplingProfiler::Samples&&, MonotonicTime end);
 
@@ -71,18 +75,21 @@ class RunningCPUProfile {
 
 public:
     // 0 is the default interval.
-    RunningCPUProfile(JSC::VM&, uint32_t intervalMicroseconds);
+    RunningCPUProfile(JSC::VM&, uint32_t intervalMicroseconds, uint32_t sampleLimit = noCPUProfileSampleLimit);
     ~RunningCPUProfile();
 
     MonotonicTime startTime() const { return m_startTime; }
     WallTime startWallTime() const { return m_startWallTime; }
     uint32_t intervalMicroseconds() const { return m_intervalMicroseconds; }
+    // How many samples to list. Like in V8, the hit counts have all of them.
+    uint32_t sampleLimit() const { return m_sampleLimit; }
     SampleTimeline stop();
 
 private:
     MonotonicTime m_startTime { MonotonicTime::now() };
     WallTime m_startWallTime { WallTime::now() };
     uint32_t m_intervalMicroseconds;
+    uint32_t m_sampleLimit;
     Ref<JSC::SamplingProfiler> m_sampler;
 };
 

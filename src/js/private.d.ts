@@ -2734,7 +2734,7 @@ interface Worker extends EventTarget {
   // For `node:worker_threads`.
   getHeapSnapshot(options: unknown): Promise<string>;
   getHeapStatistics(): Promise<Record<string, number | boolean>>;
-  startCpuProfileInternal(intervalMicroseconds: number): Promise<number>;
+  startCpuProfileInternal(intervalMicroseconds: number, sampleLimit: number): Promise<number>;
   stopCpuProfileInternal(id: number): Promise<string>;
   cpuUsageInternal(): Promise<{ user: number; system: number }>;
 }

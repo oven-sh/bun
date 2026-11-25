@@ -26,8 +26,9 @@
 
 namespace Bun {
 
-RunningCPUProfile::RunningCPUProfile(JSC::VM& vm, uint32_t intervalMicroseconds)
+RunningCPUProfile::RunningCPUProfile(JSC::VM& vm, uint32_t intervalMicroseconds, uint32_t sampleLimit)
     : m_intervalMicroseconds(intervalMicroseconds ? intervalMicroseconds : 1000)
+    , m_sampleLimit(sampleLimit)
     , m_sampler(vm.createSamplingProfiler(WTF::Stopwatch::create()))
 {
     // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/tick-sample.h#L79-L80
@@ -70,6 +71,14 @@ ASCIILiteral SampleTimeline::functionName(ThreadState state)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+WTF::String SampleTimeline::functionName(JSC::VM& vm, JSC::SamplingProfiler::StackFrame& frame)
+{
+    // JSC calls these "(program)", which here is ThreadState::Program. They have no name in V8.
+    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable && (frame.executable->isProgramExecutable() || frame.executable->isEvalExecutable()))
+        return emptyString();
+    return frame.displayName(vm);
+}
+
 SampleTimeline::SampleTimeline(JSC::SamplingProfiler::Samples&& samples, MonotonicTime end)
     : m_stackTraces(WTF::move(samples.stackTraces))
     , m_end(end)
@@ -95,7 +104,7 @@ SampleTimeline::SampleTimeline(JSC::SamplingProfiler::Samples&& samples, Monoton
     };
     for (StackTrace& stackTrace : m_stackTraces) {
         appendWithoutFramesUntil(stackTrace.timestamp);
-        append(stackTrace.frames.isEmpty() ? nullptr : &stackTrace, ThreadState::Program, stackTrace.timestamp, stackTrace.timestamp, 1);
+        append(stackTrace.frames.empty() ? nullptr : &stackTrace, ThreadState::Program, stackTrace.timestamp, stackTrace.timestamp, 1);
     }
     appendWithoutFramesUntil(MonotonicTime::infinity());
 
@@ -417,7 +426,7 @@ static void stopCPUProfiler(JSC::VM& vm, std::unique_ptr<RunningCPUProfile> prof
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String functionName = frame.displayName(vm);
+                WTF::String functionName = SampleTimeline::functionName(vm, frame);
                 WTF::String url;
                 int scriptId = 0;
                 // Function-definition line/column (0-indexed) for callFrame.
@@ -569,6 +578,8 @@ static void stopCPUProfiler(JSC::VM& vm, std::unique_ptr<RunningCPUProfile> prof
                 nodes[leaf.nodeId - 1].positionTicks.add(leaf.line, 0).iterator->value++;
 
             timeline.forEachTimestamp(run, [&](MonotonicTime timestamp) {
+                if (samples.size() >= profile->sampleLimit())
+                    return;
                 long long timeUs = microsecondsSinceProfileStart(timestamp);
                 samples.append(leaf.nodeId);
                 timeDeltas.append(timeUs - std::exchange(lastTimeUs, timeUs));
@@ -646,7 +657,7 @@ static void stopCPUProfiler(JSC::VM& vm, std::unique_ptr<RunningCPUProfile> prof
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
                 auto& frame = stackTrace.frames[i];
 
-                WTF::String rawFunctionName = frame.displayName(vm);
+                WTF::String rawFunctionName = SampleTimeline::functionName(vm, frame);
                 WTF::String functionName = formatFunctionName(rawFunctionName, frame);
                 WTF::String url;
                 int lineNumber = -1;
@@ -954,11 +965,11 @@ static void stopCPUProfiler(JSC::VM& vm, std::unique_ptr<RunningCPUProfile> prof
     }
 }
 
-uint32_t startCPUProfiler(JSC::VM& vm, uint32_t intervalMicroseconds)
+uint32_t startCPUProfiler(JSC::VM& vm, uint32_t intervalMicroseconds, uint32_t sampleLimit)
 {
     auto* clientData = WebCore::clientData(vm);
     uint32_t id = ++clientData->lastCPUProfileId;
-    clientData->cpuProfiles.add(id, makeUnique<RunningCPUProfile>(vm, intervalMicroseconds));
+    clientData->cpuProfiles.add(id, makeUnique<RunningCPUProfile>(vm, intervalMicroseconds, sampleLimit));
     return id;
 }
 

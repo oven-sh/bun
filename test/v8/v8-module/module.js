@@ -67,6 +67,12 @@ module.exports = debugMode => {
       setTimeout(() => (stop("inner"), stop("outer"), nativeModule.dispose_cpu_profiler()), 200);
     },
 
+    test_v8_cpu_profiler_max_samples() {
+      nativeModule.start_cpu_profile_of_three_samples("profile");
+      // This timer is the wait being profiled.
+      setTimeout(() => nativeModule.finish_cpu_profile_and_log_counts(), 300);
+    },
+
     test_v8_cpu_profiler_program_in_uv_timer() {
       nativeModule.start_cpu_profile("profile");
       nativeModule.finish_cpu_profile_in_uv_timer();

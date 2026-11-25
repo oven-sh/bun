@@ -538,6 +538,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const output = await checkSameOutput("test_v8_cpu_profiler_keeps_samples_across_another_stop");
       expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1"]);
     });
+    it("lists the first max_samples samples and counts all of them", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_max_samples");
+      expect(output.match(/\d+(?=\r?$)/gm)).toEqual(["3", "1"]);
+    });
     // What Node 26.12.1 prints for the timer. 26.3.0 has the same ABI and reports (idle), so this is not checkSameOutput().
     async function expectMostSamplesToBeProgram(testName: string) {
       const output = await runOn(Runtime.bun, BuildMode.release, testName);

@@ -2403,9 +2403,11 @@ impl VirtualMachine {
                 VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
             }
         }
+        let uws_loop = vm.uws_loop();
+        uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop().drain_closed_sockets();
+        uws_loop.drain_closed_sockets();
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
@@ -2423,8 +2425,6 @@ impl VirtualMachine {
             if let Some(rare) = vm.rare_data.get() {
                 rare.detach_socket_groups_from_loop();
             }
-            let uws_loop = vm.uws_loop();
-            uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             // SAFETY: what was on the loop has been closed, and the thread only frees from here on.
             unsafe {
                 bun_uws::free_thread_loop();

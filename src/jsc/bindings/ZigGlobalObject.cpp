@@ -5440,6 +5440,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
 extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
+    WebCore::clientData(globalObject->vm())->cpuProfiles.clear();
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
         if (derived)

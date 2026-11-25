@@ -241,8 +241,10 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.if(isLinux)("with --isolate, a CPU profile that a file leaves running ends before the next file", async () => {
-    const prelude = `
+  test.if(isLinux).each(isolateFlags)(
+    "with %s, a CPU profile that a file leaves running ends before the next file",
+    async isolate => {
+      const prelude = `
       import { expect, test } from "bun:test";
       import { readdirSync, readFileSync } from "node:fs";
       // What is left of "jsc.sampling-profiler.thread".
@@ -252,26 +254,28 @@ describe.concurrent("bun test --isolate", () => {
             return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
           } catch {}
         }).length;`;
-    using dir = tempDir("isolate-cpu-profile", {
-      "a-leaker.test.ts": `${prelude}
+      using dir = tempDir("isolate-cpu-profile", {
+        "a-leaker.test.ts": `${prelude}
         import { Session } from "node:inspector";
         test("start", () => {
           const session = new Session();
           session.connect();
           session.post("Profiler.enable");
           session.post("Profiler.start");
-          while (!samplers());
+          for (const end = performance.now() + 3000; !samplers() && performance.now() < end; );
+          expect(samplers()).toBe(1);
         });`,
-      "b-observer.test.ts": `${prelude}
+        "b-observer.test.ts": `${prelude}
         test("observe", () => {
           for (const end = performance.now() + 3000; samplers() && performance.now() < end; );
           expect(samplers()).toBe(0);
         });`,
-    });
-    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"]);
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
-    expect(exitCode).toBe(0);
-  });
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [isolate]);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {

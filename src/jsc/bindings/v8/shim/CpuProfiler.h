@@ -58,7 +58,6 @@ struct CpuProfilerImpl {
     struct Session {
         uint32_t id;
         WTF::String title;
-        bool recordSamples;
         std::unique_ptr<Bun::RunningCPUProfile> profile;
     };
 
@@ -67,7 +66,7 @@ struct CpuProfilerImpl {
     {
     }
 
-    uint32_t start(WTF::String&& title, bool recordSamples);
+    uint32_t start(WTF::String&& title, unsigned sampleLimit);
     CpuProfileImpl* stop(uint32_t id);
     // Running sessions have distinct titles (v8::CpuProfiler::Start refuses a
     // duplicate), so at most one session matches.

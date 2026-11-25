@@ -785,8 +785,10 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     auto parentLoopKind = globalObject->scriptExecutionContext()->currentLoopKind();
     JSValue intervalValue = callFrame->argument(0);
     uint32_t interval = intervalValue.isUInt32AsAnyInt() ? intervalValue.asUInt32AsAnyInt() : 0;
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, interval, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
-        uint32_t id = clientData(workerCtx.vm())->cpuProfiles.size() < Bun::maximumSimultaneousCPUProfiles ? Bun::startCPUProfiler(workerCtx.vm(), interval) : 0;
+    JSValue sampleLimitValue = callFrame->argument(1);
+    uint32_t sampleLimit = sampleLimitValue.isUInt32AsAnyInt() ? sampleLimitValue.asUInt32AsAnyInt() : Bun::noCPUProfileSampleLimit;
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, interval, sampleLimit, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        uint32_t id = clientData(workerCtx.vm())->cpuProfiles.size() < Bun::maximumSimultaneousCPUProfiles ? Bun::startCPUProfiler(workerCtx.vm(), interval, sampleLimit) : 0;
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, id, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [id](VM&, JSGlobalObject*) -> JSValue { return jsNumber(id); });
         });
@@ -820,10 +822,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
         });
     });
     if (!accepted) {
-        // Worker already gone: resolve with an empty profile rather than reject,
-        // so a handle.stop() after terminate still yields parseable JSON.
         worker.contextProxy().takeCrossVMRequest(reqId);
-        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyCpuProfileJSON)));
+        rejectWorkerNotRunning(vm, globalObject, promise);
     }
     return JSValue::encode(promise);
 }

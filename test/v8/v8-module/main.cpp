@@ -2299,6 +2299,33 @@ void dispose_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
   idle_test_profiler = nullptr;
 }
 
+void start_cpu_profile_of_three_samples(
+    const FunctionCallbackInfo<Value> &info) {
+  idle_test_profiler = CpuProfiler::New(info.GetIsolate());
+  idle_test_profiler->SetSamplingInterval(1000);
+  last_profile_id =
+      idle_test_profiler
+          ->Start(info[0].As<String>(), kLeafNodeLineNumbers, true, 3)
+          .id;
+}
+
+static unsigned hit_count_of_tree(const CpuProfileNode *node) {
+  unsigned hit_count = node->GetHitCount();
+  for (int i = 0; i < node->GetChildrenCount(); i++) {
+    hit_count += hit_count_of_tree(node->GetChild(i));
+  }
+  return hit_count;
+}
+
+void finish_cpu_profile_and_log_counts(const FunctionCallbackInfo<Value> &) {
+  CpuProfile *profile = idle_test_profiler->Stop(last_profile_id);
+  LOG_EXPR(profile->GetSamplesCount());
+  LOG_EXPR(hit_count_of_tree(profile->GetTopDownRoot()) > 3);
+  profile->Delete();
+  idle_test_profiler->Dispose();
+  idle_test_profiler = nullptr;
+}
+
 static void spin(uint64_t milliseconds) {
   uint64_t end = uv_hrtime() + milliseconds * 1000 * 1000;
   while (uv_hrtime() < end) {
@@ -2482,6 +2509,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "stop_cpu_profile_and_log_idle_node",
                   stop_cpu_profile_and_log_idle_node);
   NODE_SET_METHOD(exports, "dispose_cpu_profiler", dispose_cpu_profiler);
+  NODE_SET_METHOD(exports, "start_cpu_profile_of_three_samples",
+                  start_cpu_profile_of_three_samples);
+  NODE_SET_METHOD(exports, "finish_cpu_profile_and_log_counts",
+                  finish_cpu_profile_and_log_counts);
   NODE_SET_METHOD(exports, "finish_cpu_profile_in_uv_timer",
                   finish_cpu_profile_in_uv_timer);
   NODE_SET_METHOD(exports, "spin_in_uv_after_work", spin_in_uv_after_work);

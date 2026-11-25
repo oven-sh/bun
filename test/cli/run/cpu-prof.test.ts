@@ -728,15 +728,22 @@ describe.concurrent("--cpu-prof", () => {
          }
          noInline(sines);
          noInline(integers);
-         function repeat(step) {
-           let sum = 0;
-           for (const end = performance.now() + 5; performance.now() < end; ) sum = step(sum);
+         function repeatSines(sum) {
+           for (const end = performance.now() + 5; performance.now() < end; ) sum = sines(sum);
          }
-         for (let i = 0; i < 60; i++) repeat(sines), repeat(integers);`,
+         function repeatIntegers(sum) {
+           for (const end = performance.now() + 5; performance.now() < end; ) sum = integers(sum);
+         }
+         for (let i = 0; i < 60; i++) repeatSines(0), repeatIntegers(0);`,
       );
+      const callers = nodes.filter(node => node.callFrame.functionName === "repeatSines");
+      const callees = nodes.filter(node => callers.some(caller => caller.children?.includes(node.id)));
 
-      expect(hitCount(nodes, "sines", "sin")).toBeGreaterThan(hitCount(nodes, "integers") / 2);
-      expect(hitCount(nodes, "sines", "sin")).toBeGreaterThan(4 * hitCount(nodes, "repeat", "now", "(program)"));
+      expect({
+        sines: hitCount(nodes, "sines", "sin"),
+        besideSines: hitCount([...callers, ...callees], "repeatSines", "now"),
+        integers: hitCount(nodes, "integers"),
+      }).toSatisfy(hits => hits.sines > hits.integers / 2 && hits.sines > 4 * hits.besideSines);
     });
 
     test("a call that returns before its stack is read belongs to the function that was called", async () => {
@@ -754,6 +761,25 @@ describe.concurrent("--cpu-prof", () => {
       expect(nodes[0].children.flatMap(id => byId.get(id).children ?? [])).toEqual([]);
       expect(hitCount(nodes, "busy", "toJSON", "stringify")).toBe(0);
       expect(hitCount(nodes, "outermost")).toBeGreaterThan(5);
+    });
+
+    test.each([
+      ["a script", `require("vm").runInThisContext(source, "script.js")`],
+      ["indirect eval", `(0, eval)(source)`],
+      ["direct eval", `eval(source)`],
+    ])("the top level of %s is not (program)", async (_, evaluate) => {
+      const { json, markdown } = await run(
+        ["--cpu-prof", "--cpu-prof-md"],
+        `const source = "for (const end = performance.now() + 200; performance.now() < end; );";
+         (function evaluates() { ${evaluate}; })();`,
+      );
+      const { nodes } = readJSON(json);
+      const below = (node: any): string[] =>
+        (node.children ?? []).flatMap((id: number) => [nodes[id - 1].callFrame.functionName, ...below(nodes[id - 1])]);
+      const names = below(nodes.find((node: any) => node.callFrame.functionName === "evaluates"));
+      expect(names).toContain("");
+      expect(names).not.toContain("(program)");
+      expect(markdown).not.toMatch(/`\(program\)` \| `/);
     });
 
     test("a collection is (garbage collector)", async () => {

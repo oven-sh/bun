@@ -31,10 +31,10 @@ static int64_t toMicroseconds(WTF::MonotonicTime time)
     return static_cast<int64_t>(time.secondsSinceEpoch().microseconds());
 }
 
-uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
+uint32_t CpuProfilerImpl::start(WTF::String&& title, unsigned sampleLimit)
 {
     uint32_t id = m_nextId++;
-    m_sessions.append(Session { id, WTF::move(title), recordSamples, makeUnique<Bun::RunningCPUProfile>(m_isolate->vm(), m_samplingIntervalUs) });
+    m_sessions.append(Session { id, WTF::move(title), makeUnique<Bun::RunningCPUProfile>(m_isolate->vm(), m_samplingIntervalUs, sampleLimit) });
     return id;
 }
 
@@ -50,7 +50,7 @@ const CpuProfilerImpl::Session* CpuProfilerImpl::sessionWithTitle(const WTF::Str
 // Build the top-down call tree from JSC::SamplingProfiler stack traces. Mirrors
 // the tree-building pass in BunCPUProfiler.cpp (which emits JSON), but targets
 // the V8 CpuProfileNode/CpuProfile object model instead.
-static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, Bun::RunningCPUProfile& running, bool recordSamples)
+static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, Bun::RunningCPUProfile& running)
 {
     unsigned nextNodeId = 1;
     auto appendNodeWithoutScript = [&](ASCIILiteral functionName) -> CpuProfileNodeImpl* {
@@ -67,7 +67,6 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, Bun::RunningC
     profile.m_root = root;
     profile.m_startTime = toMicroseconds(running.startTime());
 
-    JSC::JSLockHolder jsLock(vm);
     JSC::DeferGC deferGC(vm);
 
     Bun::SampleTimeline timeline = running.stop();
@@ -112,7 +111,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, Bun::RunningC
                 continue;
             }
 
-            WTF::String functionName = frame.displayName(vm);
+            WTF::String functionName = Bun::SampleTimeline::functionName(vm, frame);
             WTF::String url;
             int scriptId = 0;
             int line = CpuProfileNode::kNoLineNumberInfo;
@@ -220,12 +219,12 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, Bun::RunningC
                 ticks[index].hit_count++;
         }
 
-        if (recordSamples) {
-            timeline.forEachTimestamp(run, [&](WTF::MonotonicTime time) {
-                profile.m_samples.append(leaf.node);
-                profile.m_sampleTimestamps.append(toMicroseconds(time));
-            });
-        }
+        timeline.forEachTimestamp(run, [&](WTF::MonotonicTime time) {
+            if (profile.m_samples.size() >= running.sampleLimit())
+                return;
+            profile.m_samples.append(leaf.node);
+            profile.m_sampleTimestamps.append(toMicroseconds(time));
+        });
     }
 
     profile.m_endTime = toMicroseconds(timeline.end());
@@ -243,12 +242,13 @@ CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
     if (index == WTF::notFound)
         return nullptr;
 
+    JSC::JSLockHolder jsLock(m_isolate->vm());
     Session session = WTF::move(m_sessions[index]);
     m_sessions.removeAt(index);
 
     auto* profile = new CpuProfileImpl();
     profile->m_title = WTF::move(session.title);
-    buildProfileTree(m_isolate->vm(), *profile, *session.profile, session.recordSamples);
+    buildProfileTree(m_isolate->vm(), *profile, *session.profile);
     return profile;
 }
 
@@ -424,7 +424,7 @@ static WTF::String titleString(shim::CpuProfilerImpl* impl, Local<String> title)
     return title->localToJSString()->value(impl->m_isolate->globalObject());
 }
 
-CpuProfilingResult CpuProfiler::Start(Local<String> title, CpuProfilingMode, bool record_samples, unsigned)
+CpuProfilingResult CpuProfiler::Start(Local<String> title, CpuProfilingMode, bool record_samples, unsigned max_samples)
 {
     auto* impl = toImpl(this);
     WTF::String name = titleString(impl, title);
@@ -438,7 +438,7 @@ CpuProfilingResult CpuProfiler::Start(Local<String> title, CpuProfilingMode, boo
     if (const auto* running = impl->sessionWithTitle(name))
         return CpuProfilingResult { running->id, CpuProfilingStatus::kAlreadyStarted };
 
-    uint32_t id = impl->start(WTF::move(name), record_samples);
+    uint32_t id = impl->start(WTF::move(name), record_samples ? max_samples : 0);
     return CpuProfilingResult { id, CpuProfilingStatus::kStarted };
 }
 

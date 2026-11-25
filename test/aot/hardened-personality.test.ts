@@ -6,7 +6,7 @@ import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
-const startsThreadsAndWorkers = `await new Promise(resolve => gzip("on another thread", resolve));
+const startsThreadsAndWorkers = `await new Promise(resolve => gzip(Buffer.alloc(100_000, "on another thread"), resolve));
 let answers = 0;
 for (let round = 0; round < 2; round++) {
   await Promise.all(

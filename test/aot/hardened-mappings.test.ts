@@ -13,7 +13,7 @@ const guardSizeOfSecondStack = 256 * 1024;
 
 const programThatListsItsMappings = `import { readFileSync } from "node:fs";
 import { gzip } from "node:zlib";
-await new Promise(resolve => gzip("on another thread", resolve));
+await new Promise(resolve => gzip(Buffer.alloc(100_000, "on another thread"), resolve));
 console.log(readFileSync("/proc/self/maps", "utf8"));
 `;
 

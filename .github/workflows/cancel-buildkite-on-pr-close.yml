@@ -44,7 +44,7 @@ jobs:
           # Defence in depth: never touch protected/queue branches even if the
           # event somehow resolves to one.
           case "${BK_BRANCH}" in
-            "" | main | master | gh-readonly-queue/*)
+            "" | main | master | release/* | gh-readonly-queue/*)
               echo "Refusing to cancel builds on protected branch '${BK_BRANCH}'"
               exit 0
               ;;

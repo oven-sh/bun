@@ -1,1 +1,0 @@
-exports.first = "text.first";

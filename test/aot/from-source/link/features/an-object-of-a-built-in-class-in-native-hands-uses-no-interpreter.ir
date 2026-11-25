@@ -1,0 +1,9 @@
+# the methods of Function.prototype may run by the protocols' names; they bring no constructor that evaluates text
+# -- source: an-object-of-a-built-in-class-in-native-hands-uses-no-interpreter.ts
+# console.log(new Date());
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by Function

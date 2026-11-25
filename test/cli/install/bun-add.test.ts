@@ -3041,6 +3041,30 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(exitCode).toBe(0);
   });
 
+  it("doubled backslashes in a relative path are written as slashes", async () => {
+    await makeNestedCwd();
+    await mkdir(join(package_dir, "v", "lib"), { recursive: true });
+    await writeFile(join(package_dir, "v", "lib", "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(package_dir, "add", ".\\\\v\\\\lib");
+    expect(stderr).not.toContain("error:");
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ lib: "./v/lib" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows).each(["a\\b", "a\\\\b"])("an absolute path through a directory named %s", async name => {
+    const cwd = await makeNestedCwd();
+    const lib = join(add_dir, name);
+    await mkdir(lib);
+    await writeFile(join(lib, "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", lib);
+    expect(stderr).not.toContain("error:");
+    expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ lib });
+    expect((await file(join(package_dir, "node_modules", "lib", "package.json")).json()).version).toBe("3.0.0");
+    expect(exitCode).toBe(0);
+  });
+
   // A Windows command line cannot carry a path longer than the path buffer.
   it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
     const cwd = await makeNestedCwd();
@@ -3053,7 +3077,8 @@ describe("a relative local path typed from a directory below package.json", () =
   });
 
   it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
-    const app = join(package_dir, "a", "b", "c", "d", "e", "f");
+    // Deep enough that the `../` segments make the relative path longer than the absolute one.
+    const app = join(package_dir, ...Array(Math.ceil(add_dir.length / 3) + 3).fill("a"));
     const cwd = join(app, "src");
     await mkdir(cwd, { recursive: true });
     await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));

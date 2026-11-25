@@ -4,7 +4,6 @@ use bun_sema::hir::{FnId, PropKey};
 use super::FunctionLowering;
 use super::member::PropertyName;
 use crate::known_helpers::Shape;
-use crate::statistics::StatisticId;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn emit_fast_path(&mut self, source: FnId) {
@@ -12,7 +11,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(known) = helpers.function(self.file.file, source) else {
             return;
         };
-        self.file.count(StatisticId::KnownHelperFunctions, 1);
+        self.file.known_helpers_lowered.functions += 1;
         match known.shape {
             Shape::CreateBindingReusesDescriptor => {
                 if let [_, getter] = known.functions[..] {
@@ -53,7 +52,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
 
-        let written_body = self.create_unlikely_block();
+        let written_body = self.create_block();
         for &named in &builtins {
             self.guard_builtin_path(named, written_body);
         }

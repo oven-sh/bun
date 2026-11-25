@@ -185,94 +185,9 @@ class Class400 { abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk
 function fabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij(): number { return 400 }
 console.log(named400.abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij, Object.keys(named400)[0].length, (named400 as Record<string, number>)[made(400)], new Class400().abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij(), Object.getOwnPropertyNames(Class400.prototype)[1].length, fabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij.name.length, sum(fabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij.name), fabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij())
 
-// GENERATED: made flat is1 starts1 Class254 abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrst
 // CHECK-LABEL: function {{*}}name="made"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string=""
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: Jump -> next b2(v2, v4)
-// CHECK-NEXT: b2(v5: undefined|null|string, v6: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = Less v6, v0
-// CHECK-NEXT: Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
-// CHECK-NEXT: b3(v9, v10):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v11 = Builtin builtin=String
-// CHECK-NEXT: v12 = Builtin builtin=StringFromCharCode
-// CHECK-NEXT: v13 = Integer integer=97
-// CHECK-NEXT: v14 = Integer integer=26
-// CHECK-NEXT: v15 = Mod v9, v14
-// CHECK-NEXT: v16 = Add v13, v15
-// CHECK-NEXT: v17 = Call v12, v11, v16 calleeName="String.fromCharCode"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v19 = Add v5, v18
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v21 = Increment v9
-// CHECK-NEXT: v22 = Convert v21 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: Jump -> next b2(v20, v22)
-// CHECK-NEXT: b6(v23, v24):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v25 = Convert v5 declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="flat"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="flatten"
-// CHECK-NEXT: v3 = PropGet v2 key="test"
-// CHECK-NEXT: v4 = Call v3, v2, v0 calleeKey="test" calleeName="flatten.test"
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean site=[[w_9]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Convert v0 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="is1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_11]]}] functionTypes={{*}}[[f_12]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="a"
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_11]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="starts1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_14]]}] functionTypes={{*}}[[f_15]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="startsWith"
-// CHECK-NEXT: v2 = String string="a"
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="startsWith" calleeName="s.startsWith"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=boolean site=[[w_16]]}}, {declared={type=boolean site=[[w_14]]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Class254"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_17]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_17]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_17]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrst"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_18]]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=254
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_18]]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

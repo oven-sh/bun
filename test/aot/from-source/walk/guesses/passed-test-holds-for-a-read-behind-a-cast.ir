@@ -1,0 +1,16 @@
+# `if (type.flags & 1 && (type as Union).objectFlags & 2) .. else if (type.flags & 4) ..`: the parameter is tested once; on the way that has passed every later read, behind a cast or not, is built on the proof, and the way of the closed arm stays apart
+# the cast, which stands in the block of the read, once hid that the block leans on the parameter: each read tested the cell and its shape for itself
+# f1 = reduced
+# -- source: passed-test-holds-for-a-read-behind-a-cast.ts
+# declare function sink(...values: unknown[]): void;
+# class Type { flags = 0; }
+# class Union extends Type { objectFlags = 0; }
+# function reduced(type: Union): number { if (type.flags & 1 && (type as Union).objectFlags & 2) return 1; else if ((type as Type).flags & 4) return (type as Union).objectFlags & 8; return 0; }
+# sink(reduced(new Union()), reduced);
+# -- end of source
+# RUN(ONCE): walk f1 mechanisms=all-ParameterGuards
+# ONCE-LABEL: code f1:Body
+# ONCE: = ShapeTest v0
+# ONCE-NOT: = ShapeTest v0
+# RUN(NOLONEREAD): walk f1 mechanisms=all-ParameterGuards
+# NOLONEREAD-NOT: = GetSlot v0

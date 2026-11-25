@@ -1,5 +1,7 @@
-// The other arm of each test requires a file that is not there: a build that followed it would report it.
+// What stands in a function runs when somebody calls it, and that may be ahead of the variable's statement, where each test goes the other way.
+// So the other arm is followed. Its file is not there, and the build says so.
 // RUN: lower
+// DIAGNOSTIC: TS100150 44
 
 var c0 = typeof Bun !== "undefined";
 class C0 {

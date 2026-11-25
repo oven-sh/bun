@@ -1,0 +1,17 @@
+# `this.total += i` in a loop of a method, the instance out of sight. The read finds the slot filled and the walk's state holds what lay there; nothing runs between it and the store. The look at the
+# slot that the store goes to takes that answer: in the typed copy of the loop (the second head) the slot is not asked again whether it is filled, nor read again.
+# f2 = add
+# -- source: main.js
+# class Tally { constructor() { this.total = 0; this.seen = 0; } add(count) { for (let i = 0; i < count; i++) { this.total += i * 0.5; this.seen += 1; } return this.total; } }
+# globalThis.Tally = Tally;
+# print((0, eval)("const t = new Tally(); [t.add(5), t.seen, (delete t.total, t.add(2)), (t.total = 'x', t.add(2)), Object.freeze(t) && (() => { try { return t.add(1); } catch (error) { return error.constructor.name; } })()].join(' ')"));
+# -- end of source
+# RUN(WALK): walk f2:Body mechanisms=all
+# WALK: isLoopHead=true
+# WALK: isLoopHead=true
+# WALK: IsSlotFilled {{*}}key="total"
+# WALK-NOT: IsSlotFilled {{*}}key="total"
+# WALK: PutSlot {{*}}key="total"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 5 NaN x00.5 TypeError
+# ANSWERS-NEXT: exited with 0

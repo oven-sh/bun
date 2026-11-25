@@ -1,0 +1,20 @@
+# -- source: shifts.ts
+# function tally(from: number, to: number, gives: (at: number) => number): number { let sum = 0; for (let at = from; at < to; at++) sum += gives(at); return sum; }
+# function tallyOf(text: string, gives: (unit: number, place: number) => number): number { return tally(0, text.length, at => gives(text.charCodeAt(at), at)); }
+# function weightOf(unit: number): number { return unit > 96 ? unit - 96 : unit > 64 ? unit - 64 : 0; }
+# function bestShift(page: string, word: string): number {
+#   let best = -1, most = -1;
+#   for (let shift = 0; shift + word.length <= page.length; shift++) {
+#     const same = tallyOf(word, (unit, place) => (weightOf(unit) === weightOf(page.charCodeAt(place + shift)) ? 1 : 0));
+#     if (same > most) { best = shift; most = same; }
+#   }
+#   return best;
+# }
+# (globalThis as any).tally = tally; (globalThis as any).tallyOf = tallyOf; (globalThis as any).weightOf = weightOf; (globalThis as any).bestShift = bestShift;
+# let sum = 0; for (const page of ["Harbor Lights", "gateway", "a", ""]) for (const word of ["light", "way", "a"]) sum = sum * 5 + bestShift(page, word) + 2;
+# console.log(sum);
+# -- end of source
+# tallyOf() wraps the callback in a closure of its own, done in place: what the callback captured is the string and the position of the caller, and nothing is read out of a closure.
+# RUN: walk f4:Body mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK-NOT: GetCapture

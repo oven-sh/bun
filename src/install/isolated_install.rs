@@ -26,30 +26,27 @@ use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
+use crate::resolvers::folder_resolver::is_whole_file_system;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
-    ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap, index_sort,
+    ArrayHashMap, DynamicBitSet, DynamicBitSetList, HashMap, LinearFifo, StringArrayHashMap,
+    index_sort,
 };
 use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
-use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{self as paths, AutoAbsPath as AbsPath, AutoRelPath};
+use bun_paths::{self as paths, Path};
 use bun_semver as semver;
 use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::Progress;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
-use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_task as Task;
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
@@ -137,37 +134,6 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop, with
-/// `Ctx == store::Installer`.
-pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
-    type Ctx = store::Installer<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const IS_STORE_INSTALLER: bool = true;
-
-    fn on_extract_store_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        data: &install::ExtractData,
-    ) {
-        ctx.on_package_extracted(task_id, data);
-    }
-
-    fn on_package_download_error_store(
-        ctx: &mut Self::Ctx,
-        id: Task::Id,
-        name: &[u8],
-        resolution: &Resolution,
-        err: crate::Error,
-        url: &[u8],
-    ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
-    }
-}
-
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
     err: Option<crate::Error>,
@@ -182,9 +148,9 @@ impl<'a, 'b> Wait<'a, 'b> {
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
-        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
+        if let Err(err) = run_tasks::run_tasks(
             pkg_manager,
-            self.installer,
+            run_tasks::Caller::IsolatedLinker(self.installer),
             true,
             log_level,
         ) {
@@ -194,7 +160,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         self.installer.release_members();
 
         let pkg_manager = self.installer.manager_mut();
-        if let Some(node) = pkg_manager.scripts_node_mut() {
+        if let Some(node) = pkg_manager.scripts_node {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -206,7 +172,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             if pending_lifecycle_scripts > 0
                 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1
             {
-                node.activate();
+                pkg_manager.progress.activate(node);
                 pkg_manager.progress.refresh();
             }
         }
@@ -281,7 +247,7 @@ fn peers_served_in(
     lockfile: &Lockfile,
     only: Option<&DynamicBitSet>,
 ) -> Vec<(DependencyID, PackageID)> {
-    let nodes = store.nodes.slice();
+    let nodes = &store.nodes;
     let node_pkg_ids = nodes.items_pkg_id();
     let node_dependencies = nodes.items_dependencies();
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -395,7 +361,7 @@ fn dependency_is_contained_folder(
     declarer: &Resolution,
     dep: &install::Dependency,
 ) -> bool {
-    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
+    if declarer.tag.is_local_package() || dep.version.tag() != VersionTag::Folder {
         return false;
     }
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -406,7 +372,7 @@ fn dependency_is_contained_folder(
 
 /// The `DependencyID`s that are contained folders, and the `PackageID`s only those resolve to.
 fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSet), AllocError> {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_resolutions = pkgs.items_resolution();
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
@@ -456,7 +422,7 @@ pub(crate) fn folder_is_inside_package(
     pkg_id: PackageID,
     folder_pkg_id: PackageID,
 ) -> bool {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let declarer = &pkgs.items_resolution()[pkg_id as usize];
     let pkg_deps = pkgs.items_dependencies()[pkg_id as usize];
     let resolutions = &lockfile.buffers.resolutions[..];
@@ -516,7 +482,7 @@ fn build_store(
     print_timings: bool,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_dependency_slices = pkgs.items_dependencies();
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
@@ -578,8 +544,8 @@ fn build_store(
     }
     let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-    let leaking_peers: DynamicBitSetList =
-        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+    let mut leaking_peers =
+        DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
 
     if peer_name_count != 0 {
         // The runtime child of a peer edge is whichever package an ancestor's
@@ -603,10 +569,9 @@ fn build_store(
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
         // filtered out by bundled/disabled/unresolved).
-        let own_peers: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
-        let provides: DynamicBitSetList =
-            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
+        let mut own_peers =
+            DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
+        let mut provides = DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count)?;
         for pkg_idx in 0..lockfile.packages.len() {
             let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
             let deps = pkg_dependency_slices[pkg_id as usize];
@@ -616,7 +581,7 @@ fn build_store(
                     continue;
                 };
                 if dep.behavior.is_peer() {
-                    own_peers.set(pkg_id as usize, bit);
+                    own_peers.at_mut(pkg_id).set(bit);
                 } else if !is_contained_folder(dep_id)
                     && !is_filtered_dependency_or_workspace(
                         dep_id,
@@ -629,12 +594,12 @@ fn build_store(
                         &mut linked,
                     )
                 {
-                    provides.set(pkg_id as usize, bit);
+                    provides.at_mut(pkg_id).set(bit);
                 }
             }
         }
 
-        let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize)?;
+        let mut scratch = DynamicBitSet::init_empty(peer_name_count as usize)?;
 
         let mut changed = true;
         while changed {
@@ -643,28 +608,28 @@ fn build_store(
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
 
-                scratch.copy_into(&own_peers.at(pkg_id as usize));
+                scratch.copy_from(&own_peers.at(pkg_id));
 
                 for dep_id in deps.begin()..deps.end() {
                     let dep = &dependencies[dep_id as usize];
                     if dep.behavior.is_peer() {
                         if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
                             for &child in &peer_targets[bit] {
-                                scratch.set_union(&leaking_peers.at(child as usize));
+                                scratch.set_union(&leaking_peers.at(child));
                             }
                         }
                     } else {
                         let res_pkg = resolutions[dep_id as usize];
                         if res_pkg != invalid_package_id {
-                            scratch.set_union(&leaking_peers.at(res_pkg as usize));
+                            scratch.set_union(&leaking_peers.at(res_pkg));
                         }
                     }
                 }
-                scratch.set_exclude(&provides.at(pkg_id as usize));
+                scratch.set_exclude(&provides.at(pkg_id));
 
-                let mut dst = leaking_peers.at(pkg_id as usize);
+                let mut dst = leaking_peers.at_mut(pkg_id);
                 if !scratch.eql(&dst) {
-                    dst.copy_into(&scratch);
+                    dst.copy_from(&scratch);
                     changed = true;
                 }
             }
@@ -729,15 +694,13 @@ fn build_store(
     'next_node: while let Some(entry) = node_queue.pop() {
         'check_cycle: {
             // check for cycles
-            let mut nodes_slice = nodes.slice();
-            // `split_mut()` yields disjoint `&mut [_]` per column.
             let store::node::NodeColumnsMut {
                 pkg_id: node_pkg_ids,
                 dep_id: node_dep_ids,
                 parent_id: node_parent_ids,
                 nodes: node_nodes,
                 ..
-            } = nodes_slice.split_mut();
+            } = nodes.split_mut();
 
             let mut curr_id = entry.parent_id;
             while curr_id != store::node::Id::INVALID {
@@ -791,7 +754,7 @@ fn build_store(
             // dependencies when root also declares that workspace; the
             // root-declared entry does. (If root does not declare it, the
             // protocol reference is the only one and must keep them.)
-            if entry_dep.version.tag == VersionTag::Workspace
+            if entry_dep.version.tag() == VersionTag::Workspace
                 && !entry_dep.behavior.is_workspace()
                 && root_declares_workspace.is_set(entry.pkg_id as usize)
             {
@@ -799,8 +762,6 @@ fn build_store(
             }
 
             'dont_dedupe: {
-                let mut nodes_slice = nodes.slice();
-                // disjoint-column views via `split_mut`.
                 let store::node::NodeColumnsMut {
                     pkg_id: node_pkg_ids,
                     nodes: node_nodes,
@@ -809,14 +770,14 @@ fn build_store(
                     dependencies: node_dependencies,
                     peers: node_peers,
                     ..
-                } = nodes_slice.split_mut();
+                } = nodes.split_mut();
 
                 let ctx_hash: u64 =
-                    if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
+                    if entry_dep.version.tag() == VersionTag::Workspace || peer_name_count == 0 {
                         0
                     } else {
                         'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
+                            let leaks = leaking_peers.at(entry.pkg_id);
                             if leaks.count() == 0 {
                                 break 'ctx 0;
                             }
@@ -883,14 +844,14 @@ fn build_store(
                         break 'dont_dedupe;
                     }
 
-                    if (dedupe_dep.version.tag == VersionTag::Workspace)
-                        != (entry_dep.version.tag == VersionTag::Workspace)
+                    if (dedupe_dep.version.tag() == VersionTag::Workspace)
+                        != (entry_dep.version.tag() == VersionTag::Workspace)
                     {
                         break 'dont_dedupe;
                     }
 
-                    if dedupe_dep.version.tag == VersionTag::Workspace
-                        && entry_dep.version.tag == VersionTag::Workspace
+                    if dedupe_dep.version.tag() == VersionTag::Workspace
+                        && entry_dep.version.tag() == VersionTag::Workspace
                     {
                         if dedupe_dep.behavior.is_workspace() != entry_dep.behavior.is_workspace() {
                             break 'dont_dedupe;
@@ -954,8 +915,6 @@ fn build_store(
             ..Default::default()
         })?;
 
-        let mut nodes_slice = nodes.slice();
-        // disjoint-column views via `split_mut`.
         let store::node::NodeColumnsMut {
             pkg_id: node_pkg_ids,
             parent_id: node_parent_ids,
@@ -963,7 +922,7 @@ fn build_store(
             peers: node_peers,
             nodes: node_nodes,
             ..
-        } = nodes_slice.split_mut();
+        } = nodes.split_mut();
 
         if let Some(parent_id) = entry.parent_id.try_get() {
             node_nodes[parent_id as usize].push(node_id);
@@ -1252,11 +1211,10 @@ fn build_store(
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
 
-    let nodes_slice = nodes.slice();
-    let node_pkg_ids = nodes_slice.items_pkg_id();
-    let node_dep_ids = nodes_slice.items_dep_id();
-    let node_peers: &[store::node::Peers] = nodes_slice.items_peers();
-    let node_nodes = nodes_slice.items_nodes();
+    let node_pkg_ids = nodes.items_pkg_id();
+    let node_dep_ids = nodes.items_dep_id();
+    let node_peers: &[store::node::Peers] = nodes.items_peers();
+    let node_nodes = nodes.items_nodes();
 
     let mut store_entries: store::entry::List = store::entry::List::default();
 
@@ -1294,8 +1252,8 @@ fn build_store(
                     let curr_dep = &dependencies[curr_dep_id as usize];
                     let existing_dep = &dependencies[info.dep_id as usize];
 
-                    if existing_dep.version.tag == VersionTag::Workspace
-                        && curr_dep.version.tag == VersionTag::Workspace
+                    if existing_dep.version.tag() == VersionTag::Workspace
+                        && curr_dep.version.tag() == VersionTag::Workspace
                     {
                         if existing_dep.behavior.is_workspace() != curr_dep.behavior.is_workspace()
                         {
@@ -1328,13 +1286,11 @@ fn build_store(
                         }
                     }
 
-                    let mut entries = store_entries.slice();
-                    // disjoint-column views via `split_mut`.
                     let store::entry::EntryColumnsMut {
                         dependencies: entry_dependencies,
                         parents: entry_parents,
                         ..
-                    } = entries.split_mut();
+                    } = store_entries.split_mut();
 
                     entry_parents[info.entry_id.get() as usize].push(entry.entry_parent_id);
                     if curr_dep_id == invalid_dependency_id
@@ -1389,7 +1345,7 @@ fn build_store(
 
         let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
         let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            && dependencies[new_entry_dep_id as usize].version.tag() == VersionTag::Workspace;
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {
@@ -1424,7 +1380,6 @@ fn build_store(
             nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
-            scripts: core::cell::Cell::new(None),
         })?;
 
         // skip implicit workspace dependencies on the root.
@@ -1436,8 +1391,7 @@ fn build_store(
                 entry_id: new_entry_id,
                 dep_id: new_entry_dep_id,
             };
-            let mut entries = store_entries.slice();
-            let entry_dependencies = entries.items_dependencies_mut();
+            let entry_dependencies = store_entries.items_dependencies_mut();
             entry_dependencies[entry_parent_id as usize].insert(item, &dependencies_ctx)?;
 
             let dep_name = new_entry_dep.name.slice(string_buf);
@@ -1490,32 +1444,30 @@ pub(crate) fn move_node_modules_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) -> Option<OldModules> {
-    let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
+    let mut old_modules = Path::from(b"node_modules");
     let rand = fast_random();
-    old_modules
-        .append_fmt(format_args!(
-            "{}{}",
-            OldModules::PREFIX,
-            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-        ))
-        .assume_ok();
-    if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
+    old_modules.push_fmt(format_args!(
+        "{}{}",
+        OldModules::PREFIX,
+        bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+    ));
+    if sys::mkdirat(Fd::cwd(), &old_modules, 0o755).is_err() {
         return None;
     }
     let old_modules_name = old_modules.basename().to_vec();
     let mut not_cleared: Vec<Box<[u8]>> = Vec::new();
     // Nothing is moved out of a `node_modules` that is a symlink. See `LinkedNodeModules`.
     // Returns `None` if `node_modules` does not exist.
-    let mut is_linked = |node_modules: &mut AutoRelPath| {
-        let is_linked = LinkedNodeModules::is_at(node_modules.slice_z())?;
-        if is_linked && holds_a_tree(node_modules.slice(), &old_modules_name) {
-            not_cleared.push(node_modules.slice().into());
+    let mut is_linked = |node_modules: &bun_core::ZStr| {
+        let is_linked = LinkedNodeModules::is_at(node_modules)?;
+        if is_linked && holds_a_tree(node_modules, &old_modules_name) {
+            not_cleared.push(node_modules.as_bytes().into());
         }
         Some(is_linked)
     };
 
-    let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
-    if is_linked(&mut node_modules) == Some(false) {
+    let mut node_modules = Path::from(b"node_modules");
+    if is_linked(&node_modules) == Some(false) {
         move_entries_aside(&mut node_modules, &mut old_modules, keep_links, log_level);
     }
 
@@ -1524,31 +1476,26 @@ pub(crate) fn move_node_modules_aside(
         if lockfile.is_member_path_outside(workspace_path) {
             continue;
         }
-        let mut workspace_node_modules = AutoRelPath::from(workspace_path).assume_ok();
-        workspace_node_modules.append(b"node_modules").assume_ok();
-        if is_linked(&mut workspace_node_modules) != Some(false) {
+        let mut workspace_node_modules = Path::from_parts(&[workspace_path, b"node_modules"]);
+        if is_linked(&workspace_node_modules) != Some(false) {
             continue;
         }
 
         // Don't use the folder's name, because `apps/web` and `packages/web` would collide.
-        let old_modules_len = old_modules.len();
-        old_modules
-            .append_fmt(format_args!(".old_{i}_modules"))
-            .assume_ok();
+        let mut old_workspace_modules = old_modules.save();
+        old_workspace_modules.push_fmt(format_args!(".old_{i}_modules"));
 
         move_entries_aside(
             &mut workspace_node_modules,
-            &mut old_modules,
+            &mut old_workspace_modules,
             false,
             log_level,
         );
-        let _ = sys::rmdir(workspace_node_modules.slice_z());
-
-        old_modules.set_length(old_modules_len);
+        let _ = sys::rmdir(&workspace_node_modules);
     }
     LinkedNodeModules::warn_not_cleared(log_level, &not_cleared);
 
-    if sys::rmdir(old_modules.slice_z()).is_ok() {
+    if sys::rmdir(&old_modules).is_ok() {
         // nothing was there
         return None;
     }
@@ -1574,39 +1521,27 @@ fn is_a_linkers(name: &[u8]) -> bool {
 
 /// Returns true if `move_entries_aside` would move anything out of `node_modules`.
 fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), node_modules) else {
+    let Ok(dir) = sys::Dir::open(node_modules) else {
         return false;
     };
-    let mut iter = sys::iterate_dir(dir);
-    let mut found = false;
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if is_a_linkers(name) && name != old_modules_name {
-            found = true;
-            break;
+            return true;
         }
     }
-    dir.close();
-    found
+    false
 }
 
 /// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
 /// directory inside `from`.
-fn move_entries_aside(
-    from: &mut AutoRelPath,
-    to: &mut AutoRelPath,
-    keep_links: bool,
-    log_level: LogLevel,
-) {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
+fn move_entries_aside(from: &mut Path, to: &mut Path, keep_links: bool, log_level: LogLevel) {
+    let Ok(dir) = sys::Dir::open(from) else {
         return;
     };
-    let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
-    let mut iter = sys::iterate_dir(dir);
+    let _ = sys::mkdirat(Fd::cwd(), to, 0o755);
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if !is_a_linkers(name) || name == to.basename() {
@@ -1616,33 +1551,23 @@ fn move_entries_aside(
             continue;
         }
 
-        let (from_len, to_len) = (from.len(), to.len());
-        let moved = if from.try_append(name).is_err() || to.try_append(name).is_err() {
-            Err(sys::Error::from_code(
-                sys::E::ENAMETOOLONG,
-                sys::Tag::rename,
-            ))
-        } else if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
-            move_entries_aside(from, to, keep_links, log_level);
-            let _ = sys::rmdir(from.slice_z());
-            Ok(())
-        } else {
-            move_or_delete(from.slice_z(), to.slice_z())
-        };
-        if let Err(err) = moved
+        let mut from = from.push_scoped(name);
+        let mut to = to.push_scoped(name);
+        let is_scope = entry.kind == sys::EntryKind::Directory && name[0] == b'@';
+        // A scope that is too long to open falls through, so that the failure is reported.
+        if is_scope && from.len() < paths::MAX_PATH_BYTES {
+            move_entries_aside(&mut from, &mut to, keep_links, log_level);
+            let _ = sys::rmdir(&from);
+        } else if let Err(err) = move_or_delete(&from, &to)
             && log_level != LogLevel::Silent
         {
             bun_core::warn!(
                 "{}: failed to remove {} (installed by another linker)",
                 BStr::new(err.name()),
-                BStr::new(from.slice()),
+                BStr::new(from.as_bytes()),
             );
         }
-
-        from.set_length(from_len);
-        to.set_length(to_len);
     }
-    dir.close();
 }
 
 /// Moves `from` to `to`, or deletes it if it cannot be moved, because anything left of the other
@@ -1676,8 +1601,9 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
     // `exists_at_type` reports a junction itself, so a dangling one would pass.
     #[cfg(windows)]
     {
-        use bun_sys::FdExt as _;
-        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())
+        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0)
+            .map(sys::File::from_fd)
+            .map(drop)
     }
     #[cfg(not(windows))]
     {
@@ -1694,7 +1620,7 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
 /// resolver's trust check.
 fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: &Store) {
     let string_buf = &lockfile.buffers.string_bytes[..];
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_resolutions = pkgs.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
@@ -1739,7 +1665,6 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
-    command_ctx: Command::Context,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
@@ -1753,7 +1678,7 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
-    let store: Store = build_store(
+    let mut store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
@@ -1767,20 +1692,22 @@ pub(crate) fn install_isolated_packages(
         manager.warn_incorrect_peers(&peers_served_in(&store, &*lockfile, Some(&linked)));
     }
 
-    let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
+    let has_global_store = manager.options.enable.global_virtual_store()
+        && package_manager::node_can_import_from(&manager.get_cache_directory().path);
+    let global_store_path: Option<Path> = if has_global_store {
         'global_store_path: {
-            let mut entries = store.entries.slice();
             let store::entry::EntryColumnsMut {
                 entry_hash: entry_hashes,
                 node_id: entry_node_ids,
                 dependencies: entry_dependencies,
+                peer_hash: entry_peer_hashes,
                 ..
-            } = entries.split_mut();
+            } = store.entries.split_mut();
 
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();
 
-            let pkgs = lockfile.packages.slice();
+            let pkgs = &lockfile.packages;
             let pkg_names = pkgs.items_name();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
@@ -1796,16 +1723,20 @@ pub(crate) fn install_isolated_packages(
             let no_verify = manager.skips_verify(ResolutionTag::Npm);
             // Include the integrity, because the store path `name@version` isn't unique across
             // registries.
-            let hash_entry = |seed: u64, id: store::entry::Id| {
+            let hash_entry = |seed: u64, id: u32| {
                 let mut h = Wyhash::init(seed);
                 // `no_verify` is hashed so that a verified install never shares an entry whose
                 // bytes were not checked.
                 h.update(&[GLOBAL_STORE_LAYOUT, u8::from(no_verify)]);
-                let path = store::entry::fmt_store_path(id, &store, lockfile);
+                let pkg_id = node_pkg_ids[entry_node_ids[id as usize].get() as usize];
+                let path = store::entry::StorePathFormatter {
+                    pkg_id,
+                    peer_hash: entry_peer_hashes[id as usize],
+                    lockfile,
+                };
                 // The path is the only input without a fixed length, so a NUL marks its end.
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
-                let pkg_id = store.ids(id).pkg_id as usize;
-                h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
+                h.update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
                 h
             };
 
@@ -1820,7 +1751,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // 0 means "not eligible". The SCC pass turns each 1 into the entry's hash, or into 0.
-            for entry_idx in 0..store.entries.len() {
+            for entry_idx in 0..entry_hashes.len() {
                 let node_id = entry_node_ids[entry_idx];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
                 let dep_id = node_dep_ids[node_id.get() as usize];
@@ -1835,6 +1766,7 @@ pub(crate) fn install_isolated_packages(
                         pkg_names[pkg_id as usize].slice(string_buf)
                     };
                     lockfile.has_trusted_dependency(
+                        &manager.options,
                         dep_name,
                         pkg_names[pkg_id as usize].slice(string_buf),
                         pkg_res,
@@ -1908,7 +1840,7 @@ pub(crate) fn install_isolated_packages(
 
             // A trusted entry's scripts can write through its `node_modules/<dep>` links.
             {
-                let mut visited = DynamicBitSet::init_empty(store.entries.len())?;
+                let mut visited = DynamicBitSet::init_empty(entry_hashes.len())?;
                 while let Some(entry_idx) = trusted_entries.pop() {
                     for dep in entry_dependencies[entry_idx].slice() {
                         let dep_entry_idx = dep.entry_id.get() as usize;
@@ -1924,7 +1856,7 @@ pub(crate) fn install_isolated_packages(
             // SCC pass (Tarjan). The members of a cycle share one hash, no matter which one is
             // listed first.
             {
-                let n: u32 = u32::try_from(store.entries.len()).expect("int cast");
+                let n: u32 = u32::try_from(entry_hashes.len()).expect("int cast");
                 let mut tarjan_index = vec![u32::MAX; n as usize].into_boxed_slice();
                 let mut lowlink = vec![0u32; n as usize].into_boxed_slice();
                 let mut on_stack = vec![false; n as usize].into_boxed_slice();
@@ -1982,8 +1914,7 @@ pub(crate) fn install_isolated_packages(
                                 // dependency is already final.
                                 let m = members[0];
                                 if entry_hashes[m as usize] != 0 {
-                                    let mut sub =
-                                        hash_entry(0x9E3779B97F4A7C15, store::entry::Id::from(m));
+                                    let mut sub = hash_entry(0x9E3779B97F4A7C15, m);
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
                                         let dh = entry_hashes[dep.entry_id.get() as usize];
@@ -2003,7 +1934,7 @@ pub(crate) fn install_isolated_packages(
                                 // The whole SCC gets one hash of its members' sub-hashes, which are
                                 // sorted by content so that the hash is the same in every project.
                                 let own: Vec<u64> = (members.iter())
-                                    .map(|&m| hash_entry(0, store::entry::Id::from(m)).final_())
+                                    .map(|&m| hash_entry(0, m).final_())
                                     .collect();
                                 let mut member_sub: Vec<u64> = Vec::new();
                                 let mut any_ineligible = false;
@@ -2059,30 +1990,17 @@ pub(crate) fn install_isolated_packages(
             }
 
             // <cache_dir>/links — created lazily by the first task that misses.
-            // getCacheDirectory() populates `cache_directory_path` as a side-effect.
-            let _ = manager.get_cache_directory();
-            let cache_dir_path = &manager.cache_directory_path;
-            if cache_dir_path.is_empty() {
-                break 'global_store_path None;
-            }
-            // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
-            // a `&ZStr` for `Installer.global_store_path` below.
-            let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
-                cache_dir_path,
-                &[b"links"],
-            );
-            let mut owned = joined.to_vec();
-            owned.push(0);
-            break 'global_store_path Some(owned);
+            let cache_dir_path = &manager.get_cache_directory().path;
+            break 'global_store_path Some(Path::resolve(&[cache_dir_path, b"links"]));
         }
     } else {
         None
     };
 
     let linked = {
-        let mut node_modules = AbsPath::init_top_level_dir();
-        node_modules.append(b"node_modules").assume_ok();
-        LinkedNodeModules::at(node_modules.slice_z())
+        let mut node_modules = Path::from_top_level_dir();
+        node_modules.push(b"node_modules");
+        LinkedNodeModules::at(&node_modules)
     };
 
     // setup node_modules/.bun
@@ -2160,29 +2078,13 @@ pub(crate) fn install_isolated_packages(
         .map(|st| (st.st_dev, st.st_ino));
 
     {
-        let mut download_node: ProgressNode;
-        let mut install_node: ProgressNode = ProgressNode::default();
-        let mut scripts_node: ProgressNode;
-        let progress: *mut Progress = &raw mut manager.progress;
-        // SAFETY: `progress` aliases `manager.progress`; reborrows below are
-        // disjoint from the other `manager.*` field accesses.
-        let progress = unsafe { &mut *progress };
-
         if manager.options.log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            let root_node = progress.start(b"", 0);
-            download_node = root_node.start(ProgressStrings::download(), 0);
-            install_node = root_node.start(ProgressStrings::install(), store.entries.len());
-            scripts_node = root_node.start(ProgressStrings::script(), 0);
-
-            manager.downloads_node = None;
-            manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));
-            manager.downloads_node = Some(&raw mut download_node);
+            manager.start_install_progress_bar(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();
 
-        let entries = store.entries.slice();
+        let entries = &store.entries;
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
@@ -2196,7 +2098,7 @@ pub(crate) fn install_isolated_packages(
         let lockfile_ro: &Lockfile = lockfile_ref.get();
         let string_buf = &lockfile_ro.buffers.string_bytes[..];
 
-        let pkgs = lockfile_ro.packages.slice();
+        let pkgs = &lockfile_ro.packages;
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
@@ -2215,6 +2117,7 @@ pub(crate) fn install_isolated_packages(
                 relink: installer::Relink::Off,
                 newly_trusted: false,
                 blocked_scripts: 0,
+                scripts: None,
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2224,7 +2127,6 @@ pub(crate) fn install_isolated_packages(
             })
             .collect();
 
-        let show_progress = manager.options.log_level.show_progress();
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
@@ -2232,9 +2134,7 @@ pub(crate) fn install_isolated_packages(
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
             manager: manager_ptr,
-            command_ctx,
             installed,
-            install_node: show_progress.then_some(&mut install_node),
             store: &store,
             tasks,
             tasks_in_flight: &tasks_in_flight,
@@ -2247,9 +2147,7 @@ pub(crate) fn install_isolated_packages(
             is_new_bun_modules,
             linked,
             staging_lock: Default::default(),
-            global_store_path: global_store_path
-                .as_deref()
-                .map(bun_core::ZStr::from_slice_with_nul),
+            global_store_path: global_store_path.as_deref(),
             global_store_tmp_suffix: fast_random(),
             summary: crate::package_install::Summary {
                 old_modules,
@@ -2306,7 +2204,7 @@ pub(crate) fn install_isolated_packages(
 
         // add the pending task count upfront
         installer
-            .manager_mut()
+            .manager()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
         // of their dependents start.
@@ -2316,6 +2214,7 @@ pub(crate) fn install_isolated_packages(
         };
         let links = (0..store.entries.len()).filter(is_link);
         let others = (0..store.entries.len()).filter(|entry| !is_link(entry));
+        let mut folder_name_buf = bun_paths::path_buffer_pool::get();
         for _entry_id in links.chain(others) {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
             let store::Ids { dep_id, pkg_id } = store.ids(entry_id);
@@ -2333,10 +2232,9 @@ pub(crate) fn install_isolated_packages(
                     // copied the project into the store, so that copy is deleted.
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
-                        let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
                         let _ = installer
-                            .append_local_store_entry_path(&mut old_copy, entry_id)
-                            .and_then(|()| Fd::cwd().delete_tree(old_copy.slice()));
+                            .abs_local_store_entry_path(entry_id)
+                            .and_then(|old_copy| Fd::cwd().delete_tree(&old_copy));
                     }
                     installer.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
@@ -2353,12 +2251,11 @@ pub(crate) fn install_isolated_packages(
                 }
                 ResolutionTag::Symlink => {
                     // Same target check as the hoisted linker's `install_from_link`.
-                    let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
                     match installer
-                        .append_store_path(&mut link_target, entry_id)
-                        .and_then(|()| expect_directory(link_target.slice_z()))
+                        .abs_store_path(entry_id)
+                        .and_then(|target| expect_directory(&target).map(|()| target))
                     {
-                        Ok(()) => installer.start_link_task(entry_id, link_target.slice_z()),
+                        Ok(target) => installer.start_link_task(entry_id, &target),
                         Err(err) => installer.on_task_fail(entry_id, &TaskError::LinkPackage(err)),
                     }
                 }
@@ -2366,9 +2263,11 @@ pub(crate) fn install_isolated_packages(
                     // linked by the packages containing it (`Installer::symlink_dependencies`)
                     let nested = entry_nested_folder[entry_id.get() as usize];
                     let folder = pkg_res.folder().slice(string_buf);
-                    // The resolver rejects these, so only an edited or old lockfile gets here.
-                    let refused = crate::bin::bin_target_escapes_package_dir(folder)
-                        && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id));
+                    // The resolver rejects most of these, so they come from an edited or old lockfile.
+                    let refused = match nested || !lockfile_ro.is_trusted_folder_package(pkg_id) {
+                        true => crate::bin::bin_target_escapes_package_dir(folder),
+                        false => is_whole_file_system(folder),
+                    };
                     if nested || refused {
                         let state = if refused {
                             Output::err_generic(
@@ -2393,12 +2292,10 @@ pub(crate) fn install_isolated_packages(
 
                     // folders are always hardlinked to keep them up-to-date
                     if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
-                        let mut store_path: AbsPath = AbsPath::init_top_level_dir();
-                        if installer
-                            .append_real_store_path(&mut store_path, entry_id, Which::Final)
-                            .is_ok()
+                        if let Ok(store_path) =
+                            installer.abs_real_store_path(entry_id, Which::Final)
                             && let (Ok(src), Ok(dest)) =
-                                (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
+                                (sys::Dir::open(folder), sys::Dir::open(&store_path))
                             && crate::package_install::is_linked_folder(&src, &dest)
                         {
                             installer.start_relink_task(entry_id);
@@ -2431,45 +2328,39 @@ pub(crate) fn install_isolated_packages(
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
                         || 'needs_install: {
-                            let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
                                 // Global entries are built under a per-process
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
                                 break 'needs_install !installer
-                                    .append_global_store_entry_path(&mut store_path, entry_id, Which::Final)
-                                    .and_then(|()| sys::directory_exists_at(Fd::cwd(), store_path.slice_z()))
+                                    .global_store_entry_path(entry_id, Which::Final)
+                                    .and_then(|entry| sys::directory_exists_at(Fd::cwd(), &entry))
                                     .unwrap_or(false);
                             }
                             // Likewise, the package directory appears here only once fully linked.
-                            if installer.append_local_store_entry_path(&mut store_path, entry_id).is_err() {
+                            let Ok(mut store_path) = installer.abs_local_store_entry_path(entry_id) else {
                                 break 'needs_install true;
-                            }
+                            };
                             let local_entry_len = store_path.len();
-                            if store_path.try_append(b"node_modules").is_err()
-                                || store_path.try_append(pkg_name.slice(string_buf)).is_err()
-                            {
-                                break 'needs_install true;
-                            }
-                            let package_len = store_path.len();
+                            store_path.push(b"node_modules");
+                            store_path.push(pkg_name.slice(string_buf));
                             let mut hash_buf: install::BuntagHashBuf = Default::default();
                             let marker = installer::installed_marker(pkg_res.tag, &patch_info, &mut hash_buf);
                             // `exists` follows the link of an entry that left the global store.
-                            if store_path.try_append(marker).is_err() || !sys::exists_z(store_path.slice_z()) {
+                            if !sys::exists_z(&store_path.push_scoped(marker)) {
                                 break 'needs_install true;
                             }
                             // Like the hoisted linker, replace a tarball copy that holds other bytes than bun.lock pins.
                             if matches!(pkg_res.tag, ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball) {
-                                store_path.set_length(package_len);
-                                let is_current = store_path.try_append(crate::package_install::BUN_TAG).is_ok()
-                                    && sys::File::read_from(Fd::cwd(), store_path.slice()).is_ok_and(|tag| {
-                                        crate::package_install::tarball_tag_matches(
-                                            &tag,
-                                            &pkgs.items_meta()[pkg_id as usize].integrity,
-                                            installer.manager().skips_verify(pkg_res.tag),
-                                        )
-                                    });
+                                let tag_path = store_path.push_scoped(crate::package_install::BUN_TAG);
+                                let is_current = sys::File::read_from(Fd::cwd(), &tag_path).is_ok_and(|tag| {
+                                    crate::package_install::tarball_tag_matches(
+                                        &tag,
+                                        &pkgs.items_meta()[pkg_id as usize].integrity,
+                                        installer.manager().skips_verify(pkg_res.tag),
+                                    )
+                                });
                                 if !is_current {
                                     break 'needs_install true;
                                 }
@@ -2477,19 +2368,18 @@ pub(crate) fn install_isolated_packages(
                             if cfg!(windows) {
                                 // The `..` check below does not work on Windows, which removes `..`
                                 // from a path before it follows links.
-                                store_path.set_length(local_entry_len);
-                                break 'needs_install installer::is_link(store_path.slice_z()) == Some(true);
+                                store_path.truncate(local_entry_len);
+                                break 'needs_install installer::is_link(&store_path) == Some(true);
                             }
                             // `..` goes up from a symlink's target. If part of this path is a link
                             // out of the store, going back up does not reach `node_modules/.bun`.
-                            store_path.set_length(package_len);
                             let up: &[u8] = if bun_core::strings::contains_char(pkg_name.slice(string_buf), b'/') {
                                 b"../../../.."
                             } else {
                                 b"../../.."
                             };
-                            store_path.try_append(up).is_err()
-                                || !sys::stat(store_path.slice_z()).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
+                            store_path.push(up);
+                            !sys::stat(&store_path).is_ok_and(|st| Some((st.st_dev, st.st_ino)) == store_inode)
                         };
 
                     if !needs_install {
@@ -2538,8 +2428,9 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
-                    let cache_subpath_z = installer.cached_folder_name(entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory();
+                    let cache_subpath_z =
+                        installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
+                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2572,55 +2463,13 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-
-                    let enqueued = match pkg_res.tag {
-                        ResolutionTag::Npm => package_manager::enqueue_package_for_download(
-                            installer.manager_mut(),
-                            pkg_name.slice(string_buf),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.npm().version,
-                            pkg_res.npm().url.slice(string_buf),
-                            ctx,
-                        ),
-                        ResolutionTag::Git => package_manager::enqueue_git_for_checkout(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            dep.name.slice(string_buf),
-                            ctx,
-                            patch_info.name_and_version_hash(),
-                        ),
-                        ResolutionTag::Github => {
-                            let url = installer.manager().alloc_github_url(pkg_res.github());
-                            package_manager::enqueue_tarball_for_download(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                &url,
-                                ctx,
-                            )
-                        }
-                        ResolutionTag::LocalTarball => {
-                            package_manager::enqueue_tarball_for_reading(
-                                installer.manager_mut(),
-                                dep_id,
-                                pkg_id,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                                ctx,
-                            )
-                        }
-                        _ => package_manager::enqueue_tarball_for_download(
-                            installer.manager_mut(),
-                            dep_id,
-                            pkg_id,
-                            pkg_res.remote_tarball().slice(string_buf),
-                            ctx,
-                        ),
-                    };
-                    match enqueued {
+                    match package_manager::enqueue_install_task(
+                        installer.manager_mut(),
+                        dep_id,
+                        pkg_id,
+                        ctx,
+                        patch_info.name_and_version_hash(),
+                    ) {
                         Ok(()) => {}
                         Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => {
@@ -2662,15 +2511,15 @@ pub(crate) fn install_isolated_packages(
         }
 
         if installer.manager().pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
-            // `installer.manager`; `sleep_until` + `tick_raw` hold no
-            // `&mut PackageManager` across `Wait::is_done`.
-            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
+            Output::flush();
+            while !wait.is_done() {
+                let manager = wait.installer.manager();
+                manager.event_loop.tick(core::ptr::null_mut());
+            }
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));
@@ -2690,14 +2539,13 @@ pub(crate) fn install_isolated_packages(
         installer.warn_left_out_links();
         installer.record_update_request_trust();
 
-        if installer.manager().options.log_level.show_progress() {
-            progress.root.end();
-            *progress = Progress::default();
+        let manager = installer.manager_mut();
+        if manager.options.log_level.show_progress() {
+            manager.progress.end();
+            manager.progress = Progress::default();
         }
-        // Defensive: clear the stack-local progress-node pointers so the
-        // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
+        manager.scripts_node = None;
+        manager.downloads_node = None;
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

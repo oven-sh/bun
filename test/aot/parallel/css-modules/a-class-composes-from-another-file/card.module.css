@@ -1,0 +1,14 @@
+.title {
+  composes: heading from "./shared/frame.module.css";
+  color: red;
+}
+
+.note {
+  composes: title;
+  composes: plain from global;
+  margin: 0;
+}
+
+.lost {
+  composes: nothing from "./shared/missing.module.css";
+}

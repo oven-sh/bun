@@ -38,7 +38,7 @@ const runtimeRejects = (() => {
 })();
 const rejectTest = runtimeRejects ? test : test.skip;
 
-// The llhttp binding. Node has no type declarations for this module.
+// The HTTPParser binding. Node has no type declarations for this module.
 const { HTTPParser } = createRequire(import.meta.url)("node:_http_common");
 
 const ok = "HTTP/1.1 200 OK";
@@ -88,7 +88,7 @@ const transports: Transport[] = [
     close: server => void server.close(),
   },
   {
-    // Bun parses these with the llhttp binding, like the HTTP/1.1 connections of an
+    // Bun parses these with the HTTPParser binding, like the HTTP/1.1 connections of an
     // allowHTTP1 HTTP/2 server.
     name: 'emit("connection")',
     roundtrip: (server, payload) =>
@@ -165,7 +165,7 @@ for (const { name, roundtrip, close } of transports) {
       }
     });
 
-    // The llhttp binding hands fields over in blocks of 31, so 31 to 33 cross its first flush.
+    // The HTTPParser binding hands fields over in blocks of 31, so 31 to 33 cross its first flush.
     for (const limit of [2, 31, 32, 33, 100]) {
       test(`limit ${limit}: a request at the limit passes with every field`, async () => {
         const seen: Seen[] = [];

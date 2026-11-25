@@ -19,23 +19,23 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::config::{change_extension, compare_strings_case_insensitive};
 use crate::json::Json;
-use crate::program::{get_output_extension, source_file_may_be_emitted};
+use crate::program::{ReadingTask, get_output_extension, source_file_may_be_emitted};
 use crate::resolve::{
     JsxEmit, ObjectKind, Paths, ancestors, best_pattern, contains_path,
     ensure_path_is_non_module_name, equate_string_case_insensitive, get_base_file_name,
     get_declaration_file_extension, get_relative_path_from_directory, get_root_length,
     has_ts_implementation_extension, inside, is_declaration_file_name, is_relative,
     is_rooted_disk_path, join, known_extension, node_module_path_parts, normalize_path,
-    object_kind, path_is_relative, paths_of_types_versions, remove_file_extension,
+    object_kind, parent_directory, path_is_relative, paths_of_types_versions,
+    remove_file_extension,
 };
 use crate::util::SharedSort;
 use bstr::ByteSlice;
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::sync::atomic::Ordering::Relaxed;
 
 mod commonjs;
 
@@ -798,7 +798,7 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let module = files.module(file);
         // `getDeclarationDiagnostics`: `getSourceFilesToEmit`, `isSourceFileNotJson`.
-        if module.hir.kind == FileKind::Json
+        if module.facts.kind == FileKind::Json
             || !source_file_may_be_emitted(files.options, module, files.is_case_sensitive)
         {
             return None;
@@ -2176,6 +2176,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if results.is_empty() {
+            // In a build the trees of a module go behind the last file that imports it.
+            if files.is_compile_build() {
+                return Rc::default();
+            }
             results = self.modules_that_export(symbol);
         }
         let results = Rc::new(results);
@@ -2222,7 +2226,7 @@ impl<'p, 's> Checker<'p, 's> {
         // The file being checked is searched even if it's a leaf.
         if let Some(file) = self.task.file
             && files.module(file).is_leaf
-            && files.module(file).hir.has_module_syntax
+            && files.module(file).facts.has_module_syntax
         {
             let module = files.file_symbol(file);
             if self.alias_for_symbol_in_container(module, symbol).is_some() {
@@ -2237,9 +2241,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if `exporting_modules` resolves the exports of `file`.
     pub(super) fn is_searched_for_exports(&self, file: FileId) -> bool {
         let module = self.files().module(file);
-        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-        // `is_leaf`, which is immutable after loading, before reading `hir`.
-        !module.is_leaf && module.hir.has_module_syntax
+        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`).
+        !module.is_leaf && module.facts.has_module_syntax
     }
 
     /// The first call for the program builds the index.
@@ -2249,36 +2252,70 @@ impl<'p, 's> Checker<'p, 's> {
     /// cycles, this time from the first file that leads there. What a discarded task prints is dropped, so it gets an
     /// empty index.
     fn exporting_modules(&mut self) -> &'p ExportingModules {
+        const MODULES_READ_IN_A_TASK: usize = 1024;
         let program = self.p;
         if let Some(index) = program.exporting_modules.get() {
             return index;
         }
-        let files = self.files();
-        let mut index = ExportingModules::default();
-        for (position, &file) in (0..).zip(files.order) {
-            if self.was_discarded() {
-                return &program.no_exporting_modules;
-            }
-            if !self.is_searched_for_exports(file) {
-                continue;
-            }
-            index.positions.insert(file, position);
-            let module = files.file_symbol(file);
-            let equals = files.export(module, known::export_equals);
-            let exports = self.exports_of_symbol(module);
-            for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
-                if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
-                    let positions = index.by_target.entry(target).or_default();
-                    if positions.last() != Some(&position) {
-                        positions.push(position);
-                    }
-                }
-            }
-        }
         if self.was_discarded() {
             return &program.no_exporting_modules;
         }
+        let files = self.files();
+        let stopped_at = program.exporting_modules_stopped_at.load(Relaxed);
+        if let Some(&file) = files.order.get(stopped_at as usize)
+            && !self.task.is_trusted_about_every_cycle()
+        {
+            self.add_exports_of_module(&mut ExportingModules::default(), file, stopped_at);
+            if self.was_discarded() {
+                return &program.no_exporting_modules;
+            }
+        }
+        let mut index = ExportingModules::default();
+        let mut position = 0;
+        for modules in files.order.chunks(MODULES_READ_IN_A_TASK) {
+            let _reading = ReadingTask::begin();
+            for &file in modules {
+                self.add_exports_of_module(&mut index, file, position);
+                if self.was_discarded() {
+                    (program.exporting_modules_stopped_at).store(position, Relaxed);
+                    return &program.no_exporting_modules;
+                }
+                position += 1;
+            }
+        }
         program.exporting_modules.get_or_init(|| index)
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn modules_searched_for_exports(&self) -> usize {
+        self.p.modules_searched_for_exports.load(Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn search_exports_of_every_module(&mut self) -> usize {
+        self.exporting_modules();
+        self.p.modules_searched_for_exports.load(Relaxed)
+    }
+
+    fn add_exports_of_module(&mut self, index: &mut ExportingModules, file: FileId, position: u32) {
+        if self.was_discarded() || !self.is_searched_for_exports(file) {
+            return;
+        }
+        #[cfg(any(test, feature = "test_support"))]
+        self.p.modules_searched_for_exports.fetch_add(1, Relaxed);
+        let files = self.files();
+        index.positions.insert(file, position);
+        let module = files.file_symbol(file);
+        let equals = files.export(module, known::export_equals);
+        let exports = self.exports_of_symbol(module);
+        for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
+            if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
+                let positions = index.by_target.entry(target).or_default();
+                if positions.last() != Some(&position) {
+                    positions.push(position);
+                }
+            }
+        }
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts
@@ -2997,12 +3034,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let Some(file) = files.source_file_from_reference(self.file(), &name) else {
                         continue;
                     };
-                    let decl_file_name = match files.hir(file).kind {
+                    let decl_file_name = match files.module(file).facts.kind {
                         FileKind::Declaration => files.module(file).file_name().to_vec(),
                         _ => files.declaration_file_path(file),
                     };
                     let output_file_path = files.declaration_file_path(self.file());
-                    let output_file_path = dirname::<Posix>(&output_file_path);
+                    let output_file_path = parent_directory(&output_file_path);
                     // `GetRelativePathToDirectoryOrUrl`
                     name = get_relative_path_from_directory(
                         output_file_path,
@@ -3036,9 +3073,6 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     /// Empty for a declaration without a name: `export default class {}`.
     fn name(&self, name: Atom) -> &'p [u8] {
-        if name.is_none() {
-            return b"";
-        }
         self.c.atoms().bytes(name)
     }
 
@@ -6466,7 +6500,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 known_extension(path),
                                 b".mts" | b".d.mts" | b".mjs" | b".cts" | b".d.cts" | b".cjs"
                             )
-                            && dirname::<Posix>(path) == main
+                            && parent_directory(path) == main
                             && remove_file_extension(&path[main.len()..]) == b"/index")
             }
         };
@@ -6479,7 +6513,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_redirect && !is_package_root {
             return Vec::new();
         }
-        if !dirname::<Posix>(files.module(importing).file_name())
+        if !parent_directory(files.module(importing).file_name())
             .starts_with(&path[..top_level_node_modules])
         {
             return Vec::new();
@@ -6497,7 +6531,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Vec<(Vec<u8>, bool)> {
         let links = self.files().linked_directories;
         let mut paths = Vec::new();
-        let mut directory = dirname::<Posix>(real);
+        let mut directory = parent_directory(real);
         while !links.is_empty() && !directory.is_empty() && directory != b"/" {
             let mut to_here = links.iter().filter(|link| link.0 == directory).peekable();
             if to_here.peek().is_some() {
@@ -6518,7 +6552,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
             }
-            directory = dirname::<Posix>(directory);
+            directory = parent_directory(directory);
         }
         paths
     }
@@ -6534,7 +6568,7 @@ impl<'p, 's> Checker<'p, 's> {
         target_mode: ResolutionMode,
         prefers_js: bool,
     ) -> Vec<u8> {
-        let from = dirname::<Posix>(self.files().module(importing).file_name());
+        let from = parent_directory(self.files().module(importing).file_name());
         // The number of directory levels from the importing file up to the directory that contains `path`.
         let distance = |path: &[u8]| {
             let (mut directory, mut up) = (from, 0);
@@ -6544,7 +6578,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .strip_prefix(directory)
                     .is_some_and(|rest| rest.starts_with(b"/"))
             {
-                directory = dirname::<Posix>(directory);
+                directory = parent_directory(directory);
                 up += 1;
             }
             up
@@ -6663,7 +6697,7 @@ impl<'p, 's> Checker<'p, 's> {
         if paths_only && options.paths.is_empty() {
             return Vec::new();
         }
-        let source_directory = dirname::<Posix>(files.module(importing).file_name());
+        let source_directory = parent_directory(files.module(importing).file_name());
         let mut relative_path = self.try_get_module_name_from_root_dirs(
             module_file_name,
             source_directory,
@@ -6725,7 +6759,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !path_is_relative(&maybe_non_relative) {
             let project_directory = match options.config_path.as_slice() {
                 b"" => options.base_dir.as_slice(),
-                config_path => dirname::<Posix>(config_path),
+                config_path => parent_directory(config_path),
             };
             let is_internal =
                 |path: &[u8]| contains_path(project_directory, path, files.is_case_sensitive);
@@ -6756,11 +6790,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `GetNearestAncestorDirectoryWithPackageJson` of the directory of `file`. Empty if there's none.
     fn package_json_directory(&self, file: FileId) -> &'p [u8] {
         let directory = self.files().module(file).package_json_directory;
-        if directory.is_some() {
-            self.atoms().bytes(directory)
-        } else {
-            b""
-        }
+        self.atoms().bytes(directory)
     }
 
     /// `GetNearestAncestorDirectoryWithPackageJson(GetDirectoryPath(path))` of a path that leads to `target`, for an
@@ -6780,7 +6810,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let known_directories = [target_directory, self.package_json_directory(importing)];
         let package_root = node_module_path_parts(path).map(|parts| parts.2);
-        ancestors(dirname::<Posix>(path))
+        ancestors(parent_directory(path))
             .find(|&directory| {
                 known_directories.contains(&directory)
                     || package_root == Some(directory.len())
@@ -6797,21 +6827,20 @@ impl<'p, 's> Checker<'p, 's> {
         allowed_endings: &[Ending],
     ) -> Vec<u8> {
         let root_dirs = &self.files().options.root_dirs;
-        // `getPathsRelativeToRootDirs`, each with a `/` before it.
+        let relative = |from: &[u8], to: &[u8]| get_relative_path_from_directory(from, to, true);
+        // `getPathsRelativeToRootDirs`
         let relative_to_root_dirs = |path: &[u8]| -> Vec<Vec<u8>> {
             root_dirs
                 .iter()
-                .map(|root_dir| [b"/", relative_normalized::<Posix, true>(root_dir, path)].concat())
-                .filter(|relative| !relative.starts_with(b"/.."))
+                .map(|root_dir| relative(root_dir, path))
+                .filter(|it| !it.starts_with(b"..") && get_root_length(it) == 0)
                 .collect()
         };
         let target_paths = relative_to_root_dirs(module_file_name);
         let mut shortest: Option<Vec<u8>> = None;
         for source_path in relative_to_root_dirs(source_directory) {
             for target_path in &target_paths {
-                let candidate = ensure_path_is_non_module_name(
-                    relative_normalized::<Posix, true>(&source_path, target_path).to_vec(),
-                );
+                let candidate = ensure_path_is_non_module_name(relative(&source_path, target_path));
                 let separators = strings::count_char(&candidate, b'/');
                 if shortest
                     .as_ref()
@@ -6839,8 +6868,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (key, values) in paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
-                let pattern =
-                    relative_normalized::<Posix, true>(base_directory, &normalized).to_vec();
+                let pattern = get_relative_path_from_directory(base_directory, &normalized, true);
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
                     .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))

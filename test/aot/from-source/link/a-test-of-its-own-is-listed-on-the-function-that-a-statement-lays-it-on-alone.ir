@@ -1,0 +1,26 @@
+# Three constructor functions in a row. The second loop stores through a value that may be any of the three, so nobody can tell them apart any more, and each takes what the whole program stores under a key on such functions.
+# The first loop stores under Symbol.hasInstance through a value that may be One or Two. (The store lays nothing: Function.prototype's test cannot be written over.) That comes to all three. A statement lays the name on Mid alone, so Mid alone is listed with it.
+# -- source: main.js
+# function Top() { this.t = 1; }
+# function Mid() { this.m = 1; }
+# function Low() { this.l = 1; }
+# function One() {}
+# function Two() {}
+# Object.setPrototypeOf(Mid.prototype, Top.prototype);
+# Object.setPrototypeOf(Low.prototype, Mid.prototype);
+# for (const each of [One, Two]) { try { each[Symbol.hasInstance] = function () { return false; }; } catch (error) { } }
+# for (const each of [Top, Mid, Low]) each.tag = 1;
+# Object.defineProperties(Mid, { [Symbol.hasInstance]: { value: function (value) { return value === 1; } } });
+# print(new Low() instanceof Top, 1 instanceof Mid, new Mid() instanceof Mid, new Low() instanceof Low);
+# -- end of source
+# f1 = Top, f2 = Mid, f3 = Low
+# RUN: link members mechanisms=all
+# CHECK-NOT: on-function {{*}} @@hasInstance
+# CHECK: on-function f2 @@hasInstance
+# CHECK-NOT: on-function {{*}} @@hasInstance
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true false true
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true false true
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true false true

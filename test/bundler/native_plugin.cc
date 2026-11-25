@@ -672,4 +672,14 @@ plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
   result->free_plugin_source_code_context = random_user_context_free;
 }
 
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_context_without_source(const OnBeforeParseArguments *args,
+                                   OnBeforeParseResult *result) {
+  External *external = (External *)args->external;
+  result->plugin_source_code_context =
+      compilation_ctx_new(nullptr, 0, &external->compilation_ctx_freed_count);
+  result->free_plugin_source_code_context =
+      (void (*)(void *))compilation_ctx_free;
+}
+
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

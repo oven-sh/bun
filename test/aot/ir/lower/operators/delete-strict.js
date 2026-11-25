@@ -33,3 +33,6 @@ export class Derived extends Base {
     return delete super.p;
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o) { return [o.computedSuper, o.namedSuper]; }

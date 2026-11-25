@@ -1,0 +1,18 @@
+# what a closed call of Number gives is a proven number that lies boxed, and a return beside a text takes a box. Two such numbers are added boxed, which is the witness that a box is taken here
+# a product lies raw in a register and has no tag to look at. So a sum beside it is a sum of doubles, whoever takes it: asked for boxed, its record would have a box for a result and doubles for operands
+# the functions are handed to code that nobody has seen, so nothing is known of what arrives. Built-in calls are withheld, so the call stays a call
+# f1 = scaled, f2 = plain
+# -- source: sum-beside-a-raw-number-is-a-sum-of-doubles.ts
+# declare function sink(...values: unknown[]): void;
+# function scaled(a: unknown, b: unknown) { if (a === b) return "same"; return Number(a) * 0.5 + Number(b); }
+# function plain(a: unknown, b: unknown) { if (a === b) return "same"; return Number(a) + Number(b); }
+# sink(scaled, plain);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = Add {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# NEVER-NOT: @JSValue = Add
+# RUN(BOXED): walk f2 mechanisms=none+TypedOperations+UnboxedNumbers+DirectCalls
+# BOXED-LABEL: code f2:Body
+# BOXED: @JSValue = Add {{*}}form=Numbers

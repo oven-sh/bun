@@ -6,7 +6,7 @@ use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, mod
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
     HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, ParsedFile,
-    TransformRequest, TreeChange, is_declaration_file_name,
+    TransformRequest, TreeChange, is_declaration_file_name, parent_directory,
 };
 use bun_threading::io_thread_pool;
 use std::sync::Once;
@@ -61,15 +61,15 @@ pub(super) struct StatementsHost {
     pub(super) loader_requests: Guarded<Vec<RecordedLoaderRequest>>,
     pub(super) plugin_sources: &'static [&'static str],
     pub(super) implied: Vec<(&'static str, Vec<HostResolution>)>,
-    /// `Some`: `CodeHost::follows_imports_on_request`. Each file with a file that it imports and that is followed once both the importer is parsed and the file in front is.
     pub(super) followed_on_request: Option<&'static [(&'static str, &'static str, &'static str)]>,
     pub(super) max_macro_values: usize,
     pub(super) macro_round_count: AtomicUsize,
     pub(super) transformed: &'static [&'static str],
+    pub(super) evaluated_texts: &'static [&'static str],
     pub(super) events: Guarded<Vec<HostEvent>>,
     pub(super) is_case_sensitive: bool,
     pub(super) threads: usize,
-    pub(super) io_pool: Option<io_thread_pool::Ref>,
+    pub(super) io_pool: Option<&'static bun_threading::ThreadPool>,
 }
 
 impl Default for StatementsHost {
@@ -94,6 +94,7 @@ impl Default for StatementsHost {
             max_macro_values: 0,
             macro_round_count: AtomicUsize::new(0),
             transformed: &[],
+            evaluated_texts: &[],
             events: Guarded::new(Vec::new()),
             is_case_sensitive: true,
             threads: 1,
@@ -108,7 +109,7 @@ impl StatementsHost {
         OUTPUT.call_once(bun_core::output::stdio::init);
         StatementsHost {
             threads,
-            io_pool: Some(io_thread_pool::acquire().into()),
+            io_pool: Some(io_thread_pool::get()),
             ..self
         }
     }
@@ -201,7 +202,7 @@ impl Host for StatementsHost {
     fn is_dir(&self, path: &[u8]) -> bool {
         let is_same = |directory: &[u8]| is_same_path(directory, path, self.is_case_sensitive);
         let mut directories =
-            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
+            (self.files.iter()).flat_map(|file| ancestors(parent_directory(file.0.as_bytes())));
         directories.any(is_same)
     }
 
@@ -286,7 +287,7 @@ impl Host for StatementsHost {
     }
 
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref()
+        self.io_pool
     }
 }
 
@@ -306,6 +307,10 @@ impl CodeHost for StatementsHost {
             HostResolution::Unclaimed => self.resolve_runtime_module(request.specifier),
             claim => claim,
         }
+    }
+
+    fn leaves_packages_outside(&self) -> bool {
+        !self.claims.is_empty()
     }
 
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
@@ -472,6 +477,10 @@ impl CodeHost for StatementsHost {
         self.record(HostEvent::FinishedFile(request.path.to_vec()));
         let implied = self.find_by_path(&self.implied, request.path);
         implied.cloned().unwrap_or_default()
+    }
+
+    fn is_evaluated_text(&self, path: &[u8]) -> bool {
+        self.evaluated_texts.iter().any(|it| it.as_bytes() == path)
     }
 
     fn follows_imports_on_request(&self) -> bool {
@@ -654,6 +663,9 @@ impl<'s> StatementParser<'_, '_, 's> {
         if self.eat(b"import ") {
             return self.import_statement(start);
         }
+        if self.is_at(b"export * from ") {
+            return self.export_star_statement(start);
+        }
         if self.is_at(b"{ ") {
             let object = self.object()?;
             return Some(self.add_statement(StmtKind::ExportAssign(object), start));
@@ -707,6 +719,7 @@ impl<'s> StatementParser<'_, '_, 's> {
             mode: ResolutionMode::None,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         });
         Some(self.add_statement(StmtKind::Import(import), start))
     }
@@ -720,6 +733,26 @@ impl<'s> StatementParser<'_, '_, 's> {
         let attributes = self.object()?;
         self.file.import_attributes.push((start, attributes));
         Some(attributes)
+    }
+
+    fn export_star_statement(&mut self, start: u32) -> Option<StmtId> {
+        self.expect(b"export ")?;
+        let star_pos = self.offset();
+        self.expect(b"* ")?;
+        let alias_pos = self.offset();
+        self.expect(b"from ")?;
+        let specifier = self.string()?;
+        self.add_specifier_use(specifier, SpecifierKind::Import);
+        self.file.has_module_syntax = true;
+        let kind = StmtKind::ExportStar {
+            spec: specifier.text,
+            alias: Atom::NONE,
+            type_only: false,
+            mode: ResolutionMode::None,
+            star_pos,
+            alias_pos,
+        };
+        Some(self.add_statement(kind, start))
     }
 
     fn expression_statement(&mut self) -> Option<StmtId> {
@@ -930,8 +963,6 @@ fn with_compile_inputs<'s, R>(
     then(&CompileInputs {
         entry_points: &entry_points,
         finds_entry_points: None,
-        main_module: MainModule::EntryPoint,
-        loaded_before: None,
         code: &build.code,
         fold: &fold,
         atoms: Interner::new_in(session),
@@ -950,7 +981,6 @@ pub(super) fn with_compile_context<R>(
         let compile = CompileLoad {
             host: build.host,
             inputs,
-            shares_parsed_files: false,
         };
         let context = CodeLoadContext::new(session, &resolver, options, compile);
         test(&context)
@@ -960,9 +990,8 @@ pub(super) fn with_compile_context<R>(
 pub(super) fn load_files<'s>(session: &'s Session, build: &TestBuild<'_>) -> Files<'s> {
     with_compile_inputs(session, build, |inputs| {
         let (options, roots) = (build.options.clone(), to_paths(build.roots));
-        Files::load_for_compile_with_parsed_files(
+        Files::load_for_compile(
             session,
-            None,
             build.host,
             options,
             RootFileNames::Listed(&roots),

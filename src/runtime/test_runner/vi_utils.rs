@@ -50,8 +50,8 @@ fn run(global: &JSGlobalObject, reset: Reset) {
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
     JSMock__willRunTest(global);
     let Some(runner) = Jest::runner() else { return };
-    let set = runner.vi_config.resets;
-    let configured = runner.test_options.resets_before_each_test;
+    let set = runner.vi_config.get().resets;
+    let configured = runner.resets_before_each_test;
     for (index, &reset) in RESETS.iter().enumerate() {
         // Vitest 5 clears mocks by default.
         if set[index].or(configured[index]).unwrap_or(is_vitest && index == CLEAR_MOCKS) {
@@ -63,16 +63,16 @@ pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
 /// False inside a hook that a preload registered, because that hook runs on behalf of a test file.
 #[unsafe(no_mangle)]
 extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
-    global.bun_vm().is_in_preload
+    global.bun_vm().is_in_preload.get()
 }
 
 /// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
         if !next_load_shares_global {
-            runner.vi_config_of_preload = Config::default();
+            runner.vi_config_of_preload.set(Config::default());
         }
-        runner.vi_config = runner.vi_config_of_preload;
+        runner.vi_config.set(runner.vi_config_of_preload.get());
     }
     if !next_load_shares_global {
         return;
@@ -111,9 +111,9 @@ fn number_option(
 /// Config set by a preload applies to every test file, like config set by a Vitest setup file.
 fn commit(global: &JSGlobalObject, config: Config) {
     if let Some(runner) = Jest::runner() {
-        runner.vi_config = config;
-        if global.bun_vm().is_in_preload {
-            runner.vi_config_of_preload = config;
+        runner.vi_config.set(config);
+        if global.bun_vm().is_in_preload.get() {
+            runner.vi_config_of_preload.set(config);
         }
     }
 }
@@ -132,7 +132,7 @@ pub(crate) fn set_config(cx: &mut JsScope<'_>, config: JsLocal<'_>) -> JsResult<
         *reset = config.get(global, name)?.map(JSValue::to_boolean);
     }
 
-    let mut merged = Jest::runner().map(|runner| runner.vi_config).unwrap_or_default();
+    let mut merged = Jest::runner().map(|runner| runner.vi_config.get()).unwrap_or_default();
     merged.test_timeout = test_timeout.or(merged.test_timeout);
     merged.hook_timeout = hook_timeout.or(merged.hook_timeout);
     merged.max_concurrency = max_concurrency.or(merged.max_concurrency);

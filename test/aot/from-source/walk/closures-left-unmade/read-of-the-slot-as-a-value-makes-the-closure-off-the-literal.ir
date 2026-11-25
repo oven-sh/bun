@@ -1,0 +1,31 @@
+# a record of a closure that is left unmade has no value to hand out: a read of the slot that is stored, compared or handed on is built on the literal itself, makes the closure once and keeps its identity. From there on the state holds that read, and a call takes the capture that was read beside it.
+# f1 = make, f2 = run, f3 = next
+# -- source: read-of-the-slot-as-a-value-makes-the-closure-off-the-literal.js
+# var kept;
+# function make() { var state = 0; return { next: function () { for (var k = 0; k < 3; k++) state += k; return state; } }; }
+# function run(count) { var total = 0; for (var n = 0; n < count; n++) { var it = make(); kept = it.next; total += it.next(); if (kept === it.next) total++; } return total; }
+# print(run(100), kept());
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: [[unmade]]: {{*}} = NewClosure [[scope]] {{*}}closureForm=Deferred
+# CHECK: [[literal]]: {{*}} = NewObject -, [[unmade]], [[scope]]
+# CHECK: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="next"
+# CHECK: [[read]]: {{*}} = GetCapture [[closure]]
+# CHECK: = PutModuleVariable
+# CHECK: = CallDirect [[read]]{{*}}function=f3
+# the slot is read once: the second and the third read are answered by the first
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-LABEL: code f2:Body
+# ONCE-COUNT-1: = GetDeferredClosureSlot
+# ONCE-NOT: = GetDeferredClosureSlot
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-LABEL: code f2:Body
+# NEVER: [[unmade]]: {{*}} = NewClosure {{*}}closureForm=Deferred
+# NEVER: = NewObject -, [[unmade]],
+# NEVER-NOT: [[unmade]]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

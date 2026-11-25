@@ -13,16 +13,18 @@ export const DigestOutput = b.union({
   into: b.bufferSource.allowShared,
 });
 
-/** A string for an encoding, the buffer that was given, or else a new one of the class. */
+/** A string for an encoding, a Buffer for the encoding "buffer", the buffer that was given, or else a new one of the class. */
 const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
   b.any.returning(
     { type: "Primitive", primitive: "String" },
     { type: "Operand", operand: "output" },
-    { type: "Instance", class: newBuffer, isOfClassItself: true },
+    ...[...new Set(["Buffer", newBuffer])].map(
+      made => ({ type: "Instance", class: made, isOfClassItself: true }) as const,
+    ),
   );
 
 const method = { capability: "heap", throws: true } as const;
-const uses = { output: [...table.handedOver, table.writesContents()] };
+const uses = { output: [...table.retainedByNativeCode, table.writesContents()] };
 const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
 const digestOf = (newBuffer: "Buffer" | "Uint8Array") =>
   ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true, uses }) as const;

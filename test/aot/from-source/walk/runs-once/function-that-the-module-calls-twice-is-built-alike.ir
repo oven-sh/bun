@@ -1,0 +1,25 @@
+# -- source: function-that-the-module-calls-twice-is-built-alike.ts
+# declare function print(...values: unknown[]): void;
+# class Parcel { weight: number; label: string; constructor(weight: number, label: string) { this.weight = weight; this.label = label; } }
+# function describe(parcel: Parcel): string { return parcel.label + ":" + parcel.weight; }
+# const parcels: Parcel[] = [new Parcel(1, "one"), new Parcel(2, "two")];
+# (globalThis as any).parcels = parcels;
+# print(describe(parcels[0]));
+# print(describe(parcels[1]));
+# -- end of source
+# The program of function-that-the-module-calls-once-is-built-alike.ir and one line more: a second call. The body of `describe` is the same code as there: the check lines on it are the same.
+# f1 = describe
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsSlotFilled {{*}}key="label"
+# CHECK: = GetSlot {{*}}key="label"
+# CHECK: = IsSlotFilled {{*}}key="weight"
+# CHECK: = PropGet {{*}}key="label"
+# CHECK: = GetSlot {{*}}key="weight"
+# CHECK: = Add {{*}}form=StringAndPrimitive
+# RUN(BYTES): bytes f1 mechanisms=all
+# BYTES: Call Stub Concatenate count 2
+# BYTES: Call Stub DoubleToString
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: one:1
+# ANSWERS-NEXT: two:2

@@ -2,14 +2,13 @@
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_paths::{self, SEP};
+use bun_paths::{self, SEP, fs as PFs};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
 // B-3 collapses them. Until then, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
-use bun_paths::fs as PFs;
 use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_sys::Fd;
@@ -74,6 +73,7 @@ mod hardcoded_module {
     pub(super) struct Alias {
         pub path: &'static [u8],
         pub tag: ImportRecordTag,
+        pub node_builtin: bool,
     }
     pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
         bun_resolve_builtins::Alias::get(
@@ -86,6 +86,7 @@ mod hardcoded_module {
         .map(|a| Alias {
             path: a.path.as_bytes(),
             tag: a.tag,
+            node_builtin: a.node_builtin,
         })
     }
 }
@@ -193,40 +194,24 @@ impl Linker {
 
         let source_dir = file_path.source_dir();
 
-        let is_deferred = !result.pending_imports.is_empty();
-
         match result.loader {
             options::Loader::Jsx
             | options::Loader::Js
             | options::Loader::Ts
             | options::Loader::Tsx => {
-                // Iterate by index, take field-disjoint
-                // borrows (`&result.source` + `&mut result.ast.*`) where
-                // needed, and hoist `is_pending_import` (which borrows the
-                // whole `result`) before any `ast` mut borrow.
-                let len = result.ast.import_records.as_slice().len();
-                for record_i in 0..len {
-                    let record_index = u32::try_from(record_i).expect("int cast");
-
-                    let skip_deferred =
-                        IS_BUN && is_deferred && !result.is_pending_import(record_index);
-
-                    // Field-split borrow: `source` ⟂ `ast`.
-                    let source = &result.source;
-                    let ast = &mut result.ast;
-                    let import_record = &mut ast.import_records.as_mut_slice()[record_i];
-
-                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
+                let source = &result.source;
+                for import_record in result.ast.import_records.as_mut_slice() {
+                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) {
                         continue;
                     }
 
                     if !IGNORE_RUNTIME {
                         if import_record.path.namespace == b"runtime" {
-                            let relative_name =
-                                bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
+                            let relative_name: &[u8] =
+                                &bun_paths::Path::relative(source_dir, RUNTIME_SOURCE_PATH);
                             import_record.path = match import_path_format {
                                 ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
+                                    dupe(&[origin.origin, b"/bun:wrap"].concat()),
                                     b"bun",
                                 ),
                                 ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
@@ -259,6 +244,11 @@ impl Linker {
                         ) {
                             if replacement.tag == ImportRecordTag::Builtin
                                 && import_record.kind.is_common_js()
+                            {
+                                continue;
+                            }
+                            // The `module.import` tracing channel publishes it as it is written.
+                            if replacement.node_builtin && import_record.kind == ImportKind::Dynamic
                             {
                                 continue;
                             }

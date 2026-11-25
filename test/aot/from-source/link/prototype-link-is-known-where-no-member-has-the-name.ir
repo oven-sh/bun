@@ -1,0 +1,16 @@
+# No member of the row is named `__proto__` and every name is written, so the read comes to the engine's accessor: it finds the prototype object of the instance, the prototype object above and the class above, and what hangs there is proven. So is what `super.hello` finds, which reads the link above its home object.
+# f1 = greetOf, f2 = makeOf, f3 = aboveOf, f5 = greet, f7 = hello, f8 = make, f10 = readAbove
+# -- source: prototype-link-is-known-where-no-member-has-the-name.js
+# class Alone { greet() { return 1; } }
+# class Low { hello() { return 2; } static make() { return 3; } }
+# class Top extends Low { readAbove() { return super.hello; } }
+# function greetOf(o) { return o.__proto__.greet; }
+# function makeOf(c) { return c.__proto__.make; }
+# function aboveOf(c) { return c.prototype.__proto__.hello; }
+# greetOf(new Alone()); makeOf(Top); aboveOf(Top); new Top().readAbove();
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} result=f5
+# LINK: function f2 {{*}} result=f8
+# LINK: function f3 {{*}} result=f7
+# LINK: function f10 {{*}} result=f7

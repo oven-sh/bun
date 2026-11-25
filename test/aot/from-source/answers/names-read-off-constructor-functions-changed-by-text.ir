@@ -1,0 +1,41 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Below.prototype = Object.create(Base.prototype);
+# function Counter(n) { this.n = n; }
+# Counter.of = function (n) { return new Counter(n + 1); };
+# function Check(n) { this.n = n; }
+# Object.defineProperty(Check, "init", { value: function (n) { return n + 2; } });
+# function Animal(n) { this.n = n; }
+# Animal.create = function (n) { return n + 3; };
+# function Dog(n) { Animal.call(this, n); }
+# Object.setPrototypeOf(Dog, Animal);
+# Dog.prototype = Object.create(Animal.prototype);
+# var held = { n: 0 };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { if (i === 5) change(Base, Counter, Animal, Dog); Dog.call(held, i); total += new Below(i, 1).a + Counter.of(i).n + Check.init(i) + Dog.create(i) + new Dog(i).n + held.n; } return total; }
+# try { print(run(10)); } catch (error) { print(error.name); }
+# -- end of source
+# A name is read off a constructor function and called. Nobody has laid `call` on Base, on Animal or on Dog, so the lookup ends at Function.prototype. `of` and `init` lie on the function itself, `create` on the function above Dog.
+# Nothing of that is proven. The record of the class expects it, and the guard of the name on the side of the function object answers for it from the first look until somebody changes what a lookup finds.
+# Text that the build has not seen makes the change in turn 5 of the loop.
+# RUN: run-in-shell globalThis.change = () => { };
+# CHECK: 330
+# CHECK-NEXT: exited with 0
+# RUN(CALL): run-in-shell globalThis.change = (Base) => { Base.call = function (self, a) { self.a = a + 100; }; };
+# CALL: 830
+# CALL-NEXT: exited with 0
+# RUN(DELETED): run-in-shell globalThis.change = (Base, Counter) => { delete Counter.of; };
+# DELETED: TypeError
+# DELETED-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell globalThis.change = (Base, Counter) => { Counter.of = function (n) { return { n: 1000 }; }; };
+# REPLACED: 5290
+# REPLACED-NEXT: exited with 0
+# RUN(RELINKED): run-in-shell globalThis.change = (Base, Counter, Animal, Dog) => { function Other() { } Other.create = () => 2000; Object.setPrototypeOf(Dog, Other); };
+# RELINKED: 10280
+# RELINKED-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell globalThis.change = (Base, Counter, Animal) => { Animal.call = function (self, n) { self.n = n + 10; }; };
+# ABOVE: 430
+# ABOVE-NEXT: exited with 0
+# RUN(HIDDEN): run-in-shell globalThis.change = (Base, Counter, Animal, Dog) => { Dog.create = () => 3000; };
+# HIDDEN: 15280
+# HIDDEN-NEXT: exited with 0

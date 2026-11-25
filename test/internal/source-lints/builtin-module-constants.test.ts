@@ -10,9 +10,12 @@ const root = path.resolve(import.meta.dir, "..", "..", "..", "src", "js");
 
 // The bits that belong to a ReadableState or to a WritableState alone.
 const differsOnPurpose = {
-  "Flag.DefaultUTF8Encoding": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
-  "Flag.Ended": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
-  "Flag.Sync": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
+  "Flag.DefaultUTF8Encoding": [
+    "ahead-of-time/internal/streams/readable.ts",
+    "ahead-of-time/internal/streams/writable.ts",
+  ],
+  "Flag.Ended": ["ahead-of-time/internal/streams/readable.ts", "ahead-of-time/internal/streams/writable.ts"],
+  "Flag.Sync": ["ahead-of-time/internal/streams/readable.ts", "ahead-of-time/internal/streams/writable.ts"],
 };
 
 function declaredConstants() {
@@ -40,8 +43,8 @@ function declaredConstants() {
 
 test("a constant that several built-in modules declare has one value", () => {
   const constants = declaredConstants();
-  expect(constants.get("HEADER_DATE")).toEqual(
-    new Map([["1 << 0", ["ahead-of-time/node/_http_outgoing.ts", "ahead-of-time/node/_http_server.ts"]]]),
+  expect(constants.get("ESCAPE_CODE_TIMEOUT")).toEqual(
+    new Map([["500", ["internal/readline/emitKeypressEvents.ts", "internal/readline/interface.ts"]]]),
   );
 
   const differing: Record<string, string[]> = {};

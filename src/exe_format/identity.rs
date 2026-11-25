@@ -439,33 +439,13 @@ mod process {
 
 #[cfg(windows)]
 mod process {
-    use core::mem::size_of;
-    use core::{ptr, slice};
+    use core::slice;
 
-    use super::{
-        DOSHeader, IdentityError, OptionalHeader64, PEHeader, PeAddressing, builtins,
-        find_code_view_guid,
-    };
+    use super::{IdentityError, PeAddressing, builtins, find_code_view_guid};
 
     pub(super) fn find_identity() -> Result<[u8; 16], IdentityError> {
-        // SAFETY: a null name asks for the executable of the process, and nothing is dereferenced.
-        let base = unsafe { bun_sys::windows::kernel32::GetModuleHandleW(ptr::null()) }
-            .cast_const()
-            .cast::<u8>();
-        if base.is_null() {
-            return Err(IdentityError::Malformed);
-        }
-        // SAFETY: a module handle is the address of the mapped image, and the loader has checked
-        // that the headers lie inside it.
-        let size_of_image = unsafe {
-            let dos_header = base.cast::<DOSHeader>().read_unaligned();
-            let optional_header_offset = dos_header.e_lfanew as usize + size_of::<PEHeader>();
-            let optional_header = base
-                .add(optional_header_offset)
-                .cast::<OptionalHeader64>()
-                .read_unaligned();
-            optional_header.size_of_image as usize
-        };
+        let image = bun_sys::windows::exe_image_range();
+        let (base, size_of_image) = (image.start as *const u8, image.len());
         let mut read = |offset: usize, out: &mut [u8]| {
             let is_mapped = offset
                 .checked_add(out.len())

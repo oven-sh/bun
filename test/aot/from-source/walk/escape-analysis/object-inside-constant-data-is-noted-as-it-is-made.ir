@@ -1,0 +1,18 @@
+# `{ height: 10, style: { bold: true } }` is constant data. Written out, the object inside is an allocation like any other: what it lists is read out of the state, what it lacks is undefined, and it leaves where the
+# object around it lists it.
+# f1 = nested, f2 = nestedLacks
+# -- source: object-inside-constant-data-is-noted-as-it-is-made.ts
+# declare function sink(...values: unknown[]): void;
+# type Options = { width?: number; height?: number; style?: { bold?: boolean; color?: string } };
+# function nested() { const o: Options = { height: 10, style: { bold: true } }; return o.style!.bold; }
+# function nestedLacks() { const o: Options = { height: 10, style: { bold: true } }; return o.style!.color; }
+# sink(nested, nestedLacks);
+# -- end of source
+# RUN(HAS): walk f1 mechanisms=all
+# HAS-NOT: = NewObject
+# RUN(LACKS): walk f2 mechanisms=all
+# LACKS-NOT: = NewObject
+# RUN(WITHHELD): walk f1 mechanisms=all-EscapeAnalysis
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD: Boolean boolean=true
+# WITHHELD-NOT: = GetSlot

@@ -21,6 +21,7 @@ const rustEnteredFrom: Record<Feature["enteredFrom"], string> = {
   program: "EnteredFrom::Program",
   startup: "EnteredFrom::Startup",
   "command-line": "EnteredFrom::CommandLine",
+  "compiled-code": "EnteredFrom::CompiledCode",
 };
 
 function checkNotEmpty(model: FeatureModel): void {

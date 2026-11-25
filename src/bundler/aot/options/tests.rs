@@ -99,14 +99,15 @@ fn options_about_what_can_be_removed_are_passed_on() {
             result.expect("options").removable
         })
     };
-    let plain = convert_removable(|_| {});
+    // The options of the harness are those of `bun run`, which minifies syntax.
+    let plain = convert_removable(|options| options.minify_syntax = false);
     assert_eq!(plain, RemovableOptions::default());
     let ignoring = convert_removable(|options| options.ignore_dce_annotations = true);
     assert!(ignoring.ignores_pure_annotations && !ignoring.jsx_has_side_effects);
     let with_side_effects = convert_removable(|options| options.jsx.side_effects = true);
     assert!(with_side_effects.jsx_has_side_effects && !with_side_effects.ignores_pure_annotations);
     let minifying = convert_removable(|options| options.minify_syntax = true);
-    assert_eq!(minifying, plain);
+    assert!(minifying.is_told_to_minify_syntax && !minifying.has_no_bundle);
 }
 
 #[test]
@@ -152,7 +153,7 @@ fn byte_lists(texts: &[&str]) -> Vec<Vec<u8>> {
 fn set_framework(options: &mut BundleOptions<'_>) {
     let built_in_modules = bun_collections::StringArrayHashMap::new();
     let framework = Framework::new(built_in_modules, None, None, Vec::new());
-    options.framework = Some(Box::leak(Box::new(framework)));
+    options.framework = Some(Arc::new(framework));
 }
 
 fn set_root_and_compile_name(options: &mut BundleOptions<'_>) {
@@ -175,7 +176,6 @@ fn default_options_convert() {
             );
             assert_eq!(options.load.loaders, default_loaders());
             assert_eq!(options.load.project_root, b"/project");
-            assert!(options.load.runs_macros);
             assert!(!options.load.omits_builtin_modules);
             assert!(!options.load.runs_tests);
             assert_eq!(options.paths.module_prefix, b"/$bunfs/root/");
@@ -212,7 +212,7 @@ fn unsupported_values_report_argument() {
         (|o| o.server_components = true, "--server-components"),
         (
             |o| o.allow_unresolved = AllowUnresolved::None,
-            "--allow-unresolved",
+            "--reject-unresolved",
         ),
         (
             |o| o.macro_remap.put(b"a", Default::default()).expect("oom"),
@@ -444,12 +444,8 @@ fn node_env_decides_jsx_development() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn macros_and_react_compiler_follow_options() {
-    let load = convert_load(|options| {
-        options.no_macros = true;
-        options.react_compiler = ReactCompilerMode::Ssr;
-    });
-    assert!(!load.runs_macros);
+fn react_compiler_follows_option() {
+    let load = convert_load(|options| options.react_compiler = ReactCompilerMode::Ssr);
     assert_eq!(load.react_compiler, ReactCompilerMode::Ssr);
     assert_eq!(
         convert_load(|_| {}).react_compiler,
@@ -612,8 +608,82 @@ fn single_entry_point_directory_is_root() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn root_does_not_lie_inside_node_modules() {
+    let cases: [(&[u8], &[u8], &[u8]); 5] = [
+        (
+            b"node_modules/kit/dist/main.mjs",
+            b"/project",
+            b"node_modules/kit/dist/main.mjs",
+        ),
+        (
+            b"node_modules/main.mjs",
+            b"/project",
+            b"node_modules/main.mjs",
+        ),
+        (
+            b"apps/x/node_modules/a/node_modules/kit/main.mjs",
+            b"/project/apps/x",
+            b"node_modules/a/node_modules/kit/main.mjs",
+        ),
+        (
+            b"not_node_modules/kit/main.mjs",
+            b"/project/not_node_modules/kit",
+            b"main.mjs",
+        ),
+        (
+            b"/node_modules/kit/main.mjs",
+            b"/node_modules/kit",
+            b"main.mjs",
+        ),
+    ];
+    for (entry_point, root_directory, name) in cases {
+        let paths = convert_paths(&[entry_point], |_| {});
+        assert_eq!(paths.root_directory, root_directory);
+        assert_eq!(paths.entry_point_names[0], name);
+    }
+}
+
+#[test]
+fn root_right_under_a_root_of_the_file_system_stays_an_absolute_path() {
+    let cases: [(&str, &str); 2] = [
+        ("/node_modules/kit", "/node_modules/kit"),
+        ("/project/node_modules/kit", "/project"),
+    ];
+    for (directory, root_directory) in cases {
+        let widened = widen_out_of_packages(directory.as_bytes());
+        assert_eq!(widened, root_directory.as_bytes(), "{directory}");
+    }
+}
+
+#[test]
+fn root_is_widened_to_assets_below_the_working_directory() {
+    let cases: [(&str, &str, &str, &str); 8] = [
+        ("/project", "/project/src", "data", "/project"),
+        ("/project", "/project/src", "data/", "/project"),
+        ("/project", "/project/src/a", "src/data", "/project/src"),
+        ("/project", "/project/src", "/other/data", "/project/src"),
+        ("/project", "/other", "data", "/other"),
+        ("/a/project", "/a/project", "/a/project/", "/a"),
+        ("/a/project/", "/a/project", "/a/project/", "/a/project"),
+        ("/", "/project/src", "data", "/project/src"),
+    ];
+    for (working_directory, entry_directory, asset, root_directory) in cases {
+        let widened = widen_to_assets(
+            working_directory.as_bytes(),
+            entry_directory.into(),
+            &[asset.as_bytes().into()],
+        );
+        assert_eq!(widened, root_directory.as_bytes(), "{asset}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
-    let cases: [(&[&[u8]], &[u8]); 6] = [
+    let cases: [(&[&[u8]], &[u8]); 9] = [
+        (&[b"a.ts", b"."], b"/project"),
+        (&[b"src/a.ts", b"./src"], b"/project/src"),
+        (&[b"src/lib/b.ts", b"./src/"], b"/project/src"),
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),
         (&[b"src/a.ts", b"src/lib/b.ts"], b"/project/src"),
         (&[b"src/lib/b.ts", b"src/a.ts"], b"/project/src"),

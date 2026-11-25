@@ -178,15 +178,9 @@ describe.concurrent("the record of an executable", () => {
 
       const imageAt = base + image.offset;
       expect((8 + image.offset) % 4096).toBe(0);
-      // The main program starts Workers, so each entry point begins a program of its own. Their images lie one behind the other.
-      const starts: number[] = [];
-      let end = imageAt;
-      for (const _ of entries) {
-        starts.push(end);
-        end += Number(original.readBigUInt64LE(end + imageHeader.size));
-      }
-      expect(findImages(original)).toEqual(starts);
-      expect(image.length).toBe(end - imageAt);
+      // One image, of one program with all entry points: a Worker that starts at one of them is one more realm of that program.
+      expect(findImages(original)).toEqual([imageAt]);
+      expect(image.length).toBe(Number(original.readBigUInt64LE(imageAt + imageHeader.size)));
 
       expect(readRecord(bundled).flags & hasCompiledProgram).toBe(0);
       const ran = await spawned([executablePath(folder, "bundled")], folder, bunEnv);

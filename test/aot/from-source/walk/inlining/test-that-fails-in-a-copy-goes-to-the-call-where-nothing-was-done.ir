@@ -1,0 +1,37 @@
+# f1 = readingIn, f2 = countedReadingOf, f3 = report, f4 = countedReport
+# -- source: test-that-fails-in-a-copy-goes-to-the-call-where-nothing-was-done.ts
+# declare function print(...values: unknown[]): void;
+# class Meter { reading: number; unit: string; constructor(reading: number, unit: string) { this.reading = reading; this.unit = unit; } }
+# class Pipe { meter: Meter | undefined; name: string; constructor(name: string, meter: Meter | undefined) { this.name = name; this.meter = meter; } }
+# let calls = 0;
+# function readingIn(pipe: Pipe): number { return pipe.meter!.reading; }
+# function countedReadingOf(meter: Meter): number { calls++; return meter.reading; }
+# function report(pipe: Pipe): number { return readingIn(pipe) + 100; }
+# function countedReport(meter: Meter): number { return countedReadingOf(meter) + 100; }
+# (globalThis as any).reports = [report, countedReport];
+# const given: unknown[] = [new Meter(1, "m"), { reading: 3 }];
+# print(report(new Pipe("p", given[0] as Meter)), report(new Pipe("q", given[1] as Meter)), countedReport(given[0] as Meter), countedReport(given[1] as Meter), calls);
+# -- end of source
+# A copy is its tests, the typed run and ONE rare call: where a test of a guess fails in a copy and nothing was done since the copy began, the call as written stands on the failing side, in the place of closed operations.
+# In `report` both tests lead to it, that of the parameter and that of the slot, and no closed read is built. What has passed holds to the end of the copy: nothing meets it again.
+# In `countedReport` a variable is stored in front of the test: the call would store it a second time: that test has its closed arm.
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: Branch {{*}}notTaken [[call]]()
+# CHECK: = IsSlotFilled {{*}}key="meter"
+# CHECK: Branch {{*}}notTaken [[call]]()
+# CHECK: [[call]]() frequency=Rare:
+# CHECK: = CallDirect {{*}}function=f1 {{*}}[isNeverInlined]
+# CHECK: = GetSlot {{*}}key="meter" {{*}}level=Proven
+# CHECK: = GetSlot {{*}}key="reading" {{*}}level=Proven
+# RUN(CLOSED): walk f3 mechanisms=all
+# CLOSED-NOT: = PropGet
+# RUN(DEED): walk f4 mechanisms=all
+# DEED: frame 1 callee=f2
+# DEED: = PutModuleVariable
+# DEED: = ShapeTest
+# DEED: = PropGet {{*}}key="reading"
+# RUN(ONCE): walk f4 mechanisms=all
+# ONCE-NOT: = CallDirect
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 101 103 101 103 2

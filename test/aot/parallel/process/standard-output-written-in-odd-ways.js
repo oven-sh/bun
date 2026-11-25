@@ -1,5 +1,5 @@
 // write() of a standard output with every kind of chunk, with callbacks, through variables, lists and functions, in order with console.log: as in a program that has the whole stream, and without it.
-// STATISTIC: ImageFunctionsEmitted <= 220
+// STATISTIC: ImageFunctionsEmitted <= 220 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 for (const chunk of [1, null, undefined, {}, [], true, Symbol("s"), 10n, () => {}]) {
   try {
     console.log(process.stdout.write(chunk));

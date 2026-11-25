@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function row(given, count, first) {
+#   const most = count | 0, kept = [first | 0];
+#   for (let j = 1; j <= most; j++) { let least = given[j] + 1; const beside = kept[j - 1] + 2; if (beside < least) least = beside; kept[j] = least; }
+#   return kept;
+# }
+# const made = row(new Float64Array(40).fill(100), 30, 1);
+# print(made.length, made[24], made[25], made[30]);
+# -- end of source
+# In the specialized version of the loop, `kept` is filled from its end: the iteration extends the length and stores raw.
+# The operation that extends the length relies on evidence that shows `key < room`.
+# That evidence is either the iteration's own test, or the loop header's `key < bound` together with `bound <= room`, which is checked once in the preheader.
+# Fault injection, testing=SkipCapacityChecks: the iteration skips its check, so there is no evidence to rely on.
+# The code verifier requires such evidence for every operation that extends a length, and it fails the build at the operation.
+# f1 = row
+# OPTIONS: testing=SkipCapacityChecks
+# DIAGNOSTIC: OpcodeNotInForm f1
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: code f1:Body

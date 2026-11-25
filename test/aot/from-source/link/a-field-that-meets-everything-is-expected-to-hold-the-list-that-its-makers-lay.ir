@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Odd() { this.a = 1; }
+# const soup = [new Odd(), { b: 1 }, () => 1, new Map(), new Set(), "text", 1];
+# function make(value) { return { value, issues: [] }; }
+# function spoil(payload, i) { if (i > 100) payload.issues = soup[i]; return payload; }
+# function count(payload) { return payload.issues.length; }
+# var total = 0;
+# for (var i = 0; i < 10; i++) { var made = spoil(make(i), i + shift()); made.issues.push(i); total += count(made); }
+# print(total);
+# -- end of source
+# Every maker lays a list in `issues`; one store brings whatever a list of strangers holds, so the flow says nothing of the field. It is expected to hold what its makers lay, and the read of `length` behind it is tested for a list. f4 = count
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "issues" proven
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "issues" proven=undefined|null|Array
+# RUN(ANSWERS): run-in-shell globalThis.shift = () => 0;
+# ANSWERS: 10
+# ANSWERS-NEXT: exited with 0

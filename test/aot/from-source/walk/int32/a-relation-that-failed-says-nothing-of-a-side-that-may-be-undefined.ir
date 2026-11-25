@@ -1,0 +1,18 @@
+# An element that is not there is undefined, and every relation with undefined fails. A relation that FAILED cuts its subject only where the other side is a number whatever runs:
+# a constant, a parameter or a variable that is declared, what is computed from those, what stands behind a promise. What a cast alone states of a read cuts nothing there. THE LYING CONTROLS: each is reported
+# round: the failed `>=` on the way round a loop . front: the same in front of a step . sum: undefined + 1 is NaN, and NaN fails as well
+# THE RIGHT ONES: held: the relation HOLDS: then both sides are numbers . limit: a declared parameter . kept, left: behind a promise stands an int32, though only the walk proves that promise; the one call in sight passes a text
+# -- source: a-relation-that-failed-says-nothing-of-a-side-that-may-be-undefined.ts
+# declare function sink(...values: unknown[]): void;
+# function round(other: Bun.int32[]): Bun.int32 { let i: Bun.int32 = 2147483600; for (;;) { i++; if (i >= other[i & 7]) break; if (i > 2147483700) break; } return i; }
+# function front(i: Bun.int32, other: Bun.int32[]): Bun.int32 { if (i >= other[0]) return 0; return i + 1; }
+# function sum(i: Bun.int32, other: Bun.int32[]): Bun.int32 { if (i >= other[0] - 1) return 0; return i + 1; }
+# function held(other: Bun.int32[]): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < other[i & 7]); return i; }
+# function limit(i: Bun.int32, to: Bun.int32): Bun.int32 { if (i >= to) return 0; return i + 1; }
+# function kept(text: string): Bun.int32 { const n: Bun.int32 = JSON.parse(text) | 0; let i: Bun.int32 = 0; do i++; while (i < n); return i; }
+# function left(text: string): Bun.int32 { const n: Bun.int32 = JSON.parse(text) | 0; let i: Bun.int32 = 0; for (;;) { i++; if (i >= n) break; } return i; }
+# sink(round, front, sum, held, limit, kept("5"), left("5"));
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 3
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 mechanisms=all
+# CHECK: the walk of f1:Body failed

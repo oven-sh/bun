@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keep(o: any): void { kept = o; }
+# function make(i: number): number { const o = { lid: i, spout: "s" }; keep(o); const p = { lid: i + 1, spout: "t" }; return p.lid + 1; }
+# print(make(1));
+# print(kept.lid);
+# print("went on");
+# -- end of source
+# the green control, without a lie: `o` leaves at keep(o) and is let be; `p` is fresh where make() returns and is overwritten: nobody sees it
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 3
+# CALL: 1
+# CALL: went on
+# RUN(COPY): run-in-shell mechanisms=all
+# COPY: 3
+# COPY: 1
+# COPY: went on

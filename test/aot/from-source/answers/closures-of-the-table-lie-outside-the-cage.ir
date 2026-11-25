@@ -1,0 +1,18 @@
+# -- source: closures-of-the-table-lie-outside-the-cage.js
+# class Item { constructor(n) { this.n = n; } double() { return twice(this.n); } }
+# function twice(x) { return x * 2; }
+# function apply(f, x) { return f(x); }
+# const held = [];
+# let total = 0;
+# for (let i = 0; i < 20000; i++) { const item = new Item(i); held.push(item, [i, i], "text " + i); total += apply(twice, item.n) + item.double(); }
+# print(total, held.length, apply === apply, new Item(1) instanceof Item);
+# -- end of source
+# With wide references the heap may outgrow the cage, and a class object or the one closure of a function may lie outside it, where no reference of 32 bits reaches. So a cell of the closure table holds a pointer there:
+# for the run time that fills it, for the stub that reads it and for the code that compares a callee with it. The cage has 1 MB here, and the program keeps 60,000 cells.
+# OPTIONS: references=wide
+# RUN: run-in-shell --markedBlockCageSizeInMB=1
+# CHECK: 799960000 60000 true true
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell --markedBlockCageSizeInMB=0
+# NONE: 799960000 60000 true true
+# NONE-NEXT: exited with 0

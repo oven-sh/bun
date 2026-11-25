@@ -1,1 +1,0 @@
-exports.quiet = 5;

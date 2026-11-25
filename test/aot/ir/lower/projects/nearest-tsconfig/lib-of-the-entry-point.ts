@@ -1,11 +1,9 @@
 // RUN: lower
 
 // FILE: main.ts
-export class Failure extends Error {
-  readonly cause: Error | undefined;
-  constructor(cause?: Error) {
-    super("failed");
-    this.cause = cause;
+export class Row extends Array<number> {
+  findLast(): number | undefined {
+    return this[this.length - 1];
   }
 }
 

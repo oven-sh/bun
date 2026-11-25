@@ -10,21 +10,17 @@ namespace uWS {
  * mirror SSLApp so the C ABI in libuwsockets_h3.cpp can stay 1:1 with the
  * existing uws_app_* surface. */
 struct H3App {
-    Http3Context *http3Context;
+    Http3Context::Ptr http3Context;
 
     static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));
-        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
+        auto ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
         if (!ctx) return nullptr;
-        return new H3App{ctx};
+        return new H3App{std::move(ctx)};
     }
 
     bool constructorFailed() { return http3Context == nullptr; }
-
-    ~H3App() {
-        if (http3Context) http3Context->free();
-    }
 
 #define H3_METHOD(name, verb)                                                            \
     H3App &&name(std::string_view pattern,                                               \
@@ -60,7 +56,7 @@ struct H3App {
         memcpy(&raw, &options, sizeof(raw));
         return http3Context->addServerName(hostname, raw);
     }
-    void *getNativeHandle() { return http3Context; }
+    void *getNativeHandle() { return http3Context.get(); }
 };
 
 }

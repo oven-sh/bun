@@ -77,7 +77,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-// The text has no place for what belongs to private state, and the code that uses it stands inside and outside the class.
 fn private_state_variable(
     file: &mut FileLowering<'_, '_, '_, '_>,
     state: SymbolId,
@@ -116,6 +115,7 @@ impl FileLowering<'_, '_, '_, '_> {
             function: None,
             owner: None,
             flags: VariableFlags::default(),
+            place: None,
         }
     }
 }

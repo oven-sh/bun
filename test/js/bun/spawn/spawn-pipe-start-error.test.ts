@@ -18,7 +18,7 @@ import { join } from "node:path";
 // MAGIC_VALID assert; release builds wrote through freed memory, which in
 // practice manifested as a process stuck idle with no error and no exit.
 //
-// The fix routes the start_with_current_pipe() error through on_reader_error
+// The fix routes the start_with_current_pipe() error through on_read_result
 // (matching what POSIX already does for register_poll failure), so the pipe is
 // torn down and detached from the Subprocess before the exit callback runs.
 //
@@ -101,9 +101,19 @@ try {
 // the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
+// FAIL_EPOLL_CTL=first-pidfd-add fails only the first.
+//
+// FAIL_EPOLL_CTL=output-reader-add fails the readable EPOLL_CTL_ADD of every
+// socket and pipe: what a child's stdout and stderr are read from.
 //
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
+//
+// LOSE_PIDFD_OPEN=1 acts on the main thread's wait4() calls. The first installs a
+// seccomp filter that fails pidfd_open with ENOSYS from then on. The second finds
+// nothing to reap, as when a tracer has yet to let go of the zombie.
+//
+// PIDFD_OPEN_ESRCH=1 fails every pidfd_open with ESRCH, as when something else has reaped the child.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -117,7 +127,11 @@ const SHIM_C = /* c */ `
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static long (*real_syscall)(long, ...);
@@ -143,6 +157,12 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
     if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
     return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+  }
+  if (strcmp(mode, "first-pidfd-add") == 0) return op == EPOLL_CTL_ADD && is_pidfd(fd) && pidfd_adds++ == 0;
+  if (strcmp(mode, "output-reader-add") == 0) {
+    struct stat info;
+    if (op != EPOLL_CTL_ADD || !(event->events & EPOLLIN) || fstat(fd, &info) != 0) return 0;
+    return S_ISSOCK(info.st_mode) || S_ISFIFO(info.st_mode);
   }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
@@ -177,6 +197,38 @@ int kill(pid_t pid, int signal) {
   }
   if (!real_kill) real_kill = (int (*)(pid_t, int))dlsym(RTLD_NEXT, "kill");
   return real_kill(pid, signal);
+}
+
+static void fail_pidfd_open(unsigned error) {
+  // Spelled out: the kernel's headers are not installed everywhere.
+  struct { unsigned short code; unsigned char jt, jf; unsigned k; } filter[] = {
+    {0x20, 0, 0, 0},                  // load the syscall number
+    {0x15, 0, 1, 434},                // pidfd_open?
+    {0x06, 0, 0, 0x00050000 | error}, // fail
+    {0x06, 0, 0, 0x7fff0000},         // allow
+  };
+  struct { unsigned short len; void *filter; } program = {4, filter};
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program)) abort();
+}
+
+__attribute__((constructor)) static void on_load(void) {
+  if (getenv("PIDFD_OPEN_ESRCH")) fail_pidfd_open(ESRCH);
+}
+
+pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage) {
+  static pid_t (*real_wait4)(pid_t, int *, int, struct rusage *);
+  static int waits;
+  if (getenv("LOSE_PIDFD_OPEN") && syscall(SYS_gettid) == getpid()) {
+    int nth = waits++;
+    if (nth == 0) {
+      fail_pidfd_open(ENOSYS);
+    } else if (nth == 1) {
+      *status = 0;
+      return 0;
+    }
+  }
+  if (!real_wait4) real_wait4 = (pid_t (*)(pid_t, int *, int, struct rusage *))dlsym(RTLD_NEXT, "wait4");
+  return real_wait4(pid, status, options, usage);
 }
 `;
 
@@ -493,6 +545,53 @@ describe.skipIf(!isLinux || !cc)(
   },
 );
 
+// Its pidfd stayed registered, so this thread raced the waiter thread for the exit, and the loop stayed alive.
+test.skipIf(!isLinux || !cc)("a child that moves from its pidfd to the waiter thread exits once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const env = { PATH: process.env.PATH };
+       const child = Bun.spawn({ cmd: ["cat"], env, stdin: "pipe", stdout: "ignore" });
+       await Bun.spawn({ cmd: ["true"], env }).exited;
+       await Bun.spawn({ cmd: ["true"], env }).exited;
+       child.stdin.end();
+       console.log(await child.exited);`,
+    ],
+    env: {
+      ...bunEnv,
+      FAIL_EPOLL_CTL: "pty-writer-mod",
+      LOSE_PIDFD_OPEN: "1",
+      LD_PRELOAD: join(String(dir), "shim.so"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+// The event loop watched fd 0 for its exit.
+test.skipIf(!isLinux || !cc).concurrent.each([
+  ["Bun.spawn", `Bun.spawn({ cmd: ["sh", "-c", "exit 3"], env, onExit: (_, code) => console.log(code) });`],
+  ["Bun.$", `console.log((await Bun.$\`sh -c "exit 3"\`.env(env).nothrow()).exitCode);`],
+])("%s reports the exit of a child that has no pidfd", async (_, code) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const env = { PATH: process.env.PATH }; ${code}`],
+    env: {
+      ...bunEnv,
+      FAIL_EPOLL_CTL: "pty-writer-mod",
+      PIDFD_OPEN_ESRCH: "1",
+      LD_PRELOAD: join(String(dir), "shim.so"),
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+});
+
 // Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the
 // exception with it, and Bun.spawn returned nothing at all to a caller that went on to crash on it.
 test.skipIf(!isLinux || !cc)(
@@ -534,22 +633,30 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
 
 // The same goes for what the CLI runs: it reported the script as failed and exited, and the script ran on.
 describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with the event loop is ended", () => {
-  test.concurrent.each(["run --parallel forever", "run --filter=* forever", "install"])("bun %s", async args => {
+  test.concurrent.each([
+    ["run --parallel forever", "pidfd-add"],
+    ["run --filter=* forever", "pidfd-add"],
+    ["install", "pidfd-add"],
+    // The first one aborts the run before the second one is started.
+    ["run --parallel forever again", "first-pidfd-add"],
+  ])("bun %s", async (args, mode) => {
     using project = tempDir("unwatchable-script", { "watched": "" });
     // By then its parent is somebody else, so it is told by its command line.
     const watched = join(String(project), "watched");
     const forever = `exec tail -f ${watched}`;
     await Bun.write(
       join(String(project), "package.json"),
-      JSON.stringify({ name: "unwatchable-script", scripts: { forever, postinstall: forever } }),
+      JSON.stringify({ name: "unwatchable-script", scripts: { forever, again: forever, postinstall: forever } }),
     );
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args.split(" ")],
       cwd: String(project),
-      env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+      env: { ...bunEnv, FAIL_EPOLL_CTL: mode, LD_PRELOAD: join(String(dir), "shim.so") },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
     let exitCode: number | undefined;
     let left: string[] = [];
@@ -565,7 +672,52 @@ describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with th
       });
       for (const pid of left) process.kill(Number(pid), "SIGKILL");
     }
-    expect({ left: left.length, failed: exitCode !== 0 }).toEqual({ left: 0, failed: true });
+    expect({ left: left.length, failed: exitCode !== 0, signal: proc.signalCode }).toEqual({
+      left: 0,
+      failed: true,
+      signal: null,
+    });
+  });
+});
+
+describe.skipIf(!isLinux || !cc)("what bun run prints when a registration with the event loop fails", () => {
+  async function run(args: string, env: Record<string, string>) {
+    const scripts = { say: "echo out; echo err >&2", wait: "exec sleep 30" };
+    using project = tempDir("unwatchable-output", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["a", "b"], scripts }),
+      "a/package.json": JSON.stringify({ name: "a", scripts }),
+      "b/package.json": JSON.stringify({ name: "b", scripts }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args.split(" ")],
+      cwd: String(project),
+      env: { ...bunEnv, ...env, LD_PRELOAD: join(String(dir), "shim.so") },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["--parallel say", "say | out\n", "say | err\nsay | Done\n"],
+    ["--sequential say", "say | out\n", "say | err\nsay | Done\n"],
+    ["--filter=a say", "a say: out\na say: err\na say: Exited with code 0\n", ""],
+  ])("the output of a script whose pipes are not watched: %s", async (args, stdout, stderr) => {
+    const result = await run(args, { FAIL_EPOLL_CTL: "output-reader-add" });
+    expect({ ...result, stderr: result.stderr.replace(/ in [\d.]+m?s$/m, "") }).toEqual({
+      stdout,
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--filter draws no frame before it has started what it can", async () => {
+    const { stdout, exitCode } = await run("--filter=* wait", { FAIL_EPOLL_CTL: "pidfd-add", FORCE_COLOR: "1" });
+    expect(stdout).toContain("Error");
+    expect(stdout).not.toContain("Waiting for");
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -590,8 +742,8 @@ describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be sig
   });
 });
 
-// The POSIX reader reports a failed registration by calling on_reader_error
-// from inside start(), and start() still returns Ok. Terminal's reader
+// The POSIX reader used to report a failed registration by calling on_reader_error
+// from inside start(), and start() still returned Ok. Terminal's reader
 // callbacks end by releasing the reader's ref, which the constructor used to
 // take only after start() returned: the release freed the Terminal while the
 // constructor was still using it. A reader that ends during the constructor's

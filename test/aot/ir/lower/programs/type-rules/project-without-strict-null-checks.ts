@@ -1,6 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// STATISTIC: SourceFilesChecked = 2
+// STATISTIC: SourceFilesChecked = 1
+// STATISTIC: SourceFilesDemoted = 1
 
 // FILE: main.ts
 // A project without strict null checks starts from empty literals.

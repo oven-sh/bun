@@ -1,6 +1,7 @@
 //! 8-bit RGBA or palette indices to PNG, byte for byte what libspng wrote with the same zlib.
 
-use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
+use bun_zlib::Deflater;
+use bun_zlib::deflate::{self, Container, Flush, Options, Status, Strategy};
 
 use crate::chunk;
 use crate::error::{Error, Result};
@@ -9,10 +10,6 @@ use crate::header::{ColorType, Header, MAX_U31};
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L31
 const IDAT_LEN: usize = 8192;
-const MEM_LEVEL: i32 = 8;
-const Z_DEFAULT_COMPRESSION: i32 = -1;
-const Z_DEFAULT_STRATEGY: i32 = 0;
-const Z_FILTERED: i32 = 1;
 
 /// The name is for people. Readers go by the profile alone.
 const ICC_PROFILE_NAME: &[u8] = b"ICC Profile";
@@ -65,13 +62,17 @@ pub fn encode(
 
     // Neither stored bytes nor palette indices get smaller by filtering.
     let worth_filtering = level != 0 && palette.is_none();
-    let strategy = if worth_filtering {
-        Z_FILTERED
-    } else {
-        Z_DEFAULT_STRATEGY
+    let options = Options {
+        level: i32::from(level).try_into()?,
+        strategy: if worth_filtering {
+            Strategy::Filtered
+        } else {
+            Strategy::Default
+        },
+        ..Default::default()
     };
     let mut idat = Idat {
-        deflater: DeflateEncoder::new(level.into(), bun_zlib::MAX_WBITS, MEM_LEVEL, strategy)?,
+        deflater: Deflater::new(Container::Zlib, options)?,
         start: chunk::begin(&mut out, chunk::IDAT)?,
         out,
     };
@@ -104,18 +105,8 @@ fn write_icc_profile(out: &mut Vec<u8>, profile: &[u8]) -> Result<()> {
     out.extend_from_slice(ICC_PROFILE_NAME);
     // The name's terminator, then compression method 0.
     out.extend_from_slice(&[0, 0]);
-    let mut deflater = DeflateEncoder::new(
-        Z_DEFAULT_COMPRESSION,
-        bun_zlib::MAX_WBITS,
-        MEM_LEVEL,
-        Z_DEFAULT_STRATEGY,
-    )?;
-    let bound = deflater.bound(profile.len());
-    match deflater.step(profile, out, bound, FlushValue::Finish) {
-        (_, ReturnCode::StreamEnd) => chunk::end(out, start),
-        (_, ReturnCode::MemError) => Err(Error::Alloc(bun_alloc::AllocError)),
-        _ => Err(Error::Zlib),
-    }
+    deflate::compress(profile, out, Container::Zlib, Options::default())?;
+    chunk::end(out, start)
 }
 
 fn write_palette(out: &mut Vec<u8>, palette: &Palette) -> Result<()> {
@@ -136,10 +127,10 @@ fn write_palette(out: &mut Vec<u8>, palette: &Palette) -> Result<()> {
 
 /// One zlib stream cut into IDAT chunks of `IDAT_LEN` bytes.
 ///
-/// zlib gets each line in a call of its own and sees only the room left in the current chunk, as with libspng:
+/// The deflater gets each line in a call of its own and sees only the room left in the current chunk, as with libspng:
 /// at level 0 both decide where a stored block ends.
 struct Idat {
-    deflater: DeflateEncoder,
+    deflater: Box<Deflater>,
     out: Vec<u8>,
     /// Where the chunk being written starts in `out`.
     start: usize,
@@ -150,15 +141,11 @@ impl Idat {
         (self.start + 8 + IDAT_LEN).saturating_sub(self.out.len())
     }
 
-    fn deflate(&mut self, input: &[u8], flush: FlushValue) -> Result<(usize, ReturnCode)> {
+    fn deflate(&mut self, input: &mut &[u8], flush: Flush) -> Result<Status> {
         let room = self.room();
-        let (used, code) = self
+        Ok(self
             .deflater
-            .step_limited(input, &mut self.out, room, flush);
-        if code == ReturnCode::MemError {
-            return Err(Error::Alloc(bun_alloc::AllocError));
-        }
-        Ok((used, code))
+            .deflate_limited(input, &mut self.out, room, flush)?)
     }
 
     fn next_chunk_if_full(&mut self) -> Result<()> {
@@ -172,11 +159,7 @@ impl Idat {
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4487
     fn write(&mut self, mut line: &[u8]) -> Result<()> {
         while !line.is_empty() {
-            let (used, code) = self.deflate(line, FlushValue::NoFlush)?;
-            if code != ReturnCode::Ok {
-                return Err(Error::Zlib);
-            }
-            line = line.get(used..).unwrap_or_default();
+            self.deflate(&mut line, Flush::None)?;
             self.next_chunk_if_full()?;
         }
         Ok(())
@@ -184,13 +167,7 @@ impl Idat {
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4523
     fn finish(mut self) -> Result<Vec<u8>> {
-        loop {
-            let before = self.out.len();
-            match self.deflate(&[], FlushValue::Finish)? {
-                (_, ReturnCode::StreamEnd) => break,
-                (_, ReturnCode::Ok | ReturnCode::BufError) if self.out.len() > before => {}
-                _ => return Err(Error::Zlib),
-            }
+        while self.deflate(&mut &[][..], Flush::Finish)? != Status::StreamEnd {
             self.next_chunk_if_full()?;
         }
         chunk::end(&mut self.out, self.start)?;

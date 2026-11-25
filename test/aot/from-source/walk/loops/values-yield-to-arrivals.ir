@@ -1,0 +1,19 @@
+# f1 = total
+# f2 = sums
+# -- source: main.mjs
+# const made = { users: [{ id: 1, scores: [1] }] };
+# const d = JSON.parse('{"users":[{"id":1,"scores":[1,2,3]},{"id":2,"scores":[4]}]}'), e = JSON.parse('{"users":[{"id":1},null]}');
+# function total(d) { let sum = 0; for (const u of d.users) for (let i = 0; i < u.scores.length; i++) sum += u.scores[i]; return sum; }
+# function sums(list) { let sum = 0; for (const u of list) sum += u.id; return sum; }
+# print(made.users.length, total(d), sums(d.users));
+# try { total(e); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# No object of the literals comes to the loops, so they do not ask what a for-of steps to for their shapes.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-NOT: ShapeTest
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="scores"
+# RUN(SUMS): walk f2:Body mechanisms=all
+# SUMS-NOT: ShapeTest
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1 10 3
+# ANSWERS-NEXT: true

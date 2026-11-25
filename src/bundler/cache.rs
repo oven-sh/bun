@@ -1,5 +1,3 @@
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use bun_alloc::Arena as Bump;
 use bun_core::strings;
 use bun_js_parser as js_parser;
@@ -9,53 +7,10 @@ use bun_js_parser as js_parser;
 // `BundleOptions.define` share the same nominal type.
 use js_parser::defines::Define;
 
-// ══════════════════════════════════════════════════════════════════════════
-// B-3 UNIFIED: `RuntimeTranspilerCache` is canonical in `bun_js_parser`
-// (lower tier) so `Features.runtime_transpiler_cache: Option<*mut RTC>` and
-// `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
-// nominal type. This crate adds the env-var-gated `disabled` via
-// the `RuntimeTranspilerCacheExt` trait below — it needs `bun_core::env_var`
-// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
-// the canonical
-// struct stores them type-erased as `*mut ()`.
-// ══════════════════════════════════════════════════════════════════════════
-use bun_ast::RuntimeTranspilerCache;
+pub use bun_resolver::cache::ExternalFreeFunction;
 
-/// Written by CLI argument parsing and `VirtualMachine` init, and flipped
-/// lazily on cache-dir resolution failure. Module-level so those writers can
-/// reach it; `disabled()` reads it.
-pub(crate) static DISABLED: AtomicBool = AtomicBool::new(false);
-
-/// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
-/// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
-/// this crate without an orphan-rule violation.
-pub trait RuntimeTranspilerCacheExt {
-    /// Kept as an associated fn so call-sites read
-    /// `RuntimeTranspilerCache::disabled()`.
-    fn disabled() -> bool;
-}
-
-impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
-    #[inline]
-    fn disabled() -> bool {
-        DISABLED.load(Ordering::Relaxed)
-            || bun_core::env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
-                .get()
-                .map(|v| v.is_empty() || v == b"0")
-                .unwrap_or(false)
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// `Entry`/`Contents`/`ExternalFreeFunction` are defined
-// canonically in `bun_resolver::cache` (lower tier) because `Resolver.caches`
-// is typed by them and the resolver crate cannot depend on the bundler.
-// Re-export here so `crate::cache::Entry` and `bun_resolver::cache::Entry`
-// are the SAME nominal type — `ParseTask::get_code_for_parse_task_*` receives
-// a resolver-produced `Entry` and hands it to bundler-typed consumers without
-// a structural shim. See src/resolver/lib.rs `pub mod cache`.
-// ══════════════════════════════════════════════════════════════════════════
-pub use bun_resolver::cache::{Contents, Entry, ExternalFreeFunction};
+/// What a parse task parses. A worker's arena, the bundle or a plugin owns the bytes.
+pub(crate) type Entry<'a> = bun_resolver::cache::Entry<&'a [u8]>;
 
 pub struct JavaScript {}
 
@@ -75,6 +30,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
+        cache: Option<&mut dyn js_parser::TranspilerCache>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
@@ -86,7 +42,7 @@ impl JavaScript {
             }
         };
 
-        let result = match parser.parse() {
+        let result = match parser.parse_with_cache(cache) {
             Ok(r) => {
                 // The parser halts on every logged error.
                 debug_assert_eq!(temp_log.errors, 0);
@@ -129,7 +85,7 @@ impl JavaScript {
         // scopeguard cannot capture &mut temp_log while it's used below;
         // explicit `append_to` calls at each exit.
 
-        let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
                 temp_log.append_to(log);
@@ -138,7 +94,6 @@ impl JavaScript {
         };
 
         let res = parser.scan_imports(scan_pass_result);
-        drop(parser);
         temp_log.append_to(log);
         res.map_err(Into::into)
     }

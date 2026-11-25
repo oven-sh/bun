@@ -1,0 +1,28 @@
+# -- source: closures-hold-what-they-capture-past-the-registers-of-the-stub.js
+# const kept = [];
+# function make(t, a, b, c, d, e, f, g, h) {
+#     kept.push(() => a.of + b.of + c.of + d.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + g.of + t);
+#     kept.push(() => a.of + b.of + c.of + d.of + e.of + f.of + g.of + h.of + t);
+# }
+# for (let t = 0; t < 2000; t++) {
+#     make(t, { of: "a" }, { of: "b" }, { of: "c" }, { of: "d" }, { of: "e" }, { of: "f" }, { of: "g" }, { of: "h" });
+#     if (t % 500 === 499)
+#         gc();
+# }
+# const texts = ["abcd", "abcde", "abcdef", "abcdefg", "abcdefgh"];
+# let right = 0;
+# for (let k = 0; k < kept.length; k++)
+#     right += kept[k]() === texts[k % 5] + (k - k % 5) / 5;
+# print(right, kept.length);
+# -- end of source
+# f1 = make
+# Closures with five to nine captures. The stub of slim closures is handed four of them, and the site stores the others into the cell that it gives back; with nine the closure is a whole one. Nothing but its closure holds an object that is captured, so each word must lie in its own slot and the collector must find it there. The second run collects at every eighth allocation that leaves the free list, and what is freed is overwritten: a cell that is taken again holds no zeros.
+# RUN: run-in-shell
+# CHECK: 10000 10000
+# CHECK-NEXT: exited with 0
+# RUN(OFTEN): run-in-shell --slowPathAllocsBetweenGCs=8 --scribbleFreeCells=1
+# OFTEN: 10000 10000
+# OFTEN-NEXT: exited with 0

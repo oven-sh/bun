@@ -2,7 +2,7 @@
 // RUN: link
 // CHECK: layout [[made]] kind=Instance name="Message"
 // CHECK-LABEL: function {{*}}name="Message"
-// CHECK: thisType={type=[[made]] site=
+// CHECK: thisType={type=[[made]]
 // A helper gets its `this` from whoever calls it: the written type stands.
 // CHECK-LABEL: function {{*}}name="reset"
 // CHECK: thisType={type=undefined|null|

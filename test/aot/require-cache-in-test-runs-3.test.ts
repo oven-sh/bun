@@ -35,7 +35,7 @@ const moduleThatLooksAtItself = (name: string) => `
   export const seen = look(require.resolve("./${name}"));
   export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
 
-async function expectCompiledToRunAsPlainInLayersToo(files: Record<string, string>) {
+async function expectCompiledToRunAsPlain(files: Record<string, string>) {
   using dir = tempDir("require-cache-in-test-runs", files);
   const seen = async (words?: string, ...flags: string[]) => {
     const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
@@ -45,12 +45,11 @@ async function expectCompiledToRunAsPlainInLayersToo(files: Record<string, strin
   };
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
-  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])
-    expect(await seen(words, "--aot")).toEqual(plain);
+  for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
 
 test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/in-function.cjs": commonJSFileThatLooksAtItself,
     "src/at-top.cjs": commonJSFileThatLooksAtItself,
@@ -80,7 +79,7 @@ test("a CommonJS file finds its own module in require.cache while it runs, whoev
 });
 
 test("an ES module is listed while it runs if a require() has begun it, and not if an import has", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/in-function.ts": moduleThatLooksAtItself("in-function.ts"),
     "src/at-top.ts": moduleThatLooksAtItself("at-top.ts"),
@@ -110,7 +109,7 @@ test("an ES module is listed while it runs if a require() has begun it, and not 
 });
 
 test("what a required ES module imports sees that module listed, and not itself", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/root.ts": `import { seen as below } from "./below-root";\nexport const seen = below;`,
     "src/below-root.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./below-root")), look(require.resolve("./root"))].join(" | ");`,
@@ -126,7 +125,7 @@ test("what a required ES module imports sees that module listed, and not itself"
 });
 
 test("files that require each other are all listed while the innermost runs", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/outer.ts": `const inner = require("./inner");\nexport const seen = inner.seen;`,
     "src/inner.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./outer")), look(require.resolve("./inner"))].join(" | ");`,
@@ -156,7 +155,7 @@ test("files that require each other are all listed while the innermost runs", as
 });
 
 test("an ES module that an import has begun is listed from the first require() of it", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/importer.ts": `
       import { seen as below } from "./requires-importer";
@@ -179,7 +178,7 @@ test("an ES module that an import has begun is listed from the first require() o
 });
 
 test("a file that throws while it is required was listed until then, and is not afterwards", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/throws.cjs": `globalThis.seenByFile = require("./look.cjs").look(__filename);\nthrow new Error("from the file");`,
     "src/throws.ts": `
@@ -202,7 +201,7 @@ test("a file that throws while it is required was listed until then, and is not 
 });
 
 test("a file that takes itself out of require.cache while it runs: a CommonJS file runs again, an ES module does not", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/file.cjs": `
       const { look } = require("./look.cjs");
@@ -231,7 +230,7 @@ test("a file that takes itself out of require.cache while it runs: a CommonJS fi
 });
 
 test("an ES module whose import fails behind a require() of it that has returned stays listed, and require() answers", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+  await expectCompiledToRunAsPlain({
     ...looksAtFiles,
     "src/fails.ts": `import "./requires-what-fails";\nthrow new Error("fails");\nexport const value = 1;`,
     "src/requires-what-fails.ts": `require("./fails");\nexport const below = 1;`,

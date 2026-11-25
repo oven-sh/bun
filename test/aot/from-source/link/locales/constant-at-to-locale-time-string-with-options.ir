@@ -1,0 +1,10 @@
+# the options behind the tag say nothing of the locale
+# -- source: constant-at-to-locale-time-string-with-options.ts
+# declare function sink(...values: unknown[]): void;
+# sink(new Date(0).toLocaleTimeString("ja", { hour: "numeric" }));
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "ja" DatePrototypeToLocaleTimeString
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

@@ -1,1 +1,1 @@
-{ "features": ["RegExpFromString"], "keptToday": true }
+{ "features": ["RegExpFromString"], "keptToday": ["RegExpFromString"] }

@@ -1,0 +1,35 @@
+# In a file without types the checker gives `class Shelf { list = null }`, `{ list: undefined }` and a default `= null` the type null | undefined. As a word to expect it says nothing of what is stored later:
+# the walk asked "is it null?", the likely arm threw, and the arm that ran was rare and closed. What the function does with the value says what it is: that word stands beside the null.
+# byLet: read into a variable that a branch sets to null . guarded: the loop stands behind `if (l)`, where the checker has narrowed null to never . byDefault: a parameter's default . unset: undefined first.
+# No loop asks "is it null?" in its turns; each reads its list by a typed read; null and undefined still throw as they did.
+# -- source: a-word-that-is-null-alone-takes-the-word-of-use-beside-it.cjs
+# class Shelf { list = null; count = 0; }
+# const shelf = new Shelf(); shelf.list = hidden();
+# const state = { rows: undefined }; state.rows = hidden();
+# function byLet(t) { let l = shelf.list; if (t < 0) l = null; let c = t & 1; for (let i = 0; i < l.length; i++) c = c + l[i] * 2; return c; }
+# function guarded(t) { let l = shelf.list; if (t < 0) l = null; let c = t & 1; if (l) for (let i = 0; i < l.length; i++) c = c + l[i] * 2; return c; }
+# function byDefault(list = null, t = 0) { let l = list; if (t < 0) l = null; let c = t & 1; for (let i = 0; i < l.length; i++) c = c + l[i] * 2; return c; }
+# function unset(t) { let p = state.rows; if (t < 0) p = undefined; let c = 0; for (let i = 0; i < p.length; i++) c = c + p[i] * 2; return c; }
+# say(byLet(1)); say(guarded(2)); say(guarded(-2)); say(byDefault(hidden(), 3)); say(unset(4));
+# for (const thrower of [() => byLet(-1), () => byDefault(), () => unset(-1)]) { try { thrower(); } catch (error) { say(error instanceof TypeError ? -1 : -2); } }
+# -- end of source
+# RUN: walk f1 f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: testedType=null
+# CHECK: GetArrayElement
+# CHECK-LABEL: code f2:Body
+# CHECK: GetArrayElement
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: testedType=undefined
+# CHECK: GetArrayElement
+# CHECK-LABEL: code f4:Body
+# CHECK: GetArrayElement
+# RUN(SHELL): run-in-shell globalThis.hidden = () => [0.5, 1.5, 2.5]; globalThis.say = (x) => print(String(x));
+# SHELL: 10
+# SHELL-NEXT: 9
+# SHELL-NEXT: 0
+# SHELL-NEXT: 10
+# SHELL-NEXT: 9
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1
+# SHELL-NEXT: -1

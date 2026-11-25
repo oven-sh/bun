@@ -20,7 +20,7 @@
 //! - WebSocket Handshake: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#the_websocket_handshake
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::ptr;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -33,19 +33,21 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
+use bun_http_types::ETag::Header;
+use bun_http1::{ChunkedDecoder, HeadOptions, Response, ResponseParser};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
-use bun_picohttp as picohttp;
-use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, JsCell, RefPtr};
 
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
+use bun_websocket::handshake::{compute_accept_value, parse_window_bits};
 
 use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use crate::websocket_client::ErrorCode;
+use crate::websocket_client::{ErrorCode, WebSocketClient};
 
 // LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
@@ -77,11 +79,6 @@ fn max_response_head_len() -> usize {
     bun_http::max_http_header_size().saturating_add(1024)
 }
 
-/// One slot per line is enough: picohttpparser never emits more than one header per line.
-fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
-    vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
-}
-
 /// `uws.NewSocketHandler(ssl)`
 type Socket<const SSL: bool> = SocketHandler<SSL>;
 
@@ -98,9 +95,9 @@ enum State {
 
 /// Matches node:http's (and so `ws`'s) definition of an upgrade response: status 101, a non-empty
 /// `Upgrade` header, and `upgrade` listed in `Connection`. The result is passed to ws.ts.
-fn is_upgrade(response: &picohttp::Response) -> bool {
+fn is_upgrade(response: &Response) -> bool {
     let (mut has_upgrade, mut connection_has_upgrade) = (false, false);
-    for header in response.headers.list {
+    for header in response.headers.iter() {
         if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
             has_upgrade |= !header.value().is_empty();
         } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
@@ -114,18 +111,18 @@ fn is_upgrade(response: &picohttp::Response) -> bool {
 #[derive(Clone, Copy)]
 enum ResponseBody {
     Length(u64),
-    Chunked(picohttp::phr_chunked_decoder),
+    Chunked(ChunkedDecoder),
     UntilClose,
 }
 
 impl ResponseBody {
-    fn from_response(response: &picohttp::Response) -> Self {
+    fn from_response(response: &Response) -> Self {
         if matches!(response.status_code, 101 | 204 | 304) {
             return Self::Length(0);
         }
         let mut transfer_encoding: Option<bun_http::Encoding> = None;
         let mut content_length: Option<u64> = None;
-        for header in response.headers.list {
+        for header in response.headers.iter() {
             if strings::eql_case_insensitive_ascii(header.name(), b"transfer-encoding", true) {
                 let coding = transfer_encoding.get_or_insert(bun_http::Encoding::Identity);
                 if bun_http::fold_transfer_encoding(header.value(), coding).is_err() {
@@ -136,17 +133,13 @@ impl ResponseBody {
             }
         }
         match transfer_encoding {
-            Some(bun_http::Encoding::Chunked) => {
-                let mut decoder = picohttp::phr_chunked_decoder::default();
-                decoder.consume_trailer = 1;
-                Self::Chunked(decoder)
-            }
+            Some(bun_http::Encoding::Chunked) => Self::Chunked(ChunkedDecoder::default()),
             Some(_) => Self::UntilClose,
             None => content_length.map_or(Self::UntilClose, Self::Length),
         }
     }
 
-    /// Strips `data` down to body bytes, in place. Returns true once the body has ended.
+    /// Strips `data` down to body bytes. Returns true once the body has ended.
     fn decode(&mut self, data: &mut Vec<u8>) -> bool {
         match self {
             Self::Length(remaining) => {
@@ -155,18 +148,16 @@ impl ResponseBody {
                 *remaining == 0
             }
             Self::Chunked(decoder) => {
-                let mut len = data.len();
-                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
-                // grows `len`.
-                let rc = unsafe {
-                    picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
-                };
-                data.truncate(len);
-                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
-                if rc >= 0 {
-                    *self = Self::Length(0);
+                let encoded = core::mem::take(data);
+                match decoder.decode(&encoded, data) {
+                    Ok(None) => false,
+                    Ok(Some(_)) => {
+                        *self = Self::Length(0);
+                        true
+                    }
+                    // Stop here and leave the body incomplete.
+                    Err(_) => true,
                 }
-                rc != -2
             }
             Self::UntilClose => false,
         }
@@ -199,10 +190,9 @@ pub struct HTTPClient<const SSL: bool> {
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
-    /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
+    response_parser: JsCell<ResponseParser>,
+    /// Unconsumed bytes, starting with a complete response head or with its body.
     body: JsCell<Vec<u8>>,
-    /// Bytes of interim 1xx responses skipped since the last final response.
-    interim_len: Cell<usize>,
     /// Created by the `ws` module, which runs its own handshake timer, validates the 101 itself and
     /// reads the body of a non-upgrade response.
     ws_mode: bool,
@@ -212,7 +202,7 @@ pub struct HTTPClient<const SSL: bool> {
     hostname: JsCell<ZBox>,
     /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
     context: bun_jsc::ContextId,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
 
@@ -241,15 +231,9 @@ pub struct HTTPClient<const SSL: bool> {
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
 // The `register()` C++ round-trip that previously installed these on a
 // shared `us_socket_context_t` is gone — sockets are stamped with the
-// kind at connect time and routed via the `RawSocketEvents<SSL>` impl in
+// kind at connect time and routed via the `SocketEvents<SSL>` impl in
 // `bun_runtime::socket::uws_handlers`, which forwards to the `pub
 // handle_*` methods below.
-// The handlers take `ThisPtr<Self>` (not `&mut Self`) because uSockets
-// dispatches them from the raw userdata pointer and several can free `Self`
-// (`deref` reaching zero) or be re-entered synchronously by `tcp.close()` /
-// C++ callbacks; a `&mut Self` argument across either is UB under Stacked
-// Borrows (argument protectors / aliased `&mut`). Mutable state lives in
-// `Cell`/`JsCell` fields so every access is a short shared borrow.
 impl<const SSL: bool> HTTPClient<SSL>
 where
     Self: IntoUpgradeClientRef,
@@ -290,9 +274,9 @@ where
         // Out param, only set when returning `None`: the errno name for `error.code`, if known.
         connect_error_code: &mut BunString,
     ) -> Option<*mut Self> {
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
-        debug_assert!(vm.event_loop_handle.is_some());
+        debug_assert!(vm.event_loop_handle.get().is_some());
 
         let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
             config
@@ -390,9 +374,6 @@ where
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        let mut poll_ref = KeepAlive::init();
-        poll_ref.r#ref(vm.loop_ctx());
-
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
             SSL,
@@ -404,7 +385,6 @@ where
         let context = websocket.context();
         let group = global
             .bun_vm()
-            .as_mut()
             .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
@@ -447,7 +427,6 @@ where
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            poll_ref.unref(vm.loop_ctx());
                             return None;
                         };
                         let raw = ctx.as_ptr();
@@ -461,20 +440,23 @@ where
             None
         };
 
-        let client = RefPtr::new(HTTPClient::<SSL> {
+        let poll_ref = KeepAlive::init();
+        poll_ref.r#ref(vm.loop_ctx());
+
+        let this = RefPtr::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
             socket_ref: Cell::new(None),
             outgoing_websocket: JsCell::new(None),
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
+            response_parser: JsCell::new(ResponseParser::default()),
             body: JsCell::new(Vec::new()),
-            interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
             context: context.id(),
-            poll_ref: JsCell::new(poll_ref),
+            poll_ref,
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
             ssl_config: JsCell::new(ssl_config),
@@ -483,8 +465,7 @@ where
             offered_deflate: extensions_slice.is_some(),
             subprotocols: JsCell::new(subprotocols),
         });
-        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
-        let this = client.this_ptr();
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, this.as_ptr());
 
         let sock = match &unix_socket_path_slice {
             // ws+unix:// / wss+unix://. C++ never passes a proxy with these.
@@ -493,7 +474,7 @@ where
                 kind,
                 secure_ptr,
                 path.slice(),
-                client.as_ptr(),
+                this.as_ptr(),
                 false,
             ),
             None => Socket::<SSL>::connect_group(
@@ -502,7 +483,7 @@ where
                 secure_ptr,
                 display_host,
                 c_int::from(connect_port),
-                client.as_ptr(),
+                this.as_ptr(),
                 false,
             ),
         }
@@ -535,17 +516,16 @@ where
 
         sock.set_timeout(this.handshake_timeout());
         this.state.set(State::Reading);
-        Some(Self::connected(client, websocket))
+        Some(this.connected(websocket))
     }
 
-    /// The socket now holds `client` as its userdata; record that ref and take
+    /// The socket now holds `self` as its userdata; record that ref and take
     /// one more on behalf of C++'s `m_upgradeClient`, returning its pointer.
-    fn connected(client: RefPtr<Self>, websocket: &CppWebSocket) -> *mut Self {
-        let this = client.this_ptr();
-        this.outgoing_websocket
-            .set(Some((BackRef::new(websocket), client.clone())));
-        this.socket_ref.set(Some(client));
-        this.as_ptr()
+    fn connected(self: &RefPtr<Self>, websocket: &CppWebSocket) -> *mut Self {
+        self.outgoing_websocket
+            .set(Some((BackRef::new(websocket), self.clone())));
+        self.socket_ref.set(Some(self.clone()));
+        self.as_ptr()
     }
 
     /// Disabled for `ws`, which implements `handshakeTimeout` with its own timer and has no
@@ -564,12 +544,12 @@ where
     }
 
     /// C++ let go of `m_upgradeClient`: forget the back-reference and release
-    /// the ref held on its behalf. May free `self`.
+    /// the ref held on its behalf.
     fn release_cpp_ref(&self) {
         self.outgoing_websocket.set(None);
     }
 
-    /// Release the ref held for the socket's userdata pointer. May free `self`.
+    /// Release the ref held for the socket's userdata pointer.
     fn release_socket_ref(&self) {
         self.socket_ref.set(None);
     }
@@ -578,16 +558,16 @@ where
     /// bytes written, or `None` on failure) without a cell borrow spanning the
     /// possibly re-entrant write. On failure the client is terminated — which
     /// clears the buffer anyway — and `false` is returned.
-    fn write_pending(this: ThisPtr<Self>, write: impl FnOnce(&[u8]) -> Option<usize>) -> bool {
-        let buf = this.input_body_buf.replace(Vec::new());
-        let pending = this.to_send_len.get().min(buf.len());
+    fn write_pending(&self, write: impl FnOnce(&[u8]) -> Option<usize>) -> bool {
+        let buf = self.input_body_buf.replace(Vec::new());
+        let pending = self.to_send_len.get().min(buf.len());
         let Some(wrote) = write(&buf[buf.len() - pending..]) else {
             drop(buf);
-            Self::terminate(this, ErrorCode::FailedToWrite);
+            self.terminate(ErrorCode::FailedToWrite);
             return false;
         };
-        this.to_send_len.set(pending - wrote.min(pending));
-        this.input_body_buf.set(buf);
+        self.to_send_len.set(pending - wrote.min(pending));
+        self.input_body_buf.set(buf);
         true
     }
 
@@ -595,40 +575,30 @@ where
         usize::try_from(socket.write(buf)).ok()
     }
 
-    /// Takes `ThisPtr<Self>` because `tcp.close()` synchronously dispatches
-    /// `handle_close` from the socket userdata pointer, and the trailing
-    /// `deref` may free `this`.
-    pub(crate) fn cancel(this: ThisPtr<Self>) {
-        this.clear_data();
+    fn tunnel(&self) -> Option<RefPtr<WebSocketProxyTunnel>> {
+        self.proxy.get().as_ref()?.get_tunnel().cloned()
+    }
 
-        // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
-        // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
-        // Bumps the intrusive refcount and derefs on Drop (after `tcp.close`
-        // below), which may free `this` — no `&`/`&mut Self` is live at that
-        // point.
-        let _guard = RefPtr::from_this(this);
+    fn tunneled_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.tunnel()?.connected_websocket()
+    }
+
+    pub(crate) fn cancel(self: RefPtr<Self>) {
+        self.clear_data();
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
-        this.release_cpp_ref();
+        self.release_cpp_ref();
 
-        // Copy `tcp` out so no borrow of `*this` spans the close.
-        let tcp = this.tcp.get();
         // `handle_close` / `handle_connect_error` releases the socket-userdata ref.
-        tcp.close(uws::CloseCode::Normal);
-        // `_guard` drops here, balancing the ref above. May free `this`.
+        self.tcp.get().close(uws::CloseCode::Normal);
     }
 
     /// `system_code` becomes `error.code`; `detail` is appended to `error.message`.
-    ///
-    /// Takes `ThisPtr<Self>` because `did_fail` may run JS that re-enters via
-    /// `cancel()`, and `tcp.close()` synchronously dispatches `handle_close`.
-    fn fail(this: ThisPtr<Self>, code: ErrorCode, system_code: BunString, detail: BunString) {
+    fn fail(&self, code: ErrorCode, system_code: BunString, detail: BunString) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
-        // Copy `tcp` out before dispatch so nothing touches `*this` after the
-        // FFI call (which may reenter and pop our tag).
-        let tcp = this.tcp.get();
-        Self::report_failure(this, code, system_code, detail);
+        let tcp = self.tcp.get();
+        self.report_failure(code, system_code, detail);
 
         // A failed upgrade (bad status line, mismatched subprotocol, invalid
         // headers, ...) is an application-level rejection of a healthy TCP
@@ -640,14 +610,9 @@ where
 
     /// Notifies C++ at most once. If we're reading a non-upgrade response's body, that response was
     /// already reported as the outcome, so this only ends the body instead of reporting a failure.
-    fn report_failure(
-        this: ThisPtr<Self>,
-        code: ErrorCode,
-        system_code: BunString,
-        detail: BunString,
-    ) {
-        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
-            match this.response_body.take() {
+    fn report_failure(&self, code: ErrorCode, system_code: BunString, detail: BunString) {
+        if let Some((ws, _cpp_ref)) = self.outgoing_websocket.replace(None) {
+            match self.response_body.take() {
                 Some(body) => ws.did_end_response_body(
                     // Our own timeout always aborts, since the peer never ended the body.
                     code == ErrorCode::Timeout || !body.is_complete(),
@@ -658,14 +623,14 @@ where
         }
     }
 
-    /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
-    /// ref and on the normal path frees `this`; a `&mut self` argument would
-    /// carry a Stacked Borrows protector that makes deallocating it UB.
-    pub fn handle_close(this: ThisPtr<Self>, _: Socket<SSL>, code: c_int, _: *mut c_void) {
+    pub fn handle_close(self: RefPtr<Self>, code: c_int) {
         log!("onClose");
         bun_jsc::mark_binding!();
-        this.clear_data();
-        this.tcp.set(Socket::<SSL>::detached());
+        if let Some(ws) = self.tunneled_websocket() {
+            ws.report_close_error(self.tcp.get(), code);
+        }
+        self.clear_data();
+        self.tcp.set(Socket::<SSL>::detached());
         // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
         // `handle_end` instead.
         let (system_code, detail) = match socket_errno_name(code).filter(|_| code > 2) {
@@ -675,22 +640,17 @@ where
             ),
             None => (BunString::EMPTY, BunString::EMPTY),
         };
-        Self::report_failure(this, ErrorCode::Ended, system_code, detail);
-        this.release_socket_ref();
+        self.report_failure(ErrorCode::Ended, system_code, detail);
+        self.release_socket_ref();
     }
 
     /// See `fail`.
-    pub(crate) fn terminate(this: ThisPtr<Self>, code: ErrorCode) {
-        Self::fail(this, code, BunString::EMPTY, BunString::EMPTY);
-        // We cannot access the pointer after fail is called.
+    pub(crate) fn terminate(&self, code: ErrorCode) {
+        self.fail(code, BunString::EMPTY, BunString::EMPTY);
     }
 
     /// `completed`: the TLS handshake succeeded but `accepts_tls_peer` rejected the peer.
-    pub(crate) fn fail_tls(
-        this: ThisPtr<Self>,
-        ssl_error: uws::us_bun_verify_error_t,
-        completed: bool,
-    ) {
+    pub(crate) fn fail_tls(&self, ssl_error: uws::us_bun_verify_error_t, completed: bool) {
         let (code, reason) = if completed && ssl_error.error_no == 0 {
             (
                 BunString::static_("ERR_TLS_CERT_ALTNAME_INVALID"),
@@ -702,12 +662,11 @@ where
                 BunString::clone_utf8(ssl_error.reason_bytes()),
             )
         };
-        Self::fail(this, ErrorCode::TlsHandshakeFailed, code, reason);
+        self.fail(ErrorCode::TlsHandshakeFailed, code, reason);
     }
 
-    /// Takes `ThisPtr<Self>` because `fail` may free `this` / be re-entered.
     pub fn handle_handshake(
-        this: ThisPtr<Self>,
+        self: RefPtr<Self>,
         socket: Socket<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
@@ -721,36 +680,40 @@ where
         let handshake_success = success == 1;
 
         if handshake_success {
-            let Some(ws) = this.cpp_websocket() else {
+            let Some(ws) = self.cpp_websocket() else {
                 return;
             };
-            // `tls.checkServerIdentity` may close the WebSocket, which frees `this`.
-            let _guard = RefPtr::from_this(this);
+            // `tls.checkServerIdentity` may close the WebSocket.
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
-            let hostname = this.hostname.take();
+            let hostname = self.hostname.take();
             let ssl = socket.ssl_mut();
             let name = identity_name(hostname.as_bytes(), ssl.as_deref());
             let handshake = TlsHandshake::First {
-                context: this.context,
-                peer: this.tls_peer(),
+                context: self.context,
+                peer: self.tls_peer(),
             };
             let accepted = ws.accepts_tls_peer(handshake, ssl, ssl_error.error_no == 0, &name);
-            if this.cpp_websocket().is_none() {
+            if self.cpp_websocket().is_none() {
                 return;
             }
-            this.hostname.set(hostname);
+            self.hostname.set(hostname);
             if !accepted {
                 log!(
                     "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
                     ssl_error.error_no,
-                    this.secure.get().is_some()
+                    self.secure.get().is_some()
                 );
-                Self::fail_tls(this, ssl_error, true);
+                self.fail_tls(ssl_error, true);
+            } else if self.proxy.get().is_none() {
+                self.report_request();
             }
         } else {
+            if let Some(ws) = self.tunneled_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-            Self::fail_tls(this, ssl_error, false);
+            self.fail_tls(ssl_error, false);
         }
     }
 
@@ -774,11 +737,11 @@ where
 
     /// `server_identity` for the tunnel, whose peer is the target.
     pub(crate) fn tunnel_server_identity(
-        this: ThisPtr<Self>,
+        &self,
         ssl: &mut boringssl::c::SSL,
         hostname: &[u8],
     ) -> boringssl::ServerIdentity {
-        this.cpp_websocket()
+        self.cpp_websocket()
             .map_or(boringssl::ServerIdentity::Unchecked, |ws| {
                 ws.server_identity(TlsPeer::Target, ssl, hostname)
             })
@@ -786,33 +749,32 @@ where
 
     /// `accepts_tls_peer` for the tunnel, whose peer is the target.
     pub(crate) fn accepts_tunnel_peer(
-        this: ThisPtr<Self>,
+        &self,
         ssl: Option<&mut boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
         let handshake = TlsHandshake::First {
-            context: this.context,
+            context: self.context,
             peer: TlsPeer::Target,
         };
-        this.cpp_websocket()
+        self.cpp_websocket()
             .is_some_and(|ws| ws.accepts_tls_peer(handshake, ssl, chain_verified, hostname))
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_open(this: ThisPtr<Self>, socket: Socket<SSL>) {
+    pub fn handle_open(self: RefPtr<Self>, socket: Socket<SSL>) {
         log!("onOpen");
-        this.tcp.set(socket);
+        self.tcp.set(socket);
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
-        socket.set_timeout(this.handshake_timeout());
+        socket.set_timeout(self.handshake_timeout());
 
-        debug_assert!(!this.input_body_buf.get().is_empty());
-        debug_assert!(this.to_send_len.get() == 0);
+        debug_assert!(!self.input_body_buf.get().is_empty());
+        debug_assert!(self.to_send_len.get() == 0);
 
         if SSL {
-            let hostname = this.hostname.get();
+            let hostname = self.hostname.get();
             if !hostname.is_empty() {
                 if let Some(ssl) = socket.ssl_mut() {
                     bun_http::configure_http_client_with_alpn(
@@ -826,21 +788,30 @@ where
                     );
                 }
             }
-            if this
+            if self
                 .cpp_websocket()
-                .is_some_and(|ws| ws.reject_unauthorized(this.tls_peer()))
+                .is_some_and(|ws| ws.reject_unauthorized(self.tls_peer()))
             {
                 socket.set_inline_reject();
             }
         }
 
         // If using proxy, set state to proxy_handshake
-        if this.proxy.get().is_some() {
-            this.state.set(State::ProxyHandshake);
+        if self.proxy.get().is_some() {
+            self.state.set(State::ProxyHandshake);
+        } else if !SSL {
+            self.report_request();
         }
 
-        this.to_send_len.set(this.input_body_buf.get().len());
-        Self::write_pending(this, |buf| Self::socket_write(socket, buf));
+        self.to_send_len.set(self.input_body_buf.get().len());
+        self.write_pending(|buf| Self::socket_write(socket, buf));
+    }
+
+    /// `input_body_buf` is the upgrade request, and the way to the server is open.
+    fn report_request(&self) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.will_send_request(self.input_body_buf.get(), self.tcp.get().socket.get());
+        }
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -848,142 +819,101 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
-    /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
+    /// Once the bytes received start with a complete response head, calls `on_head`
     /// with the parsed response and the bytes after it. Skips interim 1xx responses, and fails the
     /// connection if the head is malformed or too large. All interim responses together may be as
     /// large as one head, or a server could keep the client parsing them forever. The result
     /// depends only on the bytes received so far, not on how they were split across reads.
     ///
-    /// `on_head` gets a copy and the head stays in `body`: a `handshake` listener can spin the event
+    /// `on_head` gets a copy and the head goes to `body`: a `handshake` listener can spin the event
     /// loop, and the next read then appends after it.
-    fn with_response_head(
-        this: ThisPtr<Self>,
-        data: &[u8],
-        on_head: impl FnOnce(&picohttp::Response, &[u8]),
-    ) {
-        this.body.with_mut(|b| b.extend_from_slice(data));
-        let received = this.body.get().clone();
-        let mut unparsed: &[u8] = &received;
+    fn with_response_head(&self, data: &[u8], on_head: impl FnOnce(&Response, &[u8])) {
+        let mut received = self.body.take();
+        received.extend_from_slice(data);
         let cap = max_response_head_len();
-        let drop_interim = |unparsed: &[u8]| {
-            this.body
-                .with_mut(|b| drop(b.drain(..received.len() - unparsed.len())));
+        let options = HeadOptions {
+            max_len: u32::try_from(cap).unwrap_or(u32::MAX),
+            max_headers: usize::MAX,
+            max_interim_len: cap,
+            spare_capacity: 0,
         };
-        loop {
-            let window = &unparsed[..unparsed.len().min(cap)];
-            let mut slots = header_slots(window);
-            let error = match picohttp::Response::parse(window, &mut slots) {
-                Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
-                    unparsed = &unparsed[response.bytes_read..];
-                    this.interim_len
-                        .set(this.interim_len.get() + response.bytes_read);
-                    if this.interim_len.get() <= cap {
-                        continue;
-                    }
-                    ErrorCode::ResponseHeadersTooLarge
-                }
-                Ok(response) => {
-                    drop_interim(unparsed);
-                    this.interim_len.set(0);
-                    return on_head(&response, &unparsed[response.bytes_read..]);
-                }
-                Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
-                    ErrorCode::InvalidResponse
-                }
-                // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
-                Err(picohttp::ParseResponseError::ShortRead)
-                    if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>
-                {
-                    ErrorCode::InvalidResponse
-                }
-                Err(picohttp::ParseResponseError::ShortRead) if unparsed.len() > cap => {
-                    ErrorCode::ResponseHeadersTooLarge
-                }
-                Err(picohttp::ParseResponseError::ShortRead) => return drop_interim(unparsed),
-            };
-            return Self::terminate(this, error);
+        match self
+            .response_parser
+            .with_mut(|p| p.feed(&received, options))
+        {
+            Ok(Some((response, rest))) => {
+                self.body.set([&response.headers.buf, rest].concat());
+                on_head(&response, rest);
+            }
+            Ok(None) => {}
+            Err(bun_http1::Error::HeadTooLong) => {
+                self.terminate(ErrorCode::ResponseHeadersTooLarge);
+            }
+            Err(_) => self.terminate(ErrorCode::InvalidResponse),
         }
     }
 
-    /// Takes `ThisPtr<Self>` because `socket.close()` synchronously dispatches
-    /// `handle_close`, and `terminate`/`complete_upgrade`/the trailing guard
-    /// drop may free `this`.
-    pub fn handle_data(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
+    pub fn handle_data(self: RefPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("onData");
 
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
-        if this.state.get() == State::Done {
-            let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-            if let Some(tunnel) = tunnel {
-                WebSocketProxyTunnel::receive(tunnel, data);
+        if self.state.get() == State::Done {
+            if let Some(tunnel) = self.tunnel() {
+                tunnel.receive(data);
             }
             return;
         }
 
-        if this.cpp_websocket().is_none() {
-            this.state.set(State::Failed);
-            this.clear_data();
-            // No borrow of `*this` is live across this call (handle_close reenters).
+        if self.cpp_websocket().is_none() {
+            self.state.set(State::Failed);
+            self.clear_data();
             socket.close(uws::CloseCode::Failure);
             return;
         }
-        // Bumps the intrusive refcount and derefs on Drop at every return path
-        // below. No `&`/`&mut Self` is live when the guard drops.
-        let _guard = RefPtr::from_this(this);
-
-        debug_assert!(this.is_same_socket(socket));
+        debug_assert!(self.is_same_socket(socket));
 
         // Handle proxy handshake response
-        if this.state.get() == State::ProxyHandshake {
-            Self::handle_proxy_response(this, socket, data);
+        if self.state.get() == State::ProxyHandshake {
+            self.handle_proxy_response(socket, data);
             return;
         }
 
         // Route through proxy tunnel if TLS handshake is in progress or complete
-        {
-            let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-            if let Some(tunnel) = tunnel {
-                WebSocketProxyTunnel::receive(tunnel, data);
-                return;
-            }
+        if let Some(tunnel) = self.tunnel() {
+            tunnel.receive(data);
+            return;
         }
 
-        Self::handle_upgrade_response_data(this, data);
-        // `_guard` drops here, balancing the ref above. May free `this`.
+        self.handle_upgrade_response_data(data);
     }
 
-    /// Caller holds a `RefPtr` guard.
-    fn handle_upgrade_response_data(this: ThisPtr<Self>, data: &[u8]) {
-        if this.response_body.get().is_some() {
-            return Self::handle_response_body(this, data);
+    fn handle_upgrade_response_data(&self, data: &[u8]) {
+        if self.response_body.get().is_some() {
+            return self.handle_response_body(data);
         }
-        Self::with_response_head(this, data, |response, rest| {
-            Self::process_websocket_upgrade_response(this, response, rest);
+        self.with_response_head(data, |response, rest| {
+            self.process_websocket_upgrade_response(response, rest);
         });
     }
 
-    /// Caller holds a `RefPtr` guard. `response` and `rest` must not borrow `self`.
-    fn process_websocket_upgrade_response(
-        this: ThisPtr<Self>,
-        response: &picohttp::Response,
-        rest: &[u8],
-    ) {
-        let Some(ws) = this.cpp_websocket() else {
-            return Self::terminate(this, ErrorCode::Cancel);
+    /// `response` and `rest` must not borrow `self`.
+    fn process_websocket_upgrade_response(&self, response: &Response, rest: &[u8]) {
+        let Some(ws) = self.cpp_websocket() else {
+            return self.terminate(ErrorCode::Cancel);
         };
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let is_101 = response.status_code == 101;
-        let should_read_body = this.ws_mode && !is_upgrade(response);
+        let should_read_body = self.ws_mode && !is_upgrade(response);
         if should_read_body {
-            this.response_body
+            self.response_body
                 .set(Some(ResponseBody::from_response(response)));
-            this.body.set(rest.to_vec());
+            self.body.set(rest.to_vec());
             // Emit 'unexpected-response' and any body bytes that arrived with the head before
             // draining microtasks, like node:http, whose parser finishes its current chunk.
             let _scope = vm.enter_event_loop_scope();
             ws.did_receive_handshake_response(response, false, &[]);
-            return Self::handle_response_body(this, &[]);
+            return self.handle_response_body(&[]);
         }
         let verdict = {
             // Don't drain microtasks between 'upgrade' and 'open'. `did_connect` drains them
@@ -992,98 +922,85 @@ where
             let body: &[u8] = if is_101 { &[] } else { rest };
             ws.did_receive_handshake_response(response, true, body)
         };
-        if this.cpp_websocket().is_none() {
+        if self.cpp_websocket().is_none() {
             // The listener closed the WebSocket, so `did_connect` won't run. Drain microtasks
             // here instead.
             drop(vm.enter_event_loop_scope());
             return;
         }
-        let deflate_params = if this.ws_mode {
+        let deflate_params = if self.ws_mode {
             let HandshakeVerdict::Accepted { deflate } = verdict else {
                 // An 'upgrade' listener threw, so nothing validated the response. Like npm ws, stay
                 // CONNECTING until the user closes the WebSocket, and drop whatever else arrives.
-                this.response_body.set(Some(ResponseBody::UntilClose));
-                this.body.set(Vec::new());
+                self.response_body.set(Some(ResponseBody::UntilClose));
+                self.body.set(Vec::new());
                 drop(vm.enter_event_loop_scope());
                 return;
             };
             deflate
         } else if !is_101 {
             let status = BunString::create_format(format_args!("{}", response.status_code));
-            return Self::fail(
-                this,
-                ErrorCode::Expected101StatusCode,
-                BunString::EMPTY,
-                status,
-            );
+            return self.fail(ErrorCode::Expected101StatusCode, BunString::EMPTY, status);
         } else {
-            match this.validate_upgrade(response) {
+            match self.validate_upgrade(response) {
                 Ok(deflate) => deflate,
-                Err(code) => return Self::terminate(this, code),
+                Err(code) => return self.terminate(code),
             }
         };
-        Self::complete_upgrade(this, deflate_params, rest);
+        self.complete_upgrade(deflate_params, rest);
     }
 
-    /// Caller holds a `RefPtr` guard.
-    fn handle_response_body(this: ThisPtr<Self>, data: &[u8]) {
-        let (Some(mut body), Some(ws)) = (this.response_body.get(), this.cpp_websocket()) else {
+    fn handle_response_body(&self, data: &[u8]) {
+        let (Some(mut body), Some(ws)) = (self.response_body.get(), self.cpp_websocket()) else {
             return;
         };
-        let mut chunk = this.body.take();
+        let mut chunk = self.body.take();
         chunk.extend_from_slice(data);
         let ended = body.decode(&mut chunk);
-        this.response_body.set(Some(body));
+        self.response_body.set(Some(body));
         // `ws` has no timeout for the body, so use ours as an idle timeout between chunks.
         if !ws.is_paused() {
-            this.tcp.get().set_timeout(handshake_timeout_seconds());
+            self.tcp.get().set_timeout(handshake_timeout_seconds());
         }
         if !chunk.is_empty() {
             ws.did_receive_response_body(&chunk);
         }
         if ended {
-            Self::terminate(this, ErrorCode::Ended);
+            self.terminate(ErrorCode::Ended);
         }
     }
 
     /// `pause()` / `resume()` while CONNECTING only apply to a non-upgrade response's body, never to
     /// the handshake. Data that was already read is still delivered. While paused, the idle timeout
     /// is off and the socket doesn't keep the process alive, like node:http.
-    ///
-    /// Takes `ThisPtr<Self>` because `resume_stream()` closes the socket if it can't re-register the
-    /// poll; see `cancel`.
-    pub(crate) fn set_paused(this: ThisPtr<Self>, paused: bool) {
-        if this.response_body.get().is_none() {
+    pub(crate) fn set_paused(self: RefPtr<Self>, paused: bool) {
+        if self.response_body.get().is_none() {
             return;
         }
-        let _guard = RefPtr::from_this(this);
-        let tcp = this.tcp.get();
+        let tcp = self.tcp.get();
         if paused {
             tcp.set_timeout(0);
-            this.poll_ref
-                .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+            self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
             tcp.pause_stream();
         } else {
             tcp.set_timeout(handshake_timeout_seconds());
-            this.poll_ref
-                .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
+            self.poll_ref.r#ref(VirtualMachineRef::get().loop_ctx());
             tcp.resume_stream();
         }
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
-    fn handle_proxy_response(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
+    fn handle_proxy_response(self: &RefPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
-        Self::with_response_head(this, data, |response, remain_buf| {
-            Self::process_proxy_response(this, socket, response, remain_buf);
+        self.with_response_head(data, |response, remain_buf| {
+            self.process_proxy_response(socket, response, remain_buf);
         });
     }
 
     /// `response` and `remain_buf` must not borrow `self`.
     fn process_proxy_response(
-        this: ThisPtr<Self>,
+        self: &RefPtr<Self>,
         socket: Socket<SSL>,
-        response: &picohttp::Response,
+        response: &Response,
         remain_buf: &[u8],
     ) {
         if !bun_http::is_successful_connect_status(response.status_code) {
@@ -1093,84 +1010,83 @@ where
                 ErrorCode::ProxyConnectFailed
             };
             let mut status_line = response.status_code.to_string().into_bytes();
-            if !response.status.is_empty() {
+            if !response.status_text().is_empty() {
                 status_line.push(b' ');
-                status_line.extend_from_slice(response.status);
+                status_line.extend_from_slice(response.status_text());
             }
             let detail = BunString::clone_latin1(&status_line);
-            return Self::fail(this, code, BunString::EMPTY, detail);
+            return self.fail(code, BunString::EMPTY, detail);
         }
 
         // Proxy tunnel established
         log!("Proxy tunnel established");
 
         // Clear the body buffer for WebSocket handshake
-        this.body.with_mut(|b| b.clear());
+        self.body.with_mut(|b| b.clear());
 
         // Proxy state must exist if we're in proxy_handshake state.
-        let Some(target_https) = this.proxy.get().as_ref().map(|p| p.is_target_https()) else {
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+        let Some(target_https) = self.proxy.get().as_ref().map(|p| p.is_target_https()) else {
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
 
         // For wss:// through proxy, we need to do TLS handshake inside the tunnel
         if target_https {
-            Self::start_proxy_tls_handshake(this, socket, remain_buf);
+            self.start_proxy_tls_handshake(socket, remain_buf);
             return;
         }
 
         // For ws:// through proxy, send the WebSocket upgrade request (replaces
         // CONNECT request buffer; old Vec is dropped here).
-        let request_buf = this
+        let request_buf = self
             .proxy
             .with_mut(|p| {
                 p.as_mut()
                     .map(|p| p.take_websocket_request_buf().into_vec())
             })
             .unwrap_or_default();
-        this.state.set(State::Reading);
-        this.to_send_len.set(request_buf.len());
-        this.input_body_buf.set(request_buf);
+        self.state.set(State::Reading);
+        self.to_send_len.set(request_buf.len());
+        self.input_body_buf.set(request_buf);
+        self.report_request();
 
         // Send the WebSocket upgrade request
-        if !Self::write_pending(this, |buf| Self::socket_write(socket, buf)) {
+        if !self.write_pending(|buf| Self::socket_write(socket, buf)) {
             return;
         }
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
-            Self::handle_data(this, socket, remain_buf);
+            self.clone().handle_data(socket, remain_buf);
         }
     }
 
     /// Start TLS handshake inside the proxy tunnel for wss:// connections
-    ///
-    /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    fn start_proxy_tls_handshake(this: ThisPtr<Self>, socket: Socket<SSL>, initial_data: &[u8]) {
+    fn start_proxy_tls_handshake(self: &RefPtr<Self>, socket: Socket<SSL>, initial_data: &[u8]) {
         log!("startProxyTLSHandshake");
 
         // Get certificate verification setting
-        let reject_unauthorized = this
+        let reject_unauthorized = self
             .cpp_websocket()
             .is_none_or(|ws| ws.reject_unauthorized(TlsPeer::Target));
 
         // Create proxy tunnel with all parameters.
         // Safely unwrap proxy state - it must exist if we're called from handle_proxy_response.
         // The shared borrow of `proxy` spans only `init`, which allocates.
-        let tunnel = this.proxy.get().as_ref().map(|p| {
+        let tunnel = self.proxy.get().as_ref().map(|p| {
             WebSocketProxyTunnel::init::<SSL>(
-                Self::upgrade_client_ref(this),
+                self.clone().upgrade_client_ref(),
                 socket,
                 p.get_target_host(),
             )
         });
         let Some(tunnel) = tunnel else {
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
 
         // Use ssl_config if available, otherwise use defaults
-        let ssl_options: SSLConfig = match this.ssl_config.get().as_deref() {
+        let ssl_options: SSLConfig = match self.ssl_config.get().as_deref() {
             Some(config) => config.clone(),
             None => {
                 let mut c = SSLConfig::default();
@@ -1185,22 +1101,18 @@ where
         };
 
         // Start TLS handshake
-        if WebSocketProxyTunnel::start(
-            tunnel.this_ptr(),
-            &ssl_options,
-            reject_unauthorized,
-            initial_data,
-        )
-        .is_err()
+        if tunnel
+            .start(&ssl_options, reject_unauthorized, initial_data)
+            .is_err()
         {
             drop(tunnel);
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         }
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
         // can fail the client and take `proxy`.
-        let unattached = this.proxy.with_mut(|proxy| match proxy.as_mut() {
+        let unattached = self.proxy.with_mut(|proxy| match proxy.as_mut() {
             Some(p) => {
                 p.set_tunnel(tunnel);
                 None
@@ -1210,27 +1122,27 @@ where
         if let Some(tunnel) = unattached {
             // Nothing else holds the tunnel.
             drop(tunnel);
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         }
-        this.state.set(State::Reading);
+        self.state.set(State::Reading);
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully
-    ///
-    /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub(crate) fn on_proxy_tls_handshake_complete(this: ThisPtr<Self>) {
+    pub(crate) fn on_proxy_tls_handshake_complete(&self) {
         log!("onProxyTLSHandshakeComplete");
 
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
-        let step = this.proxy.with_mut(|proxy| {
-            proxy
-                .as_mut()
-                .map(|p| (p.take_websocket_request_buf().into_vec(), p.get_tunnel()))
+        let step = self.proxy.with_mut(|proxy| {
+            let p = proxy.as_mut()?;
+            Some((
+                p.take_websocket_request_buf().into_vec(),
+                p.get_tunnel().cloned(),
+            ))
         });
         let Some((request_buf, tunnel)) = step else {
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
         // This is a TLS renegotiation. The request was already sent after the first handshake.
@@ -1239,54 +1151,49 @@ where
         }
         // TLS handshake done - free the CONNECT request buffer and send the
         // WebSocket upgrade request through the tunnel.
-        this.state.set(State::Reading);
-        this.clear_input();
+        self.state.set(State::Reading);
+        self.clear_input();
         // Store it in input_body_buf so handle_writable can retry on drain.
-        this.to_send_len.set(request_buf.len());
-        this.input_body_buf.set(request_buf);
+        self.to_send_len.set(request_buf.len());
+        self.input_body_buf.set(request_buf);
 
         // Send through the tunnel (will be encrypted). Buffer any unwritten
         // portion in to_send so handle_writable retries when the socket drains.
         let Some(tunnel) = tunnel else {
-            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
-        Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
+        self.report_request();
+        self.write_pending(|buf| tunnel.write(buf).ok());
     }
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
-    ///
-    /// Takes `ThisPtr<Self>` because `terminate`/`complete_upgrade`/the guard
-    /// drop may free `this`; see `fail`.
-    pub(crate) fn handle_decrypted_data(this: ThisPtr<Self>, data: &[u8]) {
+    pub(crate) fn handle_decrypted_data(&self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
-        let _guard = RefPtr::from_this(this);
-
         // Process as if it came directly from the socket.
-        Self::handle_upgrade_response_data(this, data);
+        self.handle_upgrade_response_data(data);
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_end(this: ThisPtr<Self>, _: Socket<SSL>) {
+    pub fn handle_end(self: RefPtr<Self>, _: Socket<SSL>) {
         log!("onEnd");
-        Self::terminate(this, ErrorCode::Ended);
+        self.terminate(ErrorCode::Ended);
     }
 
     /// The global `WebSocket`'s checks on a 101 (RFC 6455 §4.1). Returns the negotiated
     /// `permessage-deflate` params, if any. `ws` validates in JS instead: see `HandshakeVerdict`.
     fn validate_upgrade(
         &self,
-        response: &picohttp::Response,
+        response: &Response,
     ) -> Result<Option<WebSocketDeflate::Params>, ErrorCode> {
-        let mut upgrade_header = picohttp::Header::ZERO;
+        let mut upgrade_header = Header::new(b"", b"");
         let mut connection_header_seen = false;
         let mut connection_has_upgrade = false;
-        let mut websocket_accept_header = picohttp::Header::ZERO;
+        let mut websocket_accept_header = Header::new(b"", b"");
         let mut protocol_header_seen = false;
 
         let mut deflate_params: Option<WebSocketDeflate::Params> = None;
 
-        for header in response.headers.list {
+        for header in response.headers.iter() {
             match header.name().len() {
                 len if len == b"Connection".len() => {
                     if strings::eql_case_insensitive_ascii_ignore_length(
@@ -1304,7 +1211,7 @@ where
                             b"Upgrade",
                         )
                     {
-                        upgrade_header = *header;
+                        upgrade_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Version".len() => {
@@ -1324,7 +1231,7 @@ where
                             b"Sec-WebSocket-Accept",
                         )
                     {
-                        websocket_accept_header = *header;
+                        websocket_accept_header = header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Protocol".len() => {
@@ -1430,12 +1337,8 @@ where
 
     /// The 101 passed validation: hand the socket to the connected client. `remain_buf` holds the
     /// bytes received after the response head.
-    ///
-    /// Takes `ThisPtr<Self>` because `terminate`/`tcp.close()` may
-    /// synchronously dispatch `handle_close`, and the success path's double
-    /// `deref` may free `this`.
     fn complete_upgrade(
-        this: ThisPtr<Self>,
+        &self,
         deflate_params: Option<WebSocketDeflate::Params>,
         remain_buf: &[u8],
     ) {
@@ -1446,15 +1349,14 @@ where
             || (!remain_buf.is_empty()).then(|| Box::new(super::InitialData(remain_buf.to_vec())));
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
-        let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-        if let Some(tunnel) = tunnel {
+        if let Some(tunnel) = self.tunnel() {
             // wss:// through HTTP proxy: use tunnel mode
             // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
             // The socket continues to call handle_data on the upgrade client, which forwards to tunnel.
             // The tunnel forwards decrypted data to the WebSocket client.
             bun_jsc::mark_binding!();
-            let tcp = this.tcp.get();
-            let has_ws = this.cpp_websocket().is_some();
+            let tcp = self.tcp.get();
+            let has_ws = self.cpp_websocket().is_some();
             if !tcp.is_closed() && has_ws {
                 tcp.set_timeout(0);
                 log!("onDidConnect (tunnel mode)");
@@ -1464,7 +1366,7 @@ where
                 // never call cancel() to drop it. The TCP socket's ref (released
                 // in handle_close) is what keeps this struct alive to forward
                 // socket data to the tunnel after we switch to .done.
-                let (ws, _cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+                let (ws, _cpp_ref) = self.outgoing_websocket.replace(None).unwrap();
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
@@ -1477,20 +1379,18 @@ where
                 // resumes, by which point C++ has attached the connected WebSocket.
                 // Same order as the non-tunnel arm below, which detaches the socket
                 // before did_connect.
-                this.state.set(State::Done);
+                self.state.set(State::Done);
                 // This struct stays alive for the whole connection and `Done` never reads `body`,
                 // so free it now.
-                this.body.set(Vec::new());
+                self.body.set(Vec::new());
                 // The connected client holds its own.
-                this.poll_ref
-                    .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+                self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
                 // Create the WebSocket client with the tunnel
-                ws.did_connect_with_tunnel(tunnel, overflow(), deflate_params.as_ref());
+                ws.did_connect_with_tunnel(&tunnel, overflow(), deflate_params.as_ref());
             } else if tcp.is_closed() {
-                Self::terminate(this, ErrorCode::Cancel);
+                self.terminate(ErrorCode::Cancel);
             } else if !has_ws {
-                // No borrow of `*this` spans this call (handle_close reenters).
                 tcp.close(uws::CloseCode::Failure);
             }
             return;
@@ -1500,24 +1400,24 @@ where
         // custom `OwnedSslCtx` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
-        let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
+        let mut saved_secure = self.secure.replace(None); // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
         // The connected client checks a TLS renegotiation against this name.
-        let verified_hostname = this.hostname.take();
-        this.clear_data();
+        let verified_hostname = self.hostname.take();
+        self.clear_data();
         bun_jsc::mark_binding!();
-        let tcp = this.tcp.get();
-        let has_ws = this.cpp_websocket().is_some();
+        let tcp = self.tcp.get();
+        let has_ws = self.cpp_websocket().is_some();
         if !tcp.is_closed() && has_ws {
             tcp.set_timeout(0);
             log!("onDidConnect");
 
-            let (ws, cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+            let (ws, cpp_ref) = self.outgoing_websocket.replace(None).unwrap();
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
-            this.tcp.set(Socket::<SSL>::detached());
+            self.tcp.set(Socket::<SSL>::detached());
             if let uws::InternalSocket::Connected(native_socket) = socket.socket {
                 ws.did_connect::<SSL>(
                     bun_opaque::opaque_deref_mut(native_socket),
@@ -1528,17 +1428,15 @@ where
                     verified_hostname.as_bytes(),
                 );
             } else {
-                Self::terminate(this, ErrorCode::FailedToConnect);
+                self.terminate(ErrorCode::FailedToConnect);
             }
             // Two refs are released here (C++'s, then the TCP socket's — the
-            // socket now belongs to the connected WebSocket). The second may
-            // free `this`.
+            // socket now belongs to the connected WebSocket).
             drop(cpp_ref);
-            this.release_socket_ref();
+            self.release_socket_ref();
         } else if tcp.is_closed() {
-            Self::terminate(this, ErrorCode::Cancel);
+            self.terminate(ErrorCode::Cancel);
         } else if !has_ws {
-            // No borrow of `*this` spans this call (handle_close reenters).
             tcp.close(uws::CloseCode::Failure);
         }
         // Any arm above that didn't transfer ownership to `did_connect` left
@@ -1548,81 +1446,68 @@ where
 
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
+        cost += self.response_parser.get().memory_cost();
         cost += self.body.get().capacity();
         cost += self.to_send_len.get();
         cost
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate` and the trailing guard drop
-    /// may free `this`; see `fail`.
-    pub fn handle_writable(this: ThisPtr<Self>, socket: Socket<SSL>) {
-        debug_assert!(this.is_same_socket(socket));
-
-        // `on_writable`/`write` flush the tunnel and can reach `terminate` →
-        // `handle_close`, dropping the socket's ref while this frame still
-        // reads `*this`.
-        let _guard = RefPtr::from_this(this);
+    pub fn handle_writable(self: RefPtr<Self>, socket: Socket<SSL>) {
+        debug_assert!(self.is_same_socket(socket));
 
         // Forward to proxy tunnel if active
-        let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
-        if let Some(tunnel) = tunnel {
-            WebSocketProxyTunnel::on_writable(tunnel);
+        if let Some(tunnel) = self.tunnel() {
+            tunnel.on_writable();
             // In .done state (after WebSocket upgrade), just handle tunnel writes
-            if this.state.get() == State::Done {
+            if self.state.get() == State::Done {
                 return;
             }
 
             // Flush any unwritten upgrade request bytes through the tunnel
-            if this.to_send_len.get() == 0 {
+            if self.to_send_len.get() == 0 {
                 return;
             }
-            Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
+            self.write_pending(|buf| self.tunnel()?.write(buf).ok());
             return;
         }
 
-        if this.to_send_len.get() == 0 {
+        if self.to_send_len.get() == 0 {
             return;
         }
 
-        Self::write_pending(this, |buf| Self::socket_write(socket, buf));
+        self.write_pending(|buf| Self::socket_write(socket, buf));
     }
 
-    /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
-        if this.state.get() == State::Done {
+    pub fn handle_timeout(self: RefPtr<Self>, socket: Socket<SSL>) {
+        if self.state.get() == State::Done {
             socket.close_now();
             return;
         }
-        Self::terminate(this, ErrorCode::Timeout);
+        self.terminate(ErrorCode::Timeout);
     }
 
     /// In theory, this could be called immediately.
     /// In that case, we set `state` to `failed` and return, expecting the parent to call `destroy`.
-    ///
-    /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
-    /// ref and may free `this`; a `&mut self` argument would carry a Stacked
-    /// Borrows protector that makes deallocating its referent UB.
-    pub fn handle_connect_error(this: ThisPtr<Self>, socket: Socket<SSL>, errno: c_int) {
-        this.tcp.set(Socket::<SSL>::detached());
+    pub fn handle_connect_error(self: RefPtr<Self>, socket: Socket<SSL>, errno: c_int) {
+        self.tcp.set(Socket::<SSL>::detached());
 
         // For the TCP socket.
-        if this.state.get() == State::Reading {
+        if self.state.get() == State::Reading {
             let code: &'static str = if socket.dns_error() != 0 {
                 "ENOTFOUND"
             } else {
                 socket_errno_name(errno).unwrap_or("ECONNREFUSED")
             };
-            Self::fail(
-                this,
+            self.fail(
                 ErrorCode::FailedToConnect,
                 BunString::static_(code),
                 BunString::EMPTY,
             );
         } else {
-            this.state.set(State::Failed);
+            self.state.set(State::Failed);
         }
 
-        this.release_socket_ref();
+        self.release_socket_ref();
     }
 }
 
@@ -1639,27 +1524,18 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub(crate) fn clear_data(&self) {
-        self.poll_ref
-            .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
+        self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();
+        self.response_parser.set(ResponseParser::default());
         self.body.set(Vec::new());
 
         if !self.hostname.get().is_empty() {
             self.hostname.set(ZBox::default());
         }
 
-        // Clean up proxy state. Null the field and detach the tunnel's
-        // back-reference before deinit so that SSLWrapper shutdown callbacks
-        // cannot re-enter clear_data() while the proxy is still reachable.
-        if let Some(proxy) = self.proxy.replace(None) {
-            if let Some(tunnel) = proxy.get_tunnel() {
-                tunnel.detach_upgrade_client();
-            }
-            drop(proxy);
-        }
-        // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
+        self.proxy.set(None);
         self.ssl_config.set(None);
         // secure: Option<OwnedSslCtx> — Drop releases the ref taken in `connect`.
         self.secure.set(None);
@@ -1724,7 +1600,7 @@ struct BuildRequestResult {
 
 #[allow(clippy::too_many_arguments)]
 fn build_request_body(
-    vm: &mut VirtualMachineRef,
+    vm: &VirtualMachineRef,
     pathname: &[u8],
     is_https: bool,
     host: &[u8],
@@ -1749,7 +1625,7 @@ fn build_request_body(
         // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
+            .encode(&mut encoded_buf, &vm.rare_data().entropy::<16>())
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
@@ -1821,23 +1697,6 @@ fn build_request_body(
     }
 }
 
-fn parse_window_bits(value: &[u8]) -> Option<u8> {
-    use WebSocketDeflate::Params;
-
-    let digits = value
-        .strip_prefix(b"\"")
-        .and_then(|v| v.strip_suffix(b"\""))
-        .unwrap_or(value);
-    let bits = match *digits {
-        [d @ b'0'..=b'9'] => d - b'0',
-        [b'1', d @ b'0'..=b'9'] => 10 + (d - b'0'),
-        _ => return None,
-    };
-    (Params::MIN_WINDOW_BITS..=Params::MAX_WINDOW_BITS)
-        .contains(&bits)
-        .then_some(bits)
-}
-
 /// Validates the server's response to the global `WebSocket`'s offer, which is always
 /// `permessage-deflate; client_max_window_bits` (`WebSocketOptions::extensions` in WebSocket.h), and
 /// returns the negotiated params (RFC 7692 §7.1). `None` for a different extension, an unknown or
@@ -1869,21 +1728,6 @@ fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
     params.server_max_window_bits = server_bits.unwrap_or(params.server_max_window_bits);
     params.client_max_window_bits = client_bits.unwrap_or(params.client_max_window_bits);
     Some(params)
-}
-
-/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
-/// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-fn compute_accept_value(key: &[u8]) -> [u8; 28] {
-    use bun_sha_hmac::sha::hashers::SHA1;
-    const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut hasher = SHA1::init();
-    hasher.update(key);
-    hasher.update(WEBSOCKET_GUID);
-    let mut hash = [0u8; SHA1::DIGEST];
-    hasher.r#final(&mut hash);
-    let mut result = [0u8; 28];
-    let _ = bun_base64::encode(&mut result, &hash);
-    result
 }
 
 /// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
@@ -1984,17 +1828,17 @@ pub fn bun__websockethttpclient__connect(
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__cancel, c)
 pub fn bun__websockethttpclient__cancel(
-    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
 ) {
-    HttpUpgradeClient::cancel(this);
+    this.cancel();
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__setPaused, c)
 pub fn bun__websockethttpclient__set_paused(
-    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
     paused: bool,
 ) {
-    HttpUpgradeClient::set_paused(this, paused);
+    this.set_paused(paused);
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPClient__memoryCost, c)
@@ -2057,17 +1901,17 @@ pub fn bun__websockethttpsclient__connect(
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__cancel, c)
 pub fn bun__websockethttpsclient__cancel(
-    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
 ) {
-    HttpsUpgradeClient::cancel(this);
+    this.cancel();
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__setPaused, c)
 pub fn bun__websockethttpsclient__set_paused(
-    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    this: RefPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
     paused: bool,
 ) {
-    HttpsUpgradeClient::set_paused(this, paused);
+    this.set_paused(paused);
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__memoryCost, c)

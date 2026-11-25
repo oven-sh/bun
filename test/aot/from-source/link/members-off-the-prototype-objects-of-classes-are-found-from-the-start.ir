@@ -1,0 +1,14 @@
+# No constructor function stands in the row: the link of a class is laid where the class is made. So a read off the prototype object of the class below gives the member of the class above and nothing else, and so do its link and `super`.
+# f1 = read, f2 = above, f4 = hello, f7 = probe
+# -- source: members-off-the-prototype-objects-of-classes-are-found-from-the-start.js
+# class Base { hello() { return 1; } }
+# class Sub extends Base {}
+# class Top extends Sub { probe() { return super.hello; } }
+# function read(p) { return p.hello; }
+# function above(p) { return p.__proto__.hello; }
+# read(Sub.prototype); above(Sub.prototype); new Top().probe();
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} result=f4
+# LINK: function f2 {{*}} result=f4
+# LINK: function f7 {{*}} result=f4

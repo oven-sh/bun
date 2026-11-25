@@ -1,0 +1,18 @@
+# -- source: variable-comes-round-as-link-types-it-where-the-stores-of-the-loop-stay-within.js
+# function each(list, f) { for (let i = 0; i < list.length; i++) f(list[i]); }
+# function sumOf(list) { let total = 0; each(list, x => { total += x; }); return total; }
+# function halvesOf(list) { let total = 0; each(list, x => { total += x / 2; }); return total; }
+# const list = [];
+# for (let i = 0; i < 12; i++) list.push(i);
+# print(sumOf(list) + 1, halvesOf(list) + 1);
+# print(sumOf(list) + 1, halvesOf(list) + 1);
+# -- end of source
+# Nothing is declared of `total`. Link types the field by what is stored into it, and the parameter of the head has the type that a read of the field has: whatever is made of it is typed as narrowly as it was when the operand was read out of memory.
+# In the typed copy the sum of two whole numbers is of that type by itself, and nothing is assumed.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: : int|whole @Double{{*}}) isInLoop=true isLoopHead=true:
+# RUN(READS): walk f2 mechanisms=all
+# READS-NOT: GetEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

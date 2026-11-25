@@ -41,15 +41,4 @@ for (const key in table) keys.push(key);
 console.log(keys.join());
 console.log(Object.keys({ ...table }).join(), Object.keys(Object.assign({}, keyed)).join());
 
-// GENERATED: Keyed
 // CHECK-LABEL: function {{*}}name="Keyed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_2]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

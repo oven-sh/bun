@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout {{*}}kind=Instance name="Made" {{*}}fields=[{key=symbol("kCount"){{*}} declared={type=number site=[[w0]]} flags=[IsRequired] {{*}}}, {key=symbol("kOwner"){{*}} declared={type=undefined|null|string site=[[w1]]
+// CHECK: layout {{*}}kind=Instance name="Made" {{*}}fields=[{key=symbol("kCount"){{*}} declared={type=number} flags=[IsRequired] {{*}}}, {key=symbol("kOwner"){{*}} declared={type=undefined|null|string
 
 // `this[kCount] = 0` in a constructor function whose `this` has a declared type: a field under a symbol has the type that is declared there, as a field under a name has.
 // It is not "a name that is only stored", which has the type of the first value stored: `null` for kOwner.

@@ -66,3 +66,24 @@ test("one that is not passed its wrapper, or answers nothing that its receiver c
     "%Thing%.prototype.later": ["Retains"],
   });
 });
+
+test("answersThis makes the receiver the result", async () => {
+  using dir = tempDir("members-that-answer-their-receiver", {
+    "thing.bind.ts": `import * as b from ${JSON.stringify(library)};
+export const Thing = b.class({
+  rustPath: "crate::thing::Thing",
+  proto: { any: { returns: b.self, passThis: true }, same: { returns: b.self, passThis: true, answersThis: true } },
+});
+`,
+  });
+  const problems = new Problems();
+  const source = `bun_runtime=${join(String(dir), "thing.bind.ts")}`;
+  const { declarations } = await collectBindgen(String(dir), [source], new Map(), new Set(), new Map(), problems);
+  expect(problems.lines).toEqual([]);
+  const resultOf = (path: string) =>
+    declarations.flatMap(({ declaration }) =>
+      declaration.declares === "Member" && declaration.path === path ? [declaration.signatures[0].result] : [],
+    );
+  expect(resultOf("%Thing%.prototype.any")).toEqual([{ type: "Instance", class: "Thing" }]);
+  expect(resultOf("%Thing%.prototype.same")).toEqual([{ type: "Operand", operand: "this" }]);
+});

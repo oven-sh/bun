@@ -11,8 +11,7 @@
 // CHECK-LABEL: function {{*}}kind=Arrow{{*}}captures=[{type=anything}]
 // CHECK: b0([[copy]]: anything):
 // CHECK-NOT: = Undefined
-// CHECK: [[result]] = [[cast]] [[copy]]
-// CHECK-NEXT: Return [[result]]
+// CHECK: Return [[copy]]
 
 // RUN(MAIN): lower
 // MAIN-NOT: kind=CommonJsModule{{*}}HasNewTarget

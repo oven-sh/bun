@@ -12,7 +12,7 @@
 //   --rounds              repeat rounds of --seconds, each in its own folder <out>/<n> with a new seed, until <out>/STOP exists
 //   --jobs <n>            concurrent builds on the product runner (default: a quarter of the cores; 0: none)
 //   --engine-jobs <n>     concurrent programs on the engine runner (default 0)
-//   --batch <n>           maximum number of programs in one product build (default 32)
+//   --batch <n>           maximum number of programs in one product build (default 64)
 //   --threads <n>         compiler threads per build (default 4)
 //   --seed <n>            first seed (default: from the clock). Program i has seed + i
 //   --bun <path>         the Bun under test (default: the one that runs this script); --out <folder>: where results go (default ./fuzz-out)
@@ -28,21 +28,22 @@
 //   --rewritten           also generate each source as <source>-rewritten: the program is transformed in one to seven ways that keep its output and hide
 //                         information from the compiler (values laundered through eval, loop bounds known only at run time, a GC inside calls, functions
 //                         the host could call, open-world global access, the whole file wrapped in a function, a try or a loop)
+//   --never-taken         also generate each source as <source>-never-taken: the program also holds code that this run never takes and that no build can
+//                         rule out, done to its own variables and fields (another kind of value stored, a field deleted, a prototype swapped, ...)
+//   --another-call        also generate each source as <source>-another-call: one or two of the program's own functions are called once more, ahead of
+//                         everything else, with values of other kinds (a list of texts, a record, a big integer, nothing at all, ...)
+//   --own-copies          also generate each source as <source>-own-copies: each statement at the top of the program that names one of its functions or
+//                         classes gets a copy of its own, so that what is known of a helper is known from one scene alone
+//   --four-callers        also generate each source as <source>-four-callers: what the program does at its top is done by four functions, each called
+//                         twice
 //
 // How it is built and run
 //   --flags "<flags>"     added to every product build; --engine-flags is the same for the engine runner
-//   --modes a,b           only these build modes. Always on: default, check-proofs, erased, hot, separate-entry-points (and validate with --validate).
-//                         Only when named: erased-hot, hot-check-proofs, no-inlining, hot-no-inlining, no-flow-results, hot-no-flow-results, cold, large,
-//                         cold-large, erased-cold-large, erased-cold, slow-path-allocations, check-claims, check-moved-loads, hot-check-claims,
-//                         hot-check-moved-loads, check-decided-comparisons, hot-check-decided-comparisons
-//   --validate            also build each program with --aot-validate
-//   --run-once            do not run each executable a second time with the run-time checks on (BUN_JSC_validateAOTRuntime=1)
+//   --modes a,b           only these build modes. Always on: default, erased, separate-entry-points
 //   --no-verifiers        leave the compiler's verifiers off, as in a user's build
 //   --gc-stress 1,2,3,5,7,11   run the executable with a collection at every n-th slow-path allocation, with freed cells scribbled and never reused. n, and
 //                         whether collections are full or eden, are picked per batch and recorded in the finding's flags as --run-env=<variable>.
 //                         0 means no extra collections. --fenced: half of the batches use the fenced write barrier
-//   --fail-predictions 1,2,7   one time in n, compiled code takes the slow path after a type check that would have passed. n and the seed are picked per batch
-//   --lowered-limits      build each batch with one compiler or run-time limit at 0, 1 or 2 (--aot-limit), so a small program hits what only a large one does
 //   --decoy-shapes 0,17,65,300   build each batch beside a module with that many unrelated object shapes that use the programs' property names
 //                         (decoy-shapes.ts). Recorded in the finding's flags as --decoy-shapes=<n>
 //   --project no-tsconfig,default,empty-tsconfig,lib-without-dom,bun-init   which project files lie in the build folder (`projects` in runners.ts), picked per
@@ -56,7 +57,7 @@
 //   --known <file>        more accepted differences, in the format of accepted-differences.tsv, which is always read. May be repeated
 //   --reduce-seconds <n>  time limit of one reduction (default 600 on the product runner, a third of that on the engine runner)
 //   --count-only          only list failures in failures.tsv and count them in groups.tsv: nothing is confirmed, reduced or stored
-//   --no-attribution      do not search for the pass or flow result that causes a finding, which takes a dozen builds or more
+//   --no-attribution      do not ask whether a finding goes away without the verifiers or the written types, which takes a build each
 //   --work <folder>       where programs and executables are written (default /dev/shm if it exists)
 //   --min-free-gb <n>     pause while --work or --out has less free space (default 4)
 //
@@ -70,6 +71,7 @@
 //   failures.tsv          every failure, including known and repeated ones
 //   findings.tsv          one line per distinct finding
 //   same-without-aot.tsv  differences from `bun <file>` that an executable built without --aot shows too: not findings
+//   driver-errors.txt     faults of the fuzzer itself. Each may have cost a finding: the exit code is 1 where there is one
 //   findings/<name>/      reduced.*, original.*, plain.txt, compiled.txt and finding.json (seed, source, runner, mode, flags, binary, cause).
 //                         A multi-file program is a folder reduced/ or original/ whose entry point is main.*
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
@@ -103,13 +105,12 @@ const runners: { runner: Runner; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("runner") !== "engine" : productJobs > 0)
-  runners.push({ jobs: productJobs, runner: new ProductRunner(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), reference: option("reference"), noVerifiers: has("no-verifiers"), validate: has("validate"), runsOnce: has("run-once"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("gc-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits"), decoyShapes: option("decoy-shapes")?.split(",").map(Number), projects: option("project")?.split(",") }) }); // prettier-ignore
+  runners.push({ jobs: productJobs, runner: new ProductRunner(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), reference: option("reference"), noVerifiers: has("no-verifiers"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("gc-stress")?.split(",").map(Number), isFenced: has("fenced"), decoyShapes: option("decoy-shapes")?.split(",").map(Number), projects: option("project")?.split(",") }) }); // prettier-ignore
 if (option("engine") && (replay ? option("runner") === "engine" : engineJobs > 0))
   runners.push({
     jobs: engineJobs,
     runner: new EngineRunner(option("engine")!, {
       baseFlags: words(option("engine-flags")),
-      validate: has("validate"),
       buildSeconds: 60,
       runSeconds: 10,
     }),
@@ -136,6 +137,7 @@ if (replay) {
   const out = option("out") ?? join(process.cwd(), "fuzz-out");
   mkdirSync(out, { recursive: true });
   const round = () => String(1 + Math.max(0, ...readdirSync(out).map(Number).filter(Number.isInteger)));
+  let driverErrors = 0;
   do {
     const summary = await fuzz({
       runners,
@@ -152,13 +154,18 @@ if (replay) {
       isCountOnly: has("count-only"),
       alsoMultiFile: !has("single-file"),
       alsoRewritten: has("rewritten"),
+      alsoNeverTaken: has("never-taken"),
+      alsoAnotherCall: has("another-call"),
+      alsoOwnCopies: has("own-copies"),
+      alsoFourCallers: has("four-callers"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),
       batch: option("batch") ? Number(option("batch")) : undefined,
     });
     console.log(summary.status);
+    driverErrors += summary.driverErrors;
   } while (has("rounds") && !existsSync(join(out, "STOP")));
-  // A source may leave something behind that keeps the process alive.
-  process.exit(0);
+  // A source may leave something behind that keeps the process alive. A fault of the fuzzer itself may have cost a finding.
+  process.exit(driverErrors ? 1 : 0);
 }

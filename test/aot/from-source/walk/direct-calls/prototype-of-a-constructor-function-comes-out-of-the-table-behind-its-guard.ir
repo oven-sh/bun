@@ -1,0 +1,24 @@
+# -- source: constructor-function-is-constructed-in-place.ts
+# declare function report(value: unknown): void;
+# function Point(this: any, x: number): any { if (!new.target) return new (Point as any)(x + 100); this.x = x; this.y = 0; }
+# function Pair(this: any, a: number) { this.a = a; this.b = a + 1; }
+# const record: any = { Pair };
+# const holders: any[] = [record];
+# (globalThis as any).holder = record;
+# export function leak(value: unknown) { holders.push(value); return holders.length; }
+# export function makePoint(n: number) { return new (Point as any)(n); }
+# export function makePair(n: number) { return new record.Pair(n); }
+# report(leak(record));
+# report(makePoint(1).x + makePair(2).b);
+# -- end of source
+# `new Point(n)` of a constructor function that is made once and holds no capture: while the guard of `prototype` on its function object holds, the object that the class began with comes out of the table of classes.
+# No read by name, no place in the caches. The failing side asks the run time: for the first object, which begins the guards, and once the program has stored to `prototype`.
+# RUN: bytes f3:Body mechanisms=-Inlining
+# CHECK: ClassGuard Instance "Point" {{*}}Static 0 "prototype"
+# CHECK: ClassRank Instance "Point"
+# CHECK: operationAOTGetConstructPrototype
+# RUN(READ): bytes f3:Body mechanisms=-Inlining
+# READ-NOT: SiteCache {{*}}"prototype"
+# What comes out of a record may be a closure of the function or anything else: the arm behind the test of the callee has the same form.
+# RUN(HELD): bytes f2:Body mechanisms=-Inlining
+# HELD: ClassGuard Instance "Pair" {{*}}Static 0 "prototype"

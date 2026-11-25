@@ -4,6 +4,7 @@
 
 struct BunVmHandleRef;
 #include "BunLoopKind.h"
+#include "EventLoopKeepAlive.h"
 #include "SharedEnvStore.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -16,11 +17,6 @@ struct BunVmHandleRef;
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
 #include <JavaScriptCore/Weak.h>
-
-namespace uWS {
-template<bool isServer, bool isClient, typename UserData>
-struct WebSocketContext;
-}
 
 struct us_socket_t;
 struct us_socket_group_t;
@@ -70,15 +66,11 @@ public:
     JSC::JSGlobalObject* jsGlobalObject();
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
-    void refEventLoop();
-    void unrefEventLoop();
+    // For an ActiveDOMObject that is collected while it keeps the event loop alive until it is closed.
+    void keepEventLoopAliveUntilStopped() { m_keepAliveOfCollectedObjects.setActive(true); }
     using RefCounted::deref;
     using RefCounted::ref;
 
-    const WTF::URL& url() const
-    {
-        return m_url;
-    }
     bool isMainThread() const { return realm().m_identifier == 1; }
     // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
     // graph's context makes and frees its own; a global's is bound to its VM's root context.
@@ -153,8 +145,6 @@ public:
     void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
-    // Executes the task on context's thread asynchronously.
-    void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     JSC::VM& vm() { return *realm().m_vm; }
@@ -193,7 +183,6 @@ private:
     void* const m_bunVM;
     // What other threads use to reach the VM (see JSVMClientData::vmHandle).
     const ::BunVmHandleRef* const m_vmHandle;
-    WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.
@@ -216,6 +205,7 @@ private:
     // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).
     bool m_isStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };
+    Bun::EventLoopKeepAlive m_keepAliveOfCollectedObjects;
 
 public:
 #if ASSERT_ENABLED

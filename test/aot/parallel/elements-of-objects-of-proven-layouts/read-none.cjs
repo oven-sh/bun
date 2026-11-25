@@ -1,0 +1,10 @@
+"use strict";
+const log = [];
+const outside = JSON.parse('[1, 20, 300]');
+const say = value => log.push(typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+const attempt = run => { try { say(run()); } catch (thrown) { log.push(thrown.constructor.name); } };
+const make = v => { const r = { n: v }; r[0] = v; r[1] = v + 1; r[2] = v + 2; return r; };
+const three = (r, k) => r[k | 0] + "," + r[(k + 1) | 0] + "," + r[(k + 2) | 0] + "," + r[(k + 3) | 0];
+function none(v, k) { const r = { n: v }; return r[k | 0] + "," + r[(k + 1) | 0]; }
+for (let turn = 0; turn < 3; turn++) for (const v of outside) { const k = outside.length - 3; attempt(() => none(v, k)); }
+console.log("SAID", log.join(" | "));

@@ -1,0 +1,40 @@
+# -- source: a-false-proof-of-a-result-is-stopped-in-every-build-in-walked-code.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# function returnsIt() { const got = id(7); print("got it"); return got; }
+# function endsInIt() { return id(7); }
+# function endsInThat() { return returnsIt(); }
+# if (which === 1) print(typeof returnsIt());
+# if (which === 2) print(typeof endsInIt());
+# if (which === 3) print(typeof endsInThat());
+# print("went on");
+# -- end of source
+# The entry check on a result, in a user's build: no switch that checks proofs is set.
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so it proves that all three results are undefined, but a number arrives.
+# returnsIt: the return checks the outgoing value against the type that the result is held to (Plan::typeHeldOfResult()). The number is caught there, and the process crashes with a named error.
+# endsInIt ends in a call of a value that only the flow analysis identifies. Its result passes no return, so the record of a call of endsInIt claims nothing,
+# and what Link has proven is checked at that call.
+# endsInThat ends in a call of a function through its binding. That callee's result is held to no wider a type than the result of endsInThat, so the callee's return is the entry check of endsInThat.
+# When the proofs were trusted unchecked, each function printed "undefined" for a number and the program continued.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(RETURNS): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# RETURNS: got it
+# RETURNS-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# RETURNS-NEXT: found int32 in a call result
+# RETURNS-NOT: went on
+# RETURNS: crashed with
+# RUN(ENDS): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# ENDS: bun: internal AOT error: type check failed at {{*}}
+# ENDS-NEXT: found int32 in a call result
+# ENDS-NOT: went on
+# ENDS: crashed with
+# RUN(THAT): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
+# THAT: got it
+# THAT-NEXT: bun: internal AOT error: type check failed at {{*}} (returnsIt)
+# THAT-NEXT: found int32 in a call result
+# THAT-NOT: went on
+# THAT: crashed with
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: went on
+# NONE-NEXT: exited with 0

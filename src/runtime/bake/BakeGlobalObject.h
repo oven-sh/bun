@@ -15,14 +15,14 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeGlobalScope, m_subspaceForBakeGlobalScope),
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForBakeGlobalObject; });
+        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBakeGlobalScope, m_subspaceForBakeGlobalScope));
     }
 
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
 
     static JSC::Structure* createStructure(JSC::VM& vm);
+    static void destroy(JSC::JSCell* cell) { static_cast<GlobalObject*>(cell)->GlobalObject::~GlobalObject(); }
 
     void finishCreation(JSC::VM& vm);
 

@@ -1,0 +1,23 @@
+# -- source: main.js
+# function target(a, b, c) { return "<" + [arguments.length, a, b, c].join("/") + ">"; }
+# function stored() { arguments[0] = "s"; return target.apply(null, arguments); }
+# function maybe(flag) { if (flag === 1) arguments[1] = "m"; return target.apply(null, arguments); }
+# function cut(flag) { if (flag === 1) arguments.length = 1; return target.apply(null, arguments); }
+# function grown(flag) { if (flag === 1) Array.prototype.push.call(arguments, "g"); return target.apply(null, arguments); }
+# function touched(flag) { touch(flag, arguments); return target.apply(null, arguments); }
+# function touch(flag, list) { if (flag === 1) list[0] = "t"; }
+# function twice() { return target.apply(null, arguments) + target.apply(null, arguments); }
+# function behind(flag) { if (flag === 0) return "early"; arguments[2] = "s"; return target.apply(null, arguments); }
+# function longer(flag) { if (flag === 0) return "early"; arguments[1] = "l"; arguments.length = 3; return target.apply(null, arguments); }
+# function first() { if (arguments.length === 0) return "none"; arguments[0] = "z"; return target.apply(null, arguments); }
+# function shorter() { if (arguments.length === 0) return "none"; arguments.length = 1; return target.apply(null, arguments); }
+# globalThis.fs = { stored, maybe, cut, grown, touched, twice, behind, longer, first, shorter };
+# const fs = globalThis.fs;
+# print(fs.stored(1, 2), fs.maybe(1, 2), fs.maybe(2, 2), fs.cut(1, 2, 3), fs.cut(2, 2, 3), fs.grown(1, 2), fs.grown(2, 2), fs.touched(1, 2), fs.touched(2, 2), fs.twice(1));
+# print(fs.behind(0), fs.behind(1, 2, 3), fs.behind(1), fs.longer(1), fs.longer(1, 2, 3, 4), fs.first(), fs.first(1, 2), fs.shorter(1, 2, 3), fs.shorter());
+# -- end of source
+# What lies in the entry's frame is what came; what `apply` hands on is what the object holds at the call. Wherever the object may have been changed, on this way or on another that comes to the call, the object is made and read.
+# RUN: run-in-shell
+# CHECK: <2/s/2/> <2/1/m/> <2/2/2/> <1/1//> <3/2/2/3> <3/1/2/g> <2/2/2/> <2/t/2/> <2/2/2/> <1/1//><1/1//>
+# CHECK-NEXT: early <3/1/2/s> <1/1//> <3/1/l/> <3/1/l/3> none <2/z/2/> <1/1//> none
+# CHECK-NEXT: exited with 0

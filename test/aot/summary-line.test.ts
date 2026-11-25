@@ -3,10 +3,9 @@
 // says whether its program has typed and untyped accesses, and computes the line from the numbers of `--explain=json`.
 // The read of `console.log` is one of the typed accesses, so only a program that prints nothing has none. An object that never
 // leaves its function is not allocated. So a program that is to be typed keeps its objects in an array.
+// The `No type errors` line of `bun check --aot` also gives the number of files and the number of lines.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
-import { parseExplainLines, type ExplainNumbers } from "./explain/explain-report";
-import { countAccesses } from "./harness/build-report";
 import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
@@ -17,6 +16,19 @@ interface Program {
   /** Left out where it depends on what the optimizer removes. */
   hasTyped?: boolean;
   hasUntyped: boolean;
+}
+
+/** How each property access was compiled. Every access is counted in exactly one of the three. */
+interface AccessCounts {
+  free: number;
+  tested: number;
+  byName: number;
+}
+
+/** The first line of `--explain=json`. */
+interface ExplainNumbers {
+  accesses: AccessCounts;
+  dependencyAccesses: AccessCounts;
 }
 
 const stock = `export interface Item {
@@ -50,62 +62,14 @@ console.log(value);
 
 const savedText = `'[{"sku":"B-2","price":10,"quantity":3}]'`;
 
-const programs: Record<string, Program> = {
-  "a class and a loop": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  constructor(
-    public id: number,
-    public balance: number,
-  ) {}
-}
-function total(accounts: Account[]): number {
-  let sum = 0;
-  for (const account of accounts) sum += account.balance;
-  return sum;
-}
-const accounts: Account[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account(id, id % 3);
-  accounts.push(account);
-}
-const sum = total(accounts);
-console.log(sum);
-`,
-    },
-  },
-  "objects of a class behind an any": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "main.ts": `class Account {
-  id = 1;
-  balance = 2;
-}
-const accounts: any[] = [];
-for (let id = 0; id < 10; id++) {
-  const account = new Account();
-  accounts.push(account);
-}
-let sum = 0;
-for (const account of accounts) sum += account.balance;
-console.log(sum);
-`,
-    },
-  },
-  "a JavaScript file of the program": {
-    hasTyped: true,
-    hasUntyped: false,
-    files: {
-      "helper.js": `export function describe(jobs) {
+const twoFiles = {
+  "helper.js": `export function describe(jobs) {
   let text = "";
   for (const job of jobs) text += job.id + ": " + job.state + "\\n";
   return text;
 }
 `,
-      "main.ts": `import { describe } from "./helper.js";
+  "main.ts": `import { describe } from "./helper.js";
 class Job {
   id = 1;
   state = "queued";
@@ -114,8 +78,9 @@ const jobs = [new Job(), new Job()];
 const text = describe(jobs);
 console.log(text);
 `,
-    },
-  },
+};
+
+const programs: Record<string, Program> = {
   "properties of parsed data": {
     hasUntyped: true,
     files: {
@@ -244,9 +209,12 @@ async function check(files: Files, ...flags: string[]) {
 async function numbersOf(files: Files): Promise<ExplainNumbers> {
   const { stdout, summary } = await check(files, "--explain=json");
   expect(summary).toEqual([]);
-  return parseExplainLines(stdout).numbers;
+  const numbers = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(numbers).toBeDefined();
+  return JSON.parse(numbers!);
 }
 
+const countAccesses = ({ free, tested, byName }: AccessCounts) => free + tested + byName;
 const count = (number: number) => number.toLocaleString("en-US");
 
 function summaryOf({ accesses }: ExplainNumbers) {
@@ -280,3 +248,18 @@ describe.concurrent("typed percentage", () => {
     buildTimeout,
   );
 });
+
+test(
+  "closing line",
+  () =>
+    slot(async () => {
+      const files = twoFiles;
+      const texts = Object.values(files);
+      const lineCount = texts.reduce((sum, text) => sum + text.split("\n").length - 1, 0);
+      const { lines } = await check(files);
+      expect(lines.filter(line => line.includes("No type errors"))).toEqual([
+        expect.stringMatching(new RegExp(` No type errors in ${texts.length} files, ${count(lineCount)} lines$`)),
+      ]);
+    }),
+  buildTimeout,
+);

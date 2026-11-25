@@ -76,19 +76,14 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-// Canary builds only: an executable built with `--aot` starts with this entry point, given as its path below the root of the
-// build, in place of the first.
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_START_AT: string, "BUN_AOT_START_AT", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
-// A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
-new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
-new!(pub BUN_AOT_TESTS_NAME_WHAT_THEY_USE: boolean, "BUN_AOT_TESTS_NAME_WHAT_THEY_USE", { default: false });
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_ORDER_OUT: string, "BUN_AOT_ORDER_OUT", {});
+// Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
+// executable.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_WRITES_PROGRAM_ALONE: boolean, "BUN_AOT_WRITES_PROGRAM_ALONE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -146,7 +141,7 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
-// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// Compressed bytes to buffer in `TarballStream.incoming` before the HTTP
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
@@ -194,9 +189,11 @@ new!(pub GITHUB_SERVER_URL: string, "GITHUB_SERVER_URL", {});
 new!(pub GITHUB_SHA: string, "GITHUB_SHA", {});
 new!(pub GITHUB_WORKSPACE: string, "GITHUB_WORKSPACE", {});
 platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE", {});
+new!(pub HOSTALIASES: string, "HOSTALIASES", {});
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
+new!(pub LOCALDOMAIN: string, "LOCALDOMAIN", {});
 // Dump mimalloc statistics at the end of the process. Note that this is not the same as
 // `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
@@ -230,6 +227,7 @@ new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
+new!(pub RES_OPTIONS: string, "RES_OPTIONS", {});
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
@@ -281,6 +279,8 @@ pub mod feature_flag {
 
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE, "BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT, "BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});

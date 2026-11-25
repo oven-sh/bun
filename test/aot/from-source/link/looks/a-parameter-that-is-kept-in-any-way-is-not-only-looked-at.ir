@@ -1,0 +1,36 @@
+# Each of these is handed an object that its caller has just made, and each does one thing more than look: it stores it in a variable, in a field, in a list, hands it back, on one arm only, throws it, lets a closure catch it,
+# hands it to code that nobody knows or to a built-in, calls a method of it (which gets it as `this`), stores into it, compares it loosely or adds to it (which may run its own valueOf), spreads it, asks whether it is an instance, reads it under a key that is worked out or under a symbol (nobody knows at build time who answers those), reads off it a name that stands on Object.prototype
+# (in a test run an accessor may stand in the place of such a member, and it is handed the object as `this`).
+# f1 .. f20 = the twenty, in the order of the source, f21 = caller
+# -- source: a-parameter-that-is-kept-in-any-way-is-not-only-looked-at.ts
+# declare function sink(...values: unknown[]): void;
+# declare const unknown: (o: unknown) => number;
+# let kept: unknown; const holder: { it: unknown } = { it: 0 }; const shelf: unknown[] = []; class Kind {}
+# type O = { a: number; m?: () => number; extra?: number };
+# function inVariable(o: O): number { kept = o; return 1; }
+# function inField(o: O): number { holder.it = o; return 1; }
+# function inList(o: O): number { shelf.push(o); return 1; }
+# function back(o: O): O { return o; }
+# function backOnOneArm(o: O): O | number { if (o.a > 1) return o; return o.a; }
+# function thrown(o: O): number { if (o.a > 1) throw o; return 1; }
+# function caught(o: O): number { kept = () => o.a; return 1; }
+# function toUnknown(o: O): number { return unknown(o); }
+# function toBuiltin(o: O): number { return Object.keys(o).length; }
+# function method(o: O): number { return o.m ? o.m() : 0; }
+# function storedInto(o: O): number { o.extra = 1; return o.a; }
+# function loosely(o: O): boolean { return (o as unknown) == 1; }
+# function added(o: O): string { return "" + o; }
+# function spread(o: O): number { kept = { ...o }; return 1; }
+# function instance(o: O): boolean { return o instanceof Kind; }
+# function byKey(o: O, k: string): unknown { return (o as any)[k]; }
+# function bySymbol(o: O): unknown { return (o as any)[Symbol.iterator]; }
+# function byMember(o: O): unknown { return o.toString; }
+# function byLink(o: O): unknown { return (o as any).__proto__; }
+# function byMaker(o: O): unknown { return o.constructor; }
+# function caller(x: number) { sink(inVariable({ a: x }), inField({ a: x }), inList({ a: x }), back({ a: x }), backOnOneArm({ a: x }), caught({ a: x }), toUnknown({ a: x }), toBuiltin({ a: x }), method({ a: x }), storedInto({ a: x }), loosely({ a: x }), added({ a: x }), spread({ a: x }), instance({ a: x }), byKey({ a: x }, "a" + x), bySymbol({ a: x }), byMember({ a: x }), byLink({ a: x }), byMaker({ a: x })); return thrown({ a: x }); }
+# sink(caller(1));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK-NOT: only-looked-at
+# CHECK-LABEL: function f21

@@ -12,8 +12,9 @@
 // CHECK-NOT: StrictEq
 // CHECK: [[isText]] = TypeTest [[value]] testedType=string
 // CHECK-NEXT: Branch [[isText]] -> taken [[text]](| 0), notTaken [[rest]](| 0)
-// CHECK: [[text]]([[proven]]):
-// CHECK: = PropGet [[proven]] key="length"
+// CHECK: [[text]]([[left]]):
+// CHECK-NEXT: [[named]] = NarrowByTest [[value]], [[left]]
+// CHECK: = PropGet [[named]] key="length"
 // CHECK-LABEL: function {{*}}name="ofMember"
 // CHECK: = StrictEq
 // RUN(OUTSIDE): lower

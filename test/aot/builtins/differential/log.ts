@@ -37,6 +37,8 @@ export type LogEvent = {
   trap: Trap;
   key: PropertyKey | undefined;
   isOwnKey: boolean;
+  // The subject has the key, or an object of its prototype chain has it: native code can have found it by listing.
+  isKeyOnChain: boolean;
   thisValue: unknown;
   passedValues: unknown[];
   descriptor: PropertyDescriptor | undefined;
@@ -69,6 +71,7 @@ export class Log {
         trap,
         key,
         isOwnKey: key !== undefined && Object.hasOwn(target, key),
+        isKeyOnChain: key !== undefined && key in target,
         thisValue: undefined,
         passedValues: [],
         descriptor: undefined,

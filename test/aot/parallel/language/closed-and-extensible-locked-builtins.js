@@ -1,4 +1,4 @@
-// The built-in objects that a compiled program closes entirely, one per line: no key can be stored, and the object is not extensible. Below them stand objects under the usual lock: a member cannot be stored, a new ordinary name can, and the object stays extensible; an index can be stored on a constructor and on a namespace object, and not on a prototype. Last come built-ins that are not locked, a member that real packages replace, and a class of the program: this program stores to them, and every store holds as in plain Bun. language/function-prototype-is-locked, language/regexp-prototype-is-locked and language/string-prototype-keeps-its-members with its neighbors have the other locked objects.
+// Object.prototype is the one built-in object that a compiled program closes entirely: no key can be stored, and the object is not extensible. Below it stand objects under the usual lock: a member cannot be stored, a new ordinary name can, and the object stays extensible; an index can be stored on a constructor and on a namespace object, and not on a prototype. Last come built-ins that are not locked, a member that real packages replace, and a class of the program: this program stores to them, and every store holds as in plain Bun. language/function-prototype-is-locked, language/regexp-prototype-is-locked and language/string-prototype-keeps-its-members with its neighbors have the other locked objects.
 function store(object, key, value) {
   const had = Object.getOwnPropertyDescriptor(object, key);
   try { object[key] = value; } catch (e) { return e.name; }
@@ -16,11 +16,11 @@ const prototypeOf = Object.getPrototypeOf;
 
 console.log("closed entirely");
 row("Object.prototype", Object.prototype, "hasOwnProperty");
+
+console.log("members fixed, new names allowed");
 row("Promise.prototype", Promise.prototype, "then");
 row("the prototype of generators", prototypeOf(generator.prototype), "next");
 row("the prototype of async generators", prototypeOf(asyncGenerator.prototype), "next");
-
-console.log("members fixed, new names allowed");
 row("Array.prototype", Array.prototype, "push");
 row("Date.prototype", Date.prototype, "toJSON");
 row("Promise", Promise, "resolve");
@@ -58,10 +58,10 @@ export {};
 /* Output:
 closed entirely
 Object.prototype: a new name TypeError, hasOwnProperty TypeError, index 0 TypeError, extensible false
-Promise.prototype: a new name TypeError, then TypeError, index 0 TypeError, extensible false
-the prototype of generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
-the prototype of async generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
 members fixed, new names allowed
+Promise.prototype: a new name stored, then TypeError, index 0 TypeError, extensible true
+the prototype of generators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of async generators: a new name stored, next TypeError, index 0 TypeError, extensible true
 Array.prototype: a new name stored, push TypeError, index 0 TypeError, extensible true
 Date.prototype: a new name stored, toJSON TypeError, index 0 TypeError, extensible true
 Promise: a new name stored, resolve TypeError, index 0 stored, extensible true

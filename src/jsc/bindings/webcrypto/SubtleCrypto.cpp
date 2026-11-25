@@ -51,10 +51,10 @@
 #include "JSPbkdf2Params.h"
 #include "JSMlDsaParams.h"
 #include "JSX25519Params.h"
-#include "AsymmetricKeyValue.h"
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
+#include "CryptoKeyOKP.h"
 #include "CryptoKeyRSA.h"
 #include "BunString.h"
 #include "ErrorCode.h"
@@ -1638,6 +1638,25 @@ static JSC::JSValue toJSArrayBuffer(JSDOMGlobalObject& globalObject, RefPtr<JSC:
     return JSC::JSArrayBuffer::create(globalObject.vm(), globalObject.arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
+static std::optional<Vector<uint8_t>> marshalPublicKey(const CryptoKey& key)
+{
+    switch (key.keyClass()) {
+    case CryptoKeyClass::RSA:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyRSA>(key).platformKey(), true);
+    case CryptoKeyClass::EC:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyEC>(key).platformKey(), true);
+    case CryptoKeyClass::AKP:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyAKP>(key).platformKey(), true);
+    case CryptoKeyClass::OKP:
+        return marshalEVPKey(uncheckedDowncast<CryptoKeyOKP>(key).toEVPKey().get(), true);
+    case CryptoKeyClass::AES:
+    case CryptoKeyClass::HMAC:
+    case CryptoKeyClass::Raw:
+        break;
+    }
+    return std::nullopt;
+}
+
 void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
 {
     if (key.type() != CryptoKeyType::Private) {
@@ -1680,15 +1699,10 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
     }
     importParams->identifier = identifier;
 
-    Vector<uint8_t> spki;
-    {
-        AsymmetricKeyValue keyValue(key);
-        auto der = marshalEVPKey(keyValue.key, true);
-        if (!der) {
-            promise->reject(OperationError, ""_s);
-            return;
-        }
-        spki = WTF::move(*der);
+    auto spki = marshalPublicKey(key);
+    if (!spki) {
+        promise->reject(OperationError, ""_s);
+        return;
     }
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);
@@ -1705,7 +1719,7 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
+    algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(*spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
 }
 
 void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, Ref<DeferredPromise>&& promise)

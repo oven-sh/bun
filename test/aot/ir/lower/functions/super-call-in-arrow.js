@@ -1,12 +1,12 @@
 // RUN: link
 // CHECK: layout [[derived]] kind=Instance name="Derived" module=[[entry]]
-// CHECK: layout [[environment]] kind=Environment module=[[entry]] fields=[{key=@"this.0" declared={type=absent|[[derived]] flags=[IsFromCompiler]}
+// CHECK: layout [[environment]] kind=Environment module=[[entry]] fields=[{key=@"0" declared={type=absent|[[derived]]} variableName="this"}]
 // CHECK: module [[entry]] path="{{*}}super-call-in-arrow.js"
 // CHECK: function [[constructor]] name="Derived" module=[[entry]] {{*}}kind=DerivedConstructor
 // CHECK: = NewObject layout=[[environment]]
 // CHECK: function [[arrow]] name="callSuper" module=[[entry]] {{*}}kind=Arrow{{*}}captures=[{type=env [[environment]] flags=[IsFromCompiler]}
 // CHECK: [[object]] = SuperConstruct
-// CHECK-NEXT: [[instance]] = Convert [[object]] declared={type=[[derived]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: [[instance]] = Convert [[object]] declared={type=[[derived]]}
 // CHECK-NEXT: [[old]] = GetEnvironmentField [[captured]] layout=[[environment]]
 // CHECK-NEXT: = TypeTest [[old]] testedType=absent
 // CHECK: PutEnvironmentField [[captured]], [[instance]] layout=[[environment]]

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout [[declared]] name="Declared"
+// CHECK: layout [[declared]] fields=[{key="x"
 // CHECK: variable {{*}}name="v" module=[[entry]] declared={type=undefined|null|absent|[[declared]] flags=[IsExpected]}
 
 // RUN(SITES): lower

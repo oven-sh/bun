@@ -1,0 +1,11 @@
+# -- source: main.mjs
+# import { kept } from "./library.mjs";
+# print(kept());
+# -- source: library.mjs
+# export function kept() { return "kept"; }
+# export function unread() { return "text of unread"; }
+# -- end of source
+# What only makes a value is left out where nobody reads the value: the closure of `unread` goes into a cast that nobody reads. A body that made it would mention the function, the queue would compile it, and the executable would hold its name and its text.
+# RUN: bytes f0:Body mechanisms=all
+# CHECK: unit f0:Body
+# CHECK-NOT: "unread"

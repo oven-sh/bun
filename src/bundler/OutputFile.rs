@@ -3,15 +3,13 @@ use crate::options::Loader;
 // the `options` module already defines them locally.
 use crate::Error;
 use crate::options::{OutputKind, Side};
-use bun_paths::fs;
-use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
+use std::borrow::Cow;
 
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
-    pub src_path: fs::Path<'static>,
-    pub owned_src_path_text: Box<[u8]>,
+    pub src_path: Cow<'static, [u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -45,13 +43,12 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
-    // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
+    // Not a `const` because `Box` isn't const-constructible.
     pub fn zero_value() -> OutputFile {
         OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,
-            src_path: fs::Path::init(b""),
-            owned_src_path_text: Box::default(),
+            src_path: Cow::default(),
             value: Value::Noop,
             size: 0,
             size_without_sourcemap: 0,
@@ -161,15 +158,10 @@ impl OutputFile {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::Saved(_) => 0,
         });
-        let owned_src_path_text: Box<[u8]> = options.input_path;
-        // SAFETY: `owned_src_path_text` is a sibling field that outlives `src_path`; the boxed buffer never moves.
-        let input_path: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&owned_src_path_text) };
         OutputFile {
             loader: options.loader,
             input_loader: options.input_loader,
-            src_path: fs::Path::init(input_path),
-            owned_src_path_text,
+            src_path: Cow::Owned(options.input_path.into_vec()),
             dest_path: options.output_path,
             source_index: options.source_index,
             size,
@@ -203,22 +195,18 @@ impl OutputFile {
                 // already written to disk
             }
             Value::Buffer { bytes } => {
-                let parent = resolve_path::dirname::<platform::Auto>(&self.dest_path);
+                let parent = bun_paths::dirname_or_root(&self.dest_path);
                 if !parent.is_empty() && parent != b"." {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::write_file_with_path_buffer(
-                    &mut path_buf,
-                    &bun_sys::WriteFileArgs {
-                        data: bun_sys::WriteFileData::Buffer { buffer: bytes },
-                        encoding: bun_sys::WriteFileEncoding::Buffer,
-                        mode: if self.is_executable { 0o755 } else { 0o644 },
-                        dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
-                    },
-                )?;
+                let _ = bun_sys::write_file(&bun_sys::WriteFileArgs {
+                    data: bun_sys::WriteFileData::Buffer { buffer: bytes },
+                    encoding: bun_sys::WriteFileEncoding::Buffer,
+                    mode: if self.is_executable { 0o755 } else { 0o644 },
+                    dirfd: root_dir,
+                    file: bun_sys::PathOrFileDescriptor::Path(&self.dest_path),
+                })?;
             }
             Value::Copy(value) => {
                 self.copy_to(&value.pathname, root_dir)?;
@@ -228,17 +216,15 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
-            resolve_path::z(rel_path, &mut out_buf),
+            &bun_paths::Path::from(rel_path),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
-            resolve_path::z(self.src_path.text, &mut in_buf),
+            &bun_paths::Path::from(&self.src_path),
             bun_sys::O::RDONLY,
             0,
         )?;

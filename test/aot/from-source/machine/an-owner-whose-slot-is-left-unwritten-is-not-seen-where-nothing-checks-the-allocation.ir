@@ -1,0 +1,20 @@
+# This test shows what the checks that run in every build do not cover. `total` makes a call on every path, so it sets up its frame at entry and has no framed part.
+# Its block order is computed once. So in a user's build nothing checks its allocation.
+# The injected fault, testing=IgnoreCollectorSpillReads, omits the store of `list` into the slot where the collector looks for it, and the build succeeds.
+# This file records that so that its twin means something.
+# The twin, an-owner-whose-slot-is-left-unwritten-stops-the-build-by-name-where-the-order-of-blocks-was-made-again.ir, fails on the same fault.
+# The difference is that its block order was computed again.
+# A check that comes to cover such a procedure makes this test fail. The test should be deleted then.
+# f1 = total
+# -- source: an-owner-whose-slot-is-left-unwritten-is-not-seen-where-nothing-checks-the-allocation.ts
+# declare function print(value: unknown): void;
+# function total(list: number[]): number { print(0); let sum = 0; for (let i = 0; i < list.length; i++) sum = (sum + list[i]) | 0; print(sum); return sum; }
+# print(total([1, 2, 3]));
+# -- end of source
+# REQUIRES: x86_64
+# AS-USERS-BUILD: the file shows what a build of a user does not check
+# RUN: allocate f1 mechanisms=all testing=IgnoreCollectorSpillReads
+# CHECK: {{*}}= ArgumentReg
+# CHECK-NOT: save
+# CHECK: Patch
+# CHECK: {{*}}isDeadSlot

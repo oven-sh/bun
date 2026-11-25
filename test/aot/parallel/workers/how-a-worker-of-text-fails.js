@@ -62,3 +62,16 @@ await node(
   "Array.prototype.map = () => 'replaced'; Object.prototype.extra = 1; require('node:worker_threads').parentPort.postMessage([[1].map(x => x), ({}).extra])",
 );
 console.log("main keeps its built-ins:", [1].map((x) => x + 1)[0], {}.extra);
+/* Output:
+no program: error 1 | this is no program | close 1
+throws: 1 | error 1 | postMessage(1); throw new TypeError('thrown at the top') | close 1
+rejects: error 1 | Promise.reject(new RangeError('nobody catches it')) | close 1
+exits: before | close 3
+imports what is missing: error error: Cannot find module '/nowhere/missing.js' from 'data:text/javascript,import%20'%2Fnowhere%2Fmissing.js'' | close 1
+imports a package that is missing: error error: Cannot find package 'no-such-package-at-all' from 'data:text/javascript,import%20'no-such-package-at-al | close 1
+stack: true | close 0
+worker data: [{"a":[1,"two",{}]},false,"number","object",true] | exit 0
+node throws: error SyntaxError from eval: true | exit 1
+changes built-ins: error TypeError Cannot assign to Array.prototype.map because built-in objects are read-only in a compiled executable (bun comp | exit 1
+main keeps its built-ins: 2 undefined
+*/

@@ -42,7 +42,8 @@ uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 
 void DisposeGlobal(uintptr_t* location)
 {
-    if (location) weakHandleParameters().remove(location);
+    auto* isolate = Isolate::GetCurrent();
+    if (location && isolate) isolate->globalInternals()->weakHandleParameters().remove(location);
     // TODO free up a slot in the handle scope
     (void)location;
 }

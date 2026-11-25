@@ -1,8 +1,9 @@
 // RUN: lower
-// DIAGNOSTIC: TS100009 1
-// STATISTIC: SourceFilesDemoted = 1
+// STATISTIC: SourceFilesDemoted = 0
+// STATISTIC: SourceFilesChecked = 2
+// CHECK: = Call {{*}}calleeName="thrice"
 
-// A type error in an installed package costs the package its types, with a warning.
+// A type error in an installed package is not reported, and the package keeps its types.
 
 // FILE: main.ts
 import { thrice } from "typed";

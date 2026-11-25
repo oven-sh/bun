@@ -1,0 +1,7 @@
+# the look follows what the pattern reads
+# -- source: a-function-that-a-pattern-takes-out-and-that-is-called-uses-its-features.ts
+# const { color } = Bun;
+# console.log(color("red", "hex"));
+# -- end of source
+# RUN: features
+# CHECK: by BunColor named

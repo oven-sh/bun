@@ -1,0 +1,21 @@
+# The arrow of `seven` captures seven values and is kept in a list: a slim closure of 80 bytes, where a whole one takes 96. The stub is handed four captures in registers, makes the cell of the full size and fills those in; the site stores the other three behind the call. A slim closure holds eight captures at most, so the arrow of `nine` is a whole closure: a cell from the allocation stub, filled at the site.
+# f1 = seven, f2 = nine
+# -- source: slim-closure-takes-four-captures-in-registers-and-the-rest-at-the-site.ts
+# declare function sink(...values: unknown[]): void;
+# const kept: (() => number)[] = [];
+# function seven(a: number, b: number, c: number, d: number, e: number, f: number, g: number) { kept.push(() => a + b + c + d + e + f + g); }
+# function nine(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) { kept.push(() => a + b + c + d + e + f + g + h + i); }
+# seven(1, 2, 3, 4, 5, 6, 7); seven(2, 3, 4, 5, 6, 7, 8); nine(1, 2, 3, 4, 5, 6, 7, 8, 9); nine(2, 3, 4, 5, 6, 7, 8, 9, 10);
+# sink(kept);
+# -- end of source
+# RUN: bytes f1 mechanisms=all
+# CHECK: NewSlimClosure.Plain count 7
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT-NOT: AOTSlimClosure_captures[3]
+# EMIT: = Store({{*}}offset = 48, AOTSlimClosure_captures[4]
+# EMIT: = Store({{*}}offset = 56, AOTSlimClosure_captures[5]
+# EMIT: = Store({{*}}offset = 64, AOTSlimClosure_captures[6]
+# RUN(NINE): bytes f2 mechanisms=all
+# NINE-NOT: NewSlimClosure.
+# NINE: AllocateCell
+# NINE-NOT: NewSlimClosure.

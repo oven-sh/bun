@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "target": "esnext",
+    "module": "esnext",
+    "strict": true,
+    "types": []
+  }
+}

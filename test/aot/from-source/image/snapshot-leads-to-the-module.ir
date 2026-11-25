@@ -1,0 +1,17 @@
+# In a heap snapshot the cell that stands for a module hangs below the module loader of the realm, and every closure of a function that the module defines leads to it: also that of a function that reads no variable, and that of a class without a constructor of its own.
+# -- source: snapshot-leads-to-the-module.js
+# let keptInModule = fresh();
+# const reads = () => keptInModule;
+# const touchesNothing = n => n + 1;
+# class Empty {}
+# hold(reads, touchesNothing, Empty);
+# print(whoLeadsToTheModule());
+# -- end of source
+# LIBRARY: own
+# RUN(TABLES): image ProgramTables
+# TABLES-LABEL: ProgramTables:
+# TABLES: moduleInHeapSnapshots place=0 module=m0 variables=
+# TABLES: closuresOfModule module=0 first=
+# RUN: run-in-shell globalThis.fresh = () => ({}); globalThis.held = []; globalThis.hold = (...values) => { held.push(...values); }; globalThis.whoLeadsToTheModule = () => { const snapshot = generateHeapSnapshot(); const classes = new Map(); for (let i = 0; i < snapshot.nodes.length; i += 4) classes.set(snapshot.nodes[i], snapshot.nodeClassNames[snapshot.nodes[i + 2]]); const out = new Map(); let list; for (let i = 0; i < snapshot.edges.length; i += 4) { if (!out.has(snapshot.edges[i])) out.set(snapshot.edges[i], []); out.get(snapshot.edges[i]).push(snapshot.edges[i + 1]); if (snapshot.edgeTypes[snapshot.edges[i + 2]] === "Property" && snapshot.edgeNames[snapshot.edges[i + 3]] === "held") list = snapshot.edges[i + 1]; } const below = new Set([...classes].filter(([, name]) => name === "ModuleLoader").map(([node]) => node)); for (const node of below) for (const to of out.get(node) ?? []) if (/^Module(RegistryEntry|Record)$|^JSModuleEnvironment$/.test(classes.get(to))) below.add(to); const functions = [...new Set(out.get(list))].filter(node => classes.get(node) === "Function"); return functions.filter(node => out.get(node).some(to => classes.get(to) === "JSModuleEnvironment" && below.has(to))).length + " of " + functions.length + " functions lead to an environment below the loader"; };
+# CHECK: 3 of 3 functions lead to an environment below the loader
+# CHECK-NEXT: exited with 0

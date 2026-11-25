@@ -1,0 +1,12 @@
+# the same function with Folding withheld: nothing is noted of the length or of the test, and the read compares the position with the length again
+# RUN: walk f1 mechanisms=none+TypedOperations+Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Guesses
+# NEVER-NOT: isInBounds
+# -- source: position-below-the-length-of-the-list-is-read-without-a-second-test.ts
+# declare function sink(...values: unknown[]): void;
+# function findsTheFirstEmptyText(list: string[]) { for (let i = 0; i < list.length; i++) { if (list[i] === "") return i; sink(i); } return -1; }
+# sink(findsTheFirstEmptyText, ["a", ""]);
+# -- end of source
+# f1 = findsTheFirstEmptyText

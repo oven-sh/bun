@@ -1,5 +1,5 @@
 // A program that writes to its standard outputs and asks the three streams whether they are terminals, and for their descriptors, has none of node:stream, node:tty and node:fs in it.
-// STATISTIC: ImageFunctionsEmitted <= 200
+// STATISTIC: ImageFunctionsEmitted <= 200 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 process.stdout.write("to the output\n");
 process.stderr.write("to the errors\n");
 console.log(process.stdout.isTTY === true, process.stderr.isTTY === true, process.stdin.isTTY === true);

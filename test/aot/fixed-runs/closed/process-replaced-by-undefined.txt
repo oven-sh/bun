@@ -1,0 +1,20 @@
+`globalThis.process = undefined`, as a library is tested as in a browser: a file of the project reads through it.
+#### a.test.ts
+import { test } from "bun:test";
+import { facts } from "./project.ts";
+test("t", () => {
+  const before = facts();
+  const old = globalThis.process;
+  let outcome = "done";
+  try { (globalThis as any).process = undefined; } catch (error: any) { outcome = error.constructor.name + ": " + error.message; }
+  const seen = facts();
+  try { globalThis.process = old; } catch {}
+  console.log("| CASE before", before);
+  console.log("| CASE", outcome, seen);
+  console.log("| CASE after", facts());
+});
+#### project.ts
+export const facts = () => {
+  const ask = (f: () => unknown) => { try { return String(f()); } catch (error: any) { return error.constructor.name; } };
+  return [ask(() => typeof process), ask(() => typeof process.env), ask(() => typeof process?.versions?.node)].join(" | ");
+};

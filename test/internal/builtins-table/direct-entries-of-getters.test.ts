@@ -80,7 +80,7 @@ test("a getter that keeps its answer in a field is entered through the table", a
   });
 });
 
-test("a getter whose answer nothing proves is entered at its thunk too: compiled code tests the answer", async () => {
+test("a getter whose answer Rust makes itself is entered at its thunk too, which holds the answer to the type", async () => {
   expect(
     await entriesOf(`
       proto: {
@@ -96,7 +96,8 @@ test("a getter whose answer nothing proves is entered at its thunk too: compiled
   });
   for (const field of [`b.string.local`, `b.self`, `b.any.returning("number")`]) {
     const [signature] = (await accessorOf(`proto: { size: { getter: ${field}, capability: "heap" } }`)).signatures;
-    expect(signature.resultIsDeclaredOnly).toBe(true);
+    expect(signature).toMatchObject({ resultIsHeld: true, throws: true });
+    expect(signature.resultIsDeclaredOnly).toBeUndefined();
   }
 });
 
@@ -114,11 +115,15 @@ test("a pure getter touches no heap, throws nothing and writes nothing", async (
     throws: false,
     writes: ["ExternalState"],
   });
-  // A body without `throws: true` returns no `Result`.
+  // A body without `throws: true` returns no `Result`. Its thunk throws in place of an answer that is no number.
   expect(await signatureOf(`{ getter: b.any.returning("number"), capability: "heap" }`)).toMatchObject({
     capability: "heap",
-    throws: false,
+    throws: true,
     writes: ["ExternalState"],
+  });
+  expect(await signatureOf(`{ getter: b.string, capability: "heap" }`)).toMatchObject({
+    capability: "heap",
+    throws: false,
   });
   expect(await signatureOf(`{ getter: b.any.returning("number"), capability: "heap", throws: true }`)).toMatchObject({
     capability: "heap",
@@ -143,7 +148,7 @@ test("a pure getter answers no cell", async () => {
 test("a store is entered only where the accessor cannot be replaced", async () => {
   const handler = `proto: { ondata: { getter: b.any, setter: { capability: "js" }, passThis: true } }`;
   expect((await accessorOf(handler)).columns.directEntryOfSetter).toBeUndefined();
-  expect((await accessorOf(`lockedObjects: ["prototype"], ${handler}`)).columns.directEntryOfSetter).toMatchObject({
+  expect((await accessorOf(`lockedMembers: ["prototype"], ${handler}`)).columns.directEntryOfSetter).toMatchObject({
     symbol: "AOT__Bun__Bindgen__ThingPrototypeSetter__ondata",
     parameters: [{ value: "Realm" }, { value: "Receiver" }, { value: "Value", cppType: "JSC::EncodedJSValue" }],
   });

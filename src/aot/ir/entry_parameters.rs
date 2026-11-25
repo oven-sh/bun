@@ -9,16 +9,19 @@ pub struct EntryPosition {
 }
 
 impl EntryPosition {
+    #[inline]
     pub fn new(kind: EntryParameter, index: u32) -> EntryPosition {
         EntryPosition { kind, index }
     }
 
+    #[inline]
     pub fn single(kind: EntryParameter) -> EntryPosition {
         EntryPosition { kind, index: 0 }
     }
 }
 
 impl Function {
+    #[inline]
     fn entry_parameter_count_of(&self, kind: EntryParameter) -> usize {
         match kind {
             EntryParameter::Capture => self.captures.len(),
@@ -28,8 +31,11 @@ impl Function {
     }
 
     pub fn entry_parameter_count(&self) -> usize {
-        let kinds = EntryParameter::ALL.into_iter();
-        kinds.map(|kind| self.entry_parameter_count_of(kind)).sum()
+        let mut count = 0;
+        for kind in EntryParameter::ALL {
+            count += self.entry_parameter_count_of(kind);
+        }
+        count
     }
 
     pub fn entry_parameter(&self, index: usize) -> Option<EntryPosition> {
@@ -44,6 +50,7 @@ impl Function {
         None
     }
 
+    #[inline]
     pub fn entry_parameter_index(&self, position: EntryPosition) -> Option<usize> {
         let mut first = 0;
         for kind in EntryParameter::ALL {

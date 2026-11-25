@@ -13,7 +13,7 @@ const IDAT = 0x49444154;
 const ICCP = 0x69434350;
 
 /** Takes apart a file that Bun.Image wrote at level 0, where zlib only stores. */
-function parse(out: Uint8Array) {
+export function parse(out: Uint8Array) {
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   const [width, height] = [view.getUint32(16), view.getUint32(20)];
   const data: Uint8Array[] = [];

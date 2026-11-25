@@ -1,0 +1,46 @@
+# a URL is never made only where one walk of its construction stands in front of every read. Where the construction is walked several times and a read stands behind them all, one name stands for what each walk has built:
+# no text answers for it, so every walk makes the object as written
+# f2: two turns written out. f3: a block that the ways of a closed arm walk apart from the others
+# f1: every turn of a typed build of this loop would leave it, so the builds are undone and the loop is built once: the one walk that is kept stands in front of the read, and the URL is never made where its text is plain
+# f4 and f5: the URL is still never made: in f4 each copy of the loop reads its own, in f5 the one construction stands in front of both copies
+# each function is handed to code that nobody has seen
+# f1 = leftByReturn, f2 = twoTurns, f3 = walkedApart, f4 = readInside, f5 = madeInFront
+# -- source: url-read-behind-several-walks-of-its-construction-is-made.ts
+# declare function sink(...values: unknown[]): void;
+# function leftByReturn(text: string, start: any, count: number) { for (let i = start; i < count; i = i + 1) { const url = new URL(text, "http://127.0.0.1"); if (i >= 1) return url.search + url.pathname; } return ""; }
+# function twoTurns(first: string, second: string, wanted: number) { for (let i = 0; i < 2; i++) { const url = new URL(i === 0 ? first : second, "http://127.0.0.1"); if (i === wanted) return url.pathname; } return ""; }
+# function walkedApart(item: { flags: number }, text: string) { if (item.flags & 1) return "one"; const url = new URL(text, "http://127.0.0.1"); if (item.flags & 2) return url.pathname; return url.search; }
+# function readInside(text: string, start: any, count: number) { let total = 0; for (let i = start; i < count; i = i + 1) { const url = new URL(text, "http://127.0.0.1"); if (url.pathname === "/a") total += url.search.length; } return total; }
+# function madeInFront(text: string, start: any, count: number) { const url = new URL(text, "http://127.0.0.1"); let longer = 0; for (let i = start; i < count; i = i + 1) { if (url.pathname.length > i) longer = longer + 1; } return url.search + longer; }
+# sink(leftByReturn, twoTurns, walkedApart, readInside, madeInFront, { flags: 1 });
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# RUN(LEFT): walk f1 mechanisms=all
+# LEFT-COUNT-1: overload=URL/
+# RUN(LEFTMADE): walk f1 mechanisms=all
+# LEFTMADE: CompilerHelpersScanPlainURL
+# RUN(TURNS): walk f2 mechanisms=all
+# TURNS-COUNT-2: overload=URL/
+# RUN(TURNSMADE): walk f2 mechanisms=all
+# TURNSMADE-NOT: isLoopHead=true
+# TURNSMADE-NOT: CompilerHelpersScanPlainURL
+# TURNSMADE-NOT: undefined|URL
+# RUN(APART): walk f3 mechanisms=all
+# APART: = ShapeTest
+# APART-COUNT-2: overload=URL/
+# RUN(APARTMADE): walk f3 mechanisms=all
+# APARTMADE-NOT: CompilerHelpersScanPlainURL
+# APARTMADE-NOT: undefined|URL
+# RUN(INSIDE): walk f4 mechanisms=all
+# INSIDE-COUNT-2: isLoopHead=true
+# RUN(INSIDESCANNED): walk f4 mechanisms=all
+# INSIDESCANNED-COUNT-1: CompilerHelpersScanPlainURL
+# RUN(FRONT): walk f5 mechanisms=all
+# FRONT-COUNT-2: isLoopHead=true
+# RUN(FRONTSCANNED): walk f5 mechanisms=all
+# FRONTSCANNED-COUNT-1: CompilerHelpersScanPlainURL
+# RUN(FRONTONCE): walk f5 mechanisms=all
+# FRONTONCE-COUNT-1: overload=URL/

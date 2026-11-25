@@ -1,7 +1,8 @@
-console.log("second begins");
+const lines = (globalThis.lines ??= []);
+lines.push("second begins");
 try {
-  console.log("second got", require("./main.mjs").answer);
+  lines.push("second got " + require("./main.mjs").answer);
 } catch (error) {
-  console.log("second caught", error.name);
+  lines.push("second caught " + error.name);
 }
-console.log("second ends");
+lines.push("second ends");

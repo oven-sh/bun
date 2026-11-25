@@ -293,7 +293,7 @@ function serverWithPagesAndItsOwnWorkerBehindTheHelper(count: number) {
   };
 }
 
-// What a build did: the files of untyped code that it compiled, in all its programs, how often it ran the engine, and which embedded files it says it left out, and where.
+// What a build did: the files of untyped code that it compiled, and which embedded files it says it left out, and where.
 async function countCompiled(folder: string, entryPoint: string) {
   const executable = join(folder, isWindows ? "server.exe" : "server");
   const flags = ["--aot", "--explain=statistics"];
@@ -306,9 +306,8 @@ async function countCompiled(folder: string, entryPoint: string) {
   const ran = await spawned([executable], folder, compiledOnly);
   return {
     untypedFiles: Number(/^SourceFilesInferred (\d+)$/m.exec(build.stderr)?.[1]),
-    engineRuns: Number(/^EngineRuns (\d+)$/m.exec(build.stderr)?.[1]),
-    leftOut: /TS100071: .* fails to load: (.*)\. Add the file/.exec(build.stderr)?.[1].replace(/"[^"]*[\\/]/g, '"'),
-    leftOutAt: /TS100071: .*\n\s+at .*[\\/](.+:\d+:\d+)/.exec(build.stderr)?.[1],
+    leftOut: /TS100081: .* fails to load: (.*)\. Add the file/.exec(build.stderr)?.[1].replace(/"[^"]*[\\/]/g, '"'),
+    leftOutAt: /TS100081: .*\n\s+at .*[\\/](.+:\d+:\d+)/.exec(build.stderr)?.[1],
     stdout: ran.stdout,
     exitCode: ran.exitCode,
   };
@@ -492,22 +491,21 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test.each([
-    // The pages are one program, however many they are. The other two are the server and what it hands to the helper whose answer starts the Worker.
-    [1000, "", { untypedFiles: 1001, engineRuns: 3, leftOut: undefined }],
-    [100, "", { untypedFiles: 101, engineRuns: 3, leftOut: undefined }],
-    [5, "", { untypedFiles: 6, engineRuns: 3, leftOut: undefined }],
-    [4, "", { untypedFiles: 5, engineRuns: 3, leftOut: undefined }],
-    // `preload` makes one program of the server and its Workers. The one file is what it names.
-    [100, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
-    [4, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 1 more' }],
+    [1000, "", { untypedFiles: 1001, leftOut: undefined }],
+    [100, "", { untypedFiles: 101, leftOut: undefined }],
+    [5, "", { untypedFiles: 6, leftOut: undefined }],
+    [4, "", { untypedFiles: 5, leftOut: undefined }],
+    // What `preload` names is the job's file, which is counted already.
+    [100, preload, { untypedFiles: 101, leftOut: undefined }],
+    [4, preload, { untypedFiles: 5, leftOut: undefined }],
   ])(
-    "compiles the embedded pages whose paths may reach a Worker as one program: %d pages, new Worker(path%s)",
+    "compiles the embedded pages beside a Worker whose file the build can't read: %d pages, new Worker(path%s)",
     (pages, workerOptions, counts) =>
       slot(async () => {
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPages(pages, workerOptions));
         expect(await countCompiled(String(dir), "./main.ts")).toEqual({
           ...counts,
-          leftOutAt: counts.leftOut && "main.ts:7:29",
+          leftOutAt: undefined,
           stdout: 'document.title = "page-1";\n',
           exitCode: 0,
         });
@@ -516,13 +514,12 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test(
-    "compiles the file that starts a Worker as a program of its own beside many embedded pages, and warns about nothing",
+    "compiles the file that a Worker starts from and none of the many embedded pages where the import stands at the constructor, and warns about nothing",
     () =>
       slot(async () => {
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPagesAndItsOwnWorker(100));
         expect(await countCompiled(String(dir), "./main.ts")).toEqual({
-          untypedFiles: 101,
-          engineRuns: 3,
+          untypedFiles: 1,
           leftOut: undefined,
           leftOutAt: undefined,
           stdout: 'document.title = "page-1";\nfrom the job\n',
@@ -539,7 +536,6 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPagesAndItsOwnWorkerBehindTheHelper(100));
         expect(await countCompiled(String(dir), "./main.ts")).toEqual({
           untypedFiles: 101,
-          engineRuns: 3,
           leftOut: undefined,
           leftOutAt: undefined,
           stdout: 'document.title = "page-1";\nfrom the job\n',

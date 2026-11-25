@@ -40,18 +40,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::ZStr;
 use bun_core::env_var;
 use bun_spawn_sys::ffi::kill;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::linux::{PrctlOp, prctl};
 
 use crate::posix_event_loop::EventLoopCtx;
 #[cfg(target_os = "macos")]
-use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
-
-/// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
-/// per-instance state.
-pub struct ParentDeathWatchdog;
+use crate::posix_event_loop::{OwnedFilePoll, Owner, PollTag};
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".
@@ -167,11 +165,6 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
-/// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
-/// per-instance state.
-#[cfg(target_os = "macos")]
-static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
-    bun_core::RacyCell::new(ParentDeathWatchdog);
 
 /// Called from `main()` before the CLI starts. Checks the env var and enables
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
@@ -241,7 +234,7 @@ pub fn enable() {
             // also runs the descendant reaper; on Linux the SIGKILL case relies on
             // env-var inheritance — Bun-spawning-Bun chains self-reap because each
             // link sets its own PDEATHSIG.
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+            if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _) != 0 {
                 return;
             }
             // Race: parent may have died between getppid() above and prctl()
@@ -288,21 +281,12 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             bun_core::exit(EXIT_CODE as u32);
         }
 
-        // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
-        let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
-        let poll = FilePoll::init(
-            handle,
-            Fd::from_native(original_ppid),
-            Default::default(),
-            Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
-        );
-        // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
-        // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
-            handle.platform_event_loop(),
-            crate::file_poll::Flags::Process,
-            true,
-        ) {
+        let owner = Owner::new(PollTag::ParentDeathWatchdog, core::ptr::null_mut());
+        // SAFETY: this tag has no pointee.
+        let poll: OwnedFilePoll =
+            unsafe { OwnedFilePoll::new(handle, Fd::from_native(original_ppid), owner) };
+        // Watches until the process exits.
+        match core::mem::ManuallyDrop::new(poll).register(crate::file_poll::Flags::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no
@@ -323,7 +307,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 /// `FilePoll.Owner` dispatch target — invoked from the event loop's
 /// `ParentDeathWatchdog` poll arm. The kqueue `NOTE_EXIT` for our parent
 /// fired.
-pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
+#[cfg(target_os = "macos")]
+pub fn on_parent_exit() {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
     bun_core::exit(EXIT_CODE as u32);
 }
@@ -633,20 +618,13 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         &path_buf[..n]
     };
 
-    let task_fd = match bun_sys::open_dir_for_iteration_os_path(Fd::cwd(), task_path) {
-        Ok(fd) => fd,
-        Err(_) => return None,
-    };
-    // `Fd` is Copy and does not impl Drop, so close explicitly via a guard.
-    let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let tasks = bun_sys::Dir::open(task_path).ok()?;
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
     // (~8 bytes per "1234567 " entry × 4096).
     let mut read_buf = [0u8; 32 * 1024];
-    let mut it = bun_sys::dir_iterator::iterate(task_fd);
+    let mut it = bun_sys::dir_iterator::iterate(tasks.fd());
     loop {
         let entry = match it.next() {
             Ok(Some(e)) => e,
@@ -688,22 +666,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// we don't need.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    let fd = match bun_sys::open(path, O::RDONLY, 0) {
-        Ok(fd) => fd,
-        Err(_) => return None,
-    };
-    let _guard = scopeguard::guard(fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
-    // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
-    // which would allocate; do the loop here.
-    let mut written = 0usize;
-    while written < buf.len() {
-        match bun_sys::read(fd, &mut buf[written..]) {
-            Ok(0) => break,
-            Ok(n) => written += n,
-            Err(_) => return None,
-        }
-    }
+    let file = bun_sys::CloseOnDrop::new(bun_sys::open(path, O::RDONLY, 0).ok()?);
+    let written = file.read_all(buf).ok()?;
     Some(&buf[..written])
 }

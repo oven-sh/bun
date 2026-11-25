@@ -1,0 +1,21 @@
+# the key of a getter is computed, and its proven type is one text that is no index: the definition is built under the name
+# a key that anybody hands over stays a computed key, and so does one that is an index
+# f1 = named, f2 = computed, f3 = indexed
+# -- source: accessor-under-a-key-that-is-one-name-goes-by-the-name.ts
+# declare function sink(...values: unknown[]): void;
+# function named(on: boolean) { const key = on ? "size" : "size"; return { get [key]() { return 1; } }; }
+# function computed(key: string) { return { get [key]() { return 1; } }; }
+# function indexed(on: boolean) { const key = on ? "7" : "7"; return { get [key]() { return 1; } }; }
+# sink(named, computed, indexed);
+# -- end of source
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: DefineGetter {{*}}key="size"
+# RUN(OTHER): walk f2 mechanisms=none+TypedOperations
+# OTHER-LABEL: code f2:Body
+# OTHER: DefineGetter
+# OTHER-NOT: key=
+# RUN(INDEX): walk f3 mechanisms=none+TypedOperations
+# INDEX-LABEL: code f3:Body
+# INDEX: DefineGetter
+# INDEX-NOT: key="7"

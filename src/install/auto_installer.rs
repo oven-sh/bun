@@ -22,9 +22,10 @@
 
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::borrow::Cow;
 
 use bun_install_types::resolver_hooks as hooks;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+use bun_paths::{Path, from_portable};
 use bun_semver::{SlicedString, String as SemverString};
 use bun_threading::Futex;
 
@@ -130,7 +131,7 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 // ─── The wait of a resolve ────────────────────────────────────────────────
 
-/// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
+/// Bumped by every `Inbox::wake` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
@@ -216,86 +217,81 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
-    fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
-    }
-
-    fn project_folder<'b>(
+    fn project_folder(
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
         version_buf: &[u8],
         package_json_dir: Option<&[u8]>,
-        buf: &'b mut [u8],
-    ) -> Option<&'b [u8]> {
+    ) -> Option<Path> {
         let name_hash = bun_semver::string::Builder::string_hash(match version.try_npm() {
             Some(npm) if npm.is_alias => npm.name.slice(version_buf),
             _ => name,
         });
         let links = self.options.link_workspace_packages;
-        let member: Option<SemverString> = match version.tag {
-            dependency::Tag::Workspace => self.lockfile.workspace_paths.get(&name_hash).copied(),
-            // A hoisted install links every workspace into the root's node_modules, whether or not
-            // a package.json lists it, so an import without a declared version finds it too.
-            dependency::Tag::Uninitialized if links => {
+        let member: Option<SemverString> = match &version.value {
+            dependency::Value::Workspace(_) => {
                 self.lockfile.workspace_paths.get(&name_hash).copied()
             }
-            dependency::Tag::Npm => lockfile::linked_workspace_path_in(
+            // A hoisted install links every workspace into the root's node_modules, whether or not
+            // a package.json lists it, so an import without a declared version finds it too.
+            dependency::Value::Uninitialized if links => {
+                self.lockfile.workspace_paths.get(&name_hash).copied()
+            }
+            dependency::Value::Npm(npm) => lockfile::linked_workspace_path_in(
                 links,
                 &self.lockfile.workspace_paths,
                 &self.lockfile.workspace_versions,
                 name_hash,
-                &version.npm().version,
+                &npm.version,
                 version_buf,
                 self.lockfile.buffers.string_bytes.as_slice(),
             ),
             _ => None,
         };
-        let (base, path): (&[u8], &[u8]) = if let Some(member) = &member {
-            (self.root_dir.dir, self.lockfile.str(member))
+        let (base, path): (&[u8], Cow<'_, [u8]>) = if let Some(member) = &member {
+            (self.root_dir.dir, self.lockfile.str(member).into())
         } else {
             let package_json_dir = package_json_dir?;
-            match version.tag {
-                dependency::Tag::Folder => (package_json_dir, version.folder().slice(version_buf)),
-                dependency::Tag::Symlink => {
-                    let target = version.symlink().slice(version_buf);
+            match &version.value {
+                dependency::Value::Folder(folder) => {
+                    (package_json_dir, from_portable(folder.slice(version_buf)))
+                }
+                dependency::Value::Symlink(symlink) => {
+                    let target = symlink.slice(version_buf);
                     if dependency::is_link_path(target) {
-                        (package_json_dir, target)
+                        (package_json_dir, from_portable(target))
                     } else {
                         directories::try_global_link_dir(self).ok()?;
-                        (directories::global_link_dir_path(self), target)
+                        (directories::global_link_dir_path(self), target.into())
                     }
                 }
                 _ => return None,
             }
         };
-        let len = join_abs_string_buf_checked::<platform::Auto>(base, buf, &[path])?.len();
-        Some(&buf[..len])
+        Path::resolve(&[base, &path]).check_len().ok()
     }
 
-    fn path_for_resolution<'b>(
+    fn path_for_resolution(
         &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
-        path_buf: &'b mut bun_paths::PathBuffer,
-    ) -> Result<&'b [u8], bun_core::Error> {
+    ) -> Result<Path, bun_core::Error> {
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
         }
         let r = resolution_from_hooks(resolution);
-        let mut len =
-            directories::path_for_resolution(self, package_id, &r, path_buf).map(|path| path.len());
+        let mut path = directories::path_for_resolution(self, package_id, &r);
         // A package that is `Done` but has no folder was skipped because it is not for this
         // platform, so it is not downloaded here either.
-        if len.is_err()
+        if path.is_err()
             && r.tag == resolution::Tag::Npm
             && PackageManager::get_preinstall_state(self, package_id) != PreinstallState::Done
         {
             enqueue::download_missing_package(self, package_id).map_err(bun_core::Error::from)?;
-            len = directories::path_for_resolution(self, package_id, &r, path_buf)
-                .map(|path| path.len());
-        } else if len.is_err() && r.tag != resolution::Tag::Npm {
+            path = directories::path_for_resolution(self, package_id, &r);
+        } else if path.is_err() && r.tag != resolution::Tag::Npm {
             let buf = self.lockfile.buffers.string_bytes.as_slice();
             self.log_mut().add_error_fmt(
                 None,
@@ -313,7 +309,7 @@ impl hooks::AutoInstaller for PackageManager {
                 ),
             );
         }
-        Ok(&path_buf.0[..len.map_err(bun_core::Error::from)?])
+        path.map_err(bun_core::Error::from)
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
@@ -333,19 +329,15 @@ impl hooks::AutoInstaller for PackageManager {
         let mut absolute: Vec<u8> = Vec::new();
         let mut from_package_json_dir = None;
         if let Some(package_json_dir) = package_json_dir
-            && version.tag == dependency::Tag::Tarball
-            && let hooks::URI::Local(path) = version.tarball().uri
+            && let dependency::Value::Tarball(tarball) = &version.value
+            && let hooks::URI::Local(path) = tarball.uri
         {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
-                package_json_dir,
-                &mut buf[..],
-                &[path.slice(version_buf)],
-            ) else {
+            let path = from_portable(path.slice(version_buf));
+            let Ok(joined) = Path::resolve(&[package_json_dir, &path]).check_len() else {
                 return hooks::EnqueueResult::NotFound;
             };
             absolute.extend_from_slice(b"file:");
-            absolute.extend_from_slice(joined);
+            absolute.extend_from_slice(&joined);
             from_package_json_dir = <Self as hooks::AutoInstaller>::parse_dependency(
                 self,
                 SemverString::init(name, name),

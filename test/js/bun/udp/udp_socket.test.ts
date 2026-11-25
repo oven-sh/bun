@@ -4,9 +4,11 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  compileFixture,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
   isIPv6,
+  isLinux,
   isWindows,
   randomPort,
   tempDir,
@@ -850,4 +852,44 @@ test("udpSocket({ hostname }) does not leak the hostname", async () => {
 
   // Unfixed: ~100 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
+});
+
+test.skipIf(!isLinux || !Bun.which("cc"))("udpSocket() closes a socket that refuses IPV6_V6ONLY", async () => {
+  using dir = tempDir("udp-v6only", {
+    "shim.c": /* c */ `
+      #define _GNU_SOURCE
+      #include <sys/socket.h>
+      #include <sys/syscall.h>
+      #include <unistd.h>
+
+      // The kernel refuses the option on an IPv4 socket, whether or not the machine has IPv6.
+      int socket(int domain, int type, int protocol) {
+        return syscall(SYS_socket, domain == AF_INET6 ? AF_INET : domain, type, protocol);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+        const open = () => require("fs").readdirSync("/proc/self/fd").length;
+        const before = open();
+        const codes = new Set();
+        for (let i = 0; i < 10; i++) {
+          try { await Bun.udpSocket({ hostname: "::1" }); } catch (error) { codes.add(error.code); }
+        }
+        console.log(JSON.stringify({ codes: [...codes], leaked: open() - before }));
+      `,
+    ],
+    env: { ...bunEnv, LD_PRELOAD: compileFixture(path.join(String(dir), "shim.c")) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ codes: ["ENOPROTOOPT"], leaked: 0 }),
+    stderr: "",
+    exitCode: 0,
+  });
 });

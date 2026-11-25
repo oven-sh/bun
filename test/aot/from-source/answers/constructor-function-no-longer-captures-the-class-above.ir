@@ -1,0 +1,21 @@
+# -- source: main.js
+# var Animal = (function () { function Animal(legs) { this.legs = legs; } Animal.prototype.count = function () { return this.legs; }; return Animal; }());
+# var Dog = (function (_super) {
+#     function Dog(legs) { this.legs = legs; this.above = _super; }
+#     Dog.prototype.isBelow = function (other) { return _super === other; };
+#     return Dog;
+# }(Animal));
+# var rex = new Dog(4);
+# print(rex.legs, rex.isBelow(Animal), rex.above === Animal, rex.isBelow(Dog), new Animal(2).count());
+# -- end of source
+# _super is never assigned, so Dog and the method capture its value, not a scope. The function around them runs once, and all that _super can be is the one closure of Animal,
+# which holds no word and which the closure table holds for good in every build: it is stored once, at the entry, and both read it from there.
+# Dog holds no capture any more, so it is the one closure of its function, as a constructor function at the top of a file is.
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: :Body (Void
+# RUN(CAPTURED): plan units mechanisms=all-PromotedEnvironments
+# CAPTURED-NOT: Void
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 true true false 2
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 4 true true false 2

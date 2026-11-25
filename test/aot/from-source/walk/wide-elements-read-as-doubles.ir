@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare const sink: any;
+# const wide: number[] = []; for (let i = 0; i < 64; i++) wide.push((i * 2654435761) % 4294967296);
+# const small: number[] = []; for (let i = 0; i < 256; i++) small.push(i & 7);
+# function price(day: number, kind: number): number { const cost = wide[day + kind & 63]! & 4095; return cost * 2 + kind; }
+# function low(a: number): number { return small[a & 255]! ^ 1; }
+# declare const numbers: number[];
+# sink(price(numbers[0]!, numbers[1]!), low(numbers[2]!));
+# -- end of source
+# A list that holds an integer beyond int32 holds doubles: outside loops its element is read as one for a bit operator.
+# RUN(WIDE): walk f1 mechanisms=all
+# WIDE: @OptionalDouble = GetArrayElement
+# RUN(NARROW): walk f2 mechanisms=all
+# NARROW-NOT: @OptionalDouble = GetArrayElement

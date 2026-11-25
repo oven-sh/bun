@@ -1,0 +1,18 @@
+# `other: Other`: the text admits neither undefined nor null, which the front end says by the flags of the position while the written type holds both. In a slot of four bytes one compare tells a reference from the marks, and what is read is an Other: the read off it asks no more. `next: Thing | undefined` is asked for as any filled slot is.
+# f1 = tagOf, f2 = nextOf
+# -- source: reference-written-without-undefined-and-null-is-asked-for-by-one-compare.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2, C = 4 }
+# class Other { tag: string; constructor(tag: string) { this.tag = tag; } }
+# class Thing { flags: Flags; ready: boolean; name: string; other: Other; next: Thing | undefined; more: Flags; last: boolean; constructor(i: number) { this.flags = (i & 7) as Flags; this.ready = (i & 1) === 0; this.name = "n" + i; this.other = new Other("t" + i); this.next = undefined; this.more = (i & 3) as Flags; this.last = false; } }
+# function tagOf(t: Thing) { return t.other.tag; }
+# function nextOf(t: Thing) { return t.next; }
+# sink(Thing, Other, tagOf, nextOf, new Thing(1));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "other" OptionalCell32 Inline
+# RUN: walk f1 f2 mechanisms=all-Inlining-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: GetSlot {{*}}key="other" {{*}}[holdsDeclaredType
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: holdsDeclaredType

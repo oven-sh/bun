@@ -4,7 +4,7 @@
 // CHECK-NEXT: Branch [[isClass]] -> taken [[admitted]](), notTaken [[rejected]]()
 // CHECK: [[admitted]]():
 // CHECK-NEXT: = GetModuleVariable
-// CHECK: [[rejected]]() frequency=Unlikely:
+// CHECK: [[rejected]]():
 // CHECK-NEXT: [[isNullish]] = TypeTest [[object]] testedType=undefined|null
 // CHECK-NEXT: Branch [[isNullish]] -> taken [[nullish]](| 0), notTaken [[other]](| 0)
 // CHECK-NEXT: [[nullish]]([[nothing]]):
@@ -16,8 +16,9 @@
 // RUN(METHOD): lower
 // METHOD-LABEL: function {{*}}name="f"
 // METHOD-COUNT-2: = StrictEq
+// METHOD-NEXT: Branch {{*}}notTaken [[rejected]]()
 // METHOD: = Call {{*}}calleeName="o.#m"
-// METHOD: frequency=Unlikely:
+// METHOD: [[rejected]]():
 // METHOD-NEXT: = NewRuntimeError runtimeError=InvalidPrivateBrand
 
 // RUN(INSTANCE): lower

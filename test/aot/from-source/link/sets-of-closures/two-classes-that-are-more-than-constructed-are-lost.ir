@@ -1,0 +1,20 @@
+# -- source: main.js
+# class A { k = 1; static tag = 10; }
+# class B { k = 2; static tag = 20; }
+# let sum = 0;
+# for (let i = 0; i < globalThis.count; i++) { const C = i & 1 ? A : B; C.tag += 1; sum += new C().k + C.tag; }
+# print(sum);
+# print(A.tag + B.tag);
+# -- end of source
+# Whoever does more with a set than call or construct it goes the way of lost functions, and that way is sound only for functions that are lost. If the two stayed known here, the store through `C` would be held against neither class.
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: result=L0
+# NEVER-NOT: result=L1
+# RUN(ANSWER): run-in-shell globalThis.count = 4;
+# ANSWER: 72
+# ANSWER-NEXT: 34
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.count = 4;
+# CHECKED: 72
+# CHECKED-NEXT: 34
+# CHECKED-NEXT: exited with 0

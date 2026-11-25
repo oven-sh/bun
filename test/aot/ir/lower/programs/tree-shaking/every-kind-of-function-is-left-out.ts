@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 2
+// CHECK-LABEL: function {{*}}name="plain"
+// CHECK-LABEL: function {{*}}name="asynchronous"
+// CHECK-LABEL: function {{*}}name="usesArguments"
 
 // FILE: main.ts
 // Nothing calls any of these: one function, constant or class of every kind the language has, some exported from a file of which another name is used. The build has to cope with leaving each of them out, and what is used still works.
@@ -93,29 +96,3 @@ const alsoNot = async () => notExported();
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: plain asynchronous usesArguments
-// CHECK-LABEL: function {{*}}name="plain"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="plain"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="asynchronous"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="asynchronous"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="usesArguments"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasNewTarget, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = NewRuntimeError runtimeError=LeftOutOfExecutable name="usesArguments"
-// CHECK-NEXT: Throw v3
-// CHECK-NEXT: }

@@ -5,6 +5,7 @@ use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
+use bun_http_types::ETag::HeaderEntryColumns as _;
 use bun_jsc::{FetchHeaders, HTTPHeaderName, JSGlobalObject, JsError, JsResult};
 
 use crate::generated_bindgen::headers_jsc::{H2LiveCounts, H3LiveCounts};
@@ -58,46 +59,16 @@ pub fn from_fetch_headers(
         }
         false
     };
-    if headers
-        .entries
-        .ensure_total_capacity(header_count as usize)
-        .is_err()
-    {
-        bun_alloc::out_of_memory();
-    }
-    // SAFETY: capacity reserved above; columns are `StringPointer` (POD) and fully
-    // overwritten by `copy_to` / the explicit writes below before any read.
-    unsafe { headers.entries.set_len(header_count as usize) };
     headers.buf.reserve_exact(buf_len as usize);
     // SAFETY: capacity reserved above; bytes are fully initialized by copyTo / the copy below.
     unsafe { headers.buf.set_len(buf_len as usize) };
-    // `Slice::items` returns `&mut [F]` from `&self`; the two columns are
-    // disjoint allocations so simultaneous access is sound, but borrowck can't see
-    // that. Take raw column pointers up front and slice in scoped blocks.
-    let sliced = headers.entries.slice();
-    // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
-    // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
-    let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
-    // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
-    let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
-    // Zero-init so any slot `copy_to` fails to write (iterator skip, count
-    // desync) reads as `{0, 0}` — a valid empty slice — rather than garbage.
-    // SAFETY: both columns hold exactly `header_count` `StringPointer` slots.
-    unsafe {
-        core::ptr::write_bytes(names_ptr, 0, header_count as usize);
-        core::ptr::write_bytes(values_ptr, 0, header_count as usize);
-    }
+    // Zeroed, so that a slot which `copy_to` does not write is an empty slice.
+    bun_core::handle_oom(headers.entries.reset_to_zeroed(header_count as usize));
+    let entries = headers.entries.split_mut();
     if let Some(h) = fetch_headers {
-        // SAFETY: each column has `header_count >= fetch_header_count` zeroed, unborrowed slots.
-        let (names, values) = unsafe {
-            (
-                core::slice::from_raw_parts_mut(names_ptr, fetch_header_count as usize),
-                core::slice::from_raw_parts_mut(values_ptr, fetch_header_count as usize),
-            )
-        };
         h.copy_to(
-            names,
-            values,
+            &mut entries.name[..fetch_header_count as usize],
+            &mut entries.value[..fetch_header_count as usize],
             &mut headers.buf[..buf_len_before_content_type as usize],
         );
     }
@@ -107,24 +78,17 @@ pub fn from_fetch_headers(
         let body_ct = body_content_type.unwrap();
         let ct = b"Content-Type";
         headers.buf[buf_len_before_content_type as usize..][..ct.len()].copy_from_slice(ct);
-        // SAFETY: header_count >= 1 (incremented above); names_ptr points to a
-        // live column of `header_count` slots.
-        unsafe {
-            *names_ptr.add(header_count as usize - 1) = api::StringPointer {
-                offset: buf_len_before_content_type,
-                length: u32::try_from(ct.len()).unwrap(),
-            };
-        }
+        entries.name[fetch_header_count as usize] = api::StringPointer {
+            offset: buf_len_before_content_type,
+            length: u32::try_from(ct.len()).unwrap(),
+        };
 
         headers.buf[buf_len_before_content_type as usize + ct.len()..][..body_ct.len()]
             .copy_from_slice(body_ct);
-        // SAFETY: see above.
-        unsafe {
-            *values_ptr.add(header_count as usize - 1) = api::StringPointer {
-                offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
-                length: u32::try_from(body_ct.len()).unwrap(),
-            };
-        }
+        entries.value[fetch_header_count as usize] = api::StringPointer {
+            offset: buf_len_before_content_type + u32::try_from(ct.len()).unwrap(),
+            length: u32::try_from(body_ct.len()).unwrap(),
+        };
     }
 
     Ok(headers)

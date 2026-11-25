@@ -1,0 +1,21 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var s = 0; for (var i = 0; i < d.length; i++) s += d[i]; return s; } };
+# print(T[key](new Int8Array(19).fill(-3)), T[key](new Uint8ClampedArray(8).fill(255)), T[key](new Int16Array(17).fill(-300)), T[key](new Uint16Array(9).fill(65535)), T[key](new Int32Array(16).fill(-70000)), T[key](new Uint32Array(10).fill(4294967295)), T[key](new Float32Array(11).fill(0.5)), T[key](new Float64Array(23).fill(0.25)), T[key](new Int16Array(7).fill(2)), T[key](new Float64Array(0)));
+# -- end of source
+# Behind the front of a loop over what nobody has typed, views of all kinds but bytes share one copy, and each read asks the cell for its kind: a chain from the widest kind down: 4 instructions for a Float64Array,
+# 17 for a Uint8ClampedArray; and such a turn was not laid out by eights. A plain sum of 1,000 elements: 11,134 .. 24,128 instructions, plain Bun 4,078 .. 8,070.
+# The kind of a view never changes. The code generator lays turns out in a row once for each kind that the view's type lists, as it does for the two kinds of storage of a list; the kind is asked in front of them;
+# in them the read is the read of one kind. The rest keeps the chain. 4,171 .. 5,189.
+# RUN: compile UnrolledLoopsForTypedArrays mechanisms=all
+# CHECK: statistic UnrolledLoopsForTypedArrays 1
+# Four turns a kind, not the eight of a loop of one kind: eight kinds stand here: a loop told apart weighed 3,573 B and 4.0 M instructions of build more by them; by four 2,083 B and 2.4 M, half an instruction an element dearer,
+# and a view of four to seven elements runs in them.
+# RUN(TURNS): compile UnrolledIterationsForTypedArrays mechanisms=all
+# TURNS: statistic UnrolledIterationsForTypedArrays 32
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -57 2040 -5100 589815 -1120000 42949672950 5.5 5.75 14 0
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: -57 2040 -5100 589815 -1120000 42949672950 5.5 5.75 14 0
+# NONE-NEXT: exited with 0

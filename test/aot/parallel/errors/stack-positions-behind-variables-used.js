@@ -87,3 +87,5 @@ show("const once = /a/; once();", () => { const once = /a/; once(); });
 show("const once = this; once();", () => { const once = this; once(); });
 show("const once = five; const next = once; next();", () => { const once = five; const next = once; next(); });
 show("const once = pass(nothing), next = 1; once(next);", () => { const once = pass(nothing), next = 1; once(next); });
+show("let once = pass(nothing); pass(...once);", () => { let once = pass(nothing); pass(...once); });
+show("const once = pass`a`; once();", () => { const once = pass`a`; once(); });

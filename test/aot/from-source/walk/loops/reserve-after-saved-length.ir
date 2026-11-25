@@ -1,0 +1,17 @@
+# -- source: main.mjs
+# const array = [4, 1, 3, 2];
+# const output = [];
+# for (let i1 = 0; i1 < array.length; i1++) { output[i1 + 1] = 0; }
+# for (let i2 = 0, length2 = array.length; i2 < length2; i2++) { output[i2] = -1; }
+# print(output.join());
+# -- end of source
+# The second loop's bound is the saved length of `array`, read before the capacity of `output` is reserved. Everything that the appending store reads from `output` is read after the reserve.
+# The code verifier judges only bounds evidence that was read from the array that the access is on. It used to reject this code because of the read from `array`.
+# RUN: walk f0:Body mechanisms=all
+# CHECK: ReserveArrayCapacity
+# CHECK: = GetArrayCapacity
+# CHECK: = GetArrayStorage
+# CHECK: ExtendArrayLength
+# RUN(SHELL): run-in-shell void 0;
+# SHELL: -1,-1,-1,-1,0
+# SHELL-NEXT: exited with 0

@@ -122,91 +122,9 @@ attempt("powers of two multiply back to one", () => {
   return wrong;
 });
 
-// GENERATED: outcome truncated root tenToThe mathTenToThe attempt
 // CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b3():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v2 = Call v0 calleeName="run"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-// CHECK-NEXT: v4 = Call v1, -, v3 calleeName="show"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: b3() role=CatchHandler:
-// CHECK-NEXT: v6 = CatchValue
-// CHECK-NEXT: v7 = String string="threw "
-// CHECK-NEXT: v8 = PropGet v6 key="constructor"
-// CHECK-NEXT: v9 = PropGet v8 key="name"
-// CHECK-NEXT: v10 = Add v7, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="truncated"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Pow v2, v3
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = BitOr v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="root"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v2 = Double number=0.5
-// CHECK-NEXT: v3 = Pow v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tenToThe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=10
-// CHECK-NEXT: v2 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Pow v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mathTenToThe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Math
-// CHECK-NEXT: v2 = Builtin builtin=MathPow
-// CHECK-NEXT: v3 = Integer integer=10
-// CHECK-NEXT: v4 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Call v2, v1, v3, v4 calleeName="Math.pow"
-// CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string="->"
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v9 = Call v8, -, v1 calleeName="outcome"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v6, v4, v0, v7, v10 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

@@ -1,0 +1,53 @@
+# -- source: main.js
+# const told = [];
+# function note(value) {
+#   told.push(String(value));
+#   return value;
+# }
+# let limit = 1;
+# function* pages(shelves, books) {
+#   let turns = 0;
+#   for (const shelf of shelves) {
+#     try {
+#       for (const book of books) {
+#         turns++;
+#         try {
+#           yield book + shelf;
+#         } finally {
+#           note("closed" + turns);
+#         }
+#       }
+#     } finally {
+#       note("shelved");
+#       if (turns === limit) break;
+#     }
+#   }
+#   note("end");
+# }
+# for (const page of pages([10, 20], [1, 2])) note(page);
+# for (const page of pages([10, 20], [1, 2])) {
+#   note(page);
+#   break;
+# }
+# limit = 3;
+# for (const page of pages([10, 20], [1, 2])) {
+#   note(page);
+#   if (page === 21) break;
+# }
+# try {
+#   for (const page of pages([10, 20], [1, 2])) {
+#     note(page);
+#     if (page === 12) throw new Error("torn");
+#   }
+# } catch (error) {
+#   note(error.message);
+# }
+# print(told.join(" "));
+# -- end of source
+# A generator is walked in the place of the loop that consumes it only if the way of a return at each yield leads forward. The way is followed with the integers that say how a finally was entered. Here the return (1) and what the inner finally may throw (2) meet at the outer finally, so how it was entered is not known there, and the switch behind it may as well come round the outer loop. The switch stands in a block of its own, behind the one that takes the integer: it had been looked at while the integer was still known and was not looked at again, so the generator was taken, the walk came to the back edge, and the build stopped: "the walk is over and an edge is open". What is known less is now carried to every block that was seen: the generator is made.
+# RUN: run-in-shell
+# CHECK: 11 closed1 12 closed2 shelved 21 closed3 22 closed4 shelved end 11 closed1 shelved end 11 closed1 12 closed2 shelved 21 closed3 shelved end 11 closed1 12 closed2 shelved torn
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 11 closed1 12 closed2 shelved 21 closed3 22 closed4 shelved end 11 closed1 shelved end 11 closed1 12 closed2 shelved 21 closed3 shelved end 11 closed1 12 closed2 shelved torn
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,69 @@
+// Loops over tables and lists that nobody types, which read by name behind their stores and store several times in an iteration.
+// STATISTIC: ArraysConvertedToDoubleStorage >= 20
+// STATISTIC: ArrayRowsHoisted >= 60
+// STATISTIC: SiteCachedReadsHoisted >= 30
+// STATISTIC: StoresUndoneAtIterationRestarts >= 30
+const said = []; let digest = 0, cases = 0, calls = 0;
+const tells = process.argv[2] === "all";
+function keep(text) { cases++; if (tells) console.log(text.slice(0, 260)); for (let i = 0; i < text.length; i++) digest = (digest * 31 + text.charCodeAt(i)) | 0; if (cases % 307 === 1) said.push(text.slice(0, 170)); }
+function show(x, depth = 0) { try { return typeof x === "number" ? Object.is(x, -0) ? "-0" : String(x) : typeof x === "string" ? JSON.stringify(x) : typeof x === "bigint" ? x + "n" : x === undefined ? "u" : x === null ? "n" : depth > 2 ? "..." : Array.isArray(x) || ArrayBuffer.isView(x) ? "[" + Array.from({ length: Math.min(x.length, 14) }, (_, i) => i in x ? show(x[i], depth + 1) : "_").join() + "]" + x.length : typeof x === "object" ? "{" + Object.keys(x).slice(0, 4) + "}" : typeof x; } catch (e) { return "!" + e.constructor.name; } }
+const got = (o, name, value) => Object.defineProperty(o, name, { get() { calls++; return value; }, set(v) { calls += 100; value = v; }, enumerable: true, configurable: true });
+const named = (names, values, o = {}) => { names.split(" ").forEach((n, i) => { o[n] = values[i]; }); return o; };
+const counting = v => ({ valueOf() { calls++; return v; } });
+const fails = { valueOf() { calls++; throw new RangeError("no"); } };
+const constants = [() => 3, () => 2.5, () => -0, () => NaN, () => Infinity, () => 2147483647, () => "t", () => "2", () => undefined, () => null, () => counting(2), () => true, () => 2n, () => fails, () => Symbol.iterator];
+const lists = [() => [1, 2, 3, 4, 5, 6], () => [1.5, 2.5, 3.5, 4.5, 5.5, 6.5], () => [1, 2.5, NaN, -0, 5, 6], () => [1, , 3, , 5, 6], () => ["a", "b", "c", "d", "e", "f"], () => [1, "b", 3, null, undefined, 6], () => [], () => new Array(6), () => new Array(6).fill(0), () => new Int8Array(6), () => new Float64Array([1, 2, 3, 4, 5, 6]), () => Object.freeze([1, 2, 3, 4, 5, 6]), () => ({ length: 4, 0: 1, 1: 2, 2: 3, 3: 4 }), () => "letter", () => { const a = [1, 2, 3, 4, 5, 6]; got(a, 3, 9); return a; }, () => new (class extends Array {})(1, 2, 3, 4, 5, 6), () => [2147483640, 2147483647, -2147483648, 0, 5, 6], () => new Proxy([1, 2, 3, 4, 5, 6], { get(t, k) { calls++; return t[k]; }, set(t, k, v) { calls++; t[k] = v; return true; } })];
+function storeThenName(x, y, c) { let s = 0; for (let i = 0; i < x.length && i < 9; i++) { y[i] = x[i] + 1; s += c.k; } return s; }
+function moveThenName(x, y, c) { for (let i = 0; i < x.length && i < 9; i++) { y[i] = x[i]; if (i > c.k) y[i] = Math.max(y[i], x[i] * 2); } return y; }
+function moveThenAdd(x, y, c) { for (let i = 1; i < x.length && i < 9; i++) { y[i] = x[i - 1]; if (c.k < i) y[i] = Math.max(x[i], x[i - 1] + c.k); } return y; }
+function nameAsKey(x, y, c) { for (let i = 0; i < x.length && i < 9; i++) { y[i] = x[c.k] + i; y[c.k] = i; } return y; }
+function nameInKey(x, y, c) { let s = 0; for (let i = 0; i < 6; i++) { y[i] = x[i]; s += x[i - c.k] + 1; y[i + c.k] = Math.max(y[i], x[i]); } return s; }
+function swapThenName(x, y, c) { let s = 0; for (let i = 0; i < 3; i++) { const t = x[i]; x[i] = x[5 - i]; x[5 - i] = t; s += c.k * i; } return s; }
+function swapBesideName(x, y, c) { for (let i = 0; i < 3; i++) { const t = x[i]; x[i] = x[5 - i] + c.k; x[5 - i] = t; } return x; }
+function carry(x, y, c) { let d = 0; for (let j = 1; j < 6; j++) { const t = x[j]; x[j] = c.k === j ? d + 1 : Math.max(x[j], x[j - 1]); d = t; } return d; }
+function shiftDown(x, y, c) { for (let i = 1; i < 6; i++) { x[i - 1] = x[i]; y[i] = x[i] - c.k; } return y; }
+function twoNames(x, y, c) { let s = 0; for (let i = 0; i < x.length && i < 9; i++) { y[i] = i; s += c.k; y[i] = c.b; s -= c.b; } return s; }
+function replaces(x, y, c) { let s = 0; for (let i = 0; i < x.length && i < 9; i++) { y[i] = x[i]; s += c.k * 1; if (i === 2) c.k = "two"; if (i === 4) y = x; } return s; }
+function throwsLate(x, y, c) { for (let i = 0; i < 6; i++) { y[i] = x[i]; if (i === 3) throw c.k; y[i] = Math.max(y[i], c.b); } return y; }
+function nested(x, y, c) { let s = 0; for (let k = 0; k < 2; k++) for (let i = 0; i < x.length && i < 9; i++) { y[i] = x[i]; s += c.k; y[i] = Math.max(y[i], s); } return s; }
+function rotate(x, y, c) { let s = 0; for (let i = 0; i + 2 < 6; i++) { x[i] = x[i + 1]; x[i + 1] = x[i + 2]; if (Math.max(x[i], 1) > 1) s += c.k * 2; } return s; }
+function rotateMax(x, y, c) { for (let i = 0; i + 2 < 6; i++) { x[i] = x[i + 1]; x[i + 1] = x[i + 2]; if (i > 0) x[i + 2] = Math.max(x[i], x[i + 2] * c.k); } return x; }
+function gather(x, y, c) { for (let i = 1; i < 6; i++) { x[i] += x[i - 1]; if (i > 2) x[i] = x[i] * c.k; y[i] = x[i]; } return y; }
+function gatherKeys(x, y, c) { for (let i = 1; i < 6; i++) { x[i] = x[i - 1]; x[i - 1] = x[i] + 1; if (i > 1) y[c.k] = Math.max(x[i], x[i - 1]); } return y; }
+const forms = [rotate, rotateMax, gather, gatherKeys, storeThenName, moveThenName, moveThenAdd, nameAsKey, nameInKey, swapThenName, swapBesideName, carry, shiftDown, twoNames, replaces, throwsLate, nested];
+const shapes = [(k, b) => named("k b", [k, b]), (k, b) => named("b k", [b, k]), (k, b) => got(named("b", [b]), "k", k), (k, b) => got(named("k", [k]), "b", b), (k, b) => Object.create(named("k b", [k, b])), (k, b) => named("k b", [k, b], JSON.parse('{"z":1}')), (k, b) => new Proxy(named("k b", [k, b]), {}), (k, b) => named("k b", [k, b], new (class { get z() { return 1; } })()), () => ({})];
+let place = 0;
+function tried(f, x, y, c) { calls = 0; let answer; try { answer = show(f(x, y, c)); } catch (e) { answer = e && e.constructor ? e.constructor.name : typeof e; } keep(f.name + " " + answer + show(x) + show(y) + calls); }
+for (const f of forms) for (const x of lists) for (const y of lists) for (const k of constants) { if (place++ % 3) continue; const l = x(), m = place % 7 ? y() : l; tried(f, l, m, shapes[place % 5 ? place % 2 : place % shapes.length](k(), constants[place % constants.length]())); }
+// Lists of whole numbers whose contents the build knows.
+function reversed(c, n) { const a = [1, 2, 3, 4, 5, 6, 7, 8]; let s = 0; for (let i = 0; i < 4; i++) { const t = a[i]; a[i] = a[7 - i]; a[7 - i] = t; if (i > n) s += c.k * 2; } return s + a.join(); }
+function prefix(c, n) { const a = [1, 2, 3, 4, 5, 6, 7, 8]; let s = 0; for (let i = 1; i < 8; i++) { a[i] = (a[i] + a[i - 1]) | 0; if (i > n) s += c.k * 2; } return s + a.join(); }
+function moved(c, n) { const a = [1, 2, 3, 4, 5, 6, 7, 8]; let s = 0; for (let i = 0; i < 6; i++) { a[i] = a[i + 1]; a[i + 1] = a[i + 2]; if (i > n) s += c.k * 2; } return s + a.join(); }
+function counted(c, n) { const a = [0, 0, 0, 0]; let s = 0; for (let i = 0; i < 12; i++) { a[i & 3]++; if (i > n) s += c.k * 2; } return s + a.join(); }
+function rising(c, n) { const a = [1, 2, 3, 4, 5, 6, 7, 8], b = [0, 0, 0, 0, 0, 0, 0, 0]; for (let i = 1; i < 8; i++) { a[i] = (a[i] + a[i - 1]) | 0; b[i] = i; if (i > n) b[i] = Math.max(b[i], c.k); } return a.join() + b.join(); }
+function heldTable(c, n) { const f = []; for (let i = 0; i < 4; i++) f.push([i, i + 1, i + 2, i + 3]); let s = 0; for (let i = 1; i < 4; i++) for (let j = 0; j < 3; j++) { const t = f[i][j]; f[i][j] = f[i - 1][j + 1]; f[i - 1][j + 1] = t; if (j + i > n) s += c.k * 2; } return s + f.join(); }
+for (const f of [reversed, prefix, moved, counted, rising, heldTable]) for (let n = 0; n < 5; n++) for (const k of constants) for (const shape of shapes) { const c = shape(k(), 2); calls = 0; let answer; try { answer = f(c, n); } catch (e) { answer = e.constructor.name; } keep(f.name + " " + answer + " " + calls); }
+// Tables.
+const items = JSON.parse('[{"w":3,"v":4},{"w":5,"v":6.5},{"w":2,"v":3},{"w":1,"v":-0},{"w":4,"v":1}]'), whole = JSON.parse('[{"w":3,"v":4},{"w":5,"v":6},{"w":2,"v":3},{"w":1,"v":0},{"w":4,"v":1}]');
+const odd = [named("w v", ["2", 3]), got(named("w", [1]), "v", 5), got(named("v", [5]), "w", 2), named("w v", [1.5, 2]), named("w v", [-1, 2]), named("w v", [NaN, 1]), named("w v", [-0, 2]), named("w v", [0, "x"]), named("w v", [2, null]), named("w v", [counting(2), 1]), named("w v", [1, counting(4)]), named("w v", [2, 2147483647]), named("w v", [2, -2147483648]), named("w v", [2, NaN]), named("w v", [2, Infinity]), named("w v", [20, 1]), named("v", [1]), named("w", [1]), null, undefined, 5, "wv", [], named("w v", [1, 2n]), named("w v", [1, fails])];
+const zeros = () => new Array(9).fill(0), halves = () => new Array(9).fill(0.5), holes = () => new Array(9), texts = () => "abcdefghi".split("");
+const filled = make => n => Array.from({ length: n + 1 }, make);
+const tables = [filled(zeros), filled(halves), n => { const f = []; for (let i = 0; i <= n; i++) f.push(zeros()); return f; }, filled((_, i) => i & 1 ? new Float64Array(9) : zeros()), filled((_, i) => i === 2 ? holes() : zeros()), filled((_, i) => i === 1 ? texts() : zeros()), filled((_, i) => i === 3 ? [0, 0] : zeros()), filled((_, i) => i === 2 ? Object.freeze(zeros()) : zeros()), n => { const r = zeros(); return filled(() => r)(n); }, n => { const f = filled(zeros)(n); f[2] = f; return f; }, filled((_, i) => i === 2 ? undefined : zeros()), filled((_, i) => i === 3 ? { length: 9 } : halves()), filled(() => [0, 0, 0, "x", 0, 0.5, 0, 0, 0]), n => { const f = filled(zeros)(n); got(f, 2, zeros()); return f; }, filled((_, i) => { const r = zeros(); if (i === 2) got(r, 4, 7); return r; }), filled((_, i) => i & 1 ? zeros() : halves()), filled(() => [0, 0, NaN, -0, 1, 2, 3, 4, 5]), n => new Proxy(filled(zeros)(n), { get(t, k) { calls++; return t[k]; } }), filled(() => new (class extends Array {})(0, 0, 0, 0, 0, 0, 0, 0, 0)), n => Object.freeze(filled(zeros)(n)), n => ({ ...filled(zeros)(n) })];
+function sackIf(f, it, n) { for (let i = 1; i <= n; i++) { const x = it[i - 1]; for (let j = 0; j <= 8; j++) { if (x.w > j) f[i][j] = f[i - 1][j]; else f[i][j] = Math.max(f[i - 1][j], f[i - 1][j - x.w] + x.v); } } return f; }
+function sackMove(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j <= 8; j++) { f[i][j] = f[i - 1][j]; if (it[i - 1].w <= j) f[i][j] = Math.max(f[i][j], f[i - 1][j - it[i - 1].w] + it[i - 1].v); } return f; }
+function sackNamed(f, c, n) { const t = named("items", [c]); for (let i = 1; i <= n; i++) for (let j = 0; j <= 8; j++) { f[i][j] = f[i - 1][j]; if (t.items[i - 1].w <= j) f[i][j] = Math.max(f[i][j], f[i - 1][j - t.items[i - 1].w] + t.items[i - 1].v); } return f; }
+function sackOne(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 1; j <= 8; j++) { const x = it[i - 1]; f[i][j] = x.w <= j ? Math.max(f[i - 1][j], f[i - 1][j - x.w] + x.v) : f[i - 1][j]; } return f; }
+function sackParts(f, it, n) { for (let i = 1; i <= n; i++) { const { w, v } = it[i - 1]; for (let j = 0; j <= 8; j++) { f[i][j] = f[i - 1][j]; if (w <= j && f[i - 1][j - w] + v > f[i][j]) f[i][j] = f[i - 1][j - w] + v; } } return f; }
+function sackRow(f, it, n) { const g = f[0]; for (let i = 0; i < n; i++) { const x = it[i]; for (let j = 8; j >= x.w; j--) g[j] = Math.max(g[j], g[j - x.w] + x.v); } return g; }
+function movedRows(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 9; j++) { f[i][j] = f[i - 1][j]; f[0][j] += it[i - 1].v; } return f; }
+function copiedRows(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 8; j++) { f[i][j] = f[i - 1][j + 1]; f[i][j + 1] = Math.max(f[i][j], j); } return f; }
+function plainCopy(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 9; j++) f[i][j] = f[i - 1][j]; return f; }
+function unequal(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 1; j < 9; j++) if (it[i - 1].v === j) f[i][j] = f[i - 1][j - 1] + 1; else f[i][j] = f[i - 1][j] > f[i][j - 1] ? f[i - 1][j] : f[i][j - 1]; return f; }
+function edits(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 1; j < 9; j++) { if (it[i - 1].w === j) f[i][j] = f[i - 1][j - 1]; else f[i][j] = Math.min(f[i - 1][j], f[i][j - 1], f[i - 1][j - 1]) + it[i - 1].v; } return f; }
+function editsAfter(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 1; j < 9; j++) { f[i][j] = f[i - 1][j - 1]; if (it[i - 1].w !== j) f[i][j] = Math.min(f[i - 1][j], f[i][j - 1]) + it[i - 1].v; } return f; }
+function rotateRows(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 7; j++) { f[i][j] = f[i][j + 1]; f[i][j + 1] = f[i][j + 2]; if (j > 2) f[i][j + 2] = Math.max(f[i][j], it[i - 1].v); } return f; }
+function carryRows(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 8; j++) { const t = f[i][j]; f[i][j] = f[i - 1][j]; f[i - 1][j] = t; if (it[i - 1].w > j) f[i][j + 1] = Math.max(f[i][j], it[i - 1].v + t); } return f; }
+function pushRows(f, it, n) { for (let i = 1; i <= n; i++) for (let j = 0; j < 8; j++) { f[i][j] = f[i - 1][j]; f[i - 1][j] = f[i - 1][j + 1] + 1; if (j > 2) f[i][j] = Math.max(f[i][j], it[i - 1].v); } return f; }
+function pushRowsByKey(f, it, n) { for (let i = 1; i <= n; i++) { const x = it[i - 1]; for (let j = 0; j < 8; j++) { f[i][j] = f[i - 1][j]; f[i - 1][j] = f[i - 1][j + 1] - 1; if (j > 3) f[i][j] = Math.min(f[i - 1][j - x.w], f[i][j]) + 2; } } return f; }
+for (const f of [pushRows, pushRowsByKey, rotateRows, carryRows, sackIf, sackMove, sackNamed, sackOne, sackParts, sackRow, movedRows, copiedRows, plainCopy, unequal, edits, editsAfter]) for (const t of tables) for (let k = 0; k <= odd.length + 1; k++) { const it = (k & 1 ? items : whole).slice(); if (k > 1) it[k % 5] = odd[k - 2]; for (const n of [5, 3]) { calls = 0; const g = t(5); let answer; try { answer = show(f(g, it, n)); } catch (e) { answer = e.constructor.name; } keep(f.name + " " + answer + show(g) + calls); } }
+console.log(cases, digest); for (const x of said) console.log(x);

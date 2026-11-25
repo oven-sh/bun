@@ -1,18 +1,20 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="throughField"
 // CHECK: [[picked]] = Call {{*}}calleeName="source.pick"
-// CHECK-NEXT: = Convert [[picked]] declared={type=number site=w{{*}}} @
+// CHECK-NEXT: Return [[picked]]
 // CHECK-LABEL: function {{*}}name="throughMethod"
 // CHECK: [[row]] = Call {{*}}calleeName="source.read"
-// CHECK-NEXT: = Convert [[row]] declared={type=undefined|null|L{{*}} site=w{{*}}} @
+// CHECK-NEXT: [[expectedRow]] = Convert [[row]] declared={type=undefined|null|[[layout]] flags=[IsExpected]}
+// CHECK-NEXT: Return [[expectedRow]]
 // CHECK-LABEL: function {{*}}name="throughParameter"
 // CHECK: [[made]] = Call {{*}}calleeName="make"
-// CHECK-NEXT: = Convert [[made]] declared={type=undefined|null|L{{*}} site=w{{*}}} @
+// CHECK-NEXT: [[expectedMade]] = Convert [[made]] declared={type=undefined|null|[[layout]] flags=[IsExpected]}
+// CHECK-NEXT: Return [[expectedMade]]
 
 // RUN(CAPTURE): lower
 // CAPTURE-LABEL: function {{*}}kind=Arrow
 // CAPTURE: [[captured]] = Call {{*}}calleeName="inner"
-// CAPTURE-NEXT: = Convert [[captured]] declared={type=number site=w{{*}}} @
+// CAPTURE-NEXT: Return [[captured]]
 
 // RUN(UNWRITTEN): lower
 // UNWRITTEN-LABEL: function {{*}}name="unwrittenResult"
@@ -20,7 +22,7 @@
 // UNWRITTEN-NOT: Convert
 // UNWRITTEN: Return
 
-// The result of a call is converted at the call, to the type that the checker gives the call, whatever the callee is. A signature in a type stands for the functions that were converted to it, so the conversion has no cause.
+// The result of a call through a value of a function type is claimed to be nothing, whatever holds the callee: a field, a method of an interface, a parameter, a capture. A signature in a type stands for functions of the program, and the engine sees what those return where it knows who is called. Here it does not, so a result that a variable takes goes with the layout that the signature names, as a guess. A number is no object, and `any` names nothing.
 interface Row {
   id: number;
 }
@@ -30,10 +32,7 @@ interface Source {
   pick: (key: string) => number;
 }
 
-export function throughCapture() {
-  function inner(): number {
-    return 1;
-  }
+export function throughCapture(inner: () => number) {
   return () => {
     var value = inner();
     return value;

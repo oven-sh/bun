@@ -7,10 +7,11 @@
 // CHECK: = GetEnvironmentField
 // CHECK-NOT: [[unusedField]]
 // CHECK-LABEL: function {{*}}name="local"
-// CHECK: [[localTest]] = TypeTest {{*}}testedType=string @
+// CHECK: [[localTest]] = TypeTest [[value]] testedType=string @
 // CHECK-NEXT: Branch [[localTest]] -> taken [[localTaken]](| 0), notTaken {{*}}(| 0)
-// CHECK: [[localTaken]]([[narrowed]]):
-// CHECK: = Convert [[narrowed]] declared={type=undefined|null|string} illTypedCause=Assertion
+// CHECK: [[localTaken]]([[text]]):
+// CHECK-NEXT: [[named]] = NarrowByTest [[value]], [[text]]
+// CHECK: = PropGet [[named]] key="length"
 // CHECK-LABEL: function {{*}}name="moduleLevel"
 // CHECK: [[moduleTest]] = TypeTest {{*}}testedType=string @
 // CHECK-NEXT: Branch [[moduleTest]] -> taken [[moduleTaken]](| 0), notTaken {{*}}(| 0)

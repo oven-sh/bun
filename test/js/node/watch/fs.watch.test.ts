@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -75,6 +76,19 @@ describe("fs.watch", () => {
       done();
     } catch (e: any) {
       done(e);
+    }
+  });
+  test("a separator after the directory is not part of the reported name", async () => {
+    using dir = tempDir("watch-trailing-separator", { "a.txt": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const watcher = fs.watch(String(dir) + path.sep, (_, name) => name?.endsWith("a.txt") && resolve(name));
+    watcher.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "a.txt"), "x"));
+    try {
+      expect(await promise).toBe("a.txt");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
     }
   });
   test("add file/folder to folder", done => {
@@ -169,6 +183,24 @@ describe("fs.watch", () => {
     });
   });
 
+  test("a recursive watcher sees subfolders of a folder that is already watched", async () => {
+    using dir = tempDir("watch-flat-then-recursive", { "nested/.keep": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const flat = fs.watch(String(dir), () => {});
+    const recursive = fs.watch(String(dir), { recursive: true }, (_, filename) => {
+      if (filename === path.join("nested", "file.txt")) resolve();
+    });
+    recursive.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "hello"));
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+      flat.close();
+      recursive.close();
+    }
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -228,6 +260,77 @@ describe("fs.watch", () => {
     });
   });
 
+  // macOS hands one FSEvents stream to every watcher in the process, and each
+  // watcher keeps the events under its own path. The watcher on the parent puts
+  // the siblings into that stream: "views2/a.txt" and "views.bak" must not reach
+  // a watcher on "views" as "2/a.txt" and ".bak".
+  test("does not report siblings whose names start with the watched name", async () => {
+    using dir = tempDir("fs-watch-sibling-prefix", { "views": {}, "views2": {} });
+    const root = String(dir);
+    const views = path.join(root, "views");
+
+    const seen = { recursive: new Set<string>(), flat: new Set<string>() };
+    const errors: unknown[] = [];
+    const watchers = [
+      fs.watch(root, { recursive: true }, () => {}),
+      fs.watch(views, { recursive: true }, (_, filename) => void seen.recursive.add(String(filename))),
+      fs.watch(views, (_, filename) => void seen.flat.add(String(filename))),
+    ];
+    for (const watcher of watchers) watcher.on("error", error => void errors.push(error));
+    const sawBoth = (name: string) => seen.recursive.has(name) && seen.flat.has(name);
+    // Writes the siblings and then `name`, until both watchers on "views" report `name`.
+    // The siblings come first, so a watcher that matches them reports them before `name`.
+    const writeUntilSeen = async (name: string) => {
+      for (let round = 0; round < 100 && errors.length === 0 && !sawBoth(name); round++) {
+        fs.writeFileSync(path.join(root, "views2", "a.txt"), "x");
+        fs.writeFileSync(path.join(root, "views.bak"), "x");
+        fs.writeFileSync(path.join(views, name), "x");
+        await Bun.sleep(20);
+      }
+    };
+
+    try {
+      await writeUntilSeen("b.txt");
+      // Both watchers are live now, so they observe every write of this round.
+      await writeUntilSeen("c.txt");
+    } finally {
+      for (const watcher of watchers) watcher.close();
+    }
+
+    expect({ errors, recursive: [...seen.recursive], flat: [...seen.flat] }).toEqual({
+      errors: [],
+      recursive: ["b.txt", "c.txt"],
+      flat: ["b.txt", "c.txt"],
+    });
+  });
+
+  // The boundary check exempts a watched path that ends in "/". Without the exemption a
+  // watcher on "/" reports nothing. Linux and Windows have no prefix filter to exempt from,
+  // and a recursive watch of the root walks the whole tree there.
+  test.skipIf(!isMacOS)("a recursive watcher on / reports a file below it", async () => {
+    using dir = tempDir("fs-watch-root", {});
+    const file = path.join(String(dir), "a.txt");
+    const suffix = path.join(path.basename(String(dir)), "a.txt");
+
+    let reported = false;
+    const errors: unknown[] = [];
+    const watcher = fs.watch("/", { recursive: true }, (_, filename) => {
+      if (String(filename).endsWith(suffix)) reported = true;
+    });
+    watcher.on("error", error => void errors.push(error));
+
+    try {
+      for (let round = 0; round < 100 && errors.length === 0 && !reported; round++) {
+        fs.writeFileSync(file, "x");
+        await Bun.sleep(20);
+      }
+    } finally {
+      watcher.close();
+    }
+
+    expect({ errors, reported }).toEqual({ errors: [], reported: true });
+  });
+
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 
@@ -253,6 +356,25 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+    using dir = tempDir("watch-backslash", { "a\\b": "real", "a/b": "decoy" });
+    const real = path.join(String(dir), "a\\b");
+    const decoy = path.join(String(dir), "a", "b");
+
+    const { promise, resolve } = Promise.withResolvers<string | null>();
+    const watcher = fs.watch(real, (_event, filename) => resolve(filename));
+    const interval = repeat(() => {
+      fs.writeFileSync(decoy, "decoy");
+      fs.writeFileSync(real, "real");
+    });
+    try {
+      expect(await promise).toBe("a\\b");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
 
   test("should error on invalid path", done => {
     try {
@@ -1664,8 +1786,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 // PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
 // calling fs.watch() reused that manager: it mutated the watcher map and drove
 // the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// debug_assert and aborted; release builds raced). The watchers are now
+// kept per VM, so a Worker's watcher never aliases the main thread's.
 //
 // Must run in a subprocess: on an unpatched debug build the Worker's
 // fs.watch() call aborts the whole runtime.
@@ -1951,4 +2073,64 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
   );
 
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
+});
+
+test.skipIf(!isMacOS && !isLinux)("watching a named pipe does not wait for a writer", async () => {
+  using dir = tempDir("fswatch-fifo", {});
+  mkfifo(path.join(String(dir), "pipe"));
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const names = new Set();
+    const pipe = fs.watch("pipe", (event, name) => names.add(name));
+    fs.mkdirSync("other");
+    const other = fs.watch("other", (event, name) => {
+      if (name !== "file" || !names.has("pipe")) return;
+      clearInterval(changes);
+      pipe.close();
+      other.close();
+      console.log([...names].join());
+    });
+    let mode = 0o600;
+    const changes = setInterval(() => {
+      fs.writeFileSync("pipe2", "x");
+      fs.chmodSync("pipe", (mode ^= 0o40));
+      fs.writeFileSync("other/file", "x");
+    }, 20);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pipe\n", stderr: "", exitCode: 0 });
+});
+
+test.skipIf(!isMacOS)("more than 4096 watched paths all get events", async () => {
+  using dir = tempDir("fswatch-many", {});
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const waiting = new Set(["d0", "d4095", "d4096"]);
+    for (let i = 0; i < 4097; i++) fs.mkdirSync("d" + i);
+    for (let i = 0; i < 4097; i++) {
+      fs.watch("d" + i, (event, name) => {
+        if (name === "file" && waiting.delete("d" + i) && waiting.size === 0) {
+          console.log("OK");
+          process.exit(0);
+        }
+      });
+    }
+    setInterval(() => waiting.forEach(d => fs.writeFileSync(d + "/file", "x")), 50);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "OK\n", exitCode: 0 });
 });

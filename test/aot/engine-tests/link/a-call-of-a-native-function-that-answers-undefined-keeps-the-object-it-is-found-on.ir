@@ -1,0 +1,35 @@
+# const held = { check: $bindgen("node_validators.bind.ts", "validateUint32"), other() {} }; held.check(1, "count");
+# A binding whose row answers one function of the table is that function, whatever the function answers: undefined alone says as much as a number.
+# The call leaves the object that it is found on in sight, and nobody calls its other method.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+entry module=m0
+layout L0 module=m1 fields=[{key="check" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_validatorsBindTsValidateUint32
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = PropGet v3 key="check"
+    v5 = Integer integer=1
+    v6 = String string="count"
+    v7 = Call v4, v3, v5, v6 calleeKey="check" calleeName="held.check"
+    v8 = Undefined
+    Return v8
+}
+function f2 name="other" module=m1 kind=Method role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

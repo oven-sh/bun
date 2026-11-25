@@ -1,0 +1,13 @@
+# -- source: main.js
+# function all(...rest) { return rest.length; }
+# function late(a, ...rest) { let n = a + 1; n = n * 2; return n + rest.length; }
+# globalThis.fs = { all, late };
+# print(globalThis.fs.all(1, 2), globalThis.fs.late(1, 2, 3));
+# -- end of source
+# No way returns without the list: the entry makes it and goes on to the body, as it did.
+# RUN: run-in-shell
+# CHECK: 2 6
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f1:GenericCallEntry mechanisms=all
+# FORM: CreateRest
+# FORM: CallDirect {{*}} function=f1

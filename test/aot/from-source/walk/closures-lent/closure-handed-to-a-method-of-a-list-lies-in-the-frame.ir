@@ -1,0 +1,19 @@
+# The source says that `list` is a list, and the walk names what a list as made finds under `forEach`: a function of the library, of which Link says that it only calls its first argument. The arrow is written into the frame.
+# The stub of the method looks at the receiver and at the word of the function that it enters. Any other receiver goes on by the name, in the stub that asks the word of whatever the name finds:
+# `named` has a `forEach` of its own that keeps what it is handed, so the arrow is moved to the heap in front of it: two calls give two functions, and each still adds to the `sum` of its own call.
+# f1 = total
+# -- source: closure-handed-to-a-method-of-a-list-lies-in-the-frame.ts
+# declare function print(...values: unknown[]): void;
+# function total(list: number[], k: number): number { let sum = 0; list.forEach(x => sum += x * k); return sum; }
+# const kept: ((x: number) => number)[] = [];
+# const named: any = [5]; named.forEach = (f: (x: number) => number) => { kept.push(f); f(1); };
+# print(total([1, 2, 3], 2), total([], 2), total(named, 10), total(named, 20), kept.length, kept[0] === kept[1], kept.indexOf(kept[1]), kept[0](1), kept[1](1), kept[0](1));
+# -- end of source
+# RUN: bytes f1 mechanisms=all
+# CHECK: Call Stub CallCompiledMethodOfArrayLending.ForEach count 1
+# RUN(NEVER): bytes f1 mechanisms=all
+# NEVER-NOT: NewSlimClosure.
+# RUN(WITHHELD): bytes f1 mechanisms=all-CellsInFrames
+# WITHHELD: NewSlimClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 0 10 20 2 false 1 20 40 30

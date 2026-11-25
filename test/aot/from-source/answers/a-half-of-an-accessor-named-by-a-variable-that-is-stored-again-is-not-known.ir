@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Message() { this.tag = 1; }
+# function reassigned() { return "declared " + this.tag; }
+# function turn() { reassigned = function () { return "assigned " + this.tag; }; }
+# Object.defineProperty(Message.prototype, "one", { __proto__: null, get: reassigned, configurable: true });
+# turn();
+# Object.defineProperty(Message.prototype, "two", { __proto__: null, get: reassigned });
+# function read(message) { return message.one + ", " + message.two; }
+# print(read(new Message()));
+# -- end of source
+# THE REFUSAL BESIDE a-half-of-an-accessor-named-by-a-function-declaration-is-known.ir: a function declaration's binding that another function stores into names no one function: the table does not call it immutable, and both names stay without halves.
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: on-prototype L0 "one"
+# MEMBERS-NOT: getter=
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: declared 1, assigned 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: declared 1, assigned 1

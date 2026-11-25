@@ -52,6 +52,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) {
         let position = self.hir[member].name_pos;
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.count_accessor_function(member, kind);
         let this = lowering.builder.this_value();
         let this = this.expect("an accessor function takes this");
         lowering.set_position(position);

@@ -13,13 +13,13 @@
 //! wants to tell the parent goes through it by context id; nothing here ever
 //! touches the parent's `Worker` object or a thread-affine ref.
 //!
-//! Thread lifecycle (`thread_main`):
-//!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
+//! Thread lifecycle (`thread_main` → `run`):
+//!   1. `start_vm()`  — env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
 //!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
-//!                      teardown, free per-thread state, `workerGlobalScopeDestroyed`.
+//!                      teardown, free per-thread state; `thread_main` then posts `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
 //!
 //! Children: every worker created on a thread is registered on that thread's
@@ -47,12 +47,14 @@
 use crate::JsCell;
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
+use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -69,7 +71,7 @@ pub struct WebWorker {
     /// The `VirtualMachine` of the thread that created this worker.
     /// **Parent thread only** (`child_workers`, `parent_poll_ref`); the worker
     /// thread never dereferences it — what it needs was copied below.
-    parent: *mut VirtualMachine,
+    parent: *const VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
     /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
@@ -90,8 +92,6 @@ pub struct WebWorker {
     exec_argv_len: usize,
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
-    /// In an executable whose entry points begin programs of their own: the image of the program that begins at the specifier.
-    image: Option<&'static [u8]>,
     /// The specifier is a `data:` or `blob:` URL, or a file on disk, that the build has not seen: the Worker runs it and nothing of the compiled program.
     runs_apart_from_compiled_program: bool,
     preloads: Vec<Box<[u8]>>,
@@ -116,13 +116,13 @@ pub struct WebWorker {
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
     /// `.ref()`/`.unref()`, released when the parent releases the thread.
-    parent_poll_ref: JsCell<KeepAlive>,
+    parent_poll_ref: KeepAlive,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
-    /// What the thread is handed, until one has started; then null.
-    thread_start: Cell<*mut ThreadStart>,
+    /// What the thread is handed, until one has started.
+    thread_start: JsCell<Option<Box<ThreadStart>>>,
     /// On the parent's loop while the worker waits for room.
-    pub room_timer: JsCell<EventLoopTimer>,
+    pub room_timer: EventLoopTimer,
     /// How many times `room_timer` has found the thread of a sibling returning and no room yet.
     room_timer_rounds: Cell<u8>,
 
@@ -133,11 +133,6 @@ pub struct WebWorker {
     /// `shutdown()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
-    // The VM's allocator IS this arena.
-    arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Cloned env for the worker VM; boxed on the global heap because the arena
-    /// does not run `Drop`. Reclaimed in `shutdown()`.
-    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
@@ -147,7 +142,7 @@ pub struct WebWorker {
 }
 
 /// Copied from the parent VM on its thread at `new Worker()`; consumed by
-/// `start_vm()` on the worker thread.
+/// `run()` on the worker thread.
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
@@ -159,12 +154,14 @@ struct WorkerVmInit {
 struct ThreadStart {
     worker: bun_ptr::RefPtr<WebWorker>,
     init: WorkerVmInit,
-    table_pages: *mut c_void,
     _parent_ticket: crate::Ticket,
 }
 
-/// Outlives a `spawn` that fails, which drops its closure.
-struct OwnedByThread(*mut ThreadStart);
+/// Raw, so that `start` outlives a `spawn` that fails, which drops its closure.
+struct OwnedByThread {
+    start: *mut ThreadStart,
+    table_pages: ReservedPages,
+}
 // SAFETY: whoever holds it last takes the box. Of what is in the box,
 // `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
@@ -173,6 +170,40 @@ struct OwnedByThread(*mut ThreadStart);
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
 unsafe impl Send for OwnedByThread {}
+
+/// The address space for the tables of a thread that has not started. Null if it needs none.
+struct ReservedPages(*mut c_void);
+
+impl ReservedPages {
+    fn try_new(threads_are_ending: bool) -> Option<Self> {
+        let mut pages = core::ptr::null_mut();
+        // SAFETY: `pages` is a live local the callee writes once.
+        unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut pages, threads_are_ending) }
+            .then(|| Self(pages))
+    }
+
+    fn adopt(self) -> PagesOfThread {
+        Bun__AOT__adoptPagesForNewThread(ManuallyDrop::new(self).0);
+        PagesOfThread(PhantomData)
+    }
+}
+
+impl Drop for ReservedPages {
+    fn drop(&mut self) {
+        Bun__AOT__releasePagesForNewThread(self.0);
+    }
+}
+
+/// What the current thread has not used of the pages that it adopted.
+#[must_use]
+struct PagesOfThread(PhantomData<*const ()>);
+
+impl Drop for PagesOfThread {
+    fn drop(&mut self) {
+        Bun__AOT__releaseUnusedPagesOfThread();
+        Bun__AOT__didStartThread();
+    }
+}
 
 enum StartOutcome {
     Started,
@@ -242,8 +273,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__AOT__didStartThread();
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
-    // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
+    // Raw FFI (no RAII guard) so `run` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
 }
@@ -269,16 +299,14 @@ pub(crate) fn join_child_workers(children: Vec<*mut WebWorker>) {
 /// uncaught error: 'error' on the parent, exit code 1. The main thread goes on.
 /// Called inside an allocation: nothing here touches the JS heap or runs script.
 #[unsafe(no_mangle)]
-extern "C" fn WebWorker__endForExhaustedHeap(vm: *mut VirtualMachine) {
-    // SAFETY: this thread's live VM; `worker` is a read-only field.
-    let Some(worker) = (unsafe { (*vm).worker_ref() }) else {
+extern "C" fn WebWorker__endForExhaustedHeap(vm: &VirtualMachine) {
+    let Some(worker) = vm.worker_ref() else {
         return;
     };
     if worker.has_requested_terminate() {
         return;
     }
-    // SAFETY: this thread's live VM.
-    unsafe { (*vm).exit_handler.exit_code = 1 };
+    vm.exit_handler.exit_code.set(1);
     WebWorker__postOutOfMemoryError(worker.messaging_proxy);
     worker.exit();
 }
@@ -300,7 +328,7 @@ impl Drop for WebWorker {
             self.join_handle.with_mut(|h| h.is_none()),
             "worker thread was never joined"
         );
-        debug_assert!(self.thread_start.get().is_null());
+        debug_assert!(self.thread_start.get().is_none());
     }
 }
 
@@ -313,16 +341,6 @@ impl WebWorker {
     #[inline]
     fn vm_ptr(&self) -> *mut VirtualMachine {
         self.vm.get()
-    }
-
-    /// Closure-scoped `&mut KeepAlive` accessor for `parent_poll_ref`. The cell
-    /// is touched only on the parent thread (`set_ref`,
-    /// `release_parent_poll_ref`, `create`) so no lock is required; `JsCell`
-    /// provides the interior mutability because `WebWorker` is shared `&self`
-    /// across threads.
-    #[inline]
-    fn with_parent_poll_ref<R>(&self, f: impl FnOnce(&mut KeepAlive) -> R) -> R {
-        self.parent_poll_ref.with_mut(f)
     }
 
     /// Whether this worker was started in eval mode (entry source is a
@@ -374,7 +392,7 @@ impl WebWorker {
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
-        parent: *mut VirtualMachine,
+        parent: &VirtualMachine,
         name_str: &BunString,
         specifier_str: &BunString,
         error_message: &mut BunString,
@@ -392,24 +410,18 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
-    ) -> *mut WebWorker {
+    ) -> Option<bun_ptr::RefPtr<WebWorker>> {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
         // The transpiler holds its address: it is neither moved nor named until the guard below has run.
         let mut temp_log = bun_ast::Log::default();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
-        // are scoped to each statement.
-        let prev_log = unsafe {
-            let prev = (*parent).transpiler.log;
-            (*parent).transpiler.set_log(&raw mut temp_log);
-            prev
-        };
+        let prev_log = parent.transpiler.get().log;
+        parent.transpiler.with_mut(|t| t.set_log(&raw mut temp_log));
         // RAII: log pointer restored on every return path, before `temp_log` drops.
         scopeguard::defer! {
-            // SAFETY: `parent` outlives the guard (this call's frame).
-            unsafe { (*parent).transpiler.set_log(prev_log) };
+            parent.transpiler.with_mut(|t| t.set_log(prev_log));
         }
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
@@ -426,22 +438,18 @@ impl WebWorker {
                 continue;
             }
             let dot_slash = OnceCell::new();
-            // SAFETY: `parent` is the live VM on the calling (parent) thread;
-            // `resolve_entry_point_specifier` takes the raw pointer.
-            let unresolved = match unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash)
-            } {
-                Ok(preload) => {
-                    preloads.push(preload.to_vec().into_boxed_slice());
-                    continue;
-                }
-                Err(unresolved) => unresolved,
-            };
+            let unresolved =
+                match resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash) {
+                    Ok(preload) => {
+                        preloads.push(preload.to_vec().into_boxed_slice());
+                        continue;
+                    }
+                    Err(unresolved) => unresolved,
+                };
             *error_message = match unresolved {
                 Unresolved::Because(text) => BunString::static_(text),
                 Unresolved::Logged => {
-                    // SAFETY: as above; the resolver has written its error to the log and is done with it.
-                    let (global, log) = unsafe { ((*parent).global(), (*parent).transpiler.log()) };
+                    let (global, log) = (parent.global(), parent.transpiler.get().log());
                     let out: jsc::JsResult<BunString> = (|| {
                         let out =
                             log.to_js(global, format_args!("Error resolving Worker entry point"))?;
@@ -457,7 +465,7 @@ impl WebWorker {
                 }
             };
             // preloads dropped by RAII.
-            return core::ptr::null_mut();
+            return None;
         }
 
         // The VM of the Worker is created for a program. The Worker resolves the specifier again and reports what is wrong with it.
@@ -469,9 +477,7 @@ impl WebWorker {
         };
         let runs_apart_from_compiled_program = runs_apart && {
             let dot_slash = OnceCell::new();
-            // SAFETY: as for the preloads.
-            let path =
-                unsafe { resolve_entry_point_specifier_quietly(parent, specifier, &dot_slash) };
+            let path = resolve_entry_point_specifier_quietly(parent, specifier, &dot_slash);
             // A text that the build knew is compiled, and so is a file of the executable.
             path.is_none_or(|path| {
                 crate::compiled_program::find_entry_point_by_source_path(path).is_none()
@@ -479,20 +485,10 @@ impl WebWorker {
                     && !crate::compiled_program::is_compiled_module(path)
             })
         };
-        let image = crate::compiled_program::has_image_for_each_entry_point().then(|| {
-            let dot_slash = OnceCell::new();
-            // SAFETY: as for the preloads.
-            let path = unsafe {
-                resolve_entry_point_specifier_quietly(parent, spec_slice.slice(), &dot_slash)
-            };
-            crate::compiled_program::image_of_worker(path)
-        });
 
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
-        // SAFETY: `parent` is the calling thread's live VM.
-        let parent_ref = unsafe { &*parent };
-        let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        let mut transform_options = (*parent.transpiler.get().options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
@@ -512,7 +508,7 @@ impl WebWorker {
                     message.extend_from_slice(arg.as_bytes());
                     *error_message = BunString::clone_utf8(&message);
                     *error_is_invalid_exec_argv = true;
-                    return core::ptr::null_mut();
+                    return None;
                 }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
@@ -526,13 +522,13 @@ impl WebWorker {
         // every slice copied is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
         let mut env_loader = {
-            let parent_slots = parent_ref.proxy_env_storage.lock();
+            let parent_slots = parent.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().clone_for_worker() {
+            match parent.env_loader().clone_for_worker() {
                 Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
+                    return None;
                 }
             }
         };
@@ -547,9 +543,9 @@ impl WebWorker {
         let worker = bun_ptr::RefPtr::new(WebWorker {
             messaging_proxy: proxy,
             parent,
-            hot_reload: parent_ref.hot_reload,
+            hot_reload: parent.hot_reload.get(),
             arm_test_gate: cfg!(debug_assertions)
-                && parent_ref.is_main_thread()
+                && parent.is_main_thread()
                 && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
                     .unwrap_or(false),
             execution_context_id: this_context_id,
@@ -562,7 +558,6 @@ impl WebWorker {
             exec_argv_len,
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
-            image,
             runs_apart_from_compiled_program,
             preloads,
             name: if name_str.is_empty() {
@@ -576,14 +571,12 @@ impl WebWorker {
             is_returning: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
             vm: Cell::new(core::ptr::null_mut()),
-            parent_poll_ref: JsCell::new(KeepAlive::init()),
+            parent_poll_ref: KeepAlive::init(),
             join_handle: JsCell::new(None),
-            thread_start: Cell::new(core::ptr::null_mut()),
-            room_timer: JsCell::new(EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom)),
+            thread_start: JsCell::new(None),
+            room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
-            arena: JsCell::new(None),
-            worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
@@ -593,7 +586,7 @@ impl WebWorker {
         // thread, unless the user opted out with `{ ref: false }`.
         if !default_unref {
             // `bun_io::js_vm_ctx()` is this (the parent) thread's loop.
-            worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
+            worker_ref.parent_poll_ref.ref_(bun_io::js_vm_ctx());
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
@@ -601,83 +594,71 @@ impl WebWorker {
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
-        let parent_ticket = parent_ref.ticket();
-        let start = bun_core::heap::alloc(ThreadStart {
+        let parent_ticket = parent.ticket();
+        let start = Box::new(ThreadStart {
             worker: thread_ref,
             init,
-            table_pages: core::ptr::null_mut(),
             _parent_ticket: parent_ticket,
         });
-        worker_ref.thread_start.set(start);
-        let mut outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
+        worker_ref.thread_start.set(Some(start));
+        let mut outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent));
         if matches!(outcome, StartOutcome::NoRoom) {
-            if Self::join_returning_children(parent_ref) {
-                outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
+            if Self::join_returning_children(parent) {
+                outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent));
             }
         }
         match outcome {
             StartOutcome::Started => {}
-            StartOutcome::NoRoom if Self::has_room_to_wait_for(parent_ref) => {
+            StartOutcome::NoRoom if Self::has_room_to_wait_for(parent) => {
                 log!("[{}] waits for room", this_context_id);
                 WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
                 worker_ref.arm_room_timer();
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
-                worker_ref.drop_thread_start();
-                worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+                worker_ref.thread_start.set(None);
+                worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
-                return core::ptr::null_mut();
+                return None;
             }
         }
-        let worker = worker.into_raw();
-        // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-        unsafe { (*parent).child_workers.push(worker) };
-        worker
+        parent
+            .child_workers
+            .with_mut(|children| children.push(worker.as_ptr()));
+        Some(worker)
     }
 
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
     /// A worker that `can_wait` for the room of workers that are ending does not take the last of the room.
     fn try_start(&self, can_wait: bool) -> StartOutcome {
-        let start = self.thread_start.get();
-        let mut table_pages: *mut c_void = core::ptr::null_mut();
-        // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
+        let Some(table_pages) = ReservedPages::try_new(can_wait) else {
             return StartOutcome::NoRoom;
-        }
-        // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.
-        unsafe { (*start).table_pages = table_pages };
-        let owned = OwnedByThread(start);
+        };
+        let needs_room = !table_pages.0.is_null();
+        let start = bun_core::heap::into_raw(self.thread_start.take().expect("not started"));
+        let owned = OwnedByThread { start, table_pages };
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let owned = owned;
-                // SAFETY: `heap::alloc`'d in `create()`; the thread that runs is its only owner.
-                let start = *unsafe { bun_core::heap::take(owned.0) };
-                Bun__AOT__adoptPagesForNewThread(start.table_pages);
+                // SAFETY: the box given up above; the parent takes it back only if no thread runs.
+                let start = *unsafe { bun_core::heap::take(owned.start) };
+                let _pages = owned.table_pages.adopt();
                 start.worker.thread_main(start.init);
-                Bun__AOT__releaseUnusedPagesOfThread();
-                Bun__AOT__didStartThread();
                 // The thread's ref (and the parent ticket) drop here.
             });
-        match spawn {
-            Ok(handle) => {
-                self.thread_start.set(core::ptr::null_mut());
-                self.join_handle.set(Some(handle));
-                StartOutcome::Started
-            }
-            Err(_) if table_pages.is_null() => StartOutcome::Failed,
-            Err(_) => {
-                Bun__AOT__releasePagesForNewThread(table_pages);
-                StartOutcome::NoRoom
-            }
+        if let Ok(handle) = spawn {
+            self.join_handle.set(Some(handle));
+            return StartOutcome::Started;
         }
-    }
-
-    fn drop_thread_start(&self) {
-        let start = self.thread_start.replace(core::ptr::null_mut());
-        // SAFETY: `heap::alloc`'d in `create()`; no thread took it.
-        drop(unsafe { bun_core::heap::take(start) });
+        // SAFETY: the box given up above, which no thread took.
+        self.thread_start
+            .set(Some(unsafe { bun_core::heap::take(start) }));
+        if needs_room {
+            StartOutcome::NoRoom
+        } else {
+            StartOutcome::Failed
+        }
     }
 
     /// Whether the thread was asked to terminate, or is shutting down on its own: the
@@ -688,14 +669,14 @@ impl WebWorker {
     }
 
     fn has_ending_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|&child| {
+        parent.child_workers.get().iter().any(|&child| {
             bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
         })
     }
 
     /// Whether the thread of one of `parent`'s children is returning.
     fn has_returning_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|&child| {
+        parent.child_workers.get().iter().any(|&child| {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             worker.is_returning.load(Ordering::Acquire)
                 && worker.join_handle.with_mut(|handle| handle.is_some())
@@ -705,10 +686,10 @@ impl WebWorker {
     /// Whether more of `parent`'s children are ending than wait for room.
     fn has_room_to_wait_for(parent: &VirtualMachine) -> bool {
         let (mut ending, mut waiting) = (0usize, 0usize);
-        for &child in parent.child_workers.iter() {
+        for &child in parent.child_workers.get().iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             ending += usize::from(worker.is_ending());
-            waiting += usize::from(!worker.thread_start.get().is_null());
+            waiting += usize::from(worker.thread_start.get().is_some());
         }
         waiting < ending
     }
@@ -718,7 +699,7 @@ impl WebWorker {
     fn join_returning_children(parent: &VirtualMachine) -> bool {
         let mut joined_any = false;
         // Nothing runs on this thread during a join, so the list does not change.
-        for &child in parent.child_workers.iter() {
+        for &child in parent.child_workers.get().iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             if worker.is_returning.load(Ordering::Acquire) {
                 joined_any |= worker.join_thread();
@@ -738,17 +719,18 @@ impl WebWorker {
             // Nothing below changes the list.
             let oldest = parent
                 .child_workers
+                .get()
                 .iter()
                 .map(|&child| {
                     bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
                 })
-                .filter(|worker| !worker.thread_start.get().is_null())
+                .filter(|worker| worker.thread_start.get().is_some())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
             match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-                    worker.disarm_room_timer();
+                    worker.room_timer.disarm();
                 }
                 StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
@@ -760,22 +742,11 @@ impl WebWorker {
     }
 
     fn arm_room_timer(&self) {
-        let timer = self.room_timer.as_ptr();
+        self.room_timer
+            .next
+            .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS));
         // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
-        unsafe {
-            (*timer).next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS);
-            VirtualMachine::timer_insert(self.parent, timer);
-        }
-    }
-
-    fn disarm_room_timer(&self) {
-        let timer = self.room_timer.as_ptr();
-        // SAFETY: parent thread; an active node is linked into the parent's heap.
-        unsafe {
-            if (*timer).state == TimerState::ACTIVE {
-                VirtualMachine::timer_remove(self.parent, timer);
-            }
-        }
+        unsafe { (*self.parent).timer_insert(&raw const self.room_timer) };
     }
 
     /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
@@ -784,8 +755,6 @@ impl WebWorker {
     /// # Safety
     /// `self` waits for room, and `parent` is its parent.
     pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer
-            .with_mut(|timer| timer.state = TimerState::FIRED);
         if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
@@ -810,8 +779,8 @@ impl WebWorker {
     fn end_without_thread(&self, exit_code: i32) {
         log!("[{}] ends without a thread", self.execution_context_id);
         WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-        self.disarm_room_timer();
-        self.drop_thread_start();
+        self.room_timer.disarm();
+        self.thread_start.set(None);
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }
 
@@ -859,13 +828,11 @@ impl WebWorker {
     /// and gates out calls once the keep-alive has been released.
     #[unsafe(export_name = "WebWorker__setRef")]
     pub(crate) extern "C" fn set_ref(this: &WebWorker, value: bool) {
-        this.with_parent_poll_ref(|poll| {
-            if value {
-                poll.ref_(bun_io::js_vm_ctx());
-            } else {
-                poll.unref(bun_io::js_vm_ctx());
-            }
-        });
+        if value {
+            this.parent_poll_ref.ref_(bun_io::js_vm_ctx());
+        } else {
+            this.parent_poll_ref.unref(bun_io::js_vm_ctx());
+        }
     }
 
     /// Ask the thread to stop: set `requested_terminate`, raise a
@@ -893,7 +860,7 @@ impl WebWorker {
             handle.request_termination();
         }
         drop(handle);
-        if !this.thread_start.get().is_null() {
+        if this.thread_start.get().is_some() {
             this.end_without_thread(0);
         }
     }
@@ -902,9 +869,9 @@ impl WebWorker {
     /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub(crate) extern "C" fn release_parent_poll_ref(this: &WebWorker) {
-        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+        this.parent_poll_ref.unref(bun_io::js_vm_ctx());
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        let children = unsafe { &mut (*this.parent).child_workers };
+        let children = unsafe { (*this.parent).child_workers.get_mut() };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
             children.swap_remove(i);
         }
@@ -952,129 +919,85 @@ impl WebWorker {
         if !self.name.is_empty() {
             bun_core::output::Source::configure_named_thread(self.name.as_zstr());
         } else {
-            bun_core::output::Source::configure_named_thread(bun_core::ZStr::from_static(
-                b"Worker\0",
-            ));
+            bun_core::output::Source::configure_named_thread(bun_core::zstr!("Worker"));
         }
 
-        // Terminated before we even started — straight to shutdown so the
-        // parent still gets its close event.
-        if self.has_requested_terminate() {
-            self.shutdown();
-            return;
-        }
+        let exit_code = self.run(init);
 
-        let vm_ptr = match self.start_vm(init) {
-            Ok(vm) => vm,
-            Err(err) => {
-                bun_core::output::panic(format_args!(
-                    "An unhandled error occurred while starting a worker: {}\n",
-                    err.name()
-                ));
-            }
-        };
-
-        // `start_vm()` observed `requested_terminate` and already ran `shutdown()`.
-        if vm_ptr.is_null() {
-            return;
-        }
-
-        // `start_vm()` installed `vm_ptr` as this thread's per-thread VM
-        // (`VirtualMachine::init` → `VMHolder`), so the safe thread-local
-        // accessor returns the same allocation.
-        debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
-        let global = VirtualMachine::get().global();
-        // Take the API lock for the thread's whole life and abandon it with the
-        // VM (`shutdown()` destroys the `JSC::VM`; there is nothing to unlock).
-        // Raw FFI rather than the RAII guard, whose `&VM` would dangle.
-        JSC__VM__getAPILock(global.vm());
-        self.spin();
+        // Last: the parent joins this thread from the task that this posts.
+        self.will_wait_for_nothing_more();
+        WebWorker__workerGlobalScopeDestroyed(
+            self.messaging_proxy,
+            exit_code,
+            self.stopped_by_parent(),
+        );
     }
 
-    /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
-    ///
-    /// Returns the published VM pointer; `Ok(null)` means the early-terminate
-    /// checkpoint already ran `shutdown()`.
-    fn start_vm(&self, init: WorkerVmInit) -> Result<*mut VirtualMachine, crate::CrateError> {
+    /// Owns what the VM borrows. Returns the exit code.
+    fn run(&self, init: WorkerVmInit) -> i32 {
+        let WorkerVmInit {
+            transform_options,
+            mut env_loader,
+            proxy_env_slots,
+        } = init;
+        let mut log = bun_ast::Log::default();
+        let dot_slash = OnceCell::new();
+
+        if !self.has_requested_terminate() {
+            let options = virtual_machine::Options {
+                args: transform_options,
+                env_loader: Some(NonNull::from(&mut env_loader)),
+                graph: crate::virtual_machine::standalone_module_graph(),
+                ..Default::default()
+            };
+            let vm = match self.start_vm(&raw mut log, options, proxy_env_slots) {
+                Ok(vm) => vm,
+                Err(err) => {
+                    bun_core::output::panic(format_args!(
+                        "An unhandled error occurred while starting a worker: {}\n",
+                        err.name()
+                    ));
+                }
+            };
+            // Never released: `shutdown()` destroys the `JSC::VM`, and the lock with it.
+            JSC__VM__getAPILock(vm.global().vm());
+            self.spin(&dot_slash);
+        }
+        self.shutdown()
+    }
+
+    /// Phase 1: build the worker's VirtualMachine and publish `vm`.
+    fn start_vm(
+        &self,
+        log: *mut bun_ast::Log,
+        options: virtual_machine::Options,
+        proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    ) -> crate::CrateResult<&'static VirtualMachine> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        let WorkerVmInit {
-            transform_options,
-            env_loader,
-            proxy_env_slots,
-        } = init;
 
-        // worker-thread only field; no other thread reads `arena`.
-        self.arena.set(Some(bun_alloc::Arena::new()));
-
-        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
-        // it on every path — including the early-terminate checkpoint below,
-        // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
-        self.worker_env_loader.set(loader_ptr);
-
-        // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If a parent's request_termination() fired while we were cloning the env
-        // above, bail now rather than spending ~50–100ms (release) creating a
-        // VM that will immediately tear down.
-        if self.has_requested_terminate() {
-            self.shutdown();
-            return Ok(core::ptr::null_mut());
+        if self.runs_apart_from_compiled_program {
+            crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         }
-
-        let runs_apart = self.runs_apart_from_compiled_program
-            && crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
-        if !runs_apart && let Some(image) = self.image {
-            crate::compiled_program::use_image_of_worker(image);
-        }
-        let vm = VirtualMachine::init_worker(
-            self,
-            virtual_machine::Options {
-                args: transform_options,
-                env_loader: NonNull::new(loader_ptr),
-                graph: crate::virtual_machine::standalone_module_graph(),
-                ..Default::default()
-            },
-        )?;
-        // Scoped `&mut VirtualMachine` for the worker-specific fields; ends
-        // before anything else on this thread re-derives access to the VM.
-        {
-            // SAFETY: init_worker returns a valid heap-allocated VM ptr;
-            // not yet published, so this `&mut` is exclusive.
-            let vm_ref = unsafe { &mut *vm };
-            // arena initialised above; worker-thread only field. `with_mut`
-            // scopes a `&mut Option<Arena>` to the closure; we extract the raw
-            // address (escaping as `*mut`, no borrow) for the VM backref.
-            vm_ref.arena = self
-                .arena
-                .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
-
-            *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
-
-            vm_ref.is_main_thread = false;
-            VirtualMachine::set_is_main_thread_vm(false);
-            vm_ref.on_unhandled_rejection = on_unhandled_rejection;
-        }
+        let vm = VirtualMachine::init_worker(self, log, options)?;
+        *vm.proxy_env_storage.lock() = proxy_env_slots;
+        VirtualMachine::set_is_main_thread_vm(false);
+        vm.on_unhandled_rejection.set(on_unhandled_rejection);
 
         // Publish now (rather than at the end of startVM) so that:
         //   - a concurrent request_termination() (parent, or an exiting ancestor) can
         //     wake us once JS starts running, and
         //   - early returns below reach spin()/shutdown() with this.vm set,
-        //     so teardownJSCVM/vm.deinit() run and the just-built JSC::VM
+        //     so `exit_and_free` runs and the just-built JSC::VM
         //     heap is not leaked.
-        // We do NOT call shutdown() directly from here: shutdown() with a
-        // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
-        // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
-        // first check observes requested_terminate.
-        self.vm.set(vm);
-        // SAFETY: `vm` is the live VM just built on this thread.
-        *self.vm_handle.lock() = Some(unsafe { (*vm).handle() });
+        self.vm.set(VirtualMachine::get_mut_ptr());
+        *self.vm_handle.lock() = Some(vm.handle());
 
-        // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
+        // SAFETY: no script has run: nothing else borrows the transpiler.
         unsafe {
-            let b = &mut (*vm).transpiler;
+            let b = vm.transpiler.get_mut();
             b.resolver.env_loader = NonNull::new(b.env);
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
@@ -1084,56 +1007,39 @@ impl WebWorker {
             }
         }
 
-        // Second checkpoint: initWorker just spent the bulk of startup time;
+        // `init_worker` just spent the bulk of startup time;
         // if terminate arrived during it, skip configureDefines() (which
         // walks the resolver's global dir_cache) and entry-point loading.
-        // spin() will observe the flag and shutdown() under the API lock.
+        // spin() will observe the flag.
         if self.has_requested_terminate() {
             return Ok(vm);
         }
 
-        // SAFETY: this thread's live VM; per-expression derefs, no long-lived `&mut`.
-        unsafe {
-            if (*vm).transpiler.configure_defines().is_err() {
-                // Fall through to spin() → shutdown() for full teardown under
-                // the API lock (flushLogs runs JS). Set terminate so spin()
-                // bails immediately; vm.log carries the error for flushLogs.
-                (*vm).exit_handler.exit_code = 1;
-                let _ = self.set_requested_terminate();
-                return Ok(vm);
-            }
-
-            (*vm).load_extra_env_and_source_code_printer();
+        if vm.transpiler.with_mut(|t| t.configure_defines()).is_err() {
+            // `spin()` sees this at once; `vm.log` has the error.
+            vm.exit_handler.exit_code.set(1);
+            let _ = self.set_requested_terminate();
+            return Ok(vm);
         }
+
+        vm.load_extra_env();
         Ok(vm)
     }
 
     /// Phase 2: post 'online', load the entry point, run the event loop.
-    /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
-    ///
-    /// Returns `()` so the thread can unwind-free fall out of the
-    /// `extern "C"` trampoline — see `shutdown`.
-    fn spin(&self) {
+    /// `dot_slash` outlives the VM, whose `main` may point into it.
+    fn spin(&self, dot_slash: &OnceCell<Vec<u8>>) {
         log!("[{}] spin start", self.execution_context_id);
 
-        // vm set in start_vm; non-null past this point. Mutation goes through
-        // `vm.as_mut()` which forms a fresh short-lived `&mut` per call (the
-        // `JsCell` escape hatch — provenance from the thread-local `*mut`).
-        let vm_ptr: *mut VirtualMachine = self.vm_ptr();
-        // This IS the worker thread's per-thread VM (set by
-        // `VirtualMachine::init` → `VMHolder`), so the safe thread-local
-        // accessor returns the same allocation.
-        debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+        debug_assert!(core::ptr::eq(self.vm_ptr(), VirtualMachine::get()));
         let vm: &VirtualMachine = VirtualMachine::get();
         debug_assert!(self.status.get() == Status::Start);
         self.set_status(Status::Starting);
 
-        // Terminated during startVM() (or startVM() short-circuited here on
-        // configureDefines failure) — shut down under the API lock so the
-        // JSC::VM built by initWorker is torn down rather than leaked.
+        // Terminated during `start_vm()`, or it failed to configure the defines.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
-            return self.shutdown();
+            return;
         }
 
         // 'online' before the entry runs, as in node: it precedes anything the entry posts.
@@ -1141,20 +1047,14 @@ impl WebWorker {
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
-        vm.as_mut().preload.clone_from(&self.preloads);
+        vm.preload
+            .with_mut(|preload| preload.clone_from(&self.preloads));
 
-        // Resolve the entry point on the worker thread (the parent only stored
-        // the raw specifier). The returned slice is BORROWED — every exit from
-        // spin() goes through shutdown() which is noreturn, so a `defer free`
-        // here would never run anyway.
-        let dot_slash = OnceCell::new();
-        // SAFETY: `vm_ptr` is the live worker-thread VM.
-        let path = match unsafe {
-            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &dot_slash)
-        } {
+        // The parent only stored the raw specifier.
+        let path = match resolve_entry_point_specifier(vm, &self.unresolved_specifier, dot_slash) {
             Ok(p) => p,
             Err(unresolved) => {
-                vm.as_mut().exit_handler.exit_code = 1;
+                vm.exit_handler.exit_code.set(1);
                 let vm_log = vm.log_mut().unwrap();
                 if vm_log.errors == 0
                     && let Unresolved::Because(text) = unresolved
@@ -1162,14 +1062,29 @@ impl WebWorker {
                     vm_log.add_error(None, bun_ast::Loc::EMPTY, text);
                 }
                 self.flush_logs(vm);
-                return self.shutdown();
+                return;
             }
         };
+
+        if crate::compiled_program::refuses_start_of_worker_at(path) {
+            vm.exit_handler.exit_code.set(1);
+            let message = [
+                &b"Cannot start a Worker at '"[..],
+                path,
+                b"': this executable loads code from disk, so a Worker starts only at the files that the build saw a Worker start at. Pass the file to bun compile as another entry point.",
+            ]
+            .concat();
+            vm.log_mut()
+                .unwrap()
+                .add_error(None, bun_ast::Loc::EMPTY, message);
+            self.flush_logs(vm);
+            return;
+        }
 
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
-            return self.shutdown();
+            return;
         }
 
         // Node runs its worker bootstrap (parentPort, stdio, process overrides)
@@ -1180,13 +1095,13 @@ impl WebWorker {
                 Bun__Worker__loadNodeWorkerThreadsModule(global)
             }) {
                 let exception = global.take_exception(err);
-                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                let _ = vm.uncaught_exception(global, exception, false);
                 if !self.exit_called.load(Ordering::Relaxed) {
-                    vm.as_mut().exit_handler.exit_code = 1;
+                    vm.exit_handler.exit_code.set(1);
                 }
                 self.flush_logs(vm);
                 WebWorker__entrySettled(global);
-                return self.shutdown();
+                return;
             }
         }
 
@@ -1194,16 +1109,16 @@ impl WebWorker {
         // standalone module graph, `self.unresolved_specifier` or `dot_slash` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
-        let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
+        let promise = match vm.load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
                 if !self.exit_called.load(Ordering::Relaxed) {
-                    vm.as_mut().exit_handler.exit_code = 1;
+                    vm.exit_handler.exit_code.set(1);
                 }
                 self.flush_logs(vm);
                 WebWorker__entrySettled(vm.global());
-                return self.shutdown();
+                return;
             }
         };
 
@@ -1215,7 +1130,7 @@ impl WebWorker {
         // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
-            return self.shutdown();
+            return;
         }
 
         // The entry's evaluation outcome is checked once now and then after every
@@ -1236,7 +1151,7 @@ impl WebWorker {
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
                 let is_rejection = !vm.entry_point_is_commonjs();
-                let handled = vm.as_mut().uncaught_exception(
+                let handled = vm.uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
                     is_rejection,
@@ -1251,7 +1166,7 @@ impl WebWorker {
         if let EntryOutcome::Stop = observe_entry(vm) {
             // exit_code is already set (1, or the handler's process.exit() code). Setting it again
             // here would clobber a process.on('exit') change to process.exitCode.
-            return self.shutdown();
+            return;
         }
         // A still-pending entry promise is an unsettled top-level await: as in
         // Node the worker counts as started once its module graph is executing,
@@ -1270,21 +1185,19 @@ impl WebWorker {
 
         // don't run the GC if we don't actually need to
         if vm.standalone_module_graph.is_none()
-            && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
+            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
-            // `Arena = bumpalo::Bump` has no collect; global mimalloc
-            // handles reclamation.
             let _ = vm.global().vm().run_gc(false);
         }
 
         // Always do a first tick so we call CppTask without delay after
         // workerGlobalScopeStarted.
-        vm.as_mut().tick();
+        vm.tick();
         let mut stopped_by_entry = matches!(observe_entry(vm), EntryOutcome::Stop);
 
         while !stopped_by_entry && vm.is_event_loop_alive() {
-            vm.as_mut().tick();
+            vm.tick();
             if self.has_requested_terminate() {
                 break;
             }
@@ -1292,7 +1205,7 @@ impl WebWorker {
                 stopped_by_entry = true;
                 break;
             }
-            vm.as_mut().auto_tick_active();
+            vm.auto_tick_active();
             if self.has_requested_terminate() {
                 break;
             }
@@ -1316,83 +1229,48 @@ impl WebWorker {
         if !self.has_requested_terminate() && !stopped_by_entry {
             // Only emit 'beforeExit' on a natural drain, not on terminate().
             // TODO: is this able to allow the event loop to continue?
-            vm.as_mut().on_before_exit();
+            vm.on_before_exit();
             // Drained with the entry still pending: an unsettled top-level await,
             // Node's exit 13 (unless the user chose a nonzero exit code).
             // SAFETY: rooted by `entry_promise`.
             if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
-                && vm.exit_handler.exit_code == 0
+                && vm.exit_handler.exit_code.get() == 0
             {
-                vm.as_mut().exit_handler.exit_code = 13;
+                vm.exit_handler.exit_code.set(13);
             }
         }
         drop(entry_promise);
 
         self.flush_logs(vm);
-        self.shutdown();
     }
 
     /// Phase 3: unpublish the VM's handle (a racing `requestTermination` now
     /// finds none), run the user 'exit' handlers, then the shared
     /// [`VirtualMachine::teardown`] (stop → forbid script → ~VM → loops →
-    /// destroy), free the thread's remaining state, and last of all report
-    /// `workerGlobalScopeDestroyed` — the parent joins this thread from that
-    /// task, so nothing after it may touch the parent.
-    fn shutdown(&self) {
+    /// drop), and free the thread's remaining state. Returns the exit code.
+    fn shutdown(&self) -> i32 {
         jsc::mark_binding();
         self.is_shutting_down.store(true, Ordering::Release);
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 
-        // worker-thread only field; no other thread reads `arena`.
-        let mut arena = self.arena.replace(None);
-        let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
-
         // ---- 1. Unpublish vm ------------------------------------------------
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, drop
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
-            // thread holds a pointer to it (they only ever held its handle);
-            // `init_worker` always passes `log: None`.
+            // SAFETY: this thread's VM, whose API lock `run` took; no other
+            // thread holds a pointer to it (they only ever held its handle).
             exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
-        if !env_loader.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
-            // gone so its raw `transpiler.env` borrow is dead.
-            drop(unsafe { bun_core::heap::take(env_loader) });
-        }
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
-        Bun__freeSharedHeaderBufferForThreadExit();
-        drop(arena.take());
-        log!(
-            "[{}] shutdown: thread state freed",
-            self.execution_context_id
-        );
-
-        // ---- 6. Report to the parent ------------------------------------------
-        // The parent joins this thread from that task, so it must be the last
-        // thing here; the thread then returns normally (never `pthread_exit`:
-        // its forced unwind would cross `extern "C"` frames and abort).
-        // A worker stopped by its parent that never called process.exit() did
-        // not choose `exit_code`; the proxy decides what that reads as per kind.
-        self.will_wait_for_nothing_more();
-        WebWorker__workerGlobalScopeDestroyed(
-            self.messaging_proxy,
-            exit_code,
-            self.stopped_by_parent(),
-        );
+        exit_code
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on
@@ -1471,12 +1349,13 @@ impl WebWorker {
 }
 
 fn on_unhandled_rejection(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
 ) {
     // Prevent recursion
-    vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+    vm.on_unhandled_rejection
+        .set(VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value);
 
     // The stop was already requested (terminate(), or the worker's own exit):
     // whatever rejects or throws from here on is a consequence of stopping —
@@ -1496,11 +1375,11 @@ fn on_unhandled_rejection(
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
     // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text: &[u8] = unsafe { &(*bm).msg.data.text };
-        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
+    if let Some(syntax_error) = error_instance
+        .as_class_ref::<crate::BuildMessage>()
+        .map(|bm| EncodedSlice::utf8(&bm.msg.data.text).to_syntax_error_instance(global_object))
+    {
+        error_instance = syntax_error;
     }
 
     let mut array: Vec<u8> = Vec::new();
@@ -1562,38 +1441,29 @@ fn on_unhandled_rejection(
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
-    // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and report
-    // `workerGlobalScopeDestroyed`, then return through
+    // the `JSC::VM` and free the Bun `VirtualMachine`, then return through
     // `VirtualMachine::uncaught_exception` (which writes
     // `is_handling_uncaught_exception = false` on the freed VM), through live
     // JSC C++ frames operating on a destroyed `JSC::VM`, and back into
-    // `spin()` which dereferences the freed `*vm` and calls `shutdown()` a
-    // second time (a second `workerGlobalScopeDestroyed` → double deref of
-    // the proxy's thread-held reference).
+    // `spin()` which dereferences the freed `*vm`.
     //
-    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
+    // Instead, request the stop as `exit()` does and unwind to `run()`'s `shutdown()`.
     vm.handle_ref().request_termination();
 }
 
 /// What a program compiled ahead of time asks where a Worker is created, ahead of the Worker's own resolve, which reports what is wrong
 /// with the name. What the resolver says to this question is nobody's: it goes into a log that ends with the question.
-///
-/// # Safety
-/// As for `resolve_entry_point_specifier`.
-unsafe fn resolve_entry_point_specifier_quietly<'s>(
-    parent: *mut VirtualMachine,
+fn resolve_entry_point_specifier_quietly<'s>(
+    parent: &VirtualMachine,
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
 ) -> Option<&'s [u8]> {
     let mut log = bun_ast::Log::default();
-    // SAFETY: per fn contract; `log` stays where it is until the pointer is put back.
-    unsafe {
-        let log_before = (*parent).transpiler.log;
-        (*parent).transpiler.set_log(&raw mut log);
-        let path = resolve_entry_point_specifier(parent, str, dot_slash).ok();
-        (*parent).transpiler.set_log(log_before);
-        path
-    }
+    let log_before = parent.transpiler.get().log;
+    parent.transpiler.with_mut(|t| t.set_log(&raw mut log));
+    let path = resolve_entry_point_specifier(parent, str, dot_slash).ok();
+    parent.transpiler.with_mut(|t| t.set_log(log_before));
+    path
 }
 
 /// Why [`resolve_entry_point_specifier`] has no path.
@@ -1607,14 +1477,8 @@ enum Unresolved {
 /// consume. The returned slice is BORROWED — it aliases `str`, `dot_slash`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
-///
-/// # Safety
-/// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because `spin()` holds a `&VirtualMachine` across the
-/// call; per-use `(*parent)` derefs keep any autoref scoped to the single
-/// expression.
-unsafe fn resolve_entry_point_specifier<'s>(
-    parent: *mut VirtualMachine,
+fn resolve_entry_point_specifier<'s>(
+    parent: &VirtualMachine,
     str: &'s [u8],
     dot_slash: &'s OnceCell<Vec<u8>>,
 ) -> Result<&'s [u8], Unresolved> {
@@ -1632,8 +1496,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
 
     // A program compiled ahead of time whose build ran below the embedded root: a relative specifier names what lay in
     // that folder, as under `bun run`, before it names what the root holds.
-    // SAFETY: per fn contract; the resolver is only read.
-    let resolver = unsafe { &(*parent).transpiler.resolver };
+    let resolver = &parent.transpiler.get().resolver;
     if let Some(module) = resolver.resolve_embedded_entry_point_from_working_directory(str)
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
@@ -1642,8 +1505,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
     // (`new URL("./w.ts", import.meta.url)`).
-    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+    if let Some(graph) = parent.standalone_module_graph
         && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
     {
         return Ok(name);
@@ -1653,6 +1515,26 @@ unsafe fn resolve_entry_point_specifier<'s>(
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {
         return Ok(crate::compiled_program::module_key(entry));
+    }
+
+    // The disk does not answer to `a\b` for what the executable holds as `a/b`. A compiled program does as `bun run`.
+    if let Some(graph) = parent.standalone_module_graph
+        && let std::borrow::Cow::Owned(converted) = bun_paths::from_portable(str)
+    {
+        let file = graph.resolve(graph.base_public_path_with_default_suffix(), &converted);
+        if graph.compiled_program().is_none()
+            && let Some(file) = file
+        {
+            return Ok(file);
+        }
+        if file.is_some()
+            || resolver.resolve_embedded_entry_point(&converted).is_some()
+            || (resolver.resolve_embedded_entry_point_from_working_directory(&converted)).is_some()
+        {
+            return Err(Unresolved::Because(
+                "A backslash does not separate names on this platform",
+            ));
+        }
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
@@ -1665,9 +1547,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
             // A text that the program writes out is an entry point of a program compiled ahead of time.
             let entry = crate::compiled_program::program_of_executable().and_then(|program| {
-                // SAFETY: per fn contract.
-                let vm = unsafe { &*parent };
-                let name = (hooks.name_text_of_blob_url)(&str[b"blob:".len()..], vm)?;
+                let name = (hooks.name_text_of_blob_url)(&str[b"blob:".len()..], parent)?;
                 program.entry_point_by_source_path(&name)
             });
             return Ok(match entry {
@@ -1679,10 +1559,42 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: per fn contract — `parent` is this thread's VM, and only its own
-    // thread mutates its `transpiler`.
-    let resolved_entry_point = unsafe { (*parent).transpiler.resolve_entry_point(str, dot_slash) }
-        .map_err(|_| Unresolved::Logged)?;
+    let transpiler = parent.transpiler.as_ptr();
+    let said_before = {
+        // SAFETY: `parent` is this thread's VM, and only its own
+        // thread mutates its `transpiler` and the log that it writes to. No two
+        // references to the log overlap: this one ends with the block,
+        // `resolve_entry_point` makes its own where it fails, and the one in the
+        // `Err` arm is made when that call has returned.
+        let log = unsafe { &*(*transpiler).log };
+        (log.msgs.len(), log.errors)
+    };
+    // SAFETY: as above.
+    let resolved_entry_point = match unsafe { (*transpiler).resolve_entry_point(str, dot_slash) } {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let below_root = (parent.standalone_module_graph)
+                .filter(|_| crate::compiled_program::program_of_executable().is_some())
+                .and_then(|graph| str.strip_prefix(graph.base_public_path_with_default_suffix()));
+            if let Some(below_root) = below_root {
+                // SAFETY: as above.
+                let log = unsafe { &mut *(*transpiler).log };
+                log.msgs.truncate(said_before.0);
+                log.errors = said_before.1;
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} resolving \"{}\" (entry point). It isn't in this executable, which only runs code that was compiled into it. If it is a file of your project, pass ./{} to bun compile as another entry point.",
+                        error,
+                        bstr::BStr::new(str),
+                        bstr::BStr::new(below_root),
+                    ),
+                );
+            }
+            return Err(Unresolved::Logged);
+        }
+    };
 
     if let Some(entry) = resolved_entry_point
         .path_const()

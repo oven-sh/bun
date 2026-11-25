@@ -5,7 +5,6 @@ pub mod diagnostic_codes;
 pub mod diagnostics;
 pub mod engine;
 pub mod ir;
-pub mod link;
 mod linked;
 pub mod load;
 #[path = "../module_keys.rs"]

@@ -1,0 +1,11 @@
+# -- source: a-member-of-an-enum-behind-a-constant-from-outside-its-namespace-is-a-number-in-the-program.ts
+# declare function print(...values: unknown[]): void;
+# const BASE = 100;
+# namespace Http { export enum Code { Ok = BASE, Fail, Gone = Fail + 1 } }
+# function row(): number { enum Row { A = BASE, B } return Row.B; }
+# print(String(Http.Code.Ok), String(Http.Code.Fail), String(Http.Code.Gone), String(Http.Code[101]), String(row()));
+# -- end of source
+# The front end writes the value of a member of an enum where `bun run` has it: a constant from outside the namespace or the function of the enum is a number there, and the member behind it counts on.
+# Until then Fail was undefined under the literal type 101, Gone NaN, and Code[101] undefined.
+# RUN: run-in-shell
+# CHECK: 100 101 102 Fail 101

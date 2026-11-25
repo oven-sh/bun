@@ -30,6 +30,17 @@ export default b.declarations(
     "%NodeVMBinding%.Module",
     "%NodeVMBinding%.compileFunction",
   ]),
+  // `app` names an application on disk, which the dev server bundles and runs as scripts of this realm: BakeLoadInitialServerCode() and BakeLoadServerHmrPatch() in src/runtime/bake/BakeSourceProvider.cpp.
+  // It gets past no lock. It is the program and no guest of it, and a program replaces what it likes: where the build sees the option it lays no lock of its own.
+  marked("RunsCodeThatLocksDoNotBind", ["Bun.serve"]),
+  // ServerConfig.rs get_routes_object(): a list under `routes` or `static` is no record of routes, and the option is passed over.
+  marked("PassesOverListWhereItTakesRecordOfHandlers", ["Bun.serve"]),
+  // ServerConfig.rs from_js(): the options are asked for one name after another, nothing walks their own keys, and BunObject.rs serve() keeps what it read and not the options.
+  marked("AsksOptionsForListedNamesAlone", ["Bun.serve"]),
+  // The loader asks what is registered with it first, under every name that the build has not followed, and answers with the module that the plugin makes.
+  marked("RunsCodeWithLoader", ["Bun.plugin"]),
+  // functionGetProtectedObjects() in src/jsc/modules/BunJSCModule.h: every protected cell and every strong root that is an object.
+  marked("ExposesNativeRoots", ["bun:jsc.getProtectedObjects"]),
   marked("HoldsLoader", [
     "%ModuleRequire%.cache",
     "%ModuleRequirePrototype%.cache",
@@ -39,6 +50,14 @@ export default b.declarations(
     "node:module.wrap",
     "node:module._load",
     "node:module._resolveFilename",
+  ]),
+  marked("AnswersWithPathOfModule", [
+    "%ImportMeta%.resolve",
+    "%ImportMeta%.resolveSync",
+    "%ModuleRequire%.resolve",
+    "%ModuleRequirePrototype%.resolve",
+    "Bun.resolve",
+    "Bun.resolveSync",
   ]),
   // import() of a graph, and the handlers under ".js" and the like: (module, filename) => ..
   marked("ReadLoadsCodeByName", [
@@ -54,34 +73,84 @@ export default b.declarations(
     "bun:test.jest.spyOn",
     "bun:test.vi.spyOn",
     "bun:test/vitest.spyOn",
-    "bun:test/vitest.jest.spyOn",
     "bun:test/vitest.vi.spyOn",
-    "bun:test/vitest.vitest.spyOn",
   ]),
-  marked("IsNotEnumerable", ["console._stdout", "console._stderr"]),
-  marked("IsReplacedBySetter", ["self"]),
-  marked("AnswersNullAsItsPrototype", ["%ImportMeta%"]),
+  marked("MocksModule", [
+    "bun:test.mock.module",
+    "bun:test.jest.mock",
+    "bun:test.jest.doMock",
+    "bun:test.vi.mock",
+    "bun:test.vi.doMock",
+  ]),
+  marked("ExtendsMatchers", ["%Expect%.extend"]),
+  marked("FakesTimers", [
+    "bun:test.jest.useFakeTimers",
+    "bun:test.vi.useFakeTimers",
+    "bun:test/vitest.vi.useFakeTimers",
+  ]),
+  // What FakeTimers::fakes() in src/runtime/test_runner/timers/FakeTimers.rs makes a fake for. The native Date.now and performance.now stay where they are: the clock is faked below them.
+  marked("IsReplacedByFakeTimers", [
+    "clearImmediate",
+    "clearInterval",
+    "clearTimeout",
+    "performance",
+    "process.nextTick",
+    "queueMicrotask",
+    "setImmediate",
+    "setInterval",
+    "setTimeout",
+  ]),
   marked("HoldsPathOfMainModule", ["Bun.main"]),
+  // src/js/bun/ffi.ts takes the three for itself and deletes them at its top level.
+  marked("IsDeletedWhenModuleOfLibraryLoads", ["Bun.FFI.callback", "Bun.FFI.cfunction", "Bun.FFI.closeCallback"]),
+  // JSEnvironmentVariableMap.cpp puts another object under both when the thread starts a worker with `env: SHARE_ENV`.
+  marked("IsReplacedByHostThatSaysSo", ["Bun.env", "process.env"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
-  marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
-  // console_print_runtime_object() in src/runtime/jsc_hooks.rs, and Buffer.prototype.inspect.
-  marked("InstancesArePrintedWithoutTheirGetters", [
-    "%BuildArtifact%.prototype",
-    "%BunRequest%.prototype",
-    "%Immediate%.prototype",
-    "%S3File%.prototype",
-    "%Timeout%.prototype",
-    "Blob.prototype",
-    "Buffer.prototype",
-    "BuildMessage.prototype",
-    "Bun.Archive.prototype",
-    "Bun.S3Client.prototype",
-    "File.prototype",
-    "Headers.prototype",
-    "Request.prototype",
-    "ResolveMessage.prototype",
-    "Response.prototype",
+  // What registers a test, a suite or a hook answers undefined, and a modifier answers another function of the kind: ScopeFunctions.bind.ts, BunTest.bind.ts, jest.bind.ts.
+  // expect() answers an Expect. A matcher answers undefined, a promise of it, or an object of one of the runner's classes: expect.bind.ts.
+  // spyOn() and mock() answer a mock function: JSMockFunction in JSMockFunction.cpp. What lies below mock is not marked: mock.module() goes to the loader.
+  // The mark on a class stands for all that lies below it.
+  marked("ExposesOnlyDescribedObjects", [
+    "bun:test.test",
+    "bun:test.xtest",
+    "bun:test.describe",
+    "bun:test.xdescribe",
+    "bun:test.beforeAll",
+    "bun:test.beforeEach",
+    "bun:test.afterAll",
+    "bun:test.afterEach",
+    "bun:test.onTestFinished",
+    "bun:test.spyOn",
+    "bun:test.mock",
+    "%ScopeFunctions%",
+    "%DoneCallback%",
+    "%Expect%",
+    "%ExpectAny%",
+    "%ExpectAnything%",
+    "%ExpectArrayContaining%",
+    "%ExpectCloseTo%",
+    "%ExpectCustomAsymmetricMatcher%",
+    "%ExpectMatcherContext%",
+    "%ExpectMatcherUtils%",
+    "%ExpectObjectContaining%",
+    "%ExpectStatic%",
+    "%ExpectStringContaining%",
+    "%ExpectStringMatching%",
   ]),
+  marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
+  // console_print_runtime_object_inner() in src/runtime/jsc_hooks.rs prints them and walks no prototype.
+  marked("InstancesArePrintedByCodeOfTheirOwn", ["%Immediate%", "%Timeout%", "Blob", "Request", "Response"]),
+  // RequestContext.rs render_missing_invalid_response(): an answer that is no Response.
+  marked("PrintsWhatHandlersAnswer", [
+    "Bun.serve",
+    ...["HTTPServer", "HTTPSServer", "DebugHTTPServer", "DebugHTTPSServer"].map(name => `%${name}%.prototype.reload`),
+  ]),
+  // RequestContext.rs: an answer that is a Response is sent, and nobody prints it.
+  marked("InstancesAreAnswersThatHostTakes", ["Response"]),
+  // ConsoleObject.rs print_proxy(): whoever prints a Proxy prints its target, and calls the target's own method even where the printer of errors calls none.
+  marked("ResultShowsOperandsToFormatters", ["Proxy", "Proxy.revocable"]),
+  // ConsoleObject.rs print_to_json(): whoever prints one prints what its toJSON() answers, and calls that answer's own method even where the printer of errors calls none.
+  marked("InstancesShowWhatTheirMethodAnswersToFormatters", ["URLSearchParams", "Bun.Cookie", "Bun.CookieMap"]),
   // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
   marked("LoadsCodeWithoutJSAccess", [
     "%NativeFunctions%.FfiBindTsLinkLibrary",
@@ -90,6 +159,22 @@ export default b.declarations(
     "Bun.FFI.cfunction",
     "Bun.FFI.dlopen",
     "Bun.FFI.linkSymbols",
+  ]),
+  marked("MayTerminateProcess", [
+    "process._kill",
+    "process.abort",
+    "process.execve",
+    "process.exit",
+    "process.kill",
+    "process.reallyExit",
+  ]),
+  marked("MayLayListenerForUncaughtExceptions", [
+    "%EventEmitter%.prototype.addListener",
+    "%EventEmitter%.prototype.on",
+    "%EventEmitter%.prototype.once",
+    "%EventEmitter%.prototype.prependListener",
+    "%EventEmitter%.prototype.prependOnceListener",
+    "process.setUncaughtExceptionCaptureCallback",
   ]),
   marked("RunsWaitingJobs", [
     "%Expect%",
@@ -108,4 +193,9 @@ export default b.declarations(
   b.extend("%NativeFunctions%.FfiBindTsOpenLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("%NativeFunctions%.FfiBindTsLinkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("%NativeFunctions%.FfiBindTsMakeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
+  // A call of what a binding answers is counted on the binding.
+  b.extend("native:Bindgen:ffi.bind.ts:cc", { loadsMachineCodeAs: "bun:ffi.cc" }),
+  b.extend("native:Bindgen:ffi.bind.ts:openLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
+  b.extend("native:Bindgen:ffi.bind.ts:linkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
+  b.extend("native:Bindgen:ffi.bind.ts:makeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
 );

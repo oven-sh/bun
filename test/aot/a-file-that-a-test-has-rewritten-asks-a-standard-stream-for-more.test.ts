@@ -15,7 +15,7 @@ const ways = {
   "by a promise": `await fs.promises.writeFile(path, NEW);`,
 };
 
-async function linesOf(way: string, flags: string[], words?: string) {
+async function linesOf(way: string, flags: string[]) {
   using dir = tempDir("aot-rewritten-file-and-streams", {
     "m.cjs": `exports.a = "first";\n`,
     "a.test.mjs": `
@@ -30,11 +30,10 @@ async function linesOf(way: string, flags: string[], words?: string) {
         console.error("OUT", require("./m.cjs").a);
       });`,
   });
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   await using run = Bun.spawn({
     cmd: [bunExe(), "test", ...flags, "--isolate"],
     cwd: String(dir),
-    env,
+    env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
@@ -47,7 +46,6 @@ test.concurrent.each(Object.entries(ways))(
     const plain = await linesOf(way, []);
     expect(plain).toEqual({ lines: ["OUT first", "OUT 0,function,function,true"], exitCode: 0 });
     expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
   },
   240_000,
 );

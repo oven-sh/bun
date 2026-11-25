@@ -1,0 +1,13 @@
+# the same functions with inlining withheld: the callee is called, and what it gives is one part of the caller's row
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallDirect
+# CHECK: = Strcat
+# -- source: join-that-a-copied-callee-returns-joins-the-row-of-the-caller.ts
+# declare function sink(...values: unknown[]): void;
+# function tag(n: number) { return "[" + n + "]"; }
+# function lines(n: unknown) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) sink("<" + tag(i) + ">"); }
+# function both(n: unknown) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) { const text = tag(i); sink("<" + text + ">", text); } }
+# sink(lines, both);
+# -- end of source
+# f1 = tag, f2 = lines, f3 = both

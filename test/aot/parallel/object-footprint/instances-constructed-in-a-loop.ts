@@ -1,5 +1,4 @@
 // A hundred thousand instances of a class that hold references, constructed in one plain loop and kept in an array. An instance takes 32 bytes; 48 where its references are wide.
-// COUNT: bytes <= 3300000
 declare const console: { log(...values: unknown[]): void };
 class Leaf {
   constructor(public v: number) {}

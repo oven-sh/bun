@@ -53,23 +53,16 @@ export const ZlibDecompressionOptions = b.dictionary(
   { allowArray: true },
 );
 
-const zlib = (
-  rustName: string,
-  options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions,
-  data = stringOrBuffer,
-) =>
+const zlib = (rustName: string, options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions) =>
   b.fn({
-    args: { data, options: options.default({}) },
+    args: { data: b.bytes({ from: ["string", "buffer"], shared: "copied" }), options: options.default({}) },
     returns: b.bufferSource,
     capability: "heap",
     throws: true,
     rustPath: `crate::api::bun_object::JSZlib::${rustName}`,
   });
 
-/** libdeflate reads each input block twice, so copy shared buffers that another thread could change in between. */
-const compressionInput = b.bytes({ from: ["string", "buffer"], shared: "copied" });
-
-export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions, compressionInput);
+export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions);
 
 export const gc = b.fn({
   args: {
@@ -81,7 +74,7 @@ export const gc = b.fn({
 });
 
 export const gunzipSync = zlib("gunzip_sync", ZlibDecompressionOptions);
-export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions, compressionInput);
+export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions);
 
 export const indexOfLine = b.fn({
   args: {

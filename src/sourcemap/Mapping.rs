@@ -5,6 +5,7 @@ use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
+use bun_paths::portable::from_portable_rooted;
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
@@ -174,15 +175,11 @@ impl List {
     }
 
     pub(crate) fn sort(&mut self) {
-        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
-        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
-        // it (that aliased the swap before this rewrite). Instead capture the
-        // raw column base + len; the column is never reallocated during sort.
         both_lists!(&mut self.r#impl, |list| {
-            let generated: *const LineColumnOffset =
-                list.items_raw::<"generated", LineColumnOffset>();
-            let len = list.len();
-            list.sort(&SortContext { generated, len });
+            list.sort_by_column::<"generated", LineColumnOffset>(|a, b| {
+                (a.lines.zero_based(), a.columns.zero_based())
+                    .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
+            });
         })
     }
 
@@ -274,29 +271,6 @@ impl List {
     }
 }
 
-struct SortContext {
-    generated: *const LineColumnOffset,
-    len: usize,
-}
-
-impl bun_collections::multi_array_list::SortContext for SortContext {
-    fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        debug_assert!(a_index < self.len && b_index < self.len);
-        // SAFETY: indices are `< len`; `generated` is the column base pointer
-        // captured before sort, which swaps elements in place but never
-        // reallocates, so it remains valid for `len` reads throughout.
-        let (a, b) = unsafe { (*self.generated.add(a_index), *self.generated.add(b_index)) };
-
-        if a.lines.zero_based() != b.lines.zero_based() {
-            return a.lines.zero_based() < b.lines.zero_based();
-        }
-        if a.columns.zero_based() != b.columns.zero_based() {
-            return a.columns.zero_based() < b.columns.zero_based();
-        }
-        a_index < b_index
-    }
-}
-
 pub struct Lookup {
     pub mapping: Mapping,
     pub source_map: Option<std::sync::Arc<ParsedSourceMap>>,
@@ -324,18 +298,12 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        let display = if source_map.standalone_module_graph.is_none()
-            && bun_paths::is_absolute(base_filename)
-        {
-            // `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
-        } else {
-            name
-        };
+        if source_map.standalone_module_graph.is_none() && bun_paths::is_absolute(base_filename) {
+            let path = path_of_source(base_filename, name);
+            return Some(bun_core::String::clone_utf8(&path));
+        }
 
-        Some(bun_core::String::clone_utf8(display))
+        Some(bun_core::String::clone_utf8(name))
     }
 
     /// Only valid if `lookup.source_map.is_external()`
@@ -384,15 +352,8 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::path_buffer_pool::get();
-            // `platform::Auto` is
-            // cfg-selected (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
-            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
-                bun_paths::platform::Loose,
-            >(dir, &mut buf[..], &[name])?;
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            let path = path_of_source(base_filename, name);
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }
@@ -400,6 +361,14 @@ impl Lookup {
 
         Some(Utf8Bytes::Owned(bytes))
     }
+}
+
+/// `source` is an entry of the `sources` of the map for `generated_file`.
+fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
+    let dir = bun_paths::dirname_or_root(generated_file);
+    let mut path = bun_paths::Path::resolve(&[dir, &from_portable_rooted(source)]);
+    path.copy_trailing_sep_from(source);
+    path
 }
 
 impl Mapping {

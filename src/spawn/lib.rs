@@ -11,6 +11,8 @@
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! and `bun_threading` — none of which depend back on this crate, so no cycle.
 
+#![feature(arbitrary_self_types)]
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
@@ -23,7 +25,7 @@ pub mod ctrl_c;
 #[path = "process.rs"]
 pub mod process;
 
-/// Generic `StaticPipeWriter<P>`.
+/// Generic `StaticPipeWriter<S>`.
 #[path = "static_pipe_writer.rs"]
 pub mod static_pipe_writer;
 
@@ -37,14 +39,14 @@ pub use error::{Error, Result};
 pub use bun_event_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
-pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
+pub use bun_spawn_sys::ffi;
 
 pub use bun_spawn_sys::RusageFields;
 #[cfg(unix)]
 pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
+    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnOptions,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_z,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -60,14 +62,12 @@ bun_dispatch::link_interface! {
         FilterRunHandle,
         MultiRunHandle,
         TestParallelWorker,
-        TestPartBuilder,
-        CronRegister,
-        CronRemove,
+        Cron,
         ChromeProcess,
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
+        fn on_process_exit(status: Status, rusage: &Rusage);
     }
 }
 
@@ -82,14 +82,14 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+        on_process_exit(status, _rusage) =>
+            process::sync::SyncWindowsProcess::on_process_exit(this, status),
     }
 }
 #[cfg(not(windows))]
 link_impl_ProcessExit! {
     SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
+        on_process_exit(_status, _rusage) =>
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
@@ -105,105 +105,26 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub mod windows {
-    /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
-    /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
-    /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
-}
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
-    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
+    pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StdioResult`,
-// `StaticPipeWriter<P>`.
+// `bun.jsc.Subprocess` cross-tier shapes — `StdioResult`, `StaticPipeWriter<S>`.
 //
 // MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
-// security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
-// stream a JSON blob to the scanner's stdin. The `Source` enum here carries a
-// `Box<dyn SourceData>` arm (§Dispatch cold path — vtable travels with the
-// value) so the JSC tier can wrap `Blob`/`ArrayBuffer` payloads without this
-// crate naming `bun_jsc`/`bun_runtime`.
+// security_scanner` constructs a `StaticPipeWriter<Box<[u8]>>` to
+// stream a JSON blob to the scanner's fd 4.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    #[cfg(not(windows))]
-    use bun_sys::Fd;
+    pub use crate::static_pipe_writer::{PipeState, StaticPipeWriter};
 
-    pub use crate::process::StdioKind;
-    pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
-
-    /// On POSIX this is `Option<Fd>`; on Windows it is the `WindowsStdioResult` union.
     #[cfg(not(windows))]
-    pub type StdioResult = Option<Fd>;
+    pub type StdioResult = Option<bun_sys::File>;
     #[cfg(windows)]
     pub type StdioResult = crate::process::WindowsStdioResult;
-
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        Some(fd)
-    }
-
-    /// The in-memory payload that a
-    /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
-    ///
-    /// `Blob`/`ArrayBuffer` payloads are JSC-owned and unreachable at this
-    /// tier, so the high-tier
-    /// variants are carried via a `Box<dyn SourceData>` (per-object vtable —
-    /// §Dispatch cold path). `bun_install` uses [`Source::from_owned_bytes`].
-    pub enum Source {
-        OwnedBytes(Box<[u8]>),
-        Any(Box<dyn SourceData>),
-        Detached,
-    }
-
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers implement it
-    /// for `webcore::AnyBlob`. The vtable travels with the value, so no global
-    /// hook registration is needed.
-    pub trait SourceData {
-        fn slice(&self) -> &[u8];
-        fn detach(&mut self);
-        fn memory_cost(&self) -> usize {
-            0
-        }
-    }
-
-    impl Source {
-        #[inline]
-        pub fn from_owned_bytes(bytes: Box<[u8]>) -> Self {
-            Self::OwnedBytes(bytes)
-        }
-
-        pub(crate) fn slice(&self) -> &[u8] {
-            match self {
-                Source::OwnedBytes(b) => b,
-                Source::Any(s) => s.slice(),
-                // slice() after detach() is a bug.
-                Source::Detached => unreachable!("Source::slice on Detached"),
-            }
-        }
-
-        /// Release the payload and flip to
-        /// `Detached`. Calling `slice()` afterwards is invalid (panics).
-        pub fn detach(&mut self) {
-            if let Source::Any(s) = self {
-                s.detach();
-            }
-            *self = Source::Detached;
-        }
-
-        pub(crate) fn memory_cost(&self) -> usize {
-            match self {
-                Source::OwnedBytes(b) => b.len(),
-                Source::Any(s) => s.memory_cost(),
-                Source::Detached => 0,
-            }
-        }
-    }
 }

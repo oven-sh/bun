@@ -1,7 +1,7 @@
 // A compiled test run reads what its test files and the helpers beside them mock and spy on before it builds. It looked for a helper under a relative name alone:
 // one that a test file imports as "@/test/helpers/guard", a name that tsconfig.json gives to the file, was read by nobody, and neither were the names that go to
 // it. Over several programs the one that holds a module that such a helper mocks was built closed:
-// "mock(module, fn) cannot replace a module that was compiled ahead of time".
+// "mock(module, fn) cannot replace .. because the build didn't see a test mock it".
 // The same for a helper's function that goes on into a parameter, and for the files of a folder that a test file names and loads one by one.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -11,7 +11,7 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-const files = {
+const filesWith = (folder: string) => ({
   "package.json": `{ "name": "p", "type": "module" }`,
   "tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./*"] } } }`,
   "src/own.ts": `export const own = "real";`,
@@ -42,7 +42,7 @@ const files = {
     import "@/test/helpers/guard";
     import { createTracker } from "@/test/helpers/tracker";
     import * as math from "../src/math";
-    const folder = fileURLToPath(new URL("./rows/", import.meta.url));
+    const folder = ${folder};
     const tracker = createTracker();
     function start(watch: ReturnType<typeof createTracker>["watch"]) { watch(math, "thrice").mockReturnValue(-2); }
     test("t", async () => {
@@ -52,13 +52,13 @@ const files = {
       const { all } = await import("../src/user");
       console.log("SEEN", JSON.stringify(all()));
     });`,
-};
+});
 
-const forms = { "one program": "TestRunLayers:0", "two layers": "TestRunLayers:2,TestRunPartFiles:1" };
+const forms = { "one program": "TestRunLayers:0" };
 
 for (const [title, words] of Object.entries(forms)) {
-  test(`a helper under a name of the tsconfig, its function in a parameter, the files of a folder: ${title}`, async () => {
-    using dir = tempDir("helpers-that-a-test-file-reaches-by-other-ways", files);
+  const findsAll = async (folder: string) => {
+    using dir = tempDir("helpers-that-a-test-file-reaches-by-other-ways", filesWith(folder));
     const lines = async (...flags: string[]) => {
       const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_logAOTPhaseTimes: "1" };
       const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
@@ -81,5 +81,29 @@ for (const [title, words] of Object.entries(forms)) {
     expect(Number(/ \| modules (\d+) \| /.exec(compiled.scan)?.[1])).toBeGreaterThanOrEqual(1);
     // "twice" and "thrice"
     expect(compiled.texts).toEndWith(": 2 texts are passed to it");
+  };
+  test(`a helper under a name of the tsconfig, its function in a parameter, the files of a folder: ${title}`, async () => {
+    await findsAll(`import.meta.dir + "/rows/"`);
+  });
+  // A test run leaves a folder that is taken out of a URL first to the loader, so that a URL of the root of a large repository does not bring every file below it into the build.
+  // What is loaded from there is not compiled with the tests, and its spy is refused with a sentence that names the file: docs/compiler/debugging.mdx, "What a test can't replace".
+  test.failing(
+    `the same where the folder is taken out of a URL first, which a test run does not follow yet: ${title}`,
+    async () => {
+      await findsAll(`fileURLToPath(new URL("./rows/", import.meta.url))`);
+    },
+  );
+  test(`until then the spy that a file of such a folder makes is refused with a sentence that names both files: ${title}`, async () => {
+    const files = filesWith(`fileURLToPath(new URL("./rows/", import.meta.url))`);
+    using dir = tempDir("helpers-that-a-test-file-reaches-by-other-ways", files);
+    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
+    expect(stderr).toMatch(
+      /TypeError: Cannot spy on 'half' of "\S+math\.ts" because "\S+one\.rows\.ts", which makes the spy, wasn't compiled with your tests: the build couldn't follow the path that loads it\./,
+    );
+    expect({ seen: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode }).toEqual({
+      seen: [],
+      exitCode: 1,
+    });
   });
 }

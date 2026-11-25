@@ -1,5 +1,4 @@
-// A flatMap callback increments a variable of the function around it, shifts the list and throws. The variable belongs to that call alone, so a validating build accepts a summary without it.
-// Flags: --aot-validate
+// A flatMap callback increments a variable of the function around it, shifts the list and throws. The variable belongs to that call alone.
 function note(v) {
   console.log(String(v));
 }

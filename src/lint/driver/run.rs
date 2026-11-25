@@ -12,10 +12,11 @@ use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
 use crate::{Linter, explain, fs, git, paths};
 use bstr::BStr;
+use bun_collections::index_sort;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
-use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work, realms_for};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
@@ -24,8 +25,10 @@ use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::thread::ThreadId;
 use std::time::Instant;
 
 macro_rules! pretty {
@@ -54,9 +57,14 @@ pub struct Script<'s> {
     pub source: Source,
     /// The working directory.
     pub cwd: &'s [u8],
+    /// No `require` waits until its result is used.
+    pub loads_all: bool,
 }
 
 impl Script<'_> {
+    /// Printed right before and after the result, because the file itself can print too, and once a `require` waits.
+    pub const MARKER: &'static [u8] = b"\x1e--bun-lint-configuration--\x1e";
+
     /// Environment variables that control a `bun` process and aren't meant for the one that runs the program. It
     /// inherits all the others. ESLint and Prettier run a config file in their own process, so it sees the environment
     /// they were started with.
@@ -161,6 +169,36 @@ pub(crate) struct Pool {
     threads: usize,
 }
 
+/// The process ends soon after the run, so freeing what's in here only takes time.
+pub(crate) struct UntilExit<T>(Option<T>);
+
+impl<T> UntilExit<T> {
+    pub(crate) fn new(value: T) -> Self {
+        UntilExit(Some(value))
+    }
+}
+
+impl<T> std::ops::Deref for UntilExit<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0.as_ref().expect("only `drop` takes it")
+    }
+}
+
+impl<T> std::ops::DerefMut for UntilExit<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0.as_mut().expect("only `drop` takes it")
+    }
+}
+
+impl<T> Drop for UntilExit<T> {
+    fn drop(&mut self) {
+        if !bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            let _not_dropped = std::mem::ManuallyDrop::new(self.0.take());
+        }
+    }
+}
+
 /// The resources that linting a file needs beyond the native code.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Needs {
@@ -169,9 +207,10 @@ enum Needs {
     Engine,
     /// A rule or processor for which the engine has to run the config file and everything it imports.
     Configuration,
-    /// Something that makes an engine's memory grow: a file of at least [`HEAVY`] bytes, or ESLint's own `Linter` with
-    /// a parser that builds a TypeScript program, which takes gigabytes.
+    /// A file of at least [`HEAVY`] bytes, which makes an engine's memory grow.
     Heavy,
+    /// ESLint's own `Linter` with a parser that builds a TypeScript program, which takes gigabytes.
+    Program,
 }
 
 /// The files that are linted without types, as a work queue for the threads that have a VM.
@@ -186,6 +225,7 @@ struct Files<'f> {
     handed_out: AtomicUsize,
     ends: [AtomicUsize; 2],
     next_plain: AtomicUsize,
+    realms_with_helpers: std::ops::Range<usize>,
     lint: &'f (dyn Fn(&Target) + Sync),
 }
 
@@ -226,6 +266,10 @@ impl Work for Files<'_> {
     fn needs_realms(&self) -> bool {
         self.handed_out.load(Ordering::Relaxed) < self.with_engine.len()
     }
+
+    fn can_have_helpers(&self, realm: usize) -> bool {
+        self.realms_with_helpers.contains(&realm)
+    }
 }
 
 fn needs(target: &Target) -> Needs {
@@ -238,7 +282,7 @@ fn needs(target: &Target) -> Needs {
         return Needs::Nothing;
     }
     if route != Route::Native && config.language.wants_types {
-        return Needs::Heavy;
+        return Needs::Program;
     }
     let processor = config
         .processor_location
@@ -246,7 +290,9 @@ fn needs(target: &Target) -> Needs {
         .filter(|_| route == Route::Processor);
     if processor.is_some_and(|it| it.needs_config_file)
         || (route == Route::Eslint && config.for_eslint.is_none())
-        || on.clone().any(|it| it.configured.rule.needs_config_file)
+        || on
+            .clone()
+            .any(|it| it.configured.rule.about().needs_config_file)
     {
         Needs::Configuration.or_heavy(target)
     } else if on.next().is_some() || route != Route::Native {
@@ -254,6 +300,21 @@ fn needs(target: &Target) -> Needs {
     } else {
         Needs::Nothing
     }
+}
+
+/// How many of the `heavy` files, largest first, go to the first realm. With many realms it would still be busy with them long
+/// after the others have linted their `light` bytes, so it gets its share of the work, and the rest is linted like other files.
+fn count_for_one_realm(heavy: &[&Target], light: u64, realms: usize) -> usize {
+    if realms < 5 {
+        return heavy.len();
+    }
+    let mut left = (light + heavy.iter().map(|it| it.size).sum::<u64>()) / realms as u64;
+    let mut fits = |it: &&&Target| {
+        let has_room = left > 0;
+        left = left.saturating_sub(it.size);
+        has_room
+    };
+    heavy.iter().take_while(&mut fits).count()
 }
 
 /// True if a rule that's on for the file can hand the file back to its package's JavaScript version.
@@ -292,6 +353,111 @@ impl Pool {
     /// Calls `work` with every index below `count`, `run` consecutive ones at a time.
     pub(crate) fn for_each(&self, count: usize, run: usize, work: &(dyn Fn(usize) + Sync)) {
         bun_sema_driver::for_each_parallel_in_runs(&self.caches, self.threads(), count, run, work);
+    }
+}
+
+impl Pool {
+    /// How many threads are worth starting for files of `size` bytes in all.
+    pub(crate) fn threads_for(&self, size: u64) -> usize {
+        usize::try_from(size / (32 << 10)).map_or(self.threads, |it| it.clamp(1, self.threads))
+    }
+
+    /// With files of `size` bytes in all, it can't be a short run. See `start_threads_gradually`.
+    pub(crate) fn expect_files(&self, size: u64) {
+        if let Some(threads) = NonZeroUsize::new(self.threads).filter(|_| size >= 32 << 20) {
+            bun_sema_driver::allow_threads(threads);
+        }
+    }
+
+    /// Like `for_each`, on at most `threads` threads.
+    pub(crate) fn for_each_on(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        bun_sema_driver::for_each_parallel_in_runs(&self.caches, threads, count, 1, work);
+    }
+
+    /// `values` were used for files of `size` bytes in all, each by the thread it comes with.
+    pub(crate) fn free_before_exit<T: Send>(&self, size: u64, values: Vec<(ThreadId, T)>) {
+        if size >= 16 << 20 || bun_core::feature_flags::HELP_CATCH_MEMORY_ISSUES {
+            bun_sema_driver::free_before_exit(&self.caches, self.threads, values);
+        } else {
+            let _not_dropped = std::mem::ManuallyDrop::new(values);
+        }
+    }
+
+    /// `items.iter().map(of).collect()`
+    pub(crate) fn map<'a, T: Sync, U: Send>(
+        &self,
+        items: &'a [T],
+        of: &(dyn Fn(&'a T) -> U + Sync),
+    ) -> Vec<U> {
+        const AT_A_TIME: usize = 256;
+        if items.len() < 4 * AT_A_TIME {
+            return items.iter().map(of).collect();
+        }
+        let parts: Vec<_> = (items.chunks(AT_A_TIME))
+            .map(|part| (part, Guarded::new(Vec::new())))
+            .collect();
+        self.for_each(parts.len(), 1, &|at| {
+            let (part, mapped) = &parts[at];
+            *mapped.lock() = part.iter().map(of).collect();
+        });
+        let mut all = Vec::with_capacity(items.len());
+        for (_, mapped) in &parts {
+            all.append(&mut mapped.lock());
+        }
+        all
+    }
+
+    pub(crate) fn sort_by_path<T: Sync>(&self, items: &mut [T], path: fn(&T) -> &[u8]) {
+        let compare = |a: usize, b: usize| path(&items[a]).cmp(path(&items[b]));
+        let mut order = self.sorted(items.len(), &compare);
+        index_sort::apply_permutation_in_place(items, &mut order);
+    }
+
+    /// The indices below `count`, in the order of a stable sort.
+    pub(crate) fn sorted(
+        &self,
+        count: usize,
+        compare: &(dyn Fn(usize, usize) -> std::cmp::Ordering + Sync),
+    ) -> Vec<u32> {
+        let all: Vec<u32> = (0..count as u32).collect();
+        let at_a_time = count.div_ceil(self.threads.min(16)).max(1024);
+        let mut runs: Vec<Guarded<Vec<u32>>> = (all.chunks(at_a_time))
+            .map(|it| Guarded::new(it.to_vec()))
+            .collect();
+        let sort_run = |at: usize| {
+            index_sort::sort_indices(&mut runs[at].lock(), &mut |a, b| {
+                compare(a as usize, b as usize)
+            });
+        };
+        match runs.len() {
+            1 => sort_run(0),
+            count => self.for_each(count, 1, &sort_run),
+        }
+        while runs.len() > 1 {
+            let merge = |at: usize| {
+                let (mut first, second) = (runs[2 * at].lock(), runs[2 * at + 1].lock());
+                let mut merged = Vec::with_capacity(first.len() + second.len());
+                let (mut left, mut right) = (&first[..], &second[..]);
+                while let ([a, after_a @ ..], [b, after_b @ ..]) = (left, right) {
+                    if compare(*b as usize, *a as usize).is_lt() {
+                        merged.push(*b);
+                        right = after_b;
+                    } else {
+                        merged.push(*a);
+                        left = after_a;
+                    }
+                }
+                merged.extend_from_slice(left);
+                merged.extend_from_slice(right);
+                *first = merged;
+            };
+            match runs.len() / 2 {
+                1 => merge(0),
+                pairs => self.for_each(pairs, 1, &merge),
+            }
+            runs = runs.into_iter().step_by(2).collect();
+        }
+        (runs.first_mut()).map_or_else(Vec::new, |it| std::mem::take(it.get_mut()))
     }
 }
 
@@ -802,11 +968,23 @@ impl Run<'_> {
             loader.warn(&[b"Skipped ", &count, rules, remedy, them]);
         }
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
-        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
+        let shared = with_engine.clone().filter(|it| needs(it) < Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Files that a rule may hand back to its package's JavaScript version.
         let may_need_realm =
             (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
+        let mut announced = FxHashSet::default();
+        let configs = with_engine.clone().filter_map(|it| match &it.status {
+            Status::Matched(config) => announced.insert(Arc::as_ptr(config)).then_some(config),
+            _ => None,
+        });
+        let configs: Vec<_> = configs.collect();
+        let loads_more = with_engine.clone().any(|it| it.route() != Route::Native)
+            || (configs.iter().flat_map(|it| &it.js_settings)).any(|it| it.need_config_file());
+        let on = (configs.iter().flat_map(|it| &it.js_rules))
+            .filter(|it| it.severity != Severity::Off)
+            .map(|it| &*it.configured.rule);
+        let has_memory_to_spare = (context.js_plugins).expect_rules(on, loads_more);
         let count = with_engine.count() + may_need_realm.clone().count();
         (context.js_plugins).expect(count, size, pool.threads());
         (context.js_plugins).may_need_realm(may_need_realm.map(|it| it.size).sum());
@@ -834,7 +1012,26 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
+        let (programs, heavy) = (count(Needs::Program), count(Needs::Heavy));
+        let realms = realms_for(size, pool.threads());
+        let sharing = realms.min(context.js_plugins.realms_that_fit());
+        let is_linted_once = |it: &&Target| it.route() == Route::Native && it.framework().is_none();
+        let with_extra = realms + usize::from(heavy > 0) + usize::from(has_memory_to_spare);
+        // They take a few megabytes.
+        let can_have_helpers = (has_memory_to_spare || size >= 1 << 20)
+            && realms < 5
+            && 3 * with_extra <= pool.threads()
+            && !(self.options.fix || self.options.fix_dry_run)
+            && with_engine.iter().all(is_linted_once);
+        // Two such files at once would take more.
+        let has_huge = with_engine.first().is_some_and(|it| it.size >= 1 << 20);
+        let realms_with_helpers = match can_have_helpers {
+            true => usize::from(has_huge)..with_extra,
+            false => 0..0,
+        };
+        let heavy = programs + count_for_one_realm(&with_engine[programs..heavy], size, sharing);
+        let (heavy, with_engine) = with_engine.split_at(heavy);
+        pool.expect_files(without_types.iter().map(|it| it.size).sum());
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
@@ -851,11 +1048,17 @@ impl Run<'_> {
             handed_out: AtomicUsize::new(0),
             ends: Default::default(),
             next_plain: AtomicUsize::new(0),
+            realms_with_helpers,
             lint: &lint,
         };
+        let workers = match heavy.is_empty() && with_engine.is_empty() {
+            true => pool.threads_for(plain.iter().map(|it| it.size).sum()),
+            false => pool.threads(),
+        };
         let mut lint_plain = || {
-            pool.for_each(pool.threads(), 1, &|worker| {
-                if worker + 1 == pool.threads()
+            pool.for_each(workers, 1, &|worker| {
+                // Not on a thread that starts late
+                if worker + 1 == workers.min(8)
                     && let Some(inferred) = context.inferred
                 {
                     inferred.begin();
@@ -940,16 +1143,20 @@ impl Run<'_> {
             }
             return self.out;
         }
-        let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
+        let registry = registry.with_native_plugins(options.native_plugin_rules.clone());
+        let linter = UntilExit::new(Linter::new(registry));
         bun_sema_driver::use_dedicated_pool("Bun Lint");
-        let pool = Pool::new(options.threads);
+        if options.threads == 0 {
+            bun_sema_driver::start_threads_gradually(false);
+        }
+        let pool = UntilExit::new(Pool::new(options.threads));
         // Nothing starts unless a config has a JavaScript plugin.
         let js_plugins = Host::with_engine(
             environment.js_engine,
             &paths::to_native(environment.cwd.clone()),
         )
         .measuring(options.timing);
-        let loader = Loader::new(&linter, options, environment, &js_plugins);
+        let loader = UntilExit::new(Loader::new(&linter, options, environment, &js_plugins));
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let prints_note = !options.rules && !options.doctor && !options.silent;
         if let Some((eslint_path, oxlint_path)) =
@@ -994,9 +1201,10 @@ impl Run<'_> {
             Some(path) => store.with_tsconfig(path),
             None => store,
         };
-        let modules = bun_lint_graph::Graph::new(&store);
+        let store = UntilExit::new(store);
+        let modules = UntilExit::new(bun_lint_graph::Graph::new(&store));
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let run_state = (&linter, environment, &js_plugins);
+            let run_state = (&*linter, environment, &js_plugins);
             discover::list_as_eslint_8(run_state, &pool, patterns, extensions)
         }));
         let format = match self.format(is_oxlint, is_native) {
@@ -1043,9 +1251,10 @@ impl Run<'_> {
         let names: Vec<_> = (0..pool.threads().max(1))
             .map(|_| bun_sema::session::Session::new())
             .collect();
-        let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
-        let memory = bun_sema::session::Session::new();
-        let (skipped_in_comments, out_of_stack) =
+        let names = UntilExit::new(names);
+        let atoms = UntilExit::new(bun_sema::atom::InternerPerThread::new_in(&names));
+        let memory = UntilExit::new(bun_sema::session::Session::new());
+        let (skipped_in_comments, not_type_checked) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
@@ -1069,7 +1278,7 @@ impl Run<'_> {
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
-            out_of_stack: &out_of_stack,
+            not_type_checked: &not_type_checked,
             without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
@@ -1077,7 +1286,7 @@ impl Run<'_> {
             needs_eslint: &needs_eslint,
             invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
-            atoms: &atoms,
+            atoms: &*atoms,
             linter: &linter,
             options,
             cwd: &environment.cwd,
@@ -1208,23 +1417,9 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *out_of_stack.lock());
-        if !incomplete.is_empty() {
-            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
-            incomplete.dedup();
-            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative_escaped(&environment.cwd, &paths::from_native(it)))
-                .collect();
-            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
-            self.warn(
-                &[
-                    b"The type checker ran out of stack in ",
-                    &examples.join(&b", "[..])[..],
-                    more,
-                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
-                ]
-                .concat(),
-            );
+        let results = linted.as_ref().map_or(&[][..], |it| &it.results);
+        for warning in typed::warnings_about_not_type_checked(&context, results) {
+            self.warn(&warning);
         }
         // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
         let mut without_include = std::mem::take(&mut *without_include.lock());
@@ -1360,13 +1555,14 @@ impl Run<'_> {
             return self.out;
         }
         let Linted {
-            mut results,
+            results,
             files,
             listed,
         } = match linted {
             Ok(linted) => linted,
             Err(Fatal(error)) => return self.fail(&error),
         };
+        let mut results = UntilExit::new(results);
         if let Some(listed) = listed {
             for path in listed {
                 self.out.stdout.extend_from_slice(&paths::to_native(path));
@@ -1404,6 +1600,7 @@ impl Run<'_> {
             results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
         }
         phases.linting += started.elapsed().as_secs_f64();
+        typed::report_not_type_checked(&context, &mut results);
         // ESLint lints files one at a time, so it stops at the first path that throws. Threads race here, so pick the
         // first path to get the same error every time.
         let thrown = results.iter().filter(|it| it.thrown.is_some());
@@ -1469,7 +1666,7 @@ impl Run<'_> {
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
-        for result in &mut results {
+        for result in results.iter_mut() {
             if LintMessage::hide_claimed(&mut result.messages) {
                 result.counts = Counts::of(&result.messages);
             }

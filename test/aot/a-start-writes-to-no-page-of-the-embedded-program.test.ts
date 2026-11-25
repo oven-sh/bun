@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import "./harness/real-executables";
 import { test } from "./supported";
 
 // Prints how many resident pages of the executable's embedded program belong to this process alone.

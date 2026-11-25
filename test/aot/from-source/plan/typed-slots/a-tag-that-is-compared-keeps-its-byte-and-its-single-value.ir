@@ -1,0 +1,30 @@
+# two classes tell themselves apart by a boolean that each holds alone, and the program compares it. The four booleans of each take a byte, so that the cell is 32 bytes.
+# the door of the tag stays at its single value, where the door of a narrow slot is otherwise widened to all that its form holds: the walk reads the class out of it. No slot changes its form for that.
+# a store by name of the other boolean is held to the door: the field table marks a field as stored without a test of its type only where the type holds both booleans.
+# so the comparison is one test of the shape: nothing is read, nothing is compared, and each side knows its class.
+# f1 = make, f2 = weigh
+# -- source: a-tag-that-is-compared-keeps-its-byte-and-its-single-value.ts
+# declare function sink(...values: unknown[]): void;
+# class Ok { readonly ok = true; readonly p = false; readonly q = false; readonly r = true; constructor(readonly value: number) {} }
+# class Err { readonly ok = false; readonly p = true; readonly q = false; readonly r = false; constructor(readonly error: number) {} }
+# function make(i: number): Ok | Err { return i % 3 ? new Ok(i) : new Err(i); }
+# function weigh(one: Ok | Err) { return one.ok === true ? one.value : one.error; }
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += weigh(make(i));
+# sink(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=32
+# CHECK: "ok" OptionalBoolean Inline {{*}} doors=true
+# CHECK: "p" OptionalBoolean Inline {{*}} doors=boolean
+# CHECK: layout L1 CompiledObject size=32
+# CHECK: "ok" OptionalBoolean Inline {{*}} doors=false
+# CHECK: "p" OptionalBoolean Inline {{*}} doors=boolean
+# RUN(WALK): walk f2 mechanisms=all
+# WALK-LABEL: code f2:Body
+# WALK: = ShapeTest {{*}}layouts=[L0]
+# WALK: = GetSlot {{*}}key="value" receivers=[L0] level=Proven
+# WALK: = GetSlot {{*}}key="error" receivers=[L1] level=Proven
+# RUN(NOTHING): walk f2 mechanisms=all
+# NOTHING-NOT: StrictEq
+# NOTHING-NOT: key="ok"

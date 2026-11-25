@@ -14,6 +14,7 @@ pub enum DataValue<'a> {
     BigInt(Atom),
     Array(&'a [DataValue<'a>]),
     Object(&'a [(Atom, DataValue<'a>)]),
+    Temporal { class: Atom, text: Atom },
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -22,6 +23,7 @@ pub enum DataModule<'a> {
         default: &'a DataValue<'a>,
         exports_keys: bool,
     },
+    MarkedDefault(&'a DataValue<'a>),
     RuntimeRequire {
         specifier: Atom,
         loader_type: Option<Atom>,
@@ -30,15 +32,24 @@ pub enum DataModule<'a> {
     NativeAddon {
         path: Atom,
     },
-    /// The default export is where the executable has its copy of the file. Nothing lies there on the machine that builds.
     EmbeddedFile {
         path: Atom,
     },
+    FileInPlace(&'a DataValue<'a>),
     Database {
         path: Atom,
-        is_embedded: bool,
+        place: DatabasePlace,
     },
     Page,
+}
+
+pub const FOLDER_OF_DATABASE: &[u8] = b"bun-folder-of-database:";
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum DatabasePlace {
+    Disk,
+    Executable,
+    WorkingDirectory,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]

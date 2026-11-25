@@ -1,0 +1,26 @@
+# A getter that the build has not followed has an entry all the same, for whoever reads the property by a road that the build has not seen. It throws there, as the entry of a method does.
+# It used to answer with a function that throws when called: `new Map(pairs)` read `0` and `1` off each pair, called nothing, and kept one function for every key.
+# -- source: getter-never-reached.ts
+# class Pair {
+#     key: number;
+#     constructor(key: number) {
+#         this.key = key;
+#     }
+#     get first() {
+#         return this.key;
+#     }
+#     second() {
+#         return this.key;
+#     }
+# }
+# console.log(new Pair(7).key);
+# -- end of source
+# RUN: walk f2:GenericCallEntry mechanisms=all
+# CHECK-LABEL: code f2:GenericCallEntry
+# CHECK-NOT: Return
+# CHECK: NewRuntimeError runtimeError=FunctionNotCompiled name="first"
+# CHECK: Throw
+# RUN(METHOD): walk f3:GenericCallEntry mechanisms=all
+# METHOD-LABEL: code f3:GenericCallEntry
+# METHOD: NewRuntimeError runtimeError=FunctionNotCompiled name="second"
+# METHOD: Throw

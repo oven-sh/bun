@@ -46,7 +46,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, readFileSync } from "node:fs";
+import { closeSync, createWriteStream, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { chmod, copyFile, cp, lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -73,7 +73,7 @@ const tarExe =
  * Layout:
  *   <prefetchDir>/by-url/<sha256(url)[:32]>   raw downloaded bytes (any URL)
  *   <prefetchDir>/extracted/<basename(dest)>/ pre-extracted prebuilt trees
- *                                             (.identity inside)
+ *                                             (stamps inside: `stampPrebuilt`)
  *
  * Both are content-addressed — a dep version bump changes the URL/identity, so
  * stale prefetch entries are simply not found and the build falls through to
@@ -106,18 +106,17 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
 }
 
 /**
- * If `prefetchDir/extracted/<basename(dest)>/<stampFile>` matches `expected`,
+ * If `prefetchDir/extracted/<basename(dest)>/` has the stamps asked for,
  * copy that tree to `dest` and return true. Used by fetchPrebuilt to
  * skip download+extract entirely when the image has the right version baked.
  *
  * Recursive copy (not symlink) so the per-build cacheDir stays self-contained
  * and writable; the prefetch tree may be read-only.
  */
-export async function tryPrefetchExtracted(dest: string, stampFile: string, expected: string): Promise<boolean> {
+async function tryPrefetchExtracted(dest: string, identity: string, sha256: string | undefined): Promise<boolean> {
   if (prefetchDir === undefined) return false;
   const src = resolve(prefetchDir, "extracted", basename(dest));
-  const stamp = resolve(src, stampFile);
-  if (!existsSync(stamp) || readFileSync(stamp, "utf8").trim() !== expected) return false;
+  if (!prebuiltIsCurrent(src, identity, sha256)) return false;
   console.log(`using prefetch cache: ${src}`);
   // Stage-then-rename so an interrupted copy doesn't leave a stamped-but-
   // incomplete tree at dest (same publish discipline as fetchPrebuilt).
@@ -181,17 +180,24 @@ export async function downloadWithRetry(
   retry: RetryPolicy = downloadRetry,
   /** Gives the whole download up when it fires (an `AbortSignal.timeout`): for a caller that has a fallback. */
   signal?: AbortSignal,
+  /** What the file must hash to (lowercase hex). Other bytes never land at `dest`. */
+  sha256?: string,
 ): Promise<void> {
   const prefetched = prefetchPathForUrl(url);
   if (prefetched !== undefined && existsSync(prefetched)) {
-    console.log(`using prefetch cache: ${prefetched}`);
     await mkdir(resolve(dest, ".."), { recursive: true });
     // Same temp-then-rename atomicity as the network path below — an
     // interrupted copy must not leave a partial file claiming to be complete.
     const tmp = `${dest}.${process.pid}.partial`;
     await copyFile(prefetched, tmp);
-    await rename(tmp, dest);
-    return;
+    if (sha256 === undefined || sha256OfFile(tmp) === sha256) {
+      console.log(`using prefetch cache: ${prefetched}`);
+      await rename(tmp, dest);
+      return;
+    }
+    // The cache is keyed by URL: it has the old bytes of a file that was published and pinned again since the bake.
+    console.log(`ignoring ${prefetched}: its sha256 is not ${sha256}`);
+    await rm(tmp, { force: true });
   }
 
   const maxAttempts = retry.attempts;
@@ -220,6 +226,15 @@ export async function downloadWithRetry(
       // Cast: DOM ReadableStream vs node:stream/web ReadableStream — same
       // shape at runtime, different TS lib declarations.
       await pipeline(Readable.fromWeb(res.body as unknown as NodeWebReadable), createWriteStream(tmpPath));
+      if (sha256 !== undefined) {
+        const actual = sha256OfFile(tmpPath);
+        if (actual !== sha256) {
+          permanent = true;
+          throw new BuildError(`${url}: sha256 is ${actual}, expected ${sha256}`, {
+            hint: "The server sent something other than the pinned file. Find out why before changing the pin",
+          });
+        }
+      }
       await rename(tmpPath, dest);
       return;
     } catch (err) {
@@ -231,7 +246,7 @@ export async function downloadWithRetry(
     }
   }
 
-  // 4xx: throw the status error directly — wrapping it in "after N attempts"
+  // 4xx or a wrong sha256: throw that error directly — wrapping it in "after N attempts"
   // is misleading (we only made one), and callers (prefetch-deps.ts) need to
   // distinguish 404 from transient failures by message.
   if (permanent) throw lastError;
@@ -242,10 +257,54 @@ export async function downloadWithRetry(
   });
 }
 
+/** Lowercase hex. Read in pieces: a WebKit tarball can be over a gigabyte (and see "Streaming to disk" above). */
+export function sha256OfFile(file: string): string {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1 << 20);
+  const descriptor = openSync(file, "r");
+  try {
+    for (let read; (read = readSync(descriptor, buffer, 0, buffer.length, null)) > 0;) {
+      hash.update(buffer.subarray(0, read));
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  return hash.digest("hex");
+}
+
 /** Throws unless `file`'s sha256 is `expected` (lowercase hex). */
 export function checkSha256(file: string, expected: string): void {
-  const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+  const actual = sha256OfFile(file);
   if (actual !== expected) throw new BuildError(`${basename(file)}: sha256 is ${actual}, expected ${expected}`);
+}
+
+/**
+ * The sha256 that `sums` has for `url`. `sums` is a file in the format of `sha256sum`, whose names are the ends of
+ * URLs (`<release tag>/<asset>`).
+ */
+export function pinnedSha256(sums: string, url: string): string | undefined {
+  for (const line of readFileSync(sums, "utf8").split("\n")) {
+    const match = /^([0-9a-f]{64})  (\S+)\r?$/.exec(line);
+    if (match !== null && url.endsWith(`/${match[2]}`)) return match[1];
+  }
+  return undefined;
+}
+
+/**
+ * `.identity` says what the tree is, `.sha256` which pin its tarball was checked against. Two files, because checkouts
+ * share the cache: one that has no pin for this identity has to take a checked tree as it is, not replace it.
+ */
+export async function stampPrebuilt(tree: string, identity: string, sha256: string | undefined): Promise<void> {
+  // The tarball may have brought one: it does not get to vouch for itself.
+  await rm(resolve(tree, ".sha256"), { recursive: true, force: true });
+  if (sha256 !== undefined) await writeFile(resolve(tree, ".sha256"), sha256 + "\n");
+  await writeFile(resolve(tree, ".identity"), identity + "\n");
+}
+
+export function prebuiltIsCurrent(tree: string, identity: string, sha256: string | undefined): boolean {
+  const holds = (stamp: string, value: string) =>
+    existsSync(resolve(tree, stamp)) && readFileSync(resolve(tree, stamp), "utf8").trim() === value;
+  return holds(".identity", identity) && (sha256 === undefined || holds(".sha256", sha256));
 }
 
 /**
@@ -365,6 +424,8 @@ function prebuiltDownloadError(name: string, url: string, cause: unknown): Error
  * `dest/` (no hoist).
  *
  * @param identity Written to `dest/.identity`. Changing it triggers re-download.
+ * @param sha256 What the tarball must hash to. It is not unpacked otherwise. A
+ *   tree that was not checked against it is fetched again.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
  *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).
  *   Deleted via fs.rm — no shell, cross-platform.
@@ -374,24 +435,29 @@ export async function fetchPrebuilt(
   url: string,
   dest: string,
   identity: string,
+  sha256: string | undefined,
   rmPaths: string[] = [],
 ): Promise<void> {
   const stampPath = resolve(dest, ".identity");
 
   // ─── Short-circuit: already at this identity? ───
+  if (prebuiltIsCurrent(dest, identity, sha256)) {
+    console.log(`up to date`);
+    return; // restat no-op
+  }
   if (existsSync(stampPath)) {
     const existing = readFileSync(stampPath, "utf8").trim();
-    if (existing === identity) {
-      console.log(`up to date`);
-      return; // restat no-op
-    }
-    console.log(`identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`);
+    console.log(
+      existing === identity
+        ? `not checked against the pinned sha256, re-fetching`
+        : `identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`,
+    );
   }
 
   // ─── Prefetch cache: pre-extracted tree with matching identity? ───
-  if (await tryPrefetchExtracted(dest, ".identity", identity)) return;
+  if (await tryPrefetchExtracted(dest, identity, sha256)) return;
 
-  console.log(`fetching ${url}`);
+  console.log(`fetching ${url}${sha256 === undefined ? " (no pinned sha256 to check it against)" : ""}`);
   const started = performance.now();
 
   // Process-unique temp paths so concurrent builds (shared cacheDir across
@@ -403,7 +469,7 @@ export async function fetchPrebuilt(
   await mkdir(destParent, { recursive: true });
   const tarballPath = `${dest}${suffix}.tar.gz`;
   try {
-    await downloadWithRetry(url, tarballPath, name);
+    await downloadWithRetry(url, tarballPath, name, downloadRetry, undefined, sha256);
   } catch (err) {
     throw prebuiltDownloadError(name, url, err);
   }
@@ -432,7 +498,7 @@ export async function fetchPrebuilt(
     for (const p of rmPaths) {
       await rm(resolve(hoistFrom, p), { recursive: true, force: true });
     }
-    await writeFile(resolve(hoistFrom, ".identity"), identity + "\n");
+    await stampPrebuilt(hoistFrom, identity, sha256);
 
     // ─── Publish ───
     // Directory rename can't overwrite on any platform, so rm first. If a
@@ -442,8 +508,7 @@ export async function fetchPrebuilt(
       await rm(dest, { recursive: true, force: true });
       await rename(hoistFrom, dest);
     } catch (err) {
-      const landed = existsSync(stampPath) ? readFileSync(stampPath, "utf8").trim() : undefined;
-      if (landed === identity) {
+      if (prebuiltIsCurrent(dest, identity, sha256)) {
         console.log(`up to date (concurrent fetch won)`);
         return;
       }

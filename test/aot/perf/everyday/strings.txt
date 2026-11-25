@@ -190,6 +190,16 @@ const headers = ["Content-Type", "ACCEPT", "host", "X-Request-Id"];
 function turn(i: number): number {
   return headers[i & 3]!.toLowerCase() === "host" ? 1 : 0;
 }
+//// lower-case-of-a-page
+const page = "The Quick Brown Fox jumps over 12 Lazy Dogs.\n".repeat(90);
+function turn(i: number): number {
+  return (page + (i & 7)).toLowerCase().length;
+}
+//// lower-case-of-a-page-with-accented-letters
+const page = "The Quick Brown Fox \u00c9t\u00e9 jumps over 12 Lazy Dogs.\n".repeat(90);
+function turn(i: number): number {
+  return (page + (i & 7)).toLowerCase().length;
+}
 //// to-upper-case
 const verbs = ["get", "post", "Put", "DELETE"];
 function turn(i: number): number {

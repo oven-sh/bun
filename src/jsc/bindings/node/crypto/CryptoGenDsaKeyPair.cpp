@@ -5,37 +5,6 @@
 using namespace Bun;
 using namespace JSC;
 
-extern "C" void Bun__DsaKeyPairJobCtx__deinit(DsaKeyPairJobCtx* ctx)
-{
-    ctx->deinit();
-}
-
-void DsaKeyPairJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__DsaKeyPairJobCtx__runTask(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
-}
-
-extern "C" void Bun__DsaKeyPairJobCtx__runFromJS(DsaKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
-
-extern "C" void Bun__DsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DsaKeyPairJobCtx* ctx, EncodedJSValue callback);
-void DsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, DsaKeyPairJobCtx&& ctx, JSValue callback)
-{
-    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTF::move(ctx));
-    Bun__DsaKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
 ncrypto::EVPKeyCtxPointer DsaKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DSA);

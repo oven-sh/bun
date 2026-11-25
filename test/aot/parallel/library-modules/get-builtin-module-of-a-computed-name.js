@@ -1,6 +1,5 @@
-// process.getBuiltinModule(name): undefined for a name that is no module, as in plain Bun; an error for a module that exists and is not in the executable, because undefined would say that there is no such module.
+// process.getBuiltinModule(name): the module for a name of the library, whether or not the program names it, and undefined for a name that is no module, as in `bun <file>`.
 // Env: NAMES=node:path,node:dgram,node:no-such-module,./relative.js
-// Alone: what it prints depends on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text
 import "node:path";
 
 for (const name of process.env.NAMES.split(",")) {
@@ -11,10 +10,3 @@ for (const name of process.env.NAMES.split(",")) {
   }
 }
 console.log("went on");
-/* Output:
-node:path object
-node:dgram MODULE_NOT_FOUND true
-node:no-such-module undefined
-./relative.js undefined
-went on
-*/

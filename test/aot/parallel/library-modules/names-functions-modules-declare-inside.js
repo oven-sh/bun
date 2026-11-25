@@ -32,3 +32,25 @@ try {
   const frames = error.stack.split("\n").slice(0, 3);
   console.log(frames.map(frame => frame.replace(/ \(.*\)$/, "")).join("\n"));
 }
+/* Output:
+Cipheriv 4 Decipheriv 4
+[LazyTransform: Cipheriv] [LazyTransform: Decipheriv]
+readline [ "onSelfCloseWithoutTerminal" ]
+readline in a terminal [ "onSelfCloseWithTerminal" ]
+pipeline [ "onerror", "onError", "onerror" ] [ "onend", "unpipe", "endFn", "onend" ]
+pipeline [ "onerror", "onerror", "onError", "onerror", "onerror" ] [ "onend", "onend", "unpipe",
+  "endFn", "onend"
+]
+pipeline [ "onerror", "onerror", "onError", "onerror" ] [ "onend", "onend" ]
+by name 1 {
+  value: "Cipheriv",
+  writable: false,
+  enumerable: false,
+  configurable: true,
+}
+[ "length", "name", "prototype" ] Cipheriv
+Error: Unknown cipher
+    at Cipher
+    at new Cipheriv
+pipeline ended undefined
+*/

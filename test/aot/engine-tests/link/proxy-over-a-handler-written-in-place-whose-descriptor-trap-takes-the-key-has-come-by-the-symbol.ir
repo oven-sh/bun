@@ -1,0 +1,51 @@
+# let seen; const inner = new Proxy({}, { getOwnPropertyDescriptor(target, key) { seen = key; } }); print(Object.create(new Proxy(inner, { get() { return "a"; } })));
+# Behind a `get` trap the engine asks the target for its own property under the same name, to hold the answer against it. The target is a proxy, so its trap is handed the name:
+# Symbol.for("nodejs.util.inspect.custom"), which no row gave to the program. So every function of a handler that takes a second operand counts, not `get` alone.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m0 fields=[{key="getOwnPropertyDescriptor" declared={type=anything} flags=[IsRequired, IsMethod]}]
+layout L2 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired, IsMethod]}]
+variable g0 name="seen" module=m0 declared={type=anything}
+runtimefunction id=UtilInspectStylizeWithNoColor function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v1, v4
+    v7 = NewClosure function=f2
+    v8 = NewObject -, v7 layout=L2 fields=[0]
+    v9 = FinishObject v8
+    v10 = Construct v5, -, v6, v9
+    v11 = Builtin builtin=ObjectCreate
+    v12 = Call v11, -, v10
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = Call v14, -, v12 calleeName="print"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="getOwnPropertyDescriptor" module=m0 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}
+function f2 name="get" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    Return v0
+}
+function f3 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

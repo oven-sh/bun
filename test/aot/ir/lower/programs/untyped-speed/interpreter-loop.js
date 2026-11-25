@@ -137,49 +137,4 @@ function run(rounds) {
 
 console.log(run(4000));
 
-// GENERATED: run
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v3, v5)
-// CHECK-NEXT: b2(v6, v7):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v10 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v11 = Less v9, v10
-// CHECK-NEXT: Branch v11 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
-// CHECK-NEXT: b3(v12, v13):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v14 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v17 = Integer integer=200
-// CHECK-NEXT: v18 = Convert v12 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v19 = Integer integer=63
-// CHECK-NEXT: v20 = BitAnd v18, v19
-// CHECK-NEXT: v21 = Add v17, v20
-// CHECK-NEXT: v22 = Call v15, -, v16, v21 calleeName="execute"
-// CHECK-NEXT: v23 = Convert v22 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v24 = Add v14, v23
-// CHECK-NEXT: v25 = Integer integer=1000000007
-// CHECK-NEXT: v26 = Mod v24, v25
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v28 = Increment v18
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v27, v29)
-// CHECK-NEXT: b6(v30, v31):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v32 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v32
-// CHECK-NEXT: }

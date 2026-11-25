@@ -1,0 +1,13 @@
+# -- source: main.js
+# class Matrix {
+#   constructor(size) { this.size = size; this.modules = Array.from({ length: size }, () => new Array(size).fill(null)); }
+#   clone() { const copy = new Matrix(this.size); copy.modules = this.modules.map(row => row.slice()); return copy; }
+# }
+# const at = JSON.parse("[1,2]");
+# const base = new Matrix(4); base.modules[1][2] = true;
+# const matrix = base.clone();
+# print(matrix.modules[at[0]][at[1]]); print(matrix.modules[at[1]][at[0]]);
+# -- end of source
+# The rows are read under keys that nobody knows, so `map` and `slice` off them give up by escape alone. A call that has given up so still enters what the language itself calls and what lays what it is handed into its receiver; `map` and `slice` do neither and are not entered: they could say nothing of their answer, and what says nothing shows in the held reading as every primitive. So of the field that takes the answer Link still holds the list that the constructor stores, and not every primitive beside it. (Where every member is entered this test is red.)
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "modules" proven=Array writers-known

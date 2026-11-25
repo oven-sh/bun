@@ -1,0 +1,25 @@
+# A turn of `for (..; i < s.length; ..) .. s.charCodeAt(i)` asked the text whether it is a rope, and loaded its characters and its flags: five of fifteen instructions.
+# The text is made flat once in front of the loop, and a turn reads through what FlattenString has opened. It may throw for lack of memory: under a handler it stands in front
+# only where the turn does nothing before the read that anybody could see.
+# f1 = digest, f2 = digestOrNothing, f3 = digestBesideCount
+# -- source: text-is-made-flat-in-front-of-the-loop-that-reads-its-characters.ts
+# function digest(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+# function digestOrNothing(s: string): number { let h = 0; try { for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; } catch { h = 0; } return h; }
+# let count = 0;
+# function digestBesideCount(s: string): number { let h = 0; try { for (let i = 0; i < s.length; i++) { count++; h = (h * 31 + s.charCodeAt(i)) | 0; } } catch { h = 0; } return h; }
+# console.log(digest("abcdefghij"), digestOrNothing("abcdefghij"), digestBesideCount("abcdefghij"), count);
+# -- end of source
+# RUN: walk f1 f2 f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: [[flat]]: opaque(FlatString) @Cell = FlattenString
+# CHECK-NEXT: Jump -> next
+# CHECK: isLoopHead=true
+# CHECK: = GetStringCodeUnit [[flat]], {{*}}traits=[mayTouchMemory]
+# CHECK-LABEL: code f2:Body
+# CHECK: [[flatUnderHandler]]: opaque(FlatString) @Cell = FlattenString
+# CHECK: isLoopHead=true
+# CHECK: = GetStringCodeUnit [[flatUnderHandler]], {{*}}traits=[mayTouchMemory]
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: FlattenString
+# RUN(WITHHELD): walk f1 mechanisms=all-Inlining-LoopInvariants
+# WITHHELD-NOT: FlattenString

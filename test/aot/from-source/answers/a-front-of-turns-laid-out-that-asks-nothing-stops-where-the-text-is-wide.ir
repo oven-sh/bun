@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# var key = JSON.parse('"go"');
+# var halves = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k + 0.5); return l; }, wholes = function (n) { var l = []; for (var k = 0; k < n; k++) l.push(k); return l; };
+# var T = { go(t) { var s = 0; for (var i = 0; i < t.length; i++) s += t.charCodeAt(i); return s; } };
+# print(T[key](globalThis.fails ? "\u0100bcdefghijklmnop" : "abcdefghijklmnop"));
+# -- end of source
+# Every iteration of an unrolled loop trusts what the loop's entry checks have found. With testing=CheckProofsAtRunTime and testing=CheckBoundsAtRunTime the walk adds checks to each iteration,
+# and an iteration that holds such checks is not unrolled, so no unrolled loop ever ran in those test lanes. With testing=CheckBoundsInEmittersOnly the walk adds nothing,
+# the loop is unrolled as in an executable, and each access checks the facts that it was given against memory.
+# The entry checks test whether the string is 8-bit. Fault injection, testing=SkipUnrollEntryChecks: a 16-bit string is read byte by byte.
+# Nothing used to check the width that was found against the string: 1831 came out as 708, and nothing crashed.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.fails = true;
+# RIGHT: 1831
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly globalThis.fails = true;
+# HELD: 1831
+# HELD-NEXT: exited with 0
+# The injected fault does not harm an input that would have passed the entry checks. So the crash in the last run comes from this check and from no other.
+# RUN(PASSES): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks
+# PASSES: 1672
+# PASSES-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,SkipUnrollEntryChecks globalThis.fails = true;
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

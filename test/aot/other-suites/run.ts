@@ -10,13 +10,13 @@
 //     --plain               nothing is built: the Bun under test runs the file too. With --reference: what this branch has changed for every program, compiled or not
 //     --jobs <n>            tests at a time (default: one per core)
 //     --only <expression>   the tests whose path in the suite matches the regular expression
-//     --flags "<flags>"     more flags for every build, for example --aot-validate
+//     --flags "<flags>"     more flags for every build, for example --aot-check=Validate
 //     --known <file>        lines `<kind> <test>: ..` of an earlier run: what stands there is counted and not printed
 //     --out <file>          one line for every test, the same ones too
 //
 // One line for each test that is not the same, then the totals:
 //   DIES       the executable ends by a signal and plain Bun does not
-//   STOP       a validating build or a sanitizer stopped the executable
+//   STOP       a sanitizer stopped the executable
 //   DIFFERS    another exit code, or another kind of error in the first line that names one
 //   REFUSED    plain Bun runs the file, the build fails
 //   COMPILER   the build ends by a signal, a panic or an internal error
@@ -149,7 +149,7 @@ async function spawned(cmd: string[], cwd: string, seconds: number, temporary?: 
 
 // The first line that names an error, without the paths and without what quotes the source: plain Bun and an executable word those parts differently.
 function firstError(said: string) {
-  const line = said.split("\n").filter(line => !/^ *\d+ \|/.test(line)).find(line => /Test262Error|Error|AOT validation|panic|AddressSanitizer|Test262:AsyncTest(Complete|Failure)/.test(line)) ?? "";
+  const line = said.split("\n").filter(line => !/^ *\d+ \|/.test(line)).find(line => /Test262Error|Error|panic|AddressSanitizer|Test262:AsyncTest(Complete|Failure)/.test(line)) ?? "";
   if (line.startsWith("Test262Error {")) return "Test262Error: " + (/^ *message: (.*)$/m.exec(said)?.[1] ?? "").slice(0, 120);
   return line.replace(/^\[STD(ERR|OUT)\] /, "").replace(/\/[^ :]*\//g, "").replace(/\(evaluating .*/, "").replace(/\. \(In .*/, "").slice(0, 110);
 }
@@ -220,7 +220,7 @@ async function judge({ name, path, ownText }: Test, index: number): Promise<stri
     if (suite === "node" && process.platform !== "win32") Bun.spawnSync(["pkill", "-9", "-f", "^" + executable]);
     const [theirs, ours] = [firstError(plain.said), firstError(compiled.said)];
     const startedItself = suite === "node" && plain.code === 0 && existsSync(temporary("compiled") + markOfASecondStart);
-    if (/AddressSanitizer|AOT validation/.test(compiled.said)) return `STOP ${name}: ${ours}`;
+    if (/AddressSanitizer/.test(compiled.said)) return `STOP ${name}: ${ours}`;
     if (startedItself && compiled.code === "SIGKILL") return `ITSELF ${name}: its time was up: ${ours}`;
     if (typeof compiled.code === "string" && compiled.code !== plain.code) return `DIES ${name}: ${compiled.code} (plain ${plain.code}): ${compiled.said.split("\n").find(line => line.includes("panic"))?.slice(0, 90) ?? ""}`;
     if (plain.code === compiled.code && kindOf(theirs) === kindOf(ours)) return `same ${name}`;

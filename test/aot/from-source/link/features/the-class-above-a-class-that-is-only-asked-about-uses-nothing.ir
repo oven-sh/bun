@@ -1,0 +1,9 @@
+# what the accessor answers is compared and asked for its type
+# -- source: the-class-above-a-class-that-is-only-asked-about-uses-nothing.ts
+# console.log((CustomEvent as any).__proto__ === Event, typeof (CustomEvent as any).__proto__);
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by CustomEvent

@@ -1,0 +1,30 @@
+// The method is a field of the literal. One written call by name, `r.m(..)`, on a receiver that nobody knows, at a place that sees more than two shapes, so that the call goes past what the place remembers. A fresh object for each of sixteen histories of the method; three rounds before and three behind.
+class F1 { constructor() { this.f1 = 1; } m(x0) { return "F1" + x0; } }
+const fillers = [new F1(), { f2: 1, m: (x0) => "F2" + x0 }, { f3: 1, f4: 2, m: (x0) => "F3" + x0 }, Object.assign(JSON.parse('{"f5":1}'), { m: (x0) => "F4" + x0 })];
+function hide(list) { return JSON.parse('[' + list.map((_, i) => i).join(',') + ']').map((i) => list[i]); }
+function call(r) { try { return String(r.m(1)); } catch (e) { return e.constructor.name + ': ' + e.message; } }
+function round(list) { const out = []; for (let i = 0; i < list.length; i++) out.push(call(list[i])); return out.join(' | '); }
+function tell(name, s, change) {
+    const list = hide([s, ...fillers]);
+    const before = [round(list), round(list), round(list)];
+    let failed = '';
+    try { change(s); } catch (e) { failed = ' (' + e.constructor.name + ')'; }
+    const behind = [round(list), round(list), round(list)];
+    console.log(name + failed + ': ' + [...new Set(before)].join(' // ') + ' >> ' + [...new Set(behind)].join(' // '));
+}
+tell('nothing', ({ a: 1, m: (x0) => "first" + x0 }), (s) => {  });
+tell('deleted', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { delete s.m; });
+tell('stored-anew', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { s.m = (x0) => "second" + x0; });
+tell('stored-a-number', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { s.m = 7; });
+tell('stored-undefined', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { s.m = undefined; });
+tell('made-a-getter', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { Object.defineProperty(s, 'm', { get() { return (x0) => "second" + x0; }, configurable: true }); });
+tell('defined-anew', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { Object.defineProperty(s, 'm', { value: (x0) => "second" + x0, writable: false, enumerable: false, configurable: true }); });
+tell('deleted-and-stored', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { delete s.m; s.m = (x0) => "second" + x0; });
+tell('stored-and-deleted', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { s.m = (x0) => "second" + x0; delete s.m; });
+tell('another-above', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { Object.setPrototypeOf(s, { m: (x0) => "second" + x0 }); });
+tell('nothing-above', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { Object.setPrototypeOf(s, null); });
+tell('grown', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { for (let i = 0; i < 70; i++) s['z' + i] = i; });
+tell('grown-and-deleted', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { for (let i = 0; i < 70; i++) s['z' + i] = i; delete s.m; });
+tell('frozen-late', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { Object.freeze(s); });
+tell('replaced-above', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { { const p = Object.getPrototypeOf(Object(s)); if (p && p !== Object.prototype && p !== Function.prototype && p !== Array.prototype) p.m = (x0) => "second" + x0; } });
+tell('deleted-above', ({ a: 1, m: (x0) => "first" + x0 }), (s) => { { const p = Object.getPrototypeOf(Object(s)); if (p && p !== Object.prototype && p !== Function.prototype && p !== Array.prototype) delete p.m; } });

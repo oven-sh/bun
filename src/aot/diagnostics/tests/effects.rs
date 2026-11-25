@@ -1,11 +1,14 @@
 use bun_ast::Kind;
+use bun_options_types::aot_options::AotOptions;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::messages::Category;
 use bun_sema::program::FileId;
 
 use super::super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, ProgramView, Span};
 use super::{file_named, kinds_and_codes, kinds_and_texts, take_diagnostics, text, written};
-use crate::compile::testing::{TYPED_PACKAGE_JSON, default_settings, with_loaded_build};
+use crate::compile::testing::{
+    TYPED_PACKAGE_JSON, default_settings, with_loaded_build, with_loaded_build_and_options,
+};
 use crate::diagnostic_codes::Code;
 use crate::load::ProjectId;
 
@@ -29,8 +32,7 @@ const EVERY_ORIGIN: [(&str, &str); 7] = [
     (
         "main.ts",
         "/// <reference path=\"./globals.d.ts\" />\n\
-         import \"./plain.js\";\nimport \"dep\";\nimport \"untyped\";\n\
-         Function(\"return 1\");\n",
+         import \"./plain.js\";\nimport \"dep\";\nimport \"untyped\";\nconsole.log([2, 1].sort());\n",
     ),
     ("plain.js", "export {};\n"),
     ("globals.d.ts", "declare const declared: number;\n"),
@@ -106,16 +108,11 @@ fn for_each_origin(mut visit: impl FnMut(FileOrigin, Option<ProgramView<'_, '_>>
         let file = runtime.files().compiled_files()[0];
         assert_eq!(runtime.origin(file), FileOrigin::Runtime);
         visit(FileOrigin::Runtime, Some(runtime), start_of(file));
-        let mut compiled_files = application.files().compiled_files().iter().copied();
-        let is_text = |file: &FileId| application.origin(*file) == FileOrigin::EvaluatedText;
-        let text = compiled_files.find(is_text);
-        let text = text.expect("the text given to Function is a file");
-        visit(FileOrigin::EvaluatedText, Some(application), start_of(text));
     });
 }
 
 fn with_runtime_view<R>(then: impl FnOnce(ProgramView<'_, '_>) -> R) -> R {
-    let files = [("main.ts", "export {};\n")];
+    let files = [("main.ts", "console.log([2, 1].sort());\n")];
     with_loaded_build(&files, &default_settings(), |_, loaded| {
         then(loaded.project(ProjectId::Runtime).view())
     })
@@ -189,22 +186,14 @@ fn compiler_diagnostic_follows_origin() {
             shown_effect(diagnostics)
         };
         let of_error = report(Code::NestedTooDeeply, b"500");
-        let of_warning = report(Code::FunctionIntrospection, b"f.caller");
+        let of_warning = report(Code::WorkerFileNotCompiled, b"./w.ts");
         shown.push((origin, of_error, of_warning));
     });
-    let expected = COMPILER_DIAGNOSTIC_EFFECTS.map(|(origin, of_error, of_warning)| {
-        let shown_for_error = match of_error {
-            Effect::WithdrawsTrust => Effect::StopsBuild,
-            Effect::StopsBuild | Effect::Warns | Effect::Dropped | Effect::InternalError => {
-                of_error
-            }
-        };
-        (origin, shown_for_error, of_warning)
-    });
-    // None of these is a build of tests.
-    let is_shown = |it: &(FileOrigin, Effect, Effect)| it.0 != FileOrigin::TestedSource;
-    let expected: Vec<_> = expected.into_iter().filter(is_shown).collect();
-    assert_eq!(shown, expected);
+    let is_shown = |it: &(FileOrigin, Effect, Effect)| {
+        !matches!(it.0, FileOrigin::TestedSource | FileOrigin::EvaluatedText)
+    };
+    let expected = COMPILER_DIAGNOSTIC_EFFECTS.into_iter().filter(is_shown);
+    assert_eq!(shown, expected.collect::<Vec<_>>());
 }
 
 #[test]
@@ -222,7 +211,7 @@ fn diagnostics_in_runtime_files_are_not_shown_to_users() {
         let file = view.files().compiled_files()[0];
 
         let mut diagnostics = Diagnostics::new();
-        let warning = Diagnostic::new(Code::FunctionIntrospection, start_of(file), &[b"f.caller"]);
+        let warning = Diagnostic::new(Code::WorkerFileNotCompiled, start_of(file), &[b"./w.ts"]);
         diagnostics.add(Some(view), warning);
         assert!(!diagnostics.has_errors());
         assert!(written(diagnostics).msgs.is_empty());
@@ -269,52 +258,50 @@ fn internal_error_quotes_at_most_eighty_bytes_of_source() {
 }
 
 #[test]
-fn type_error_in_program_source_stops_build() {
+fn type_errors_are_looked_for_in_the_typescript_of_the_program_alone() {
+    for (text, code) in [
+        (TYPE_ERROR, 2322),
+        (MISSING_DECLARATION, 2304),
+        (IMPLICIT_ANY, 7006),
+    ] {
+        assert_eq!(check(&[("main.ts", text)]), [(Kind::Err, code)], "{text}");
+        assert_eq!(check_dependency_source(text), NOTHING, "{text}");
+        assert_eq!(check_aot_source(text), NOTHING, "{text}");
+    }
+    let text = CHECKED_JAVASCRIPT_TYPE_ERROR;
+    assert_eq!(check(&[("main.js", text)]), NOTHING);
+    assert_eq!(check_dependency_javascript(text), NOTHING);
+}
+
+#[test]
+fn type_errors_of_the_program_are_looked_for_on_request() {
+    let check = |files: &[(&str, &str)]| {
+        let options = AotOptions {
+            looks_for_type_errors: true,
+            ..AotOptions::default()
+        };
+        with_loaded_build_and_options(files, &default_settings(), options, |build, loaded| {
+            let bound = build.bind_modules(loaded).expect("modules are bound");
+            let _ = build.check_and_lower(loaded, &bound);
+            kinds_and_codes(&written(take_diagnostics(build)))
+        })
+    };
     assert_eq!(check(&[("main.ts", TYPE_ERROR)]), [(Kind::Err, 2322)]);
-}
-
-#[test]
-fn signatures_of_compiler_declarations_take_no_parameter_types_away() {
-    let source =
-        "export const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);\n";
-    assert_eq!(check(&[("main.ts", source)]), NOTHING);
-}
-
-#[test]
-fn overloads_of_program_give_no_parameter_types() {
-    let source = "interface Overloaded {
-  <T>(value: T): T;
-  (value: string): string;
-}
-export const same: Overloaded = value => value;
-";
-    assert_eq!(check(&[("main.ts", source)]), [(Kind::Err, 7006)]);
-}
-
-#[test]
-fn type_error_in_program_javascript_is_dropped() {
+    assert_eq!(
+        check(&[("main.ts", MISSING_DECLARATION)]),
+        [(Kind::Err, 2304)]
+    );
+    assert_eq!(check(&[("main.ts", IMPLICIT_ANY)]), [(Kind::Err, 7006)]);
     assert_eq!(
         check(&[("main.js", CHECKED_JAVASCRIPT_TYPE_ERROR)]),
         NOTHING
     );
-}
-
-#[test]
-fn type_error_in_dependency_source_withdraws_trust() {
-    assert_eq!(check_dependency_source(TYPE_ERROR), [(Kind::Warn, 100009)]);
-}
-
-#[test]
-fn type_error_in_dependency_javascript_is_dropped() {
-    assert_eq!(
-        check_dependency_javascript(CHECKED_JAVASCRIPT_TYPE_ERROR),
-        NOTHING
-    );
-}
-
-#[test]
-fn type_error_in_aot_source_withdraws_trust() {
-    assert_eq!(check_aot_source(TYPE_ERROR), [(Kind::Warn, 100009)]);
+    let dependency = [
+        ("main.ts", "import \"dep\";\n"),
+        ("node_modules/dep/package.json", TYPESCRIPT_PACKAGE),
+        ("node_modules/dep/index.ts", TYPE_ERROR),
+    ];
+    assert_eq!(check(&dependency), NOTHING);
 }
 
 #[test]
@@ -324,22 +311,6 @@ fn early_error_stops_build_in_every_compiled_file() {
     assert_eq!(check(&[("main.js", DUPLICATE_LABEL)]), stops_build);
     assert_eq!(check_dependency_source(DUPLICATE_LABEL), stops_build);
     assert_eq!(check_dependency_javascript(DUPLICATE_LABEL), stops_build);
-}
-
-#[test]
-fn missing_declaration_stops_build_only_in_program_source() {
-    assert_eq!(
-        check(&[("main.ts", MISSING_DECLARATION)]),
-        [(Kind::Err, 2304)]
-    );
-    assert_eq!(check_dependency_source(MISSING_DECLARATION), NOTHING);
-}
-
-#[test]
-fn style_error_stops_build_only_in_program_source() {
-    assert_eq!(check(&[("main.ts", IMPLICIT_ANY)]), [(Kind::Err, 7006)]);
-    assert_eq!(check_dependency_source(IMPLICIT_ANY), NOTHING);
-    assert_eq!(check_aot_source(IMPLICIT_ANY), NOTHING);
 }
 
 #[test]

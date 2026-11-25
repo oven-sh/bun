@@ -37,6 +37,13 @@
 // MARKER: = Boolean boolean=true
 // MARKER: Return
 
+// RUN(TAKEN): lower
+// TAKEN-LABEL: function {{*}}name="markerOfWhatIsHandedOn"
+// TAKEN: EvaluateModule module=m
+// TAKEN: = ModuleNamespace module=m
+// TAKEN: = PropGet {{*}}key="__esModule"
+// TAKEN: Return
+
 // RUN(STORED): lower
 // STORED-LABEL: function {{*}}name="storedAgain"
 // STORED: EvaluateModule module=m
@@ -80,6 +87,12 @@ function handedOn() {
 }
 
 function marker() {
+  const all = require("./imports/nested");
+  return all.__esModule;
+}
+
+// `handedOn` gives the object away, and whoever has it may store the name on it.
+function markerOfWhatIsHandedOn() {
   const all = require("./imports/values");
   return all.__esModule;
 }
@@ -95,4 +108,4 @@ function storedAgain() {
   return all.one;
 }
 
-module.exports = { absent, bound, called, handedOn, marker, ofCommonJs, storedAgain };
+module.exports = { absent, bound, called, handedOn, marker, markerOfWhatIsHandedOn, ofCommonJs, storedAgain };

@@ -1,0 +1,31 @@
+# -- source: main.js
+# const kept = [];
+# function risky(flag) { if (flag) throw new Error("no"); }
+# function open() {
+#     const helper = (k) => (k + 2) | 0;
+#     helper.table = { size: 5 };
+#     const Cat = function Cat(k) { this.n = (helper(k) + helper.table.size) | 0; };
+#     kept.push(Cat);
+#     const use = () => (helper(1) + helper.table.size) | 0;
+#     return (use() + new Cat(1).n) | 0;
+# }
+# function guarded(flag) {
+#     const helper = (k) => (k + 2) | 0;
+#     helper.table = { size: 5 };
+#     try { risky(flag); const Dog = function Dog(k) { this.n = (helper(k) + helper.table.size) | 0; }; kept.push(Dog, new Dog(1).n); } catch (e) { kept.push(0); }
+#     const use = () => (helper(1) + helper.table.size) | 0;
+#     return use();
+# }
+# print(open(), guarded(JSON.parse("true")), kept.length);
+# -- end of source
+# A block under a handler can be left in the middle. The block that makes Dog stands in front of every return of guarded(), and on the way that throws Dog is not made all the same:
+# nothing but use holds the helper there, and it is let go with use: it stays a capture of both. open() makes Cat on every way: the helper lies in a word.
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: unit f5:Body (Void
+# UNITS: unit f6:Body (Void
+# UNITS-NOT: unit f8:Body (Void
+# UNITS-NOT: unit f9:Body (Void
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 16 8 2
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 16 8 2

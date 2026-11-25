@@ -16,6 +16,5 @@ const dialects = [
 
 export default endless("statements between declare and return", index => ({
   name: `seed ${index + 1}.`,
-  flags: index % 8 === 5 ? ["--aot-validate"] : [],
   make: () => generate(new Random(index + 1), dialects[index % dialects.length]),
 }));

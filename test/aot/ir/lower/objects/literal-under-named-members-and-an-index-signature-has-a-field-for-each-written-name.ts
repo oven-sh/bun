@@ -1,6 +1,8 @@
 // RUN: link
-// CHECK: layout [[options]] name="Options" {{*}}fields=[{key="name"
-// CHECK: layout [[own]] module={{*}}fields=[{key="extra" {{*}}{key="name" {{*}}supertypes=[
+// CHECK: layout [[options]] {{*}}fields=[{key="name"
+// CHECK: layout [[own]] module={{*}}fields=[{key="extra" {{*}}{key="name"
+// CHECK-NOT: supertypes=
+// CHECK: variable
 // CHECK: function {{*}}name="create" module=
 // CHECK-NOT: = NewDictionary
 // CHECK: [[head]] = NewObject {{*}}layout=[[own]] fields=[1, 0]
@@ -24,7 +26,7 @@
 // FINITE-NOT: = NewDictionary
 // FINITE: Return
 
-// A type that names a member has a layout, whatever else it lets in, and a literal that writes the named members alone has that layout. A literal that also writes a name that only the index signature covers has a layout of its own below it, with a field for each name it writes. A literal of constants under such a type stays a record of data. `Record` over a union of names has those names as members and no index signature. The type of an empty literal that is written under no type has no index signature either.
+// A type that names a member has a layout, whatever else it lets in, and a literal that writes the named members alone has that layout. A literal that also writes a name that only the index signature covers has a layout of its own, with a field for each name it writes. The type is no supertype of that layout: an initializer declares nothing. A literal of constants under such a type stays a record of data. `Record` over a union of names has those names as members and no index signature. The type of an empty literal that is written under no type has no index signature either.
 interface Options {
   name: string;
   [key: string]: unknown;

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isDebug, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -426,6 +426,117 @@ describe("ipc mode advanced", () => {
   );
 });
 
+// The exit can be noticed before the loop has polled the channel: by the waiter thread, or, on macOS, because a process
+// that is already gone can't be watched.
+describe.skipIf(isWindows).each(["advanced", "json"] as const)("a child's last messages (%s)", serialization => {
+  async function run(parent: string, env: Record<string, string> = {}) {
+    using dir = tempDir("ipc-last-messages", {
+      "parent.js": `
+        const { existsSync, readFileSync } = require("fs");
+        const { getPriority } = require("os");
+        function until(condition) {
+          const deadline = Date.now() + 30_000;
+          while (!condition()) {
+            if (Date.now() > deadline) {
+              console.error("30 seconds have passed without " + condition);
+              process.exit(1);
+            }
+            Bun.sleepSync(1);
+          }
+        }
+        const messages = [];
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const child = {
+          cmd: [process.execPath, "child.js"],
+          env: { ...process.env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: undefined, BUN_GARBAGE_COLLECTOR_LEVEL: undefined },
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "inherit",
+          serialization: ${JSON.stringify(serialization)},
+          ipc(message, subprocess) {
+            messages.push([message, subprocess === proc]);
+          },
+          onDisconnect,
+        };
+        ${parent}
+        await disconnected;
+        console.log(JSON.stringify({ messages, exitCode: await proc.exited, connected: proc.connected }));
+      `,
+      "child.js": `
+        process.send("first");
+        process.send({ second: 2 });
+        process.send("last");
+        require("fs").writeFileSync("sent", String(process.pid));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"))).toEqual([]);
+    expect(JSON.parse(stdout)).toEqual({
+      messages: [
+        ["first", true],
+        [{ second: 2 }, true],
+        ["last", true],
+      ],
+      exitCode: 0,
+      connected: false,
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  it.skipIf(!isLinux)("arrive if the waiter thread reaps it before the loop turns", async () => {
+    await run(
+      `
+        const proc = Bun.spawn(child);
+        const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        const isReaped = ({ pid }) => {
+          try {
+            return !process.kill(pid, 0);
+          } catch {
+            return true;
+          }
+        };
+        until(() => isReaped(proc));
+        // The thread posts each exit before it waits for the next process.
+        next.kill("SIGKILL");
+        until(() => isReaped(next));
+      `,
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+    );
+  });
+
+  it("arrive if it exits before it is watched", async () => {
+    // pull() runs inside of Bun.spawn(), after the process has started. macOS finds no zombie for getpriority() either.
+    await run(`
+      const isZombie = pid => {
+        if (existsSync("/proc/self/stat")) return readFileSync(\`/proc/\${pid}/stat\`, "latin1").includes(") Z ");
+        try {
+          getPriority(pid);
+          return false;
+        } catch {
+          return true;
+        }
+      };
+      child.stdin = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          let pid;
+          until(() => existsSync("sent") && (pid = Number(readFileSync("sent", "latin1"))));
+          until(() => isZombie(pid));
+          controller.close();
+        },
+      });
+      const proc = Bun.spawn(child);
+    `);
+  });
+});
+
 // get_ipc_instance error path: on Windows, windows_configure_client can open
 // the pipe, mark the socket open, then fail read_start, at which point
 // close_socket has queued a deferred task that holds a ref on the SendQueue.
@@ -485,4 +596,588 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+/** Runs parent.js next to child.js. Both have the helpers below. */
+async function runPair(parent: string, child: string, env: Record<string, string> = {}, prelude = "") {
+  const helpers = `
+    const fs = require("node:fs");
+    // So that a child does not outlive a test that timed out.
+    const deadline = Date.now() + 120_000;
+    function until(file) {
+      while (!fs.existsSync(file)) {
+        if (Date.now() > deadline) throw new Error("gave up waiting for " + file);
+        Bun.sleepSync(1);
+      }
+    }
+    function retry(syscall) {
+      for (;;) {
+        try {
+          return syscall();
+        } catch (e) {
+          if (e.code !== "EAGAIN" || Date.now() > deadline) throw e;
+          Bun.sleepSync(1);
+        }
+      }
+    }
+    function write(bytes) {
+      bytes = Buffer.from(bytes);
+      for (let offset = 0; offset < bytes.length; ) offset += retry(() => fs.writeSync(3, bytes, offset));
+    }
+    function advancedFrame(message) {
+      const body = Buffer.from(require("bun:jsc").serialize(message));
+      const header = Buffer.from([2, 0, 0, 0, 0]);
+      header.writeUInt32LE(body.length, 1);
+      return Buffer.concat([header, body]);
+    }
+    const spawnChild = options =>
+      Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        env: { ...process.env, BUN_JSC_gcMaxHeapSize: undefined },
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "json",
+        ipc() {},
+        onExit: (_, code, signal) => void (code === 0 || console.log("child failed", code, signal)),
+        ...options,
+      });
+    const listen = () =>
+      new Promise((resolve, reject) => {
+        const server = require("node:net").createServer().once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve(server));
+      });
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const openFds = () => fs.readdirSync("/proc/self/fd").length;
+    // Bun.build() runs the event loop until the setup() of a plugin has settled.
+    const runEventLoopUntil = promise =>
+      void Bun.build({ entrypoints: ["./empty.js"], plugins: [{ name: "wait", setup: () => promise.then(() => {}) }] });
+  `;
+  using dir = tempDir("ipc-pair", {
+    "parent.js": prelude + helpers + parent,
+    "child.js": helpers + child,
+    "empty.js": "",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "parent.js"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+describe.concurrent("the send queue", () => {
+  it("does not run a setter on Array.prototype to store a callback", async () => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const child = spawnChild();
+        // Nothing follows a handle until it is acked, so the next three are joined.
+        child.send("handle", server);
+        child.send("a", () => console.log("a"));
+        child.send("b", () => console.log("b"));
+        Object.defineProperty(Array.prototype, 2, {
+          configurable: true,
+          set() {
+            delete Array.prototype[2];
+            console.log("setter");
+            for (let i = 0; i < 16; i++) child.send("handle", server);
+          },
+        });
+        child.send("c", () => console.log("c"));
+        delete Array.prototype[2];
+        child.send("last");
+        await child.exited;
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["a", "b", "c"], stderr: "", exitCode: 0 });
+  });
+
+  // The child uses descriptor 3 directly. Windows frames what goes through its pipe.
+  it.skipIf(isWindows)("writes a long backlog of replies without overflowing the stack", async () => {
+    const count = isDebug ? 4_000 : 100_000;
+    const result = await runPair(
+      `await spawnChild({ ipc: () => fs.writeFileSync("queued", "") }).exited;`,
+      `
+        // Each announces a handle that does not come, and is answered with a NACK.
+        write(Buffer.alloc(${count} * 22, '{"cmd":"NODE_HANDLE"}\\n'));
+        write('"last"\\n');
+        until("queued");
+        const buffer = Buffer.alloc(1 << 20);
+        let total = 0;
+        for (let n = 1; n && total < ${count} * 27; total += n) n = retry(() => fs.readSync(3, buffer));
+        console.log("replies", total / 27);
+      `,
+    );
+    expect(result).toEqual({ stdout: [`replies ${count}`], stderr: "", exitCode: 0 });
+  });
+
+  // Linux only: reads /proc/self/fd.
+  it.skipIf(!isLinux).each([
+    { handle: "server", keepOpen: false, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: true, descriptorsLeft: 1 },
+    { handle: "socket", keepOpen: false, descriptorsLeft: 0 },
+  ])("releases a $handle (keepOpen: $keepOpen) if the channel closes while its message is serialized", async row => {
+    const result = await runPair(
+      `
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        await require("node:events").once(socket, "connect");
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const child = spawnChild({ onDisconnect });
+        const message = {
+          toJSON() {
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+            return "late";
+          },
+        };
+        const inode = fd => fs.statSync("/proc/self/fd/" + fd, { throwIfNoEntry: false })?.ino;
+        const sentInode = inode(${row.handle}._handle.fd);
+        child.send(message, ${row.handle}, { keepOpen: ${row.keepOpen} });
+        await turn();
+        console.log("descriptors left", fs.readdirSync("/proc/self/fd").filter(fd => inode(fd) === sentInode).length);
+        process.exit(0);
+      `,
+      `process.on("message", () => {});`,
+    );
+    expect(result).toEqual({ stdout: [`descriptors left ${row.descriptorsLeft}`], stderr: "", exitCode: 0 });
+  });
+
+  // Windows has given the child its duplicate by then, so the peer sees no end while the child lives.
+  it.skipIf(isWindows).each(["json", "advanced"])(
+    "closes a socket whose message the serializer rejects: %s",
+    async serialization => {
+      const result = await runPair(
+        `
+        const { once } = require("node:events");
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1");
+        const [[peer]] = await Promise.all([once(server, "connection"), once(socket, "connect")]);
+        try {
+          spawnChild({ serialization: "${serialization}" }).send({ get a() { throw new Error("rejected"); } }, socket);
+        } catch (error) {
+          console.log(error.message);
+        }
+        await once(peer.resume(), "end");
+        console.log("closed");
+        process.exit(0);
+      `,
+        `process.on("message", () => {});`,
+      );
+      expect(result).toEqual({ stdout: ["rejected", "closed"], stderr: "", exitCode: 0 });
+    },
+  );
+
+  it("has the same number of GC roots for any number of callbacks", async () => {
+    const result = await runPair(
+      `
+        const roots = () => require("bun:jsc").heapStats().protectedObjectCount;
+        const server = await listen();
+        const child = spawnChild();
+        const called = [];
+        child.send("handle", server);
+        for (let i = 0; i < 10; i++) child.send(i, () => called.push(i));
+        const before = roots();
+        for (let i = 10; i < 1000; i++) child.send(i, () => called.push(i));
+        console.log("new roots", roots() - before);
+        Bun.gc(true);
+        child.send("last");
+        await child.exited;
+        console.log("called", called.length, "in order", called.every((it, i) => it === i));
+        server.close();
+      `,
+      `
+        process.on("message", (message, handle) => {
+          handle?.close();
+          if (message === "last") process.disconnect();
+        });
+      `,
+    );
+    expect(result).toEqual({ stdout: ["new roots 0", "called 1000 in order true"], stderr: "", exitCode: 0 });
+  });
+});
+
+// The child uses descriptor 3 directly.
+describe.concurrent.skipIf(isWindows)("a process.nextTick that runs the event loop until the child is gone", () => {
+  // Native code calls this one, because nothing has read the original.
+  const prelude = `
+    let onNextTick;
+    process.nextTick = (callback, ...args) => {
+      onNextTick?.(callback);
+      queueMicrotask(() => callback(...args));
+    };
+  `;
+  const sendAndForget = (send: string) => `
+    const sent = () => console.log("sent");
+    const { promise: exited, resolve } = Promise.withResolvers();
+    // Not resolved with the Subprocess, which the promise would keep.
+    const onExit = () => resolve();
+    const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+    onNextTick = callback => {
+      if (callback !== sent) return;
+      fs.writeFileSync("in nextTick", "");
+      runEventLoopUntil(gone);
+      for (let i = 0; i < 3; i++) Bun.gc(true), runEventLoopUntil(turn());
+      console.log("collected garbage");
+    };
+    disconnected.then(() => console.log("disconnected"));
+    ${send}
+  `;
+
+  it("when a write completes", async () => {
+    const result = await runPair(
+      sendAndForget(`
+        const gone = Promise.all([exited, disconnected]);
+        (() => void spawnChild({ onExit, onDisconnect }).send(Buffer.alloc(1 << 20, "x").toString(), sent))();
+        fs.writeFileSync("blocked", "");
+      `),
+      `
+        until("blocked");
+        const buffer = Buffer.alloc(1 << 20);
+        for (let n = 1, total = 0; n && total < (1 << 20) + 3; total += n) n = retry(() => fs.readSync(3, buffer));
+      `,
+      {},
+      prelude,
+    );
+    expect(result).toEqual({ stdout: ["disconnected", "collected garbage", "sent"], stderr: "", exitCode: 0 });
+  });
+
+  it("when the close is reported", async () => {
+    const result = await runPair(
+      sendAndForget(`
+        const gone = exited;
+        const server = await listen();
+        (() => void spawnChild({ onExit, onDisconnect }).send("never acked", server, sent))();
+        server.close();
+      `),
+      `
+        retry(() => fs.readSync(3, Buffer.alloc(100)));
+        fs.closeSync(3);
+        until("in nextTick");
+      `,
+      {},
+      prelude,
+    );
+    expect(result.stdout.sort()).toEqual(["collected garbage", "disconnected", "sent"]);
+    expect(result).toMatchObject({ stderr: "", exitCode: 0 });
+  });
+});
+
+// Linux only: what one write() sends has to arrive in one read.
+describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop", () => {
+  it.each([
+    ["messages arrive in order", `advancedFrame("m3")`, ["m1", "m2", "m3"]],
+    [
+      "an undecodable message is reported once",
+      `[2, 4, 0, 0, 0, 255, 255, 255, 255]`,
+      ["m1", "m2", "Unable to deserialize data."],
+    ],
+  ])("while messages are buffered: %s", async (_, later, expected) => {
+    const result = await runPair(
+      `
+        process.on("uncaughtException", error => console.log(error.message));
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(message);
+            if (message === "m0") fs.writeFileSync("one byte is buffered", "");
+            if (message !== "m1") return;
+            fs.writeFileSync("in the handler", "");
+            runEventLoopUntil(disconnected);
+          },
+        });
+      `,
+      `
+        const bytes = Buffer.concat(["m1", "m2"].map(advancedFrame));
+        write(Buffer.concat([advancedFrame("m0"), bytes.subarray(0, 1)]));
+        until("one byte is buffered");
+        write(bytes.subarray(1));
+        until("in the handler");
+        write(${later});
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m0", ...expected], stderr: "", exitCode: 0 });
+  });
+
+  it("while nothing is buffered: the bytes of another socket are not read as a message", async () => {
+    const result = await runPair(
+      `
+        const { promise: received, resolve: data } = Promise.withResolvers();
+        const { port } = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data } });
+        const client = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect: () => process.exit(0),
+          ipc(message) {
+            console.log(message);
+            if (message !== "m1") return;
+            client.write(Buffer.concat(["aa", "zz"].map(advancedFrame)));
+            runEventLoopUntil(received);
+            fs.writeFileSync("received", "");
+          },
+        });
+      `,
+      `
+        write(Buffer.concat(["m1", "m2"].map(advancedFrame)));
+        until("received");
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m1", "m2"], stderr: "", exitCode: 0 });
+  });
+
+  it("while nothing is buffered: messages arrive in order through two nested reads", async () => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(message);
+            if (message !== "m1" && message !== "m2") return;
+            fs.writeFileSync("in " + message, "");
+            runEventLoopUntil(disconnected);
+          },
+        });
+      `,
+      `
+        write(Buffer.concat(["m1", "m2", "m3"].map(advancedFrame)));
+        until("in m1");
+        write(advancedFrame("m4"));
+        until("in m2");
+        write(advancedFrame("m5"));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["m1", "m2", "m3", "m4", "m5"], stderr: "", exitCode: 0 });
+  });
+
+  it.each(["buffered", "not buffered"])("or script that does while Buffers are restored: %s", async kind => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        const { types } = require("node:util");
+        const { isUint8Array } = types;
+        types.isUint8Array = value => {
+          fs.writeFileSync("restoring", "");
+          runEventLoopUntil(disconnected);
+          return isUint8Array(value);
+        };
+        spawnChild({
+          serialization: "advanced",
+          onDisconnect,
+          ipc(message) {
+            console.log(String(message));
+            if (message === "m0") fs.writeFileSync("got m0", "");
+          },
+        });
+      `,
+      `
+        const buffer = Buffer.from("m1");
+        const envelope = advancedFrame([buffer, [buffer]]);
+        envelope[0] = 4;
+        const bytes = Buffer.concat([envelope, advancedFrame("m2")]);
+        const early = ${kind === "buffered" ? 1 : 0};
+        write(Buffer.concat([advancedFrame("m0"), bytes.subarray(0, early)]));
+        until("got m0");
+        write(bytes.subarray(early));
+        until("restoring");
+        write(advancedFrame("m3"));
+      `,
+    );
+    // m1 is last, because restoring it waits for the rest.
+    expect(result).toEqual({ stdout: ["m0", "m2", "m3", "m1"], stderr: "", exitCode: 0 });
+  });
+
+  it.each(["json", "advanced"])("until nothing else keeps the Subprocess: %s", async serialization => {
+    const result = await runPair(
+      `
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        spawnChild({
+          serialization: "${serialization}",
+          onDisconnect,
+          ipc(message, child) {
+            console.log(Array.isArray(message) ? message.length + " objects" : message);
+            if (message !== "first") return;
+            child.disconnect();
+            runEventLoopUntil(Promise.all([disconnected, child.exited]));
+          },
+        });
+        until("written");
+      `,
+      `
+        const frame = "${serialization}" === "json" ? it => Buffer.from(JSON.stringify(it) + "\\n") : advancedFrame;
+        // The receiver collects garbage while it decodes the second one.
+        write(Buffer.concat(["first", Array.from({ length: 5000 }, (_, i) => ({ i })), "last"].map(frame)));
+        fs.writeFileSync("written", "");
+      `,
+      { BUN_JSC_gcMaxHeapSize: "196608", BUN_JSC_useGenerationalGC: "0", BUN_JSC_useConcurrentGC: "0" },
+    );
+    expect(result).toEqual({ stdout: ["first", "5000 objects", "last"], stderr: "", exitCode: 0 });
+  });
+});
+
+// Linux only: reads /proc/self/fd.
+describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
+  // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.
+  const sendDescriptorWith = (line: string) => `
+    const server = await listen();
+    write("\\x02");
+    process.send("ignored", server, () => {
+      server.close();
+      process.send("last");
+    });
+    write(${JSON.stringify(line + "\n")});
+  `;
+
+  it("is closed once if dgram.Native cannot adopt it", async () => {
+    const result = await runPair(
+      `
+        const { closeSync } = fs;
+        let next;
+        // What is opened after a close gets the number that was freed.
+        fs.closeSync = fd => {
+          closeSync(fd);
+          next = fs.openSync("/dev/null");
+        };
+        process.on("uncaughtException", error => console.log(error.message));
+        const before = openFds();
+        await spawnChild().exited;
+        await turn();
+        if (next !== undefined) closeSync(next);
+        console.log("leaked", openFds() - before);
+      `,
+      sendDescriptorWith(JSON.stringify({ cmd: "NODE_HANDLE", type: "dgram.Native" })),
+    );
+    expect(result).toEqual({
+      stdout: ["failed to open received dgram handle: -22", "leaked 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is closed by a parent, which has no use for one in a cluster message", async () => {
+    const result = await runPair(
+      `
+        const before = openFds();
+        await spawnChild().exited;
+        await turn();
+        console.log("leaked", openFds() - before);
+      `,
+      sendDescriptorWith('\x02{"$hasHandle":true}'),
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
+
+  it("is closed by a child that queues a cluster message, because node:cluster is not loaded", async () => {
+    const result = await runPair(
+      `
+        // Both ends of the channel are children.
+        const spawnEnd = (role, channel) =>
+          spawnChild({
+            cmd: [process.execPath, "child.js", role],
+            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
+            stdio: ["ignore", "inherit", "inherit", channel],
+            ipc: undefined,
+          });
+        const receiver = spawnEnd("receive", "pipe");
+        await Promise.all([receiver.exited, spawnEnd("send", receiver.stdio[3]).exited]);
+      `,
+      `
+        if (process.argv[2] === "send") {
+          ${sendDescriptorWith('\x02{"$hasHandle":true}')}
+        } else {
+          process.on("message", () => {
+            console.log("leaked", openFds() - before);
+            process.disconnect();
+          });
+          const before = openFds();
+        }
+      `,
+    );
+    expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
+  });
+
+  it("is closed once if the Worker that receives it exits in the listener", async () => {
+    const result = await runPair(
+      `
+        const { Worker, isMainThread, workerData } = require("node:worker_threads");
+        const [FD, TAKEN] = [0, 1];
+        if (isMainThread) {
+          const shared = new Int32Array(new SharedArrayBuffer(8));
+          const worker = new Worker(__filename, { workerData: shared });
+          worker.on("message", () => {
+            while (fs.openSync("/dev/null") !== shared[FD]);
+            Atomics.store(shared, TAKEN, 1);
+            Atomics.notify(shared, TAKEN);
+          });
+          worker.on("exit", () => console.log(fs.fstatSync(shared[FD]).isCharacterDevice()));
+        } else {
+          spawnChild({
+            ipc(message, child, socket) {
+              // The number is free now, and the main thread takes it.
+              workerData[FD] = socket._handle.fd;
+              socket._handle.terminate();
+              require("node:worker_threads").parentPort.postMessage("closed");
+              Atomics.wait(workerData, TAKEN, 0);
+              process.exit(0);
+            },
+          });
+        }
+      `,
+      `
+        const server = await listen();
+        const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => process.send("socket", socket));
+        process.on("disconnect", () => process.exit(0));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["true"], stderr: "", exitCode: 0 });
+  });
+
+  it("is delivered while a callback of a disposed Bun.ModuleGraph runs the event loop", async () => {
+    const result = await runPair(
+      `
+        const done = Promise.withResolvers();
+        const child = spawnChild({
+          ipc(message, _, handle) {
+            console.log(message, handle?.constructor.name);
+            handle?.on("error", () => {});
+            if (message === "last") done.resolve();
+          },
+        });
+        const graph = new Bun.ModuleGraph();
+        const data = () => {
+          graph.dispose();
+          child.send("go");
+          runEventLoopUntil(done.promise);
+          child.disconnect();
+        };
+        const { port } = graph.run(() => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data } }));
+        const client = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
+        client.write("x");
+        await child.exited;
+      `,
+      `
+        const server = await listen();
+        process.on("message", () => {
+          const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => {
+            process.send("socket", socket);
+            process.send("last");
+          });
+        });
+        process.on("disconnect", () => process.exit(0));
+      `,
+    );
+    expect(result).toEqual({ stdout: ["socket Socket", "last undefined"], stderr: "", exitCode: 0 });
+  });
 });

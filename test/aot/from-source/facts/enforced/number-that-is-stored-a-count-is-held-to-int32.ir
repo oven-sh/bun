@@ -1,0 +1,29 @@
+# a field that checked code writes `number` is held to every int32 where some store in sight brings a variable of which Link proves numbers without fractions: what is counted up and down: a variable of the module (`id`, `step`), a variable that closures share (`tag`).
+# Nobody needs to use what is read as an integer: `links[idOf(item)]` hands it on first. Where nothing is written of the receiver, what is written where it is handed on says whose field it is (`late`: what `new` gives, and the result of the function).
+# A variable that gets a quotient is no count (`scaled`), and a parameter says nothing (`given`, `mixed`).
+# -- source: number-that-is-stored-a-count-is-held-to-int32.ts
+# declare function sink(...values: unknown[]): void;
+# let nextId = 1;
+# let nextStep = 0;
+# let nextLate = 5;
+# let factor = 1;
+# class Item { id: number; step: number; tag: number; late: number | undefined; given: number; scaled: number; mixed: number; constructor(given: number) { this.id = 0; this.step = 0; this.tag = 0; this.late = undefined; this.given = given; this.scaled = 0; this.mixed = 0; } }
+# function idOf(item: Item) { if (!item.id) { item.id = nextId; nextId++; } return item.id; }
+# function stepOf(item: Item) { item.step = nextStep; nextStep--; return item.step; }
+# function makeTagger() { let count = 0; return function tag(item: Item) { count++; item.tag = count; return item; }; }
+# function create(Maker: any): Item { const made = new Maker(1); made.late = nextLate; nextLate++; return made; }
+# function scale(item: Item) { item.scaled = factor; factor = factor / 3; }
+# function mix(item: Item, by: number) { item.mixed = by; }
+# sink(Item, idOf, stepOf, makeTagger, create, scale, mix);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "id" source=written type=i32{{*}} int32-by-guess
+# CHECK-NEXT: field {{*}} "step" source=written type=i32{{*}} int32-by-guess
+# CHECK-NEXT: field {{*}} "tag" source=written type=i32{{*}} int32-by-guess
+# CHECK-NEXT: field {{*}} "late" source=written type=undefined|i32{{*}} int32-by-guess
+# CHECK: | int32 by guess 4 |
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "given" source=written type=i32
+# NEVER-NOT: "scaled" source=written type=i32
+# NEVER-NOT: "mixed" source=written type=i32
+# NEVER-NOT: differs-from-table

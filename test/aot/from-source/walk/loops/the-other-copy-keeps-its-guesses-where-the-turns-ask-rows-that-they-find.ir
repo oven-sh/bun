@@ -1,0 +1,11 @@
+# `d[i][0] * d[i][1]`, `d` a parameter of which its uses alone say what it is: the loop is built twice behind a guess at `d`, and each row is asked in its turn.
+# One odd row, a row with a text in it, sends the rest of the loop to the other copy. That copy keeps its guesses open: it tests each row for a list of numbers and reads it by that,
+# as the loop did before it was built twice; closed, it read every element and multiplied through stubs.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# -- source: main.js
+# function products(d) { let s = 0; for (let i = 0; i < d.length; i++) s += d[i][0] * d[i][1]; return s; }
+# globalThis.kept = products;
+# -- end of source

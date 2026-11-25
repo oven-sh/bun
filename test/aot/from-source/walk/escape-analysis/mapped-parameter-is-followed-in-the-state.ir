@@ -1,0 +1,22 @@
+# -- source: mapped-parameter-is-followed-in-the-state.cjs
+# function stored(a, flag) { a = 5; if (flag) return arguments[1]; return a; }
+# function kept(a) { a = 5; return arguments; }
+# sink(stored, kept);
+# -- end of source
+# A parameter of a sloppy function that is stored to while elements of `arguments` are read lives in the object. While nothing else has the object, the state follows the store and answers the read.
+# RUN: walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# CHECK-LABEL: code f1:Body
+# CHECK: [[five]]: 5 {{*}} = Integer integer=5
+# CHECK: b0([[callee]]: function{{*}}, [[count]]: int[0, 4294967295] {{*}}, [[a]]: anything{{*}}, [[flag]]: anything
+# CHECK: Return [[flag]]
+# CHECK: Return [[five]]
+# RUN(NEVER): walk f1 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# NEVER-NOT: = CreateMappedArguments
+# NEVER-NOT: MappedArgument
+# RUN(KEPT): walk f2 mechanisms=none+TypedOperations+Folding+EscapeAnalysis
+# KEPT: [[object]]: Arguments {{*}} = CreateMappedArguments
+# KEPT: SetMappedArgument [[object]]
+# RUN(WITHHELD): walk f1 mechanisms=none+TypedOperations+Folding
+# WITHHELD: [[object]]: Arguments {{*}} = CreateMappedArguments
+# WITHHELD: SetMappedArgument [[object]]
+# WITHHELD: = GetMappedArgument [[object]]

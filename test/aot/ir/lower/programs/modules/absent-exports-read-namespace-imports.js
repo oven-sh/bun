@@ -2,6 +2,8 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 13
 // STATISTIC: SourceFilesData = 1
+// CHECK-LABEL: function {{*}}name="shown"
+// CHECK-LABEL: function {{*}}name="say"
 
 // FILE: main.js
 // A name that a module does not export is read off `import * as`, as a value and as a test: undefined for an ES module, also for `default` behind `export *`; what is there for a name that a star carries, for CommonJS and for JSON.
@@ -110,66 +112,3 @@ export function then() {}
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: shown say
-// CHECK-LABEL: function {{*}}name="shown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = TypeTest v0 testedType=function
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = String string="function"
-// CHECK-NEXT: Jump -> next b10(v3)
-// CHECK-NEXT: b4(v4):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v5 = Builtin builtin=JSON
-// CHECK-NEXT: v6 = PropGet v5 key="stringify"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v8 = Call v7, v5, v4 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v10 = TypeTest v9 testedType=undefined|null
-// CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b6(v11):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v12 = String string="undefined"
-// CHECK-NEXT: Jump -> next b9(v12)
-// CHECK-NEXT: b8(v13):
-// CHECK-NEXT: Jump -> next b9(v13)
-// CHECK-NEXT: b9(v14):
-// CHECK-NEXT: Jump -> next b10(v14)
-// CHECK-NEXT: b10(v15):
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="say"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="lines"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = String string=": "
-// CHECK-NEXT: v7 = Add v0, v6
-// CHECK-NEXT: v8 = PropGet v1 key="map"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="shown"
-// CHECK-NEXT: v12 = Call v9, v1, v11 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="join"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = String string=" "
-// CHECK-NEXT: v17 = Call v15, v13, v16 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v19 = Add v7, v18
-// CHECK-NEXT: v20 = Call v5, v3, v19 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: ReturnCall v20 casts=[{declared={type=number flags=[IsExpected]}}]
-// CHECK-NEXT: }

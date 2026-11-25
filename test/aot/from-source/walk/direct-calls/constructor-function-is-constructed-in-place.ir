@@ -1,0 +1,32 @@
+# -- source: constructor-function-is-constructed-in-place.ts
+# declare function report(value: unknown): void;
+# function Point(this: any, x: number): any { if (!new.target) return new (Point as any)(x + 100); this.x = x; this.y = 0; }
+# function Pair(this: any, a: number) { this.a = a; this.b = a + 1; }
+# const record: any = { Pair };
+# const holders: any[] = [record];
+# (globalThis as any).holder = record;
+# export function leak(value: unknown) { holders.push(value); return holders.length; }
+# export function makePoint(n: number) { return new (Point as any)(n); }
+# export function makePair(n: number) { return new record.Pair(n); }
+# report(leak(record));
+# report(makePoint(1).x + makePair(2).b);
+# -- end of source
+# `new F(..)` of a constructor function that is known: the object is made in the place of the call, under the layout of the class, and the body is entered directly.
+# A function that reads new.target has no unit that allocates `this` for whoever enters by value. The body takes both.
+# RUN: walk f3 mechanisms=-Inlining
+# CHECK-LABEL: code f3:Body
+# CHECK: [[prototype]]: {{*}} = GetConstructPrototype [[closure]] layout=L0
+# CHECK-NEXT: [[object]]: L0 {{*}} = NewObject [[prototype]] layout=L0
+# CHECK: = CallDirect {{*}}function=f4 {{*}}[isConstruction]
+# CHECK-NOT: TryFinishBirth
+# CHECK-NOT: = Construct
+# What comes out of a record that unseen code has got hold of is held to be what the program put there: behind a test, of the record or of the callee, the object is made here, and the other arm has the construction as written.
+# RUN(HELD): walk f2 mechanisms=-Inlining
+# HELD-LABEL: code f2:Body
+# HELD: : L1 {{*}} = NewObject {{*}}layout=L1
+# HELD: = CallDirect {{*}}function=f5 {{*}}[isConstruction]
+# RUN(OTHER): walk f2 mechanisms=-Inlining
+# OTHER-LABEL: code f2:Body
+# OTHER: = Construct
+# RUN(CLOSED): walk f2 f3 mechanisms=none
+# CLOSED-NOT: NewObject

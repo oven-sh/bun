@@ -1,0 +1,15 @@
+# This test covers the owners of inner pointers. The loop in `total` keeps a pointer into the storage of `list` across its poll, where the collector can run.
+# So `list` itself is kept for the collector: it stays in a slot that no step reads again.
+# Fault injection, testing=IgnoreCollectorSpillReads: the allocator assumes that nothing reads such a slot, so its store is omitted and the collector would find no owner.
+# The test requests no check, as in a user's build. The references are checked anyway, because the procedure has a framed part and inner pointers across safepoints.
+# The build fails with a named internal error.
+# f1 = total
+# -- source: an-owner-that-the-collector-alone-reads-and-whose-slot-is-left-unwritten-stops-the-build-by-name.ts
+# declare function print(value: unknown): void;
+# function total(list: number[]): number { let sum = 0; for (let i = 0; i < list.length; i++) sum = (sum + list[i]) | 0; return sum; }
+# print(total([1, 2, 3]));
+# -- end of source
+# REQUIRES: x86_64
+# AS-USERS-BUILD: the check of the references runs in every build where a framed part has inner pointers across safepoints, and under the check of the runner it runs everywhere
+# DIAGNOSTIC: InnerPointerWithoutOwner f1
+# RUN: emit f1 mechanisms=all testing=IgnoreCollectorSpillReads

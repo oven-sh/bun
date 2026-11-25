@@ -1,0 +1,16 @@
+# f1 = Row, f2 = make
+# -- source: a-word-that-an-allocation-stores-thrice-is-stored-out-of-a-register.ts
+# declare function sink(...values: unknown[]): void;
+# function Row(this: any, own: unknown) { this.first = null; this.second = null; this.third = null; this.fourth = undefined; this.fifth = undefined; this.own = own; }
+# function make(own: unknown) { return new (Row as any)(own); }
+# sink(make);
+# -- end of source
+# RUN(LISTED): walk f2 mechanisms=all
+# LISTED: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5]
+# REQUIRES(WORD): x86_64
+# RUN(WORD): emit f2 mechanisms=all
+# WORD: @[[word]] = Opaque(
+# WORD: = Store(@[[word]],
+# WORD: = Store(@[[word]],
+# WORD: = Store(@[[word]],
+# WORD-NOT: Opaque(

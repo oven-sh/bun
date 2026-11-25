@@ -1,23 +1,19 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="callResult"
 // CHECK: [[made]] = Call {{*}}calleeName="f"
-// CHECK-NEXT: [[convertedMade]] = Convert [[made]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[convertedMade]], -,
+// CHECK-NEXT: = Call [[made]], -,
 // CHECK-NOT: callee
 // CHECK-LABEL: function {{*}}name="cast"
-// CHECK-NOT: = Convert {{*}}site=
-// CHECK: [[castRead]] = PropGet [[castObject]] key="m"
-// CHECK-NEXT: [[castMethod]] = Convert [[castRead]] declared={type=undefined|null|f{{*}} flags=[IsExpected]}
+// CHECK-NOT: Convert
+// CHECK: [[castMethod]] = PropGet [[castObject]] key="m"
 // CHECK-NEXT: = Call [[castMethod]], [[castObject]], {{*}}calleeKey="m" calleeName="o.m"
-// CHECK-NOT: = Convert {{*}}site=
+// CHECK-NOT: Convert
 // CHECK-LABEL: function {{*}}name="comma"
-// CHECK: [[detachedRead]] = PropGet {{*}}key="m"
-// CHECK-NEXT: [[detached]] = Convert [[detachedRead]] declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK: [[detached]] = PropGet {{*}}key="m"
 // CHECK-NEXT: = Call [[detached]], -,
 // CHECK-NOT: callee
 // CHECK-LABEL: function {{*}}name="computed"
-// CHECK: [[computedRead]] = ElemGet [[computedObject]],
-// CHECK-NEXT: [[computedMethod]] = Convert [[computedRead]] declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK: [[computedMethod]] = ElemGet [[computedObject]],
 // CHECK-NEXT: = Call [[computedMethod]], [[computedObject]], {{*}}calleeName="o[k]"
 // CHECK-NOT: calleeKey
 // CHECK-LABEL: function {{*}}name="conditional"
@@ -29,17 +25,14 @@
 // CHECK-NOT: callee
 // CHECK-LABEL: function {{*}}name="identifier"
 // CHECK: b0([[f]]: anything, [[x]]: anything):
-// CHECK: [[convertedF]] = Convert [[f]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[convertedF]], -, [[x]] calleeName="f"
+// CHECK: = Call [[f]], -, [[x]] calleeName="f"
 // CHECK-LABEL: function {{*}}name="index"
 // CHECK: [[one]] = Integer integer=1
-// CHECK-NEXT: [[elementRead]] = ElemGet [[indexObject]], [[one]]
-// CHECK-NEXT: [[element]] = Convert [[elementRead]] declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: [[element]] = ElemGet [[indexObject]], [[one]]
 // CHECK-NEXT: = Call [[element]], [[indexObject]], {{*}}calleeName="o[1]"
 // CHECK-NOT: calleeKey
 // CHECK-LABEL: function {{*}}name="parenthesized"
-// CHECK: [[methodRead]] = PropGet [[object]] key="m"
-// CHECK-NEXT: [[method]] = Convert [[methodRead]] declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK: [[method]] = PropGet [[object]] key="m"
 // CHECK-NEXT: = Call [[method]], [[object]], {{*}}calleeKey="m" calleeName="o.m"
 
 // RUN(KEYS): lower

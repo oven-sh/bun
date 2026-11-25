@@ -1,0 +1,30 @@
+A preload's vi.mock() of a package, ended by vi.doUnmock() in one test file, and what the next test file reads.
+preload: setup.js
+#### a.test.js
+import { test, vi, mock } from "bun:test";
+const say = (...a) => console.log("| CASE", ...a);
+test("a", async () => { say("a own", mineOfPreload()); vi.doUnmock("dep"); say("a by name", (await import("dep")).value()); say("a own", mineOfPreload()); });
+#### b.test.js
+import { test, vi, mock } from "bun:test";
+const say = (...a) => console.log("| CASE", ...a);
+test("b", () => say("b the package, first read:", seenOfPreload(), "own:", mineOfPreload()));
+#### node_modules/dep/index.js
+export const value = () => "real";
+#### node_modules/dep/package.json
+{ "name": "dep", "type": "module", "main": "index.js" }
+#### node_modules/reads/index.js
+import { value } from "dep";
+export const seen = () => value();
+#### node_modules/reads/package.json
+{ "name": "reads", "type": "module", "main": "index.js" }
+#### own.js
+import { value } from "dep";
+export const mine = () => value();
+#### package.json
+{ "type": "module" }
+#### setup.js
+import { vi } from "bun:test";
+import { seen } from "reads";
+import { mine } from "./own.js";
+vi.mock("dep", () => ({ value: () => "preload" }));
+globalThis.seenOfPreload = seen; globalThis.mineOfPreload = mine;

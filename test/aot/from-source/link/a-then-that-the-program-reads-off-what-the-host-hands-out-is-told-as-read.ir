@@ -1,0 +1,7 @@
+# the red control: the program itself reads `then` and keeps it: the name is read
+# -- source: a-then-that-the-program-reads-off-what-the-host-hands-out-is-told-as-read.ts
+# const kept = JSON.parse("{}").then;
+# console.log(typeof kept, await JSON.parse("{}"));
+# -- end of source
+# RUN(TOLD): link lookups mechanisms=all
+# TOLD: lookup name-read "then"

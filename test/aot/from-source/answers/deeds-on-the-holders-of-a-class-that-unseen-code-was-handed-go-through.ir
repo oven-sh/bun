@@ -1,0 +1,55 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Open {
+#     count = 1;
+#     twice() { return this.count * 2; }
+#     get label() { return "label " + this.count; }
+#     static make() { return new Open(); }
+# }
+# const kept = Open.make();
+# const tell = () => kept.count + " " + kept.twice() + " " + kept.label + " " + (kept as any).late + " " + typeof Open.make();
+# print(tell());
+# poke(Open.prototype);
+# try { print(tell()); } catch (error) { print((error as Error).name); }
+# -- end of source
+# The green twin of what-is-ruled-out-of-the-holders-of-a-class-that-stays-with-compiled-code-ends-the-process.ir: the program hands the prototype object to `poke`, a free name that each run defines: code that the build has not seen. Link sees it leave, nothing is ruled out of the holders, and compiled code looks.
+# Each deed goes through and the answers are those of the language.
+# OPTIONS: mechanisms=all
+# RUN(REPLACES): run-in-shell globalThis.poke = above => { above.twice = function () { return "other " + this.count; }; };
+# REPLACES: 1 2 label 1 undefined object
+# REPLACES-NEXT: 1 other 1 label 1 undefined object
+# REPLACES-NEXT: exited with 0
+# RUN(DELETES): run-in-shell globalThis.poke = above => { delete above.twice; };
+# DELETES: 1 2 label 1 undefined object
+# DELETES-NEXT: TypeError
+# DELETES-NEXT: exited with 0
+# RUN(REDEFINES): run-in-shell globalThis.poke = above => { Object.defineProperty(above, "label", { get() { return "got"; } }); };
+# REDEFINES: 1 2 label 1 undefined object
+# REDEFINES-NEXT: 1 2 got undefined object
+# REDEFINES-NEXT: exited with 0
+# RUN(ADDS): run-in-shell globalThis.poke = above => { above.late = "above"; };
+# ADDS: 1 2 label 1 undefined object
+# ADDS-NEXT: 1 2 label 1 above object
+# ADDS-NEXT: exited with 0
+# RUN(RELINKS): run-in-shell globalThis.poke = above => { Object.setPrototypeOf(above, { late: "far above" }); };
+# RELINKS: 1 2 label 1 undefined object
+# RELINKS-NEXT: 1 2 label 1 far above object
+# RELINKS-NEXT: exited with 0
+# RUN(FREEZES): run-in-shell globalThis.poke = above => { Object.freeze(above); print(Object.isFrozen(above)); };
+# FREEZES: 1 2 label 1 undefined object
+# FREEZES-NEXT: true
+# FREEZES-NEXT: 1 2 label 1 undefined object
+# FREEZES-NEXT: exited with 0
+# RUN(OVERWRITES): run-in-shell globalThis.poke = above => { above.constructor.make = function () { return "other"; }; };
+# OVERWRITES: 1 2 label 1 undefined object
+# OVERWRITES-NEXT: 1 2 label 1 undefined string
+# OVERWRITES-NEXT: exited with 0
+# RUN(REMOVES): run-in-shell globalThis.poke = above => { delete above.constructor.make; };
+# REMOVES: 1 2 label 1 undefined object
+# REMOVES-NEXT: TypeError
+# REMOVES-NEXT: exited with 0
+# RUN(REPARENTS): run-in-shell globalThis.poke = above => { delete above.constructor.make; Object.setPrototypeOf(above.constructor, { make() { return "other"; } }); };
+# REPARENTS: 1 2 label 1 undefined object
+# REPARENTS-NEXT: 1 2 label 1 undefined string
+# REPARENTS-NEXT: exited with 0

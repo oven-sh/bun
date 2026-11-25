@@ -4,25 +4,20 @@
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
-use core::ffi::c_char;
-#[cfg(target_os = "macos")]
-use core::ffi::{c_int, c_void};
 #[cfg(unix)]
 use core::sync::atomic::Ordering;
 
+#[cfg(unix)]
+use bun_core::CStrList;
+use bun_core::CStrRef;
 #[cfg(target_os = "macos")]
 use bun_core::Output;
-#[cfg(unix)]
-use bun_sys::FdExt as _;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, File};
 
 #[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
-
-#[cfg(unix)]
-use crate::{Argv, Envp};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PID / fd width aliases
@@ -35,9 +30,6 @@ pub type PidT = bun_libuv_sys::uv_pid_t;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub type PidFdType = FdT;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
@@ -68,61 +60,26 @@ pub struct WinRusage {
     // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
-pub type IoCounters = bun_windows_sys::IO_COUNTERS;
-
-#[cfg(windows)]
-unsafe extern "system" {
-    // IoCounters = bun_windows_sys::IO_COUNTERS (alias resolves, no change)
-    fn GetProcessIoCounters(
-        handle: bun_sys::windows::HANDLE,
-        counters: *mut IoCounters,
-    ) -> core::ffi::c_int;
-}
-
 #[cfg(windows)]
 pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     use core::ffi::c_void;
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
-    type WinTime = bun_sys::windows::FILETIME;
-    let mut starttime: WinTime = bun_core::ffi::zeroed();
-    let mut exittime: WinTime = bun_core::ffi::zeroed();
-    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
-    let mut usertime: WinTime = bun_core::ffi::zeroed();
     // We at least get process times
-    // SAFETY: FFI call with valid out-pointers
-    if unsafe {
-        bun_sys::windows::GetProcessTimes(
-            process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
-        )
-    } != 0
-    {
+    if let Ok(times) = bun_sys::windows::GetProcessTimes(process_pid) {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. A `temp % 1_000_000` computation here would be
+        // 10 ticks. A `ticks % 1_000_000` computation here would be
         // unit-mismatched (a 100-ns tick count modulo a microsecond
         // denominator): a 178 125 µs run (1_781_250 ticks) would report as
         // 781_250 µs, which is what tips the "does not use 100% cpu >
         // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
         // Convert correctly: `(ticks % 10_000_000) / 10`.
-        let mut temp: u64 =
-            ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.stime.sec = (temp / 10_000_000) as i64;
-            usage_info.stime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
-        temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.utime.sec = (temp / 10_000_000) as i64;
-            usage_info.utime.usec = ((temp % 10_000_000) / 10) as i64;
-        }
+        usage_info.stime.sec = (times.kernel / 10_000_000) as i64;
+        usage_info.stime.usec = ((times.kernel % 10_000_000) / 10) as i64;
+        usage_info.utime.sec = (times.user / 10_000_000) as i64;
+        usage_info.utime.usec = ((times.user % 10_000_000) / 10) as i64;
     }
-    let mut counters = IoCounters::default();
-    // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
+    let counters = bun_sys::windows::GetProcessIoCounters(process_pid).unwrap_or_default();
     usage_info.inblock = counters.ReadOperationCount;
     usage_info.oublock = counters.WriteOperationCount;
 
@@ -299,7 +256,7 @@ impl RusageFields for WinRusage {
 // Spawn option / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PosixSpawnOptions {
+pub struct PosixSpawnOptions<'a> {
     pub stdin: PosixStdio,
     pub stdout: PosixStdio,
     pub stderr: PosixStdio,
@@ -311,7 +268,7 @@ pub struct PosixSpawnOptions {
     pub uid: Option<u32>,
     /// Run the child as this group id (`setgid` after fork, like libuv/Node).
     pub gid: Option<u32>,
-    pub argv0: Option<*const c_char>,
+    pub argv0: Option<CStrRef<'a>>,
     pub stream: bool,
     pub sync: bool,
     pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
@@ -344,7 +301,7 @@ pub struct PosixSpawnOptions {
     pub cgroup_fd: Option<Fd>,
 }
 
-impl Default for PosixSpawnOptions {
+impl Default for PosixSpawnOptions<'_> {
     fn default() -> Self {
         Self {
             stdin: PosixStdio::Inherit,
@@ -368,14 +325,6 @@ impl Default for PosixSpawnOptions {
             cgroup_fd: None,
         }
     }
-}
-
-impl PosixSpawnOptions {
-    /// No-op.
-    /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
-    /// heap-allocated `uv::Pipe` handles on the spawn error path.
-    #[inline]
-    pub fn deinit(&mut self) {}
 }
 
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
@@ -416,9 +365,7 @@ pub enum PosixStdio {
     Inherit,
     Ignore,
     Buffer,
-    /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
-    /// end is returned as `ExtraPipe::UnownedFd`: the caller owns and closes
-    /// it. Only valid in `extra_fds`.
+    /// Like `Buffer`, and only valid in `extra_fds`.
     SocketFd,
     Ipc,
     Pipe(Fd),
@@ -426,31 +373,15 @@ pub enum PosixStdio {
     Dup2(Dup2),
 }
 
-impl PosixStdio {
-    // Constructor helpers — keep parity with `WindowsStdio::buffer(*mut Pipe)`
-    // so `sync::SyncStdio::to_stdio` can spell both platforms uniformly.
-    #[inline]
-    pub fn inherit() -> Self {
-        PosixStdio::Inherit
-    }
-    #[inline]
-    pub fn ignore() -> Self {
-        PosixStdio::Ignore
-    }
-    #[inline]
-    pub fn buffer() -> Self {
-        PosixStdio::Buffer
-    }
-}
-
 #[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub pidfd: Option<PidFdType>,
-    pub stdin: Option<Fd>,
-    pub stdout: Option<Fd>,
-    pub stderr: Option<Fd>,
+    pub pidfd: Option<File>,
+    /// The parent's end of a [`PosixStdio::Buffer`].
+    pub stdin: Option<File>,
+    pub stdout: Option<File>,
+    pub stderr: Option<File>,
     #[cfg(not(windows))]
     pub(crate) ipc: Option<Fd>,
     pub extra_pipes: Vec<ExtraPipe>,
@@ -461,10 +392,8 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
-    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
-    /// then owns the raw number and is responsible for closing it).
-    OwnedFd(Fd),
+    /// We created this fd (e.g. socketpair for `"pipe"`).
+    OwnedFd(File),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
     UnownedFd(Fd),
@@ -476,9 +405,32 @@ pub enum ExtraPipe {
 impl ExtraPipe {
     pub fn fd(&self) -> Fd {
         match self {
-            ExtraPipe::OwnedFd(f) | ExtraPipe::UnownedFd(f) => *f,
+            ExtraPipe::OwnedFd(file) => file.fd(),
+            ExtraPipe::UnownedFd(fd) => *fd,
             ExtraPipe::Unavailable => Fd::INVALID,
         }
+    }
+
+    pub fn into_raw(self) -> Fd {
+        match self {
+            ExtraPipe::OwnedFd(file) => file.into_raw(),
+            other => other.fd(),
+        }
+    }
+
+    pub fn into_owned(self) -> Option<File> {
+        match self {
+            ExtraPipe::OwnedFd(file) => Some(file),
+            _ => None,
+        }
+    }
+
+    /// Whoever is told the number closes the descriptor from now on.
+    pub fn release_to_caller(&mut self) {
+        *self = match core::mem::replace(self, ExtraPipe::Unavailable) {
+            ExtraPipe::OwnedFd(file) => ExtraPipe::UnownedFd(file.into_raw()),
+            other => other,
+        };
     }
 }
 
@@ -496,7 +448,7 @@ impl PosixSpawnResult {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<File> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -545,7 +497,7 @@ impl PosixSpawnResult {
                 }
                 Err(err)
             }
-            Ok(fd) => Ok(fd.native()),
+            Ok(fd) => Ok(File::from_fd(fd)),
         }
     }
 }
@@ -560,25 +512,11 @@ const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
 const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd cleanup for `spawn_process_posix`. On *every* exit it sets
-/// CLOEXEC on `to_set_cloexec`, then closes `to_close_at_end`; on error
-/// returns it additionally closes `to_close_on_error`. `on_error` is
-/// disarmed on the success path.
-///
-/// This exists so that bare `?` on `actions.*` propagates without leaking
-/// the parent-side socketpair ends pushed earlier in the loop.
-///
-/// The guard initializes `on_error = true` and is only disarmed after
-/// `spawn_z` succeeds, so socketpair/set_nonblocking/spawn_z value-error
-/// returns (`return Ok(Err(..))`) are covered as well as `?` failures. The
-/// fds in `to_close_on_error` are parent-side ends never handed back to the
-/// caller on any error path, so closing them is the correct behavior.
+/// What `spawn_process_posix` does to descriptors once the child has them.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
-    to_close_at_end: Vec<Fd>,
-    to_close_on_error: Vec<Fd>,
-    on_error: bool,
+    to_close_at_end: Vec<File>,
 }
 
 #[cfg(unix)]
@@ -589,7 +527,7 @@ impl PosixSpawnFdGuard {
             return Ok(src);
         }
         let moved = bun_sys::dup_at_least(src, max_slot + 1)?;
-        self.to_close_at_end.push(moved);
+        self.to_close_at_end.push(File::from_fd(moved));
         Ok(moved)
     }
 }
@@ -597,30 +535,18 @@ impl PosixSpawnFdGuard {
 #[cfg(unix)]
 impl Drop for PosixSpawnFdGuard {
     fn drop(&mut self) {
-        if self.on_error {
-            for fd in self.to_close_on_error.iter() {
-                fd.close();
-            }
-        }
         for fd in self.to_set_cloexec.iter() {
             let _ = bun_sys::set_close_on_exec(*fd);
-        }
-        for fd in self.to_close_at_end.iter() {
-            fd.close();
         }
     }
 }
 
-/// # Safety
-/// `argv` must point to a null-terminated array of NUL-terminated C strings
-/// with at least one non-null element (`argv[0]`); `envp` must point to a
-/// null-terminated array of NUL-terminated C strings. Both must remain valid
-/// for the duration of the call.
+/// Without `envp`, the child inherits the environment of this process.
 #[cfg(unix)]
-pub unsafe fn spawn_process_posix(
-    options: &PosixSpawnOptions,
-    argv: Argv,
-    envp: Envp,
+pub fn spawn_process_posix(
+    options: &PosixSpawnOptions<'_>,
+    argv: CStrList<'_>,
+    envp: Option<CStrList<'_>>,
 ) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
@@ -702,13 +628,10 @@ pub unsafe fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // Cleanup is owned by an RAII guard so every `?`
-    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
+    // Declared after `spawned`, so that it drops while the memfds are open.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
         to_close_at_end: Vec::new(),
-        to_close_on_error: Vec::new(),
-        on_error: true,
     };
 
     let _ = attr.set(flags as _);
@@ -805,20 +728,21 @@ pub unsafe fn spawn_process_posix(
                             _ => c"spawn_stdio_generic",
                         };
 
-                        let fd =
-                            match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess) {
-                                Ok(fd) => fd,
-                                Err(_) => break 'use_memfd,
-                            };
+                        let fd = match bun_sys::memfd_create(
+                            label.into(),
+                            bun_sys::MemfdFlags::CrossProcess,
+                        ) {
+                            Ok(fd) => fd,
+                            Err(_) => break 'use_memfd,
+                        };
 
-                        cleanup.to_close_on_error.push(fd);
+                        set_spawned_stdio(&mut spawned, i, fd);
                         cleanup.to_set_cloexec.push(fd);
                         let src = match cleanup.source_above_slots(max_slot, fd) {
                             Ok(src) => src,
                             Err(e) => return Ok(Err(e)),
                         };
                         actions.dup2(src, fileno)?;
-                        set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
                         continue 'stdio;
                     }
@@ -851,46 +775,18 @@ pub unsafe fn spawn_process_posix(
                     // macOS seems to default to around 8 KB for the buffer size
                     // this is comically small.
                     // TODO: investigate if this should be adjusted on Linux.
-                    let so_recvbuf: c_int = 1024 * 512;
-                    let so_sendbuf: c_int = 1024 * 512;
-                    // SAFETY: setsockopt with valid fds
-                    unsafe {
-                        if i == 0 {
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        } else {
-                            libc::setsockopt(
-                                fds[0].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[1].native(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        }
-                    }
+                    use bun_sys::net::setsockopt_int;
+                    let (recv_fd, send_fd) = if i == 0 {
+                        (fds[1], fds[0])
+                    } else {
+                        (fds[0], fds[1])
+                    };
+                    let _ = setsockopt_int(recv_fd, libc::SOL_SOCKET, libc::SO_RCVBUF, 1024 * 512);
+                    let _ = setsockopt_int(send_fd, libc::SOL_SOCKET, libc::SO_SNDBUF, 1024 * 512);
                 }
 
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(File::from_fd(fds[1]));
+                set_spawned_stdio(&mut spawned, i, fds[0]);
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
@@ -906,8 +802,6 @@ pub unsafe fn spawn_process_posix(
                 if src == fds[1] {
                     actions.close(fds[1])?;
                 }
-
-                set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
                 let _ = bun_sys::update_nonblocking(*fd, false);
@@ -916,7 +810,6 @@ pub unsafe fn spawn_process_posix(
                     Err(e) => return Ok(Err(e)),
                 };
                 actions.dup2(src, fileno)?;
-                set_spawned_stdio(&mut spawned, i, *fd);
             }
             PosixStdio::SocketFd => {
                 // Rejected at i < 3 in Stdio::extract(); unreachable here.
@@ -964,8 +857,8 @@ pub unsafe fn spawn_process_posix(
                         Err(e) => return Ok(Err(e)),
                     };
 
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(File::from_fd(fds[1]));
+                extra_fds.push(ExtraPipe::OwnedFd(File::from_fd(fds[0])));
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
@@ -981,14 +874,6 @@ pub unsafe fn spawn_process_posix(
                 if src == fds[1] {
                     actions.close(fds[1])?;
                 }
-                // SocketFd: push as OwnedFd here so every error path between
-                // spawn and returning the JS Subprocess (to_close_on_error
-                // above, and the Writable::init error arm's finalize_streams
-                // in js_bun_spawn_bindings.rs) still closes it. The caller's
-                // "I own this fd" contract only begins once they can read
-                // .stdio[i]; the OwnedFd -> UnownedFd downgrade happens in
-                // js_bun_spawn_bindings.rs after all fallible init succeeds.
-                extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {
                 let src = match cleanup.source_above_slots(max_slot, *fd) {
@@ -998,16 +883,14 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(src, fileno)?;
                 // The fd was supplied by the caller (a number in the stdio array) and is
                 // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
-                // mark it unowned so finalizeStreams leaves it open.
+                // mark it unowned so it stays open.
                 extra_fds.push(ExtraPipe::UnownedFd(*fd));
             }
         }
     }
 
-    // SAFETY: argv is null-terminated, argv[0] is non-null
-    let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
-    // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
-    let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+    let argv0 = options.argv0.or_else(|| argv.first());
+    let argv0_cstr = argv0.expect("argv[0] is required").to_cstr();
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {
@@ -1043,9 +926,6 @@ pub unsafe fn spawn_process_posix(
                 }
             }
 
-            // Disarm `errdefer`; the unconditional `defer` (cloexec +
-            // close_at_end) runs from `cleanup`'s Drop on the way out.
-            cleanup.on_error = false;
             return Ok(Ok(spawned));
         }
     }
@@ -1053,10 +933,11 @@ pub unsafe fn spawn_process_posix(
 
 #[cfg(unix)]
 fn set_spawned_stdio(spawned: &mut PosixSpawnResult, i: usize, fd: Fd) {
+    let file = Some(File::from_fd(fd));
     match i {
-        0 => spawned.stdin = Some(fd),
-        1 => spawned.stdout = Some(fd),
-        2 => spawned.stderr = Some(fd),
+        0 => spawned.stdin = file,
+        1 => spawned.stdout = file,
+        2 => spawned.stderr = file,
         _ => unreachable!(),
     }
 }

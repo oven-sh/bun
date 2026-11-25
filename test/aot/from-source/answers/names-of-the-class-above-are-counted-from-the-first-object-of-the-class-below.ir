@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# function Heir(a) { Base.call(this, a); }
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Heir(i); total += item.both(); } return total; }
+# Base.prototype.first = function () { return this.a; };
+# Base.prototype.second = function () { return this.a + 1; };
+# Object.setPrototypeOf(Heir.prototype, Base.prototype);
+# Heir.prototype.both = function () { return Base.prototype.first.call(this) + Base.prototype.second.call(this); };
+# change(Base);
+# print(run(4));
+# -- end of source
+# Base makes no object. `both` reads two names off its prototype, and what begins the guards of Heir is taken to have begun those of Base.
+# So the names of Base have to be counted from there on: a member that was replaced before the first Heir is one guard that does not hold, and a test of the two names fails.
+# RUN: run-in-shell globalThis.change = () => { };
+# CHECK: 16
+# CHECK-NEXT: exited with 0
+# RUN(SWAPPED): run-in-shell globalThis.change = (base) => { base.prototype.first = function () { return -100; }; };
+# SWAPPED: -390
+# SWAPPED-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.change = (base) => { base.prototype.first = function () { return -100; }; };
+# CHECKED: -390
+# CHECKED-NEXT: exited with 0

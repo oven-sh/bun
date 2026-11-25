@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function inherit(child, parent) {
+#   function Surrogate() { this.constructor = child; }
+#   Surrogate.prototype = parent.prototype;
+#   child.prototype = new Surrogate();
+# }
+# function Base(n) { this.n = n; }
+# Base.prototype.get = function () { return this.n; };
+# function Derived(n) { Base.call(this, n); }
+# inherit(Derived, Base);
+# print(new Derived(1).get());
+# -- end of source
+# The helper uses Surrogate to construct the prototype object, and for nothing else. f5 = Surrogate.
+# Nobody else can call it, so its `this` is never undefined. In sloppy code that would be the global object.
+# RUN: link functions mechanisms=all
+# CHECK: function f5 callers-known
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1

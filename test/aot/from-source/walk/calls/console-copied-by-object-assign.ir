@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# function who() { return this; }
+# var both = [who(), who.call(Math), who.call(JSON)]; both[0].nothing;
+# var quiet = Object.assign({}, console, { log: function () {} });
+# var Lib = {};
+# (function (lib) {
+#   lib.number = function (text) { return Math.abs(parseInt(text)); };
+#   lib.Point = function Point(x) { this.x = x; this.next = null; };
+#   lib.Point.prototype.move = function (text) { this.x += lib.number(this); return this; };
+# })(Lib);
+# function run(count) {
+#   var point = new Lib.Point(0.5);
+#   for (var i = 0; i < count; i++) point.move(i);
+#   return point.x;
+# }
+# console.log(run(10), run(1000), typeof quiet.log);
+# -- end of source
+# The copy writes on the object that is made for it alone: the global object stays as it is, and parseInt is handed the point.
+# RUN: link functions
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# CHECK: function f6 callers-known
+# CHECK: function f7 callers-known

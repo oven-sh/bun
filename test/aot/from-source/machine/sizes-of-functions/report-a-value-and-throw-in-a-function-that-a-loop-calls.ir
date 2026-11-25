@@ -1,0 +1,25 @@
+# f1 = checkBoth
+# -- source: report-a-value-and-throw-in-a-function-that-a-loop-calls.ts
+# declare const input: any;
+# const log: any = input;
+# function checkBoth(first: number, second: number): number {
+#   if (first < 0) {
+#     log.sink.report("negative", first);
+#     throw new RangeError("negative");
+#   }
+#   if (second < 0) {
+#     log.sink.report("negative", second);
+#     throw new RangeError("negative");
+#   }
+#   return first + second;
+# }
+# let total = 0;
+# for (let index = 0; index < input; index++) total += checkBoth(index, total);
+# (globalThis as any).answer = total;
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 40, patches 10, moves 5, unlikely or rare 0.
+# RUN(X64): steps most:45 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 45

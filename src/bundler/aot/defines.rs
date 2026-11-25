@@ -1,6 +1,7 @@
 use bun_alloc::Arena;
 use bun_ast::expr::Data;
 use bun_ast::{Expr, Loc, Log};
+use bun_core::strings::contains_char;
 use bun_js_parser::defines::{Define as DefineTable, DefineData};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
@@ -25,7 +26,9 @@ pub(crate) fn fold_options<'s>(
 ) -> FoldOptions<'s> {
     let table = &*options.define;
     let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
-    let user_defined = paths_of_names(user_defined_names, arena, atoms);
+    let mut user_defined = paths_of_names(user_defined_names, arena, atoms);
+    let paths = defines.iter().map(|define| define.path);
+    user_defined.extend(paths.filter(|path| is_whole_path(path, atoms)));
     let dropped_calls = paths_of_names(&options.drop, arena, atoms);
     let features = feature_atoms(options, atoms);
     FoldOptions {
@@ -52,9 +55,28 @@ fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
         .chain(dots)
         .filter(|entry| !entry.data.valueless())
         .collect();
+    // The parser writes a path in place of a name as one name, and so does the React Compiler.
+    let whole_paths: Vec<DefineEntry<'_>> = entries
+        .iter()
+        .filter_map(|entry| find_whole_path(entry.data))
+        .collect();
+    entries.extend(whole_paths);
     entries.shared_sort_by(|a, b| a.parts.cmp(&b.parts));
     entries.dedup_by(|later, first| later.parts == first.parts);
     entries
+}
+
+fn find_whole_path(data: &DefineData) -> Option<DefineEntry<'_>> {
+    let path = data.original_name.as_deref()?;
+    let is_path = matches!(data.value, Data::EIdentifier(_)) && contains_char(path, b'.');
+    is_path.then(|| DefineEntry {
+        parts: vec![path],
+        data,
+    })
+}
+
+fn is_whole_path(path: &DefinePath<'_>, atoms: &Interner<'_>) -> bool {
+    matches!(path.root, DefineRoot::Global(name) if contains_char(atoms.bytes(name), b'.'))
 }
 
 fn convert_defines<'s>(
@@ -144,6 +166,7 @@ fn define_value_from_data<'s>(value: &'s DataValue<'s>) -> DefineValue<'s> {
         DataValue::String(text) => DefineValue::Constant(Constant::String(text)),
         DataValue::BigInt(digits) => DefineValue::Constant(Constant::BigInt(digits)),
         DataValue::Array(_) | DataValue::Object(_) => DefineValue::Data(value),
+        DataValue::Temporal { .. } => unreachable!("only the parser of TOML makes one"),
     }
 }
 
@@ -315,6 +338,10 @@ mod tests {
         let target = [atoms.intern(b"b"), atoms.intern(b"c")];
         assert_eq!(
             global_value(&options, &atoms, b"a"),
+            Some(DefineValue::GlobalPath(&target))
+        );
+        assert_eq!(
+            global_value(&options, &atoms, b"b.c"),
             Some(DefineValue::GlobalPath(&target))
         );
         assert_eq!(

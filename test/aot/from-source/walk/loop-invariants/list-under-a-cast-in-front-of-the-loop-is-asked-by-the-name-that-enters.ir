@@ -1,0 +1,14 @@
+# `const first: string[] = rows[0].split(",")`: the call and the cast stand in the stretch of a guess at `rows[0]`, and behind the rejoin the cast alone is read: it is bound anew there, and the call stays bound to what the typed arm has built, which does not dominate the loop
+# the row in front of the loop asks the list by the name that enters the loop. It was UseNotDominated at the IsPristine.
+# f2 = countsCellsThatAgree, f1 = countsEmptyCells
+# -- source: list-under-a-cast-in-front-of-the-loop-is-asked-by-the-name-that-enters.ts
+# declare function sink(...values: unknown[]): void;
+# function countsEmptyCells(rows: string[]): number { const cells: string[] = rows[0].split(","); let n = 0; for (let j = 0; j < cells.length; j++) { if (cells[j] === "") n++; } return n; }
+# function countsCellsThatAgree(rows: string[]): number { const first: string[] = rows[0].split(","); let most = first.length; for (let i = 1; i < rows.length; i++) { const cells: string[] = rows[i].split(","); let j = 0; while (j < most && j < cells.length && first[j] === cells[j]) j++; most = j; } return most; }
+# sink(countsEmptyCells(["a,,b"]), countsCellsThatAgree(["a,b,c", "a,b,d"]), countsEmptyCells, countsCellsThatAgree);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}}builtinClass=Array
+# RUN(ONE): walk f1 mechanisms=all
+# ONE-LABEL: code f1:Body

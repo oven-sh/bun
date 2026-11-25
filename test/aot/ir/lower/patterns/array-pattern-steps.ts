@@ -1,7 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="steps"
-// CHECK: [[called]] = Call {{*}}calleeName="pair"
-// CHECK-NEXT: [[iterable]] = Convert [[called]] declared={type=undefined|null|string|Array flags=[IsExpected]}
+// CHECK: [[iterable]] = Call {{*}}calleeName="pair"
 // CHECK-NEXT: [[iterator]] = IteratorOpen [[iterable]] elementCount=2 [isDestructuring]
 // CHECK: = IteratorResume [[iterator]] stepIndex=0
 // CHECK: = IteratorResume [[iterator]] stepIndex=1

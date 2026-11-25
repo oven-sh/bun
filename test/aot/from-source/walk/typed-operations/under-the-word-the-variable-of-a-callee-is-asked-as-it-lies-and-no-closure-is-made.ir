@@ -1,0 +1,30 @@
+# `told` is a function declaration that nobody stores to: its variable has no word of its own, and a read of it gives the closure that the table keeps for the function: no memory is looked at. Where proofs are checked
+# at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) the check on such a read asked whether the closure of f1 is a closure of f1, and kept alive a read that makes the closure.
+# Now the word is read as it lies (here the slot of the table) and asked: empty, or a closure of f1. The read as written goes unasked and, with no user, is swept as in a plain build.
+# f1 = told, f3 = twice
+# -- source: under-the-word-the-variable-of-a-callee-is-asked-as-it-lies-and-no-closure-is-made.ts
+# declare function print(value: unknown): void;
+# class Meter {
+#   small = 0;
+#   step(by: number): void { this.small = (this.small + by) | 0; }
+#   read(): number { return this.small; }
+# }
+# let count = 0;
+# function bump(): void { count = (count + 1) | 0; }
+# function told(): number { return count; }
+# function twice(): number { return told() * 2; }
+# const meter = new Meter();
+# for (let i = 0; i < 4; i++) { meter.step(i & 3); bump(); }
+# print(meter.read()); print(told()); print(twice());
+# -- end of source
+# RUN(ASKED): walk f3 mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# ASKED-LABEL: code f3:Body
+# ASKED-NOT: : f1 @JSValue = GetModuleVariable
+# ASKED: [[word]]: absent|f1 @JSValue = GetModuleVariable variable=g0 [returnsRawSlot]
+# ASKED-NEXT: CheckProof [[word]] checkedType=absent|f1 {{*}}source=Variable
+# ASKED: = CallDirect function=f1
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: 6
+# RIGHT-NEXT: 4
+# RIGHT-NEXT: 8
+# RIGHT-NEXT: exited with 0

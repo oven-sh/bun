@@ -1,7 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[a]] = Convert {{*}}declared={type=1 site=[[siteOfA]]}
-// CHECK: [[b]] = Convert {{*}}declared={type=2 site=[[siteOfB]]}
+// CHECK: b0([[a]]: number, [[b]]: number):
 // CHECK: [[m]] = NewClosure [[a]] function=
 // CHECK-NEXT: DefineMethod {{*}}, [[m]] {{*}}key="m"
 // CHECK: [[n]] = NewClosure [[b]] function=
@@ -9,11 +8,11 @@
 // CHECK: [[k]] = NewClosure function=
 // CHECK-NEXT: DefineMethod {{*}}, [[k]] {{*}}key="k"
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: captures=[{type=1 site=[[siteOfA]] variableName="a"}] thisType
-// CHECK: b0([[copyOfA]]: 1):
+// CHECK: captures=[{type=number variableName="a"}] thisType
+// CHECK: b0([[copyOfA]]: number):
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: captures=[{type=2 site=[[siteOfB]] variableName="b"}] thisType
-// CHECK: b0([[copyOfB]]: 2):
+// CHECK: captures=[{type=number variableName="b"}] thisType
+// CHECK: b0([[copyOfB]]: number):
 // CHECK-LABEL: function {{*}}name="k"
 // CHECK-NOT: captures=
 // CHECK: b0():
@@ -26,9 +25,7 @@
 // OWNER-NOT: = NewObject
 // OWNER-LABEL: function {{*}}kind=BaseConstructor
 
-export function f() {
-  const a = 1,
-    b = 2;
+export function f(a: number, b: number) {
   return class {
     m() {
       return a;
@@ -39,3 +36,6 @@ export function f() {
     k() {}
   };
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.m]; }

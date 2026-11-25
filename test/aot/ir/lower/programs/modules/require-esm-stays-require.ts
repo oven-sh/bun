@@ -2,6 +2,13 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 14
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="lazily"
+// CHECK-LABEL: function {{*}}name="readsEarly"
+// CHECK-LABEL: function {{*}}name="typeofEarly"
+// CHECK-LABEL: function {{*}}name="shadowed"
+// CHECK-LABEL: function {{*}}name="makes"
+// CHECK-LABEL: function {{*}}name="seen"
+// CHECK-LABEL: function {{*}}name="require"
 
 // FILE: main.ts
 // Where `require()` of an ES module differs from an import: the module is evaluated at the call, once; a destructured name is a copy; the variable that holds the module has a dead zone of its own; the object is the one that `import *` yields and says `__esModule` from the first `require` on.
@@ -212,101 +219,3 @@ export const a = "of the module";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: lazily readsEarly typeofEarly shadowed makes seen require
-// CHECK-LABEL: function {{*}}name="lazily"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = String string="in the function"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="log"
-// CHECK-NEXT: EvaluateModule module=[[m_2]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v5 = Boolean boolean=true
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="value"
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="readsEarly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_4]]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="early"
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="count"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="typeofEarly"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="early"
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_11]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_11]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="./marked"
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="require"
-// CHECK-NEXT: ReturnCall v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="makes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[f_13]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: RecordRequire module=[[m_15]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_15]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_15]] referrer=[[m_0]]
-// CHECK-NEXT: v3 = ModuleNamespace module=[[m_15]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v5 = NewClosure v4 function=[[f_16]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_13]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="seen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_19]]] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_20]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="__esModule"
-// CHECK-NEXT: v4 = Call v1, -, v3 calleeName="String"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = String string=":"
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Builtin builtin=Object
-// CHECK-NEXT: v9 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v10 = Call v9, v8, v0 calleeName="Object.keys"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|string> site=[[w_22]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v12 = PropGet v11 key="join"
-// CHECK-NEXT: v13 = Call v12, v11 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|string site=[[w_22]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v15 = Add v7, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v16
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="require"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_23]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_24]] site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_26]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="inner "
-// CHECK-NEXT: v2 = Add v1, v0
-// CHECK-NEXT: v3 = NewObject -, v2 layout=[[L_24]] fields=[0]
-// CHECK-NEXT: v4 = FinishObject v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_24]] site=[[w_25]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

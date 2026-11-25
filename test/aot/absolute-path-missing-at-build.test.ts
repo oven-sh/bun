@@ -54,9 +54,15 @@ await attempt("require nothing", () => require(${at("none.json")}));
 await attempt("import nothing", () => import(${at("none.json")}));
 await attempt("require.resolve nothing", () => require.resolve(${at("none.json")}));
 await attempt("import.meta.require nothing", () => import.meta.require(${at("none.json")}));
-if (require("node:fs").existsSync(json)) show("outside a try block", require(json));
 `;
 };
+
+// A program of its own: what is loaded by a path that is looked up when the program runs may be any module that the executable holds, and show() reads every member of it. Beside
+// the loads above, node:fs would come whole, with its streams and promises: five times the build.
+const loadsBehindATest = (folder: string) => String.raw`${prelude}
+const json = ${JSON.stringify(join(folder, "data.json"))};
+if (require("node:fs").existsSync(json)) show("outside a try block", require(json));
+`;
 
 const loadsOfCode = (folder: string) => {
   const at = (name: string) => JSON.stringify(join(folder, name));
@@ -92,6 +98,18 @@ describe("a constant absolute path that does not exist at build time", () => {
       const plain = await spawned([bunExe(), "./main.mjs"], String(dir), bunEnv);
       expect(plain.stdout).toContain(`require json object {"kind":"json","list":[1,2]} kind,list`);
       expect(plain.stdout).toContain("import nothing threw ResolveMessage ERR_MODULE_NOT_FOUND");
+      expect(await spawned([executable], String(dir), bunEnv)).toEqual(plain);
+    },
+    timeout,
+  );
+
+  test.concurrent(
+    "loads a data file outside a try block, behind a test for the file",
+    async () => {
+      const { dir, executable } = await buildThenCreate(loadsBehindATest, data, []);
+      using _ = dir;
+      const plain = await spawned([bunExe(), "./main.mjs"], String(dir), bunEnv);
+      expect(plain.stdout).toBe(`outside a try block object {"kind":"json","list":[1,2]} kind,list\n`);
       expect(await spawned([executable], String(dir), bunEnv)).toEqual(plain);
     },
     timeout,

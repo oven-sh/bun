@@ -1,0 +1,25 @@
+# -- source: a-call-whose-answer-is-made-a-property-key.mjs
+# const rows = JSON.parse('[{"region": "n", "kind": "alpha"}, {"region": "s", "kind": "beta"}]');
+# const groupBy = (list, name) => list.reduce((groups, row) => { (groups[name(row)] ??= []).push(row); return groups; }, {});
+# const single = (list, name) => list.map(row => ({ [name(row)]: 1 }));
+# const isRecord = (list, name) => list.map(row => typeof name(row) === "object");
+# const updated = row => row.region + ":" + row.kind;
+# const written = row => row.region + "=" + row.kind;
+# const asked = row => row.region + "?" + row.kind;
+# console.log(JSON.stringify(groupBy(rows, updated)), JSON.stringify(single(rows, written)), JSON.stringify(isRecord(rows, asked)));
+# -- end of source
+# f1 = groupBy, f2 = single, f3 = isRecord, f4 = updated, f5 = written, f6 = asked
+# For an update under a computed key the front end takes the key once: it tests it for an object, makes a property key of the object, and the access reads a parameter of the join behind. The scan
+# did not see the call behind that parameter, so `(groups[name(row)] ??= []).push(row)` left the helper its rope (157,578 instructions a turn of the peer's 16-group-summary.mjs so written, against
+# 65,567 with a read and a store). What is made a property key is read as a key: the conversion says it of the call whose answer it takes, straight (a computed member) or by the name that the test gave it.
+# A call whose answer is only asked whether it is an object is told nothing.
+# RUN: walk f4:Body mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: Strcat {{*}} [isLikelyKey]
+# CHECK: Strcat {{*}} [isLikelyKey]
+# RUN(WRITTEN): walk f5:Body mechanisms=all
+# WRITTEN-LABEL: code f5:Body
+# WRITTEN: Strcat {{*}} [isLikelyKey]
+# RUN(ASKED): walk f6:Body mechanisms=all
+# ASKED-LABEL: code f6:Body
+# ASKED-NOT: isLikelyKey

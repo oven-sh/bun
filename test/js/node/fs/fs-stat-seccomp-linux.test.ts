@@ -539,35 +539,37 @@ describe.skipIf(!isLinux)("a syscall trapped by seccomp fails with ENOSYS", () =
 });
 
 // The kernel is not bound to the errno table bun knows: FUSE filesystems and
-// some drivers return codes above EHWPOISON (133). fs.fsyncSync decodes the
-// errno through SystemErrno::from_raw; a code outside the table must report
-// as EUNKNOWN instead of becoming an invalid enum value (a debug build used
-// to die on an assertion there).
-describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
-  const helperBin = tryBuildHelper("__NR_fsync");
+// some drivers return codes above EHWPOISON (133). A code outside the table
+// must report as EUNKNOWN instead of becoming an invalid enum value (a debug
+// build used to die on an assertion there).
+describe.skipIf(!isLinux).each([
+  ["fsync", "fs.fsyncSync(fd)"],
+  ["fchmod", "fs.fchmodSync(fd, 0o644)"],
+])("node:fs errno outside the SystemErrno table: %s", (syscall, call) => {
+  const helperBin = tryBuildHelper(`__NR_${syscall}`);
 
   const snippet = `
     const fs = require("node:fs");
     const fd = fs.openSync(process.argv[1], "r");
     try {
-      fs.fsyncSync(fd);
+      ${call};
       console.log(JSON.stringify({ threw: false }));
     } catch (e) {
       console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
     }
   `;
 
-  // fs.fsyncSync in a bun subprocess whose fsync(2) fails with `errno`.
+  // `call` in a bun subprocess whose `syscall` fails with `errno`.
   // Returns the parsed result line, or null on an environment skip.
-  async function fsyncWithErrno(errno: number) {
+  async function callWithErrno(errno: number) {
     if (helperBin == null) {
-      console.warn("SKIP fsync seccomp: cc or seccomp headers not available");
+      console.warn(`SKIP ${syscall} seccomp: cc or seccomp headers not available`);
       return null;
     }
     using dir = tempDir("fsync-seccomp-target", { "file.txt": "hello" });
     const out = await runUnderSeccomp(helperBin, errno, snippet, [join(String(dir), "file.txt")]);
     if (out == null) {
-      console.warn("SKIP fsync seccomp: seccomp not permitted in this environment");
+      console.warn(`SKIP ${syscall} seccomp: seccomp not permitted in this environment`);
       return null;
     }
     // Don't assert empty stderr — ASAN builds emit a startup warning there.
@@ -579,27 +581,26 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
   }
 
   test.concurrent("a code above the table reports EUNKNOWN", async () => {
-    const result = await fsyncWithErrno(ENOTSUPP);
+    const result = await callWithErrno(ENOTSUPP);
     if (result == null) return;
     expect(result).toEqual({
       threw: true,
-      errno: expect.any(Number),
+      errno: -ENOTSUPP,
       code: "EUNKNOWN",
-      syscall: "fsync",
-      message: "EUNKNOWN: unknown error, fsync",
+      syscall,
+      message: `EUNKNOWN: unknown error, ${syscall}`,
     });
-    expect(result.errno).toBeLessThan(0);
   });
 
   test.concurrent("a code in the table keeps its name", async () => {
-    const result = await fsyncWithErrno(EACCES);
+    const result = await callWithErrno(EACCES);
     if (result == null) return;
     expect(result).toEqual({
       threw: true,
       errno: -EACCES,
       code: "EACCES",
-      syscall: "fsync",
-      message: "EACCES: permission denied, fsync",
+      syscall,
+      message: `EACCES: permission denied, ${syscall}`,
     });
   });
 });

@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# function Open(this: any, n: number) { this.tag = n; }
+# Open.prototype.weigh = function () { return "weigh " + this.tag; };
+# const kept = new (Open as any)(0);
+# const tell = () => kept.weigh() + " " + new (Open as any)(1).weigh() + " " + (new (Open as any)(1) instanceof Open) + " " + new (Open as any)(2).late;
+# print(tell());
+# poke(Open);
+# print(tell());
+# -- end of source
+# The green twin of what-is-ruled-out-of-a-constructor-function-that-stays-with-compiled-code-ends-the-process.ir: the program hands the function to `poke`, a free name that each run defines. Link sees it leave, and compiled code looks.
+# OPTIONS: mechanisms=all
+# RUN(REPLACES): run-in-shell globalThis.poke = given => { given.prototype.weigh = function () { return "other weigh"; }; };
+# REPLACES: weigh 0 weigh 1 true undefined
+# REPLACES-NEXT: other weigh other weigh true undefined
+# REPLACES-NEXT: exited with 0
+# RUN(ADDS): run-in-shell globalThis.poke = given => { given.prototype.late = "late"; };
+# ADDS: weigh 0 weigh 1 true undefined
+# ADDS-NEXT: weigh 0 weigh 1 true late
+# ADDS-NEXT: exited with 0
+# RUN(SWAPS): run-in-shell globalThis.poke = given => { given.prototype = { weigh() { return "other weigh"; }, late: "late" }; };
+# SWAPS: weigh 0 weigh 1 true undefined
+# SWAPS-NEXT: weigh 0 other weigh true late
+# SWAPS-NEXT: exited with 0

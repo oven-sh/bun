@@ -1,0 +1,34 @@
+# LIBRARY: own
+# -- source: an-element-with-a-user-that-does-more-than-reckon-keeps-its-hole.ts
+# declare function sink(value: unknown): void;
+# function tally(d: number[]): number { let s = 0, holes = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; if (v === undefined) holes++; else s += v * v; } return holes * 1000000 + s; }
+# function kept(d: number[], out: unknown[]): number { let s = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; s += v; out[i] = v; } return s; }
+# function carried(d: number[]): number { let s = 0, last: number | undefined = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; s += v * 2; last = v; } return last === undefined ? -7 : s; }
+# sink([tally, kept, carried]);
+# -- end of source
+# Of the users of `v` one asks whether anything is there, or hands the value on as it is, into a list or to the next turn: there NaN is not undefined, and the read keeps its hole though the other
+# users only reckon.
+# f1 = tally
+# f2 = kept
+# f3 = carried
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: readsHoleAsNaN
+# RUN(KEPT): walk f2 mechanisms=all
+# REQUIRES(KEPT): as-written
+# KEPT-LABEL: code f2:Body
+# KEPT-NOT: readsHoleAsNaN
+# RUN(CARRIED): walk f3 mechanisms=all
+# REQUIRES(CARRIED): as-written
+# CARRIED-LABEL: code f3:Body
+# CARRIED-NOT: readsHoleAsNaN
+# RUN(SHELL): run-in-shell globalThis.sink = ([tally, kept, carried]) => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(); delete holed[21]; delete holed[22]; delete holedWholes[3]; const holedLast = halves.slice(); delete holedLast[39]; for (const d of [halves, wholes, holed, holedWholes, holedLast, [], [1.5, NaN], [, 2]]) { const out = []; print(tally(d), kept(d, out), out.filter(v => v === undefined).length, out.filter(v => v !== v).length, carried(d)); } };
+# SHELL: 21330 800 0 0 1600
+# SHELL: 20540 780 0 0 1560
+# SHELL: 2020361.5 NaN 2 0 NaN
+# SHELL: 1020531 NaN 1 0 NaN
+# SHELL: 1019769.75 NaN 1 0 -7
+# SHELL: 0 0 0 0 0
+# SHELL: NaN NaN 0 1 NaN
+# SHELL: 1000004 NaN 1 0 NaN

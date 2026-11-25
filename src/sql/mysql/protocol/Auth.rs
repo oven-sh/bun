@@ -7,21 +7,20 @@ use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
 
-use super::new_writer::{NewWriter, WriterContext};
-use super::stack_reader::PacketReader;
-use crate::shared::Data;
+use super::any_mysql_error::Error as AnyMySQLError;
+use super::packet_writer::PacketWriter;
 
 bun_core::declare_scope!(Auth, hidden);
 
-pub const NONCE_LENGTH: usize = 20;
-pub type Nonce = [u8; NONCE_LENGTH];
+pub(crate) const NONCE_LENGTH: usize = 20;
+pub(crate) type Nonce = [u8; NONCE_LENGTH];
 
 /// The server terminates the nonce with a NUL that is not part of it.
-pub fn nonce(plugin_data: &[u8]) -> crate::Result<Nonce> {
+pub(crate) fn nonce(plugin_data: &[u8]) -> Result<Nonce, AnyMySQLError> {
     plugin_data
         .first_chunk()
         .copied()
-        .ok_or(crate::Error::MissingAuthData)
+        .ok_or(AnyMySQLError::MissingAuthData)
 }
 
 pub(crate) mod mysql_native_password {
@@ -57,7 +56,7 @@ pub(crate) mod mysql_native_password {
     }
 }
 
-pub mod caching_sha2_password {
+pub(crate) mod caching_sha2_password {
     use super::*;
 
     pub(crate) fn scramble(password: &[u8], nonce: &Nonce) -> [u8; 32] {
@@ -90,77 +89,25 @@ pub mod caching_sha2_password {
         result
     }
 
-    // Any wire byte is possible (success = 0x03, continue_auth = 0x04),
-    // so represent as a transparent u8 newtype rather than a closed Rust enum.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct FastAuthStatus(pub(crate) u8);
+    pub(crate) const FAST_AUTH_SUCCESS: u8 = 0x03;
+    pub(crate) const PERFORM_FULL_AUTHENTICATION: u8 = 0x04;
 
-    impl FastAuthStatus {
-        pub const SUCCESS: Self = Self(0x03);
-        pub const CONTINUE_AUTH: Self = Self(0x04);
-
-        #[inline]
-        pub(crate) const fn from_raw(n: u8) -> Self {
-            Self(n)
-        }
+    pub(crate) struct EncryptedPassword<'a> {
+        pub(crate) password: &'a [u8],
+        pub(crate) public_key: &'a [u8],
+        pub(crate) nonce: Nonce,
+        pub(crate) sequence_id: u8,
     }
 
-    impl Default for FastAuthStatus {
-        fn default() -> Self {
-            Self::SUCCESS
-        }
-    }
-
-    #[derive(Default)]
-    pub struct Response {
-        pub status: FastAuthStatus,
-        pub(crate) data: Data,
-    }
-
-    impl Response {
-        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
-        // needed here.
-
-        pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
-            let status: u8 = reader.int::<u8>()?;
-            bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
-            self.status = FastAuthStatus::from_raw(status);
-
-            self.data = reader.read(reader.peek().len())?;
-            Ok(())
-        }
-    }
-
-    // Borrowed param-pack: caller-owned slices that live only across a single
-    // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
-    // `Deref` under the outlives-holder invariant) avoids the per-method
-    // `unsafe { &*self.field }` deref triple while keeping the struct
-    // lifetime-free per PORTING.md conventions.
-    pub struct EncryptedPassword {
-        pub password: bun_ptr::RawSlice<u8>,
-        pub public_key: bun_ptr::RawSlice<u8>,
-        pub nonce: Nonce,
-        pub sequence_id: u8,
-    }
-
-    impl EncryptedPassword {
+    impl EncryptedPassword<'_> {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        pub(crate) fn write_internal<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
-            // `RawSlice` invariant: backing storage outlives the holder (this
-            // struct lives only for the single `write()` call its caller wraps it
-            // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
-            let (password, public_key) = (self.password.slice(), self.public_key.slice());
-            // `&this.public_key[0]` below would index past a zero-length
-            // slice if the server answered the public-key request with an
-            // empty payload.
+        pub(crate) fn write(&self, out: &mut Vec<u8>) -> Result<(), AnyMySQLError> {
+            let (password, public_key) = (self.password, self.public_key);
+
             if public_key.is_empty() {
-                return Err(crate::Error::InvalidPublicKey);
+                return Err(AnyMySQLError::InvalidPublicKey);
             }
             // 1024 is overkill but lets cover all cases
             let needed_len = password.len() + 1;
@@ -174,23 +121,13 @@ pub mod caching_sha2_password {
             boringssl::load();
             boringssl::c::ERR_clear_error();
             // Decode public key
-            // SAFETY: public_key is non-empty (checked above); BIO_new_mem_buf
-            // borrows the buffer for the lifetime of `bio` and does not take ownership.
-            let bio = unsafe {
-                boringssl::c::BIO_new_mem_buf(
-                    public_key.as_ptr().cast::<core::ffi::c_void>(),
-                    isize::try_from(public_key.len()).expect("int cast"),
-                )
-            };
-            if bio.is_null() {
-                return Err(crate::Error::InvalidPublicKey);
-            }
-            let bio = OwnedBio(bio);
+            let bio =
+                boringssl::c::MemBio::new(public_key).ok_or(AnyMySQLError::InvalidPublicKey)?;
 
-            // SAFETY: bio.0 is a valid BIO*; null callback/userdata are permitted.
+            // SAFETY: `bio` is live; null callback/userdata are permitted.
             let rsa = unsafe {
                 boringssl::c::PEM_read_bio_RSA_PUBKEY(
-                    bio.0,
+                    bio.as_ptr(),
                     core::ptr::null_mut(),
                     None,
                     core::ptr::null_mut(),
@@ -216,7 +153,7 @@ pub mod caching_sha2_password {
                         );
                     }
                 }
-                return Err(crate::Error::InvalidPublicKey);
+                return Err(AnyMySQLError::InvalidPublicKey);
             }
             let rsa = OwnedRsa(rsa);
             // encrypt password
@@ -238,48 +175,15 @@ pub mod caching_sha2_password {
                 )
             };
             if encrypted_password_len == -1 {
-                return Err(crate::Error::FailedToEncryptPassword);
+                return Err(AnyMySQLError::FailedToEncryptPassword);
             }
             let encrypted_password_slice =
                 &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
 
-            let mut packet = writer.start(self.sequence_id)?;
-            writer.write(encrypted_password_slice)?;
-            packet.end()?;
+            let mut packet = PacketWriter::start(out, self.sequence_id);
+            packet.write(encrypted_password_slice);
+            packet.end();
             Ok(())
-        }
-
-        // See src/sql/mysql/protocol/NewWriter.rs
-        pub fn write<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
-            self.write_internal(writer)
-        }
-    }
-
-    #[derive(Default)]
-    pub struct PublicKeyResponse {
-        pub data: Data,
-    }
-
-    impl PublicKeyResponse {
-        // `Data`'s own Drop frees `self.data`.
-
-        pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
-            self.data = reader.read(reader.peek().len())?;
-            Ok(())
-        }
-    }
-
-    struct OwnedBio(*mut boringssl::c::BIO);
-
-    impl Drop for OwnedBio {
-        fn drop(&mut self) {
-            // SAFETY: a non-null BIO* from BIO_new_mem_buf, freed once.
-            unsafe {
-                let _ = boringssl::c::BIO_free(self.0);
-            }
         }
     }
 

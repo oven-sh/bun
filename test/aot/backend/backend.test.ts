@@ -12,12 +12,13 @@
 //
 // ./measure has the benchmark. See ./README.md.
 import { SQL } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { cpSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isDockerEnabled, isWindows, tempDir } from "harness";
 import { join } from "path";
 import * as dockerCompose from "../../docker/index.ts";
 import { built, spawned, unsupported } from "../harness/commands";
+import { afterAll, beforeAll, test } from "../harness/default-timeout";
 import { badOrders, carrierRates, fortunesPage, json, orders, plaintext, product, sessionToken } from "./answers";
 
 const wanted = !!process.env.AOT_BACKEND;

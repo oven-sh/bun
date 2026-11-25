@@ -1,0 +1,48 @@
+# process.on("exit", () => {}), the method named by the operation
+# A listener for "message" or "disconnect" on `process` opens the channel to the parent: what serves the channel hangs on the methods that lay listeners under the condition that the event is one of the two texts and the receiver `process`.
+# The event is written in the call. If Link took the condition for one that may hold, every listener on every emitter would bring the channel.
+# The controls stand beside this file: a-listener-laid-on-process-*.ir, a-listener-laid-for-messages-through-an-object-that-holds-process-brings-the-channel.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: function f4 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/Ipc.ts" displayPath="/$bun/js/builtins/Ipc.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=IpcParseHandle function=f1
+runtimefunction id=IpcRestoreAdvancedBuffers function=f2
+runtimefunction id=IpcSerialize function=f3
+runtimefunction id=IpcTagAdvancedBuffers function=f4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Builtin builtin=EventEmitterPrototypeOn [isNotReadFromHolder]
+    v2 = String string="exit"
+    v3 = NewClosure function=f5
+    v4 = Call v1, v0, v2, v3 calleeKey="on" calleeName="process.on"
+    Return v4
+}
+function f1 name="parseHandle" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcParseHandle thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f2 name="restoreAdvancedBuffers" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcRestoreAdvancedBuffers thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f3 name="serialize" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcSerialize thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f4 name="tagAdvancedBuffers" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=IpcTagAdvancedBuffers thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f5 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

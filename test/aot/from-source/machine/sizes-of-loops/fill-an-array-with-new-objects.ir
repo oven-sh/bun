@@ -1,0 +1,18 @@
+# f1 = fill
+# -- source: fill-an-array-with-new-objects.ts
+# type Entry = { weight: number };
+# function fill(list: Entry[], weight: number): void {
+#   for (let index = 0; index < list.length; index++) list[index] = { weight: weight + index };
+# }
+# declare const input: any;
+# const list: Entry[] = [{ weight: 0.5 }, { weight: 1.5 }];
+# fill(list, +input);
+# fill(list, 2.5);
+# (globalThis as any).answer = list[0].weight + list[1].weight;
+# -- end of source
+# The compiler before this one: 11 instructions, 2 of them patches.
+# When the bound was taken: loop: operations 15, patches 2, moves 1, unlikely 0.
+# RUN(X64): loops most:16 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 16

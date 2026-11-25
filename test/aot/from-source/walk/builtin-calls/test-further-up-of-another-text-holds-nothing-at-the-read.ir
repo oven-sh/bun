@@ -1,0 +1,10 @@
+# the same, but the length is that of another text: the read asks the bounds of its own
+# f1 = code
+# -- source: test-further-up-of-another-text-holds-nothing-at-the-read.ts
+# function code(text: string, other: string, from: number, flag: boolean): number { const pos = from & 3; if (pos < other.length) { if (flag) return text.charCodeAt(pos); return -1; } return -2; }
+# console.log(code("abc", "abcd", 1, true), code("abc", "abcd", 3, true), code("abc", "a", 1, false));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = Less v
+# CHECK: = GetStringCodeUnit

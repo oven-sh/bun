@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isWindows, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -508,6 +508,28 @@ describe.concurrent("suffixes of an import path", () => {
 
   const base64 = (type: string, content: string | Buffer) =>
     `data:${type};base64,${Buffer.from(content).toString("base64")}`;
+
+  test("?inline frees the module it generates", async () => {
+    using dir = tempDir("import-inline-leak", {
+      "big.png": Buffer.alloc(1024 * 1024, 1),
+      "main.js": `
+        function load(times) {
+          for (let i = 0; i < times; i++) {
+            require("./big.png?inline");
+            const key = Object.keys(require.cache).find(key => key.includes("big.png"));
+            if (!key) throw new Error("not in require.cache");
+            delete require.cache[key];
+            Bun.gc(true);
+          }
+          return process.memoryUsage.rss() / 1024 / 1024;
+        }
+        const before = load(3);
+        console.log(JSON.stringify({ deltaMiB: load(24) - before }));
+      `,
+    });
+    // Unfixed: 1.3 MiB per load, 32 MiB in all.
+    await expectRssDeltaBelow([path.join(String(dir), "main.js")], { release: 16, debug: 16 });
+  }, 20_000);
 
   test("?inline on an asset file returns a base64 data: URL with its MIME type", async () => {
     const types = {

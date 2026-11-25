@@ -1,0 +1,49 @@
+A test adds a name to the prototype of generator functions, of async functions and of generators, which no global name leads to.
+#### a-generator-function.test.js
+import { test } from "bun:test";
+test("generatorFunction", () => {
+  const holder = Object.getPrototypeOf(function* () {});
+  try {
+    holder.generatorFunctionStored = "stored";
+    Object.defineProperty(holder, "generatorFunctionDefined", { value: "defined", configurable: true });
+    console.log("| CASE generatorFunction:", (function* () {}).generatorFunctionStored, (function* () {}).generatorFunctionDefined);
+  } catch (error) {
+    console.log("| CASE generatorFunction: threw", error.name);
+  }
+});
+#### b-async-function.test.js
+import { test } from "bun:test";
+test("asyncFunction", () => {
+  const holder = Object.getPrototypeOf(async function () {});
+  try {
+    holder.asyncFunctionStored = "stored";
+    Object.defineProperty(holder, "asyncFunctionDefined", { value: "defined", configurable: true });
+    console.log("| CASE asyncFunction:", (async function () {}).asyncFunctionStored, (async function () {}).asyncFunctionDefined);
+  } catch (error) {
+    console.log("| CASE asyncFunction: threw", error.name);
+  }
+});
+#### c-generators.test.js
+import { test } from "bun:test";
+test("generators", () => {
+  const holder = Object.getPrototypeOf(function* () {}).prototype;
+  try {
+    holder.generatorsStored = "stored";
+    Object.defineProperty(holder, "generatorsDefined", { value: "defined", configurable: true });
+    console.log("| CASE generators:", ((function* () {})()).generatorsStored, ((function* () {})()).generatorsDefined);
+  } catch (error) {
+    console.log("| CASE generators: threw", error.name);
+  }
+});
+#### d-constructor-of-an-async-function.test.js
+import { test } from "bun:test";
+test("byConstructor", () => {
+  const holder = (async () => {}).constructor.prototype;
+  try {
+    holder.byConstructorStored = "stored";
+    Object.defineProperty(holder, "byConstructorDefined", { value: "defined", configurable: true });
+    console.log("| CASE byConstructor:", (async () => {}).byConstructorStored, (async () => {}).byConstructorDefined);
+  } catch (error) {
+    console.log("| CASE byConstructor: threw", error.name);
+  }
+});

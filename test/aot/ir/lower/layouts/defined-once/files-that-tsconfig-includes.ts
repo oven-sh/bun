@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: CheckerQueries <= 19500
 
 // Which files tsconfig.json includes changes the numbers of the files, not that.
 

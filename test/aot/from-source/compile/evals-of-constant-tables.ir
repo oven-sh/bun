@@ -1,0 +1,19 @@
+# The strings of each eval follow from the tables, so no eval is left and the class sees the built-in Array.
+# -- source: main.cjs
+# function make(Base) {
+#   class Scale extends Base { static steps(count) { return new Array(count).fill(1); } }
+#   var signs = { adds: "+", takes: "-" };
+#   for (var key in signs) Scale.prototype[key] = eval("(function (first, second, third) { return first " + signs[key] + " second " + signs[key] + " third; })");
+#   var parts = [[2, "half"], [4, "quarter"], [8, "eighth"]];
+#   for (var at = parts.length - 1; at >= 0; at--) {
+#     var written = "(" + parts[at][1] + " => Math.floor(" + parts[at][1] + " / " + parts[at][0] + "))";
+#     Scale[parts[at][1]] = eval(written);
+#   }
+#   return Scale;
+# }
+# const S = make(Object);
+# console.log(new S().adds(1, 2, 3), new S().takes(9, 2, 3), S.half(9), S.quarter(9), S.eighth(9), S.steps(3).join());
+# -- end of source
+# RUN: print
+# CHECK-NOT: DirectEval
+# CHECK-NOT: ScopeHasBinding

@@ -1,0 +1,23 @@
+# which keys an object has by now is a guess about its state. Without Guesses no test is opened, and the call stays
+# RUN: walk f1 mechanisms=all-Guesses
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: HasKeyOrder
+# CHECK: ObjectValues
+# RUN(NEVER): walk f1 mechanisms=all-Guesses
+# NEVER-NOT: = NewArray
+# -- source: own-values-of-an-expected-layout-stand-behind-tests.ts
+# declare function sink(...values: unknown[]): void;
+# type Point = { x: number; y: number };
+# type Loose = { u: number; v?: number };
+# type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; i: number };
+# function values(p: Point) { return Object.values(p); }
+# function entries(p: Point) { return Object.entries(p); }
+# function keys(p: Point) { return Object.keys(p); }
+# function loose(p: Loose) { return Object.values(p); }
+# function wide(p: Wide) { return Object.values(p); }
+# const point: Point = { x: 1, y: 2 };
+# const other: Loose = { u: 1 };
+# const nine: Wide = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 };
+# sink(values, entries, keys, loose, wide, point, other, nine);
+# -- end of source
+# f1 = values, f2 = entries, f3 = keys, f4 = loose, f5 = wide

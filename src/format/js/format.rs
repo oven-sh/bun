@@ -1013,6 +1013,10 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
     use print::{statements, ts_declarations};
     match statement.kind() {
         StmtKind::Empty => statements::write_empty_statement(statement, f),
+        StmtKind::Debugger if f.options().is_reduced => {
+            super::settled::write_placeholder(f);
+            write!(f, print::semicolon::OptionalSemicolon);
+        }
         StmtKind::Debugger => write!(f, ["debugger", print::semicolon::OptionalSemicolon]),
         StmtKind::Expr(expression)
             if expression.tag() == ExprTag::String && statement.directive().is_some() =>

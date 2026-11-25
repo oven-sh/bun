@@ -1,0 +1,8 @@
+# a written text can reach what stands on String.prototype and above: a method of numbers that no code names gets no place from it
+# -- source: a-text-called-under-a-key-of-the-run-gives-its-place-to-the-methods-of-texts-alone.ts
+# console.log(("abc" as any)[process.argv[2]!]("b"));
+# -- end of source
+# RUN: features
+# CHECK: by StringPrototypeLocaleCompare unnamed at f0 v
+# RUN(OTHERS): features
+# OTHERS-NOT: by NumberPrototypeToLocaleString unnamed at f0

@@ -1,0 +1,9 @@
+# -- source: data-descriptor-that-is-read-only-is-no-store.js
+# function K(v) { this.v = v; }
+# Object.defineProperty(K.prototype, "m", { value: function m() { return this.v; }, enumerable: false, configurable: true, writable: false });
+# sink(new K(1).m());
+# -- end of source
+# A name that is read only refuses the assignment on every object below it, which no store does: the definition stays one by a descriptor.
+# RUN: link members mechanisms=all
+# CHECK: on-prototype L0 "m"
+# CHECK-NOT: on-prototype L0 "m" function=

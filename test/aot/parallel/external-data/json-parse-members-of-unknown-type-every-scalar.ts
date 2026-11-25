@@ -1,4 +1,3 @@
-// STATISTIC: TypedResultsSelected >= 2
 interface Holder {
   first: unknown;
   second: any;

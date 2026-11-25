@@ -1,0 +1,16 @@
+# a key that is joined of two parts is looked up by its parts where the read alone takes the text. Where somebody else reads the text it is joined for him, and the read goes by it
+# run() calls both with written texts, so Link proves that the second part is a string
+# f1 = handlerOf, f2 = both, f3 = run
+# -- source: key-joined-of-parts-that-somebody-else-reads-is-joined.ts
+# declare function sink(...values: unknown[]): void;
+# const handlers: any = { onopen: 1, onclose: 2 };
+# function handlerOf(table: any, type: string) { return table["on" + type]; }
+# function both(table: any, type: string) { const k = "on" + type; return [table[k], k]; }
+# function run() { sink(handlerOf(handlers, "open"), handlerOf(handlers, "close"), both(handlers, "open"), both(handlers, "close")); }
+# run();
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:
+# CHECK: = ElemGetByKeyParts
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH-NOT: ElemGetByKeyParts

@@ -1,0 +1,30 @@
+# -- source: main.js
+# const rows = [1, 2, 3, 4, 5, 6];
+# function refuse(x) { throw new Error("no " + x); }
+# async function find(offset, limit) { return rows.slice(offset, offset + limit); }
+# async function risky(x) { return refuse(x); }
+# async function* pages(size) { for (let offset = 0; offset < rows.length; offset += size) yield await find(offset, size); }
+# async function* tries(n) { for (let i = 0; i < n; i++) yield await risky(i); }
+# globalThis.keep = [pages, tries];
+# -- end of source
+# f2 = find, f3 = risky, f4 = pages, f5 = tries
+# An async generator that awaits the call of an async function which never suspends: the body is copied in as it is into an async function. The await takes a fresh promise that is fulfilled in line:
+# the stub that suspends a generator at an await lets the frame go on over a fulfilled promise, and suspends over any other object.
+# RUN: walk f4:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f4:CoroutineBody
+# CHECK: frame 1 callee=f2
+# What slice gives is a list, and a list has no `then`: nothing is asked in front of the fulfilling.
+# CHECK: : Array {{*}}= CallBuiltin {{*}}overload=ArrayPrototypeSlice/0
+# CHECK-NOT: = IsNotThenable
+# CHECK: = FulfillFreshPromise
+# CHECK: = AwaitBySavingFrame
+# CHECK: = AsyncGeneratorYield
+# RUN(NOCALL): walk f4:CoroutineBody mechanisms=all
+# NOCALL-NOT: function=f2
+# What the copy throws is what the promise would be rejected with.
+# RUN(THROWS): walk f5:CoroutineBody mechanisms=all
+# THROWS-LABEL: code f5:CoroutineBody
+# THROWS: frame 1 callee=f3
+# THROWS: role=CatchHandler
+# THROWS: [[caught]]: {{*}} = CatchValue
+# THROWS: = RejectPromise {{*}}, [[caught]]

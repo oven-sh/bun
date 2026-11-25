@@ -1,8 +1,10 @@
+use bun_ptr::AliasableBox;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
@@ -12,6 +14,7 @@ pub(crate) struct Subshell {
     pub(crate) io: IO,
     pub(crate) state: SubshellState,
     pub(crate) exit_code: ExitCode,
+    shell: AliasableBox<ShellExecEnv>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -23,18 +26,16 @@ pub enum SubshellState {
 }
 
 impl Subshell {
-    /// `shell` must already be a duped env owned by this node (see
-    /// `init_dupe_shell_state` for the Stmt/Binary path; Pipeline dupes the
-    /// env itself before calling this). `Subshell::deinit` frees it.
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: AliasableBox<ShellExecEnv>,
         node: &ast::Subshell,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
@@ -42,7 +43,7 @@ impl Subshell {
         }))
     }
 
-    /// Dupe the parent env and `init`.
+    /// Runs in a dupe of the parent env.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
     ///
@@ -61,8 +62,8 @@ impl Subshell {
         // SAFETY: caller guarantees `parent_shell` points to a live
         // `ShellExecEnv` owned by the parent state for the duration of this
         // call (see `# Safety` above).
-        let duped = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
-        Ok(Self::init(interp, duped, node, parent, io))
+        let env = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
+        Ok(Self::init(interp, env, node, parent, io))
     }
 
     pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
@@ -78,18 +79,18 @@ impl Subshell {
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
                 // Spawn Script directly with
-                // `this.base.shell`. The env was already duped at construction
+                // `this.shell`. The env was already duped at construction
                 // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
                 // again here.
                 let (shell, io, node) = {
                     let me = interp.as_subshell(this);
-                    (me.base.shell, me.io.clone(), me.node)
+                    (me.shell.as_ptr(), me.io.clone(), me.node)
                 };
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // `node.redirect` is always `None` here: the parser rejects
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
-                let script = Script::init(interp, shell, &node.script, this, io);
+                let script = Script::init(interp, Env::inherited(shell), &node.script, this, io);
                 Script::start(interp, script)
             }
             SubshellState::Exec => Yield::suspended(),
@@ -113,18 +114,5 @@ impl Subshell {
             me.state = SubshellState::Done;
         }
         Yield::Next(this)
-    }
-
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
-        log!("Subshell {} deinit", this);
-        let me = interp.as_subshell_mut(this);
-        // The env was duped at construction (either by Pipeline or by
-        // `init_dupe_shell_state`) — Subshell always owns it.
-        if !me.base.shell.is_null() {
-            // SAFETY: `me.base.shell` is the duped env this Subshell owned;
-            // null-checked and exclusively held here.
-            ShellExecEnv::deinit_impl(me.base.shell);
-            me.base.shell = core::ptr::null_mut();
-        }
     }
 }

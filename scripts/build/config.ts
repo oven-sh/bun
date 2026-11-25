@@ -170,7 +170,7 @@ export interface Config {
   /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
   fuzzilliCompilerOnly: boolean;
   /**
-   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC included: selects the `-hardened` WebKit prebuilt.
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
    * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    * Leaves out one thing that any other build can do: an executable that it compiles ahead of time does not start where
@@ -210,14 +210,6 @@ export interface Config {
    * Defines BUN_REFUSES_EXECUTE_ONLY_START for C and C++, JSC included, and `bun_refuses_execute_only_start` for Rust.
    */
   executeOnlyStart: boolean;
-  /**
-   * Default false. On: behind the link, the new executable compiles Bun's own JavaScript ahead of time and the result
-   * goes into it as the section `.bun_library` (scripts/build/embed-compiled-library.ts). `bun test --aot` takes it for
-   * the lowest layer of a run that is built in layers, which otherwise compiles that code in every run. No segment
-   * holds the section, so nothing else reads or maps it. Costs file size. Changes no compiled code of Bun's: the same
-   * link without the section behaves as a build with this off.
-   */
-  compiledLibrary: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
@@ -407,7 +399,7 @@ export interface Config {
   msvcLinker: string | undefined;
   /** Windows: llvm-rc, compiles bun.exe's resources. */
   rc: string | undefined;
-  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -486,7 +478,6 @@ export interface PartialConfig {
   lockEnvironment?: boolean;
   guardedPages?: boolean;
   executeOnlyStart?: boolean;
-  compiledLibrary?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
@@ -620,7 +611,7 @@ export interface Toolchain extends JsToolchain {
   msvcLinker: string | undefined;
   /** Windows only: llvm-rc (resource compiler). */
   rc: string | undefined;
-  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 }
 
@@ -1133,11 +1124,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
   // keep become available_externally, their module-private guards included,
   // and inlining one leaves a reference to guards that nothing defines.
-  // Android, FreeBSD: not enabled (never built that way; untested).
-  // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
-  // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
+  if (asan || fuzzilli) {
     lto = false;
   }
 
@@ -1206,7 +1193,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const lockEnvironment = partial.lockEnvironment ?? hardened;
   const guardedPages = partial.guardedPages ?? hardened;
   const executeOnlyStart = partial.executeOnlyStart ?? !hardened;
-  const compiledLibrary = partial.compiledLibrary ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1232,15 +1218,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
   assert(!requireMdwe || hardened, "requireMdwe=true requires hardened=true");
-  assert(
-    !compiledLibrary || (linux && abi !== "android" && !hardened && (partial.aot ?? true)),
-    "compiledLibrary=true requires os=linux, abi=gnu or musl, aot=true and hardened=false",
-    { hint: "Only there does a realm take one compiled program above another" },
-  );
-  assert(
-    !compiledLibrary || (os === host.os && arch === host.arch && abi === (detectLinuxAbi() ?? abi)),
-    "compiledLibrary=true requires a build for this machine: the new executable compiles its own code",
-  );
   assert(!lockEnvironment || hardened, "lockEnvironment=true requires hardened=true");
   assert(!guardedPages || linux, "guardedPages=true requires os=linux");
   assert(
@@ -1544,7 +1521,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lockEnvironment,
     guardedPages,
     executeOnlyStart,
-    compiledLibrary,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
@@ -1957,7 +1933,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.executeOnlyStart === cfg.hardened) {
     features.push(cfg.executeOnlyStart ? "execute-only-start" : "execute-only-start:off");
   }
-  if (cfg.compiledLibrary) features.push("compiled-library");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

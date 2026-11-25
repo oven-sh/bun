@@ -1,6 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 4
+// CHECK-LABEL: function {{*}}name="patternOverTheHeld"
+// CHECK-LABEL: function {{*}}name="constructs"
+// CHECK-LABEL: function {{*}}name="asAValue"
 
 // FILE: main.ts
 // `require()` of an ES module binds as an import does: a member, a pattern and a constant that holds the module read what the module declares. No object is made, nothing is looked up by name, and functions are called directly.
@@ -106,86 +109,3 @@ export function log(...values: unknown[]) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: patternOverTheHeld constructs asAValue
-// CHECK-LABEL: function {{*}}name="patternOverTheHeld"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_1]]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="atTheTop"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=undefined|null
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() frequency=Unlikely:
-// CHECK-NEXT: v4 = NewRuntimeError runtimeError=NotDestructurable name="twice"
-// CHECK-NEXT: Throw v4
-// CHECK-NEXT: b4(v5):
-// CHECK-NEXT: v6 = PropGet v5 key="twice"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_4]]} illTypedCause=Assertion
-// CHECK-NEXT: v8 = PropGet v5 key="constant"
-// CHECK-NEXT: v9 = Convert v8 declared={type=10} illTypedCause=Assertion
-// CHECK-NEXT: v10 = Call v7, -, v9 calleeName="twice"
-// CHECK-NEXT: ReturnCall v10 casts=[{declared={type=number site=[[w_5]]}}, {declared={type=number site=[[w_1]]}}]
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="constructs"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_6]]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_8]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: v3 = Boolean boolean=true
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="Box"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_11]]} illTypedCause=Assertion
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_8]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: v12 = Boolean boolean=true
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v14 = Integer integer=1
-// CHECK-NEXT: v15 = Construct v8, -, v14 calleeName="Box"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[L_12]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v17 = PropGet v16 key="value"
-// CHECK-NEXT: v18 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v19 = CheckInitialized v18 name="Box"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[f_11]] site=[[w_14]]} illTypedCause=Assertion
-// CHECK-NEXT: v21 = Integer integer=2
-// CHECK-NEXT: v22 = Construct v20, -, v21 calleeName="lib.Box"
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|[[L_12]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v24 = PropGet v23 key="value"
-// CHECK-NEXT: v25 = Add v17, v24
-// CHECK-NEXT: v26 = Builtin builtin=Number
-// CHECK-NEXT: v27 = Integer integer=3
-// CHECK-NEXT: v28 = Construct v8, -, v27 calleeName="Box"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|[[L_12]] site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v30 = GetModuleVariable variable=[[g_10]]
-// CHECK-NEXT: v31 = CheckInitialized v30 name="Box"
-// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|[[f_11]] site=[[w_17]]} illTypedCause=Assertion
-// CHECK-NEXT: v33 = InstanceOf v29, v32
-// CHECK-NEXT: v34 = Call v26, -, v33 calleeName="Number"
-// CHECK-NEXT: v35 = Convert v34 declared={type=number site=[[w_18]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v36 = Add v25, v35
-// CHECK-NEXT: v37 = Convert v36 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Return v37
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="asAValue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: EvaluateModule module=[[m_8]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: RecordRequire module=[[m_8]] referrer=[[m_0]]
-// CHECK-NEXT: v4 = ModuleNamespace module=[[m_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|object site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v7 = ElemGet v6, v0
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

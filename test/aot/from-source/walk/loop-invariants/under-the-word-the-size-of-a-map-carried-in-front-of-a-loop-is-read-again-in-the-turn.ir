@@ -1,0 +1,23 @@
+# -- source: main.js
+# function run(o, turns) {
+#   let sum = 0;
+#   for (let i = 0; i < turns; i++) sum += o.size;
+#   return sum;
+# }
+# print(run(new Map([["key", 1]]), 8));
+# print(run(new Map([["key", 1], ["more", 2]]), 6));
+# -- end of source
+# f1 = run. Nothing in the loop writes what `o.size` reads, so the read stands in front of the loop, rightly. Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) an answer
+# that comes from in front of a loop is read again in the turn and compared, BUT ONLY WHAT MAY BE RUN AGAIN UNSEEN IS READ AGAIN (under-the-word-a-getter-copied-in-line-in-the-head-of-a-loop-runs-once-a-turn.ir). `o.size` is a form
+# of a built-in: the bound of its operation has to allow for every built-in and says that it may run code; this one only reads. For a form of a built-in the exact effects decide. Under a lie that a callee in the loop writes nothing
+# (a fact ends in a callee that is said to write nothing: the size of a map) the process then ends by name; the lies that the tree can lay take one part of one row and do not carry this read out.
+# RUN(AGAIN): walk f1 mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# AGAIN: = CallInline {{*}}inlineBuiltin=MapSize
+# AGAIN: isLoopHead=true
+# AGAIN: = CallInline {{*}}inlineBuiltin=MapSize
+# AGAIN: CheckProof {{*}}source=RememberedFact
+# RUN(RIGHT): run-in-shell mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# RIGHT: 8
+# RIGHT-NEXT: 12
+# RIGHT-NEXT: exited with 0
+# RIGHT-NEXT: the source prints the same

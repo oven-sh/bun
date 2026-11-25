@@ -1,0 +1,25 @@
+# -- source: main.js
+# function Message(n) { this.first = n; this.list = [n]; this.last = n + 1; }
+# function readList() { return this.hidden; }
+# function storeList(value) { this.hidden = value; this.stores = (this.stores | 0) + 1; }
+# function areOurs(get, set) { return get === readList && set === storeList; }
+# Object.defineProperty(Message.prototype, "list", { __proto__: null, enumerable: true, get: readList, set: storeList });
+# function fill(message, value) { message.list = value; return message.list.length; }
+# for (let i = 0; i < 2; i++) { const message = new Message(i); print(message.first + " " + message.last + " " + message.list.join() + " " + fill(message, [1, 2, 3]) + " " + message.stores + " " + Object.keys(message).join()); }
+# const found = Object.getOwnPropertyDescriptor(Message.prototype, "list"); print(areOurs(found.get, found.set));
+# -- end of source
+# f0 = the module, f3 = Message, f1 = readList, f2 = storeList
+# `get: readList`: the half is a function declaration that another function names too, so it lives in a variable of the module, which nothing stores into again: the program's table says which function it holds (`initialization=Function function=f2 flags=[IsImmutable]`). The scan took a half only where the closure was made in the body itself, so Link listed the name on the prototype object without its halves.
+# WHAT HUNG ON IT: the constructor stores `this.list = ..`, so the layout declares a field of the name. Link knew of no setter above, the walk laid that store into ONE guarded run with its neighbors, the guard "a store under the name passes by" never held (the accessor is there), and EVERY store of the run went by name at each construction.
+# RUN(MEMBERS): link members mechanisms=all
+# MEMBERS: on-prototype L0 "list" getter=f1 setter=f2
+# RUN(FORM): walk f3 mechanisms=all
+# FORM-NOT: {kind=MemberPassedByStores layout=L0 key="list"}
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 0 1 0 3 2 first,hidden,stores,last
+# ALL-NEXT: 1 2 1 3 2 first,hidden,stores,last
+# ALL-NEXT: true
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 0 1 0 3 2 first,hidden,stores,last
+# NONE-NEXT: 1 2 1 3 2 first,hidden,stores,last
+# NONE-NEXT: true

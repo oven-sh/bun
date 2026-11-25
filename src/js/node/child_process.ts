@@ -1,6 +1,6 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const { kHandle } = require("internal/shared");
+const { kHandle, builtinChannel } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
@@ -13,6 +13,7 @@ const {
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
+const ObjectKeys = Object.keys;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
@@ -39,10 +40,16 @@ var NumberIsInteger = Number.isInteger;
 var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+
+const childProcessChannel = builtinChannel("child_process");
+const spawnStartChannel = builtinChannel("tracing:child_process.spawn:start");
+const spawnEndChannel = builtinChannel("tracing:child_process.spawn:end");
+const spawnErrorChannel = builtinChannel("tracing:child_process.spawn:error");
 
 interface ExecException extends Error {
   cmd?: string;
@@ -1134,10 +1141,24 @@ function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> |
   if (!envPairs) return undefined;
   const resEnv = {};
   for (const line of envPairs) {
-    const [key, ...value] = line.split("=", 2);
-    resEnv[key] = value.join("=");
+    // A name can start with "=" on Windows.
+    const separator = StringPrototypeIndexOf.$call(line, "=", 1);
+    if (separator === -1) resEnv[line] = "";
+    else resEnv[StringPrototypeSlice.$call(line, 0, separator)] = StringPrototypeSlice.$call(line, separator + 1);
   }
   return resEnv;
+}
+
+/** A subscriber finds the environment where Node has it, and can change it there. */
+function publishSpawnStart(child: ChildProcess, options) {
+  const env = options[kBunEnv];
+  if (env) {
+    const envPairs: string[] = [];
+    for (const key of ObjectKeys(env)) $arrayPush(envPairs, `${key}=${env[key]}`);
+    options.envPairs = envPairs;
+    options[kBunEnv] = undefined;
+  }
+  spawnStartChannel.publish({ process: child, options });
 }
 
 //------------------------------------------------------------------------------
@@ -1155,11 +1176,18 @@ class ChildProcess extends EventEmitter {
 
   signalCode: string | null = null;
   exitCode: number | null = null;
-  spawnfile;
+  spawnfile: string | null = null;
   spawnargs;
   pid;
   channel;
   killed = false;
+
+  constructor() {
+    super();
+    if (childProcessChannel.hasSubscribers) {
+      childProcessChannel.publish({ process: this });
+    }
+  }
 
   [Symbol.dispose]() {
     if (!this.killed) {
@@ -1236,12 +1264,8 @@ class ChildProcess extends EventEmitter {
   #getBunSpawnIo(i: 1 | 2, autoResume?: boolean): $Node.Readable | null | undefined;
   #getBunSpawnIo(i: number, autoResume?: boolean): StdioStream | null | undefined;
   #getBunSpawnIo(i: number, autoResume = false) {
-    if ($debug && !this.#handle) {
-      if (this.#handle === null) {
-        $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
-      } else {
-        $debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
-      }
+    if ($debug && this.#handle === null) {
+      $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
     }
 
     const handle = this.#handle;
@@ -1397,9 +1421,7 @@ class ChildProcess extends EventEmitter {
   }
 
   get connected(): boolean {
-    const handle = this.#handle;
-    if (handle === null) return false;
-    return handle!.connected ?? false;
+    return this.#handle?.connected ?? false;
   }
 
   get [kHandle]() {
@@ -1438,24 +1460,19 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
-
-    const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
-    var file;
-    file = this.spawnfile = options.file;
+    this.spawnfile = options.file;
 
-    var spawnargs;
     if (options.args === undefined) {
-      spawnargs = this.spawnargs = [];
+      this.spawnargs = [];
       // how is this allowed?
     } else {
       validateArray(options.args, "options.args");
-      spawnargs = this.spawnargs = options.args;
+      this.spawnargs = options.args;
     }
     // What script of a disposed Bun.ModuleGraph starts does not start, and reports nothing: a
     // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
@@ -1469,17 +1486,20 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
+    if (spawnStartChannel.hasSubscribers) publishSpawnStart(this, options);
+
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
 
     try {
+      const spawnargs = options.args ?? [];
       this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+        cmd: [options.file, ...Array.prototype.slice.$call(spawnargs, 1)],
         stdio: bunStdio,
         cwd: options.cwd || undefined,
-        env: env,
-        detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        env: options[kBunEnv] || parseEnvPairs(options.envPairs) || process.env,
+        detached: !!options.detached,
         uid: options.uid,
         gid: options.gid,
         cgroup: options.cgroup,
@@ -1514,6 +1534,9 @@ class ChildProcess extends EventEmitter {
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
+      // Node publishes before it sets the pid.
+      if (spawnEndChannel.hasSubscribers) spawnEndChannel.publish({ process: this });
+
       process.nextTick(() => {
         this.emit("spawn");
       });
@@ -1539,6 +1562,7 @@ class ChildProcess extends EventEmitter {
         }
       }
     } catch (ex) {
+      const publishes = spawnErrorChannel.hasSubscribers && this.#handle === undefined;
       const exCode =
         ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
@@ -1552,22 +1576,24 @@ class ChildProcess extends EventEmitter {
         this.#handle = null;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
-        process.nextTick(() => {
-          this.emit("error", ex);
-          this.emit("close", (ex as SystemError).errno ?? -1);
-        });
         if (exCode === "EMFILE" || exCode === "ENFILE") {
           // emfile/enfile error; in this case node does not initialize stdio streams.
           this.#stdioOptions[0] = "undefined";
           this.#stdioOptions[1] = "undefined";
           this.#stdioOptions[2] = "undefined";
         }
+        if (publishes) spawnErrorChannel.publish({ process: this, error: ex });
+        process.nextTick(() => {
+          this.emit("error", ex);
+          this.emit("close", (ex as SystemError).errno ?? -1);
+        });
       } else {
         if (exCode !== undefined) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
           (ex as SystemError).syscall = "spawn";
         }
+        if (publishes) spawnErrorChannel.publish({ process: this, error: ex });
         throw ex;
       }
     }
@@ -1686,6 +1712,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function (this: ChildProcess) {
+          if (this.#handle === undefined) return undefined;
           const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
@@ -1701,6 +1728,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function (this: ChildProcess) {
+          if (this.#handle === undefined) return undefined;
           const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
@@ -1716,6 +1744,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function (this: ChildProcess) {
+          if (this.#handle === undefined) return undefined;
           const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
@@ -1731,6 +1760,7 @@ class ChildProcess extends EventEmitter {
       },
       stdio: {
         get: function (this: ChildProcess) {
+          if (this.#handle === undefined) return undefined;
           const value = (this.#stdioObject ??= this.#createStdioObject());
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdio", {

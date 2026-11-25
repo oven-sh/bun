@@ -71,6 +71,16 @@ pub struct RSA_PSS_PARAMS {
     pub maskHash: *mut X509_ALGOR,
 }
 
+#[repr(transparent)]
+struct OwnedRsaPssParams(core::ptr::NonNull<RSA_PSS_PARAMS>);
+
+impl Drop for OwnedRsaPssParams {
+    fn drop(&mut self) {
+        // SAFETY: only `d2i_RSA_PSS_PARAMS` makes one.
+        unsafe { RSA_PSS_PARAMS_free(self.0.as_ptr()) }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
@@ -311,6 +321,13 @@ impl OwnedSslCtx {
     }
 }
 
+impl core::ops::Deref for OwnedSslCtx {
+    type Target = SSL_CTX;
+    fn deref(&self) -> &SSL_CTX {
+        SSL_CTX::opaque_ref(self.0.as_ptr())
+    }
+}
+
 impl Clone for OwnedSslCtx {
     /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
     fn clone(&self) -> Self {
@@ -324,6 +341,179 @@ impl Drop for OwnedSslCtx {
     fn drop(&mut self) {
         // SAFETY: we own exactly one reference, released once.
         unsafe { SSL_CTX_free(self.0.as_ptr()) }
+    }
+}
+
+/// An owner of one reference, released on drop. `Option<$name>` is a nullable `$handle *`.
+macro_rules! owned_handle {
+    ($($name:ident($handle:ident) => $free:ident;)+) => {$(
+        #[doc = concat!("Owns one `", stringify!($handle), "` reference.")]
+        #[repr(transparent)]
+        pub struct $name(core::ptr::NonNull<$handle>);
+
+        impl core::ops::Deref for $name {
+            type Target = $handle;
+            fn deref(&self) -> &$handle {
+                $handle::opaque_ref(self.0.as_ptr())
+            }
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                // SAFETY: we own exactly one reference, released once.
+                unsafe { $free(self.0.as_ptr()) }
+            }
+        }
+    )+};
+}
+
+owned_handle! {
+    OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
+    OwnedX509(X509) => X509_free;
+    OwnedX509Crl(X509_CRL) => X509_CRL_free;
+    OwnedX509Store(X509_STORE) => X509_STORE_free;
+    OwnedEvpPkey(EVP_PKEY) => EVP_PKEY_free;
+}
+
+impl OwnedSslSession {
+    pub fn retain(session: &SSL_SESSION) -> Self {
+        SSL_SESSION_up_ref(session);
+        Self(session.into())
+    }
+
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        let len = c_long::try_from(der.len()).expect("int cast");
+        // SAFETY: BoringSSL reads at most `len` bytes of `der`.
+        unsafe { d2i_SSL_SESSION(core::ptr::null_mut(), &mut der.as_ptr(), len) }
+    }
+
+    pub fn as_ptr(&self) -> *mut SSL_SESSION {
+        self.0.as_ptr()
+    }
+}
+
+impl OwnedX509 {
+    pub fn retain(cert: &X509) -> Self {
+        X509_up_ref(cert);
+        Self(cert.into())
+    }
+
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        let len = c_long::try_from(der.len()).expect("int cast");
+        // SAFETY: BoringSSL reads at most `len` bytes of `der`.
+        unsafe { d2i_X509(core::ptr::null_mut(), &mut der.as_ptr(), len) }
+    }
+}
+
+impl core::ops::DerefMut for OwnedX509 {
+    fn deref_mut(&mut self) -> &mut X509 {
+        X509::opaque_mut(self.0.as_ptr())
+    }
+}
+
+/// Finds the issuer of a certificate in a trust store.
+pub struct IssuerLookup<'a>(
+    core::ptr::NonNull<X509_STORE_CTX>,
+    core::marker::PhantomData<&'a X509_STORE>,
+);
+
+impl<'a> IssuerLookup<'a> {
+    pub fn new(store: &'a X509_STORE) -> Option<Self> {
+        let ctx = core::ptr::NonNull::new(X509_STORE_CTX_new())?;
+        let lookup = Self(ctx, core::marker::PhantomData);
+        // SAFETY: the context keeps a pointer to `store`, which outlives it.
+        let ready = unsafe {
+            X509_STORE_CTX_init(
+                ctx.as_ptr(),
+                store,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        (ready == 1).then_some(lookup)
+    }
+
+    pub fn issuer_of(&self, cert: &X509) -> Option<OwnedX509> {
+        let mut issuer = None;
+        // SAFETY: `new` initialized the context.
+        unsafe { X509_STORE_CTX_get1_issuer(&mut issuer, self.0.as_ptr(), cert) };
+        issuer
+    }
+}
+
+impl Drop for IssuerLookup<'_> {
+    fn drop(&mut self) {
+        // SAFETY: we own the context, freed once.
+        unsafe { X509_STORE_CTX_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns one `CRYPTO_BUFFER` reference. A slice of them is a `CRYPTO_BUFFER **`.
+#[repr(transparent)]
+pub struct OwnedCryptoBuffer(core::ptr::NonNull<CRYPTO_BUFFER>);
+
+impl OwnedCryptoBuffer {
+    pub fn new(data: &[u8]) -> Option<Self> {
+        // SAFETY: BoringSSL copies `data`, and no pool is asked for.
+        let buf = unsafe { CRYPTO_BUFFER_new(data.as_ptr(), data.len(), core::ptr::null_mut()) };
+        core::ptr::NonNull::new(buf).map(Self)
+    }
+}
+
+impl Drop for OwnedCryptoBuffer {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { CRYPTO_BUFFER_free(self.0.as_ptr()) }
+    }
+}
+
+/// A `BIO` that reads from a slice.
+pub struct MemBio<'a>(core::ptr::NonNull<BIO>, core::marker::PhantomData<&'a [u8]>);
+
+impl<'a> MemBio<'a> {
+    pub fn new(data: &'a [u8]) -> Option<Self> {
+        // SAFETY: the `BIO` only reads `data`, which outlives it.
+        let bio = unsafe { BIO_new_mem_buf(data.as_ptr().cast(), data.len() as ossl_ssize_t) };
+        core::ptr::NonNull::new(bio).map(|bio| Self(bio, core::marker::PhantomData))
+    }
+
+    pub fn as_ptr(&self) -> *mut BIO {
+        self.0.as_ptr()
+    }
+
+    /// The next PEM block that `read` accepts. `None` at the end, or when it does not parse.
+    fn read_pem<T>(&self, read: PemReader<T>) -> Option<core::ptr::NonNull<T>> {
+        use core::ptr::null_mut;
+        // SAFETY: the `BIO` is live; no out-parameter, password callback or password is passed.
+        core::ptr::NonNull::new(unsafe { read(self.as_ptr(), null_mut(), None, null_mut()) })
+    }
+
+    pub fn read_x509(&self) -> Option<OwnedX509> {
+        self.read_pem(PEM_read_bio_X509).map(OwnedX509)
+    }
+
+    /// Also accepts a `TRUSTED CERTIFICATE` block.
+    pub fn read_x509_aux(&self) -> Option<OwnedX509> {
+        self.read_pem(PEM_read_bio_X509_AUX).map(OwnedX509)
+    }
+
+    pub fn read_x509_crl(&self) -> Option<OwnedX509Crl> {
+        self.read_pem(PEM_read_bio_X509_CRL).map(OwnedX509Crl)
+    }
+
+    pub fn read_private_key(&self) -> Option<OwnedEvpPkey> {
+        self.read_pem(PEM_read_bio_PrivateKey).map(OwnedEvpPkey)
+    }
+}
+
+/// A `PEM_read_bio_*` function: it returns a new reference, or null.
+type PemReader<T> =
+    unsafe extern "C" fn(*mut BIO, *mut *mut T, Option<pem_password_cb>, *mut c_void) -> *mut T;
+
+impl Drop for MemBio<'_> {
+    fn drop(&mut self) {
+        // SAFETY: we own the `BIO`, freed once.
+        unsafe { BIO_free(self.0.as_ptr()) };
     }
 }
 
@@ -483,12 +673,13 @@ impl X509 {
                 return NID_undef;
             };
             let mut input = der.data.cast_const();
-            let params =
-                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long);
-            let Some(hash) = params.as_ref().map(|params| params.hashAlgorithm) else {
+            let Some(params) =
+                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long)
+            else {
                 ERR_clear_error();
                 return NID_undef;
             };
+            let hash = params.0.as_ref().hashAlgorithm;
             // RFC 4055 §3.1: `hashAlgorithm [0] HashAlgorithm DEFAULT sha1Identifier`
             digest_nid = NID_sha1;
             if !hash.is_null() {
@@ -501,9 +692,17 @@ impl X509 {
                 );
                 digest_nid = OBJ_obj2nid(object);
             }
-            RSA_PSS_PARAMS_free(params);
         }
         digest_nid
+    }
+
+    pub fn to_der(&self) -> Option<OpensslBytes> {
+        let mut der: *mut u8 = core::ptr::null_mut();
+        // SAFETY: `self` is live. Given null, `i2d_X509` allocates `len` bytes or leaves it null.
+        unsafe {
+            let len = i2d_X509(self, &raw mut der);
+            OpensslBytes::from_raw(der, len as usize)
+        }
     }
 
     /// Iterates this certificate's Subject Common Names in order.
@@ -516,24 +715,30 @@ impl X509 {
     }
 }
 
-/// An `ASN1_STRING_to_UTF8`-transcoded name. `OPENSSL_free`s on drop.
-pub struct Utf8Name {
+/// Bytes that BoringSSL has allocated. `OPENSSL_free`s on drop.
+pub struct OpensslBytes {
     ptr: core::ptr::NonNull<u8>,
     len: usize,
 }
 
-impl core::ops::Deref for Utf8Name {
+impl OpensslBytes {
+    /// SAFETY: `ptr` is null, or `len` bytes from `OPENSSL_malloc` that the caller gives up.
+    pub unsafe fn from_raw(ptr: *mut u8, len: usize) -> Option<Self> {
+        core::ptr::NonNull::new(ptr).map(|ptr| Self { ptr, len })
+    }
+}
+
+impl core::ops::Deref for OpensslBytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        // SAFETY: `ASN1_STRING_to_UTF8` allocated `len` readable bytes at `ptr`
-        // and this struct owns them until `Drop`.
+        // SAFETY: this struct owns `len` readable bytes at `ptr` until `Drop`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
-impl Drop for Utf8Name {
+impl Drop for OpensslBytes {
     fn drop(&mut self) {
-        // SAFETY: `ptr` was returned by `ASN1_STRING_to_UTF8` (OPENSSL_malloc).
+        // SAFETY: `ptr` is from `OPENSSL_malloc`, freed once.
         unsafe { OPENSSL_free(self.ptr.as_ptr().cast()) }
     }
 }
@@ -548,16 +753,15 @@ pub struct CommonNames<'a> {
 }
 
 impl Iterator for CommonNames<'_> {
-    type Item = Utf8Name;
+    type Item = OpensslBytes;
 
-    fn next(&mut self) -> Option<Utf8Name> {
+    fn next(&mut self) -> Option<OpensslBytes> {
         if self.subject.is_null() {
             return None;
         }
         // SAFETY: the subject and its entries are owned by the certificate
         // borrowed for `'a`; every accessor is guarded against null returns
-        // and non-positive lengths. `ASN1_STRING_to_UTF8` allocates a fresh
-        // buffer that `Utf8Name` owns.
+        // and `ASN1_STRING_to_UTF8` allocates `len` bytes or leaves `out` null.
         unsafe {
             loop {
                 let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
@@ -575,14 +779,9 @@ impl Iterator for CommonNames<'_> {
                 }
                 let mut out: *mut u8 = core::ptr::null_mut();
                 let len = ASN1_STRING_to_UTF8(&raw mut out, data);
-                let Some(ptr) = core::ptr::NonNull::new(out) else {
-                    continue;
-                };
-                let Ok(len) = usize::try_from(len) else {
-                    OPENSSL_free(ptr.as_ptr().cast());
-                    continue;
-                };
-                return Some(Utf8Name { ptr, len });
+                if let Some(name) = OpensslBytes::from_raw(out, len as usize) {
+                    return Some(name);
+                }
             }
         }
     }
@@ -605,9 +804,14 @@ impl SSL {
     }
 
     /// Client side: the SNI host name to send, set before the handshake. `false` if BoringSSL rejects it.
-    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+    pub fn set_servername(&mut self, hostname: &bun_core::ZStr) -> bool {
         // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
+    }
+
+    /// The peer's leaf certificate. A server's cert chain leaves it out.
+    pub fn peer_certificate(&self) -> Option<OwnedX509> {
+        SSL_get_peer_certificate(self)
     }
 
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
@@ -733,13 +937,11 @@ unsafe extern "C" {
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
-    pub fn SHA1(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SHA-256 ──────────────────────────────────────────────────────────
     pub fn SHA256_Init(sha: *mut SHA256_CTX) -> c_int;
     pub fn SHA256_Update(sha: *mut SHA256_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int;
-    pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SSL ──────────────────────────────────────────────────────────────
     pub safe fn SSL_library_init() -> c_int;
@@ -748,9 +950,10 @@ unsafe extern "C" {
     pub fn SSL_get_peer_cert_chain(ssl: *const SSL) -> *mut struct_stack_st_X509;
 
     // ── X509 ─────────────────────────────────────────────────────────────
-    pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
-    pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
-    pub fn X509_free(x509: *mut X509);
+    fn d2i_X509(out: *mut *mut X509, inp: &mut *const u8, len: c_long) -> Option<OwnedX509>;
+    pub fn i2d_X509(x: *const X509, outp: *mut *mut u8) -> c_int;
+    safe fn X509_up_ref(x: &X509) -> c_int;
+    fn X509_free(x509: *mut X509);
     fn X509_get_signature_nid(x509: *const X509) -> c_int;
     fn X509_get0_signature(
         out_sig: *mut *const asn1_string_st,
@@ -767,7 +970,7 @@ unsafe extern "C" {
         out: *mut *mut RSA_PSS_PARAMS,
         inp: *mut *const u8,
         len: c_long,
-    ) -> *mut RSA_PSS_PARAMS;
+    ) -> Option<OwnedRsaPssParams>;
     fn RSA_PSS_PARAMS_free(params: *mut RSA_PSS_PARAMS);
     fn OBJ_obj2nid(obj: *const ASN1_OBJECT) -> c_int;
     fn X509_digest(
@@ -914,7 +1117,7 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 unsafe extern "C" {
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
-    pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
+    fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_session_id_context(
         ctx: *mut SSL_CTX,
@@ -960,16 +1163,16 @@ unsafe extern "C" {
         protos: *const u8,
         protos_len: usize,
     ) -> c_int;
-    pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
-    pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
+    pub safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> Option<&X509_STORE>;
+    pub fn SSL_CTX_add1_chain_cert(ctx: &SSL_CTX, x509: &X509) -> c_int;
     pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
-    pub fn PEM_read_bio_X509_AUX(
+    fn PEM_read_bio_X509_AUX(
         bp: *mut BIO,
         x: *mut *mut X509,
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509;
-    pub fn OPENSSL_free(ptr: *mut c_void);
+    fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
     /// Returns a static NUL-terminated string, or NULL if unknown.
@@ -1019,8 +1222,8 @@ unsafe extern "C" {
 
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
-    pub fn BIO_free(bio: *mut BIO) -> c_int;
-    pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
+    fn BIO_free(bio: *mut BIO) -> c_int;
+    fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub safe fn BIO_get_new_index() -> c_int;
     pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
     pub fn BIO_meth_set_write(
@@ -1157,8 +1360,8 @@ unsafe extern "C" {
     pub fn SSL_CTX_set_min_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
     pub fn SSL_CTX_set_max_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
     pub fn SSL_CTX_set_verify(ctx: *mut SSL_CTX, mode: c_int, callback: SSL_verify_cb);
-    pub fn SSL_CTX_use_certificate(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
-    pub fn SSL_CTX_use_PrivateKey(ctx: *mut SSL_CTX, pkey: *mut EVP_PKEY) -> c_int;
+    pub fn SSL_CTX_use_certificate(ctx: &SSL_CTX, x509: &X509) -> c_int;
+    pub fn SSL_CTX_use_PrivateKey(ctx: &SSL_CTX, pkey: &EVP_PKEY) -> c_int;
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
@@ -1173,12 +1376,12 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         userdata: *mut c_void,
     ) -> c_int;
-    pub fn CRYPTO_BUFFER_new(
+    fn CRYPTO_BUFFER_new(
         data: *const u8,
         len: usize,
         pool: *mut CRYPTO_BUFFER_POOL,
     ) -> *mut CRYPTO_BUFFER;
-    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
     /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
     /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
     pub fn X509_LAZY_CERT_SET_new(
@@ -1188,41 +1391,61 @@ unsafe extern "C" {
     pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
-    pub fn PEM_read_bio_X509(
+    fn PEM_read_bio_X509(
         bp: *mut BIO,
         x: *mut *mut X509,
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509;
-    pub fn PEM_read_bio_PrivateKey(
+    fn PEM_read_bio_PrivateKey(
         bp: *mut BIO,
         x: *mut *mut EVP_PKEY,
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut EVP_PKEY;
-    pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
+    fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
 
     /// Returns a static NUL-terminated string, never NULL.
     pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
-    pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
-    pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub safe fn X509_STORE_add_cert(store: &X509_STORE, x509: &X509) -> c_int;
+    pub safe fn X509_STORE_add_crl(store: &X509_STORE, crl: &X509_CRL) -> c_int;
+    pub fn X509_STORE_set_flags(store: &X509_STORE, flags: c_ulong) -> c_int;
+    fn X509_STORE_free(store: *mut X509_STORE);
+    safe fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
+    fn X509_STORE_CTX_init(
+        ctx: *mut X509_STORE_CTX,
+        store: &X509_STORE,
+        x509: *mut X509,
+        chain: *mut struct_stack_st_X509,
+    ) -> c_int;
+    fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
+    /// Leaves `issuer` as it is when there is none.
+    fn X509_STORE_CTX_get1_issuer(
+        issuer: &mut Option<OwnedX509>,
+        ctx: *mut X509_STORE_CTX,
+        x: &X509,
+    ) -> c_int;
     pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
-    pub fn X509_CRL_free(crl: *mut X509_CRL);
-    pub fn PEM_read_bio_X509_CRL(
+    fn X509_CRL_free(crl: *mut X509_CRL);
+    fn PEM_read_bio_X509_CRL(
         bp: *mut BIO,
         x: *mut *mut X509_CRL,
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509_CRL;
 
-    /// Returns a NEW reference (caller frees) or null when the peer sent no
-    /// certificate.
-    pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+    /// `None` when the peer sent no certificate.
+    safe fn SSL_get_peer_certificate(ssl: &SSL) -> Option<OwnedX509>;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
-    pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
+    safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
+    fn SSL_SESSION_free(session: *mut SSL_SESSION);
+    fn d2i_SSL_SESSION(
+        out: *mut *mut SSL_SESSION,
+        inp: &mut *const u8,
+        len: c_long,
+    ) -> Option<OwnedSslSession>;
 }

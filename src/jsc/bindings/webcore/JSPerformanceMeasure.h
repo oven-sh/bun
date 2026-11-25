@@ -20,58 +20,29 @@
 
 #pragma once
 
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "JSPerformanceEntry.h"
 #include "PerformanceMeasure.h"
 
 namespace WebCore {
 
-class JSPerformanceMeasure : public JSPerformanceEntry {
+class JSPerformanceMeasure final : public JSDOMInterface<JSPerformanceMeasure, PerformanceMeasure, JSPerformanceEntry> {
 public:
-    using Base = JSPerformanceEntry;
-    static JSPerformanceMeasure* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceMeasure>&& impl)
-    {
-        JSPerformanceMeasure* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasure>(globalObject->vm())) JSPerformanceMeasure(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
+    using JSDOMInterface::JSDOMInterface;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMeasure, m_subspaceForPerformanceMeasure);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
+    using Base::isReachableFromOpaqueRoots;
+
     mutable JSC::WriteBarrier<JSC::Unknown> m_detail;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     DECLARE_VISIT_CHILDREN;
-
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    PerformanceMeasure& wrapped() const
-    {
-        return static_cast<PerformanceMeasure&>(Base::wrapped());
-    }
-
-protected:
-    JSPerformanceMeasure(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceMeasure>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
 };
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceMeasure> {
     using WrapperClass = JSPerformanceMeasure;
-    using ToWrappedReturnType = PerformanceMeasure*;
 };
 
 } // namespace WebCore

@@ -1,0 +1,14 @@
+# f1 = weigh
+# -- source: null-test-on-a-reference-without-types.js
+# function weigh(item) {
+#   if (item === null) return 0;
+#   return item.weight;
+# }
+# globalThis.answer = weigh(input ? { weight: +input } : null);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 6

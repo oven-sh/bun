@@ -3,8 +3,9 @@ import { expect } from "bun:test";
 import { chmodSync, writeFileSync } from "fs";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { buildFlags } from "../harness/flags";
 import { describe, test } from "../supported";
-import { compareProgram, functionsOf } from "./same-output";
+import { compareBuilds, compareProgram, functionsOf } from "./same-output";
 
 describe("same-output", () => {
   test("a Bun generates the same output as itself", async () => {
@@ -18,8 +19,8 @@ console.log(add([1, 2, 3]), [..."abc"].map(letter => letter.toUpperCase()).join(
 `,
     });
     expect(
-      await compareProgram(bunExe(), bunExe(), join(String(folder), "program.ts"), join(String(folder), "work")),
-    ).toBeUndefined();
+      await compareBuilds(bunExe(), bunExe(), join(String(folder), "program.ts"), join(String(folder), "work")),
+    ).toEqual({ difference: undefined, builtByNeither: false });
   }, 120_000);
 
   test.skipIf(isWindows)(
@@ -39,7 +40,7 @@ console.log(sum);
       const program = join(String(folder), "program.ts");
       // The wrapper adds a flag to every build, so it stands in for a Bun whose compiler does something else.
       const wrapper = join(String(folder), "other-bun");
-      writeFileSync(wrapper, `#!/bin/sh\nexec "${bunExe()}" "$@" --aot-heat=everything-is-cold\n`);
+      writeFileSync(wrapper, `#!/bin/sh\nexec "${bunExe()}" "$@" ${buildFlags.hugeHeap}\n`);
       chmodSync(wrapper, 0o755);
       const difference = await compareProgram(bunExe(), wrapper, program, join(String(folder), "work"));
       expect(difference?.functions.length).toBeGreaterThan(0);

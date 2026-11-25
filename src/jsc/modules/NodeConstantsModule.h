@@ -24,7 +24,6 @@
 #include <openssl/ssl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <zlib.h>
 
 #ifndef OPENSSL_NO_ENGINE
 #include <openssl/engine.h>

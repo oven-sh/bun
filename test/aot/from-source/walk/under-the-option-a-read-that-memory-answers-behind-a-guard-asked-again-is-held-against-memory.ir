@@ -1,0 +1,31 @@
+# -- source: main.js
+# class Crate { constructor(tag) { this.tag = tag; } }
+# function mark(item, note) { item.note = note; }
+# function twice(item, above, turns, when) {
+#   let same = 0;
+#   for (let turn = 0; turn < turns; turn++) {
+#     const first = item.note;
+#     const second = item.note;
+#     if (first === second) same++;
+#     if (turn === when) above.note = "above";
+#   }
+#   return same;
+# }
+# const spare = new Crate("spare");
+# mark(spare, "own");
+# const one = new Crate("one"), two = new Crate("two");
+# print(twice(one, new Crate("other"), 20, 5), twice(one, Crate.prototype, 20, 5), twice(two, spare, 20, 99), two.note);
+# -- end of source
+# f2 = twice. The second `item.note` of a turn is answered by what the walk remembers of the first. Where proofs are checked at run time (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for) such a read is walked
+# once more and held against memory, BUT ONLY WHERE THE OPERATION HAS BUILT NOTHING BUT CONSTANTS. The guard that the read leans on is asked again in front of it
+# (under-the-option-a-guard-that-a-read-leans-on-is-asked-again-in-the-turn.ir), and that builds two records: the read no longer looked as if it had built nothing, and went unasked: one net hid what its neighbor was to see.
+# What the guard asked again builds for itself is not counted as the operation's. Two versions of the loop, two reads each, the second one read again: four reads; without that, two. Ten tests of guards; without the guards asked
+# again, four.
+# RUN(HELD): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# HELD-COUNT-4: = GetSlotOrUndefined
+# RUN(ASKED): walk f2 mechanisms=all testing=CheckProofsAtRunTime
+# ASKED-COUNT-10: = AreMembersUnchanged
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: 20 20 20 above
+# RIGHT-NEXT: exited with 0
+# RIGHT-NEXT: the source prints the same

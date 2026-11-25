@@ -2,14 +2,8 @@
 //! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
 //! told to emit RGBA, encoders are fed RGBA, so Image.rs never branches on
 //! channel layout.
-//!
-//! Memory ownership: decode returns global-allocator-owned RGBA. Encode
-//! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
-//! JS layer can hand the buffer to `ArrayBuffer.toJSWithContext` without a
-//! dupe — see `Encoded` below.
 
-use core::ffi::{c_int, c_void};
-use core::ptr::NonNull;
+use core::ffi::c_int;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
@@ -34,10 +28,10 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/bun_png/bun_webp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
-///     libz vs our zlib-ng. Keeping these static also makes output bytes
+///     libz (measured against zlib-ng). Keeping these static also makes output bytes
 ///     and the `quality` scale match Linux.
 ///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
 ///     kernel on the geometry step).
@@ -272,8 +266,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
-        // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
-        // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
+        // ImageIO is no faster (for JPEG, Huffman is the
+        // bottleneck and isn't vectorisable; for PNG, zlib-ng beat ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
@@ -354,25 +348,8 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
         }
-        Format::Jpeg => {
-            // turbojpeg's header decode is already cheap (no scan data read).
-            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            (w, h) = handle.read_header(bytes)?;
-        }
-        Format::Webp => {
-            let mut cw: c_int = 0;
-            let mut ch: c_int = 0;
-            // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) }
-                == 0
-                || cw <= 0
-                || ch <= 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(cw).expect("int cast");
-            h = u32::try_from(ch).expect("int cast");
-        }
+        Format::Jpeg => (w, h) = jpeg::dimensions(bytes)?,
+        Format::Webp => (w, h) = webp::dimensions(bytes)?,
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
             w = ih.width;
@@ -465,60 +442,6 @@ impl Default for EncodeOptions {
     }
 }
 
-/// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
-/// than dupe into the global allocator so JS can own it,
-/// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
-/// the matching free — one allocation, zero copies, for the final output.
-///
-/// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
-/// be passed straight through; the `ctx` arg is unused.
-pub(crate) struct Encoded {
-    // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
-    // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub(crate) bytes: NonNull<[u8]>,
-    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-}
-
-impl Drop for Encoded {
-    fn drop(&mut self) {
-        // SAFETY: `bytes` was allocated by the codec whose deallocator is `free`.
-        unsafe {
-            (self.free)(
-                self.bytes.as_ptr().cast::<u8>().cast::<c_void>(),
-                core::ptr::null_mut(),
-            )
-        }
-    }
-}
-
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
-/// 2-arg JSC deallocator signature.
-// Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
-// so this is a macro that mints a static trampoline per call site.
-#[macro_export]
-macro_rules! encoded_wrap_free {
-    ($f:path) => {{
-        unsafe extern "C" fn call(p: *mut ::core::ffi::c_void, _: *mut ::core::ffi::c_void) {
-            // SAFETY: p was allocated by the matching allocator for `$f`.
-            unsafe { $f(p) }
-        }
-        call as unsafe extern "C" fn(*mut ::core::ffi::c_void, *mut ::core::ffi::c_void)
-    }};
-}
-
-impl Encoded {
-    pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
-        let (ptr, len, _capacity) = bytes.into_parts();
-        Encoded {
-            bytes: NonNull::slice_from_raw_parts(ptr, len),
-            // `bytes` came from a `Vec<u8>` (the global allocator); free with
-            // `default_alloc::free` so it agrees with the `#[global_allocator]`.
-            free: encoded_wrap_free!(bun_alloc::default_alloc::free),
-        }
-    }
-}
-
 /// `icc` is the ICC profile to embed in the output container (JPEG APP2, PNG
 /// iCCP, WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
 /// pipeline forwards this from the decode step so a non-sRGB source
@@ -530,7 +453,7 @@ pub(crate) fn encode(
     height: u32,
     opts: EncodeOptions,
     icc: Option<&[u8]>,
-) -> Result<Encoded, Error> {
+) -> Result<Vec<u8>, Error> {
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise
@@ -555,7 +478,7 @@ pub(crate) fn encode(
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
-        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
+        // libjpeg's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
         Format::Heic | Format::Avif => {
@@ -564,7 +487,7 @@ pub(crate) fn encode(
                 return match system_backend::BackendError::split(system_backend::encode(
                     rgba, width, height, &opts,
                 )) {
-                    Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
+                    Ok(Some(buf)) => Ok(buf),
                     // BackendUnavailable collapses into UnsupportedOnPlatform.
                     Ok(None) => Err(Error::UnsupportedOnPlatform),
                     Err(e) => Err(e),
@@ -634,13 +557,6 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
-    fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
-}
-
-/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
-pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
-    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
-    unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
@@ -649,6 +565,13 @@ pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
 pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
+}
+
+fn try_with_capacity(capacity: usize) -> Result<Vec<u8>, Error> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity)
+        .map_err(|_| Error::OutOfMemory)?;
+    Ok(vec)
 }
 
 pub(crate) fn resize(
@@ -681,7 +604,7 @@ pub(crate) fn resize(
         i32::try_from(dh).expect("int cast"),
         f as i32,
     );
-    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    let mut block = try_with_capacity(out_sz + scratch_sz)?;
     // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
@@ -702,7 +625,7 @@ pub(crate) fn resize(
     unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.shrink_to_fit();
+    let _ = block.try_shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
@@ -729,7 +652,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         }
     }
     let out_len = (dw as usize) * (dh as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
@@ -760,7 +683,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
         }
     }
     let out_len = (w as usize) * (h as usize) * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    let mut out = try_with_capacity(out_len)?;
     // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(

@@ -1,0 +1,24 @@
+# f1 = known
+# -- source: map-has-in-a-loop.ts
+# function known(prices: Map<string, number>, names: string[]): number {
+#   let count = 0;
+#   for (let k = 0; k < names.length; k++) if (prices.has(names[k]!)) count++;
+#   return count;
+# }
+# declare const input: any;
+# const prices = new Map<string, number>();
+# prices.set(String(input), +input);
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = known(prices, names);
+# -- end of source
+# The map is searched in line, by the tag of its string keys. What every search asks of the map is read before the loop, in both of its versions.
+# RUN: walk f1 mechanisms=all-Inlining
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasStringKeyByTag
+# CHECK: = CollectionColumns {{*}}keysAreStrings
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: CollectionColumns
+# CHECK: = HasStringKeyByTag

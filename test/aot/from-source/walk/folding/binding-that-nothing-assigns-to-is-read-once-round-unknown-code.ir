@@ -1,0 +1,18 @@
+# -- source: binding-that-nothing-assigns-to-is-read-once-round-unknown-code.js
+# function make(load) { function f() { const a = cfg.x; print("between"); return a + cfg.x; } const cfg = load(f); return f; }
+# const limits = { x: 1 };
+# function top() { const a = limits.x; print("between"); return a + limits.x; }
+# print(make(() => ({ x: 2 }))(), top());
+# -- end of source
+# `const cfg = load(f)`, read in a function that is declared in front of it and leaves inside the initializer: its closure is made over the scope, and the name lies in a slot. (A closure that is made behind the store takes the value itself: the front end sees to that.)
+# Nothing assigns to the name. What the first read found behind its check is what the slot holds for good,
+# so the read behind code that nobody knows is the value that the first read found.
+# RUN: walk f4 mechanisms=all
+# CHECK: = GetEnvironmentField
+# CHECK: = Call {{*}}calleeName="print"
+# CHECK-NOT: GetEnvironmentField
+# RUN(WITHHELD): walk f4 mechanisms=all-Folding
+# WITHHELD: = Call {{*}}calleeName="print"
+# WITHHELD: = GetEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

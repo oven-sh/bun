@@ -1225,7 +1225,7 @@ impl<'p, 'a> Walker<'p, 'a> {
     }
 
     #[allow(
-        clippy::large_stack_frames,
+        clippy::large_unopt_stack_frames,
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn expr_at_depth(&mut self, expr: &'p Expr) {
@@ -1356,7 +1356,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             }
             Data::ETemplate(e) => {
                 self.byte(t | 14);
-                self.optional_expr(e.tag.as_ref());
+                self.optional_expr(e.tag.as_ref().map(|tag| &tag.expr));
                 self.number(e.parts().len() as u64);
                 for part in e.parts() {
                     self.expr(&part.value);

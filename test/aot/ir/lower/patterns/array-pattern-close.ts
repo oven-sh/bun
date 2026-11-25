@@ -6,11 +6,8 @@
 // CHECK: [[iterator]] = IteratorOpen
 // CHECK: handler=[[landing]]():
 // CHECK-NEXT: = IteratorResume [[iterator]] stepIndex=0
-// CHECK: [[default]]() handler=[[landing]]():
-// CHECK-NEXT: [[callee]] = Convert [[f]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next [[call]]()
-// CHECK-NEXT: [[call]]() handler=[[landing]]():
-// CHECK-NEXT: = Call [[callee]] calleeName="f"
+// CHECK: [[default]]({{*}}) handler=[[landing]]():
+// CHECK-NEXT: = Call [[f]] calleeName="f"
 // CHECK: IteratorClose [[iterator]] @
 // CHECK: [[landing]]() role=IterationCleanup subject=[[iterator]]:
 // CHECK: IteratorClose [[iterator]] completion=Throw
@@ -24,11 +21,7 @@
 // CHECK-NOT: handler=
 // CHECK: [[memberIterator]] = IteratorOpen
 // CHECK: handler=[[memberLanding]]():
-// CHECK-NEXT: [[memberCallee]] = Convert {{*}}declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next [[memberCall]]()
-// CHECK-NEXT: [[memberCall]]() handler=[[memberLanding]]():
-// CHECK-NEXT: [[result]] = Call [[memberCallee]] calleeName="o"
-// CHECK-NEXT: [[object]] = Convert [[result]] declared={type={{*}}flags=[IsExpected]}
+// CHECK-NEXT: [[object]] = Call {{*}}calleeName="o"
 // CHECK-NEXT: = IteratorResume [[memberIterator]] stepIndex=0
 // CHECK: PropSet [[object]], {{*}}key="p"
 // CHECK: IteratorClose [[memberIterator]] @

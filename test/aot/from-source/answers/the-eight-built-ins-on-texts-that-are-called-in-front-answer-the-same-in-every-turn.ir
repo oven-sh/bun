@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: string[] = JSON.parse('["ab","AB"," ab","ab ","b","a","\\u00e9x","\\u00c9X"]');
+# function count(q: string, a: number, b: number): number { let n = 0; for (let i = 0; i < list.length; i++) if (list[i] === q.toLowerCase() || list[i] === q.toUpperCase() || list[i] === q.trim() || list[i] === q.trimStart() || list[i] === q.trimEnd() || list[i] === q.slice(a, b) || list[i] === q.substring(a, b) || list[i] === q.substr(a, b)) n += i + 1; return n; }
+# function lowered(q: string): number { let n = 0; for (let i = 0; i < list.length; i++) if (list[i] === q.toLowerCase()) n += i + 1; return n; }
+# (globalThis as any).kept = [count, lowered];
+# print(count(" aB ", 1, 2), count("Ab", 0, 1), count("\u00c9x", 0, 2), lowered("AB"), lowered("\u00c9X"));
+# -- end of source
+# The right side of the net: each of the eight is made again in every turn and answers what it answered in front. The walk shows the call twice: in front and in the turn.
+# RUN(PLAIN): run-in-shell mechanisms=all
+# PLAIN: 6 3 15 1 7
+# PLAIN-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
+# HELD: 6 3 15 1 7
+# HELD-NEXT: exited with 0
+# RUN(STANDS): walk f2:Body mechanisms=all testing=CheckProofsAtRunTime,CheckHoistedCallsAtRunTime
+# STANDS: source=HoistedCall
+# A hardened build is the proofs' word alone: there nothing is made again.
+# RUN(HARDENED): walk f2:Body mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED-NOT: source=HoistedCall

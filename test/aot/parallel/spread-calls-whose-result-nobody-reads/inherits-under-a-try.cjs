@@ -1,0 +1,1 @@
+const util = require("node:util"); function Old() {} function Up() {} for (const bad of [[Old, Up], [Old, 5], [null, Up]]) { try { util.inherits(...bad); console.log("ok"); } catch (e) { console.log(e.code); } }

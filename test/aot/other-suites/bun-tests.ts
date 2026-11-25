@@ -51,7 +51,7 @@ const found = () =>
   (readdirSync(root, { recursive: true, withFileTypes: true }) as Dirent[])
     .filter(entry => entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name) && !entry.parentPath.split(/[\\/]/).includes("node_modules"))
     .map(entry => relative(process.cwd(), resolve(entry.parentPath, entry.name)).replaceAll("\\", "/"));
-const files = (option("--list") ? readFileSync(option("--list")!, "utf8").split("\n").filter(file => file) : found())
+const files = (option("--list") ? readFileSync(option("--list")!, "utf8").split("\n").map(line => line.split("\t")[0]).filter(file => file) : found())
   .filter(file => !only || only.test(file))
   .sort()
   .slice(Number(option("--from")) || 0, Number(option("--to")) || undefined);
@@ -105,7 +105,7 @@ async function judge(file: string): Promise<string[]> {
   const compiled = await run(file, isPlain ? [] : ["--debug-aot", ...flags], seconds);
   const lines: string[] = [];
   const death = typeof compiled.code === "string" && compiled.code !== plain.code ? compiled.code : /^panic\b|internal compiler error/m.test(compiled.printed) && !/^panic\b/m.test(plain.printed) ? "a panic" : undefined;
-  if (death) lines.push(`DIES ${file}: ${death} (plain ${plain.code}): ${firstMatch(compiled.printed, /panic|internal compiler error|AOT validation|Trap|Segmentation/)}`);
+  if (death) lines.push(`DIES ${file}: ${death} (plain ${plain.code}): ${firstMatch(compiled.printed, /panic|internal compiler error|Trap|Segmentation/)}`);
   else if (compiled.verdicts.size === 0) lines.push(`NOT-BUILT ${file}: ${firstMatch(compiled.printed, /^error\b/) || firstMatch(compiled.printed, /\berror\b/i) || compiled.code}`);
   if (compiled.verdicts.size > 0 || death) {
     for (const [name, theirs] of plain.verdicts) {

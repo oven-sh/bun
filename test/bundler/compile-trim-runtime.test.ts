@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, isLinux, isMacOS, isWindows, readElf64ProgramHeaders } from "harness";
-import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
@@ -73,9 +73,9 @@ const saysHello = { stdout: "hello world\n", stderr: "", exitCode: 0 };
 
 function printedBy(trimmed: Build) {
   const [, size, removed] =
-    new RegExp(
-      ` compile +${trimmed.name}(?:\\.exe)? +(\\d+\\.\\d) MB \\((\\d+\\.\\d) MB of unused Bun APIs removed\\)\\n`,
-    ).exec(trimmed.stdout) ?? [];
+    new RegExp(` compile +${trimmed.name}(?:\\.exe)?  (\\d+\\.\\d) MB  \\((\\d+\\.\\d) MB trimmed\\)\\n`).exec(
+      trimmed.stdout,
+    ) ?? [];
   return { size, removed: Number(removed) };
 }
 
@@ -177,6 +177,14 @@ test.concurrent("--trim requires --compile", async () => {
   expect(built.exitCode).not.toBe(0);
 });
 
+test("--trim-without suggests a name that it takes", async () => {
+  const command = [bunExe(), "build", "--compile", "--trim-without=sqlite", "hello.ts", "--outfile", "unknown"];
+  expect(await run(command, folder)).toMatchObject({
+    stderr: 'error: --trim-without: unknown feature "sqlite". Did you mean "Sqlite"?\n',
+    exitCode: 1,
+  });
+});
+
 (canTrim ? describe.concurrent : describe.skip)("--trim", () => {
   test("--trim-without rejects an unknown feature name", async () => {
     const built = await run(
@@ -221,14 +229,18 @@ test.concurrent("--trim requires --compile", async () => {
     test.skipIf(isAot && !!unsupported)(
       `${how}: the build prints the executable's size and how much was removed`,
       async () => {
-        expect((await build("hello.ts", ...flags)).stdout).not.toContain(" MB");
+        expect((await build("hello.ts", ...flags)).stdout).not.toContain("trimmed");
         const trimmed = await build("hello.ts", ...flags, "--trim");
         const { size, removed } = printedBy(trimmed);
         expect({ size, stdout: trimmed.stdout }).toEqual({
           size: (sizeOf(trimmed) / 1e6).toFixed(1),
           stdout: trimmed.stdout,
         });
-        expect(removed).toBeGreaterThan(30);
+        // The figure is how much smaller --trim made the file, and never more than that.
+        const smaller = (sizeOf(await build("hello.ts", ...flags)) - sizeOf(trimmed)) / 1e6;
+        expect(smaller).toBeGreaterThan(isAot ? 15 : 30);
+        expect(removed).toBeLessThanOrEqual(smaller + 0.1);
+        expect(removed).toBeGreaterThan(smaller * 0.8);
       },
     );
 
@@ -310,7 +322,8 @@ test.concurrent("--trim requires --compile", async () => {
     "--compile --aot --compile-inspector: near-removed-features: much is removed, and the executable prints what bun prints, also with --preload in BUN_OPTIONS",
     async () => {
       const trimmed = await build("near-removed-features.ts", "--aot", "--compile-inspector", "--trim");
-      expect(printedBy(trimmed).removed).toBeGreaterThan(15);
+      // An executable that admits the inspector leaves out the same with and without --trim, so the build's own figure is 0.
+      expect((statSync(executablePath ?? bunExe()).size - sizeOf(trimmed)) / 1e6).toBeGreaterThan(15);
       const plain = await run([bunExe(), "run", "near-removed-features.ts"], folder, inFolder);
       expect({ ...plain, stdout: plain.stdout.split("\n")[0] }).toEqual({ stdout: "true 1", stderr: "", exitCode: 0 });
       expect(await run([trimmed.executable], folder, inFolder)).toEqual(plain);
@@ -324,8 +337,8 @@ test.concurrent("--trim requires --compile", async () => {
     const asks = await build("asks-for-the-checker.ts", "--trim");
     expect(await run([asks.executable], folder, inFolder)).toEqual({
       stdout:
-        "check: this executable doesn't include the type checker\n" +
-        "compile.aot isn't available in this build of Bun\n" +
+        `check: this executable doesn't include the type checker. To keep the type checker, build it with trim: { allow: ["bundler", "check"] }\n` +
+        `compile.aot: this executable doesn't include the ahead-of-time compiler. To keep the ahead-of-time compiler, build it with trim: { allow: ["bundler", "aot"] }\n` +
         "true\n",
       stderr: "",
       exitCode: 0,

@@ -1,5 +1,5 @@
 use crate::bind::{Decl, SymFlags};
-use crate::check::{Checker, Program};
+use crate::check::Checker;
 use crate::hir::{TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Files, Sym};
 use crate::types::{SigData, SigId};
@@ -7,21 +7,25 @@ use smallvec::SmallVec;
 
 pub const COMPILER_DECLARATIONS_PATH: &[u8] = b"/$bun/types/compiler.d.ts";
 
+#[derive(Copy, Clone)]
 pub(in crate::check) struct ProgramSymbols {
     compiler_declarations: Option<FileId>,
     bun_module_without_values: Option<Sym>,
     int32: Option<Sym>,
     int32_tag: Option<(FileId, TypeNodeId)>,
+    is_int32_written: bool,
 }
 
 impl ProgramSymbols {
-    fn resolve(files: &Files<'_>) -> ProgramSymbols {
+    /// Call before the first task: it reads the trees of every file.
+    pub(in crate::check) fn resolve(files: &Files<'_>) -> ProgramSymbols {
         let declared_in = files.by_path.get(COMPILER_DECLARATIONS_PATH);
         let mut symbols = ProgramSymbols {
             compiler_declarations: declared_in,
             bun_module_without_values: None,
             int32: None,
             int32_tag: None,
+            is_int32_written: false,
         };
         let bun_module = files
             .atoms
@@ -35,19 +39,26 @@ impl ProgramSymbols {
             symbols.bun_module_without_values = Some(bun_module);
         }
         symbols.int32 = find_type_alias(files, bun_module, b"int32", declared_in);
+        symbols.is_int32_written = files.is_compile_build()
+            && symbols
+                .int32
+                .is_some_and(|int32| is_spelled_by_some_file(files, int32));
         symbols.int32_tag = symbols
             .int32
             .and_then(|int32| find_tag_literal(files, int32));
         symbols
     }
 
-    /// The compiler declares a few types in the module "bun". Where no other file declares the module, nothing is known about its values.
     pub(in crate::check) fn is_bun_module_without_values(&self, module: Sym) -> bool {
         self.bun_module_without_values == Some(module)
     }
 
     pub(super) fn int32_alias(&self) -> Option<Sym> {
         self.int32
+    }
+
+    pub(super) fn is_int32_written(&self) -> bool {
+        self.is_int32_written
     }
 
     pub(super) fn is_int32_tag(&self, file: FileId, literal: TypeNodeId) -> bool {
@@ -85,6 +96,16 @@ fn find_type_alias(
         .then(|| files.canonical(alias))
 }
 
+fn is_spelled_by_some_file(files: &Files<'_>, alias: Sym) -> bool {
+    let name = files.symbol(alias).name;
+    files.modules.iter().any(|module| {
+        let hir = &module.trees().hir;
+        hir.names.iter().any(|it| it.text == name)
+            || hir.import_specs.iter().any(|it| it.imported == name)
+            || (hir.export_specs.iter()).any(|it| it.local == name || it.exported == name)
+    })
+}
+
 fn find_tag_literal(files: &Files<'_>, int32: Sym) -> Option<(FileId, TypeNodeId)> {
     let declarations = files.decls_of(int32);
     let (file, alias) = declarations.iter().find_map(|&(file, decl)| match decl {
@@ -107,7 +128,7 @@ impl Checker<'_, '_> {
         &self,
         signatures: &mut SmallVec<[SigId; 4]>,
     ) {
-        let Some(compiler_declarations) = self.p.aot_symbols().compiler_declarations else {
+        let Some(compiler_declarations) = self.p.aot_symbols.compiler_declarations else {
             return;
         };
         let is_of_program = |&signature: &SigId| {
@@ -117,12 +138,5 @@ impl Checker<'_, '_> {
         if signatures.iter().any(is_of_program) {
             signatures.retain(|signature| is_of_program(signature));
         }
-    }
-}
-
-impl<'s> Program<'s> {
-    pub(in crate::check) fn aot_symbols(&self) -> &ProgramSymbols {
-        self.aot_symbols
-            .get_or_init(|| ProgramSymbols::resolve(self.files))
     }
 }

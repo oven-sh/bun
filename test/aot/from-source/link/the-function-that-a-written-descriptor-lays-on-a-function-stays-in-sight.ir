@@ -1,0 +1,16 @@
+# A written, read-only descriptor lays a function on a function: it lies under the name as behind a store and does not go to unseen code: every caller of it is known and what it is handed stays in sight. f2 = init, L1 = the holder.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known one-callee
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L1 changes=[] stays-with-compiled-code
+# -- source: the-function-that-a-written-descriptor-lays-on-a-function-stays-in-sight.js
+# function make(name) {
+#   function init(inst, by) { inst.total += by.n; return inst.total; }
+#   function made() { return name; }
+#   Object.defineProperty(made, "init", { value: init });
+#   return made;
+# }
+# const one = make("one");
+# const holder = { total: 1 };
+# console.log(one.init(holder, { n: 2 }), one.init(holder, { n: 3 }), one());
+# -- end of source

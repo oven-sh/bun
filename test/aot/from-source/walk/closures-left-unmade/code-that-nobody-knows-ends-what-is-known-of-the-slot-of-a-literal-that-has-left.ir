@@ -1,0 +1,24 @@
+# what the state holds of a slot that defers its closure ends where it ends for any slot. The first call takes the scope off the record that the allocation listed. Then the literal is stored in a variable, so others can reach it, and code that nobody knows runs: the second call reads the slot off the literal again, as a load of the scope beside it.
+# f1 = make, f2 = run, f3 = next
+# -- source: code-that-nobody-knows-ends-what-is-known-of-the-slot-of-a-literal-that-has-left.js
+# var kept;
+# function make() { var state = 0; return { next: function () { for (var k = 0; k < 3; k++) state += k; return state; } }; }
+# function run(count) { var total = 0; for (var n = 0; n < count; n++) { var it = make(); total += it.next(); kept = it; print(total); total += it.next(); } return total; }
+# print(run(3), kept.next());
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: [[unmade]]: {{*}} = NewClosure [[scope]] {{*}}closureForm=Deferred
+# CHECK: [[literal]]: {{*}} = NewObject -, [[unmade]], [[scope]]
+# CHECK-NOT: GetDeferredClosureSlot
+# CHECK: = CallDirect [[scope]]{{*}}function=f3
+# CHECK-NOT: GetDeferredClosureSlot
+# CHECK: = PutModuleVariable
+# CHECK: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="next"
+# CHECK: [[read]]: {{*}} = GetCapture [[closure]]
+# CHECK: = CallDirect [[read]]{{*}}function=f3
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

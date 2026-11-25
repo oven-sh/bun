@@ -2,8 +2,11 @@
  * WebKit commit — determines prebuilt download URL + what to checkout
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
+ *
+ * After changing it, run `bun run pin-webkit`: webkit.sha256 pins the sha256
+ * of this version's tarballs, and a build refuses one that is not in there.
  */
-export const WEBKIT_VERSION = "4d45755fed4aeef19e95beb90d3d0c884a2812bd";
+export const WEBKIT_VERSION = "32300d4d274b67f5cd3b3f109da0f0589aff742f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -31,7 +34,7 @@ import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import type { Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
+import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags, linuxIcuRoot } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -84,13 +87,18 @@ function prebuiltSuffix(cfg: Config): string {
   return s;
 }
 
+export function webkitReleaseTag(version: string): string {
+  return version.startsWith("autobuild-") ? version : `autobuild-${version}`;
+}
+
+/** The sha256 of every tarball of `WEBKIT_VERSION`'s release. Written by scripts/pin-webkit.ts. */
+export const webkitSha256Sums: string = resolve(import.meta.dirname, "webkit.sha256");
+
 function prebuiltUrl(cfg: Config): string {
   const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
-  const version = cfg.webkitVersion;
-  const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
-  return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
+  return `https://github.com/oven-sh/WebKit/releases/download/${webkitReleaseTag(cfg.webkitVersion)}/${name}.tar.gz`;
 }
 
 /** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
@@ -253,16 +261,22 @@ function programObjects(cfg: Config, program: string): string {
   return wkLib(cfg, `${program}-objects`);
 }
 
+/** `data` joins every link. `code` is for WebKit's own programs: bun has src/icu. */
+interface IcuLibs {
+  data: string[];
+  code: string[];
+}
+
 /** ICU libs the prebuilt tarball bundles on linux/windows (macOS uses system ICU). */
-function prebuiltIcuLibs(cfg: Config): string[] {
+function prebuiltIcuLibs(cfg: Config): IcuLibs {
   if (cfg.windows) {
     const d = cfg.debug ? "d" : "";
-    return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
+    return { data: [`lib/sicudt${d}.lib`], code: [`lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`] };
   }
   if (cfg.linux || cfg.freebsd) {
-    return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
+    return { data: ["lib/libicudata.a"], code: ["lib/libicui18n.a", "lib/libicuuc.a"] };
   }
-  return []; // darwin: system ICU
+  return { data: [], code: [] }; // darwin: system ICU
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -374,6 +388,8 @@ const rows: Row[] = [
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
   ["ENABLE_LEGACY_ENCRYPTED_MEDIA", 0],
+  // WebKitFeatures.cmake exposes it where it is off, which is everywhere but Apple. PlatformEnable.h turns it on for macOS.
+  ["ENABLE_LIB_JSC_TOOLS", c => (c.darwin ? undefined : 0)],
   ["ENABLE_LLVM_PROFILE_GENERATION", 0],
   ["ENABLE_MAC_GESTURE_EVENTS", 0],
   ["ENABLE_MALLOC_HEAP_BREAKDOWN", 0],
@@ -452,6 +468,7 @@ const rows: Row[] = [
   ["ENABLE_WEBXR", 0],
   ["ENABLE_WEBXR_HIT_TEST", 0],
   ["ENABLE_WEBXR_LAYERS", 0],
+  ["ENABLE_WEBXR_PLANE_DETECTION", 0],
   ["ENABLE_WEB_API_STATISTICS", 0],
   ["ENABLE_WEB_AUDIO", 1],
   ["ENABLE_WEB_AUTHN", 0],
@@ -718,6 +735,8 @@ function webkitLists(wk: WebKitBuild): WebKitLists {
     ...flag("UNIX", cfg.unix),
     ...flag("APPLE", cfg.darwin),
     ...flag("ANDROID", cfg.abi === "android"),
+    // WebKitFeatures.cmake: on for Apple targets. It is not in cmakeconfig.h. The lists take the corpse headers by it.
+    ...flag("ENABLE_JAVASCRIPTCORE_TOOLS", cfg.darwin),
     ...flag("WTF_CPU_X86_64", cfg.x64),
     ...flag("WTF_CPU_ARM64", cfg.arm64),
     COMPILER_IS_GCC_OR_CLANG: "ON",
@@ -768,21 +787,24 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   const wk = webkitLayout(cfg);
   const lists = checkoutLists(wk);
   checkAotSourceLists(wk);
+  removeGeneratedFilesThatHideSources(wk);
   const flags = webkitFlags(wk);
-  const icu = icuBuild(wk);
+  const icuOutputs = icuBuild(wk);
   const codegen = jscCodegenSteps(wk, lists.jsc);
-  // Written in this graph: the first by a step of this spec, the others by the steps of ../aot.ts.
+  // Written in this graph: the first two by steps of this spec, the others by the steps of ../aot.ts.
   const aotGenerated = [
     ...aotRuntimeFactsStep(wk, lists.jsc),
-    ...aotVectorStep(wk, lists.jsc),
+    ...aotReadsThatAssumeStep(wk),
+    ...aotLateStoresStep(wk),
+    ...aotForcedJumpsStep(wk),
     ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
     ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
   ];
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
-  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icu.outputs];
+  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icuOutputs];
   const jsc = jscCompileFlags(wk, flags, lists.jsc);
-  const wtf = wtfGroup(wk, flags, lists.wtf, icu.outputs);
+  const wtf = wtfGroup(wk, flags, lists.wtf, icuOutputs);
   const llint = llintSteps(wk, jsc, lists.jsc, codegenReady);
   const jscSources = jscSourceList(wk, lists.jsc);
 
@@ -797,7 +819,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       jscGroup(wk, jsc, jscSources, codegenReady, llint.assembly),
     ],
     steps: wk.steps,
-    libs: icu.libs,
+    libs: icuLibs(wk).data,
     // What a consumer's compile waits for: JSC's generated headers (bun
     // includes them through the PrivateHeaders stubs), WTF's MIG stubs, and
     // ICU's headers where a step produces them.
@@ -805,7 +827,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       ...codegen.headers,
       ...aotGenerated.filter(file => !file.endsWith(".cpp")),
       ...wtf.migHeaders,
-      ...icu.outputs,
+      ...icuOutputs,
     ],
     // A directory's mtime moves when a file is added to or removed from it.
     configureInputs: [
@@ -837,7 +859,10 @@ function webkitLocalIncludes(cfg: Config): string[] {
 
 // ─── ICU ───
 //
-// Not built here. Linux uses the system's (headers on the default search
+// bun takes the headers and the data of an ICU4C, and has src/icu for its
+// code, whose names carry the version of the prebuilt's ICU4C.
+//
+// Not built here. Linux uses all of the system's (headers on the default search
 // path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
 // include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
 // headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
@@ -848,39 +873,47 @@ function webkitLocalIncludes(cfg: Config): string[] {
 // and runs msbuild, into the per-profile build dir.
 
 const androidIcuRoot = (): string => process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
-const windowsIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
-export const linuxIcuRoot = (cfg: Config): string | undefined =>
-  cfg.linux && cfg.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
-const staticIcuLibs = (root: string): string[] =>
-  ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib));
+const builtIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
+const staticIcuLibs = (codeRoot: string, dataRoot: string): IcuLibs => ({
+  data: [join(dataRoot, "lib", "libicudata.a")],
+  code: ["libicui18n.a", "libicuuc.a"].map(lib => join(codeRoot, "lib", lib)),
+});
 
 function icuIncludes(wk: WebKitBuild): string[] {
   const { cfg } = wk;
   if (cfg.darwin) return [join(wk.WTF, "icu")];
-  if (cfg.windows) return [join(windowsIcuDir(wk), "include")];
+  if (cfg.windows) return [join(builtIcuDir(wk), "include")];
   if (cfg.abi === "android") return [join(androidIcuRoot(), "include")];
   const root = linuxIcuRoot(cfg);
   return root === undefined ? [] : [join(root, "include")];
 }
 
-/** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
-function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
+function icuLibs(wk: WebKitBuild): IcuLibs {
   const { cfg } = wk;
-  if (cfg.abi === "android") {
-    return { libs: staticIcuLibs(androidIcuRoot()), outputs: [] };
+  if (cfg.abi === "android") return staticIcuLibs(androidIcuRoot(), androidIcuRoot());
+  if (cfg.windows) {
+    const lib = (name: string) => join(builtIcuDir(wk), "lib", name);
+    return { data: [lib("sicudt.lib")], code: [lib("icuin.lib"), lib("icuuc.lib")] };
   }
   const root = linuxIcuRoot(cfg);
+  if (root !== undefined) return staticIcuLibs(cfg.hardened ? builtIcuDir(wk) : root, root);
   if (cfg.hardened) {
-    if (root === undefined) {
-      throw new BuildError("hardened needs ICU's headers and data", {
-        hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
-      });
-    }
-    const dir = join(wk.B, "icu");
+    throw new BuildError("hardened needs ICU's headers and data", {
+      hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT",
+    });
+  }
+  return { data: [], code: [] };
+}
+
+/** Adds the step that produces some of `icuLibs`, if there is one. Returns the outputs that come with ICU's headers. */
+function icuBuild(wk: WebKitBuild): string[] {
+  const { cfg } = wk;
+  const { data, code } = icuLibs(wk);
+  const dir = builtIcuDir(wk);
+  if (cfg.hardened) {
     const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");
-    const libs = ["libicui18n.a", "libicuuc.a"].map(lib => join(dir, "lib", lib));
     gen(wk, {
-      outputs: libs,
+      outputs: code,
       inputs: [script, join(wk.W, "icu", "source.json"), join(wk.W, "icu", "udata-decompress-hook.patch")],
       cwd: wk.W,
       cmd: [
@@ -898,13 +931,11 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
       ],
       desc: "ICU (hardened-icu.sh)",
     });
-    return { libs: [...libs, join(root, "lib", "libicudata.a")], outputs: [] };
+    return [];
   }
-  if (root !== undefined) return { libs: staticIcuLibs(root), outputs: [] };
-  if (!cfg.windows) return { libs: [], outputs: [] };
-  const dir = windowsIcuDir(wk);
+  if (!cfg.windows) return [];
   const script = join(wk.W, "build-icu.ps1");
-  const libs = ["sicudt.lib", "icuin.lib", "icuuc.lib"].map(l => join(dir, "lib", l));
+  const libs = [...data, ...code];
   gen(wk, {
     outputs: libs,
     inputs: [script],
@@ -927,7 +958,7 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
     ],
     desc: "ICU (build-icu.ps1)",
   });
-  return { libs, outputs: libs };
+  return libs;
 }
 
 // ─── Flags ───
@@ -940,6 +971,8 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
  */
 const webkitWarningFlags: readonly string[] = [
   "-Wcast-align",
+  "-Wvla",
+  "-Walloca",
   "-Wformat-security",
   "-Wmissing-format-attribute",
   "-Wpointer-arith",
@@ -1197,7 +1230,10 @@ function wtfGroup(
       // PLATFORM(COCOA) refers to it, never the JSCOnly port. In libWTF.a it is a
       // member nothing pulls in; a native macOS link takes every object, and this
       // one is ARC, so it would need the Objective-C runtime for nothing.
-      sources: lists.paths("WTF_SOURCES").filter(s => !s.endsWith(".mm")),
+      // Likewise without three files for WebCore, which call parts of ICU that src/icu does not have.
+      sources: lists
+        .paths("WTF_SOURCES")
+        .filter(s => !s.endsWith(".mm") && !/^(URLHelpers|CollatorICU|UnicodeExtras)\.cpp$/.test(basename(s))),
       includes: [...lists.paths("WTF_PRIVATE_INCLUDE_DIRECTORIES"), ...flags.bmallocConsumerIncludes],
       cflags: [
         ...flags.common,
@@ -1442,7 +1478,6 @@ function jscCodegenSteps(wk: WebKitBuild, lists: LibraryLists): { headers: strin
 // aot/AOT.cmake is data first: what JSC's cmake build and this one both need
 // to know about aot/ is written there as plain lists, outside any function.
 
-/** The files of one generated folder that are compiled or included, from the list file beside them. */
 /** `JavaScriptCore_AOT_GENERATED_DIR` of aot/AOT.cmake. */
 function aotGeneratedDirectory(wk: WebKitBuild): string {
   return join(wk.DS, "aot");
@@ -1469,15 +1504,58 @@ function aotRuntimeFactsStep(wk: WebKitBuild, lists: LibraryLists): string[] {
   return outputs;
 }
 
-/** AOT_GENERATE_VECTOR of aot/AOT.cmake. */
-function aotVectorStep(wk: WebKitBuild, lists: LibraryLists): string[] {
-  const script = join(wk.JSC, "aot", "support", "generator", "vector.ts");
-  const outputs = lists.paths("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS");
+/** AOT_CHECK_READS_THAT_ASSUME of aot/AOT.cmake. What it writes says only that the sources have passed. */
+function aotReadsThatAssumeStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "codegen", "generator", "reads-that-assume.ts");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTReadsThatAssumeChecked.h")];
   gen(wk, {
     outputs,
-    cmd: [wk.cfg.bun, script, "--wtf", wk.WTF, "--out", aotGeneratedDirectory(wk)],
-    inputs: [script, join(wk.WTF, "wtf", "Vector.h")],
-    desc: "AOTVector.h",
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [script, join(wk.JSC, "aot", "codegen", "AOTReadsThatAssume.txt"), ...handwrittenAotFiles(wk.JSC)],
+    desc: "AOTReadsThatAssumeChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_LATE_STORES of aot/AOT.cmake, with Bun's own files of the compiler beside the engine's. */
+function aotLateStoresStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "late-stores.ts");
+  const bindings = join(wk.cfg.cwd, "src", "jsc", "bindings");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTLateStoresChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--bindings", bindings, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTLateStores.txt"),
+      ...handwrittenAotFiles(wk.JSC),
+      ...readdirSync(bindings)
+        .filter(name => /^Bun(?:AOT|Compiled|WithoutAOT)\w*\.(?:cpp|h)$/.test(name))
+        .sort()
+        .map(name => join(bindings, name)),
+    ],
+    desc: "AOTLateStoresChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_FORCED_JUMPS of aot/AOT.cmake. What it writes says only that the sources have passed. */
+function aotForcedJumpsStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps.py");
+  const fixtures = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps-fixtures");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTForcedJumpsChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.python, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTForcedJumps.txt"),
+      ...readdirSync(fixtures)
+        .sort()
+        .map(name => join(fixtures, name)),
+      ...handwrittenAotFiles(wk.JSC),
+    ],
+    desc: "AOTForcedJumpsChecked.h",
   });
   return outputs;
 }
@@ -1491,6 +1569,14 @@ function checkAotSourceLists(wk: WebKitBuild): void {
       hint: "bun scripts/build/aot-source-lists.ts writes the lists of aot/ for the tree as it is",
     });
   }
+}
+
+/** The folder of generated files stands in front of aot/'s own on the include path: a file left there under the name of a file of the checkout would be found first. */
+function removeGeneratedFilesThatHideSources(wk: WebKitBuild): void {
+  const directory = aotGeneratedDirectory(wk);
+  if (!existsSync(directory)) return;
+  const handwritten = new Set(handwrittenAotFiles(wk.JSC).map(file => basename(file)));
+  for (const name of readdirSync(directory)) if (handwritten.has(name)) rmSync(join(directory, name));
 }
 
 // ─── JavaScriptCore: compile flags ───
@@ -1786,30 +1872,29 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
 }
 
 interface AotPrefix {
+  /** Precompiled by itself, so that what it includes first stands in front of the standard library's headers. */
   header: string;
-  /** None: precompiled by itself, so that what it includes first stands in front of the standard library's headers. */
-  base?: string;
   directories: string[];
-  files?: RegExp;
 }
 
 const aotPrefixes: AotPrefix[] = [
-  { header: "aot/support/AOTPrefix.h", directories: [] },
   {
-    header: "aot/support/AOTCompilerPrefix.h",
-    base: "aot/support/AOTPrefix.h",
-    directories: ["analysis", "builtins", "ir", "passes", "pipeline", "place", "represent", "select", "valueflow"],
-  },
-  {
-    header: "aot/support/AOTCodeGeneratorPrefix.h",
-    base: "aot/support/AOTCompilerPrefix.h",
-    directories: ["codegen"],
-    files: /^(builtins\/AOT\w*Emitter\w*|image\/AOTCodeGenerationDriver|image\/AOTCompile)\.cpp$/,
-  },
-  {
-    header: "aot/support/AOTRuntimePrefix.h",
-    base: "aot/support/AOTPrefix.h",
-    directories: ["image", "object", "runtime", "stubs", "support"],
+    header: "aot/support/AOTPrefix.h",
+    directories: [
+      "builtins",
+      "codegen",
+      "driver",
+      "facts",
+      "image",
+      "ir",
+      "machine",
+      "object",
+      "plan",
+      "runtime",
+      "stubs",
+      "support",
+      "walk",
+    ],
   },
 ];
 
@@ -1829,10 +1914,13 @@ function jscGroup(
     const file = path.startsWith(generated)
       ? `ir/${basename(path)}`
       : relative(join(JSC, "aot"), path).replaceAll(sep, "/");
-    return (
-      aotPrefixes.find(prefix => prefix.files?.test(file)) ??
-      aotPrefixes.find(prefix => prefix.directories.some(directory => file.startsWith(`${directory}/`)))
+    const prefix = aotPrefixes.find(({ directories }) =>
+      directories.some(directory => file.startsWith(`${directory}/`)),
     );
+    assert(prefix !== undefined || file.startsWith("../") || isAbsolute(file), `aot/${file} has no prefix`, {
+      hint: "It would be compiled without -Werror=switch and -Werror=dangling: name its folder in aotPrefixes (scripts/build/deps/webkit.ts)",
+    });
+    return prefix;
   };
   // Windows ARM64: the alignment directives in these files' inline asm break
   // LLVM's SEH unwind-info emission (llvm.org/pr47432), so JSC's CMakeLists
@@ -1859,6 +1947,9 @@ function jscGroup(
           // Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are
           // unrolled in the link, so this counts where the objects are machine code.
           if (cfg.release && attribute === undefined) extra.push("-mllvm=-unroll-runtime=false");
+          // CMake builds what ships, and does not define it: `--aot-testing=MisstateFact` is known to local builds alone.
+          if ((bundled ?? [path]).some(source => basename(source) === "AOTFactFaults.cpp"))
+            extra.push("-DENABLE_AOT_FAULT_INJECTION=1");
           // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
           // (aot/AOT.cmake has the same flags).
           return {
@@ -1888,10 +1979,7 @@ function jscGroup(
     cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore", ...fuzzilliCoverageFlags(cfg)],
     cxxflags: jsc.cxx,
     pch: join(JSC, "JavaScriptCorePrefix.h"),
-    chainedPch: aotPrefixes.map(({ header, base }) => ({
-      header: join(JSC, header),
-      ...(base !== undefined && { base: join(JSC, base) }),
-    })),
+    chainedPch: aotPrefixes.map(({ header }) => ({ header: join(JSC, header) })),
     orderOnly: codegenReady,
   };
 }
@@ -1905,11 +1993,8 @@ export interface JSCProgram {
   cxxflags: string[];
   ldflags: string[];
   libs?: string[];
-  /** Its sources in C, and their flags. */
-  cSources?: string[];
-  cflags?: string[];
-  /** Dependencies of bun whose sources it compiles for itself. Its compiles wait until they are fetched. */
-  sourcesFrom?: Array<"zstd">;
+  /** Crates of bun that it links. */
+  rustCrates?: string[];
   /**
    * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
    * the last one whose `files` matches its path, or that has none.
@@ -1948,97 +2033,50 @@ function outOfMemoryHook(cfg: Config, program: string): string {
 
 /**
  * The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts), and that ICU calls a weak hook
- * on each item that it loads (icu/udata-decompress-hook.patch). Bun defines the hook
- * (src/jsc/bindings/bun_icu_decompress.cpp), and so does the shell (jsc.cpp). testaot has none of its own. Without one
- * ICU knows no locale there, and the compiler, which asks Intl at build time how a locale writes a number or a date, is
- * told nothing.
+ * on each item that it loads (icu/udata-decompress-hook.patch). Without one ICU knows no locale, and the compiler, which
+ * asks Intl at build time how a locale writes a number or a date, is told nothing. Bun defines the hook
+ * (src/jsc/bindings/bun_icu_decompress.cpp). Returns `program` with such a hook on Bun's decoder: the hooks in WebKit's
+ * sources need the C library.
  */
-function icuDataHook(cfg: Config, program: string): string {
-  const source = join(depBuildDir(cfg, "WebKit"), "programs", program, "ICUData.cpp");
+function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
+  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ICUData.cpp");
   writeIfChanged(
     source,
-    `#define ZSTD_STATIC_LINKING_ONLY
-#include <zstd.h>
-#include <cstdint>
+    `#include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <mutex>
 #include <unordered_map>
-
-extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
-extern "C" __attribute__((weak)) const unsigned bun_icu_zstd_dict_size;
+#include "${join(cfg.cwd, "src", "icu_data", "icu_data.h").replaceAll("\\", "/")}"
 
 extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
 {
-    // An item that is not compressed has 0xda 0x27 at bytes 2 and 3, so its first word is never zstd's magic number.
-    uint32_t magic;
-    if (!item)
-        return item;
-    std::memcpy(&magic, item, sizeof(magic));
-    if (magic != ZSTD_MAGICNUMBER)
+    if (!item || !Bun::isCompressedICUItem(item))
         return item;
 
     static std::mutex lock;
-    static auto& decompressed = *new std::unordered_map<const void*, void*>;
-    static ZSTD_DCtx* context = ZSTD_createDCtx();
-    static ZSTD_DDict* dictionary = &bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
-        ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
-        : nullptr;
+    [[clang::no_destroy]] static std::unordered_map<const void*, void*> decompressed;
+    static Bun::ICUDictionary* dictionary;
 
     std::lock_guard<std::mutex> locker(lock);
-    size_t compressedSize = ZSTD_findFrameCompressedSize(item, *length > 0 ? static_cast<size_t>(*length) : 1u << 20);
-    if (ZSTD_isError(compressedSize))
-        return item;
-    unsigned long long size = ZSTD_getFrameContentSize(item, compressedSize);
-    if (size == ZSTD_CONTENTSIZE_UNKNOWN || size == ZSTD_CONTENTSIZE_ERROR)
+    int32_t size = Bun__ICUItem__size(item, *length);
+    if (size < 0)
         return item;
 
     void*& kept = decompressed[item];
     if (!kept) {
         void* buffer = std::malloc(static_cast<size_t>(size));
-        if (!buffer)
-            return item;
-        size_t result = dictionary
-            ? ZSTD_decompress_usingDDict(context, buffer, size, item, compressedSize, dictionary)
-            : ZSTD_decompressDCtx(context, buffer, size, item, compressedSize);
-        if (ZSTD_isError(result)) {
+        if (!buffer || !Bun::decompressICUItem(dictionary, item, *length, buffer, size)) {
             std::free(buffer);
             return item;
         }
         kept = buffer;
     }
-    *length = static_cast<int32_t>(size);
+    *length = size;
     return kept;
 }
 `,
   );
-  return source;
-}
-
-/**
- * `program` with what reads those frames: zstd's decoder, as zstd itself puts it into one file, compiled for this program
- * alone, as shell/CMakeLists.txt compiles it for the shell. Not the objects bun links: those carry what the build asks
- * of bun's libraries (in a hardened bun they keep their arrays on a second stack, which bun's run time sets up), and
- * these programs are linked without that run time.
- */
-function withZstdDecoder(cfg: Config, program: JSCProgram): JSCProgram {
-  const zstd = join(cfg.vendorDir, "zstd");
-  const source = join(depBuildDir(cfg, "WebKit"), "programs", program.name, "ZstdDecoder.c");
-  const decoder = join(zstd, "build", "single_file_libs", "zstddeclib-in.c");
-  writeIfChanged(source, `#include "${decoder.replaceAll("\\", "/")}"\n`);
-  const include = `-I${join(zstd, "lib")}`;
-  return {
-    ...program,
-    cxxflags: [...program.cxxflags, include],
-    cSources: [source],
-    cflags: [...groupCompileFlags(cfg, cfg.buildDir, {}).c, include],
-    sourcesFrom: ["zstd"],
-  };
-}
-
-/** testaot as `program` says, reading the data of a prebuilt WebKit's ICU. */
-function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
-  return withZstdDecoder(cfg, { ...program, sources: [...program.sources, icuDataHook(cfg, program.name)] });
+  return { ...program, sources: [...program.sources, source], rustCrates: ["bun_icu_data", "bun_global_allocator"] };
 }
 
 /**
@@ -2054,21 +2092,20 @@ function readingPrebuiltIcuData(cfg: Config, program: JSCProgram): JSCProgram {
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (prebuiltHasProgramObjects(cfg)) {
-    return ["jsc", "testaot"].map(name => {
-      const program: JSCProgram = {
-        name,
-        sources: [outOfMemoryHook(cfg, name)],
-        cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
-        ldflags: [
-          ...standaloneExeLinkFlags(cfg),
-          ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
-        ],
-        libs: [resolve(prebuiltDestDir(cfg), programObjects(cfg, name))],
-      };
-      // The objects of jsc hold the shell's own hook.
-      const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
-      return name === "testaot" && hasCompressedData ? readingPrebuiltIcuData(cfg, program) : program;
-    });
+    // The objects hold the hook that reads the compressed data of ICU, whose weak reference would leave it in the archive.
+    const hasCompressedData = cfg.windows || (cfg.linux && cfg.abi !== "android");
+    const icuHook = `${cfg.windows ? "/include:" : "-Wl,--undefined="}bun_icu_maybe_decompress`;
+    return ["jsc", "testaot"].map(name => ({
+      name,
+      sources: [outOfMemoryHook(cfg, name)],
+      cxxflags: groupCompileFlags(cfg, cfg.buildDir, {}).cxx,
+      ldflags: [
+        ...standaloneExeLinkFlags(cfg),
+        ...(cfg.darwin ? (name === "jsc" ? ["-ledit"] : []) : cfg.windows ? [] : ["-Wl,--strip-debug"]),
+        ...(hasCompressedData ? [icuHook] : []),
+      ],
+      libs: [programObjects(cfg, name), ...prebuiltIcuLibs(cfg).code].map(lib => resolve(prebuiltDestDir(cfg), lib)),
+    }));
   }
   if (cfg.webkit !== "local") return [];
   const wk = webkitLayout(cfg);
@@ -2090,21 +2127,17 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
       cxxflags: jsc.cxx,
     }).cxx,
     ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags],
+    libs: icuLibs(wk).code,
   });
   const testb3 = readdirSync(testb3Dir(wk))
     .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
     .sort()
     .map(f => `b3/${f}`);
-  let jscShell = program(
+  const jscShell = program(
     "jsc",
     ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder],
     cfg.darwin ? ["-ledit"] : [],
   );
-  // The data of the ICU of a prebuilt WebKit is a zstd frame an item (icu/compress-data.ts). jsc.cpp has the hook that
-  // reads it, as shell/CMakeLists.txt builds it with BUN_ICU_ZSTD_SOURCE_DIR.
-  if (linuxIcuRoot(cfg) !== undefined) {
-    jscShell = withZstdDecoder(cfg, { ...jscShell, cxxflags: [...jscShell.cxxflags, "-DBUN_ICU_ZSTD=1"] });
-  }
   const testaot = program(
     "testaot",
     [
@@ -2113,24 +2146,16 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     ],
     [],
   );
+  const readingIcuData = (program: JSCProgram) =>
+    linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, program) : program;
   return [
-    jscShell,
+    readingIcuData(jscShell),
     program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
     program("testb3", [...testb3, ...embedder], []),
     program("testair", ["b3/air/testair.cpp", ...embedder], []),
     program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
     program("testRegExp", ["testRegExp.cpp", ...embedder], []),
-    {
-      ...(linuxIcuRoot(cfg) !== undefined ? readingPrebuiltIcuData(cfg, testaot) : testaot),
-      pch: [
-        { header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") },
-        { header: join(wk.JSC, "aot", "tests", "AOTCompilerTestPrefix.h") },
-        {
-          header: join(wk.JSC, "aot", "tests", "AOTCodeGeneratorTestPrefix.h"),
-          files: /\/aot\/(tests\/AOT(Image|Stub)\w*|codegen\/\w+)\.cpp$/,
-        },
-      ],
-    },
+    { ...readingIcuData(testaot), pch: [{ header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") }] },
   ];
 }
 
@@ -2155,6 +2180,10 @@ export const webkit: Dependency = {
         identity: `${cfg.webkitVersion}${prebuiltSuffix(cfg)}`,
         destDir: prebuiltDestDir(cfg),
       };
+      // Nothing pins what `--webkit-version` asks for.
+      if (webkitReleaseTag(cfg.webkitVersion) === webkitReleaseTag(WEBKIT_VERSION)) {
+        src.sha256sums = webkitSha256Sums;
+      }
       // macOS: bundled ICU headers conflict with system ICU.
       if (cfg.darwin) {
         src.rmAfterExtract = ["include/unicode"];
@@ -2179,7 +2208,7 @@ export const webkit: Dependency = {
       // it. If a future version drops libbmalloc.a, you'll get a clear
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
-      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
+      const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg).data, bmallocLib(cfg)];
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by
@@ -2188,7 +2217,9 @@ export const webkit: Dependency = {
 
       const { schemaInputs, builtinTableInputs } = webkitEngineSources(cfg);
       const files = [...schemaInputs, ...builtinTableInputs].map(file => relative(prebuiltDestDir(cfg), file));
-      if (prebuiltHasProgramObjects(cfg)) files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"));
+      if (prebuiltHasProgramObjects(cfg)) {
+        files.push(programObjects(cfg, "jsc"), programObjects(cfg, "testaot"), ...prebuiltIcuLibs(cfg).code);
+      }
       // `HARDENING` in lanes.mjs has grown, and the name of a tarball does not say which list it was compiled with.
       const symbols = [
         ...(cfg.aot && cfg.guardedPages ? ["JSC__AOT__mapsGuardedPages"] : []),

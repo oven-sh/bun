@@ -1,0 +1,58 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# abstract class Base { tag = 1; }
+# class C0 extends Base { own0 = 0; even = 2; third = 3; fifth = 5; } class C1 extends Base { own1 = 1; } class C2 extends Base { own2 = 2; even = 2; } class C3 extends Base { own3 = 3; third = 3; }
+# class C4 extends Base { own4 = 4; even = 2; } class C5 extends Base { own5 = 5; fifth = 5; } class C6 extends Base { own6 = 6; even = 2; third = 3; } class C7 extends Base { own7 = 7; }
+# class C8 extends Base { own8 = 8; even = 2; } class C9 extends Base { own9 = 9; third = 3; } class C10 extends Base { own10 = 10; even = 2; fifth = 5; } class C11 extends Base { own11 = 11; }
+# class C12 extends Base { own12 = 12; even = 2; third = 3; } class C13 extends Base { own13 = 13; } class C14 extends Base { own14 = 14; even = 2; } class C15 extends Base { own15 = 15; third = 3; fifth = 5; }
+# class C16 extends Base { own16 = 16; even = 2; } class C17 extends Base { own17 = 17; } class C18 extends Base { own18 = 18; even = 2; third = 3; } class C19 extends Base { own19 = 19; }
+# class C20 extends Base { own20 = 20; even = 2; fifth = 5; } class C21 extends Base { own21 = 21; third = 3; } class C22 extends Base { own22 = 22; even = 2; } class C23 extends Base { own23 = 23; }
+# class C24 extends Base { own24 = 24; even = 2; third = 3; } class C25 extends Base { own25 = 25; fifth = 5; } class C26 extends Base { own26 = 26; even = 2; } class C27 extends Base { own27 = 27; third = 3; }
+# class C28 extends Base { own28 = 28; even = 2; } class C29 extends Base { own29 = 29; } class C30 extends Base { own30 = 30; even = 2; third = 3; fifth = 5; } class C31 extends Base { own31 = 31; }
+# class C32 extends Base { own32 = 32; even = 2; } class C33 extends Base { own33 = 33; third = 3; } class C34 extends Base { own34 = 34; even = 2; } class C35 extends Base { own35 = 35; fifth = 5; }
+# class C36 extends Base { own36 = 36; even = 2; third = 3; } class C37 extends Base { own37 = 37; } class C38 extends Base { own38 = 38; even = 2; } class C39 extends Base { own39 = 39; third = 3; }
+# class C40 extends Base { own40 = 40; even = 2; fifth = 5; } class C41 extends Base { own41 = 41; } class C42 extends Base { own42 = 42; even = 2; third = 3; } class C43 extends Base { own43 = 43; }
+# class C44 extends Base { own44 = 44; even = 2; } class C45 extends Base { own45 = 45; third = 3; fifth = 5; } class C46 extends Base { own46 = 46; even = 2; } class C47 extends Base { own47 = 47; }
+# class C48 extends Base { own48 = 48; even = 2; third = 3; } class C49 extends Base { own49 = 49; } class C50 extends Base { own50 = 50; even = 2; fifth = 5; } class C51 extends Base { own51 = 51; third = 3; }
+# class C52 extends Base { own52 = 52; even = 2; } class C53 extends Base { own53 = 53; } class C54 extends Base { own54 = 54; even = 2; third = 3; } class C55 extends Base { own55 = 55; fifth = 5; }
+# class C56 extends Base { own56 = 56; even = 2; } class C57 extends Base { own57 = 57; third = 3; } class C58 extends Base { own58 = 58; even = 2; } class C59 extends Base { own59 = 59; }
+# class C60 extends Base { own60 = 60; even = 2; third = 3; fifth = 5; } class C61 extends Base { own61 = 61; } class C62 extends Base { own62 = 62; even = 2; } class C63 extends Base { own63 = 63; third = 3; }
+# class C64 extends Base { own64 = 64; even = 2; } class C65 extends Base { own65 = 65; fifth = 5; } class C66 extends Base { own66 = 66; even = 2; third = 3; } class C67 extends Base { own67 = 67; }
+# function pick(which: number): Base {
+#   switch (which) {
+#     case 0: return new C0(); case 1: return new C1(); case 2: return new C2(); case 3: return new C3(); case 4: return new C4(); case 5: return new C5();
+#     case 6: return new C6(); case 7: return new C7(); case 8: return new C8(); case 9: return new C9(); case 10: return new C10(); case 11: return new C11();
+#     case 12: return new C12(); case 13: return new C13(); case 14: return new C14(); case 15: return new C15(); case 16: return new C16(); case 17: return new C17();
+#     case 18: return new C18(); case 19: return new C19(); case 20: return new C20(); case 21: return new C21(); case 22: return new C22(); case 23: return new C23();
+#     case 24: return new C24(); case 25: return new C25(); case 26: return new C26(); case 27: return new C27(); case 28: return new C28(); case 29: return new C29();
+#     case 30: return new C30(); case 31: return new C31(); case 32: return new C32(); case 33: return new C33(); case 34: return new C34(); case 35: return new C35();
+#     case 36: return new C36(); case 37: return new C37(); case 38: return new C38(); case 39: return new C39(); case 40: return new C40(); case 41: return new C41();
+#     case 42: return new C42(); case 43: return new C43(); case 44: return new C44(); case 45: return new C45(); case 46: return new C46(); case 47: return new C47();
+#     case 48: return new C48(); case 49: return new C49(); case 50: return new C50(); case 51: return new C51(); case 52: return new C52(); case 53: return new C53();
+#     case 54: return new C54(); case 55: return new C55(); case 56: return new C56(); case 57: return new C57(); case 58: return new C58(); case 59: return new C59();
+#     case 60: return new C60(); case 61: return new C61(); case 62: return new C62(); case 63: return new C63(); case 64: return new C64(); case 65: return new C65();
+#     case 66: return new C66();
+#     default: return new C67();
+#   }
+# }
+# function weigh(thing: Base, depth: number): number {
+#   if (depth > 0) return weigh(thing, depth - 1);
+#   return thing.tag + ("even" in thing ? 2 : 0) + ("third" in thing ? 3 : 0) + ("fifth" in thing ? 5 : 0);
+# }
+# let total = 0;
+# for (let which = 0; which < 68; which++) total += weigh(pick(which), 1);
+# print(total);
+# -- end of source
+# A bound on a table of shapes. Every second, third and fifth of the classes has a field of its own kind, so no numbering of shapes lays the holders of each side by side,
+# and each of the three tests reads a table.
+# f1 = weigh
+# RUN: bytes f1:Body mechanisms=all
+# CHECK: constants=3
+# RUN(TABLES): bytes f1:Body mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesKnown
+# TABLES: constants=3
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 275
+# RIGHT-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesKnown
+# LIE: 275
+# LIE-NEXT: exited with 0

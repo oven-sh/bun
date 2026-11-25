@@ -554,6 +554,14 @@ describe.concurrent.todoIf(isWindows)("bun create <component> and files that are
     expect(readFileSync(path.join(String(dir), "src/App.css"), "utf8")).toBe(css);
   });
 
+  test("finds the component through a backslash", async () => {
+    using dir = tempDir("create-jsx-files", { "src/ui/App.tsx": reactApp });
+
+    const { stderr, created } = await create(String(dir), "./src\\ui\\App.tsx");
+
+    expect(created, stderr).toEqual(templates.react("src/ui/App"));
+  });
+
   // An existing shadcn/ui project has these files already, and the template has a row for each name.
   test("keeps the user's index.css, styles/globals.css and lib/utils.ts beside a component of another name", async () => {
     const mine = ["index.css", "styles/globals.css", "lib/utils.ts"];

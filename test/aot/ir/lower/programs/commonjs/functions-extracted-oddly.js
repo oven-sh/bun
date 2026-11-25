@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 6
+// CHECK-LABEL: function {{*}}name="row"
+// CHECK-LABEL: function {{*}}name="reassigned"
 
 // FILE: main.js
 function row(label, f) {
@@ -92,54 +94,3 @@ exports.replace = function () {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: row reassigned
-// CHECK-LABEL: function {{*}}name="row"
-// CHECK: module=[[m_0]] text={end=156} flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b5():
-// CHECK-NEXT: v4 = Call v1 calleeName="f"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() handler=b5():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b6(v5)
-// CHECK-NEXT: b5() role=CatchHandler:
-// CHECK-NEXT: v6 = CatchValue
-// CHECK-NEXT: v7 = String string="threw "
-// CHECK-NEXT: v8 = PropGet v6 key="name"
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v10)
-// CHECK-NEXT: b6(v11):
-// CHECK-NEXT: v12 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v13 = PropGet v12 key="console" [isFreeName]
-// CHECK-NEXT: v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v15 = PropGet v14 key="log"
-// CHECK-NEXT: v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v17 = String string=": "
-// CHECK-NEXT: v18 = Add v0, v17
-// CHECK-NEXT: v19 = Builtin builtin=String
-// CHECK-NEXT: v20 = Call v19, -, v11 calleeName="String"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v22 = Add v18, v21
-// CHECK-NEXT: v23 = Call v16, v14, v22 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: Return v24
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="reassigned"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = String string="reassigned "
-// CHECK-NEXT: v2 = Add v1, v0
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

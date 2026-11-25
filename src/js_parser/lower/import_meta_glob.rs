@@ -1,6 +1,8 @@
 //! Expands Vite's `import.meta.glob()` into `{ [file]: () => import(file) }`, or static imports with `eager`.
 
 use std::borrow::Cow;
+use std::cell::Cell;
+use std::ptr::NonNull;
 
 use bun_alloc::Arena;
 use bun_ast::expr::Data as ExprData;
@@ -9,8 +11,7 @@ use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
-use bun_paths::resolve_path::{self, platform};
-use bun_paths::{fs, path_buffer_pool};
+use bun_paths::{Path, from_portable, fs};
 
 use crate::lexer::T;
 use crate::p::P;
@@ -40,6 +41,89 @@ impl ImportMetaGlobHost {
         // SAFETY: the contract of `new`.
         unsafe { (self.resolve_alias)(self.resolver, importer_dir, glob) }
     }
+}
+
+/// A call as the parser has expanded it. `bun build --compile --aot` reads the file into a tree of its own and writes the same object there.
+pub struct ExpandedImportMetaGlob {
+    /// Where the call starts in the source.
+    pub start: i32,
+    pub result: Result<ImportMetaGlobFiles, InvalidImportMetaGlob>,
+}
+
+pub struct ImportMetaGlobFiles {
+    /// The argument of `Object.keys()`, which needs no values.
+    pub only_keys: bool,
+    pub eager: bool,
+    /// Empty means the whole namespace.
+    pub import: Vec<u8>,
+    /// The `type` import attribute.
+    pub import_type: Option<&'static [u8]>,
+    /// (key, import path)
+    pub entries: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+pub struct InvalidImportMetaGlob {
+    pub start: i32,
+    pub message: Vec<u8>,
+}
+
+thread_local! {
+    static RECORDED: Cell<Option<NonNull<Vec<ExpandedImportMetaGlob>>>> = const { Cell::new(None) };
+    static LEFT_AS_WRITTEN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// No parser on this thread expands a call until `parse` returns.
+pub fn leave_import_meta_globs_as_written<R>(parse: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LEFT_AS_WRITTEN.set(self.0);
+        }
+    }
+    let _restore = Restore(LEFT_AS_WRITTEN.replace(true));
+    parse()
+}
+
+/// Appends every call that a parser on this thread expands to `expanded` until `parse` returns.
+pub fn record_import_meta_globs<R>(
+    expanded: &mut Vec<ExpandedImportMetaGlob>,
+    parse: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<NonNull<Vec<ExpandedImportMetaGlob>>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RECORDED.set(self.0);
+        }
+    }
+    let _restore = Restore(RECORDED.replace(Some(NonNull::from(expanded))));
+    parse()
+}
+
+#[cold]
+fn record(loc: Loc, only_keys: bool, expansion: &Result<Expansion<'_>, Invalid<'_>>) {
+    let Some(mut recorded) = RECORDED.get() else {
+        return;
+    };
+    let result = match expansion {
+        Ok(expansion) => Ok(ImportMetaGlobFiles {
+            only_keys,
+            eager: expansion.eager,
+            import: expansion.import.to_vec(),
+            import_type: expansion.loader.map(|(_, r#type)| r#type),
+            entries: (expansion.entries.iter())
+                .map(|&(key, path)| (key.to_vec(), path.to_vec()))
+                .collect(),
+        }),
+        Err(invalid) => Err(InvalidImportMetaGlob {
+            start: invalid.loc.start,
+            message: invalid.message.to_vec(),
+        }),
+    };
+    // SAFETY: `record_import_meta_globs` borrows the list until it clears `RECORDED`, and nothing else reads it meanwhile.
+    unsafe { recorded.as_mut() }.push(ExpandedImportMetaGlob {
+        start: loc.start,
+        result,
+    });
 }
 
 /// Variant order matters, because the parser keeps the `max` over every use in the file.
@@ -109,15 +193,11 @@ fn is_node_modules(name: &[u8]) -> bool {
 
 fn path_below<'p>(ancestor: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     let below = path.strip_prefix(ancestor)?;
-    if below.is_empty()
-        || ancestor
-            .last()
-            .is_none_or(|&last| bun_paths::is_sep_native(last))
-    {
+    if below.is_empty() || ancestor.last().is_none_or(|&last| bun_paths::is_sep(last)) {
         return Some(below);
     }
     let (&separator, below) = below.split_first()?;
-    bun_paths::is_sep_native(separator).then_some(below)
+    bun_paths::is_sep(separator).then_some(below)
 }
 
 /// Vite leaves these unescaped in `query` keys and values, plus `=` in values.
@@ -140,48 +220,25 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 }
 
 fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let mut buf = path_buffer_pool::get();
-    resolve_path::join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
-        .filter(|joined| joined.len() < bun_paths::MAX_PATH_BYTES)
-        .map(<[u8]>::to_vec)
+    let absolute = Path::resolve(&[dir, path]).check_len().ok()?;
+    Some(absolute.to_vec())
 }
 
 fn with_posix_separators(path: &[u8]) -> Vec<u8> {
-    let mut path = path.to_vec();
-    resolve_path::platform_to_posix_in_place::<u8>(&mut path);
-    path
+    bun_paths::to_portable(path).into_owned()
 }
 
-/// `from` and `to` must be absolute and normalized.
 fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
-    let mut path = Vec::new();
-    if cfg!(windows) {
-        // Each directory in `from` takes at least two bytes and can become `../`.
-        let mut buf = vec![0u8; from.len() * 2 + to.len() + 8];
-        let below =
-            resolve_path::relative_platform_buf::<platform::Loose, true>(&mut buf, from, to);
-        if !below.starts_with(b"../") {
-            path.extend_from_slice(b"./");
-        }
-        path.extend_from_slice(below);
-    } else {
-        // `resolve_path` treats `\` as a separator on every platform, but here it's part of a file name.
-        let len = bun_node_path::relative_buf_len::<u8>(from, to);
-        let mut buffers = vec![0u8; 3 * len];
-        let (buf, rest) = buffers.split_at_mut(len);
-        let (from_buf, tmp_buf) = rest.split_at_mut(len);
-        let below = bun_node_path::relative_posix_t(from, to, buf, from_buf, tmp_buf).ok()?;
-        if !below.starts_with(b"../") {
-            path.extend_from_slice(b"./");
-        }
-        path.extend_from_slice(below);
+    let mut path = Path::relative(from, to).into_portable();
+    if !path.starts_with(b"../") {
+        path.prepend(b"./");
     }
-    (path.len() < bun_paths::MAX_PATH_BYTES).then_some(path)
+    Some(path.check_len().ok()?.to_vec())
 }
 
-fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
+fn is_not_an_import_path(path: &[u8], relative: &[u8], is_bundling: bool) -> bool {
     !strings::is_valid_utf8(path)
-        || (!cfg!(windows) && strings::contains_char(path, b'\\'))
+        || (!cfg!(windows) && strings::contains_char(relative, b'\\'))
         // The runtime parses everything after `?` as a query.
         || (!is_bundling && strings::contains_char(path, b'?'))
 }
@@ -256,13 +313,15 @@ impl Pattern {
     #[optimize(size)]
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let text = &*without_extglobs(text);
-        let mut buf = vec![0u8; text.len() + 1];
-        let normalized: &[u8] = resolve_path::normalize_string_generic_t::<u8, true, false>(
-            text,
-            &mut buf,
-            b'/',
-            |char| char == b'/',
-        );
+        let mut segments: Vec<&[u8]> = Vec::new();
+        for segment in strings::tokenize(text, b"/") {
+            match segment {
+                b"." => {}
+                b".." if segments.last().is_some_and(|last| *last != b"..") => _ = segments.pop(),
+                _ => segments.push(segment),
+            }
+        }
+        let normalized: &[u8] = &segments.join(&b'/');
 
         // Unescape plain names here, because on Windows the walker treats `\` as a separator.
         let mut names = Vec::with_capacity(normalized.len());
@@ -330,14 +389,11 @@ fn find_files(
         shared_dir = Some(shared);
 
         if pattern.is_name {
-            let mut buf = path_buffer_pool::get();
-            if let Some(file) = absolute_from(&pattern.dir, &pattern.glob)
-                && matches!(
-                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), resolve_path::z(&file, &mut buf)),
-                    Ok(bun_sys::ExistsAtType::File)
-                )
+            let file = Path::resolve(&[&pattern.dir, &pattern.glob]);
+            if let Ok(bun_sys::ExistsAtType::File) =
+                bun_sys::exists_at_type(bun_sys::Fd::cwd(), &file)
             {
-                files.push(file);
+                files.push(file.to_vec());
             }
             continue;
         }
@@ -499,8 +555,8 @@ impl<'a> Arguments<'a, '_> {
         let root = fs::FileSystem::instance().top_level_dir().to_vec();
         let root = &root[..strings::index_of_char_usize(&root, 0).unwrap_or(root.len())];
         let source = self.source;
-        let importer_dir = (source.path.is_file() && bun_paths::is_absolute(source.path.text))
-            .then(|| source.path.name().dir);
+        let importer_dir = bun_paths::dirname(source.path.text)
+            .filter(|_| source.path.is_file() && bun_paths::is_absolute(source.path.text));
         let is_relative = globs
             .iter()
             .all(|(glob, _)| matches!(glob.first(), Some(b'.' | b'!')));
@@ -515,8 +571,8 @@ impl<'a> Arguments<'a, '_> {
         }
         let base_dir = match options.base {
             [] => Some(importer_dir.unwrap_or(root).to_vec()),
-            [b'/', base @ ..] => absolute_from(root, base),
-            base => absolute_from(importer_dir.unwrap_or(root), base),
+            [b'/', base @ ..] => absolute_from(root, &from_portable(base)),
+            base => absolute_from(importer_dir.unwrap_or(root), &from_portable(base)),
         };
         let Some(base_dir) = base_dir else {
             return self.invalid(
@@ -603,7 +659,8 @@ impl<'a> Arguments<'a, '_> {
                     format_args!("The path to \"{}\" is too long", bstr::BStr::new(file)),
                 );
             };
-            if is_not_an_import_path(&import_path, is_bundling) {
+            let relative = importer_dir.map_or(&key, |_| &import_path);
+            if is_not_an_import_path(&import_path, relative, is_bundling) {
                 self.warn(
                     path_loc,
                     format_args!(
@@ -956,6 +1013,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             && !self.is_control_flow_dead
             && call.optional_chain.is_none()
             && is_import_meta_glob(call.target)
+            && !LEFT_AS_WRITTEN.get()
     }
 
     /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
@@ -1013,6 +1071,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             Ok(literals) => finder.expand(literals, loc, host, is_bundling),
             Err(invalid) => Err(*invalid),
         };
+        record(loc, only_keys, &expansion);
         let expansion = match expansion {
             Ok(expansion) => expansion,
             Err(invalid) => {

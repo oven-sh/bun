@@ -1,0 +1,14 @@
+# the same function, and a caller in sight that passes undefined: it is an ordinary value of the parameter, and a test that turned it away would send ordinary calls into the slow version. The guard tests for all that the position lists
+# f1 = area, f2 = passesNothing
+# -- source: guard-lets-undefined-pass-where-a-caller-in-sight-passes-it.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x = 1; y = 2; }
+# function area(point: Point, scale: number): number { const across = point.x * scale; const down = point.y * scale; return across * down + point.x; }
+# function passesNothing(): number { return area(undefined as any, 2); }
+# sink(area, passesNothing, new Point());
+# -- end of source
+# RUN: walk f1:ParameterGuard mechanisms=all
+# CHECK-LABEL: code f1:ParameterGuard
+# CHECK: = TypeTest {{*}}testedType=undefined|null
+# RUN(FAST): walk f1 mechanisms=all
+# FAST: RequireObjectCoercible

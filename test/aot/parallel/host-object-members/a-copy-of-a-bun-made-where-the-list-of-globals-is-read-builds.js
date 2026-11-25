@@ -1,5 +1,4 @@
 // The program comes to Bun by listing the globals and never names it. A copy made right where the list is read is a copy of Bun, and `build` called on it is Bun.build.
-// Alone: what it prints depends on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -2,14 +2,15 @@
 // compiler makes is no check, and it looks like one. Each of these fails its program:
 //   a line of a kind that nothing reads, or that is spelled so that nothing reads it
 //   a line in a file of the program's folder that is not read
-//   a line that says what must not be there and names an operation or a stub that no program has: the compiler may have lost it long ago
+//   a line that says what must not be there and names an operation that no program has: the compiler may have lost it long ago
 //   `// IR- <a declaration>[\s\S]*<a use of it>` where nothing is declared so
 //   a pattern that finds nothing but itself: the dump quotes the text of the program, these lines included
 // And the top-level code of a module that awaits is read where it is, not in the few operations that make its promise.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
@@ -18,14 +19,10 @@ const texts = process.argv.map(String);
 console.log(join(texts[0], "x").length > 0, join("y", texts[0]).length > 0, [join].length);
 `;
 const programs = {
-  "lines/lines-that-can-fail.ts": `// CALLS+ join Concatenate
-// CALLS- join StringBuilder
-// JSCALLS- join StringBuilder
-// IRT= 1 join  = Strcat 
-// IRT= 0 join  = StringBuilderBegin
+  "lines/lines-that-can-fail.ts": `// IRT= 2 join  form=StringAndPrimitive 
+// IRT= 0 join  = StackStringBuilderBegin
 ${joins}`,
-  "lines/what-the-others-say-is-absent.ts": `// IR+  = StringBuilderBegin
-// CALLS+ numbers StringBuilder
+  "lines/what-the-others-say-is-absent.ts": `// IR+  = StackStringBuilderBegin
 function numbers(count: number): string { let text = ""; for (let i = 0; i < count; i++) { text += i; text += ","; } return text; }
 console.log(numbers(process.argv.length).length > 0, numbers(3), [numbers].length);
 `,
@@ -34,6 +31,9 @@ console.log(numbers(process.argv.length).length > 0, numbers(3), [numbers].lengt
 //IR= 1 join Strcat
   // CALLS- join Concatenate
 // TODO: this is for people
+// CALLS+ join Concatenate
+// KNOWN g a
+// IR-UNTIL X
 ${joins}`,
   "lines/in-another-file/main.ts": `import { join } from "./join";
 console.log(join(String(process.argv.length), "x"));
@@ -43,12 +43,8 @@ console.log(join(String(process.argv.length), "x"));
 export function join(a: string, b: string): string { return a + "-" + b; }
 `,
   "lines/operations-that-no-compiler-has.ts": `// IRT= 0 join  = ConcatenateInTheFrame 
-// IR- = Strcat .* \\[isBuiltInTheFrame\\]
+// IR- = Add .* \\[isBuiltInTheFrame\\]
 // IRM= 0  = NewTextOfTheOldCompiler 
-${joins}`,
-  "lines/stubs-that-no-compiler-has.ts": `// CALLS- join StringBuilder|IntToString
-// CALLS- join operationAOTConcat\\b
-// JSCALLS- join StubOfTheOldCompiler
 ${joins}`,
   "lines/a-declaration-that-is-not-there.ts": `// IR- ^layout (L\\d+) .*name="Gone" [\\s\\S]* receivers=\\[\\1, \\.\\.\\]
 // IR- ^layout (L\\d+) .*name="Kept" [\\s\\S]* receivers=\\[\\1, \\.\\.\\]
@@ -60,10 +56,10 @@ function read(kept: Kept): number { return kept.field; }
 console.log(read(all[0]) > 0, [read].length);
 `,
   "lines/a-pattern-that-finds-itself.ts": `// IR+ JoinedInTheFrame
-// IR+  = Strcat 
+// IR+  form=StringAndPrimitive 
 ${joins}`,
   "lines/top-level-code-that-awaits.ts": `// IRM= 1  = Await\\w+ 
-// IRM= 0  = StringBuilderBegin
+// IRM= 0  = StackStringBuilderBegin
 console.log(await Promise.resolve(process.argv.length > 0));
 `,
 };
@@ -92,16 +88,16 @@ test.skipIf(!!scriptSkipReason)(
       "FAIL lines/kinds-that-nothing-reads\t// REMARK- join rejected\tnothing reads a line of this kind",
       "FAIL lines/kinds-that-nothing-reads\t//IR= 1 join Strcat\tnothing reads a line of this kind",
       "FAIL lines/kinds-that-nothing-reads\t  // CALLS- join Concatenate\tnothing reads a line of this kind",
-      "ok   lines/lines-that-can-fail: 5 expectations",
+      "FAIL lines/kinds-that-nothing-reads\t// CALLS+ join Concatenate\tnothing reads a line of this kind",
+      "FAIL lines/kinds-that-nothing-reads\t// KNOWN g a\tnothing reads a line of this kind",
+      "FAIL lines/kinds-that-nothing-reads\t// IR-UNTIL X\tnothing reads a line of this kind",
+      "ok   lines/lines-that-can-fail: 2 expectations",
       "FAIL lines/operations-that-no-compiler-has\t// IRT= 0 join  = ConcatenateInTheFrame \tit cannot fail: the dump of no program holds ConcatenateInTheFrame",
-      "FAIL lines/operations-that-no-compiler-has\t// IR- = Strcat .* \\[isBuiltInTheFrame\\]\tit cannot fail: the dump of no program holds isBuiltInTheFrame",
+      "FAIL lines/operations-that-no-compiler-has\t// IR- = Add .* \\[isBuiltInTheFrame\\]\tit cannot fail: the dump of no program holds isBuiltInTheFrame",
       "FAIL lines/operations-that-no-compiler-has\t// IRM= 0  = NewTextOfTheOldCompiler \tit cannot fail: the dump of no program holds NewTextOfTheOldCompiler",
-      "FAIL lines/stubs-that-no-compiler-has\t// CALLS- join StringBuilder|IntToString\tit cannot fail: no function of any program calls /IntToString/",
-      "FAIL lines/stubs-that-no-compiler-has\t// CALLS- join operationAOTConcat\\b\tit cannot fail: no function of any program calls /operationAOTConcat\\b/",
-      "FAIL lines/stubs-that-no-compiler-has\t// JSCALLS- join StubOfTheOldCompiler\tit cannot fail: no function of any program calls /StubOfTheOldCompiler/",
       "ok   lines/top-level-code-that-awaits: 2 expectations",
-      "ok   lines/what-the-others-say-is-absent: 2 expectations",
-      "9 programs, 26 expectation lines: 6 programs fail; 0 lines are known failures",
+      "ok   lines/what-the-others-say-is-absent: 1 expectations",
+      "8 programs, 22 expectation lines: 5 programs fail; 0 lines are known failures",
     ]);
     expect(exitCode).toBe(1);
   },

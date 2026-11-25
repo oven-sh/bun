@@ -50,8 +50,6 @@ const ruleVars = {
   cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
   link: ["ldflags", "lazy"],
   link_trimmable: ["ldflags", "lazy"],
-  link_with_library: ["ldflags", "lazy"],
-  link_trimmable_with_library: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
@@ -74,10 +72,9 @@ const ruleVars = {
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
-  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "sha256sums", "rm_paths"],
   dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** ninja's `Rule::IsReservedBinding` (src/eval_env.cc; `early_output_prefix` is oven-sh/ninja's). */

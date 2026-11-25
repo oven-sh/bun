@@ -1,6 +1,5 @@
 //! bun_threading crate root — thin re-exports.
 
-pub mod channel;
 #[path = "Condition.rs"]
 pub mod condition;
 #[path = "Futex.rs"]
@@ -26,10 +25,9 @@ pub mod wait_group;
 
 // ─── re-exports ───────────────────────────────────────────────────────────
 
-pub use channel::Channel;
 pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
-/// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
+/// `Futex::wait`, `Futex::wake`.
 pub use futex as Futex;
 pub use guarded::Guarded;
 pub use mutex::{Mutex, MutexGuard};
@@ -40,7 +38,6 @@ pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;
-pub use work_pool::Task as WorkPoolTask;
 pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};
 
 /// Returns a non-zero OS thread id.

@@ -1,0 +1,28 @@
+# a function that is constructed waits for what its last call returns: it hands on the object that comes back, or `this`. So it makes no tail call, and a stack trace lists it below its last callee.
+# Where the walk copies it into the code that constructs it, the call in the copy is not marked as one that leaves: a frame that is marked so is left out of stack traces, and an error that is made for the function
+# as new.target (what Babel writes for `class Mine extends Error`) leaves out the frames down to it, finds it nowhere and has no `stack` at all.
+# f1 = helper, f2 = Mine, f3 = constructs, f4 = calls
+# -- source: last-call-of-a-function-copied-where-it-is-constructed-is-no-tail-call.ts
+# declare function sink(...values: unknown[]): unknown;
+# function helper(made: unknown) { sink(made); sink(made); sink(made); sink(made); sink(made); sink(made); return made; }
+# function Mine(this: any) { this.a = 1; return helper(this); }
+# function constructs() { return new (Mine as any)(); }
+# function calls(holder: unknown) { const made = Mine.call(holder); sink(made); return made; }
+# sink(constructs, calls);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: frame 1 callee=f2 {{*}}isConstruction=true
+# CHECK-NOT: = CallDirect {{*}}function=f1 {{*}} tail
+# RUN(THERE): walk f3 mechanisms=all
+# THERE-LABEL: code f3:Body
+# THERE: = CallDirect {{*}}function=f1
+# the controls: the copy of a plain call leaves as the function does, and so does the function's own code
+# RUN(CALLED): walk f4 mechanisms=all
+# CALLED-LABEL: code f4:Body
+# CALLED: frame 1 callee=f2
+# CALLED: = CallDirect {{*}}function=f1 {{*}} tail
+# RUN(ITSELF): walk f2 mechanisms=all
+# ITSELF-LABEL: code f2:Body
+# ITSELF: [[call]]: {{*}} = CallDirect {{*}}function=f1 {{*}} tail
+# ITSELF: ReturnCall [[call]]

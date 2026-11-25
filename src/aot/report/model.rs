@@ -1,17 +1,13 @@
-use core::ops::{Add, AddAssign};
+use super::source_texts::ModuleOrigin;
 
-use crate::link::ModuleOrigin;
-
-#[derive(Copy, Clone, Default, PartialEq, Debug)]
-pub(super) struct OriginCounts<T = u64> {
-    pub program: T,
-    pub dependencies: T,
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub(super) struct OriginCounts {
+    pub program: u64,
+    pub dependencies: u64,
 }
 
-impl<T: PartialEq> Eq for OriginCounts<T> {}
-
-impl<T: Copy + Add<Output = T> + AddAssign> OriginCounts<T> {
-    pub(super) fn add_for_origin(&mut self, origin: ModuleOrigin, count: T) {
+impl OriginCounts {
+    pub(super) fn add_for_origin(&mut self, origin: ModuleOrigin, count: u64) {
         match origin {
             ModuleOrigin::Program => self.program += count,
             ModuleOrigin::Dependency => self.dependencies += count,
@@ -19,7 +15,7 @@ impl<T: Copy + Add<Output = T> + AddAssign> OriginCounts<T> {
         }
     }
 
-    pub(super) fn total(self) -> T {
+    pub(super) fn total(self) -> u64 {
         self.program + self.dependencies
     }
 }

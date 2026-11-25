@@ -1,0 +1,30 @@
+;; Source of the .wasm file of the same name. Any assembler that supports the proposals below can rebuild it; the bytes may differ.
+;; Proposals: simd.
+(module
+  (memory (export "memory") 1)
+  (func (export "addLanes") (param i32 i32 i32)
+    (v128.store (local.get 0) (i32x4.add (v128.load (local.get 1)) (v128.load (local.get 2)))))
+  (func (export "dot") (param i32 i32 i32) (result f32)
+    (local $acc v128)
+    (block $done (loop $l
+      (br_if $done (i32.eqz (local.get 2)))
+      (local.set $acc (f32x4.add (local.get $acc) (f32x4.mul (v128.load (local.get 0)) (v128.load (local.get 1)))))
+      (local.set 0 (i32.add (local.get 0) (i32.const 16)))
+      (local.set 1 (i32.add (local.get 1) (i32.const 16)))
+      (local.set 2 (i32.sub (local.get 2) (i32.const 1)))
+      (br $l)))
+    (f32.add
+      (f32.add (f32x4.extract_lane 0 (local.get $acc)) (f32x4.extract_lane 1 (local.get $acc)))
+      (f32.add (f32x4.extract_lane 2 (local.get $acc)) (f32x4.extract_lane 3 (local.get $acc)))))
+  (func (export "mask8") (param i32) (result i32) (i8x16.bitmask (v128.load (local.get 0))))
+  (func (export "mask16") (param i32) (result i32) (i16x8.bitmask (v128.load (local.get 0))))
+  (func (export "mask32") (param i32) (result i32) (i32x4.bitmask (v128.load (local.get 0))))
+  (func (export "mask64") (param i32) (result i32) (i64x2.bitmask (v128.load (local.get 0))))
+  (func (export "reversed") (param i32 i32)
+    (v128.store (local.get 0) (i8x16.shuffle 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 (v128.load (local.get 1)) (v128.load (local.get 1)))))
+  (func $pass (param v128) (result v128) (i32x4.mul (local.get 0) (v128.const i32x4 1 2 3 4)))
+  (func (export "throughCall") (param i32) (result i32)
+    (i32x4.extract_lane 3 (call $pass (i32x4.splat (local.get 0)))))
+  (func (export "outOfBounds") (result i32) (i32x4.extract_lane 0 (v128.load (i32.const 65521))))
+  (func (export "takesVector") (param v128))
+)

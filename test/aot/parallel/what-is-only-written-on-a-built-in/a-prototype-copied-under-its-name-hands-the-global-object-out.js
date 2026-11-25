@@ -1,0 +1,8 @@
+Object.assign(globalThis, {
+  ["__proto__"]: {
+    get whole() {
+      return this;
+    },
+  },
+});
+globalThis.whole.process.nextTick(() => console.log("ticked"));

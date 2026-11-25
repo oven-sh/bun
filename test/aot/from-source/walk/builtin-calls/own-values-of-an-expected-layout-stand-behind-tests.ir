@@ -1,0 +1,44 @@
+# a layout is written for what is listed. One word of the cell says which fields the object has, in which order it got them and whether it has anything beside them: behind the tests stand loads and a literal,
+# and the call as written stands in a block of its own, for an object of another layout, one that got its keys otherwise, a proxy, a text, null
+# the list of the keys alone stays with the code in line of the built-in, which hands out a cell over a list that the run time keeps. Outside a loop a layout with an optional field has no arm
+# the functions are handed to sink: nobody knows their callers, and the written type is only expected
+# the two small types share no name: written as { x, y } and { x, y? } the front end gives them one layout, whose y is optional, and then neither has an arm
+# f1 = values, f2 = entries, f3 = keys, f4 = loose, f5 = wide
+# -- source: own-values-of-an-expected-layout-stand-behind-tests.ts
+# declare function sink(...values: unknown[]): void;
+# type Point = { x: number; y: number };
+# type Loose = { u: number; v?: number };
+# type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; i: number };
+# function values(p: Point) { return Object.values(p); }
+# function entries(p: Point) { return Object.entries(p); }
+# function keys(p: Point) { return Object.keys(p); }
+# function loose(p: Loose) { return Object.values(p); }
+# function wide(p: Wide) { return Object.values(p); }
+# const point: Point = { x: 1, y: 2 };
+# const other: Loose = { u: 1 };
+# const nine: Wide = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 };
+# sink(values, entries, keys, loose, wide, point, other, nine);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = ShapeTest
+# RUN(ORDER): walk f1 mechanisms=all
+# ORDER: = HasKeyOrder
+# RUN(NOTHINGELSE): walk f1 mechanisms=all
+# NOTHINGELSE: = HasNoExtraProperties {{*}}[hasNoFieldOutsideSlot]
+# RUN(SLOTS): walk f1 mechanisms=all
+# SLOTS: = GetSlot {{*}}key="x"
+# SLOTS: = GetSlot {{*}}key="y"
+# SLOTS: = NewArray
+# RUN(WRITTEN): walk f1 mechanisms=all
+# WRITTEN: frequency=Unlikely
+# WRITTEN: ObjectValues
+# RUN(FEWEST): walk f1 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+Guesses
+# FEWEST: = HasKeyOrder
+# The entries stay with their row until lists-5D lands.
+# RUN(KEYS): walk f3 mechanisms=all
+# KEYS-NOT: HasKeyOrder
+# RUN(LOOSE): walk f4 mechanisms=all
+# LOOSE-NOT: HasKeyOrder
+# RUN(WIDE): walk f5 mechanisms=all
+# WIDE-NOT: HasKeyOrder

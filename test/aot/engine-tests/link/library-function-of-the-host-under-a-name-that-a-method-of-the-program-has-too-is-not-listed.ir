@@ -1,0 +1,26 @@
+# peek() is a method of an object of the program that nobody follows here. Bun.peek() has the same name and is written in JavaScript, and Bun stands out of sight. Nobody reaches Bun.peek(): a member of the host is reached through its holder,
+# and the front end, which follows the holder by its binding, has rightly left the function out. The build does not stop for it.
+# hidden(Bun); sink(hidden().peek());
+# LIBRARY: own
+# RUN(FOUND): link lookups mechanisms=all
+# FOUND: lookup name-called "peek"
+# FOUND: lookup let-go Bun
+# RUN: lacked
+# CHECK-NOT: lacked PeekPeek
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hidden" [isFreeName]
+    v2 = Builtin builtin=Bun
+    v3 = Call v1, -, v2
+    v4 = Call v1, -
+    v5 = PropGet v4 key="peek"
+    v6 = Call v5, v4 calleeKey="peek"
+    v7 = PropGet v0 key="sink" [isFreeName]
+    v8 = Call v7, -, v6
+    v9 = Undefined
+    Return v9
+}

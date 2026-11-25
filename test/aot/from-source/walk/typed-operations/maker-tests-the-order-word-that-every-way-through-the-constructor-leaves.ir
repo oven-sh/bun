@@ -1,0 +1,22 @@
+# -- source: maker-tests-the-order-word-that-every-way-through-the-constructor-leaves.ts
+# declare function report(value: unknown): void;
+# interface Stone { grams: number; vein?: number[]; day: number; cut?: string }
+# interface Gem extends Stone { color?: string; flaw?: object; light?: object; facets: number }
+# interface Wall extends Stone { rows: Stone[]; high: number }
+# const isVeined: boolean = (globalThis as any).isVeined;
+# function Stone(this: Stone, grams: number) { this.grams = grams * 2; if (isVeined) this.vein = [grams]; }
+# function dug(hours: number): Stone { const stone: Stone = new (Stone as any)(hours & 7); days = days + hours; stone.day = days; return stone; }
+# let days = 0;
+# function sawn(hours: number, cut: string): Stone { const stone = dug(hours); stone.cut = cut + hours; return stone; }
+# function ground(facets: number): Gem { const gem = sawn(facets + 1, "g") as Gem; gem.color = undefined; gem.flaw = undefined; gem.light = undefined; gem.facets = facets; return gem; }
+# function built(count: number): Wall { const wall = dug(count) as Wall, rows: Stone[] = []; for (let left = count; left > 0; left--) rows.push(ground(left)); wall.rows = rows; wall.high = count * 3; return wall; }
+# const wall = built(2);
+# report(Object.keys(wall).join() + wall.high);
+# report(wall);
+# -- end of source
+# `const stone = new Stone(hours & 7); .. stone.day = days;` behind `function Stone(grams) { this.grams = grams * 2; if (isVeined) this.vein = [grams]; }`: two orders go on with `day`: behind `grams vein` and behind `grams`.
+# The walk tests the one with the fewest keys in front: what every way through the constructor leaves. What a call or a construction of the body itself has answered is likely in an order, whatever has run since: the test says.
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0]
+# CHECK: PutSlotOrAdd {{*}}key="day" receivers=[L0] {{*}}orderWordAfter=

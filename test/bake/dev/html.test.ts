@@ -516,3 +516,28 @@ devTest("editing a file imported from outside the project root hot-reloads", {
     await c.expectMessage("three");
   },
 });
+// One watch batch that holds an html file and a file it references makes both entry points of one rebuild.
+// An editor that saves by renaming makes such a batch: https://github.com/oven-sh/bun/issues/20877
+devTest("html file and its scripts rebuilt together load by their module ids", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts", "./other.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `console.log("v1");`,
+    "other.ts": `console.log("other v1");`,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2");`);
+      await dev.write("other.ts", `console.log("other v2");`);
+    }
+    // previously: Failed to load bundled module '<absolute path>/script.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("v2", "other v2");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});

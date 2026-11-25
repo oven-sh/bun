@@ -1,33 +1,34 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="written"
-// CHECK: [[converted]] = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=FromLooseType
-// CHECK-NEXT: PropSet {{*}}, [[converted]] key="value"
+// CHECK: ([[box]]: {{*}}, [[stored]]: anything):
+// CHECK-NOT: Convert
+// CHECK: PropSet [[box]], [[stored]] key="value"
 
 // RUN(ANNOTATED): lower
 // ANNOTATED-LABEL: function {{*}}name="annotated"
 // ANNOTATED: ([[stored]]: anything):
-// ANNOTATED: [[number]] = Convert [[stored]] declared={type=number {{*}}}
-// ANNOTATED-NEXT: PropSet {{*}}, [[number]] key="value"
+// ANNOTATED-NOT: Return
+// ANNOTATED: PropSet {{*}}, [[stored]] key="value"
 
 // RUN(ARGUMENT): lower
 // ARGUMENT-LABEL: function {{*}}name="writtenArgument"
 // ARGUMENT: ([[stored]]: anything):
-// ARGUMENT: [[number]] = Convert [[stored]] declared={type=number {{*}}}
-// ARGUMENT-NEXT: PropSet {{*}}, [[number]] key="value"
+// ARGUMENT-NOT: Return
+// ARGUMENT: PropSet {{*}}, [[stored]] key="value"
 
 // RUN(INFERRED): lower
 // INFERRED-LABEL: function {{*}}name="inferred"
 // INFERRED: ([[stored]]: anything):
-// INFERRED: [[same]] = Convert [[stored]] declared={type=undefined|null|L{{*}}}
-// INFERRED-NEXT: PropSet {{*}}, [[same]] key="value"
+// INFERRED-NOT: Return
+// INFERRED: PropSet {{*}}, [[stored]] key="value"
 
 // RUN(DIRECT): lower
 // DIRECT-LABEL: function {{*}}name="inferredAtTheCall"
 // DIRECT: ([[stored]]: anything):
-// DIRECT: [[same]] = Convert [[stored]] declared={type=undefined|null|L{{*}}}
-// DIRECT-NEXT: PropSet {{*}}, [[same]] key="value"
+// DIRECT-NOT: Return
+// DIRECT: PropSet {{*}}, [[stored]] key="value"
 
-// Each instantiation of a generic interface is a layout of its own, whose field has the type argument. What is stored through `Box<number>` is converted to `number` where somebody wrote that type argument: in the type of a parameter, in the annotation of a variable, at the call. A type argument that the checker inferred decides nothing: the store is converted to what the interface says of the member, the type parameter, which is a layout of its own that nobody allocates (../types/type-parameter-is-a-layout.ts), never to `number`.
+// What is stored into a member is converted to nothing, whether somebody wrote the type argument of `Box<number>` (in the type of a parameter, in the annotation of a variable, at the call) or the checker inferred it: the layout says what the field is declared to hold, and the slot judges what arrives.
 interface Box<T> {
   value: T;
 }

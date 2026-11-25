@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# function Below(a) { Base.call(this, a); this.b = 1; }
+# Object.setPrototypeOf(Below.prototype, Base.prototype);
+# class Lower extends Base { constructor(a) { super(a); this.c = 2; } }
+# publish(Base, Below, Lower);
+# print(new Base(1).a, Object.keys(new Below(2)).join(), Object.keys(new Lower(3)).join());
+# -- end of source
+# The function and the class below stand at the top of the file: each class is evaluated once, and their objects do arrive in the body of `Base`. Nothing is left out of the test. f1 = Base; L0 = Base, L1 = Below, L2 = Lower
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK-NOT: receivers=[L0]
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
+# ANSWERS: 1 a,b a,c
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = () => { };
+# CHECKED: 1 a,b a,c
+# CHECKED-NEXT: exited with 0

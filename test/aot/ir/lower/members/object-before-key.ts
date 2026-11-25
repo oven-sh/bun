@@ -1,15 +1,13 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="read"
 // CHECK-NOT: = Call
-// CHECK: [[calledObject]] = Call {{*}}calleeName="f"
-// CHECK-NEXT: [[object]] = Convert [[calledObject]] declared={type={{*}}flags=[IsExpected]}
+// CHECK: [[object]] = Call {{*}}calleeName="f"
 // CHECK-NOT: = Call
 // CHECK: [[key]] = Call {{*}}calleeName="g"
 // CHECK-NEXT: = ElemGet [[object]], [[key]]
 // CHECK-LABEL: function {{*}}name="store"
 // CHECK-NOT: = Call
-// CHECK: [[calledTarget]] = Call {{*}}calleeName="f"
-// CHECK-NEXT: [[target]] = Convert [[calledTarget]] declared={type={{*}}flags=[IsExpected]}
+// CHECK: [[target]] = Call {{*}}calleeName="f"
 // CHECK-NOT: = Call
 // CHECK: [[name]] = Call {{*}}calleeName="g"
 // CHECK-NOT: = Call

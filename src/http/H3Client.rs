@@ -1,10 +1,10 @@
-//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.c.
+//! HTTP/3 client over lsquic via packages/bun-usockets/src/quic.cpp.
 //!
 //! One `ClientContext` per HTTP-thread loop wraps the lsquic client engine;
 //! each `ClientSession` is one QUIC connection to an origin and multiplexes
 //! `Stream`s, each bound 1:1 to an `HTTPClient`. The result-delivery surface
 //! is the same one H2 uses (`handleResponseMetadata` / `handleResponseBody` /
-//! `progressUpdateH3`), so redirect, decompression, and FetchTasklet plumbing
+//! `InFlightRequest::finish`), so redirect, decompression, and FetchTasklet plumbing
 //! are shared with HTTP/1.1.
 //!
 //! Layout mirrors `h2_client/`:
@@ -40,7 +40,6 @@ bun_core::declare_scope!(h3_client, hidden);
 pub(crate) use client_context::ClientContext;
 pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
-pub use stream::Stream;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
@@ -52,5 +51,4 @@ pub use stream::Stream;
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
-pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;

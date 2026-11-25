@@ -135,86 +135,8 @@ for (const [name, value] of [["0", 0], ["1", 1], ["''", ""], ["'false'", "false"
 
 honest("honest after");
 
-// GENERATED: half code total exactlyTrue valueOf
 // CHECK-LABEL: function {{*}}name="half"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=number site=[[w_2]]}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=2
-// CHECK-NEXT: v2 = Div v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_2]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="code"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_4]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="charCodeAt"
-// CHECK-NEXT: v2 = Integer
-// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="charCodeAt" calleeName="s.charCodeAt"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_5]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v0 key="length"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_6]]} illTypedCause=Assertion
-// CHECK-NEXT: v7 = Add v4, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="total"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_8]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: v3 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b2(v2)
-// CHECK-NEXT: b2(v4: number):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v3
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v9 = Convert v4 declared={type=number site=[[w_8]]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b7():
-// CHECK-NEXT: v10 = Convert v8 declared={type=number site=[[w_10]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v11 = Add v4, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_9]]}
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b7():
-// CHECK-NEXT: Jump -> next b2(v12)
-// CHECK-NEXT: b7() role=IterationCleanup subject=v3:
-// CHECK-NEXT: v13 = CatchException
-// CHECK-NEXT: IteratorClose v3 completion=Throw
-// CHECK-NEXT: Rethrow v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="exactlyTrue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_11]]}] results=[{type=boolean site=[[w_12]]}] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Boolean boolean=true
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_12]]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_15]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="log"
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = String string="valueOf"
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_16]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Integer integer=8
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

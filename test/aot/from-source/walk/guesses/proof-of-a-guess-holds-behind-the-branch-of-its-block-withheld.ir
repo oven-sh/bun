@@ -1,0 +1,13 @@
+# the same function with guesses withheld: nothing is tested, each block is walked once, and both reads are closed
+# RUN: walk f1 mechanisms=all-ParameterGuards-Guesses-LoopInvariants
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = PropGet {{*}}key="flags"
+# CHECK-NOT: = PropGet {{*}}key="flags"
+# RUN(NEVER): walk f1 mechanisms=all-ParameterGuards-Guesses-LoopInvariants
+# NEVER-NOT: = ShapeTest
+# -- source: proof-of-a-guess-holds-behind-the-branch-of-its-block.ts
+# declare function sink(...values: unknown[]): void;
+# class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
+# function reduced(type: Kind) { if (type.flags & 1) return 1; else if (type.flags & 2) return 2; return 3; }
+# sink(reduced, new Kind(1));
+# -- end of source

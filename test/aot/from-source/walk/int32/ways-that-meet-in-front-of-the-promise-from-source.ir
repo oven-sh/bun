@@ -1,0 +1,24 @@
+# the promise of a conditional stands where its arms meet: what arrives there is what each arm brings, judged in the block that the arm leaves, where the relation in front of the arm holds
+# f1 previous, f2 next: unequal to the end of the range . f3 opposite: the relation cuts what an operator gives, and 0 is gone in front of the minus . f4 nested . f5 byAnd, f6 byOr: two tests in front of one arm
+# f7 defaultThenStep: what `??` lets through is what is written without undefined . f8 twice: what has met meets again . f9 chain . f10 behindLoop: behind a loop the walk types the variable, and `!==` cuts that
+# Eight of the ten were once reported (TS100031 stopped the build of a right program)
+# -- source: ways-that-meet-in-front-of-the-promise-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function previous(a: Bun.int32): Bun.int32 { return a !== -2147483648 ? a - 1 : a; }
+# function next(a: Bun.int32): Bun.int32 { return a !== 2147483647 ? a + 1 : a; }
+# function opposite(a: Bun.int32): Bun.int32 { const low = a & 255; return low !== 0 ? -low : 0; }
+# function nested(a: Bun.int32): Bun.int32 { return a > 0 ? (a !== 2147483647 ? a + 1 : a) : 0; }
+# function byAnd(a: Bun.int32): Bun.int32 { return a > 0 && a < 1000 ? a * 1000 : 0; }
+# function byOr(a: Bun.int32): Bun.int32 { return a < -1000 || a > 1000 ? 0 : a * 1000; }
+# function defaultThenStep(a: Bun.int32 | undefined): Bun.int32 { const b = a ?? 0; return b < 100 ? b + 1 : b; }
+# function twice(a: Bun.int32): Bun.int32 { const x = a < 100 ? a + 1 : a; const y = x > -100 ? x - 1 : x; return y; }
+# function chain(a: Bun.int32): Bun.int32 { return a === 1 ? 10 : a === 2 ? 20 : a === 3 ? 30 : a < 0 ? a + 1 : a; }
+# function behindLoop(a: Bun.int32, n: Bun.int32): Bun.int32 { let s: Bun.int32 = 0; for (let i = 0; i < n; i++) s = (s + a) | 0; return s !== 2147483647 ? s + 1 : s; }
+# sink(previous, next, opposite, nested, byAnd, byOr, defaultThenStep, twice, chain, behindLoop);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-LABEL: code f10:Body
+# RUN(NONE): walk f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 mechanisms=none
+# NONE-LABEL: code f1:Body
+# NONE-LABEL: code f10:Body

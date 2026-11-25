@@ -1,0 +1,27 @@
+# Where Link's proofs are checked at run time a record that lies raw is asked too: `small` lies in a slot of 64 bits and its read is typed int32: the form tells "a whole number", the rest is claimed.
+# A right program runs on under the word.
+# f6 = read
+# -- source: under-the-word-a-read-that-lies-raw-is-asked-for-what-its-form-does-not-tell.ts
+# declare function print(value: unknown): void;
+# class Meter {
+#   small = 0;
+#   step(by: number): void { this.small = (this.small + by) | 0; }
+#   read(): number { return this.small; }
+# }
+# let count = 0;
+# function bump(): void { count = (count + 1) | 0; }
+# function told(): number { return count; }
+# function twice(): number { return told() * 2; }
+# const meter = new Meter();
+# for (let i = 0; i < 4; i++) { meter.step(i & 3); bump(); }
+# print(meter.read()); print(told()); print(twice());
+# -- end of source
+# RUN(ASKED): walk f6 mechanisms=all-Inlining testing=CheckProofsAtRunTime
+# ASKED-LABEL: code f6:Body
+# ASKED: [[read]]: i32 @Int64 = GetSlot {{*}}key="small"
+# ASKED-NEXT: CheckProof [[read]] checkedType=i32 typeWithoutProof=int source=Field
+# RUN(RIGHT): run-in-shell testing=CheckProofsAtRunTime
+# RIGHT: 6
+# RIGHT-NEXT: 4
+# RIGHT-NEXT: 8
+# RIGHT-NEXT: exited with 0

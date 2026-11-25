@@ -1,7 +1,7 @@
 // RUN: link
-// CHECK: layout [[chunk]] name="Chunk"
-// CHECK: layout [[declared]] name="Declared"
-// CHECK: variable {{*}}name="v" module=[[entry]] declared={type=undefined|null|absent|[[chunk]]|[[declared]] flags=[IsExpected]}
+// CHECK: layout [[declared]] fields=[{key="x"
+// CHECK: layout [[chunk]] {{*}}fields=[{key="n"
+// CHECK: variable {{*}}name="v" module=[[entry]] declared={type=undefined|null|absent|[[declared]]|[[chunk]] flags=[IsExpected]}
 
 // RUN(SITES): lower
 // SITES-NOT: site=

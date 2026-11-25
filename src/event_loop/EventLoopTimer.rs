@@ -1,189 +1,116 @@
-// LAYERING: re-export `bun_core::Timespec` so every embedder of
-// `EventLoopTimer.next` agrees on the type (was a local stub with the same
-// `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
-// — to convert at every assignment and risked silent layout drift).
-use Timespec as timespec;
-pub use bun_core::Timespec;
+use core::cell::Cell;
 
-// Re-export so higher tiers see the *same* type they pass to
-// `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
-// would make the real pairing-heap unusable — orphan rule blocks
-// `impl HeapNode for EventLoopTimer` anywhere but here).
-pub use bun_io::heap::IntrusiveField;
+use bun_core::Timespec;
+use bun_io::heap::{HeapNode, IntrusiveField};
 
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
-// ─── Hot-dispatch (link-time) ───────────────────────────────────────────────
-// `EventLoopTimer` is per-tick hot. Low tier (this crate) keeps `Tag` + the
-// intrusive heap node; the `match tag { … container_of … }` dispatch lives in
-// `bun_runtime::dispatch` because it names ~20 high-tier container types.
-//
-// LAYERING: rather than a runtime-registered fn-ptr (init-order
-// hazard), the bodies are declared `extern "Rust"` and defined `#[no_mangle]`
-// in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
-//
-// PERF: `__bun_js_timer_epoch` sits on the
-// heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
-// to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
-    /// Runtime owns the tag→variant `match`; `vm` is an erased
-    /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
-    ///
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// derefs `t`, recovers the tier-6 container via `container_of`
-    /// keyed on `(*t).tag`, and may free that container. Caller must pass a
-    /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(t: *mut EventLoopTimer, now: &timespec, vm: *mut ())
-    -> crate::JsResult<()>;
-    /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
-    /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
-    /// Defined in `bun_runtime::dispatch`.
-    ///
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// recovers the parent struct via `container_of` keyed on `tag`; `t` must
-    /// be the `event_loop_timer` field of that container (tag invariant).
-    fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
+    /// Defined in `bun_runtime::jsc_hooks`.
+    safe fn __bun_remove_timer(timer: &EventLoopTimer);
 }
-// ────────────────────────────────────────────────────────────────────────────
 
+// `repr(C)` keeps `next` at offset 0: its address is the node's.
+#[repr(C)]
 pub struct EventLoopTimer {
     /// The absolute time to fire this timer next.
-    pub next: timespec,
-    pub state: State,
+    pub next: Cell<Timespec>,
+    heap: IntrusiveField<EventLoopTimer>,
     pub tag: Tag,
-    /// Internal heap fields.
-    pub heap: IntrusiveField<EventLoopTimer>,
-    pub in_heap: InHeap,
+    pub state: Cell<State>,
+    /// What `next` is measured on, and so which heap links the node.
+    pub clock: Cell<Clock>,
     /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
     /// timers is Node's. An event loop that would sleep until then runs it at once.
-    pub is_due_when_idle: bool,
+    pub is_due_when_idle: Cell<bool>,
+    /// Set by every insert. Orders JS timers that are due in the same millisecond.
+    pub epoch: Cell<u32>,
 }
 
-// Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
-// here (the defining crate) so higher tiers can instantiate
-// `Intrusive<EventLoopTimer, _>` without hitting the orphan rule.
-impl bun_io::heap::HeapNode for EventLoopTimer {
+const _: () = assert!(size_of::<EventLoopTimer>() == 48);
+
+impl HeapNode for EventLoopTimer {
     #[inline]
-    fn heap(&mut self) -> &mut IntrusiveField<Self> {
-        &mut self.heap
+    fn heap(&self) -> &IntrusiveField<Self> {
+        &self.heap
+    }
+
+    #[inline]
+    fn less(&self, other: &Self) -> bool {
+        let (a, b) = (self.next.get(), other.next.get());
+        if a.sec != b.sec {
+            return a.sec < b.sec;
+        }
+        let (a_is_js, b_is_js) = (self.tag.is_js_timer(), other.tag.is_js_timer());
+        let whole_ms = |nsec: i64| NS_PER_MS * (nsec / NS_PER_MS);
+        let a_ns = if a_is_js { whole_ms(a.nsec) } else { a.nsec };
+        let b_ns = if b_is_js { whole_ms(b.nsec) } else { b.nsec };
+        if a_ns != b_ns {
+            return a_ns < b_ns;
+        }
+        // Only a fake `setImmediate` is ever in a heap. It runs before timeouts due at the same instant.
+        if (self.tag == Tag::ImmediateObject) != (other.tag == Tag::ImmediateObject) {
+            return self.tag == Tag::ImmediateObject;
+        }
+        // The epoch wraps: the earlier one is less than half the range behind.
+        a_is_js && b_is_js && other.epoch.get().wrapping_sub(self.epoch.get()) < u32::MAX / 2
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
-pub enum InHeap {
-    #[default]
-    None,
-    Regular,
+/// An [`EventLoopTimer`] that leaves the heap when it drops.
+#[repr(transparent)]
+pub struct OwnedTimer(EventLoopTimer);
+
+impl OwnedTimer {
+    pub fn init_paused(tag: Tag) -> Self {
+        Self(EventLoopTimer::init_paused(tag))
+    }
+
+    /// The pointer to link, with the provenance of `this`.
+    pub const fn node(this: *const Self) -> *const EventLoopTimer {
+        this.cast()
+    }
+}
+
+impl core::ops::Deref for OwnedTimer {
+    type Target = EventLoopTimer;
+
+    fn deref(&self) -> &EventLoopTimer {
+        &self.0
+    }
+}
+
+impl Drop for OwnedTimer {
+    fn drop(&mut self) {
+        self.disarm();
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Clock {
+    Real,
+    /// `jest.useFakeTimers()`
     Fake,
 }
 
 impl EventLoopTimer {
     pub fn init_paused(tag: Tag) -> Self {
         Self {
-            next: timespec::EPOCH,
-            state: State::PENDING,
+            next: Cell::new(Timespec::EPOCH),
+            state: Cell::new(State::PENDING),
             tag,
             heap: IntrusiveField::default(),
-            in_heap: InHeap::None,
-            is_due_when_idle: false,
+            clock: Cell::new(Clock::Real),
+            is_due_when_idle: Cell::new(false),
+            epoch: Cell::new(0),
         }
     }
 
-    pub fn less(_: (), a: &Self, b: &Self) -> bool {
-        let sec_order = a.next.sec.cmp(&b.next.sec);
-        if sec_order != core::cmp::Ordering::Equal {
-            return sec_order == core::cmp::Ordering::Less;
+    /// Unlinks an armed timer from the heap of this thread's VM. A `WTFTimer` is in another.
+    pub fn disarm(&self) {
+        if self.state.get() == State::ACTIVE {
+            __bun_remove_timer(self);
         }
-
-        // collapse sub-millisecond precision for JavaScript timers
-        let maybe_a_epoch = a.js_timer_epoch();
-        let maybe_b_epoch = b.js_timer_epoch();
-        let mut a_ns = a.next.nsec;
-        let mut b_ns = b.next.nsec;
-        if maybe_a_epoch.is_some() {
-            a_ns = NS_PER_MS * (a_ns / NS_PER_MS);
-        }
-        if maybe_b_epoch.is_some() {
-            b_ns = NS_PER_MS * (b_ns / NS_PER_MS);
-        }
-
-        let order = a_ns.cmp(&b_ns);
-        if order == core::cmp::Ordering::Equal {
-            // Only a fake `setImmediate` is ever in a heap. It runs before timeouts due at the same instant.
-            if (a.tag == Tag::ImmediateObject) != (b.tag == Tag::ImmediateObject) {
-                return a.tag == Tag::ImmediateObject;
-            }
-            if let Some(a_epoch) = maybe_a_epoch {
-                if let Some(b_epoch) = maybe_b_epoch {
-                    // We expect that the epoch will overflow sometimes.
-                    // If it does, we would ideally like timers with an epoch from before the
-                    // overflow to be sorted *before* timers with an epoch from after the overflow
-                    // (even though their epoch will be numerically *larger*).
-                    //
-                    // Wrapping subtraction gives us a distance that is consistent even if one
-                    // epoch has overflowed and the other hasn't. If the distance from a to b is
-                    // small, it's likely that b is really newer than a, so we consider a less than
-                    // b. If the distance from a to b is large (greater than half the u24 range),
-                    // it's more likely that b is older than a so the true distance is from b to a.
-                    //
-                    // The epoch is logically a u24, stored in a wider int,
-                    // so we mask the wrapping_sub result to 24 bits to wrap mod 2^24.
-                    // (`TimerFlags::epoch`/`set_epoch` below mask to 24 bits on both read
-                    // and write, so both operands here are already < 2^24.)
-                    const U24_MAX: u32 = TimerFlags::EPOCH_MASK;
-                    return (b_epoch.wrapping_sub(a_epoch) & U24_MAX) < U24_MAX / 2;
-                }
-            }
-        }
-        order == core::cmp::Ordering::Less
-    }
-
-    /// If self was created by set{Immediate,Timeout,Interval}, return its
-    /// JS-timer epoch (used for stable ordering of equal-deadline timers).
-    ///
-    /// The container_of dispatch into
-    /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
-    /// runtime types) lives in
-    /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
-    /// Returns `None` for non-JS timer tags.
-    #[inline]
-    pub(crate) fn js_timer_epoch(&self) -> Option<u32> {
-        // SAFETY: `self` is a live timer; the extern impl reads `tag` and
-        // recovers the container via `offset_of`.
-        unsafe { __bun_js_timer_epoch(self.tag, self) }
-    }
-
-    /// Fire the timer's callback.
-    ///
-    /// The `match self.tag { … container_of … }` body is
-    /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
-    /// PostgresSQLConnection, …). That match lives in
-    /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
-    /// the erased `*mut VirtualMachine`.
-    ///
-    /// Deliberately takes `this: *mut Self`, NOT
-    /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
-    /// tier-6 timer object whose JS callback can re-enter and re-derive a
-    /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
-    /// `vm.timer.remove()` mutates `(*this).state`/`heap`). A live `&mut self`
-    /// across that FFI call lets LLVM `noalias` dead-store the re-entrant
-    /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
-    /// `*mut EventLoopTimer` popped from the heap — pass it directly.
-    ///
-    /// The owner returns the exception its handler left pending as `Err` and
-    /// never reports it itself; the drain loop that called `fire` folds it.
-    ///
-    /// # Safety
-    /// `this` is a live timer just popped from `All.timers`; `now` is the
-    /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
-    /// may free the container — caller must not touch `this` after.
-    pub unsafe fn fire(
-        this: *mut Self,
-        now: &timespec,
-        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) -> crate::JsResult<()> {
-        // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) }
     }
 }
 
@@ -222,15 +149,12 @@ pub enum Tag {
 }
 
 impl Tag {
-    /// Whether `jest.useFakeTimers()` can capture this timer. Only timers a
-    /// program schedules itself are faked; runtime-internal timeouts stay on
-    /// the real clock, as in Jest. A fakeable owner has a release arm in
-    /// `FakeTimers::clear`; every other owner arms with `ForceRealTime`, the
-    /// clock the real heap is drained against.
-    pub fn allow_fake_timers(self) -> bool {
+    /// Due to the millisecond, and within one in the order of arming.
+    #[inline]
+    pub fn is_js_timer(self) -> bool {
         matches!(
             self,
-            Tag::TimeoutObject | Tag::ImmediateObject | Tag::AbortSignalTimeout | Tag::CronJob
+            Tag::TimeoutObject | Tag::ImmediateObject | Tag::AbortSignalTimeout
         )
     }
 
@@ -274,17 +198,17 @@ impl Tag {
 /// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
 ///
 /// The accessor layer exists only as a cross-crate visibility shim: the
-/// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
+/// `fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
 /// fields on owners defined elsewhere, so each owner exports a named thunk per
 /// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
 /// call site); the field may be a bare `EventLoopTimer` or any
-/// `#[repr(transparent)]` wrapper such as `JsCell<EventLoopTimer>`, and may be
+/// wrapper that starts with one, and may be
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
+/// bun_event_loop::impl_timer_owner!(JSMySQLConnection;
+///     from_timer_ptr => timers.timer,
+///     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 /// );
 /// ```
 #[macro_export]
@@ -316,192 +240,138 @@ pub enum State {
     #[default]
     PENDING,
 
-    /// The timer is active and will fire at the next time.
+    /// The timer is linked into a heap.
     ACTIVE,
 
     /// The timer has been cancelled and will not fire.
     CANCELLED,
 
-    /// The timer has fired and the callback has been called.
+    /// The heap has popped the timer.
     FIRED,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `TimerObjectInternals.Flags` + `Kind` — moved DOWN from `bun_runtime::timer`
-// (LAYERING: `bun_jsc::AbortSignal::Timeout` embeds `Flags` for the heap-order
-// epoch tiebreak; `bun_runtime` depends on `bun_jsc`, so the field type must
-// live in a crate both can see. Pure data — no high-tier deps.)
-// ──────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bun_io::heap::Intrusive;
 
-/// `setTimeout` / `setInterval` / `setImmediate` discriminant stored in the
-/// `Flags` bitfield (2 bits).
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Kind {
-    SetTimeout = 0,
-    SetInterval = 1,
-    SetImmediate = 2,
-}
+    const NS_PER_S: i64 = 1000 * NS_PER_MS;
 
-impl Kind {
-    /// Returns the [`KindBig`] that [`ID`](Timer::ID) packs into the `u64` async-id.
-    #[inline]
-    pub fn big(self) -> KindBig {
-        match self {
-            Kind::SetTimeout => KindBig::SetTimeout,
-            Kind::SetInterval => KindBig::SetInterval,
-            Kind::SetImmediate => KindBig::SetImmediate,
+    impl EventLoopTimer {
+        fn due_at_ns(self, ns: i64) -> Self {
+            let (sec, nsec) = (ns / NS_PER_S, ns % NS_PER_S);
+            self.next.set(Timespec { sec, nsec });
+            self
+        }
+
+        fn in_epoch(self, epoch: u32) -> Self {
+            self.epoch.set(epoch);
+            self
         }
     }
-}
 
-/// Same variants as [`Kind`]. Stored in the two low bits of the `u64` async-id.
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum KindBig {
-    SetTimeout = 0,
-    SetInterval = 1,
-    SetImmediate = 2,
-}
-
-impl From<Kind> for KindBig {
-    #[inline]
-    fn from(k: Kind) -> Self {
-        k.big()
+    fn armed_first(tag: Tag) -> EventLoopTimer {
+        EventLoopTimer::init_paused(tag).in_epoch(1)
     }
-}
 
-/// Packed per-JS-timer state in a `u32`. Layout (LSB→MSB):
-///   epoch:u24, fake:1, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
-///   has_accessed_primitive:1, has_js_ref:1, in_callback:1
-///
-/// Used by `TimeoutObject` / `ImmediateObject` / `AbortSignal::Timeout`.
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-pub struct TimerFlags(u32);
+    fn armed_second(tag: Tag) -> EventLoopTimer {
+        EventLoopTimer::init_paused(tag).in_epoch(2)
+    }
 
-impl Default for TimerFlags {
-    fn default() -> Self {
-        // has_js_ref=true, everything else 0
-        Self(1 << 30)
+    #[track_caller]
+    fn assert_fires_in_order(first: &EventLoopTimer, second: &EventLoopTimer) {
+        assert_eq!((first.less(second), second.less(first)), (true, false));
     }
-}
 
-impl TimerFlags {
-    pub const EPOCH_MASK: u32 = (1 << 24) - 1;
-    const FAKE: u32 = 1 << 24;
-    const KIND_SHIFT: u32 = 25;
-    const KIND_MASK: u32 = 0b11 << Self::KIND_SHIFT;
-    const HAS_CLEARED_TIMER: u32 = 1 << 27;
-    const IS_KEEPING_EVENT_LOOP_ALIVE: u32 = 1 << 28;
-    const HAS_ACCESSED_PRIMITIVE: u32 = 1 << 29;
-    const HAS_JS_REF: u32 = 1 << 30;
-    const IN_CALLBACK: u32 = 1 << 31;
+    #[test]
+    fn the_earlier_deadline_is_first() {
+        for tag in [Tag::TimeoutObject, Tag::BunTest] {
+            for boundary in [NS_PER_MS, NS_PER_S] {
+                assert_fires_in_order(
+                    &armed_second(tag).due_at_ns(boundary - 1),
+                    &armed_first(tag).due_at_ns(boundary),
+                );
+            }
+        }
+        assert_fires_in_order(
+            &armed_second(Tag::TimeoutObject).due_at_ns(0),
+            &armed_first(Tag::ImmediateObject).due_at_ns(NS_PER_MS),
+        );
+    }
 
-    /// Whenever a timer is inserted into the heap (creation or refresh), the
-    /// global epoch is incremented and the new epoch is set on the timer. For
-    /// JS timers, the epoch breaks ties between equal-deadline timers so that
-    /// refreshing a timer makes it fire after its peers (Node.js semantics).
-    #[inline]
-    pub fn epoch(self) -> u32 {
-        self.0 & Self::EPOCH_MASK
+    #[test]
+    fn only_js_deadlines_are_cut_to_the_millisecond() {
+        assert_fires_in_order(
+            &armed_second(Tag::BunTest).due_at_ns(1),
+            &armed_first(Tag::BunTest).due_at_ns(2),
+        );
+        assert_fires_in_order(
+            &armed_second(Tag::TimeoutObject).due_at_ns(NS_PER_MS - 1),
+            &armed_first(Tag::BunTest).due_at_ns(1),
+        );
     }
-    #[inline]
-    pub fn set_epoch(&mut self, v: u32) {
-        self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
-    }
-    /// Created by a function `jest.useFakeTimers()` installed, so it always arms on the fake clock and heap.
-    #[inline]
-    pub fn fake(self) -> bool {
-        self.0 & Self::FAKE != 0
-    }
-    #[inline]
-    pub fn set_fake(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::FAKE
-        } else {
-            self.0 &= !Self::FAKE
+
+    #[test]
+    fn an_immediate_wins_a_tie() {
+        for tag in [Tag::TimeoutObject, Tag::AbortSignalTimeout, Tag::CronJob] {
+            assert_fires_in_order(&armed_second(Tag::ImmediateObject), &armed_first(tag));
         }
     }
-    /// Kind does not include AbortSignal's timeout since it has no
-    /// corresponding ID callback.
-    #[inline]
-    pub fn kind(self) -> Kind {
-        // stored value always written via set_kind (range 0..=2)
-        match ((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8 {
-            0 => Kind::SetTimeout,
-            1 => Kind::SetInterval,
-            2 => Kind::SetImmediate,
-            _ => unreachable!(),
+
+    #[test]
+    fn js_timers_tie_in_the_order_of_arming() {
+        for epoch in [0, u32::MAX] {
+            for armed_between in [1, 1 << 23, 1 << 24, (1 << 31) - 2] {
+                assert_fires_in_order(
+                    &armed_first(Tag::TimeoutObject).due_at_ns(5).in_epoch(epoch),
+                    &armed_second(Tag::AbortSignalTimeout)
+                        .in_epoch(epoch.wrapping_add(armed_between)),
+                );
+            }
         }
     }
-    #[inline]
-    pub fn set_kind(&mut self, k: Kind) {
-        self.0 = (self.0 & !Self::KIND_MASK) | ((k as u32) << Self::KIND_SHIFT);
+
+    #[test]
+    fn a_js_timer_and_another_timer_tie_in_no_order() {
+        let (js, other) = (armed_first(Tag::TimeoutObject), armed_second(Tag::CronJob));
+        assert_eq!((js.less(&other), other.less(&js)), (false, false));
     }
-    /// We do not allow the timer to be refreshed after clearInterval/clearTimeout.
-    #[inline]
-    pub fn has_cleared_timer(self) -> bool {
-        self.0 & Self::HAS_CLEARED_TIMER != 0
-    }
-    #[inline]
-    pub fn set_has_cleared_timer(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::HAS_CLEARED_TIMER
-        } else {
-            self.0 &= !Self::HAS_CLEARED_TIMER
-        }
-    }
-    #[inline]
-    pub fn is_keeping_event_loop_alive(self) -> bool {
-        self.0 & Self::IS_KEEPING_EVENT_LOOP_ALIVE != 0
-    }
-    #[inline]
-    pub fn set_is_keeping_event_loop_alive(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::IS_KEEPING_EVENT_LOOP_ALIVE
-        } else {
-            self.0 &= !Self::IS_KEEPING_EVENT_LOOP_ALIVE
-        }
-    }
-    /// If they never access the timer by integer, don't create a hashmap entry.
-    #[inline]
-    pub fn has_accessed_primitive(self) -> bool {
-        self.0 & Self::HAS_ACCESSED_PRIMITIVE != 0
-    }
-    #[inline]
-    pub fn set_has_accessed_primitive(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::HAS_ACCESSED_PRIMITIVE
-        } else {
-            self.0 &= !Self::HAS_ACCESSED_PRIMITIVE
-        }
-    }
-    #[inline]
-    pub fn has_js_ref(self) -> bool {
-        self.0 & Self::HAS_JS_REF != 0
-    }
-    #[inline]
-    pub fn set_has_js_ref(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::HAS_JS_REF
-        } else {
-            self.0 &= !Self::HAS_JS_REF
-        }
-    }
-    /// Set to `true` only during execution of the JavaScript function so that
-    /// `_destroyed` can be false during the callback even though `state` will
-    /// be `FIRED`.
-    #[inline]
-    pub fn in_callback(self) -> bool {
-        self.0 & Self::IN_CALLBACK != 0
-    }
-    #[inline]
-    pub fn set_in_callback(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::IN_CALLBACK
-        } else {
-            self.0 &= !Self::IN_CALLBACK
+
+    #[test]
+    fn iter_visits_what_is_linked_and_pops_are_ordered() {
+        let mut seed = 1u32;
+        let mut random = move |below: usize| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as usize % below
+        };
+        let nodes: Vec<_> = (0..40)
+            .map(|i| armed_first(Tag::TimeoutObject).in_epoch(i))
+            .map(|node| node.due_at_ns(random(4) as i64 * NS_PER_S))
+            .collect();
+        let heap = Intrusive::<EventLoopTimer>::default();
+        // SAFETY: `nodes` outlives `heap`, and `state` says which of them are linked.
+        unsafe {
+            for _ in 0..200 {
+                let node = &nodes[random(nodes.len())];
+                let ptr = core::ptr::from_ref(node).cast_mut();
+                if node.state.get() != State::ACTIVE {
+                    heap.insert(ptr);
+                    node.state.set(State::ACTIVE);
+                } else if random(2) == 0 {
+                    heap.remove(ptr);
+                    node.state.set(State::CANCELLED);
+                } else if random(2) == 0 {
+                    (*heap.delete_min()).state.set(State::FIRED);
+                }
+                let mut visited: Vec<_> = heap.iter().map(|node| (*node).epoch.get()).collect();
+                visited.sort_unstable();
+                let linked = nodes
+                    .iter()
+                    .filter(|node| node.state.get() == State::ACTIVE);
+                assert!(linked.map(|node| node.epoch.get()).eq(visited));
+            }
+            let popped: Vec<_> = core::iter::from_fn(|| heap.delete_min().as_ref()).collect();
+            assert!(popped.len() > 1 && popped.is_sorted_by(|a, b| a.less(b)));
         }
     }
 }

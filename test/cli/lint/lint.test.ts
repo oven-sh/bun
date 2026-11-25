@@ -10,7 +10,9 @@ import {
   isMusl,
   isWindows,
   normalizeBunSnapshot,
+  runCommandMaxRSS,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import {
   chmodSync,
@@ -137,6 +139,16 @@ describe.concurrent("bun lint", () => {
         1 error and 1 warning potentially fixable with the \`--fix\` option."
     `);
     expect(stderr).toMatchInlineSnapshot(`"Linted 3 files"`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a pattern can be longer than a path", async () => {
+    const names = Array.from({ length: 300 }, (_, index) => `some/dir/file${index}.js`);
+    const { stdout, exitCode } = await lint(
+      { ".eslintrc.json": `{ "root": true, "rules": { "no-debugger": "error" } }`, "a.js": "debugger;\n" },
+      [`{a.js,${names.join()}}`],
+    );
+    expect(stdout).toContain("no-debugger");
     expect(exitCode).toBe(1);
   });
 
@@ -6501,15 +6513,19 @@ maybe(() => { return f; });
       ".eslintrc.json": JSON.stringify({ root: true, rules: { "no-extra-boolean-cast": "error" } }),
       "a.js": `x = ${"!".repeat(45_000)}a;\n`,
     });
-    await using proc = spawn({ cmd: [...command, "--threads", "1", "a.js"], env, cwd: String(dir), stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Started by a process of its own: on Linux a child's peak RSS starts at its parent's peak, which for this test
+    // file is whatever it has run so far.
+    const { stdout, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [...command, "--threads", "1", "a.js"],
+      cwd: String(dir),
+      env: withoutAsanQuarantine(env),
+    });
     // Where the stack is smaller or the frames are larger, the file is rejected instead.
     if (!stdout.includes("The code is nested too deeply")) {
       expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
     }
     expect(exitCode).toBe(1);
-    // On Linux a child's peak RSS starts at its parent's peak, which is about 300 MB for this test file.
-    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
+    expect(maxRSS).toBeLessThan((isASAN || isDebug ? 800 : 600) * 1024 * 1024);
   });
 
   // The matcher for `include` patterns used to recurse for each `**`, and to try every number of directories for each
@@ -10346,6 +10362,95 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       const where = (text: string) => /a\.ts:\d+:\d+: Type 'string'/.exec(text)?.[0];
       expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:17: Type 'string'", "a.ts:1:17: Type 'string'"]);
     });
+
+    const unchecked = { "tsconfig.json": files["tsconfig.json"], "ok.ts": "export const ok = 1;\n" };
+    // Too many for the 18 MB of a thread on Windows as well.
+    const calls = Buffer.alloc(200_000 * 4, ".f()").toString();
+
+    // The binder runs out of stack. Without types the linter doesn't need it.
+    test.concurrent("--type-check fails a file that's nested too deeply for the type checker", async () => {
+      const deep = `const o = { f() { return o; } };\nexport const bad: number = "x";\nexport const a = o${calls};\n`;
+      const project = { ...unchecked, "deep.ts": deep };
+      const flags = ["--type-aware", "-f", "unix", "deep.ts"];
+      const [checked, piped, aware] = await Promise.all([
+        lint(project, ["--type-check", ...flags]),
+        lint(project, ["--type-check", ...flags.slice(0, -1), "--stdin", "--stdin-filename", "deep.ts"], {
+          stdin: deep,
+        }),
+        lint(project, flags),
+      ]);
+      for (const { raw, exitCode } of [checked, piped]) {
+        expect(raw).toContain(
+          "deep.ts:1:1: The code is nested too deeply for the type checker. Type errors in this file may be missing.",
+        );
+        expect(exitCode).toBe(1);
+      }
+      expect(aware.stderr).toContain("warn: The code is nested too deeply for the type checker in deep.ts\n");
+      expect(aware.exitCode).toBe(0);
+    });
+
+    test.concurrent("--type-check fails a file in which the type checker ran out of stack", async () => {
+      const nested = Buffer.alloc(8_000, "f(").toString() + "1" + Buffer.alloc(4_000, ")").toString();
+      const project = { ...unchecked, "a.ts": `declare function f<T>(x: T): T;\nexport const a = ${nested};\n` };
+      const { raw, exitCode } = await lint(project, ["--type-aware", "--type-check", "-f", "unix", "a.ts"]);
+      // Where the frames are larger, the parser is the first to run out.
+      expect(raw).toMatch(
+        /a\.ts:1:1: (The type checker ran out of stack|The code is nested too deeply for the type checker|Parsing error: The code is nested too deeply)/,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a rule that looks at several files keeps that error", async () => {
+      const deep = `import "./b";\nconst o = { f() { return o; } };\nexport const a = o${calls};\n`;
+      const project = {
+        "tsconfig.json": files["tsconfig.json"],
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          plugins: ["import"],
+          rules: { "import/no-cycle": "warn" },
+        }),
+        "a.ts": deep,
+        "b.ts": `import "./a";\nexport const b = 1;\n`,
+      };
+      const { raw, exitCode } = await lint(project, ["--type-aware", "--type-check", "-f", "unix"]);
+      expect(raw).toContain("a.ts:1:1: The code is nested too deeply for the type checker.");
+      expect(raw).toMatch(/a\.ts:1:\d+: .*import\(no-cycle\)/);
+      expect(exitCode).toBe(1);
+    });
+
+    // `\` is a separator on Windows.
+    test.concurrent.skipIf(isWindows)("--type-check checks a file with a backslash in its name", async () => {
+      const project = { ...unchecked, "a\\b.ts": `export const x: number = "s";\n` };
+      const flags = ["--type-aware", "--type-check", "-f", "unix", "a\\b.ts"];
+      // `a/b.ts` is another file.
+      const other = { ...project, "a/b.ts": "export const other: string = 5;\n" };
+      const results = await Promise.all([lint(project, flags), lint(other, flags)]);
+      for (const { raw, exitCode } of results) {
+        expect(raw).toContain("a\\b.ts:1:14: Type 'string' is not assignable to type 'number'.");
+        expect(raw).not.toContain("is not assignable to type 'string'");
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test.concurrent.skipIf(isWindows)(
+      "--type-check fails a file in a directory with a backslash in its name, and reports no other file's errors for it",
+      async () => {
+        const project = {
+          ...unchecked,
+          "w\\x/a.ts": "export const fine = 1;\n",
+          "w/x/a.ts": "export const other: string = 5;\n",
+        };
+        const flags = ["--type-aware", "-f", "unix", "w\\x/a.ts"];
+        const [checked, aware] = await Promise.all([lint(project, ["--type-check", ...flags]), lint(project, flags)]);
+        expect(checked.raw).toContain(
+          "w\\x/a.ts:1:1: The type checker cannot read this file because a directory in its path has a backslash in its name.",
+        );
+        expect(checked.raw).not.toContain("is not assignable");
+        expect(checked.exitCode).toBe(1);
+        expect(aware.stderr).toContain("warn: The type checker cannot read a path that has a backslash");
+        expect(aware.exitCode).toBe(0);
+      },
+    );
 
     test("multi-file rules like import/no-cycle also run on a file that's linted with types", async () => {
       const { raw, exitCode } = await lint(

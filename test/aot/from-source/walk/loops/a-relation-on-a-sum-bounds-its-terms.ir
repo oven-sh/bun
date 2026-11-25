@@ -1,0 +1,44 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# interface Row { id: number }
+# function idsOf(rows: readonly Row[]): string {
+#   let result = "";
+#   const length = rows.length;
+#   let i = 0;
+#   while (i < length) {
+#     const start = rows[i].id;
+#     let count = 1;
+#     while (i + count < length && rows[i + count].id === start + count) count++;
+#     if (result.length) result += ",";
+#     result += start;
+#     if (count > 1) result += ":" + count;
+#     i += count;
+#   }
+#   return result;
+# }
+# function belowZero(rows: readonly Row[], from: number): number { const first = from | 0; let count = 0; while (first + count < rows.length) count++; return count; }
+# function twice(rows: readonly Row[]): number { let count = 0; while (count + count < rows.length) count++; return count; }
+# function fraction(rows: readonly Row[], from: number): number { let count = 0; while (from + count < rows.length) count++; return count; }
+# const rows: Row[] = [1, 2, 3, 7, 9, 10].map(id => ({ id }));
+# print([idsOf(rows), belowZero(rows, -4), twice(rows), fraction(rows, 0.5)].join(" "));
+# -- end of source
+# Nothing bounds `count` but `i + count < length`. It climbed to the widest integer, the sum passed the exact integers, `i` was a whole number in a double, and both loops reckoned in doubles.
+# Where the relation holds, each term is at most the bound less one less the least of the other term. A term that stands twice in the sum, or beside what is no integer, is left as it was.
+# f1 = idsOf, f2 = belowZero, f3 = twice, f4 = fraction
+# RUN(IDS): walk f1 mechanisms=all
+# IDS-LABEL: code f1:Body
+# IDS-NOT: @Double) isInLoop=true isLoopHead=true
+# IDS: int[0, 8589934589] @Int64) isInLoop=true isLoopHead=true
+# IDS: int[1, 4294967294] @Int64 = Narrowed {{*}}narrowsTermOfOperand
+# IDS-NOT: @Double) isInLoop=true isLoopHead=true
+# RUN(BELOW): walk f2 mechanisms=all
+# BELOW-LABEL: code f2:Body
+# BELOW: int[0, 6442450942] @Int64 = Narrowed {{*}}narrowsTermOfOperand
+# RUN(TWICE): walk f3 mechanisms=all
+# TWICE-LABEL: code f3:Body
+# TWICE-NOT: narrowsTermOfOperand
+# RUN(FRACTION): walk f4 mechanisms=all
+# FRACTION-LABEL: code f4:Body
+# FRACTION-NOT: narrowsTermOfOperand
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1:3,7,9:2 10 3 6

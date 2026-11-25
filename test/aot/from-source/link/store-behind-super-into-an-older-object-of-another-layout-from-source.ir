@@ -1,0 +1,41 @@
+# A base constructor may answer with an older object, and `this` behind super() is then that object. A store there is part of the construction of the class that is being constructed and of what lies below it; for an object of any other layout it is a store like any other.
+# While the store counted as part of the construction of whatever layout arrived, the literal's field `run` was said to be written at its construction alone, and its closure could have been left unmade.
+# RUN: link fields mechanisms=all
+# CHECK: "run"
+# RUN(LATER): link fields mechanisms=all
+# LATER-NOT: "run" {{*}}written-at-construction-alone
+# -- source: store-behind-super-into-an-older-object-of-another-layout-from-source.ts
+# type Box = { run: () => number };
+# function makeBox(n: number): Box {
+#   let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   return { run: () => { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return n; } };
+# }
+# class Base {
+#   constructor(older?: Base | Child | Box) {
+#     let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#     if (older) return older as any;
+#   }
+# }
+# class Child extends Base {
+#   declare run: () => number;
+#   constructor(older: Base | Child | Box, other: Box) {
+#     let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#     super(older);
+#     this.run = other.run;
+#   }
+# }
+# function turn(k: number): number {
+#   let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   const first = makeBox(k);
+#   const second = makeBox(k + 1000);
+#   const answered: Base | Child | Box = new Child(first, second);
+#   return (answered === first ? 100000 : 0) + first.run();
+# }
+# function main(): number {
+#   let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0;
+#   let sum = 0;
+#   for (let k = 0; k < 300; k++) sum = (sum + turn(k)) % 1000003;
+#   return sum;
+# }
+# console.log(main());
+# -- end of source

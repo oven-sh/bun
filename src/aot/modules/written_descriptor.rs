@@ -1,11 +1,10 @@
-use bun_sema::atom::Interner;
+use bun_sema::atom::known;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, File, PropKey, PropKind};
 
 #[cfg(test)]
 mod tests;
 
-/// What ToPropertyDescriptor reads from an object literal. A flag is `None` where the literal does not name it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct WrittenDescriptor {
     pub(crate) part: DescribedPart,
@@ -26,10 +25,7 @@ pub(crate) enum DescribedPart {
 }
 
 impl WrittenDescriptor {
-    /// `None`: the text does not say what the built-in reads, or the built-in throws.
-    /// Otherwise nothing in the literal but `value`, `get` and `set` is more than a constant, and each of the three is written once at most.
     pub(crate) fn read(
-        atoms: &Interner<'_>,
         hir: &File<'_>,
         decisions: &Decisions<'_>,
         descriptor: ExprId,
@@ -56,19 +52,19 @@ impl WrittenDescriptor {
                 PropKind::Init | PropKind::Shorthand | PropKind::Method => {}
                 PropKind::Spread | PropKind::Getter | PropKind::Setter => return None,
             }
-            let part = match atoms.bytes(name) {
-                b"value" => &mut value,
-                b"get" => &mut getter,
-                b"set" => &mut setter,
-                b"writable" => {
+            let part = match name {
+                known::value => &mut value,
+                known::get => &mut getter,
+                known::set => &mut setter,
+                known::writable => {
                     is_writable = Some(flag(property.value)?);
                     continue;
                 }
-                b"enumerable" => {
+                known::enumerable => {
                     is_enumerable = Some(flag(property.value)?);
                     continue;
                 }
-                b"configurable" => {
+                known::configurable => {
                     is_configurable = Some(flag(property.value)?);
                     continue;
                 }

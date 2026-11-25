@@ -84,7 +84,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [BuiltinShape], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }
@@ -95,10 +95,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(members) = self.c.members(ty).filter(|_| !subtypes.is_empty()) else {
             return Ok(self.list(&accepted));
         };
+        let has_bits = subtypes.len() <= u64::BITS as usize;
+        let mut possible = u64::MAX;
+        for prop in &members.shape().props {
+            if !has_bits || prop.flags.contains(PropFlags::OPTIONAL) {
+                continue;
+            }
+            possible &= self.subtypes_with_property(subtypes, prop.name);
+            if possible == 0 {
+                return Ok(self.list(&accepted));
+            }
+        }
         let target = self.c.permissive_instantiation(ty);
-        for &subtype in subtypes {
+        for (index, &subtype) in subtypes.iter().enumerate() {
+            if has_bits && possible >> index & 1 == 0 {
+                continue;
+            }
             let declared = self.c.declared_type(subtype);
-            if !self.has_required_properties(declared, members.shape()) {
+            if !has_bits && !self.has_required_properties(declared, members.shape()) {
                 continue;
             }
             let base = self.builtin_type_or_base(declared)?;
@@ -116,7 +130,30 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&accepted))
     }
 
-    /// Whether `ty` is written for instances of the built-in class: the class, a class that extends it, or an object type that they fit. A type that every object fits says nothing.
+    /// A bit for each of `subtypes`.
+    fn subtypes_with_property(&mut self, subtypes: &[Sym], name: Atom) -> u64 {
+        let list = subtypes.as_ptr() as usize;
+        let (known_list, known) = &mut self.kept.subtypes_with_property;
+        if *known_list != list {
+            *known_list = list;
+            known.clear();
+        }
+        if let Some(&known) = known.get(&name) {
+            return known;
+        }
+        let mut found = 0;
+        for (index, &subtype) in subtypes.iter().enumerate() {
+            let declared = self.c.declared_type(subtype);
+            if self.c.get_property_of_type(declared, name).is_some() {
+                found |= 1 << index;
+            }
+        }
+        if !name.is_own() {
+            self.kept.subtypes_with_property.1.insert(name, found);
+        }
+        found
+    }
+
     pub fn is_type_of_builtin(
         &mut self,
         ty: TypeId,
@@ -140,8 +177,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let Some(members) = self.c.members(ty) else {
                     return Ok(false);
                 };
-                let mut props = members.shape().props.iter();
-                if !props.any(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
+                if self.requires_only_what_every_object_has(ty) {
                     return Ok(false);
                 }
                 let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
@@ -150,7 +186,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     let Some(instance_members) = self.c.members(instance) else {
                         continue;
                     };
-                    // Nearly every type names a member that the other lacks, and is told apart without a type being made.
                     let fits = self.has_required_properties(instance, members.shape());
                     let extends = self.has_required_properties(ty, instance_members.shape());
                     if !fits && !extends {
@@ -170,27 +205,49 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Whether the types of the built-in class declare the member themselves.
-    pub(in crate::check::aot) fn is_member_of_builtin(
-        &mut self,
-        name: Atom,
-        class: BuiltinClassIndex,
-    ) -> bool {
-        let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
-        types.into_iter().any(|symbol| {
-            let instance = self.c.declared_type(symbol);
-            let Some(members) = self.c.members(instance) else {
-                return false;
-            };
-            members.shape().props.iter().any(|prop| prop.name == name)
+    fn requires_only_what_every_object_has(&mut self, ty: TypeId) -> bool {
+        let Some(members) = self.c.members(ty) else {
+            return true;
+        };
+        members.shape().props.iter().all(|prop| {
+            prop.flags.contains(PropFlags::OPTIONAL)
+                || self
+                    .c
+                    .get_property_of_type(TypeId::EMPTY_OBJECT, prop.name)
+                    .is_some()
         })
+    }
+
+    pub(in crate::check::aot) fn is_type_of_every_object(
+        &mut self,
+        ty: TypeId,
+    ) -> Result<bool, GaveUp> {
+        match self.type_shape(ty)?.kind {
+            ShapeKind::Anything(_) | ShapeKind::AnyObject => Ok(true),
+            ShapeKind::TypeVariable { constraint, .. } => match constraint {
+                Some(constraint) => self.is_type_of_every_object(constraint),
+                None => Ok(true),
+            },
+            ShapeKind::Union(members) => {
+                for &member in members {
+                    if self.is_type_of_every_object(member)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ShapeKind::Class(_) | ShapeKind::Object => {
+                Ok(self.requires_only_what_every_object_has(ty))
+            }
+            _ => Ok(false),
+        }
     }
 
     pub(in crate::check::aot) fn compute_accepted_class_constructors(
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ClassRef], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }

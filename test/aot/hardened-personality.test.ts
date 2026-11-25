@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, libcPathForDlopen, tempDir } from "harness";
 import { join } from "node:path";
 import { hasGuardedPages } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 
@@ -63,6 +64,7 @@ describe.skipIf(!hasGuardedPages)("a Bun built with --hardened=on", () => {
     const built = await run([bunExe(), "build", "--compile", "--aot", ...sources, "--outfile", pathOf("forbids")]);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   }, 120_000);
+  afterAll(() => directory?.[Symbol.dispose]());
 
   test.each<[string, () => string[]]>([
     ["an executable that it compiled ahead of time", () => [pathOf("forbids")]],

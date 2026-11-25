@@ -14,17 +14,20 @@ test("the table of flags for shell completions lists every --aot flag of bun bui
       ].map(match => match[1]),
     ),
   ];
-  expect(inHelp).toEqual(
-    expect.arrayContaining(["aot", "aot-log-type-mismatches", "dts", "explain", "compile-inspector"]),
-  );
+  expect(inHelp).toEqual(expect.arrayContaining(["aot", "aot-huge-heap", "dts", "explain", "compile-inspector"]));
   const table = await Bun.file(join(import.meta.dir, "..", "..", "completions", "bun-cli.json")).json();
   const inTable: string[] = table.commands.build.flags.map((flag: { name: string }) => flag.name);
   expect(inHelp.filter(name => !inTable.includes(name))).toEqual([]);
-  expect(inTable.filter(name => name === "admit" || name === "aot-type-errors" || name === "aot-audit")).toEqual([]);
+  const removed = ["admit", "aot-type-errors", "aot-audit", "aot-log-type-mismatches"];
+  expect(inTable.filter(name => removed.includes(name))).toEqual([]);
   expect(exitCode).toBe(0);
 });
 
-test.each(["bun.bash", "bun.fish", "bun.zsh"])("%s offers every --aot flag of bun compile", async file => {
+test.each([
+  ["bun.bash", /(?<=[ "])--([\w-]+)(?=[ "])/g],
+  ["bun.fish", / -l "([\w-]+)"/g],
+  ["bun.zsh", /'--([\w-]+)\[/g],
+])("%s offers every --aot flag of bun compile", async (file, offeredFlag) => {
   await using compile = Bun.spawn({
     cmd: [bunExe(), "compile", "--help"],
     env: bunEnv,
@@ -35,6 +38,8 @@ test.each(["bun.bash", "bun.fish", "bun.zsh"])("%s offers every --aot flag of bu
   const inHelp = [...new Set([...(help + errors).matchAll(/^\s+--(aot-[a-z-]+)(?![a-z-])/gm)].map(match => match[1]))];
   expect(inHelp).toContain("aot-huge-heap");
   const completions = await Bun.file(join(import.meta.dir, "..", "..", "completions", file)).text();
-  expect(inHelp.filter(name => !completions.includes(name))).toEqual([]);
+  const offered = new Set([...completions.matchAll(offeredFlag)].map(match => match[1]));
+  expect(inHelp.filter(name => !offered.has(name))).toEqual([]);
+  expect(completions).not.toContain("aot-log-type-mismatches");
   expect(exitCode).toBe(0);
 });

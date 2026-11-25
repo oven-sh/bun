@@ -1,0 +1,15 @@
+# a text grows in a loop by a part that is an object with a toString() of its own; nothing is written of the part (the types are erased). The walk of the loop comes to its end: every block has one
+# It was "the walk is over and an edge leads to a block that has no end", in f0 (the copy) and in f1; gone without LoopInvariants | Guesses | Folding.
+# f1 = grow
+# -- source: text-that-grows-in-a-loop-by-an-object-written-as-a-text.ts
+# // Flags: --aot-erase-types
+# declare function sink(...values: unknown[]): void;
+# function grow(first: string, part: string, n: number) { let s = first; for (let i = 0; i < n; i++) s += part; return s; }
+# const converts = { toString() { return "S"; } };
+# sink(grow("a", converts as any, 2));
+# -- end of source
+# RUN: walk f0 f1 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK-LABEL: code f1:Body
+# RUN(ALONE): walk f1 mechanisms=all-Inlining
+# ALONE-LABEL: code f1:Body

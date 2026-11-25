@@ -1,0 +1,29 @@
+# `for (let i = 0; i < 100; i++) s += holder.list[i] * t`: the list is read off a field in the turn. The typed copy moves that read in front and asks the list there for its storage, while the turn is walked:
+# behind the head, so the head could no longer be held against the lesser of the bound and the length: every read asked `i < length`, and what hangs on a position inside the list fell with it:
+# the kind of storage asked once for turns laid out, the int32 behind an element.
+# Where the counter is held by a relation with a WRITTEN bound, its greatest value is known: `99 < length` is asked once, in front of the typed copy, beside the questions on the storage; the length is held above it and the read lies inside by the types.
+# In `open` the bound is no written number, so nothing is asked so. In `past` the list is shorter than the bound, and the closed copy runs.
+# -- source: a-list-asked-in-front-of-a-typed-copy-is-asked-there-whether-the-written-bound-of-the-counter-lies-inside.ts
+# declare function hidden(): number;
+# declare function say(x: number): void;
+# function sum(t: number): number { let s = 0; for (let i = 0; i < 10; i++) s += holder.list[i]! * t; return s; }
+# function past(t: number): number { let s = 0; for (let i = 0; i < 20; i++) { const x = holder.list[i]; s += x === undefined ? 1000 : x * t; } return s; }
+# function open(t: number, n: number): number { let s = 0; for (let i = 0; i < n; i++) s += holder.list[i]! * t; return s; }
+# class Holder { list: number[] = []; }
+# const holder = new Holder();
+# for (let i = 0; i < 12; i++) holder.list.push(i * 3 + 0.5);
+# say(sum(hidden())); say(past(hidden())); say(open(hidden(), hidden()));
+# -- end of source
+# RUN: walk f1 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}}isInBounds
+# CHECK: = GetArrayLength
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: isInBounds
+# RUN(COUNT): compile ArrayBoundsChecksHoisted mechanisms=all
+# COUNT: statistic ArrayBoundsChecksHoisted 2
+# RUN(SHELL): run-in-shell const all = [2, 2, 2, 11]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: 280
+# SHELL-NEXT: 8408
+# SHELL-NEXT: 341

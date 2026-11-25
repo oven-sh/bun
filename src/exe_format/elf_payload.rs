@@ -209,13 +209,15 @@ impl<'a> ElfFile<TemplateBytes<'a>> {
         Ok(ElfFile { data })
     }
 
-    /// Find the `.bun` section and place `payload` so the kernel `mmap`s it at exec time alongside the rest of the binary.
+    /// Find the `.bun` section and place the payload so the kernel `mmap`s it at exec time alongside the rest of the binary.
+    /// `parts`, one behind the other, are the payload.
     pub fn bun_section_in_pieces(
         mut self,
-        payload: &'a [u8],
+        parts: &[&'a [u8]],
         code: Option<Range<u64>>,
-    ) -> Result<[Piece<'a>; 6], ElfError> {
-        let plan = self.plan_payload(payload.len() as u64, code)?;
+    ) -> Result<Vec<Piece<'a>>, ElfError> {
+        let payload_length: u64 = parts.iter().map(|part| part.len() as u64).sum();
+        let plan = self.plan_payload(payload_length, code)?;
         self.write_payload_headers(&plan);
 
         let head_end = plan.head_end();
@@ -227,14 +229,17 @@ impl<'a> ElfFile<TemplateBytes<'a>> {
         let head = take_up_to(head_end);
         drop(take_up_to(plan.tail_start));
         let tail = take_up_to(plan.tail_end);
-        Ok([
+        let mut pieces = vec![
             Piece::Bytes(head),
             Piece::Zeros(plan.file_offset - head_end),
-            Piece::Length((payload.len() as u64).to_le_bytes()),
-            Piece::Bytes(ReadOnce::kept(payload)),
+            Piece::Length(payload_length.to_le_bytes()),
+        ];
+        pieces.extend(parts.iter().map(|&part| Piece::Bytes(ReadOnce::kept(part))));
+        pieces.extend([
             Piece::Zeros(plan.aligned_size - plan.content_size),
             Piece::Bytes(tail),
-        ])
+        ]);
+        Ok(pieces)
     }
 }
 
@@ -269,8 +274,8 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         };
         let PayloadPlace {
             replaces_payload,
-            mapping,
-            spare_headers,
+            mut mapping,
+            mut spare_headers,
             tail,
         } = place;
         let header_size = size_of::<u64>() as u64;
@@ -286,6 +291,34 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             file_offset: ehdr.e_phoff + (index * size_of::<Elf64_Phdr>()) as u64,
             header,
         };
+        // A payload of an earlier build without code ends the linked segment, or is a segment.
+        let mut linked_header = None;
+        if replaces_payload
+            && code_in_section.is_some()
+            && spare_headers.start == mapping.header_index + 1
+        {
+            let linked_size = mapping.address - mapping.header.p_vaddr;
+            if linked_size == 0 {
+                spare_headers.start = mapping.header_index;
+            } else if spare_headers.len() >= PAYLOAD_SEGMENT_COUNT {
+                let linked = Elf64_Phdr {
+                    p_filesz: linked_size,
+                    p_memsz: linked_size,
+                    ..mapping.header
+                };
+                linked_header = Some(header_write(mapping.header_index, linked));
+                mapping.header_index = spare_headers.start;
+                mapping.header = Elf64_Phdr {
+                    p_offset: mapping.file_offset,
+                    p_vaddr: mapping.address,
+                    p_paddr: mapping.address,
+                    p_filesz: aligned_size,
+                    p_memsz: aligned_size,
+                    p_align: page_size,
+                    ..mapping.header
+                };
+            }
+        }
         let has_own_segment = spare_headers.contains(&mapping.header_index);
         let mut header_writes: Vec<ProgramHeaderWrite> = spare_headers
             .clone()
@@ -300,6 +333,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
             _ if has_own_segment => header_writes[0].header = mapping.header,
             _ => header_writes.push(header_write(mapping.header_index, mapping.header)),
         }
+        header_writes.extend(linked_header);
 
         let moved_tail_start = mapping
             .file_offset
@@ -751,9 +785,10 @@ mod tests {
     use bun_core::slice_to_nul;
 
     use super::*;
-    use crate::elf_ranges::reserve_payload_segments;
-    use crate::elf_ranges::tests::toy_elf;
-    use crate::image::{AddressRange, Architecture, ImageEditor};
+    use crate::cut_model::{CutCapacity, RemovableBytes};
+    use crate::elf_ranges::tests::{HEADERS_WITH_ONE_CUT, limit_header_room, toy_elf};
+    use crate::elf_ranges::{cut_model, remove_ranges, reserve_payload_segments};
+    use crate::image::{AddressRange, Architecture, ImageEditor, ImageError};
 
     const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
     const PHDR_SIZE: usize = size_of::<Elf64_Phdr>();
@@ -828,7 +863,10 @@ mod tests {
         let page = page_size(elf);
         let start = align_up(find_section(elf, b".text").sh_addr, page);
         let end = start + 4 * page;
-        let cut = AddressRange { start, end };
+        remove(elf, AddressRange { start, end })
+    }
+
+    fn remove(elf: &mut Vec<u8>, cut: AddressRange) -> AddressRange {
         let mut editor = ImageEditor::open(elf).unwrap();
         editor.remove_ranges(&[cut]).unwrap();
         cut
@@ -850,7 +888,7 @@ mod tests {
         (result, elf.data)
     }
 
-    fn concatenate(pieces: [Piece<'_>; 6]) -> Vec<u8> {
+    fn concatenate(pieces: Vec<Piece<'_>>) -> Vec<u8> {
         let mut bytes = Vec::new();
         for piece in pieces {
             let start = bytes.len();
@@ -867,7 +905,7 @@ mod tests {
     fn write_in_pieces(template: &[u8], payload: &[u8]) -> (Result<Vec<u8>, ElfError>, Vec<u8>) {
         let mut bytes = template.to_vec();
         let written = ElfFile::over(TemplateBytes::Kept(&mut bytes))
-            .and_then(|elf| elf.bun_section_in_pieces(payload, None))
+            .and_then(|elf| elf.bun_section_in_pieces(&[payload], None))
             .map(concatenate);
         (written, bytes)
     }
@@ -875,7 +913,7 @@ mod tests {
     fn write_with_code(template: &[u8], payload: &[u8], code: Range<u64>) -> Vec<u8> {
         let mut bytes = template.to_vec();
         let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
-        concatenate(elf.bun_section_in_pieces(payload, Some(code)).unwrap())
+        concatenate(elf.bun_section_in_pieces(&[payload], Some(code)).unwrap())
     }
 
     fn payload_segments(elf: &[u8]) -> Vec<(u32, u64, u64)> {
@@ -1087,6 +1125,33 @@ mod tests {
     }
 
     #[test]
+    fn payload_in_parts_is_written_as_the_joined_payload() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let payload = create_payload(4 * page);
+            let code = page - 8..3 * page - 8;
+            let joined = write_with_code(&trimmed, &payload, code.clone());
+            let ends = [[0, 0], [1, 2], [code.start, code.end], [4 * page, 4 * page]];
+            for [first, second] in ends.map(|ends| ends.map(|end| end as usize)) {
+                let parts = [
+                    &payload[..first],
+                    &payload[first..second],
+                    &payload[second..],
+                ];
+                let mut bytes = trimmed.clone();
+                let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+                let pieces = elf
+                    .bun_section_in_pieces(&parts, Some(code.clone()))
+                    .unwrap();
+                assert_eq!(pieces.len(), 8);
+                assert!(concatenate(pieces) == joined);
+            }
+        }
+    }
+
+    #[test]
     fn payload_with_code_is_replaced_where_it_lies() {
         for architecture in ARCHITECTURES {
             let mut trimmed = template(architecture);
@@ -1117,6 +1182,128 @@ mod tests {
             assert_both_fail(&longer_span, 100, ElfError::BunSectionAlreadyWritten);
             let moved_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_vaddr += page);
             assert_both_fail(&moved_span, 100, ElfError::BunSectionAlreadyWritten);
+        }
+    }
+
+    #[test]
+    fn payload_with_code_is_replaced_after_another_cut() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            let first_cut = remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let second_cut = AddressRange {
+                start: first_cut.end,
+                end: first_cut.end + page,
+            };
+            let mut cut_once = template(architecture);
+            let both_cuts = AddressRange {
+                start: first_cut.start,
+                end: second_cut.end,
+            };
+            remove(&mut cut_once, both_cuts);
+
+            let free_slots = |elf: &[u8]| cut_model(elf).free_slots();
+            let payloads = [
+                (4 * page, page - 8..3 * page - 8),
+                (2 * page - 8, page - 8..2 * page - 8),
+                (6 * page, 2 * page - 8..5 * page - 8),
+            ];
+            for (length, code) in payloads.clone() {
+                let first = write_with_code(&trimmed, &create_payload(length), code);
+                assert_eq!(free_slots(&first), free_slots(&trimmed));
+
+                let mut cut_twice = first.clone();
+                remove(&mut cut_twice, second_cut);
+                assert_eq!(find_reserved_segment(&cut_twice), None);
+                assert_eq!(free_slots(&cut_twice), free_slots(&first));
+
+                for (length, code) in payloads.clone() {
+                    let payload = create_payload(length);
+                    let built = write_with_code(&cut_twice, &payload, code.clone());
+                    assert!(built == write_with_code(&cut_once, &payload, code));
+                }
+                let payload = create_payload(3 * page);
+                let without_code = write_in_pieces(&cut_twice, &payload).0;
+                assert!(without_code == write_in_pieces(&cut_once, &payload).0);
+            }
+        }
+    }
+
+    #[test]
+    fn full_table_holds_the_empty_piece_of_a_payload() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            limit_header_room(&mut trimmed, HEADERS_WITH_ONE_CUT);
+            let first_cut = remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let [beside, apart] = [0, 2].map(|pages| AddressRange {
+                start: first_cut.end + pages * page,
+                end: first_cut.end + (pages + 1) * page,
+            });
+
+            let code_to_the_end = (2 * page - 8, page - 8..2 * page - 8);
+            let code_in_the_middle = (4 * page, page - 8..3 * page - 8);
+            for (length, code) in [code_to_the_end, code_in_the_middle.clone()] {
+                let first = write_with_code(&trimmed, &create_payload(length), code);
+                assert_eq!(usize::from(read_ehdr(&first).e_phnum), HEADERS_WITH_ONE_CUT);
+                assert_eq!(cut_model(&first).capacity, CutCapacity::Cuts(0));
+                let mut refused = first.clone();
+                let result = remove_ranges(&mut refused, &[apart]);
+                assert_eq!(result, Err(ImageError::HeaderRoomExhausted));
+                assert!(refused == first);
+
+                let removable = [beside, apart].map(|range| RemovableBytes {
+                    range,
+                    is_code: true,
+                    can_be_cut: true,
+                    can_be_filled: true,
+                });
+                let plan = cut_model(&first).choose(&removable);
+                assert_eq!(plan.cuts, [beside]);
+                let mut cut_twice = first;
+                remove(&mut cut_twice, beside);
+                let (length, code) = code_in_the_middle.clone();
+                let built = write_with_code(&cut_twice, &create_payload(length), code);
+                assert_eq!(
+                    payload_segments(&built),
+                    [
+                        (PF_R, 0, page),
+                        (PF_R | PF_X, page, 2 * page),
+                        (PF_R, 3 * page, 2 * page),
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn payload_with_code_replaces_plain_one() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            remove_text_pages(&mut trimmed);
+            for linked in [template(architecture), trimmed] {
+                let page = page_size(&linked);
+                let pointer_address = find_section(&linked, b".bun").sh_addr;
+                let mut replaced = write_in_pieces(&linked, &create_payload(3 * page))
+                    .0
+                    .unwrap();
+                let address = find_section(&replaced, b".bun").sh_addr;
+                assert_eq!(reserve_payload_segments(&mut replaced), Ok(true));
+
+                let (payload, code) = (create_payload(4 * page), page - 8..3 * page - 8);
+                let written = write_with_code(&replaced, &payload, code.clone());
+                let expected = [
+                    (PF_R, 0, page),
+                    (PF_R | PF_X, page, 2 * page),
+                    (PF_R, 3 * page, 2 * page),
+                ];
+                assert_eq!(payload_segments(&written), expected);
+                assert_eq!(find_section(&written, b".bun").sh_addr, address);
+                assert!(section_bytes(&written, b".bun")[size_of::<u64>()..] == payload);
+                let (_, linked_segment) = load_segment_at(&written, pointer_address);
+                assert!(linked_segment.p_vaddr + linked_segment.p_memsz <= address);
+                assert!(write_with_code(&written, &payload, code) == written);
+            }
         }
     }
 

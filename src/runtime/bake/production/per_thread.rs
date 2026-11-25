@@ -21,7 +21,7 @@ pub(crate) struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
+    pub(crate) vm: &'static VirtualMachine,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -44,31 +44,21 @@ unsafe extern "C" {
 }
 
 impl PerThread {
-    /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
-    #[inline]
-    pub(crate) fn vm(&self) -> &VirtualMachine {
-        // BackRef invariant: VM outlives `PerThread` (set in `init`/`placeholder`
-        // from `init_bake`).
-        self.vm.get()
-    }
-
-    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
+    /// Safe `&'static JSGlobalObject` accessor — `self.vm.global()`.
     #[inline]
     pub(crate) fn global(&self) -> &'static JSGlobalObject {
-        self.vm().global()
+        self.vm.global()
     }
 
     /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
-    pub(super) fn placeholder(vm: *mut VirtualMachine) -> PerThread {
+    pub(super) fn placeholder(vm: &'static VirtualMachine) -> PerThread {
         PerThread {
             entry_points: EntryPointMap::default(),
             bundled_outputs: Vec::new(),
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
-            // write provenance); outlives `PerThread`.
-            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
+            vm,
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -77,7 +67,7 @@ impl PerThread {
 
     /// After initializing, call `attach`
     pub(crate) fn init(
-        vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
+        vm: &'static VirtualMachine,
         entry_points: EntryPointMap,
         mut bundled_outputs: Vec<OutputFile>,
         module_keys: Vec<BunString>,
@@ -145,7 +135,7 @@ impl PerThread {
     pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
         let global = self.global();
         load_module(
-            self.vm.as_ptr(),
+            self.vm,
             global,
             self.module_keys[id.get() as usize]
                 .to_js(global)

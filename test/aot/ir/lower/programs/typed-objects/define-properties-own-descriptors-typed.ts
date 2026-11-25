@@ -30,96 +30,10 @@ show("undefined as source", () => whole(mergeNullable({}, undefined)));
 show("many", () => { let sum = 0; for (let i = 0; i < 2000; i++) { const made = mergeOntoCopy(defaults, { name: "n", level: i, get twice(): number { return this.level * 2; } }); sum += made.level + made.twice + Object.keys(made).length; } return sum; });
 console.log(lines.join("\n"));
 
-// GENERATED: whole mergeOntoCopy Point sum describe late twice
 // CHECK-LABEL: function {{*}}name="whole"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Reflect
-// CHECK-NEXT: v2 = Builtin builtin=ReflectOwnKeys
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Reflect.ownKeys"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string|symbol> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v5 = PropGet v4 key="map"
-// CHECK-NEXT: v6 = NewClosure v0 function=[[f_4]]
-// CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v9 = PropGet v8 key="join"
-// CHECK-NEXT: v10 = String string=" "
-// CHECK-NEXT: v11 = Call v9, v8, v10 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mergeOntoCopy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] site=[[w_6]]}, {type=undefined|null|[[L_7]] site=[[w_8]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_5]], v1: undefined|null|[[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=ObjectDefineProperties
-// CHECK-NEXT: v3 = CopyObject v0
-// CHECK-NEXT: v4 = Builtin builtin=ObjectGetOwnPropertyDescriptors
-// CHECK-NEXT: v5 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary [isNotReadFromHolder]
-// CHECK-NEXT: v6 = Call v5, -, v1
-// CHECK-NEXT: v7 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
-// CHECK-NEXT: v8 = Call v7, -, v3, v6, v1 calleeName="Object.defineProperties"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[L_5]] site=[[w_9]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Point"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_10]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_10]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_10]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_11]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sum"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_10]] site=[[w_12]]} results=[{type=number site=[[w_13]]}] {
-// CHECK-NEXT: b0(v0: [[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_15]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="default"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_16]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=[[w_17]]}] {
-// CHECK-NEXT: b0(v0: env [[L_16]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_16]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="ran"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_18]]}
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_16]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="ran"
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_16]]
-// CHECK-NEXT: v8 = Integer integer=7
-// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_17]]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_19]]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_20]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="level"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Mul v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_19]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

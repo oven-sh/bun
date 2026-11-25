@@ -61,6 +61,8 @@ function executableSegments(file: Buffer): number[] {
 }
 
 describe.concurrent("code for foreign calls", () => {
+  const open = imageFlag.admitsUnknownJavaScript | imageFlag.loadsModulesByName;
+
   async function make(folder: string, entry: keyof typeof files, ...flags: string[]) {
     const outfile = join(folder, named("out-" + entry.slice(0, -3)));
     const startsFrom = flags.includes("--compile-executable-path") ? [] : withoutDebugInformation;
@@ -77,7 +79,7 @@ describe.concurrent("code for foreign calls", () => {
     if (isLinux) expect(executableSegments(file)).toContain(executableSize);
     const { stdout, exitCode } = await spawned([outfile], folder, bunEnv);
     return {
-      flags: file.readUInt32LE(image + imageHeader.flags),
+      flags: file.readUInt32LE(image + imageHeader.flags) & open,
       size: file.readUInt32LE(image + imageHeader.ffiCodeSize),
       executableSize,
       stdout,
@@ -85,7 +87,6 @@ describe.concurrent("code for foreign calls", () => {
     };
   }
   const closed = { flags: 0, size: 0, exitCode: 0 };
-  const open = imageFlag.admitsUnknownJavaScript | imageFlag.loadsModulesByName | imageFlag.runsUnreadCode;
 
   test("is in no program that cannot use it", async () => {
     using dir = tempDir("foreign-calls-hello", files);

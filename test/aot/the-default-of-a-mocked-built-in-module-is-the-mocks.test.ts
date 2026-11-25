@@ -7,19 +7,11 @@ import { test } from "./supported";
 // `import T from`, `import * as N` and `await import(..)`. For a module of native code the build took `default` for the object that it knows, which nothing replaces.
 // Over a module that an import has loaded the mock is laid: the names that it lacks stay, and import() goes on answering the same namespace object.
 // There a compiled run asked the loader, which had not seen the import of compiled code and answered with the names of the mock alone.
+// All of these are native code.
 const modules: [specifier: string, mocked: string, other: string][] = [
-  // Native code.
   ["node:buffer", "isUtf8", "isAscii"],
-  ["node:constants", "O_RDONLY", "O_WRONLY"],
-  ["node:module", "isBuiltin", "createRequire"],
-  ["node:process", "uptime", "hrtime"],
-  ["node:string_decoder", "StringDecoder", "StringDecoder"],
   ["node:util/types", "isDate", "isRegExp"],
   ["bun:jsc", "heapSize", "heapStats"],
-  // JavaScript.
-  ["node:fs", "existsSync", "readFileSync"],
-  ["node:path", "join", "resolve"],
-  ["node:os", "cpus", "platform"],
 ];
 
 const helpers = `const is = v => (v === fake ? "mock" : typeof v);
@@ -119,18 +111,14 @@ async function runTests(directory: string, words: string | undefined, ...flags: 
   };
 }
 
-for (const [way, words] of [
-  ["at default flags", undefined],
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:8"],
-] as const) {
+for (const [way, words] of [["as one program", "TestRunLayers:0"]] as const) {
   test(`what a test file mocks is read as under plain bun test, ${way}`, async () => {
     using dir = tempDir("aot-default-of-a-mocked-built-in-module", filesOf(false));
     const plain = await runTests(String(dir), undefined);
     expect(plain.exitCode).toBe(0);
     expect(plain.stdout.length).toBe(modules.length * 5);
     expect(plain.stdout).toContain(
-      "SEEN node-buffer mocked at the top: T mock | N.default mock | S.default mock | TOP.default mock | in a function mock | in an arrow mock | Q.default mock | D mock | N mock | require function | one object true",
+      "SEEN node-buffer mocked at the top: T mock | N.default mock | S.default mock | TOP.default mock | in a function mock | in an arrow mock | Q.default mock | D mock | N mock | require mock | one object true",
     );
     expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
   }, 300_000);

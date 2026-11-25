@@ -1,0 +1,15 @@
+const log = [];
+function may(x) { if (x === 1) throw new RangeError("r"); return x; }
+function withGrowsInBoth(n) { let s = ""; for (let j = 0; j < 3; j++) { try { s += "t"; may(n); log.push(s); } catch (e) { s += "c"; } } return s + "/"; }
+function withGrowsBehindTheCall(n) { let s = ""; for (let j = 0; j < 3; j++) { try { may(n); log.push(s); s += "t"; } catch (e) { s += "c"; } } return s + "/"; }
+function withGrowsInFrontOfTheTry(n) { let s = ""; for (let j = 0; j < 3; j++) { s += j; try { may(n); log.push(s); } catch (e) { s += "c"; } } return s + "/"; }
+function withGrowsBehindTheTry(n) { let s = ""; for (let j = 0; j < 3; j++) { try { may(n); log.push(s); } catch (e) { s += "c"; } s += j; } return s + "/"; }
+function withFinally(n) { let s = ""; for (let j = 0; j < 3; j++) { try { try { s += "t"; may(n); log.push(s); } finally { s += "f"; } } catch (e) { s += "c"; } } return s + "/"; }
+function withTheCatchReads(n) { let s = ""; for (let j = 0; j < 3; j++) { try { s += "t"; may(n); } catch (e) { log.push(s); s += "c"; } } return s + "/"; }
+function withThrownOnTheSecondTurn(n) { let s = ""; for (let j = 0; j < 3; j++) { try { s += "t"; may(j === 1 ? n : 0); log.push(s); } catch (e) { s += "c" + j; } } return s + "/"; }
+function withTwoTexts(n) { let s = "", t = ""; for (let j = 0; j < 3; j++) { try { s += "t"; may(n); t += s; } catch (e) { s += "c"; t += "x"; } } log.push(t); return s + "/" + t; }
+function withWhileAndBreak(n) { let s = ""; let j = 0; while (true) { j++; try { s += "t"; may(n); log.push(s); if (j > 2) break; } catch (e) { s += "c"; if (j > 2) break; } } return s + "/"; }
+function withANumberPart(n) { let s = ""; for (let j = 0; j < 3; j++) { try { s += j; may(n); log.push(s); } catch (e) { s += j + "c"; } } return s + "/"; }
+function withForOf(n) { let s = ""; for (const j of [1, 2, 3]) { try { s += "t"; may(n); log.push(s); } catch (e) { s += "c" + j; } } return s + "/"; }
+function withTheErrorIsAppended(n) { let s = ""; for (let j = 0; j < 3; j++) { try { s += "t"; may(n); log.push(s); } catch (e) { s += e.message; } } return s + "/"; }
+for (const read of [() => [withGrowsInBoth(0), withGrowsInBoth(1), withGrowsInBoth(2)], () => [withGrowsBehindTheCall(0), withGrowsBehindTheCall(1), withGrowsBehindTheCall(2)], () => [withGrowsInFrontOfTheTry(0), withGrowsInFrontOfTheTry(1), withGrowsInFrontOfTheTry(2)], () => [withGrowsBehindTheTry(0), withGrowsBehindTheTry(1), withGrowsBehindTheTry(2)], () => [withFinally(0), withFinally(1), withFinally(2)], () => [withTheCatchReads(0), withTheCatchReads(1), withTheCatchReads(2)], () => [withThrownOnTheSecondTurn(0), withThrownOnTheSecondTurn(1), withThrownOnTheSecondTurn(2)], () => [withTwoTexts(0), withTwoTexts(1), withTwoTexts(2)], () => [withWhileAndBreak(0), withWhileAndBreak(1), withWhileAndBreak(2)], () => [withANumberPart(0), withANumberPart(1), withANumberPart(2)], () => [withForOf(0), withForOf(1), withForOf(2)], () => [withTheErrorIsAppended(0), withTheErrorIsAppended(1), withTheErrorIsAppended(2)]]) console.log(read().join(" "), log.splice(0).join("|"));

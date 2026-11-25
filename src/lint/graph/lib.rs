@@ -41,12 +41,12 @@ use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, 
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native};
-use bun_threading::Guarded;
+use bun_threading::{Condvar, Guarded};
 use smallvec::SmallVec;
 use std::any::Any;
 use std::borrow::Cow;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The data a [`Graph`] borrows from. It costs nothing until a rule queries it.
 pub struct Store {
@@ -118,9 +118,8 @@ struct Recorded<'h> {
     found_from_link: Vec<Vec<u8>>,
 }
 
-#[derive(Default)]
 struct Complete {
-    ids: FxHashMap<Vec<u8>, ModuleId>,
+    ids: ShardedMap<Vec<u8>, ModuleId>,
     paths: Vec<Vec<u8>>,
     imports: Vec<Vec<Import>>,
     components: Vec<u32>,
@@ -1005,92 +1004,63 @@ impl<'h> Graph<'h> {
     /// Call this once, after every file is linted. Returns the files to lint again now that [`Modules::is_complete`] is
     /// true, each by the path it was linted under.
     pub fn complete(&self, parallel: Parallel) -> Vec<Vec<u8>> {
-        let mut pending = std::mem::take(&mut *self.recorded.lock());
-        if pending.is_empty() {
+        let recorded = std::mem::take(&mut *self.recorded.lock());
+        if recorded.is_empty() {
             return Vec::new();
         }
-        let mut all = Complete::default();
-        // Per module: whether it's been read, whether it's always checked, and the paths it's linted under.
-        let (mut is_known, mut is_always_checked, mut linted_as) =
-            (Vec::new(), Vec::new(), Vec::new());
-        while !pending.is_empty() {
-            let mut unknown: Vec<ModuleId> = Vec::new();
-            for record in pending.drain(..) {
-                let module = all.intern(&record.path);
-                let mut imports: Vec<Import> = Vec::new();
-                // Maps a module to its index in `imports`. Only filled once there are more than a few.
-                let mut positions: FxHashMap<ModuleId, usize> = FxHashMap::default();
-                for (target, declaration, kind) in record.requests {
-                    let target = all.intern(&target);
-                    if imports.len() > 16 && positions.len() < imports.len() {
-                        positions.extend(
-                            imports
-                                .iter()
-                                .enumerate()
-                                .skip(positions.len())
-                                .map(|(at, it)| (it.module, at)),
-                        );
-                    }
-                    let existing = match positions.is_empty() {
-                        true => imports.iter_mut().find(|it| it.module == target),
-                        false => positions.get(&target).and_then(|at| imports.get_mut(*at)),
-                    };
-                    match (kind, existing) {
-                        (RequestKind::Other, _) => {}
-                        // Like eslint-plugin-import: the last dynamic import replaces the others.
-                        (RequestKind::Dynamic, Some(existing)) => {
-                            existing.declarations = SmallVec::from_iter([declaration])
-                        }
-                        (RequestKind::Static, Some(existing)) => {
-                            existing.declarations.push(declaration)
-                        }
-                        (_, None) => imports.push(Import {
-                            module: target,
-                            declarations: SmallVec::from_iter([declaration]),
-                        }),
-                    }
-                    unknown.push(target);
-                }
-                unknown.extend(record.found_from_link.iter().map(|it| all.intern(it)));
-                for list in [&mut is_known, &mut is_always_checked] {
-                    list.resize(all.paths.len(), false);
-                }
-                linted_as.resize(all.paths.len(), Vec::new());
-                let at = module.0 as usize;
-                is_known[at] = true;
-                // A file that has several names through links is linted under each name.
-                linted_as[at].extend(record.linted_as);
-                is_always_checked[at] |= record.is_always_checked;
-                all.imports.resize_with(all.paths.len(), Vec::new);
-                // Several rules may have recorded the same file. One of them may count type imports.
-                let type_import_count = |imports: &[Import]| {
-                    let declarations = imports.iter().flat_map(|it| &it.declarations);
-                    declarations.filter(|it| it.is_only_importing_types).count()
-                };
-                let recorded_imports = &all.imports[at];
-                let is_the_same = recorded_imports.len() == imports.len()
-                    && recorded_imports
-                        .iter()
-                        .zip(&imports)
-                        .all(|(a, b)| a.module == b.module);
-                if !is_the_same || type_import_count(&imports) < type_import_count(recorded_imports)
-                {
-                    all.imports[at] = imports;
-                }
+        let ids = Ids::default();
+        // From here on, a path that has no ID is that of a file that isn't linted.
+        let mut paths = Vec::with_capacity(recorded.len());
+        for record in &recorded {
+            ids.intern(&record.path, &mut paths);
+        }
+        let mut queue = Queue {
+            state: Guarded::new(QueueState {
+                recorded: recorded.into_iter().enumerate().collect(),
+                ..QueueState::default()
+            }),
+            has_changed: Condvar::new(),
+        };
+        parallel(MAX_WORKERS, &|_| self.work_off(&queue, &ids));
+        let QueueState {
+            mut numbered,
+            paths: more_paths,
+            ..
+        } = std::mem::take(queue.state.get_mut());
+        paths.extend(more_paths);
+        let count = ids.next.load(Ordering::Relaxed) as usize;
+        let mut all = Complete {
+            ids: ids.by_path,
+            paths: vec![Vec::new(); count],
+            imports: Vec::new(),
+            components: Vec::new(),
+        };
+        all.imports.resize_with(count, Vec::new);
+        for (id, path) in paths {
+            all.paths[id.0 as usize] = path;
+        }
+        // Per module: whether it's always checked, and the paths it's linted under.
+        let (mut is_always_checked, mut linted_as) = (vec![false; count], vec![Vec::new(); count]);
+        numbered.sort_unstable_by_key(|it| it.turn);
+        for record in numbered {
+            let (at, imports) = (record.module.0 as usize, record.imports);
+            // A file that has several names through links is linted under each name.
+            linted_as[at].extend(record.linted_as);
+            is_always_checked[at] |= record.is_always_checked;
+            // Several rules may have recorded the same file. One of them may count type imports.
+            let type_import_count = |imports: &[Import]| {
+                let declarations = imports.iter().flat_map(|it| &it.declarations);
+                declarations.filter(|it| it.is_only_importing_types).count()
+            };
+            let recorded_imports = &all.imports[at];
+            let is_the_same = recorded_imports.len() == imports.len()
+                && recorded_imports
+                    .iter()
+                    .zip(&imports)
+                    .all(|(a, b)| a.module == b.module);
+            if !is_the_same || type_import_count(&imports) < type_import_count(recorded_imports) {
+                all.imports[at] = imports;
             }
-            unknown.sort_unstable();
-            unknown.dedup();
-            unknown.retain(|it| {
-                !std::mem::replace(&mut is_known[it.0 as usize], true)
-                    && self.should_read(&all.paths[it.0 as usize])
-            });
-            let mut read = Guarded::new(Vec::new());
-            parallel(unknown.len(), &|at| {
-                if let Some(record) = self.read(&all.paths[unknown[at].0 as usize]) {
-                    read.lock().push(record);
-                }
-            });
-            pending = std::mem::take(read.get_mut());
         }
         all.find_components();
         let mut sizes = vec![0u32; all.paths.len()];
@@ -1118,24 +1088,154 @@ impl<'h> Graph<'h> {
         let _ = self.complete.set(all);
         to_relint
     }
+
+    /// Returns when all files that the records lead to have been read.
+    fn work_off(&self, queue: &Queue<'h>, ids: &Ids) {
+        let (mut numbered, mut paths) = (Vec::new(), Vec::new());
+        let mut state = queue.state.lock();
+        loop {
+            let unread = state.unread.pop();
+            let rest = match unread {
+                Some(_) => state.recorded.len(),
+                None => state.recorded.len().saturating_sub(64),
+            };
+            let mut records = state.recorded.split_off(rest);
+            if unread.is_none() && records.is_empty() {
+                if state.busy == 0 {
+                    break;
+                }
+                queue.has_changed.wait_guarded(&mut state);
+                continue;
+            }
+            state.busy += 1;
+            drop(state);
+            records.extend(unread.and_then(|path| Some((usize::MAX, self.read(&path)?))));
+            let known = paths.len();
+            for (turn, record) in records {
+                numbered.push(ids.number(turn, record, &mut paths));
+            }
+            let found = paths[known..].iter().map(|it| &it.1);
+            let found: Vec<Vec<u8>> = found.filter(|it| self.should_read(it)).cloned().collect();
+            state = queue.state.lock();
+            state.busy -= 1;
+            match state.busy == 0 && found.is_empty() {
+                true => queue.has_changed.notify_all(),
+                // This thread takes one.
+                false => queue.has_changed.notify_many(found.len().saturating_sub(1)),
+            }
+            state.unread.extend(found);
+        }
+        state.numbered.append(&mut numbered);
+        state.paths.append(&mut paths);
+    }
 }
 
-impl Complete {
-    fn intern(&mut self, path: &[u8]) -> ModuleId {
-        if let Some(&existing_id) = self.ids.get(path) {
-            return existing_id;
+/// Those that don't get a thread of their own find nothing left to do.
+const MAX_WORKERS: usize = 256;
+
+/// The work of [`Graph::complete`]
+struct Queue<'h> {
+    state: Guarded<QueueState<'h>>,
+    has_changed: Condvar,
+}
+
+#[derive(Default)]
+struct QueueState<'h> {
+    /// Each with [`Numbered::turn`]
+    recorded: Vec<(usize, Recorded<'h>)>,
+    unread: Vec<Vec<u8>>,
+    /// The number of threads that may add to `unread`
+    busy: usize,
+    numbered: Vec<Numbered>,
+    paths: Vec<(ModuleId, Vec<u8>)>,
+}
+
+/// A [`Recorded`], after the files are assigned IDs.
+struct Numbered {
+    /// Orders the records of one file.
+    turn: usize,
+    module: ModuleId,
+    imports: Vec<Import>,
+    is_always_checked: bool,
+    linted_as: Option<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct Ids {
+    by_path: ShardedMap<Vec<u8>, ModuleId>,
+    /// An ID stays unused if two threads add a path at the same time.
+    next: AtomicU32,
+}
+
+impl Ids {
+    /// Appends to `added` if `path` had no ID.
+    fn intern(&self, path: &[u8], added: &mut Vec<(ModuleId, Vec<u8>)>) -> ModuleId {
+        if let Some(&id) = self.by_path.get_ref(path) {
+            return id;
         }
-        let id = ModuleId(self.paths.len() as u32);
-        self.ids.insert(path.to_vec(), id);
-        self.paths.push(path.to_vec());
+        let new = ModuleId(self.next.fetch_add(1, Ordering::Relaxed));
+        let id = *self.by_path.insert_ref(path.to_vec(), new);
+        if id == new {
+            added.push((id, path.to_vec()));
+        }
         id
     }
 
+    fn number(
+        &self,
+        turn: usize,
+        record: Recorded<'_>,
+        added: &mut Vec<(ModuleId, Vec<u8>)>,
+    ) -> Numbered {
+        let mut imports: Vec<Import> = Vec::new();
+        // Maps a module to its index in `imports`. Only filled once there are more than a few.
+        let mut positions: FxHashMap<ModuleId, usize> = FxHashMap::default();
+        for (target, declaration, kind) in record.requests {
+            let target = self.intern(&target, added);
+            if imports.len() > 16 && positions.len() < imports.len() {
+                positions.extend(
+                    imports
+                        .iter()
+                        .enumerate()
+                        .skip(positions.len())
+                        .map(|(at, it)| (it.module, at)),
+                );
+            }
+            let existing = match positions.is_empty() {
+                true => imports.iter_mut().find(|it| it.module == target),
+                false => positions.get(&target).and_then(|at| imports.get_mut(*at)),
+            };
+            match (kind, existing) {
+                (RequestKind::Other, _) => {}
+                // Like eslint-plugin-import: the last dynamic import replaces the others.
+                (RequestKind::Dynamic, Some(existing)) => {
+                    existing.declarations = SmallVec::from_iter([declaration])
+                }
+                (RequestKind::Static, Some(existing)) => existing.declarations.push(declaration),
+                (_, None) => imports.push(Import {
+                    module: target,
+                    declarations: SmallVec::from_iter([declaration]),
+                }),
+            }
+        }
+        for path in &record.found_from_link {
+            self.intern(path, added);
+        }
+        Numbered {
+            turn,
+            module: self.intern(&record.path, added),
+            imports,
+            is_always_checked: record.is_always_checked,
+            linted_as: record.linted_as,
+        }
+    }
+}
+
+impl Complete {
     /// Tarjan's algorithm on the value imports.
     fn find_components(&mut self) {
         const UNSEEN: u32 = u32::MAX;
         let count = self.paths.len();
-        self.imports.resize_with(count, Vec::new);
         let (mut index, mut low, mut is_on_stack) =
             (vec![UNSEEN; count], vec![0u32; count], vec![false; count]);
         let (mut stack, mut calls): (Vec<u32>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
@@ -1240,7 +1340,7 @@ impl Modules for Graph<'_> {
         self.complete
             .get()?
             .ids
-            .get(&self.identity_path(path))
+            .get_ref(&self.identity_path(path)[..])
             .copied()
     }
 
@@ -1249,7 +1349,7 @@ impl Modules for Graph<'_> {
         let from = from_native(from);
         let (path, is_external) = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
-            module: *self.complete.get()?.ids.get(&path[..])?,
+            module: *self.complete.get()?.ids.get_ref(&path[..])?,
             is_external,
         })
     }

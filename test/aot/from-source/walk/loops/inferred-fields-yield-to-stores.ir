@@ -1,0 +1,15 @@
+# f1 = make
+# f2 = sum
+# -- source: main.mjs
+# function make(n) { const image = {}; image.data = new Uint8Array(n); return image; }
+# function sum(image) { let all = 0; for (let i = 0; i < image.data.length; i++) all ^= (i * image.data[i]) | 0; return all; }
+# const image = make(300); image.data.fill(7);
+# const other = make(1); other.data = [1, 2.5, 3];
+# print(sum(image), sum(other), sum({ data: "123" }));
+# -- end of source
+# The front end infers of the uses that the field holds an array of numbers. The program stores a Uint8Array.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: TypeTest {{*}} testedType=Uint8Array
+# CHECK: GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2068 4 4

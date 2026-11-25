@@ -1,0 +1,15 @@
+# a list literal whose only user is the call holds what is written in it
+# -- source: list-of-written-tags-that-the-call-alone-has.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# new Intl.NumberFormat(["da", "en-GB"]); new Intl.Collator(["is", "nb"]);
+# -- end of source
+# RUN: locales
+# CHECK-COUNT-4: locale constant
+# REPEAT: name = A B C D; tag = da en-GB is nb
+# RUN(%(name)): locales
+# %(name): locale constant "%(tag)" {{*}}at f0
+# END REPEAT
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

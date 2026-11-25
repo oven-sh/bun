@@ -1,0 +1,20 @@
+# -- source: late-names.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2 }
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# interface Links { flags: Flags; more: Flags; last: Flags; first?: Mark; second?: Mark; third?: Mark; fourth?: Mark; }
+# const LinksMaker = function (this: Links) { this.flags = Flags.None; this.more = Flags.A; this.last = Flags.B; } as unknown as new () => Links;
+# function fourthOf(links: Links) { links.fourth = new Mark("fourth"); }
+# function thirdOf(links: Links): Mark { return links.third || (links.third = new Mark("third")); }
+# function secondOf(links: Links): Mark { return links.second || (links.second = new Mark("second")); }
+# function firstOf(links: Links): Mark { return links.first || (links.first = new Mark("first")); }
+# sink(fourthOf, thirdOf, secondOf, firstOf, new LinksMaker());
+# -- end of source
+# The cell has three words left. The stores stand in the text in the order fourth, third, second, first; the written type declares first, second, third, fourth: what it declares first lies in the cell.
+# RUN: plan layouts mechanisms=all
+# CHECK: size=48
+# CHECK: "last" OptionalInt32 Inline offset=32
+# CHECK: "fourth" appended JSValue OutOfLine
+# CHECK: "third" appended OptionalCell32 Inline offset=44
+# CHECK: "second" appended OptionalCell32 Inline offset=40
+# CHECK: "first" appended OptionalCell32 Inline offset=36

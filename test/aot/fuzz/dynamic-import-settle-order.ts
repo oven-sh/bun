@@ -32,7 +32,7 @@ function textOf(module: Module) {
   return text + `export const ${module.name} = "${module.name}";\n`;
 }
 
-export function generate(random: Random, form: Form): Program {
+export function generate(random: Random, form: Form) {
   const kind = () =>
     random.weighted([
       [3, "holds"],
@@ -107,7 +107,27 @@ export function generate(random: Random, form: Form): Program {
 
   const text = files["m0.mjs"];
   delete files["m0.mjs"];
-  return startedAs(form, { file: "m0.mjs", text, files });
+
+  const byName = new Map(all.map(module => [module.name, module]));
+  const atOrBelow = (root: string) => {
+    const found = new Set([root]);
+    for (const name of found) for (const imported of byName.get(name)!.imports) found.add(imported);
+    return found;
+  };
+  const called = [...all.flatMap(module => module.calls), ...[...inJobs.values()].flat()];
+  const loadedByTwoCalls = new Set(
+    called.filter((target, index) => called.some((other, at) => at !== index && atOrBelow(other).has(target))),
+  );
+  return {
+    ...startedAs(form, { file: "m0.mjs", text, files }),
+    /** What one call names and another call loads too, as its root or below it. */
+    loadedByTwoCalls,
+    /** Those modules and what they import. */
+    loadedWithThem: new Set([...loadedByTwoCalls].flatMap(target => [...atOrBelow(target)])),
+    /** A module calls `import()` while the `require()` that loads it is on the stack. */
+    callsUnderRequireOfModule:
+      form === "required" && [...atOrBelow("m0")].some(name => byName.get(name)!.calls.length > 0),
+  };
 }
 
 type Program = {

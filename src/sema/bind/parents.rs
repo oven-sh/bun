@@ -17,6 +17,7 @@ pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     end: UNREACHABLE,
     exit: FlowId::NONE,
     contains_this: false,
+    is_context_sensitive: None,
 };
 
 /// The lists to fill in. Each is as long as the file's matching list and starts out with empty

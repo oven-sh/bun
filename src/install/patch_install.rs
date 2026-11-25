@@ -1,7 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
-use std::io::Write as _;
+use std::borrow::Cow;
 
 use bun_ast::{Loc, Log, Range, Source};
 use bun_core::ZBox;
@@ -11,29 +11,21 @@ use bun_paths as path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd};
-use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
+use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_threading::work_pool::OwnedTask;
 
 use crate::cache_publish::StagedEntry;
-use crate::package_install::PackageInstall;
-use crate::package_manager;
-use crate::{DependencyID, PackageID, PackageManager, lockfile::Package, resolution::Resolution};
+use crate::package_manager::{self, INBOX};
+use crate::resolution::{Resolution, Tag as ResolutionTag};
+use crate::{DependencyID, PackageID, PackageManager, lockfile::Package};
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
-// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
+// process-wide cache/temp directory descriptors. Store the raw `Fd`
 // so the task's drop never closes a descriptor it doesn't own. Use
 // `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
-    /// BACKREF. Stored as `BackRef` because the task
-    /// is held via raw pointer through the intrusive thread-pool queue while
-    /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
-    /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
-    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    /// Borrowed view of the process-wide temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],
     pub(crate) callback: Callback,
@@ -81,10 +73,10 @@ pub struct CalcPatchHash {
     pub(crate) logger: Log,
 }
 
+/// Only created for npm packages.
 pub struct EnqueueAfterState {
     pub(crate) pkg_id: PackageID,
     pub(crate) dependency_id: DependencyID,
-    pub(crate) url: Box<[u8]>,
 }
 
 pub struct ApplyPatch {
@@ -93,8 +85,9 @@ pub struct ApplyPatch {
 
     pub(crate) patchfilepath: Box<[u8]>,
     pub(crate) pkgname: SemverString,
+    resolution_tag: ResolutionTag,
 
-    /// Borrowed view of the manager's cache directory fd (see comment at top of file).
+    /// Borrowed view of the process-wide cache directory fd (see comment at top of file).
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: ZBox,
     pub(crate) cache_dir_subpath_without_patch_hash: ZBox,
@@ -113,22 +106,16 @@ pub struct InstallContext {
 }
 
 /// A relative path in `patchedDependencies` is resolved against the project directory.
-fn resolve_patchfile_path<'a>(
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-    project_dir: &[u8],
-    patchfile_path: &[u8],
-) -> &'a ZStr {
-    let base: &[u8] = if path::is_absolute(patchfile_path) {
-        b""
-    } else {
-        project_dir
+fn resolve_patchfile_path(project_dir: &[u8], patchfile_path: &[u8]) -> path::Path {
+    let resolve = |spelling: &[u8]| match path::is_absolute(spelling) {
+        true => path::Path::join(&[spelling]),
+        false => path::Path::join(&[project_dir, spelling]),
     };
-    path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
-        buf,
-        spill,
-        &[base, patchfile_path],
-    )
+    let as_written = resolve(patchfile_path);
+    match path::from_portable(patchfile_path) {
+        Cow::Owned(converted) if !sys::exists_z(&as_written) => resolve(&converted),
+        _ => as_written,
+    }
 }
 
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
@@ -229,21 +216,8 @@ fn crash_on_missing_patch(
     Global::crash();
 }
 
-impl PatchTask {
-    /// # Safety
-    /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
-    /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
-    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
-    /// granting exclusive access for the duration of the call.
-    pub(crate) unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
-        // SAFETY: thread-pool callback contract — `task` points to the `task`
-        // field of a live `PatchTask` (set at construction); the pool runs
-        // each task at most once with exclusive access for the call.
-        let patch_task = unsafe { &mut *PatchTask::from_task_ptr(task) };
-        patch_task.run_from_thread_pool_impl();
-    }
-
-    pub(crate) fn run_from_thread_pool_impl(&mut self) {
+impl OwnedTask for PatchTask {
+    fn run(mut self: Box<Self>) {
         // There are no early returns in the body, so the ordering
         // (body → push → wake) is inlined below.
         match &mut self.callback {
@@ -259,19 +233,12 @@ impl PatchTask {
                 bun_core::handle_oom(self.apply());
             }
         }
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // the worker thread only touches the lock-free `patch_task_queue` and the
-        // event-loop wake atomics, neither of which alias data the main thread
-        // holds an exclusive borrow on.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
-        }
+        INBOX.patch_tasks.push(bun_core::heap::into_raw_nn(self));
+        INBOX.wake();
     }
+}
 
+impl PatchTask {
     pub(crate) fn run_from_main_thread(
         &mut self,
         manager: &mut PackageManager,
@@ -301,9 +268,7 @@ impl PatchTask {
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
         }
-        let _ = apply
-            .logger
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = apply.logger.print(Output::error_writer());
     }
 
     fn run_from_main_thread_calc_hash(
@@ -336,9 +301,7 @@ impl PatchTask {
             None => {
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
-                        let _ = calc_hash
-                            .logger
-                            .print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = calc_hash.logger.print(Output::error_writer());
                     } else {
                         Output::err_generic(
                             "Failed to calculate hash for patch <b>{}<r>",
@@ -351,13 +314,10 @@ impl PatchTask {
         }
 
         if let Some(state) = &calc_hash.state {
-            let url = &state.url;
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
             let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
-            // `Package` is not `Copy`; capture the scalar fields we need
-            // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
             let name_and_version_hash = calc_hash.name_and_version_hash;
@@ -378,35 +338,21 @@ impl PatchTask {
                         crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS,
                     ) => {}
                 PreinstallState::Extract => {
-                    // SAFETY: every `Resolution` `Value` payload is `Copy`
-                    // POD and the union is zero-initialized (see the union
-                    // accessors in resolution.rs), so reading `.npm.version`
-                    // yields initialized bytes even when the active variant
-                    // is not `npm` — possibly stale, never uninit. This arm
-                    // is reachable for non-npm resolutions too (git/github/
-                    // tarball; see the TODO below), which then read garbage
-                    // version bytes into the task id, not UB.
-                    let pkg_npm_version = unsafe {
-                        manager.lockfile.packages.items_resolution()[pkg_id as usize]
-                            .value
-                            .npm
-                            .version
-                    };
-                    let task_id =
-                        TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
+                    let task_id = TaskId::for_npm_package(
+                        manager.lockfile.str(&pkg_name),
+                        pkg.resolution.npm().version,
+                    );
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = dep_behavior.is_required();
-                    let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         match package_manager::generate_network_task_for_tarball(
                             manager,
-                            // TODO: not just npm package
                             task_id,
-                            url,
+                            None,
                             is_required,
                             dep_id,
-                            &pkg_again,
+                            &pkg,
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
@@ -450,15 +396,8 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
 
-        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
-        let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = resolve_patchfile_path(
-            &mut absolute_patchfile_path_buf.0,
-            &mut absolute_patchfile_path_spill,
-            dir,
-            patchfile_path,
-        );
+        let absolute_patchfile_path: &ZStr = &resolve_patchfile_path(dir, patchfile_path);
         // TODO: can the patch file be anything other than utf-8?
 
         let patchfile_txt =
@@ -486,58 +425,23 @@ impl PatchTask {
         let system_tmpdir = self.tempdir;
         let staging = StagedEntry::new(system_tmpdir, tempdir_name);
 
-        let pkg_name = patch.pkgname;
-
-        let dummy_node_modules = crate::package_installer::NodeModulesFolder {
-            path: Vec::<u8>::new(),
-            tree_id: 0,
-        };
-
-        let (resolution_label, resolution_tag) = {
-            // TODO: fix this threadsafety issue.
-            // Not `self.manager()` — `&mut self.callback` is live.
-            // BACKREF; the lockfile is read-only while apply tasks run
-            // off-thread.
-            let manager = self.manager.get();
-            let resolution: &Resolution =
-                &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
-            let mut label = Vec::<u8>::new();
-            write!(
-                &mut label,
-                "{}",
-                resolution.fmt(
-                    manager.lockfile.buffers.string_bytes.as_slice(),
-                    bun_core::fmt::PathSep::Posix,
-                )
-            )
-            .expect("OOM");
-            (label, resolution.tag)
-        };
-
         // 3. copy the unpatched files into temp dir
-        let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // Not `self.manager()` — `&mut self.callback` is live.
-        // BACKREF — read-only lockfile access while the task runs off-thread.
-        let lockfile = &self.manager.get().lockfile;
-        let mut pkg_install = PackageInstall {
+        let unpatched: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
+        let mut files = PackageFiles {
             cache_dir: patch.cache_dir,
-            cache_dir_subpath: cache_dir_subpath_z,
+            cache_dir_subpath: unpatched,
             destination_dir_subpath: tempdir_name,
-            patch: None,
-            package_name: pkg_name,
-            package_version: &resolution_label,
-            // dummy value
-            node_modules: &dummy_node_modules,
-            lockfile,
         };
-
-        match pkg_install.install(
+        let copied = files.install(
             crate::package_install::Staging::Off,
             true,
             sys::Dir::borrow(&system_tmpdir),
             InstallMethod::Copyfile,
-            resolution_tag,
-        ) {
+            patch.resolution_tag,
+            None,
+        );
+
+        match copied.report() {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 log.add_error_fmt_opts(
@@ -559,22 +463,21 @@ impl PatchTask {
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
             ) {
-                sys::Result::Ok(fd) => fd,
+                sys::Result::Ok(fd) => sys::Dir::from_fd(fd),
                 sys::Result::Err(e) => {
                     log.add_sys_error(
                         &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
-                            bun_core::fmt::for_terminal(BStr::new(&resolution_label))
+                            bun_core::fmt::for_terminal(BStr::new(unpatched.as_bytes()))
                         ),
                     );
                     return Ok(());
                 }
             };
-            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
 
             // 4. apply patch
-            if let Err(e) = patchfile.apply(patch_pkg_dir) {
+            if let Err(e) = patchfile.apply(patch_pkg_dir.fd()) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -586,7 +489,7 @@ impl PatchTask {
             let mut buntagbuf = crate::BuntagHashBuf::default();
             let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
             let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
-            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+            if let Err(e) = sys::File::write_file(&patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
                         "failed adding bun tag: {}",
@@ -623,15 +526,8 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &calc_hash.patchfile_path;
 
-        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
-        let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = resolve_patchfile_path(
-            &mut absolute_patchfile_path_buf.0,
-            &mut absolute_patchfile_path_spill,
-            dir,
-            patchfile_path,
-        );
+        let absolute_patchfile_path: &ZStr = &resolve_patchfile_path(dir, patchfile_path);
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
@@ -689,10 +585,6 @@ impl PatchTask {
         }
     }
 
-    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(&raw mut self.task));
-    }
-
     pub(crate) fn new_calc_patch_hash(
         manager: &mut PackageManager,
         name_and_version_hash: u64,
@@ -705,8 +597,6 @@ impl PatchTask {
             .unwrap_or_else(|| panic!("This is a bug"));
         let patchfile_path: Box<[u8]> =
             Box::from(patchdep.path.slice(&manager.lockfile.buffers.string_bytes));
-        // The field is only ever consumed as a byte slice (`join_z_buf` input,
-        // log formatting), so no trailing NUL is needed.
 
         let result = (manager.pending_patch_commit).patch_hash(name_and_version_hash);
         let tempdir = manager.get_temporary_directory().handle.fd();
@@ -720,12 +610,8 @@ impl PatchTask {
                 not_found: false,
                 logger: Log::init(),
             }),
-            manager: bun_ptr::BackRef::new_mut(manager),
             project_dir: FileSystem::get().top_level_dir(),
-            task: ThreadPoolTask {
-                node: ThreadPoolNode::default(),
-                callback: Self::run_from_thread_pool,
-            },
+            task: ThreadPoolTask::default(),
             pre: false,
             next: bun_threading::Link::new(),
         })
@@ -775,8 +661,6 @@ impl PatchTask {
         let patch_hash_idx = strings::index_of(cache_dir_subpath_bytes, b"_patch_hash=")
             .unwrap_or_else(|| panic!("This is a bug in Bun."));
 
-        // need to dupe this as it's calculated using
-        // `PackageManager.cached_package_folder_name_buf` which may be modified
         let cache_dir_subpath = ZBox::from_bytes(cache_dir_subpath_bytes);
         let cache_dir_subpath_without_patch_hash =
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
@@ -791,18 +675,15 @@ impl PatchTask {
                 cache_dir,
                 patchfilepath,
                 pkgname: pkg_name,
+                resolution_tag: resolution_clone.tag,
                 logger: Log::init(),
                 cache_dir_subpath,
                 cache_dir_subpath_without_patch_hash,
                 task_id: None,
                 install_context: None,
             }),
-            manager: bun_ptr::BackRef::new_mut(pkg_manager),
             project_dir: FileSystem::get().top_level_dir(),
-            task: ThreadPoolTask {
-                node: ThreadPoolNode::default(),
-                callback: Self::run_from_thread_pool,
-            },
+            task: ThreadPoolTask::default(),
             pre: false,
             next: bun_threading::Link::new(),
         })
@@ -810,6 +691,6 @@ impl PatchTask {
 }
 
 use crate::PreinstallState;
-use crate::package_install::{InstallResult, Method as InstallMethod};
+use crate::package_install::{InstallResult, Method as InstallMethod, PackageFiles};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

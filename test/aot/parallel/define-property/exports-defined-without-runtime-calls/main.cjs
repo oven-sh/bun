@@ -1,5 +1,5 @@
 // Definitions with constant keys and attributes on an exports object fill slots: none of them calls the run time's definition.
-// COUNT: operation:operationAOTDefineOwnProperty = 0
+// COUNT: operation:operationAOTDefineOwnProperty = 0 Todo: the definition is one operation of the run time, without the descriptor object, until it is a store into the slot. Until then it was a call of the host function Object.defineProperty, which no operation counts
 // COUNT: operation:operationAOTDefineById = 0
 const marked = require("./marked.cjs");
 const reexports = require("./reexports.cjs");

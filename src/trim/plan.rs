@@ -16,7 +16,7 @@ use crate::locales::resolve_wanted_groups;
 use crate::model::{
     Decision, EntryPointNeeds, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
     PlannedIcuPackage, PlannedRange, RefusedEntryPoint, RemovableRange, RetainReason, SetIndex,
-    TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
+    TrimInput, TrimPlan, TrimTable, UnrequestedCut, UsedFeatures, UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
 
@@ -101,7 +101,7 @@ pub fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequiremen
         || requirements.iter().any(runs_unseen_code)
 }
 
-// Without ImageFlag::AdmitsLibraryText the realm of the program runs no built-in module from its text. A realm that the program creates holds nothing compiled and runs each from its text.
+// A realm that the program creates holds nothing compiled and runs built-in modules from source.
 fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
     used.names(CREATES_REALMS)
         || used
@@ -193,6 +193,7 @@ pub(crate) fn plan_table(
         refused_entry_points: Vec::new(),
         icu_packages,
         keeps_table: false,
+        unrequested: UnrequestedCut::Nothing,
     }
 }
 
@@ -1170,7 +1171,7 @@ mod tests {
             request: &TrimRequest::default(),
         };
         let planned = plan_encoded_input(&table, &input);
-        assert_eq!(planned.removed(), Feature::all_outside_compiled_programs());
+        assert_eq!(planned.removed(), Feature::all_that_leave_unasked());
         assert_eq!(planned.ranges.len(), 1);
         assert_eq!(planned.ranges[0].named_feature, Feature::Jit);
     }

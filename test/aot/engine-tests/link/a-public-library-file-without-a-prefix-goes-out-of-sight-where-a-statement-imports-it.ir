@@ -1,0 +1,38 @@
+# import { util } from "undici";  util("a");        and somewhere: require.cache["undici"].exports
+# The control of a-public-library-file-that-only-written-requests-name-stays-in-sight.ir: once an import statement has reached a library file whose name begins with neither node: nor bun:,
+# require.cache lists it (Modules::isListedOnceStatementReaches()) and hands out what it gives to whoever reads the entry. No operation of the program names the file there, so the statement itself sends it out.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link variables modules mechanisms=all
+# CHECK-NOT: variable g0 proven
+# CHECK-NOT: module m1 value-stays-with-compiled-code
+
+layout L0 module=m1 fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}, {key="util" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="util" module=m1 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="undici" displayPath="undici" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=Undici body=f1 syntheticExports=[{name="util" variable=g0 isKnownMember=true}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = String string="a"
+    v2 = Call v0, -, v1 calleeName="util"
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="fetch" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="util" module=m1 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

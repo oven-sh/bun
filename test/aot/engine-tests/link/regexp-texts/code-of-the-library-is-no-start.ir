@@ -1,0 +1,38 @@
+# Every program brings modules of the library, and some of them hand RegExp a text that is not written:
+#   node:util:  var debugs = new RegExp("^" + names + "$")   function escaped(text) { return new RegExp("\\" + text) }
+# They are no starts: what they need is the same in every build, and a build whose own code asks for nothing makes no realm.
+# LIBRARY: own
+# RUN: regexp-texts realms mechanisms=all
+# CHECK: realms 0
+# CHECK-NOT: text /
+
+variable g0 name="escaped" module=m0 declared={type=anything} initialization=Function function=f1
+module m0 path="node:util" displayPath="node:util" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f0
+module m1 path="main.js" displayPath="main.js" body=f2
+entry module=m1
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="^"
+    v2 = String string="a|b"
+    v3 = Add v1, v2
+    v4 = String string="$"
+    v5 = Add v3, v4
+    v6 = Construct v0, -, v5
+    Return v6
+}
+function f1 name="escaped" module=m0 position=10 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=RegExp
+    v2 = String string="\\"
+    v3 = Add v2, v0
+    v4 = Construct v1, -, v3
+    Return v4
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="c+"
+    v2 = Construct v0, -, v1
+    Return v2
+}

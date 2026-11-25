@@ -1,0 +1,19 @@
+# -- source: main.js
+# function mixin(target, source) { Object.getOwnPropertyNames(source).forEach(function (name) { if (name !== "first") Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }); return target; }
+# var Sized = { size: function () { return this.items.length; }, first: function () { return this.items[0]; } };
+# function Bag(a, b) { this.items = [a, b]; }
+# mixin(Bag.prototype, Sized);
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var bag = new Bag(i & 7, 1); total += bag.size(); if (bag.first) total += 1000; } return total; }
+# print(run(10));
+# try { new Bag(1, 2).first(); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# Link does not read the test in the loop, so it expects `first` on the prototype object too. The record is held against the prototype object when the first object is made: the name is lacking, the guard of that one name ends, and the read finds nothing.
+# The guard of `size` is armed all the same.
+# RUN: run-in-shell
+# CHECK: 20
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 20
+# CALLED-NEXT: true
+# CALLED-NEXT: exited with 0

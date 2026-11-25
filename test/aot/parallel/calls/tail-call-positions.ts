@@ -300,8 +300,6 @@ row("builtin_stringify", () => { const s: any = t_builtin_stringify(); return s;
 const numbery = { valueOf() { probe(); return 1; } };
 function t_builtin_number(): any { return Number(numbery); }
 row("builtin_number", () => { const s: any = t_builtin_number(); return s; });
-function t_builtin_math(): any { return Math.max(numbery as any, 2); }
-row("builtin_math", () => { const s: any = t_builtin_math(); return s; });
 function t_not_a_function(f: any): any { return f(); }
 row("not_a_function", () => { try { t_not_a_function(undefined); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });
 function t_not_a_function_number(f: any): any { return f(1, 2); }

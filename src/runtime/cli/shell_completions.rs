@@ -54,7 +54,7 @@ impl Default for ShellCompletions {
 impl ShellCompletions {
     pub(crate) fn print(&self) {
         let _flush = Output::flush_guard();
-        let writer = &mut *Output::writer();
+        let writer = Output::writer();
 
         if self.commands.is_empty() {
             return;

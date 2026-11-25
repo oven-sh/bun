@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keep(o: any): void { kept = o; }
+# function make(i: number): number { const o = { lid: i }; keep(o); o.lid = i + 100; return i; }
+# print(make(1));
+# print(kept.lid);
+# print("went on");
+# -- end of source
+# A store into a fresh object that nothing reads again may be dropped.
+# With the fault injected (testing=AssumeCalleesRetainNothing), the code that retained the object would read 1 instead of 101, and no value check covers that read.
+# The cell is overwritten when make() returns, so that code crashes when it next accesses the cell.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL-NOT: went on
+# CALL: crashed with

@@ -1,0 +1,23 @@
+# As constructor-read-through-a-family-may-be-any-function-of-the-row.ir, with the name in a variable: `o[k]` through a family is answered by the aggregate under any key, which named the nearest constructor alone too.
+# f1 = Base, f2 = Sub, f3 = Sub2, f4 = maker, f5 = markIt, f6 = markOf
+# -- source: constructor-read-under-a-computed-key-may-be-any-function-of-the-row.js
+# function Base(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; }
+# function Sub(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.s = work; }
+# function Sub2(v) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; this.v = v; this.t = work; }
+# Sub.prototype = Object.create(Base.prototype);
+# Sub2.prototype = Object.create(Sub.prototype);
+# function maker(o, k) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return o[k]; }
+# function markIt(C) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; C.mark = "text"; }
+# function markOf(f) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return f.mark; }
+# const first = new Base(1);
+# let out = "";
+# for (let i = 0; i < 300; i++) markIt(maker(i & 1 ? new Sub(i) : new Sub2(i), globalThis.which));
+# for (let i = 0; i < 300; i++) out = typeof markOf(Base);
+# print(out, String(first.v));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f6 {{*}}result=undefined|string
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 callers-known
+# RUN(ANSWERS): run-in-shell globalThis.which = "constructor";
+# ANSWERS: string 1

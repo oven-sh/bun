@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; eleventh(): number; twelfth(): number; again(): number; }
+# function makeDial(start: number): Dial { let at = start; function step(): number { return ++at; } return { first: () => at + 0, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: () => at + 9, eleventh: step, twelfth: () => at + 11, again: step }; }
+# const dial = makeDial(10); sink(dial.eleventh(), dial.again(), dial.eleventh === dial.again, dial.twelfth(), Object.keys(dial).join());
+# const other = makeDial(100); sink(other.again(), other.eleventh(), other.first(), dial.first(), other.again === dial.again);
+# -- end of source
+# `step` lies under two names: it is made once and both slots hold that one closure; the birth lists it with the eleven that stay unmade.
+# f1 = makeDial
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-11: isMadeOnDemand
+# CHECK: = NewObject {{*}}fields=[4, 7, 11, 5, 3, 9, 8, 1, 6, 10, 2, 12, 0, 13]
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PutSlot
+# NEVER-NOT: = PropDefine

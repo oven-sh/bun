@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -6,17 +7,17 @@ use bun_core::{String as BunString, StringView};
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
-    pub agent: Option<NonNull<InspectorHTTPServerAgent>>,
+    pub agent: Cell<Option<NonNull<InspectorHTTPServerAgent>>>,
 
     /// This becomes the "server ID" field.
-    pub next_server_id: ServerId,
+    pub next_server_id: Cell<ServerId>,
 }
 
 impl Default for HTTPServerAgent {
     fn default() -> Self {
         Self {
-            agent: None,
-            next_server_id: ServerId::init(0),
+            agent: Cell::new(None),
+            next_server_id: Cell::new(ServerId::init(0)),
         }
     }
 }
@@ -159,10 +160,8 @@ impl InspectorHTTPServerAgent {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
-    // SAFETY: VM singleton is process-lifetime.
-    let vm = VirtualMachine::get().as_mut();
-    if let Some(debugger) = &mut vm.debugger {
-        debugger.http_server_agent.agent = NonNull::new(agent);
+    if let Some(debugger) = VirtualMachine::get().debugger.get() {
+        debugger.http_server_agent.agent.set(NonNull::new(agent));
     }
 }
 

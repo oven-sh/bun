@@ -1,0 +1,70 @@
+A test writes a file of the project anew before anything has loaded it: whoever loads it first gets the new text. Each test file puts back what it wrote.
+#### a-module.test.js
+import { afterAll, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+afterAll(() => writeFileSync(join(import.meta.dir, "state.js"), "export let count = 0;\nexport function bump() { return ++count; }\n"));
+test("a module", async () => {
+  writeFileSync(join(import.meta.dir, "state.js"), 'export let count = 100;\nexport function bump() { return count += 10; }\nexport const extra = "new";\n');
+  const state = await import("./state.js");
+  console.log("| CASE a module", state.count, state.bump(), Object.keys(state).sort().join());
+});
+#### b-new-text-imports.test.js
+import { afterAll, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { twice } from "./lib.js";
+afterAll(() => writeFileSync(join(import.meta.dir, "uses-lib.js"), 'import { twice } from "./lib.js";\nexport const made = twice(1);\n'));
+test("the new text imports a compiled file", async () => {
+  console.log("| CASE before", twice(2));
+  writeFileSync(join(import.meta.dir, "uses-lib.js"), 'import { twice, unread } from "./lib.js";\nexport const made = [twice("ab"), unread()].join();\n');
+  console.log("| CASE the new text", (await import("./uses-lib.js")).made);
+});
+#### c-data.test.js
+import { afterAll, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+afterAll(() => {
+  writeFileSync(join(import.meta.dir, "imported.json"), '{ "count": 0 }\n');
+  writeFileSync(join(import.meta.dir, "required.json"), '{ "count": 0 }\n');
+});
+test("files of data", async () => {
+  writeFileSync(join(import.meta.dir, "imported.json"), '{ "count": 100, "extra": 1 }');
+  console.log("| CASE imported", JSON.stringify((await import("./imported.json")).default));
+  writeFileSync(join(import.meta.dir, "required.json"), '{ "count": 100, "extra": 1 }');
+  console.log("| CASE required", JSON.stringify(require("./required.json")));
+});
+#### d-writes.test.js
+import { test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+test("one test file writes", () => {
+  writeFileSync(join(import.meta.dir, "late.js"), 'export let count = 100;\nexport function bump() { return count += 10; }\nexport const extra = "new";\n');
+  console.log("| CASE written");
+});
+#### e-imports.test.js
+import { afterAll, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import * as late from "./late.js";
+afterAll(() => writeFileSync(join(import.meta.dir, "late.js"), "export let count = 0;\nexport function bump() { return ++count; }\n"));
+test("a later test file imports it by a statement", () => {
+  console.log("| CASE a later test file", late.count, late.bump(), Object.keys(late).sort().join());
+});
+#### imported.json
+{ "count": 0 }
+#### late.js
+export let count = 0;
+export function bump() { return ++count; }
+#### lib.js
+let calls = 0;
+export function twice(value) { calls++; return value + value; }
+export const unread = () => "calls " + calls;
+#### required.json
+{ "count": 0 }
+#### state.js
+export let count = 0;
+export function bump() { return ++count; }
+#### uses-lib.js
+import { twice } from "./lib.js";
+export const made = twice(1);

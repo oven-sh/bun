@@ -1,0 +1,18 @@
+# a store through a family writes without asking which member it has, so its value has to fit the slot of each. `tag` lies at one slot in both members of Shape: the two are held to one type, which holds what each of them writes.
+# f1 = retag
+# -- source: what-lies-at-one-slot-of-a-family-is-held-to-one-type.ts
+# declare function sink(...values: unknown[]): void;
+# interface Shape { tag: string | boolean; open: boolean; }
+# class Circle implements Shape { tag: string; open: boolean; constructor(tag: string, open: boolean) { this.tag = tag; this.open = open; } }
+# class Square implements Shape { tag: boolean; open: boolean; constructor(tag: boolean, open: boolean) { this.tag = tag; this.open = open; } }
+# function retag(shape: Shape, tag: boolean) { shape.tag = tag; }
+# sink(Circle, Square, retag);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK-COUNT-2: "tag" {{*}} type=undefined|null|boolean|string
+# RUN(OPEN): plan layouts mechanisms=all
+# OPEN-COUNT-2: "open" {{*}} type=undefined|null|boolean
+# each field says its own in Facts: the plan alone knows what lies at one slot.
+# RUN(FACTS): facts enforced mechanisms=all
+# FACTS: "tag" source=written type=undefined|null|string {{*}} held=undefined|null|boolean|string
+# FACTS: "tag" source=written type=boolean markers {{*}} held=undefined|null|boolean|string

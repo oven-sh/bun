@@ -1,0 +1,25 @@
+# -- source: fresh-list-read-in-a-loop-stays-here.js
+# function stays(a, b) { const list = [a, b, 1, 2, 3, 4, 5, 6, 7]; let s = 0; for (let i = 0; i < list.length; i++) s += list[i]; return s; }
+# function leaves(a, b) { const list = [a, b]; for (let i = 0; i < 9; i++) sink(list); return list[0]; }
+# function isStoredTo(a, b) { const list = [a, b]; for (let i = 0; i < 9; i++) list[i] = list[i] + 1; return list[0]; }
+# sink(stays, leaves, isStoredTo);
+# -- end of source
+# A read by an index or of the length hands a list to nobody, in a loop as anywhere. So a list from in front of the loop that the turns only read is still this code's alone in the loop and behind it:
+# its length is the one it was made with, and a read finds an element of its own or nothing and runs no code. A list that a turn hands on or stores into has left at the head.
+# Of the list that is only stored into Link says that it stays as made (LinkTables::receiversThatStayAsMade), which a read hears: what the state has let go shows at the store.
+# Nine turns: the turns of a shorter loop are written out, and there is no loop (walk/turns-written-out/).
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[nine]]: 9 {{*}} = Integer integer=9
+# CHECK: [[list]]: Array {{*}} = NewArray
+# CHECK: isLoopHead=true
+# CHECK: = Less {{*}}, [[nine]] form=Integers
+# CHECK: = GetArrayElement [[list]], {{*}} level=Proven
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: GetArrayLength
+# NEVER-NOT: level=Expected
+# RUN(LEAVES): walk f2 f3 mechanisms=all
+# LEAVES-LABEL: code f2:Body
+# LEAVES: = GetArrayElement {{*}} level=Expected
+# LEAVES-LABEL: code f3:Body
+# LEAVES: = PutArrayElement {{*}} level=Expected

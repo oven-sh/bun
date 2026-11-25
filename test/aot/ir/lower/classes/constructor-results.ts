@@ -1,18 +1,16 @@
 // RUN(BASE): lower
 // BASE-LABEL: function {{*}}name="ReturnsValue" {{*}}kind=BaseConstructor
 // BASE: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// BASE-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// BASE-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // BASE: [[isObject]] = TypeTest {{*}}testedType=object
-// BASE-NEXT: Branch [[isObject]] -> taken [[object]](| 0), notTaken [[other]](| 0)
+// BASE-NEXT: Branch [[isObject]] -> taken [[object]](| 0), notTaken [[join]]([[this]])
 // BASE: [[object]]([[result]]):
 // BASE-NEXT: Jump -> next [[join]]([[result]])
-// BASE: [[other]]({{*}}):
-// BASE-NEXT: Jump -> next [[join]]([[this]])
 // BASE-NOT: TypeTest
 // BASE-LABEL: function {{*}}name="FallsOff" {{*}}kind=BaseConstructor
-// BASE: [[undefined]] = Undefined
-// BASE: = TypeTest [[undefined]] testedType=object
+// BASE: [[made]] = Convert {{*}}declared={type=L
 // BASE-NOT: TypeTest
+// BASE: Return [[made]]
 // BASE-LABEL: function {{*}}name="DerivedReturnsValue"
 
 // RUN(DERIVED): lower
@@ -21,9 +19,8 @@
 // DERIVED: = TypeTest {{*}}testedType=undefined
 // DERIVED: = NewRuntimeError runtimeError=DerivedConstructorResult name="DerivedReturnsValue"
 // DERIVED-LABEL: function {{*}}name="DerivedFallsOff" {{*}}kind=DerivedConstructor
-// DERIVED: = TypeTest {{*}}testedType=object
-// DERIVED: = TypeTest {{*}}testedType=undefined
-// DERIVED: = NewRuntimeError runtimeError=DerivedConstructorResult name="DerivedFallsOff"
+// DERIVED-NOT: TypeTest
+// DERIVED-NOT: NewRuntimeError
 
 declare const v: any;
 

@@ -185,7 +185,6 @@ export default b.declarations(
   extendAll(["WebSocket", "HttpClient", "Events", "Bodies"], "Bun.WebView"),
   extendAll(["Bodies", "Headers", "WebStreams"], "WebAssembly.compileStreaming", "WebAssembly.instantiateStreaming"),
 
-  extendAll(["NodeBufferModule", "Base64Globals"], "node:buffer.atob", "node:buffer.btoa"),
   extendAll(["NodeBufferModule", "Bodies"], "node:buffer.resolveObjectURL"),
   extendAll(["WebCrypto"], ...nativeBindings("Cpp", "node_crypto_binding.cpp", "createNodeCryptoBinding")),
   extendAll(

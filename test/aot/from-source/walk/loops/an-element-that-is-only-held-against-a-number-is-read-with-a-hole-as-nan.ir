@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function over(list: number[], bound: number): number { let count = 0; for (let i = 0; i < list.length; i++) if (list[i]! > bound) count++; return count; }
+# function tally(list: number[], sums: number[], wanted: number): number { let count = 0; for (let i = 0; i < sums.length; i++) { if (list[i] === wanted) count++; sums[i] = count; } return count; }
+# const heights = [3, 1, 4, 1, 5, 9, 2, 6], sums = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+# let all = 0;
+# for (let t = 0; t < 20; t++) all += over(heights, t & 7) + tally(heights, sums, t & 3);
+# print(all, sums.join());
+# -- end of source
+# `undefined > 5` and `NaN > 5` are both false. So an element of a list of numbers whose one user is a relation beside a number is read with NaN for a hole and for what lies past the end: no question
+# whether the element is there, no way out of the turn. In a turn that stores, every read asked for the element and left the turn where there was none; what is only held against a number, by a relation
+# or an equality, is written nowhere, so it asks no more: the relation takes NaN, the equality takes the number or undefined as the read gives it.
+# f1 = over, f2 = tally. The loop of tally removes its check twice: in the function, and in the copy that the loop of the module takes for its one call.
+# RUN(OVER): walk f1 mechanisms=all
+# OVER-LABEL: code f1:Body
+# OVER: = GetArrayElement {{*}}readsHoleAsNaN
+# RUN(COUNT): compile StoringLoopHoleChecksRemoved mechanisms=all
+# COUNT: statistic StoringLoopHoleChecksRemoved 2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 103 1,1,1,1,1,1,1,1,1,1

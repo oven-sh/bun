@@ -1,0 +1,22 @@
+# String.raw`\d+` made a template object and called the built-in each time it ran: 319 objects up to the prompt of a real program, most of them in bodies of modules that write regular expressions in pieces.
+# The row was there (joinOfWhatIsInSight()) and never fired: it looked for the built-in in the callee's reference, which a call of a built-in under its name does not build, and it left a template without substitutions alone.
+# A template object is frozen, and so is its `raw`: what String.raw reads off them is written in the program.
+# -- source: main.ts
+# declare function print(value: any): void;
+# function texts(n: number, word: string): string {
+#   const digits = String.raw`\d+`;
+#   const both = String.raw`(${digits})\.(${word})`;
+#   const counted = String.raw`\n${n}\t`;
+#   const none = String.raw``;
+#   return digits + " " + both + " " + counted + none;
+# }
+# print(texts(3, "a"));
+# print(texts(4, "\\w"));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: NewTemplateObject
+# CHECK-NOT: StringRaw/0
+# CHECK: = Strcat
+# RUN(CALL): run-in-shell
+# CALL: \d+ (\d+)\.(a) \n3\t
+# CALL: \d+ (\d+)\.(\w) \n4\t

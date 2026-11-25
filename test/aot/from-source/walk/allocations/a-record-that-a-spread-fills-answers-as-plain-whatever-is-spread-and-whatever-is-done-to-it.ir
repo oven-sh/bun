@@ -1,0 +1,30 @@
+# What is spread comes from code that nobody sees: nothing . a listed name . a name that the literal lays behind the spread, laid first by the spread . an earlier name laid anew . an accessor . a proxy . a getter that throws amid the copy . null.
+# And what unseen code does to the finished object: a name deleted . an accessor over it . frozen . deleted and laid again. Read by a guess in a loop, in front of the deed and behind it. As plain.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function source(step: number): any;
+# declare function deed(step: number, made: any): string;
+# interface Options { abort?: boolean; error?: string }
+# function least(value: number, params: Options) { return { check: "least", ...params, least: value }; }
+# function read(defs: any[]) { let text = ""; for (const d of defs) text += d.check + ":" + d.least + ":" + d.abort + " "; return text; }
+# function attempt(step: number) { try { return least(step, source(step)); } catch (error: any) { return { check: "threw", least: error.message, abort: undefined }; } }
+# for (let step = 0; step < 12; step++) {
+#   const made = attempt(step);
+#   const first = read([made, made]);
+#   print(step + " " + deed(step, made) + ": " + first + "| " + read([made]) + "| " + Object.keys(made).join());
+# }
+# -- end of source
+# RUN(ANSWERS): run-in-shell globalThis.source = step => { switch (step) { case 1: return { abort: true }; case 2: return { least: 100 }; case 3: return { check: "over" }; case 4: return { get abort() { return true; } }; case 5: return new Proxy({ abort: true, least: 7, check: "proxy", more: 1 }, { ownKeys(t) { return ["more", "least", "check", "abort"]; } }); case 6: return { error: "e", get abort() { throw new Error("thrown amid the copy"); } }; case 7: return null; default: return {}; } }; globalThis.deed = (step, made) => { switch (step) { case 8: delete made.least; return "a name of birth deleted"; case 9: Object.defineProperty(made, "least", { get() { return "got"; }, enumerable: true, configurable: true }); return "an accessor over a name of birth"; case 10: Object.freeze(made); return "frozen"; case 11: delete made.check; made.check = "again"; return "deleted and laid again"; default: return ["nothing is spread", "a listed name out of the spread", "the spread lays a name of birth first", "the spread lays an earlier name anew", "an accessor in the source", "the source is a proxy", "a getter throws amid the copy", "null is spread"][step]; } };
+# ANSWERS: 0 nothing is spread: least:0:undefined least:0:undefined | least:0:undefined | check,least
+# ANSWERS-NEXT: 1 a listed name out of the spread: least:1:true least:1:true | least:1:true | check,abort,least
+# ANSWERS-NEXT: 2 the spread lays a name of birth first: least:2:undefined least:2:undefined | least:2:undefined | check,least
+# ANSWERS-NEXT: 3 the spread lays an earlier name anew: over:3:undefined over:3:undefined | over:3:undefined | check,least
+# ANSWERS-NEXT: 4 an accessor in the source: least:4:true least:4:true | least:4:true | check,abort,least
+# ANSWERS-NEXT: 5 the source is a proxy: proxy:5:true proxy:5:true | proxy:5:true | check,more,least,abort
+# ANSWERS-NEXT: 6 a getter throws amid the copy: threw:thrown amid the copy:undefined threw:thrown amid the copy:undefined | threw:thrown amid the copy:undefined | check,least,abort
+# ANSWERS-NEXT: 7 null is spread: least:7:undefined least:7:undefined | least:7:undefined | check,least
+# ANSWERS-NEXT: 8 a name of birth deleted: least:8:undefined least:8:undefined | least:undefined:undefined | check
+# ANSWERS-NEXT: 9 an accessor over a name of birth: least:9:undefined least:9:undefined | least:got:undefined | check,least
+# ANSWERS-NEXT: 10 frozen: least:10:undefined least:10:undefined | least:10:undefined | check,least
+# ANSWERS-NEXT: 11 deleted and laid again: least:11:undefined least:11:undefined | again:11:undefined | least,check
+# ANSWERS-NEXT: exited with 0

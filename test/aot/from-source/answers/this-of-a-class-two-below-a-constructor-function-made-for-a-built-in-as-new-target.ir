@@ -1,0 +1,18 @@
+# -- source: main.js
+# function Root(n) { this.a = n; }
+# class Middle extends Root { constructor(n) { super(n); this.b = n + 1; } }
+# let last;
+# class Low extends Middle { constructor(n) { super(n); this.c = n + 2; last = this; } }
+# const numbers = JSON.parse("[1,2,3]");
+# let text = "";
+# for (let turn = 0; turn < 200; turn++)
+#   for (const n of numbers) {
+#     Reflect.construct(Low, [n], Object);
+#     text = typeof last + " " + JSON.stringify(last) + " " + (last instanceof Low);
+#   }
+# print(text);
+# -- end of source
+# The same row as in this-of-a-class-two-below-a-constructor-function-made-for-another-new-target.ir, made for `Object` as the new target: the variable that takes `this` holds the object.
+# RUN: run-in-shell
+# CHECK: object {"a":3,"b":4,"c":5} false
+# CHECK-NEXT: exited with 0

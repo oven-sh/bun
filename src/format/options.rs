@@ -101,6 +101,8 @@ pub struct FormatOptions {
     pub toml: bool,
     /// For tests: what to output instead of the formatted text.
     pub debug_comments: DebugComments,
+    /// The text is from [`crate::settled::Scratch::reduced`].
+    pub is_reduced: bool,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]

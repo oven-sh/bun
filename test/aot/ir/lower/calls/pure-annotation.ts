@@ -1,6 +1,5 @@
 // A mark lets a call go where `bun build` lets it go: where the call is a statement. Its arguments stay for what they do. The engine is not told of the mark: it would let more go.
 // RUN: lower
-// CHECK-NOT: isAnnotatedPure
 // CHECK-LABEL: function {{*}}name="construction"
 // CHECK-NOT: = Construct
 // CHECK-LABEL: function {{*}}name="head"

@@ -1,9 +1,9 @@
 // `test` and `describe` of bun:test for a file that asks the front end of the compiler in this process.
 // In a Bun that was built without the compiler they define nothing.
 import { describeCheckerQueries } from "bun:internal-for-testing";
-import { describe as describeAnywhere, test as testAnywhere } from "bun:test";
+import { describe as describeAnywhere } from "bun:test";
 import { join } from "node:path";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { raiseDefaultTimeout, test as testAnywhere } from "./harness/default-timeout";
 
 function hasCompiler() {
   try {

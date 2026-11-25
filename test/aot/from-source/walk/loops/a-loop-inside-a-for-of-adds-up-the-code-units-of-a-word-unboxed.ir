@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function total(words: string[]): number {
+#   let sum = 0;
+#   for (const word of words) { for (let at = 0; at < word.length; at++) sum += word.charCodeAt(at); }
+#   return sum;
+# }
+# sink(total);
+# -- end of source
+# f1 = total
+# The inner loop stands under the cleanup of the outer for-of. What it adds up is the answer of `charCodeAt` on what a step handed out: a reader of characters reads its receiver as `word[at]` does, so its
+# answer is a read of the loop, the loop reckons with what it reads, its typed turns may begin again, and the sum is asked for a number once in front and goes round unboxed.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ([[sum]]: number @Double, {{*}}isLoopHead=true
+# CHECK: = Add [[sum]], {{*}}form=Numbers

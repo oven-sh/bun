@@ -1,0 +1,28 @@
+# f3 = unitAt, f4 = skipWord
+# -- source: guard-of-a-copy-is-asked-in-front-of-a-typed-loop.ts
+# declare function print(...values: unknown[]): void;
+# function makeReader(words: string) {
+#   let text: string = words, at = 0, end = words.length;
+#   function unitAt(s: string, i: number): number { return s.charCodeAt(i); }
+#   function skipWord(): number { while (at < end && unitAt(text, at) !== 32) at++; return at; }
+#   function take(next: unknown, length: number): void { text = next as string; at = 0; end = length; }
+#   return { skipWord, take };
+# }
+# const reader = makeReader("alpha beta");
+# (globalThis as any).readers = [reader];
+# const first = reader.skipWord();
+# reader.take({ charCodeAt(i: number): number { return i === 3 ? 32 : 65; } }, 8);
+# const second = reader.skipWord();
+# reader.take("back again", 10);
+# print(first, second, reader.skipWord());
+# -- end of source
+# `unitAt` is copied into the loop behind its guard: is `text` a string. No quiet turn stores `text`, so in the typed build of the loop the read and the test stand in front.
+# The branch stands there too, as that of every guess does: where it fails the loop starts in its other build. So the proof, the unboxing and the length of the text stand in front as well.
+# RUN: walk f4 mechanisms=all
+# CHECK: [[other]]() frequency=Rare:
+# CHECK: [[test]]: boolean {{*}} = TypeTest {{*}}testedType=string
+# CHECK-NEXT: Branch [[test]] -> taken [[passed]](), notTaken [[other]]()
+# CHECK: [[passed]]():
+# CHECK: = GetStringLength
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5 3 4

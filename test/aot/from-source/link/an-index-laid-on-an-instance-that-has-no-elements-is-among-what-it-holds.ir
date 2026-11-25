@@ -1,0 +1,28 @@
+# `cache[0] = "x"` on a Map, a Set, a Date: the class has no list of elements, so the value used to be laid nowhere that Object.values(cache) looks: the instance counted as its class makes it,
+# and what came out of it was proven to be nothing that it held. It is laid among what the instance holds under names that nobody knows, under a written index as under a key that is some number.
+# g0 .. g3 have an index laid, g4 has none and stays as made.
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# const cache = new Map<string, number>([["a", 1]]);
+# const seen = new Set<number>([1]);
+# const day = new Date(0);
+# const counted = new Map<string, number>();
+# const plain = new Map<string, number>([["a", 1]]);
+# (cache as any)[0] = "x";
+# (seen as any)[1] = { v: 5 };
+# (day as any)[2] = true;
+# function lay(at: number): void { (counted as any)[at] = "y"; }
+# function ofCache(): void { for (const value of Object.values(cache)) sink(value); }
+# function ofSeen(): void { for (const value of Object.values(seen)) sink(value); }
+# function ofDay(): void { for (const value of Object.values(day)) sink(value); }
+# function ofCounted(): void { for (const value of Object.values(counted)) sink(value); }
+# function ofPlain(): void { for (const value of Object.values(plain)) sink(value); }
+# sink(lay, ofCache, ofSeen, ofDay, ofCounted, ofPlain);
+# -- end of source
+# RUN: link mechanisms=all
+# CHECK: variable g4 proven=absent|Map {{*}}stays-as-made
+# RUN(LAID): link mechanisms=all
+# LAID-NOT: variable g0 {{*}}stays-as-made
+# LAID-NOT: variable g1 {{*}}stays-as-made
+# LAID-NOT: variable g2 {{*}}stays-as-made
+# LAID-NOT: variable g3 {{*}}stays-as-made

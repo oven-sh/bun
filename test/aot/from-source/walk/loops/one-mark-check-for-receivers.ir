@@ -1,0 +1,17 @@
+# f1 = Machine
+# f2 = start
+# f3 = run
+# -- source: main.mjs
+# function Machine() { this.start(); this.ticks = 4; this.shift = 1; this.total = 0; }
+# Machine.prototype.start = function () { this.early = this.ticks === undefined; };
+# Machine.prototype.run = function (steps) { for (let i = 0; i < steps.length; i++) { steps[i](this); this.total += this.ticks >> this.shift; } return this.total; };
+# const machine = new Machine(), steps = JSON.parse("[0, 1, 2, 3]").map(n => n === 2 ? m => { m.ticks = "6"; } : n === 3 ? m => { delete m.ticks; } : m => { m.ticks += 2; });
+# print(machine.run(steps.slice(0, 2)), machine.run(steps), machine.early);
+# globalThis.unseen = machine;
+# -- end of source
+# A method that the constructor calls sees the object before its fields are filled. The loop asks the cell's mark once for the fields that it reads behind each call.
+# RUN: walk f3:Body mechanisms=all
+# CHECK: Call
+# CHECK: ShapeTest {{*}} [rejectsMarkedObjects]
+# CHECK: GetSlot {{*}} key="ticks"
+# CHECK-NEXT: GetSlot {{*}} key="shift"

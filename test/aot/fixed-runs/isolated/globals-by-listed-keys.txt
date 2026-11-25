@@ -1,0 +1,100 @@
+A helper of a test file replaces globals by the keys of an object that its callers spell; each way of listing the keys has a global of its own, so that none unlocks it for another.
+#### stubs.test.ts
+import { test } from "bun:test";
+const RealMap = Map;
+const restore = (before: Map<string, PropertyDescriptor | undefined>) => {
+  for (const [name, descriptor] of before) {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+    else Reflect.deleteProperty(globalThis, name);
+  }
+};
+function entries(stubs: Record<string, unknown>, run: () => unknown) {
+  const before = new RealMap<string, PropertyDescriptor | undefined>();
+  try {
+    for (const [name, value] of Object.entries(stubs)) {
+      before.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      if (stubs[name] === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, { configurable: true, value: stubs[name] });
+    }
+    return run();
+  } finally {
+    restore(before);
+  }
+}
+test("entries", () => {
+  const away = entries({ process: undefined }, () => typeof process);
+  const replaced = entries({ process: { name: "fake" } }, () => process.name);
+  console.log("| CASE entries", away, replaced, typeof process);
+});
+function keys(stubs: Record<string, unknown>, run: () => unknown) {
+  const before = new RealMap<string, PropertyDescriptor | undefined>();
+  try {
+    for (const name of Object.keys(stubs)) {
+      before.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      if (stubs[name] === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, { configurable: true, value: stubs[name] });
+    }
+    return run();
+  } finally {
+    restore(before);
+  }
+}
+test("keys", () => {
+  const away = keys({ Map: undefined }, () => typeof Map);
+  const replaced = keys({ Map: { name: "fake" } }, () => Map.name);
+  console.log("| CASE keys", away, replaced, typeof Map);
+});
+function forIn(stubs: Record<string, unknown>, run: () => unknown) {
+  const before = new RealMap<string, PropertyDescriptor | undefined>();
+  try {
+    for (const name in stubs) {
+      before.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      if (stubs[name] === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, { configurable: true, value: stubs[name] });
+    }
+    return run();
+  } finally {
+    restore(before);
+  }
+}
+test("forIn", () => {
+  const away = forIn({ Set: undefined }, () => typeof Set);
+  const replaced = forIn({ Set: { name: "fake" } }, () => Set.name);
+  console.log("| CASE forIn", away, replaced, typeof Set);
+});
+function entriesForEach(stubs: Record<string, unknown>, run: () => unknown) {
+  const before = new RealMap<string, PropertyDescriptor | undefined>();
+  try {
+    Object.entries(stubs).forEach(([name, value]) => {
+      before.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      if (stubs[name] === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, { configurable: true, value: stubs[name] });
+    });
+    return run();
+  } finally {
+    restore(before);
+  }
+}
+test("entriesForEach", () => {
+  const away = entriesForEach({ BigInt: undefined }, () => typeof BigInt);
+  const replaced = entriesForEach({ BigInt: { name: "fake" } }, () => BigInt.name);
+  console.log("| CASE entriesForEach", away, replaced, typeof BigInt);
+});
+function namesForEach(stubs: Record<string, unknown>, run: () => unknown) {
+  const before = new RealMap<string, PropertyDescriptor | undefined>();
+  try {
+    Object.getOwnPropertyNames(stubs).forEach(name => {
+      before.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      if (stubs[name] === undefined) Reflect.deleteProperty(globalThis, name);
+      else Object.defineProperty(globalThis, name, { configurable: true, value: stubs[name] });
+    });
+    return run();
+  } finally {
+    restore(before);
+  }
+}
+test("namesForEach", () => {
+  const away = namesForEach({ WeakSet: undefined }, () => typeof WeakSet);
+  const replaced = namesForEach({ WeakSet: { name: "fake" } }, () => WeakSet.name);
+  console.log("| CASE namesForEach", away, replaced, typeof WeakSet);
+});

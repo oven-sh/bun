@@ -1,11 +1,11 @@
 // RUN: link
-// CHECK: layout [[i]] name="I" {{*}}fields=[{key="a" declared={type={{*}}}}, {key="b" declared={type={{*}}} flags=[IsRequired]}, {key="m" declared={type={{*}}} flags=[IsRequired, IsMethod]}]
+// CHECK: layout [[i]] {{*}}fields=[{key="a" declared={type={{*}}}}, {key="b" declared={type={{*}}} flags=[IsRequired]}, {key="m" declared={type={{*}}} flags=[IsRequired, IsMethod]}]
 
 // RUN(SITES): link
 // SITES-NOT: layout {{*}}name="I"{{*}}site=
 
 // RUN(LITERAL): link
-// LITERAL: layout [[i]] name="I"
+// LITERAL: layout [[i]] {{*}}fields=[{key="a"
 // LITERAL: function {{*}}name="create"
 // LITERAL: = NewObject {{*}}layout=[[i]] fields=[1, 0, 2]
 

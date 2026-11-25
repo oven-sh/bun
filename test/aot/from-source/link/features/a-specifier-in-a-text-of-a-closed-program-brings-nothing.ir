@@ -1,0 +1,7 @@
+# nobody can load under a name here: the text is prose
+# -- source: a-specifier-in-a-text-of-a-closed-program-brings-nothing.ts
+# console.log("bun:sqlite");
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN(NEVER): features
+# NEVER-NOT: CreateJSSQLStatementConstructor

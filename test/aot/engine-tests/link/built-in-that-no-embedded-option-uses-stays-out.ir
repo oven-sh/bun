@@ -1,0 +1,23 @@
+# console.log("ran")
+# The control of built-in-that-an-embedded-option-uses-at-the-start-is-let-go.ir: the same program without the line: nobody uses Bun.sql, and the module behind it stays out.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSql body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = PropGet v0 key="log"
+    v2 = Convert v1 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v3 = String string="ran"
+    v4 = Call v2, v0, v3 calleeKey="log" calleeName="console.log"
+    Return v4
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

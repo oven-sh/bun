@@ -1,0 +1,20 @@
+import { test, vi } from "bun:test";
+const turns = async count => { for (let turn = 0; turn < count; turn++) await new Promise(done => setImmediate(done)); };
+const told = error => "threw " + (/^snapped/.test(error.message) ? error.message : error.constructor.name);
+const required = name => { try { return String(require(name).label); } catch (error) { return told(error); } };
+test("a detached load fails with the factory call that it waits for", async () => {
+  let snap, wind, spools = 0, bobbins = 0;
+  const unwound = new Promise((done, fail) => (snap = fail));
+  const wound = new Promise(done => (wind = done));
+  const count = when => console.log("the factories were called", spools, "and", bobbins, "times", when);
+  vi.doMock("./spool.mjs", async () => { spools++; await unwound; return { thread: "first" }; });
+  vi.doMock("./bobbin.mjs", async () => { bobbins++; await wound; return { thread: "wound" }; });
+  console.log("the first require:", required("./loom.mjs"));
+  vi.doMock("./spool.mjs", () => { spools++; return { thread: "later " + spools }; });
+  wind();
+  await turns(5);
+  count("after the other factory settled");
+  snap(new Error("snapped first"));
+  await turns(5);
+  count("after the first factory rejected");
+});

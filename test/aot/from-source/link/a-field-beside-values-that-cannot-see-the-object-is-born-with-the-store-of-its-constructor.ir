@@ -1,0 +1,23 @@
+# -- source: main.ts
+# const seen: unknown[] = [];
+# class Grid {
+#   cells = new Map<string, number>();
+#   size: number;
+#   moved = () => this.size;
+#   constructor(size: number, readonly kind: string) { this.size = size; }
+# }
+# class Watched {
+#   width: number;
+#   place = seen.push(this);
+#   constructor(width: number) { this.width = width; }
+# }
+# const grids = [new Grid(2.5, "a"), new Grid(3, "b")];
+# const watched = [new Watched(1.5)];
+# console.log(grids.length, watched.length, grids[0].moved(), grids[1].kind, watched[0].width, seen.length);
+# -- end of source
+# A value that cannot see the object is evaluated in front of the parameters: the field beside it is defined with what the constructor stores. One that is handed `this` finds `undefined` there.
+# RUN: link fields mechanisms=all
+# CHECK: "kind" proven=string
+# CHECK: "cells" proven=Map
+# CHECK: "size" proven=number
+# CHECK: "width" proven=undefined|number

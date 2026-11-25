@@ -1,0 +1,20 @@
+# table.get(`${a.id},${b.id}`): the join of a likely key asks the cache of keys by their parts, which knows a number by its value and a string by its cell. The string of a number is made anew each time, so the cache never answered:
+# two conversions, two strings, the text written and hashed, once a look. Where the part is written a number it is tested once and goes on to the join as it is; what is no number is converted in an unlikely block, in its turn,
+# so an object's toString() runs and a symbol throws in front of the read of the next part.
+# -- source: look.ts
+# type Item = { id: number; name: string };
+# const table = new Map<string, number>();
+# export function look(a: Item, b: Item) { return table.get(`${a.id},${b.id}`); }
+# (globalThis as any).look = look;
+# table.set("1,2", 3);
+# console.log(String(look({ id: 1, name: "a" }, { id: 2, name: "b" })));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: [[isNumber]]: boolean @Boolean = TypeTest {{*}}number
+# CHECK: Branch [[isNumber]]
+# CHECK: = Narrowed {{*}}[[isNumber]]
+# CHECK: frequency=Unlikely
+# CHECK-NEXT: = ToString
+# CHECK: [[first]]: {{*}}number|string @JSValue
+# CHECK: [[second]]: {{*}}number|string @JSValue
+# CHECK: = Strcat [[first]], {{*}}, [[second]] [isLikelyKey]

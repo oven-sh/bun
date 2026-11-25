@@ -167,15 +167,21 @@ fn remap_optional_keeps_absent_id() {
 }
 
 #[test]
-#[should_panic(expected = "retained code names a dropped item")]
-fn remap_of_dropped_id_panics() {
+#[should_panic(expected = "a record that is moved names one that the program lacks")]
+fn remap_of_id_without_record_panics() {
     let mut id = FunctionId::new(1);
     remap(&mut id, &[Some(FunctionId::new(0)), None]);
 }
 
 #[test]
-#[should_panic(expected = "retained code names a dropped item")]
-fn remap_optional_of_dropped_id_panics() {
+#[should_panic(expected = "a record that is moved names one that the program lacks")]
+fn remap_of_id_past_list_panics() {
+    remap(&mut TypeSiteId::new(0), &[]);
+}
+
+#[test]
+#[should_panic(expected = "a record that is moved names one that the program lacks")]
+fn remap_optional_of_id_without_record_panics() {
     remap_optional(&mut Some(ModuleId::new(0)), &[None]);
 }
 

@@ -1,0 +1,21 @@
+A test file takes a module out of require.cache; the statement of the next test file and a require() of the path name one module, the one from disk.
+#### a.test.js
+import { test } from "bun:test";
+import { bump } from "./state.js";
+test("takes it out", () => {
+  console.log("| CASE", "first", bump(), bump());
+  delete require.cache[require.resolve("./state.js")];
+});
+#### b.test.js
+import { test } from "bun:test";
+import { bump } from "./state.js";
+import * as all from "./state.js";
+test("imports it", () => {
+  const required = require(require.resolve("./state.js"));
+  console.log("| CASE", "second", bump(), required.bump(), all.bump(), required.bump === bump);
+});
+#### package.json
+{ "type": "module" }
+#### state.js
+let calls = 0;
+export const bump = () => ++calls;

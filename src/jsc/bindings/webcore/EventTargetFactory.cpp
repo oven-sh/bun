@@ -34,7 +34,7 @@
 
 namespace WebCore {
 
-JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, EventTarget& impl)
+template<> JSC::JSValue toJS<EventTarget>(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, EventTarget& impl)
 {
     switch (impl.eventTargetInterface()) {
     case EventTargetInterfaceType:

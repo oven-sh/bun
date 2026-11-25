@@ -1,14 +1,16 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="equal"
-// CHECK: [[converted]] = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=FromLooseType
-// CHECK-NEXT: PropSet {{*}}, [[converted]] key="level"
+// CHECK: b0({{*}}, [[next]]: anything):
+// CHECK-NOT: Convert
+// CHECK: PropSet {{*}}, [[next]] key="level"
+// CHECK-NOT: Convert
+// CHECK-LABEL: function {{*}}name="unequal"
+// CHECK: b0({{*}}, [[other]]: anything):
+// CHECK-NOT: Convert
+// CHECK: PropSet {{*}}, [[other]] key="level"
+// CHECK-NOT: Convert
 
-// RUN(UNEQUAL): lower
-// UNEQUAL-LABEL: function {{*}}name="unequal"
-// UNEQUAL-NOT: Convert {{*}}declared={type=number site=
-// UNEQUAL: PropSet {{*}}key="level"
-
-// A store reaches the setter. The setter of `Gauge` takes more than its getter returns, so the store is not held to the type of the getter: a string is a legal `level`.
+// A store reaches the setter, which tests its parameter. So the store is converted to nothing, whether the setter takes what its getter returns or more: a string is a legal `level` of a `Gauge`.
 class Meter {
   get level(): number {
     return 1;

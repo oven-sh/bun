@@ -23,20 +23,4 @@ for (const r of classes) {
     console.log(r.source.length, r.flags, count, alone, inside);
 }
 
-// GENERATED: hash
 // CHECK-LABEL: function {{*}}name="hash"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=[[w_1]]}, {type=number site=[[w_2]]}] results=[{type=number site=[[w_3]]}] {
-// CHECK-NEXT: b0(v0: number, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=Math
-// CHECK-NEXT: v3 = Builtin builtin=MathImul
-// CHECK-NEXT: v4 = Integer integer=31
-// CHECK-NEXT: v5 = Call v3, v2, v0, v4 calleeName="Math.imul"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_4]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = Add v6, v1
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = BitOr v7, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_3]]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

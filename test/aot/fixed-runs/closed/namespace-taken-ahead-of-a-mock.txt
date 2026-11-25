@@ -1,0 +1,55 @@
+An earlier test file has taken the namespace object of a barrel; the next mocks the file below it with a name more; the third reads the file's own names again.
+#### by-a-call-1.test.js
+import { test } from "bun:test";
+import { early } from "./by-a-call/early.js";
+test("early", async () => console.log("| CASE by-a-call early", await early()));
+#### by-a-call-2.test.js
+import { test, vi } from "bun:test";
+test("mocked", async () => {
+  vi.doMock("./by-a-call/dep.js", () => ({ flag: "one", plain: "one", added: "added" }));
+  console.log("| CASE by-a-call mocked", (await import("./by-a-call/user.js")).report());
+});
+#### by-a-call-3.test.js
+import { test } from "bun:test";
+import { early } from "./by-a-call/early.js";
+test("next", async () => console.log("| CASE by-a-call next", (await import("./by-a-call/user.js")).report(), await early()));
+#### by-a-call/barrel.js
+export * from "./dep.js";
+#### by-a-call/dep.js
+export const flag = "real";
+export const plain = "real";
+#### by-a-call/early.js
+export const early = async () => {
+  const barrel = await import("./barrel.js");
+  return Object.keys(barrel).sort().join("+");
+};
+#### by-a-call/user.js
+import * as barrel from "./barrel.js";
+export const report = () => [barrel.flag, barrel.added, Object.keys(barrel).sort().join("+")].join();
+#### by-a-statement-1.test.js
+import { test } from "bun:test";
+import { early } from "./by-a-statement/early.js";
+test("early", async () => console.log("| CASE by-a-statement early", await early()));
+#### by-a-statement-2.test.js
+import { test, vi } from "bun:test";
+test("mocked", async () => {
+  vi.doMock("./by-a-statement/dep.js", () => ({ flag: "one", plain: "one", added: "added" }));
+  console.log("| CASE by-a-statement mocked", (await import("./by-a-statement/user.js")).report());
+});
+#### by-a-statement-3.test.js
+import { test } from "bun:test";
+import { early } from "./by-a-statement/early.js";
+test("next", async () => console.log("| CASE by-a-statement next", (await import("./by-a-statement/user.js")).report(), await early()));
+#### by-a-statement/barrel.js
+export * from "./dep.js";
+#### by-a-statement/dep.js
+export const flag = "real";
+export const plain = "real";
+#### by-a-statement/early.js
+import * as barrel from "./barrel.js";
+export const early = () => Object.keys(barrel).sort().join("+");
+#### by-a-statement/user.js
+import * as barrel from "./barrel.js";
+export const report = () => [barrel.flag, barrel.added, Object.keys(barrel).sort().join("+")].join();
+#### package.json
+{ "type": "module" }

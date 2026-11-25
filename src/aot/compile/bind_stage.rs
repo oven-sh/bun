@@ -678,15 +678,13 @@ fn list_file_reads(
 fn is_within_other_read(
     files: &Files<'_>,
     file: FileId,
-    reads: &[FileRead],
+    read_by: &FxHashSet<(ExprId, &[u8])>,
     read: &FileRead,
 ) -> bool {
     let bound = files.bound(file);
     let mut inner = read.operand;
     while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
-        let is_around =
-            |it: &FileRead| it.operand == outer && it.path == read.path && !it.is_ruled_out;
-        if reads.iter().any(is_around) {
+        if read_by.contains(&(outer, &read.path)) {
             return true;
         }
         inner = outer;
@@ -962,6 +960,7 @@ fn warn_about_unembedded_reads(
         let folder = parent_directory(files.module(file).file_name());
         let mut names_build_paths = None;
         let reads = list_reads(file);
+        let mut read_by = None;
         for read in &reads {
             let (operand, path) = (read.operand, &read.path);
             let is_query = read.is_query && !provider.is_searched_for(to_native(path));
@@ -1019,7 +1018,11 @@ fn warn_about_unembedded_reads(
             if is_in_left_out_code(files, left_out, file, operand) {
                 continue;
             }
-            if is_within_other_read(files, file, &reads, read) {
+            let read_by = read_by.get_or_insert_with(|| {
+                let run = reads.iter().filter(|it| !it.is_ruled_out);
+                run.map(|it| (it.operand, &it.path[..])).collect()
+            });
+            if is_within_other_read(files, file, read_by, read) {
                 continue;
             }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));

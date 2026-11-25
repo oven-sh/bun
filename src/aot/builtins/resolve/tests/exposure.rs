@@ -801,6 +801,8 @@ fn replaced_member_receivers_are_exposed() {
         "const spy = spyOn(process, 'exit'); const state = () => spy.mock;",
         "const spy = spyOn(process, 'exit'); spy.mock[key];",
         "const spy = spyOn(process, 'exit'); const state = spy.mock; f(state);",
+        "const spy = spyOn(process, 'exit'); try { throw spy.mock; } catch (state) { f(state); }",
+        "const spy = spyOn(process, 'exit'); export default spy.mock;",
     ] {
         let source = format!("{IMPORTS}{source}");
         with_case(TEST_RUN, &source, |case| {

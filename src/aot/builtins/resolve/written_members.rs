@@ -636,7 +636,14 @@ impl Resolver<'_, '_> {
                 ExprKind::Unary { .. } => false,
                 _ => !matches!(hir.member_key(user), Some((_, MemberKey::Name(_)))),
             },
-            Parent::Stmt(statement) => matches!(hir[statement].kind, StmtKind::Return(_)),
+            Parent::Stmt(statement) => matches!(
+                hir[statement].kind,
+                StmtKind::Return(_)
+                    | StmtKind::Throw(_)
+                    | StmtKind::ExportDefault(_)
+                    | StmtKind::ExportAssign(_)
+                    | StmtKind::With { .. }
+            ),
             _ => true,
         }
     }

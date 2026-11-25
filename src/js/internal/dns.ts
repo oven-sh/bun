@@ -27,7 +27,7 @@ const preferAsyncStack = $bindgen("dns_internals.bind.ts", "preferAsyncStack");
 
 type Callback = (this: ReqWrap, err: Error | null, result?: any, second?: any) => void;
 type Query = (this: ResolverBase, name: string, ...args: any[]) => unknown;
-type QueryName = Extract<keyof $Bindgen.ChannelWrap, `query${string}` | "getHostByAddr">;
+type QueryName = keyof $Bindgen.ChannelWrap & (`query${string}` | "getHostByAddr");
 type ServerTriple = [family: number, address: string, port: number];
 interface LookupOptions {
   family: number;

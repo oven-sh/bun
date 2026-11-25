@@ -2762,6 +2762,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
       cmd: [bunExe(), "-e", script],
       env: {
         ...bunEnv,
+        BUN_FEATURE_FLAG_NO_ORPHANS: "1",
         HTTP_PROXY: undefined,
         http_proxy: undefined,
         UV_THREADPOOL_SIZE: "2",

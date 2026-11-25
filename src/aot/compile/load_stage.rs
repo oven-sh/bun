@@ -98,9 +98,9 @@ fn start_asset_readers<'scope>(
 
 const NAMES_SPELLED: usize = 5;
 
-fn spell_first_names<'p>(
+fn spell_first_names(
     host: &LoadHost<'_>,
-    paths: impl ExactSizeIterator<Item = &'p [u8]>,
+    paths: &mut dyn ExactSizeIterator<Item = &[u8]>,
 ) -> Vec<u8> {
     let count = paths.len();
     let spelled = paths.take(NAMES_SPELLED);
@@ -155,7 +155,7 @@ fn warn_about_typed_files(
                     1 => format!("1 file ({size})"),
                     count => format!("{count} files ({size})"),
                 };
-                let list = spell_first_names(host, of_site.iter().map(|it| &it.path[..]));
+                let list = spell_first_names(host, &mut of_site.iter().map(|it| &it.path[..]));
                 let node = NodeData::Expr(site.specifier_node);
                 let span = Span::of_node(hir, file, node);
                 let arguments: [&[u8]; 3] = [count.as_bytes(), atoms.bytes(written_type), &list];
@@ -210,7 +210,7 @@ fn warn_of_files_left_out_by_patterns(
                 [data, with_dot].into_iter().zip(CURES)
             });
             for (left_out, cure) in by_cure.filter(|(left_out, _)| !left_out.is_empty()) {
-                let list = spell_first_names(host, left_out.iter().map(|it| &it.path[..]));
+                let list = spell_first_names(host, &mut left_out.iter().map(|it| &it.path[..]));
                 let node = NodeData::Expr(site.specifier_node);
                 let span = Span::of_node(files.hir(file), file, node);
                 let code = Code::FilesLeftOutByPattern;

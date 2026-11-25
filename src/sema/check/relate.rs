@@ -3105,8 +3105,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // This has the value from the first valid commit, and what finished measurements have
         // shared. See `commit::Claims`.
+        let measures_again = self.measures_again(sym);
         let serial = self.p.serial_variances.lock().get(&sym).copied();
-        if let Some(variances) = serial {
+        if let Some(variances) = serial
+            && !measures_again
+        {
             return self.take_shared_variances(sym, variances);
         }
         let (cuts, outermost) = (
@@ -3123,7 +3126,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Only a thread that isn't measuring claims or waits. See `commit::Claims` for why.
         let mut has_claim = false;
-        if self.task.commits() && !self.in_variance_computation {
+        if self.task.commits() && !self.in_variance_computation && !measures_again {
             match self.p.claim_variances(sym, cuts == 0) {
                 VarianceClaim::Known(variances) => {
                     return self.take_shared_variances(sym, variances);
@@ -3351,7 +3354,20 @@ impl<'p, 's> Checker<'p, 's> {
         let awaiting = self.variances_awaiting_commit.take();
         if !awaiting.is_empty() && !self.task.is_trusted() && !self.task.was_discarded() {
             self.p.share_variances(&awaiting, true, None);
+            if let Some(file) = self.task.file {
+                let mut by_file = self.p.variances_of_discarded_visits.lock();
+                by_file.extend(awaiting.iter().map(|&(sym, _)| (sym, file)));
+            }
         }
+    }
+
+    /// True if a visit of this file that a limit discarded shared the variances of `sym`. The last visit measures them
+    /// again, because the queries in the measurement's cycles get their results from it.
+    fn measures_again(&self, sym: Sym) -> bool {
+        self.task.is_trusted()
+            && self.task.file.is_some_and(|file| {
+                self.p.variances_of_discarded_visits.lock().get(&sym) == Some(&file)
+            })
     }
 
     /// Call right after `relate_variances` on the type arguments `sources` and `targets` of `sym`.

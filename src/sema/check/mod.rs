@@ -278,6 +278,8 @@ pub struct Program<'s> {
     /// symbol. Written at a commit and by `share_variances`, read on a cache miss in `variances_worker`. Any thread
     /// can add to this map, so it's on the regular heap. See `release`.
     serial_variances: Guarded<FxHashMap<Sym, &'s [u8]>>,
+    /// See `Checker::measures_again`.
+    variances_of_discarded_visits: Guarded<FxHashMap<Sym, FileId>>,
     /// See `commit`.
     commits: commit::Commits<'s>,
     /// The union of all tasks' `Checker::referenced_properties`. The task that checks a declaration's
@@ -697,6 +699,7 @@ impl<'s> Program<'s> {
         let mut program = Program {
             session,
             serial_variances: Guarded::default(),
+            variances_of_discarded_visits: Guarded::default(),
             commits: commit::Commits::new_in(session.arena())
                 .for_files(files.ranks(), session.arena()),
             properties_referenced_before: Default::default(),
@@ -810,6 +813,7 @@ impl<'s> Program<'s> {
         self.types.release();
         self.commits.release();
         *self.serial_variances.get_mut() = FxHashMap::default();
+        *self.variances_of_discarded_visits.get_mut() = FxHashMap::default();
         *self.global_errors.get_mut() = Default::default();
         self.exporting_modules = Default::default();
         self.call_diagnostics = ByNodeIndirect::new_in(&no_nodes, session);

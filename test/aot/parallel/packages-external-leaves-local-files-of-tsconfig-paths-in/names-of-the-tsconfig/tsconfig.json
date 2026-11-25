@@ -1,1 +1,1 @@
-{ "compilerOptions": { "paths": { "@lib/*": ["./lib/*"], "tools": ["./lib/tools.ts"], "*": ["./types/*"] } } }
+{ "compilerOptions": { "paths": { "~lib/*": ["./lib/*"], "~tools": ["./lib/tools.ts"], "*": ["./types/*"] } } }

@@ -5,7 +5,7 @@ use crate::fold::Decisions;
 use crate::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
     find_require_call, find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler,
-    is_name_written_out, is_site_of_handed_url,
+    is_name_written_out, is_require_written_out, is_site_of_handed_url,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -26,6 +26,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
     let folder_of_text = context.host.directory_of(key.path);
+    let required = context.files_required_by_unknown_names_in(key.path);
     for (index, site) in sites.iter().enumerate() {
         let key = match analyzed.analysis.path_to_resolve_from(index) {
             Some(ResolvedFrom::File(path)) => LoadKey {
@@ -53,7 +54,9 @@ pub(super) fn resolve_code_imports<'s, 'r>(
                 if !site.specifier_node.is_none()
                     && context.host.is_name_for_transpiler_alone(atoms.bytes(name)) =>
             {
-                find_names_folded_by_transpiler(hir, decisions, site.specifier_node).contains(&name)
+                is_require_written_out(hir, bound, site.kind)
+                    && find_names_folded_by_transpiler(hir, decisions, site.specifier_node)
+                        .contains(&name)
             }
             _ => true,
         };
@@ -112,6 +115,12 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         let followed = analyzed.analysis.known_load_names_at(site.specifier_node);
         let followed: SmallVec<[Atom; 2]> = followed.collect();
         let resolution = add_written_arms(context, key, site, &followed, resolution);
+        let resolution = match site.kind {
+            ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => {
+                add_files_to_unknown(context, resolution, || required.iter().copied())
+            }
+            _ => resolution,
+        };
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
@@ -255,6 +264,25 @@ fn add_written_arms<'r>(
     arms: &[Atom],
     resolution: SiteResolution<'r>,
 ) -> SiteResolution<'r> {
+    let kind = (
+        CodeImportKind::from_site(site.kind),
+        CodeImportForm::from_site(site.kind),
+    );
+    add_files_to_unknown(context, resolution, || {
+        arms.iter().filter_map(move |&arm| {
+            match resolve_specifier(context, key, context.atoms.bytes(arm), kind) {
+                CodeResolution::File(file) => Some(file),
+                _ => None,
+            }
+        })
+    })
+}
+
+fn add_files_to_unknown<'r, F: Iterator<Item = CodeFile<'r>>>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    resolution: SiteResolution<'r>,
+    files: impl FnOnce() -> F,
+) -> SiteResolution<'r> {
     let SiteResolution::Computed(ComputedResolution::All {
         cause,
         host_modules,
@@ -262,16 +290,9 @@ fn add_written_arms<'r>(
     else {
         return resolution;
     };
-    let kind = (
-        CodeImportKind::from_site(site.kind),
-        CodeImportForm::from_site(site.kind),
-    );
     let mut candidates = host_modules.to_vec();
-    for &arm in arms {
-        let named = resolve_specifier(context, key, context.atoms.bytes(arm), kind);
-        if let CodeResolution::File(file) = named
-            && !candidates.contains(&ComputedCandidate::File(file))
-        {
+    for file in files() {
+        if !candidates.contains(&ComputedCandidate::File(file)) {
             candidates.push(ComputedCandidate::File(file));
         }
     }

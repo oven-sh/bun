@@ -412,6 +412,21 @@ mod _impl {
     }
 
     impl CompressionContext for Context {
+        fn can_do_all_work(&self, in_len: usize) -> bool {
+            match &self.state {
+                Some(State::Compress(it)) => {
+                    // `zstdCompressSync()` gives the bytes of `zstdCompress()`.
+                    in_len <= self.long_input_len()
+                        && it.pledged_src_size.is_none_or(|it| it == in_len as u64)
+                }
+                _ => true,
+            }
+        }
+
+        fn announced_len(&self, input: &[u8]) -> usize {
+            bun_zstd::declared_len(input).unwrap_or(0) as usize
+        }
+
         fn do_all_work(
             &mut self,
             input: &[u8],
@@ -419,10 +434,10 @@ mod _impl {
             max: usize,
         ) -> Option<Result<usize, Error>> {
             match self.state.as_mut()? {
-                State::Compress(state) => (state.pledged_src_size)
-                    .is_none_or(|size| size == input.len() as u64)
-                    .then(|| state.encoder.compress_whole(input, out))
-                    .map(|result| result.map(|()| 0).map_err(codec_error)),
+                State::Compress(state) => {
+                    let result = state.encoder.compress_whole(input, out);
+                    Some(result.map(|()| 0).map_err(codec_error))
+                }
                 State::Decompress(state) => {
                     let result = state.decoder.decompress_whole(input, out, max);
                     state.reset();

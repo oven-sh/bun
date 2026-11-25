@@ -1898,6 +1898,40 @@ describe("a whole buffer at once", () => {
     expect(output.equals(Buffer.alloc(65 << 20, "ab"))).toBe(true);
   });
 
+  it("is not read again from a WebAssembly.Memory that has grown", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const frame = Buffer.concat([zlib.zstdCompressSync("kept"), Buffer.from("junk")]);
+    const input = new Uint8Array(memory.buffer, 0, frame.length);
+    input.set(frame);
+    const output = util.promisify(zlib.zstdDecompress)(input);
+    memory.grow(1);
+    expect(String(await output)).toBe("kept");
+  });
+
+  it.each([
+    ["gzip", { level: 0 }],
+    ["gzip", { level: 6 }],
+    ["brotliCompress", { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }],
+    ["zstdCompress", {}],
+  ])("gives the bytes that %s gives in chunks with %j", async (name, options) => {
+    const input = goldenInput("prose", 300_000);
+    const limited = { ...options, maxOutputLength: 301_000 };
+    const [sync, async] = [zlib[`${name}Sync`], util.promisify(zlib[name])];
+    expect(sync(input, options).equals(sync(input, limited))).toBe(true);
+    expect((await async(input, options)).equals(await async(input, limited))).toBe(true);
+  });
+
+  it.each([
+    ["brotliCompress", { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 }, dictionary: Buffer.from("word") }],
+    [
+      "zstdCompress",
+      { params: { [zlib.constants.ZSTD_c_compressionLevel]: 9, [zlib.constants.ZSTD_c_windowLog]: 17 } },
+    ],
+  ])("gives the bytes that %s gives for more than a job takes", async (name, options) => {
+    const input = goldenInput("prose", 700_000);
+    expect(zlib[`${name}Sync`](input, options).equals(await util.promisify(zlib[name])(input, options))).toBe(true);
+  });
+
   it("throws for a detached DataView", () => {
     const view = new DataView(new ArrayBuffer(8));
     view.buffer.transfer();
@@ -1915,16 +1949,17 @@ it("does not do long work for short input in write()", async () => {
   const text = Buffer.alloc(1 << 20, "ab");
   const bomb = zlib.brotliCompressSync(text, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } });
   const isDoneAtOnce = async (engine, flush, input) => {
-    const seen = [];
-    for (let i = 0; i < 5; i++) {
+    // Another thread may be done by then too, but not every time.
+    let isDone = true;
+    for (let i = 0; i < 100 && isDone; i++) {
       const [stream, out] = [engine(), Buffer.alloc(1024)];
       stream._outBuffer = out;
       stream._processChunk(input, flush, () => {});
-      seen.push(out[0] !== 0);
+      isDone = out[0] !== 0;
       await once(stream, "data");
       stream.destroy();
     }
-    return seen.every(Boolean);
+    return isDone;
   };
   const chunkSize = 1024;
   expect({
@@ -1938,17 +1973,19 @@ it("does not do long work for short input in write()", async () => {
 it("streams that stay open do not pile up the memory that calls pass on to each other", async () => {
   const source = /* js */ `
     const zlib = require("zlib");
-    const [input, kept] = [require("fs").readFileSync(process.execPath).subarray(1e6, 1.2e6), []];
+    const [input, kept] = [await Bun.file(process.execPath).slice(1e6, 1.2e6).bytes(), []];
     const round = () => {
       Bun.zstdCompressSync(input);
       kept.push(zlib.createZstdCompress({ chunkSize: 64 }));
       Bun.zstdCompressSync(input);
       kept.push(new CompressionStream("zstd"));
-      Bun.gc(true);
     };
     round();
     const before = process.memoryUsage.rss();
-    for (let i = 0; i < 100; i++) round();
+    for (let i = 1; i <= 100; i++) {
+      round();
+      if (i % 20 === 0) Bun.gc(true);
+    }
     console.log((process.memoryUsage.rss() - before) >> 20);
   `;
   const env = { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=1"].filter(Boolean).join(":") };

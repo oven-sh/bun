@@ -17,7 +17,7 @@ const LEN_MIN: usize = 9;
 struct Rung {
     /// How many bytes are hashed.
     len: u32,
-    /// From 0 to 4 for all positions, a third, a fifth, a ninth and a sixteenth of them. The last is not for the optimal parsers.
+    /// From 0 to 4 for all positions, a third, a fifth, a ninth and a sixteenth of them. 4 is not for the optimal parsers. 5 is a last rung for when there is time.
     spacing: u32,
     /// Of the number of entries, and of how many there is room for.
     log: u32,

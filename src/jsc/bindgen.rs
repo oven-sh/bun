@@ -1004,6 +1004,11 @@ impl PinnedBytes {
         // SAFETY: the string is thread-isolated, and the buffer pinned and GC-rooted.
         Ok(Self(unsafe { ThreadIsolated::new(pinned) }))
     }
+
+    /// Of a buffer that may be gone when the job is done.
+    pub fn is_copy(&self) -> bool {
+        matches!(&*self.0, Pinned::Buffer(buffer) if buffer.is_copy())
+    }
 }
 
 impl core::ops::Deref for PinnedBytes {

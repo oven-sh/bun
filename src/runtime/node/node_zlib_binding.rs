@@ -106,6 +106,13 @@ pub(crate) trait CompressionContext: Send + 'static {
     fn reset(&mut self, dropped: Unseen) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
     fn write_result(&self) -> Result<[usize; 2], Error>;
+    fn can_do_all_work(&self, _in_len: usize) -> bool {
+        true
+    }
+    /// What `input` claims to be decoded to, or 0.
+    fn announced_len(&self, _input: &[u8]) -> usize {
+        0
+    }
     /// Right after `init()`: appends a whole stream's output and returns `avail_in`. After `None` it is as it was.
     fn do_all_work(
         &mut self,
@@ -115,6 +122,10 @@ pub(crate) trait CompressionContext: Send + 'static {
     ) -> Option<Result<usize, Error>>;
     /// About how much input it works through in the time that it takes to get to another thread and back.
     fn quick_input_len(&self) -> Option<usize>;
+    /// More is too much for one job.
+    fn long_input_len(&self) -> usize {
+        2048 * self.quick_input_len().unwrap_or(256)
+    }
     /// `do_work` does not stop when `out` is full.
     fn fills_window_first(&self) -> bool {
         false
@@ -163,7 +174,7 @@ impl SpareCodecMemory {
     }
 
     pub(crate) fn lend(take: impl FnOnce(&mut Self)) -> Option<Loan> {
-        const MAX_LOANS: usize = 2;
+        const MAX_LOANS: usize = 4;
         Self::with(|spare| {
             (Arc::strong_count(&spare.loans) <= MAX_LOANS).then(|| {
                 take(spare);
@@ -175,6 +186,9 @@ impl SpareCodecMemory {
 
 /// More output than this is not made on the JS thread for an asynchronous call.
 pub(crate) const QUICK_OUTPUT_LEN: usize = 32 * 1024;
+
+/// A Worker that is terminated waits for a job, and chunks do not have to move when a guess was too low.
+const LONG_OUTPUT_LEN: usize = 64 * 1024 * 1024;
 
 type WriteResult = Result<[usize; 2], Error>;
 
@@ -290,7 +304,7 @@ pub(crate) struct Stream<C> {
     /// Since `init()`.
     has_begun: bool,
     loan: Option<Loan>,
-    has_flushed: bool,
+    is_set_up: bool,
 }
 
 impl<C> Stream<C> {
@@ -303,13 +317,13 @@ impl<C> Stream<C> {
             unbroken: 0,
             has_begun: false,
             loan: None,
-            has_flushed: false,
+            is_set_up: false,
         })
     }
 
     fn forget_writes(&mut self) {
         (self.ahead, self.unflushed, self.unbroken) = (WorkAhead::default(), 0, 0);
-        self.has_flushed = false;
+        self.is_set_up = false;
     }
 
     pub(crate) fn context_to_init(&mut self) -> &mut C {
@@ -329,6 +343,7 @@ impl<C: CompressionContext> Stream<C> {
         let is_first = !core::mem::replace(&mut self.has_begun, true);
         if is_first && C::SWAPS_MEMORY {
             self.loan = SpareCodecMemory::lend(|spare| self.context.swap_memory(spare));
+            self.is_set_up = self.loan.is_some();
         }
         is_first
     }
@@ -339,27 +354,20 @@ impl<C: CompressionContext> Stream<C> {
         }
     }
 
-    /// An encoder does not stop at `max`.
-    fn can_do_all_work(&self, in_len: usize, max: usize) -> bool {
-        !self.context.is_encoder() || in_len + in_len / 4 + 1024 <= max
-    }
-
-    /// Chunks are better for output that is too long to guess, as they do not have to move.
-    fn do_all_work(
-        &mut self,
-        input: &[u8],
-        out: &mut Vec<u8>,
-        max: usize,
-    ) -> Option<Result<usize, Error>> {
-        let likely = input.len().saturating_mul(32).max(16 * 1024 * 1024);
-        self.context.do_all_work(input, out, max.min(likely))
+    fn can_do_all_work(&self, input: &[u8], max: usize) -> bool {
+        let needed = match self.context.is_encoder() {
+            // It does not stop at `max`.
+            true => input.len() + input.len() / 4 + 1024,
+            false => self.context.announced_len(input),
+        };
+        needed <= max && self.context.can_do_all_work(input.len())
     }
 
     fn is_short(&self, in_len: usize, out_len: usize) -> bool {
         (self.context.quick_input_len())
             .is_some_and(|len| self.unflushed.saturating_add(in_len) <= len)
             && match self.context.is_encoder() {
-                true => !C::SWAPS_MEMORY || self.loan.is_some() || self.has_flushed,
+                true => !C::SWAPS_MEMORY || self.is_set_up,
                 false => self.unbroken + out_len <= QUICK_OUTPUT_LEN,
             }
     }
@@ -381,7 +389,7 @@ impl<C: CompressionContext> Stream<C> {
         [avail_out, avail_in]: [usize; 2],
     ) {
         let is_full = avail_out == 0;
-        self.has_flushed |= flushes;
+        self.is_set_up |= flushes;
         self.unbroken = if is_full { self.unbroken + out_len } else { 0 };
         self.unflushed = match self.context.is_encoder() && (is_full || !flushes) {
             true => self.unflushed + in_len.saturating_sub(avail_in),
@@ -665,13 +673,11 @@ struct PendingWriteAll<T: CompressionStreamImpl> {
 }
 
 impl<T: CompressionStreamImpl> PendingWriteAll<T> {
-    /// A Worker that is terminated waits for the job.
-    const MAX_OUTPUT_LEN: usize = 64 * 1024 * 1024;
-
     fn work(&mut self, max: usize) {
         let mut out = Vec::new();
         self.result = self
             .stream
+            .context
             .do_all_work(&self.input, &mut out, max.min(self.max));
         if let Some(Ok(_)) = self.result {
             if out.len() < out.capacity() / 2 && self.out.try_reserve_exact(out.len()).is_ok() {
@@ -692,7 +698,7 @@ impl<T: CompressionStreamImpl> JobContext for PendingWriteAll<T> {
 
     fn run(write: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         if done.ticket().script_allowed() && write.result.is_none() {
-            write.work(Self::MAX_OUTPUT_LEN);
+            write.work(write.max);
         }
         Some(done)
     }
@@ -1093,11 +1099,12 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         let global_this = cx.global();
         let callback = validators::validate_function(global_this, "callback", callback.to_js())?;
         let callback = callback.with_async_context_if_needed(global_this);
-        let max = max_output_length as usize;
+        let max = (max_output_length as usize).min(LONG_OUTPUT_LEN);
         let mut stream = self.borrow_idle_stream(global_this)?;
         let quick_len = stream.context.quick_input_len();
-        if input.len() > 2048 * quick_len.unwrap_or(256)
-            || !stream.can_do_all_work(input.len(), max)
+        if input.len() > stream.context.long_input_len()
+            || input.is_copy()
+            || !stream.can_do_all_work(&input, max)
             || !stream.begin()
         {
             return Ok(false);
@@ -1109,7 +1116,9 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
             out: Vec::new(),
             result: None,
         };
-        if quick_len.is_some_and(|len| write.input.len() <= len) {
+        if quick_len.is_some_and(|len| write.input.len() <= len)
+            && write.stream.can_do_all_work(&write.input, QUICK_OUTPUT_LEN)
+        {
             write.work(QUICK_OUTPUT_LEN);
         }
         let thread = global_this.js_thread(global_this.bun_vm().root_context());
@@ -1148,9 +1157,11 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
             false => OutputScratch::for_decoder(input),
         };
         let mut result = None;
-        if stream.can_do_all_work(input.len(), max) {
+        if stream.can_do_all_work(input, max) {
+            let likely = input.len().saturating_mul(32).max(LONG_OUTPUT_LEN);
+            let max = max.min(likely.max(stream.context.announced_len(input)));
             stream.swap_memory();
-            result = stream.do_all_work(input, &mut out.0, max);
+            result = stream.context.do_all_work(input, &mut out.0, max);
             stream.swap_memory();
         }
         stream.context.free_state();

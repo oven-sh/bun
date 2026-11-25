@@ -572,6 +572,10 @@ impl PinnedArrayBuffer {
         true
     }
 
+    pub(crate) fn is_copy(&self) -> bool {
+        self.copy.is_some()
+    }
+
     /// Swaps in `len` bytes of scratch space if `grow()` could free the block while a job writes to
     /// it. If this returns true, the job writes from index 0 and [`write_back`](Self::write_back)
     /// copies the bytes to `offset`, even if `grow()` detached the view.

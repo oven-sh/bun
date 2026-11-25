@@ -131,6 +131,8 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
       handle.buffer = buffer;
       return;
     }
+    // The same bytes as at once: they depend on whether the encoder sees the end.
+    if (engine instanceof BrotliCompress) engine._defaultFlushFlag = engine._finishFlushFlag;
   }
   zlibBufferInChunks(engine, buffer);
 }

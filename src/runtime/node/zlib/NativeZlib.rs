@@ -182,13 +182,15 @@ pub(crate) struct Context {
     write_result: Result<[usize; 2], Error>,
 }
 
+const Z_MEM_ERROR: c_int = -4;
+
 /// `default` is for what zlib has no message of its own for.
 fn zlib_error(error: bun_zlib::Error, default: &'static str) -> Error {
     use bun_zlib::Error::*;
     let (err, code) = match error {
         InvalidParameter | InvalidState | Internal => (-2, c"Z_STREAM_ERROR"),
         Damaged(_) | WrongDictionary => (-3, c"Z_DATA_ERROR"),
-        Alloc(_) => (-4, c"Z_MEM_ERROR"),
+        Alloc(_) => (Z_MEM_ERROR, c"Z_MEM_ERROR"),
         InputAfterFinish => (Z_BUF_ERROR, c"Z_BUF_ERROR"),
     };
     let msg = match error {
@@ -260,8 +262,16 @@ impl Context {
             _ => State::Inflate(Box::new(Inflater::from_zlib_window_bits(window_bits)?)),
         });
 
-        // Nothing else can be wrong with a new stream.
-        (self.set_dictionary()).map_err(|_| bun_zlib::Error::Alloc(bun_alloc::AllocError))
+        match self.set_dictionary() {
+            Err(Error {
+                err: Z_MEM_ERROR, ..
+            }) => Err(bun_alloc::AllocError.into()),
+            _ => Ok(()),
+        }
+    }
+
+    fn is_gzip(&self, input: &[u8]) -> bool {
+        matches!(self.mode, NodeMode::GUNZIP | NodeMode::UNZIP) && input.starts_with(&GZIP_ID)
     }
 
     fn set_dictionary(&mut self) -> Result<(), Error> {
@@ -404,21 +414,32 @@ fn inflate_all(
 impl CompressionContext for Context {
     const SWAPS_MEMORY: bool = false;
 
+    fn can_do_all_work(&self, _: usize) -> bool {
+        match self.is_encoder() {
+            // Stored blocks end where the chunks do.
+            true => self.level != 0,
+            false => self.has_largest_window,
+        }
+    }
+
+    fn announced_len(&self, input: &[u8]) -> usize {
+        let trailer = input.last_chunk().filter(|_| self.is_gzip(input));
+        trailer.map_or(0, |&len| u32::from_le_bytes(len) as usize)
+    }
+
     fn do_all_work(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
         max: usize,
     ) -> Option<Result<usize, Error>> {
+        let is_gzip = self.is_gzip(input);
         match self.state.as_mut()? {
             State::Deflate(deflater) => Some(match deflater.deflate_whole(input, out) {
                 Ok(()) => Ok(0),
                 Err(error) => Err(zlib_error(error, "Zlib error")),
             }),
-            State::Inflate(_) if !self.has_largest_window => None,
             State::Inflate(inflater) => {
-                let is_gzip = matches!(self.mode, NodeMode::GUNZIP | NodeMode::UNZIP)
-                    && input.starts_with(&GZIP_ID);
                 let left = inflate_all(inflater, input, out, max, is_gzip, &self.dictionary);
                 if left.is_none() {
                     inflater.reset();

@@ -3728,7 +3728,9 @@ impl Follower<'_, '_, '_> {
         if !self.is_initialized_with_list(symbol) {
             return Some(values);
         }
-        let mut values = Distinct::from(values);
+        let mut lists = Distinct::from(values);
+        let mut elements: Option<Distinct<Held>> = None;
+        let mut paid = 0;
         for mention in self.mentions_of(symbol) {
             let Some((pushing, call)) = self.find_push(mention) else {
                 continue;
@@ -3739,16 +3741,41 @@ impl Follower<'_, '_, '_> {
             let Held::List(pushed) = self.values_of_list(call.args)?.pop()? else {
                 return None;
             };
-            self.pay_for(values.len())?;
-            for index in 0..values.len() {
-                let Held::List(places) = &values[index] else {
+            let left = self.texts_left.get();
+            let count = u32::try_from(lists.len()).unwrap_or(u32::MAX);
+            if elements.is_none() && count > left {
+                self.texts_left.set(left + paid);
+                let mut held = Distinct::new();
+                for list in &lists.all {
+                    let Held::List(places) = list else {
+                        return None;
+                    };
+                    places
+                        .iter()
+                        .flatten()
+                        .for_each(|it| add(&mut held, it.clone()));
+                }
+                elements = Some(held);
+            }
+            if let Some(elements) = &mut elements {
+                let pushed = pushed.into_iter().flatten();
+                pushed.for_each(|it| add(elements, it));
+                continue;
+            }
+            self.pay_for(lists.len())?;
+            paid += count;
+            for index in 0..lists.len() {
+                let Held::List(places) = &lists[index] else {
                     return None;
                 };
                 let longer = places.iter().chain(&pushed).cloned().collect();
-                add(&mut values, Held::List(longer));
+                add(&mut lists, Held::List(longer));
             }
         }
-        Some(values.all)
+        Some(match elements {
+            Some(elements) => vec![Held::ListOf(elements.all)],
+            None => lists.all,
+        })
     }
 
     fn is_exported(&self, symbol: SymbolId) -> bool {

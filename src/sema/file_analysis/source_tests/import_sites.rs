@@ -4114,6 +4114,29 @@ fn property_values_are_known_on_endless_parent_paths() {
 }
 
 #[test]
+fn finds_every_file_of_a_list_that_is_pushed_to_many_times() {
+    for (count, guard) in [(12, ""), (13, ""), (13, "if (c) "), (400, "")] {
+        let pushes: String = (0..count)
+            .map(|it| format!("{guard}files.push(path.join(import.meta.dirname, 'f{it}.txt'));\n"))
+            .collect();
+        let text = format!(
+            "import fs from 'node:fs'; import path from 'node:path'; const files = [];\n{pushes}for (const file of files) fs.readFileSync(file);"
+        );
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", &text), &w.fold_inputs(&TARGET));
+            let read = s.analysis.module_relative_reads.iter();
+            let mut paths: Vec<String> = read
+                .map(|&(_, path)| s.workspace.text(path).to_string())
+                .collect();
+            let mut expected: Vec<String> = (0..count).map(|it| format!("./f{it}.txt")).collect();
+            paths.sort();
+            expected.sort();
+            assert_eq!(paths, expected, "{count} pushes {guard}");
+        });
+    }
+}
+
+#[test]
 fn finds_module_relative_reads() {
     for &(name, text, paths) in MODULE_RELATIVE_READS {
         with_workspace(|w| {

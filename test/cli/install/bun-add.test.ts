@@ -1336,7 +1336,7 @@ for (const streaming of [true, false]) {
       "src/a.js": "",
       "docs/guide.md": "",
       "node_modules/dep/index.js": "",
-      "readme.md": "",
+      "README.md": "",
     });
     const urls: string[] = [];
     setHandler(dummyRegistry(urls));
@@ -1362,7 +1362,7 @@ for (const streaming of [true, false]) {
     const installed = join(package_dir, "node_modules", "files-demo");
     const tree = async (dir: string): Promise<string[]> =>
       (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dir, dot: true, onlyFiles: true }))).sort();
-    expect(await tree(installed)).toEqual([".bun-tag", "lib/main.js", "package.json", "readme.md", "src/a.js"]);
+    expect(await tree(installed)).toEqual([".bun-tag", "README.md", "lib/main.js", "package.json", "src/a.js"]);
   });
 }
 

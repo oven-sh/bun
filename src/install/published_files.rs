@@ -1165,7 +1165,7 @@ pub fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool 
     let Some((stem, extension)) = filename.split_at_checked(name.len()) else {
         return false;
     };
-    strings::eql_case_insensitive_ascii_check_length(stem, name)
+    strings_eql(stem, name)
         && (extension.is_empty() || (extension.len() > 1 && extension[0] == b'.'))
 }
 

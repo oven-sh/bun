@@ -1266,18 +1266,23 @@ impl JSValkeyClient {
         Ok(self.send(this, global, b"UNSUBSCRIBE", &redis_channels, Reply::Value))
     }
 
-    pub(crate) fn duplicate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    pub(crate) fn duplicate(
+        &self,
+        this: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+    ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         // The duplicate is the calling script's, whoever made the original.
         let new_client = self.clone_without_connecting(&cx);
+        let wrapper = js::wrap(new_client.clone(), global);
+        if let Some(callback) = js::check_server_identity_get_cached(this.to_js()) {
+            js::check_server_identity_set_cached(wrapper.to_js(), global, callback);
+        }
         if self.get_connected() {
-            let wrapper = js::wrap(new_client.clone(), global);
             new_client.connection_promise_returns_client.set(true);
             return Ok(new_client.do_connect(global, (&wrapper).into()));
         }
-
-        let new_client_js = js::to_js(new_client, global);
-        Ok(JSPromise::resolved_promise_value(global, new_client_js))
+        Ok(JSPromise::resolved_promise_value(global, wrapper.to_js()))
     }
 }

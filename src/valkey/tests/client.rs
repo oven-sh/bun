@@ -938,6 +938,195 @@ mod handshake {
     }
 }
 
+mod selected_database {
+    use super::*;
+
+    /// With database 1 in the config. Each command stands ahead of the lines of its reply.
+    fn after(exchange: &str) -> Driver {
+        let mut it = Driver::new(database(1));
+        it.dial();
+        it.start();
+        it.read("+OK\r\n+OK\r\n");
+        let is_reply = |word: &&str| word.starts_with(['+', '-', '*', '>', '_']);
+        let words = exchange.split_ascii_whitespace();
+        let mut words = words.map(|it| it.trim_end_matches(',')).peekable();
+        while words.peek().is_some() {
+            let command = core::iter::from_fn(|| words.next_if(|it| !is_reply(it)));
+            let command = command.collect::<Vec<_>>().join(" ");
+            it.client.claim();
+            it.client.connect();
+            it.send(&command);
+            it.checkpoint();
+            while let Some(line) = words.next_if(is_reply) {
+                it.read(&format!("{line}\r\n"));
+            }
+        }
+        it.log.clear();
+        it
+    }
+
+    fn next_handshake(it: &mut Driver) -> String {
+        it.lost();
+        it.client.connect();
+        it.dial();
+        it.start();
+        it.take().pop().unwrap()
+    }
+
+    #[track_caller]
+    fn check(rows: &[(&str, &str)]) {
+        for (exchange, select) in rows {
+            let expected = format!("write HELLO 3 {select}");
+            let actual = next_handshake(&mut after(exchange));
+            assert_eq!(actual, expected.trim_end(), "{exchange}");
+        }
+    }
+
+    #[test]
+    fn is_the_last_that_the_server_confirmed() {
+        check(&[
+            ("SELECT 5 +OK", "SELECT 5"),
+            ("select 5 +OK", "SELECT 5"),
+            ("SELECT 0 +OK", ""),
+            ("SELECT 5 -ERR", "SELECT 1"),
+            ("SELECT 5 +other", "SELECT 1"),
+            ("SELECT x +OK", "SELECT 1"),
+            ("ECHO 5 +OK", "SELECT 1"),
+            ("SELECT 5 +OK, SELECT 6 +OK", "SELECT 6"),
+            ("SELECT 5 +OK, SELECT 6 -ERR", "SELECT 5"),
+            ("SELECT 5 +OK, SELECT 6", "SELECT 5"),
+            ("SELECT 5 +OK, RESET +RESET", "SELECT 1"),
+            ("SELECT 5 +OK, RESET -ERR", "SELECT 5"),
+        ]);
+    }
+
+    #[test]
+    fn inside_multi_is_confirmed_by_its_result_in_exec() {
+        const OPEN: &str = "SELECT 5 +OK, MULTI +OK, SET k v +QUEUED, SELECT 6 +QUEUED";
+        let rows = [
+            ("EXEC *2 +OK +OK", "SELECT 6"),
+            ("EXEC *2 -ERR +OK", "SELECT 6"),
+            ("EXEC NX k *2 +OK +OK", "SELECT 6"),
+            ("EXEC *2 +OK -ERR", "SELECT 5"),
+            ("EXEC *2 +OK -ERR, EXEC *1 +OK", "SELECT 5"),
+            ("EXEC", "SELECT 5"),
+            ("EXEC _", "SELECT 5"),
+            ("DISCARD +OK", "SELECT 5"),
+            ("RESET +RESET", "SELECT 1"),
+            ("SET k v +QUEUED", "SELECT 5"),
+            ("SET k v +QUEUED, EXEC *3 +OK +OK -ERR", "SELECT 6"),
+            ("SET k v +QUEUED, EXEC *3 +OK -ERR +OK", "SELECT 5"),
+            ("SELECT 7 +QUEUED, EXEC *3 +OK +OK +OK", "SELECT 7"),
+            ("SELECT 7 +QUEUED, EXEC *3 +OK +OK -ERR", "SELECT 6"),
+            ("WATCH k -ERR, EXEC *2 +OK +OK", "SELECT 6"),
+            (
+                "SET k v >1 +invalidate +QUEUED, EXEC *3 -ERR +OK -ERR",
+                "SELECT 6",
+            ),
+            ("EXEC *2 +OK +other", "SELECT 5"),
+            (
+                "EXEC -EXECABORT, SELECT 7 +QUEUED, EXEC *2 +OK -ERR",
+                "SELECT 5",
+            ),
+            ("EXEC _, SELECT 7 +QUEUED, EXEC *2 +OK -ERR", "SELECT 5"),
+            ("EVAL x 0 *1 +OK", "SELECT 5"),
+            (
+                "EXEC NX k -CROSSSLOT, SELECT 7 +QUEUED, EXEC *2 +OK -ERR",
+                "SELECT 5",
+            ),
+            ("+QUEUED, exec *2 -ERR +OK", "SELECT 6"),
+            (
+                "DISCARD +OK, MULTI +OK, SET k v +QUEUED, EXEC *2 +OK +OK",
+                "SELECT 5",
+            ),
+        ]
+        .map(|(rest, select)| (format!("{OPEN}, {rest}"), select));
+        check(&rows.each_ref().map(|(all, select)| (all.as_str(), *select)));
+    }
+
+    #[test]
+    fn inside_multi_the_client_is_as_ready_as_outside() {
+        let events: [(&str, fn(&mut Driver) -> String); 6] = [
+            ("is_connected", |it| it.client.is_connected().to_string()),
+            ("awaited", |it| format!("{:?}", it.client.awaited())),
+            ("rejection", |it| format!("{:?}", it.client.rejection())),
+            ("fail", |it| format!("{:?}", it.client.fail())),
+            ("close", |it| {
+                matches!(it.client.close(), Close::Socket).to_string()
+            }),
+            ("a reply", |it| {
+                it.read("+QUEUED\r\n");
+                it.take().join(", ")
+            }),
+        ];
+        for (name, event) in events {
+            let [tracked, plain] = ["SELECT 6", "ECHO 6"].map(|command| {
+                let mut it = after(&format!("MULTI +OK, {command} +QUEUED, PING"));
+                let result = event(&mut it);
+                it.lost();
+                (result, it.take())
+            });
+            assert_eq!(tracked, plain, "{name}");
+        }
+    }
+
+    #[test]
+    fn outlasts_every_end() {
+        let ends: [(&str, fn(&mut Driver)); 4] = [
+            ("a drop", |_| {}),
+            ("a failure", Driver::fail),
+            ("close()", |it| drop(it.client.close())),
+            ("the last retry", |it| {
+                for _ in 0..Config::default().max_retries {
+                    it.lost();
+                    it.dial();
+                }
+            }),
+        ];
+        for (name, end) in ends {
+            let mut it = after("SELECT 5 +OK");
+            end(&mut it);
+            assert_eq!(next_handshake(&mut it), "write HELLO 3 SELECT 5", "{name}");
+        }
+    }
+
+    #[test]
+    fn is_given_up_when_the_server_refuses_it_for_good() {
+        for (config, reply, expected, later) in [
+            (0, "-NOPERM x", "connected OK", ""),
+            (0, "-NOAUTH x", "connected OK", ""),
+            (1, "-NOPERM x", "write SELECT 1", " SELECT 1"),
+            (1, "-NOAUTH x\r\n+OK", "connected OK", " SELECT 1"),
+            (1, "-NOPERM x\r\n-NOPERM x", "closed [] Final", " SELECT 1"),
+            (0, "-BUSY x", "retry in 100 []", " SELECT 5"),
+            (0, "-ERR range", "closed [] Final", ""),
+            (1, "-ERR range", "closed [] Final", " SELECT 1"),
+        ] {
+            let mut it = Driver::new(database(config));
+            it.dial();
+            it.start();
+            it.read(&"+OK\r\n".repeat(1 + config as usize));
+            it.send("SELECT 5");
+            it.read("+OK\r\n");
+            it.lost();
+            it.dial();
+            it.start();
+            it.read(&format!("+OK\r\n{reply}\r\n"));
+            it.log.retain(|line| line != "ignored");
+            assert_eq!(it.take().pop().unwrap(), expected, "{config} {reply}");
+
+            if it.attempt.is_some() {
+                it.lost();
+            }
+            it.client.connect();
+            it.dial();
+            it.start();
+            let expected = format!("write HELLO 3{later}");
+            assert_eq!(it.take().pop().unwrap(), expected, "{config} {reply}");
+        }
+    }
+}
+
 mod pipeline {
     use super::*;
 
@@ -1207,15 +1396,15 @@ mod subscriptions {
 
     #[test]
     fn a_second_prefix_counts_as_a_reply() {
-        let mut it = Driver::connected(Config::default());
-        it.read(&push("spsubscribe", "k"));
-        it.send("X");
-        it.checkpoint();
-        it.read(&push("spsubscribe", "k"));
-        assert_eq!(
-            it.take(),
-            ["ignored", "write X", "resolve #1 >spsubscribe k"]
-        );
+        for command in ["X", "SELECT 1", "EXEC"] {
+            let mut it = Driver::connected(Config::default());
+            it.read(&push("spsubscribe", "k"));
+            it.send(command);
+            it.checkpoint();
+            it.read(&push("spsubscribe", "k"));
+            let write = format!("write {command}");
+            assert_eq!(it.take(), ["ignored", &write, "resolve #1 >spsubscribe k"]);
+        }
 
         for (mut it, command, failed) in [
             (subscriber(), "X", "fail Some([2])"),

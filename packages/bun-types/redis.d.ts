@@ -38,7 +38,24 @@ declare module "bun" {
      * TLS options. `serverName` sets the SNI and the name the certificate is
      * verified against, which default to the URL host.
      */
-    tls?: boolean | Bun.TLSOptions;
+    tls?:
+      | boolean
+      | (Bun.TLSOptions & {
+          /**
+           * Replaces the built-in check of the host name, as in `node:tls`. Bun
+           * calls it once for each connection, after the certificate chain
+           * verified and before it sends the user name or the password. Bun
+           * does not call it with `rejectUnauthorized: false`. The certificate
+           * has no `issuerCertificate`, and `this` is `undefined`.
+           *
+           * @param hostname `serverName`, or else the URL host. `"localhost"`
+           * for a unix socket.
+           * @returns `undefined` to accept the certificate. A returned or thrown
+           * `Error`, or any other truthy value such as a promise, fails the
+           * connection.
+           */
+          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
+        });
 
     /**
      * Whether to enable auto-pipelining
@@ -59,8 +76,8 @@ declare module "bun" {
     /**
      * Creates a new Redis client
      *
-     * @param url URL to connect to, defaults to `process.env.VALKEY_URL`,
-     * `process.env.REDIS_URL`, or `"valkey://localhost:6379"`
+     * @param url URL to connect to, defaults to `process.env.REDIS_URL`,
+     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`
      * @param options Additional options
      *
      * @example
@@ -96,7 +113,8 @@ declare module "bun" {
     onclose: ((this: RedisClient, error: Error) => void) | null;
 
     /**
-     * Connect to the Redis server
+     * Connect to the Redis server, and to the database of this client's last
+     * successful `SELECT` or else of the URL
      *
      * @returns A promise that resolves when connected and on the database, or
      * rejects with the reason the connection failed
@@ -2930,7 +2948,7 @@ declare module "bun" {
      * Create a new RedisClient instance with the same configuration as the
      * current instance.
      *
-     * Opens a new connection to the Redis server.
+     * Opens a new connection to the Redis server, on the database of the URL.
      */
     duplicate(): Promise<RedisClient>;
 

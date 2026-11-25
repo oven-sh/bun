@@ -165,9 +165,9 @@ pub(crate) fn do_send(
             match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
-                        .get_socket()
-                        .get_fd();
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),

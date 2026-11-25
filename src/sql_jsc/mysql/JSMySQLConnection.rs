@@ -471,14 +471,9 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(_) => {
-                    let mut message = b"Failed to connect".to_vec();
-                    if !path.is_empty() {
-                        message.extend_from_slice(b" to ");
-                        message.extend_from_slice(&path);
-                    }
                     return Err(global_object.throw_value(mysql_error_to_js(
                         global_object,
-                        Some(&message),
+                        Some(b"Failed to connect"),
                         AnyMySQLErrorT::ConnectionRefused,
                     )));
                 }

@@ -6062,7 +6062,7 @@ declare module "bun" {
        * The number of unchanged lines before and after each change, like `diff -U`.
        * An integer from 0, or `Infinity` for the whole file.
        *
-       * @default 4
+       * @default 3
        */
       context?: number | undefined;
     }
@@ -6146,8 +6146,9 @@ declare module "bun" {
     function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
 
     /**
-     * Compare two strings word by word. A token is a word of Latin letters, digits and `_`,
-     * a run of spaces, a line ending, or any other single character.
+     * Compare two strings word by word. A token is a word of letters, digits and `_`, a run of spaces,
+     * a line ending, or any other single character. In scripts without spaces between words,
+     * like Chinese, Japanese and Thai, each character is a token.
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */
@@ -6221,12 +6222,16 @@ declare module "bun" {
      * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
      * is converted first.
      *
-     * @param patch A unified diff, or hunks from {@link hunks} or {@link parsePatch}
-     * @returns The patched text, or `undefined` if a hunk does not match
-     * @throws SyntaxError if `patch` is a malformed unified diff
+     * @param patch A unified diff, a file from {@link parsePatch}, or hunks
+     * @returns The patched text
+     * @throws Error with the code `ERR_PATCH_DOES_NOT_APPLY` if a hunk does not match
+     * @throws SyntaxError if `patch` is not a unified diff, or is malformed
      * @throws TypeError if `patch` changes several files, or is a binary patch from `git diff`
      */
-    function applyPatch(source: string, patch: string | Pick<Hunk, "oldStart" | "lines">[]): string | undefined;
+    function applyPatch(
+      source: string,
+      patch: string | Pick<FilePatch, "hunks" | "isBinary"> | Pick<Hunk, "oldStart" | "lines">[],
+    ): string;
   }
 
   namespace unsafe {

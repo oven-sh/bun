@@ -50,6 +50,19 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     });
   });
 
+  test("db.namespace follows the database that the server confirmed", async () => {
+    await ctx.redis.send("SELECT", ["3"]);
+    await ctx.redis.get("key");
+    await ctx.redis.send("SELECT", ["99999"]).catch(() => {});
+    await ctx.redis.get("key");
+    expect((await collect()).map(s => [s.name, s.attributes["db.namespace"]])).toEqual([
+      ["SELECT 0", "0"],
+      ["GET 3", "3"],
+      ["SELECT 3", "3"],
+      ["GET 3", "3"],
+    ]);
+  });
+
   test("neither ECHO nor the reply to an unknown command reveals a value", async () => {
     await ctx.redis.send("ECHO", ["secret"]);
     await ctx.redis.send("MADEUP", ["key", "secret"]).catch(() => {});

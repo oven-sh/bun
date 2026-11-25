@@ -798,25 +798,9 @@ pub(crate) fn create_connection<'a>(
         },
     )
     .map_err(|_| {
-        let mut message: Vec<u8> = Vec::new();
-        use std::io::Write as _;
-        let _ = if path.is_empty() {
-            write!(
-                &mut message,
-                "Failed to connect to {}:{}",
-                bstr::BStr::new(hostname),
-                port
-            )
-        } else {
-            write!(
-                &mut message,
-                "Failed to connect to {}",
-                bstr::BStr::new(path)
-            )
-        };
         global_object.throw_value(postgres_error_to_js(
             global_object,
-            Some(&message),
+            Some(b"Failed to connect"),
             AnyPostgresError::ConnectionRefused,
         ))
     })

@@ -5169,15 +5169,19 @@ impl<'p, 's> Checker<'p, 's> {
         if self.quick_initializers.is_empty() {
             (self.fully_marked).taint_by_incomplete_flow_from(&mut self.frames, depth);
         } else {
-            for at in depth..self.frames.len() {
-                let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
-                if self.quick_initializers.iter().any(is_quick)
-                    && self.is_resolution(self.stack[at])
-                {
-                    continue;
-                }
-                self.frames[at].marks.taint();
-                self.frames[at].incomplete_flow = true;
+            let height = self.frames.len();
+            let mut kept: smallvec::SmallVec<[(usize, QueryFrame); 8]> = Default::default();
+            for &(from, to) in &self.quick_initializers {
+                let resolutions = (from.max(depth)..to.min(height))
+                    .filter(|&at| self.is_resolution(self.stack[at]));
+                kept.extend(resolutions.map(|at| (at, self.frames[at])));
+            }
+            for frame in &mut self.frames[depth..] {
+                frame.marks.taint();
+                frame.incomplete_flow = true;
+            }
+            for (at, frame) in kept {
+                self.frames[at] = frame;
             }
         }
         self.taints += 1;

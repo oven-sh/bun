@@ -3211,12 +3211,6 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             RETURN_IF_EXCEPTION(scope, );
             for (auto& name : properties) {
                 JSValue value = exports->get(globalObject, name);
-#if ENABLE(AOT)
-                // `bun test` reads no export for a file that only require() has loaded: whoever reads the name gets the error.
-                bool isOnlyRequired = !moduleNamespaceObject && !isBuiltin && !JSC::AOT::isESModule(*loaded.compiledModule) && !JSC::AOT::isDataFile(*loaded.compiledModule) && !JSC::AOT::hasBeenImported(globalObject, *loaded.compiledModule);
-                if (scope.exception() && isOnlyRequired && scope.tryClearException()) [[unlikely]]
-                    continue;
-#endif
                 RETURN_IF_EXCEPTION(scope, );
                 names.append(name);
                 values.append(value);

@@ -6,6 +6,10 @@ pub const PAGE_SHIFT: u32 = 7;
 /// In the entry of a code unit: the lower bits are not a symbol, but the value of the only word that has the unit.
 pub const IS_LONE: u16 = 0x8000;
 pub const BLOCK_SHIFT: u32 = 6;
+/// The count of a node has two bits: the number of its children, but not more than this.
+pub const MAX_COUNT: u32 = 3;
+/// For the sum of the counts before a block. The bits above, up to 32, have the number of `MAX_COUNT`s among them.
+pub const SUM_BITS: u32 = 18;
 pub const VALUE_BITS: u32 = 7;
 /// The value is among the rare ones.
 pub const RARE_VALUE: u32 = (1 << VALUE_BITS) - 1;
@@ -39,11 +43,11 @@ pub struct Dictionary<'a> {
     maps: u32,
     map_size: u32,
     unlabelled: u32,
-    /// For 64 nodes: which have children, which end words, the first child, and the number of words before if `values` is not 0.
+    /// For 64 nodes: the low and the high bits of their counts, which end words, 32 bits as at `SUM_BITS`, and the number of words before if `values` is not 0.
     blocks: u32,
     block_size: u32,
-    /// A bit for each label and the end: whether it is the first of its parent.
-    firsts: u32,
+    /// For each node with `MAX_COUNT` and the end: the number of children before that the counts do not cover.
+    extras: u32,
     labels: u32,
     label_bits: u32,
     /// A symbol from this one on takes two labels: of the symbol less this, the high bits plus `escape`, and the low bits.
@@ -98,7 +102,7 @@ const WINDOW: u32 = 56;
 impl<'a> Dictionary<'a> {
     pub const FIELDS: usize = 22;
 
-    /// At least eight bytes follow the last part, and all bits of them are set.
+    /// At least eight bytes follow the last part.
     pub fn new(bytes: &'a [u8]) -> Option<Self> {
         let fields: &[_; Dictionary::FIELDS] = bytes.as_chunks().0.first_chunk()?;
         let [
@@ -109,7 +113,7 @@ impl<'a> Dictionary<'a> {
             seconds,
             maps,
             blocks,
-            firsts,
+            extras,
             labels,
             symbol_labels,
             tails_index,
@@ -138,8 +142,8 @@ impl<'a> Dictionary<'a> {
             map_size,
             unlabelled,
             blocks,
-            block_size: if has_values { 22 } else { 19 },
-            firsts,
+            block_size: if has_values { 31 } else { 28 },
+            extras,
             labels,
             label_bits,
             rare_symbols,
@@ -157,7 +161,7 @@ impl<'a> Dictionary<'a> {
     fn read(&self, offset: u32) -> u64 {
         let bytes = self.bytes.get(offset as usize..offset as usize + 8);
         let bytes = bytes.and_then(|it| it.first_chunk());
-        bytes.map_or(u64::MAX, |&it| u64::from_le_bytes(it))
+        bytes.map_or(0, |&it| u64::from_le_bytes(it))
     }
 
     #[inline(always)]
@@ -184,11 +188,11 @@ impl<'a> Dictionary<'a> {
         (self.read(self.entries + 2 * (slot + u32::from(unit % (1 << PAGE_SHIFT)))) as u16).into()
     }
 
-    /// Returns the position of the bit from `from` on that has `n` like it before it. `flip` turns them into set bits.
+    /// Returns the position of the zero from `from` on that has `n` zeros before it.
     #[inline(always)]
-    fn select(&self, part: u32, mut from: u32, mut n: u32, flip: u64) -> u32 {
+    fn select_zero(&self, part: u32, mut from: u32, mut n: u32) -> u32 {
         loop {
-            let bits = (self.bits(part, from) ^ flip) % (1 << WINDOW);
+            let bits = !self.bits(part, from) % (1 << WINDOW);
             if n < bits.count_ones() {
                 return from + select(bits, n);
             }
@@ -196,12 +200,12 @@ impl<'a> Dictionary<'a> {
         }
     }
 
-    /// Returns the number of bits from `from` on before the first that `flip` turns into a set bit.
+    /// Returns the number of bits from `from` on before the first zero.
     #[inline(always)]
-    fn run_length(&self, part: u32, from: u32, flip: u64) -> u32 {
+    fn ones_from(&self, part: u32, from: u32) -> u32 {
         let mut length = 0;
         loop {
-            match (self.bits(part, from + length) ^ flip) % (1 << WINDOW) {
+            match !self.bits(part, from + length) % (1 << WINDOW) {
                 0 => length += WINDOW,
                 bits => return length + bits.trailing_zeros(),
             }
@@ -218,9 +222,12 @@ impl<'a> Dictionary<'a> {
     ) -> (u32, u32) {
         while count > 1 {
             let half = count / 2;
-            let is_above = self.field(part, first + half, width) > limit;
-            first = core::hint::select_unpredictable(is_above, first, first + half);
-            count -= half;
+            // With a select in the place of the branch, text that is broken again takes longer than with ICU4C's tries.
+            if self.field(part, first + half, width) > limit {
+                count = half;
+            } else {
+                (first, count) = (first + half, count - half);
+            }
         }
         (first, self.field(part, first, width))
     }
@@ -241,13 +248,10 @@ impl<'a> Dictionary<'a> {
             return (None, 1 + usize::from(count != 0));
         }
         let ones = match high.checked_sub(1) {
-            Some(before) => self.select(part, high_part, before, u64::MAX) + 1,
+            Some(before) => self.select_zero(part, high_part, before) + 1,
             None => high_part,
         };
-        let candidates = (
-            ones - high_part - high,
-            self.run_length(part, ones, u64::MAX),
-        );
+        let candidates = (ones - high_part - high, self.ones_from(part, ones));
         let low = second % (1 << width);
         let (index, found) = self.search((part, width), candidates, low);
         (
@@ -306,25 +310,17 @@ impl<'a> Dictionary<'a> {
 
     /// Returns the first label and the number of labels below a node that has children.
     #[inline(always)]
-    fn children(&self, block: u32, parents_before: u64) -> (u32, u32) {
-        let (mut from, mut n) = (
-            self.read(block + 16) as u32 % (1 << 24),
-            parents_before.count_ones(),
-        );
-        loop {
-            let bits = self.bits(self.firsts, from) % (1 << WINDOW);
-            if n < bits.count_ones() {
-                let at = select(bits, n);
-                return (
-                    from + at,
-                    1 + match bits >> at >> 1 {
-                        0 => self.run_length(self.firsts, from + at + 1, 0),
-                        after => after.trailing_zeros(),
-                    },
-                );
-            }
-            (from, n) = (from + WINDOW, n - bits.count_ones());
-        }
+    fn children(&self, block: u32, [low, high]: [u64; 2], bit: u64) -> (u32, u32) {
+        let before = self.read(block + 24) as u32;
+        let index = (before >> SUM_BITS) + ((low & high) % bit).count_ones();
+        let [extra, next] = self.range(self.extras, index);
+        let sum = (low % bit).count_ones() + 2 * (high % bit).count_ones();
+        let count = match (high & bit, low & bit) {
+            (0, _) => 1,
+            (_, 0) => 2,
+            _ => MAX_COUNT + next - extra,
+        };
+        (before % (1 << SUM_BITS) + sum + extra, count)
     }
 
     #[inline(always)]
@@ -337,7 +333,7 @@ impl<'a> Dictionary<'a> {
         if self.values == 0 {
             return 0;
         }
-        let word = self.read(block + 19) as u32 % (1 << 24) + words_before.count_ones();
+        let word = self.read(block + 28) as u32 % (1 << 24) + words_before.count_ones();
         match self.field(self.values, word, VALUE_BITS) {
             RARE_VALUE => self.rare_value(word),
             common if node < self.unlabelled => self.read(self.common_values + common) as u8,
@@ -364,7 +360,8 @@ impl<'a> Dictionary<'a> {
         let (index, label) = self.search(labels, children, high);
         let node = (label == high).then_some(self.unlabelled + index)?;
         let (block, low) = (self.block(node), rare % (1 << self.label_bits));
-        let children = self.children(block, self.read(block) % (1 << (node % 64)));
+        let counts = [block, block + 8].map(|it| self.read(it));
+        let children = self.children(block, counts, 1 << (node % 64));
         let (index, label) = self.search(labels, children, low);
         (label == low).then_some(index)
     }
@@ -378,15 +375,15 @@ impl<'a> Dictionary<'a> {
         };
         loop {
             let (block, bit) = (self.block(node), 1 << (node % 64));
-            let (parents, words) = (self.read(block), self.read(block + 8));
+            let [low, high, words] = [0, 8, 16].map(|it| self.read(block + it));
             if words & bit != 0 {
                 found(length, self.value(node, block, words % bit));
             }
-            let Some(&unit) = text.get(length).filter(|_| parents & bit != 0) else {
+            let Some(&unit) = text.get(length).filter(|_| (low | high) & bit != 0) else {
                 return length;
             };
             length += 1;
-            let (symbol, children) = (self.entry(unit), self.children(block, parents % bit));
+            let (symbol, children) = (self.entry(unit), self.children(block, [low, high], bit));
             let index = if symbol < self.rare_symbols {
                 let [alone, end] = self.range(self.symbol_labels, symbol);
                 let labels = (self.labels, self.label_bits);

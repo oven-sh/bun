@@ -368,18 +368,24 @@ fn write<'w>(
     symbol_labels.push(escape as u16);
     tails_index.push(tails.len() as u16);
 
-    let (mut labels, mut is_first, mut blocks) = (Bits::default(), Bits::default(), Vec::new());
+    let (mut labels, mut extras, mut blocks) = (Bits::default(), vec![0u16], Vec::new());
     let mut values = Vec::new();
     let mut queue: VecDeque<_> = second_nodes.iter().map(|&it| Below::Children(it)).collect();
-    let (mut count, mut parents, mut ends, mut at_start) = (0, 0u64, 0u64, [0; 2]);
+    let (mut count, mut sum, mut bitmaps, mut before) = (0, 0, [0u64; 3], Vec::new());
     let mut values_of_seconds = 0;
     while let Some(below) = queue.pop_front() {
-        let bit = 1 << (count % 64);
+        if count % (1 << BLOCK_SHIFT) == 0 {
+            assert!(sum >> SUM_BITS == 0);
+            let sums = u32::try_from((extras.len() - 1) << SUM_BITS | sum).expect("32 bits");
+            before.extend(sums.to_le_bytes());
+            before.extend(&values.len().to_le_bytes()[..3 * usize::from(has_values)]);
+        }
+        let (bit, others) = (1 << (count % 64), queue.len());
         let after = |node: Node<'_>, parts: Vec<usize>| parts.is_empty().then_some(node.depth);
         let mut edges = match below {
             Below::Children(node) => {
                 if let Some(value) = node.value() {
-                    ends |= bit;
+                    bitmaps[2] |= bit;
                     values.push(value);
                 }
                 let edges = sorted_children(node).into_iter().map(|child| {
@@ -399,14 +405,12 @@ fn write<'w>(
                 parts,
             )],
             Below::Rare(edges) => {
-                parents |= bit;
-                for (i, (child, mut parts)) in edges.into_iter().enumerate() {
+                for (child, mut parts) in edges {
                     parts.pop();
                     labels.push(
                         (symbol_of(&child) - alphabet.rare_symbols) % (1 << label_bits),
                         label_bits,
                     );
-                    is_first.push((i == 0).into(), 1);
                     queue.push_back(match after(child, parts.clone()) {
                         Some(_) => Below::Children(child),
                         None => Below::Parts(child, parts),
@@ -417,42 +421,45 @@ fn write<'w>(
         };
         let rare =
             edges.split_off(edges.partition_point(|it| symbol_of(&it.0) < alphabet.rare_symbols));
-        let has_common = !edges.is_empty();
-        for (i, (child, mut parts)) in edges.into_iter().enumerate() {
+        for (child, mut parts) in edges {
             let end = Node {
                 depth: child.depth - 1 + parts.pop().expect("a part"),
                 ..child
             };
             labels.push(labels_of[&end.text()[child.depth - 1..]], label_bits);
-            is_first.push((i == 0).into(), 1);
             queue.push_back(if parts.is_empty() {
                 Below::Children(end)
             } else {
                 Below::Parts(end, parts)
             });
         }
-        if has_common || !rare.is_empty() {
-            parents |= bit;
-        }
         let high = |it: &(Node, _)| (symbol_of(&it.0) - alphabet.rare_symbols) >> label_bits;
-        for (i, group) in rare.chunk_by(|a, b| high(a) == high(b)).enumerate() {
+        for group in rare.chunk_by(|a, b| high(a) == high(b)) {
             labels.push(escape + high(&group[0]), label_bits);
-            is_first.push((!has_common && i == 0).into(), 1);
             queue.push_back(Below::Rare(group.into()));
+        }
+        let children = queue.len() - others;
+        let covered = children.min(MAX_COUNT as usize);
+        bitmaps[0] |= bit * (covered as u64 % 2);
+        bitmaps[1] |= bit * (covered as u64 / 2);
+        sum += covered;
+        if covered == MAX_COUNT as usize {
+            let extra = usize::from(extras[extras.len() - 1]) + children - covered;
+            extras.push(u16::try_from(extra).expect("16 bits"));
         }
         count += 1;
         if count == second_nodes.len() {
             values_of_seconds = values.len();
         }
         if count % (1 << BLOCK_SHIFT) == 0 || queue.is_empty() {
-            blocks.extend(std::mem::take(&mut parents).to_le_bytes());
-            blocks.extend(std::mem::take(&mut ends).to_le_bytes());
-            let numbers = at_start.iter().take(1 + usize::from(has_values));
-            blocks.extend(numbers.flat_map(|it: &usize| it.to_le_bytes().into_iter().take(3)));
-            at_start = [is_first.count, values.len()];
+            blocks.extend(
+                std::mem::take(&mut bitmaps)
+                    .map(u64::to_le_bytes)
+                    .as_flattened(),
+            );
+            blocks.append(&mut before);
         }
     }
-    is_first.push(1, 1);
 
     let [pages, entries, symbol_values] = write_units(root, &alphabet);
     let (of_seconds, of_others) = values.split_at(values_of_seconds);
@@ -468,7 +475,7 @@ fn write<'w>(
         seconds,
         maps,
         blocks,
-        is_first.bytes,
+        to_bytes(&extras),
         labels.bytes,
         to_bytes(&symbol_labels),
         to_bytes(&tails_index),
@@ -490,7 +497,7 @@ fn write<'w>(
         escape,
     ]);
     let fields = fields.into_iter().flat_map(|it| (it as u32).to_le_bytes());
-    [fields.collect(), parts.concat(), vec![u8::MAX; 8]].concat()
+    [fields.collect(), parts.concat(), vec![0; 8]].concat()
 }
 
 /// Compares the results for each word, and for each word with another unit in each place.

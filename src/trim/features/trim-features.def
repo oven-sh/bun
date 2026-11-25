@@ -205,7 +205,7 @@ trim-feature brotli : BrotliEncoder BrotliDecoder
 
 trim-feature intl : IntlSegmenter IntlDisplayNames IntlOther IntlCollation IntlUnits IntlDateTimeFormat IntlNumberFormat IntlLocale IntlPluralRules
   about "All of `Intl`, plus `localeCompare()`, `toLocaleString()`, `toLocaleDateString()` and `toLocaleTimeString()`, with their locale data. Includes `\"intl-segmenter\"`. On macOS, Bun uses the system's ICU, so this is only the bindings."
-  saves 4.3 0.0
+  saves 4.4 0.0
 
 trim-feature intl-segmenter : IntlSegmenter
   about "`Intl.Segmenter` and its dictionaries. Included in `\"intl\"`. On macOS, the dictionaries come with the system."

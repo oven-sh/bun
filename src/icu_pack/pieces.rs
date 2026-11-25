@@ -516,7 +516,8 @@ pub(crate) fn write(levels: &[Level], numbers: &NumberCodes) -> Written {
     let piece = |symbol: &usize| vocabulary.pieces.get(symbol.wrapping_sub(operation::COUNT));
     let text = overlapped(symbols().filter_map(piece).map(|it| &it.text[..]).collect());
     let entries = symbols().map(|symbol| {
-        piece(symbol).map_or(entry::FIRST_OPERATION + *symbol as u16, |piece| {
+        let operation = || entry::FIRST_OPERATION + *symbol as u16;
+        piece(symbol).map_or_else(operation, |piece| {
             let offset = symbols().count() + find(&text, &piece.text).expect("the piece");
             assert!(offset < (entry::FIRST_OPERATION >> entry::OFFSET_SHIFT).into());
             let ends = if piece.ends { entry::ENDS } else { 0 };

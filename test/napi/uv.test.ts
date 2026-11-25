@@ -257,7 +257,7 @@ describe("uv stubs", () => {
   // a child process. The child's exit is part of the test: a ref'd handle or a
   // queued request must keep it alive, and an unref'd handle must not. `script`
   // can use `addon` and `report`, which prints one line per event from the addon.
-  async function runInChild(script: string) {
+  async function runInChild(script: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -268,7 +268,7 @@ describe("uv stubs", () => {
           ${script}
         `,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -523,6 +523,32 @@ describe("uv stubs", () => {
     const cancelled = `cancel 0\nafter ${UV_ECANCELED} 124\n`;
     const tooLate = `cancel ${UV_EBUSY}\nafter 0 127\n`;
     expect([cancelled, tooLate]).toContain(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows)(
+    "blocked uv_queue_work callbacks do not hold up other background tasks",
+    async () => {
+      const { stdout, stderr, exitCode } = await runInChild(
+        `addon.queueBlockingWorks();
+       console.log((await fs.promises.stat(".")).isDirectory());
+       addon.releaseBlockingWorks();`,
+        { GOMAXPROCS: "2" },
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.skipIf(!isWindows)("UV_THREADPOOL_SIZE takes effect when the script sets it", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `process.env.UV_THREADPOOL_SIZE = "1";
+       addon.queueOverlappingWorks();
+       process.on("exit", () => console.log(addon.didWorksOverlap()));`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("false\n");
     expect(exitCode).toBe(0);
   });
 

@@ -1108,6 +1108,61 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static uv_work_t work_pair[2];
+static atomic_int works_running;
+static atomic_bool works_released;
+static atomic_bool works_overlapped;
+
+static void queue_work_pair(napi_env env, uv_work_cb work_cb) {
+  for (int i = 0; i < 2; i++) {
+    uv_queue_work(get_loop(env, false), &work_pair[i], work_cb, NULL);
+  }
+}
+
+static void blocking_work_cb(uv_work_t *req) {
+  (void)req;
+  atomic_fetch_add(&works_running, 1);
+  while (!atomic_load(&works_released)) {
+    usleep(1000);
+  }
+}
+
+// Returns once both requests occupy a thread.
+static napi_value queue_blocking_works(napi_env env, napi_callback_info info) {
+  queue_work_pair(env, blocking_work_cb);
+  while (atomic_load(&works_running) < 2) {
+    usleep(1000);
+  }
+  return NULL;
+}
+
+static napi_value release_blocking_works(napi_env env,
+                                         napi_callback_info info) {
+  atomic_store(&works_released, true);
+  return NULL;
+}
+
+static void overlapping_work_cb(uv_work_t *req) {
+  (void)req;
+  if (atomic_fetch_add(&works_running, 1) > 0) {
+    atomic_store(&works_overlapped, true);
+  }
+  usleep(50 * 1000);
+  atomic_fetch_add(&works_running, -1);
+}
+
+static napi_value queue_overlapping_works(napi_env env,
+                                          napi_callback_info info) {
+  queue_work_pair(env, overlapping_work_cb);
+  return NULL;
+}
+
+static napi_value did_works_overlap(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_get_boolean(env, atomic_load(&works_overlapped), &result);
+  return result;
+}
+
 // --- uv_default_loop on another thread ---------------------------------------
 
 static uv_work_t default_loop_work;
@@ -1660,6 +1715,18 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
+
+  napi_create_function(env, NULL, 0, queue_blocking_works, NULL, &fn);
+  napi_set_named_property(env, exports, "queueBlockingWorks", fn);
+
+  napi_create_function(env, NULL, 0, release_blocking_works, NULL, &fn);
+  napi_set_named_property(env, exports, "releaseBlockingWorks", fn);
+
+  napi_create_function(env, NULL, 0, queue_overlapping_works, NULL, &fn);
+  napi_set_named_property(env, exports, "queueOverlappingWorks", fn);
+
+  napi_create_function(env, NULL, 0, did_works_overlap, NULL, &fn);
+  napi_set_named_property(env, exports, "didWorksOverlap", fn);
 
   napi_create_function(env, NULL, 0, test_default_loop_work, NULL, &fn);
   napi_set_named_property(env, exports, "testDefaultLoopWork", fn);

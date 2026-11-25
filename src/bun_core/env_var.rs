@@ -246,7 +246,6 @@ platform_specific_new!(pub TMPDIR: string, posix = "TMPDIR", windows = "TMPDIR",
 new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
-new!(pub UV_THREADPOOL_SIZE: unsigned, "UV_THREADPOOL_SIZE", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
 // The same as system_root.
 // TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could

@@ -23,6 +23,7 @@
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
 
 use core::cell::Cell;
+use core::convert::Infallible;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -32,14 +33,12 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
+use bun_jsc::job::{OwnedJob, Running};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted,
-    VmHandle,
-};
+use bun_jsc::{JSGlobalObject, Job, JsError, JsResult, JsThread, LoopKind, Posted, VmHandle};
 use bun_ptr::{AliasableBox, CellExt};
 use bun_sys::UV_E;
-use bun_threading::work_pool::WorkPool;
+use bun_threading::work_pool::FilePool;
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerTag};
@@ -1277,6 +1276,10 @@ impl WorkRef {
         unsafe { &(*self.0.as_ptr()).fields.body }
     }
 
+    fn into_raw(self) -> *mut UvWork {
+        self.0.as_ptr()
+    }
+
     fn run(&self) {
         let started = self
             .work()
@@ -1320,10 +1323,10 @@ impl WorkRef {
             return UV_ECANCELED;
         };
         vm.add_keep_alive(LoopKind::Regular, 1);
-        bun_core::handle_oom(WorkPool::go((self, ticket), |(req, ticket)| {
-            req.run();
-            ticket.post(ConcurrentTask::create_from(req.0.as_ptr()));
-        }));
+        FilePool::go(move || {
+            self.run();
+            ticket.post(ConcurrentTask::create_from(self.into_raw()));
+        });
         0
     }
 }
@@ -1361,13 +1364,22 @@ impl UvWork {
 /// that never call `uv_cancel` ignore the status. The V8 API would also still enter JS.
 struct UvWorkJob;
 
-impl JobContext for UvWorkJob {
+impl OwnedJob for UvWorkJob {
     type OffThread = WorkRef;
     type Js = ();
+    type Shared = ();
+    type Resume = Infallible;
+    const OUTLIVES_SCRIPT: bool = false;
+    /// `work_cb` can block, and addons rely on the order and on `UV_THREADPOOL_SIZE`.
+    const IS_FILE_IO: bool = true;
 
-    fn run(req: &mut WorkRef, done: Completion<Self>) -> Option<Completion<Self>> {
-        req.run();
-        Some(done)
+    fn run(mut job: Running<Self>) {
+        job.off().run();
+        job.finish();
+    }
+
+    fn resume(_: Running<Self>, with: Infallible) {
+        match with {}
     }
 
     fn then(req: WorkRef, _: (), cx: &JsThread<'_>) -> JsResult<()> {

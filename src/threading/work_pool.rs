@@ -163,18 +163,21 @@ fn create() -> ThreadPool {
     })
 }
 
-/// For calls on open files. On Windows an open file pins its directory, so these calls do not queue behind CPU-bound tasks.
+/// For calls on open files and `uv_queue_work`. On Windows an open file pins its directory, so these calls do not queue behind CPU-bound tasks.
 pub struct FilePool;
 
 impl FilePool {
     #[cfg(windows)]
     pub fn get() -> &'static FifoPool {
         static POOL: std::sync::LazyLock<FifoPool> = std::sync::LazyLock::new(|| {
-            let max_threads = bun_core::env_var::UV_THREADPOOL_SIZE.get().unwrap_or(4);
+            // Not `env_var`: scripts assign it to `process.env` before their first call.
+            let size = bun_sys::windows::getenv_w(bun_core::wstr!("UV_THREADPOOL_SIZE"));
+            let parse = |size: Vec<u16>| String::from_utf16_lossy(&size).trim().parse();
             FifoPool::new(Config {
                 name: "File I/O",
-                max_threads: max_threads.clamp(1, 1024) as usize,
-                stack_size: 4 * 1024 * 1024,
+                max_threads: size.map_or(Ok(4), parse).unwrap_or(1).clamp(1, 1024),
+                // Addons run on these threads, and libuv gives them this much.
+                stack_size: 8 * 1024 * 1024,
                 on_thread_start: bun_core::Output::Source::configure_thread_no_js,
                 has_warmup: true,
             })

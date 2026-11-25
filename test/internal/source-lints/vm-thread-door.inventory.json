@@ -125,7 +125,7 @@
     ]
   },
   "src/runtime/napi/uv.rs": {
-    "WorkPool::schedule*": 1,
+    "FifoPool": 1,
     "unsafe impl Send": [
       "WorkRef"
     ]

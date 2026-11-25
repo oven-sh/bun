@@ -26311,20 +26311,6 @@ describe("listed directory roots", () => {
   // `bun check <directory>` where no tsconfig.json at or above the directory has files in it: the directory stands for
   // the files that the projects below it list, however `files`, `include` or `references` name them.
 
-  // Disable AI agent and CI detection regardless of the environment the tests run in.
-  const env = {
-    ...bunEnv,
-    AGENT: "0",
-    CLAUDECODE: undefined,
-    REPL_ID: undefined,
-    GITHUB_ACTIONS: undefined,
-    GITHUB_WORKSPACE: undefined,
-    // Of the script that runs the tests.
-    npm_lifecycle_event: undefined,
-    npm_package_json: undefined,
-    NO_COLOR: "1",
-  };
-
   async function run(cwd: { toString(): string }, cmd: string[]) {
     await using proc = spawn({
       timeout: longLimit,
@@ -26599,21 +26585,6 @@ describe("listed directory roots", () => {
 describe("empty path requests", () => {
   // `bun check <paths>`: a path names a file or a directory to check, and a project is named with `-p` or `-b`. A run whose
   // paths have no TypeScript file does not pass.
-
-  // Disable AI agent and CI detection regardless of the environment the tests run in.
-  const env = {
-    ...bunEnv,
-    AGENT: "0",
-    CLAUDECODE: undefined,
-    REPL_ID: undefined,
-    GITHUB_ACTIONS: undefined,
-    GITHUB_WORKSPACE: undefined,
-    // Of the script that runs the tests.
-    npm_lifecycle_event: undefined,
-    npm_package_json: undefined,
-    BUN_INTERNAL_CHECK_SCRIPTS: undefined,
-    NO_COLOR: "1",
-  };
 
   // `lib: ["es5"]`: three library files in place of eighty, which a debug build takes long to read.
   const options = { strict: true, noEmit: true, lib: ["es5"], types: [], skipLibCheck: true };

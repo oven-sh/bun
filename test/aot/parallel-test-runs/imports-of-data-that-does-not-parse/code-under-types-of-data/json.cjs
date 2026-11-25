@@ -1,0 +1,1 @@
+exports.own = "code";

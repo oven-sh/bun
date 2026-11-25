@@ -209,17 +209,24 @@ impl Shared {
         }
     }
 
-    /// For wake keys that arrived after the read had ended.
+    /// For wake keys that arrived after the read had ended. They stay if typed input is ahead of them.
     fn remove_wake_keys(&mut self, input: &Input, keys: [InputRecord; 3]) {
-        if !matches!(console::queued_record_count(input.raw()), Ok(1..=3)) {
+        let [mut queued, mut removed] = [[InputRecord::default(); 16]; 2];
+        let queued = console::peek_records(input.raw(), &mut queued).unwrap_or_default();
+        let Some(wake_index) = queued
+            .iter()
+            .take_while(|record| keys.contains(record) || !record.is_key_input())
+            .position(|record| record.is_key_input() && record.character == WAKE_CHAR)
+        else {
             return;
+        };
+        match console::read_records(input.raw(), &mut removed[..=wake_index]) {
+            Ok(removed) if removed == &queued[..=wake_index] => self.pending_wake_count -= 1,
+            // Another reader was faster.
+            Ok(removed) => drop(console::write_records(input.raw(), removed)),
+            Err(_) => {}
         }
-        let mut records = keys;
-        match console::read_records(input.raw(), &mut records) {
-            Ok([]) | Err(_) => {}
-            Ok(records) if keys.ends_with(records) => self.pending_wake_count -= 1,
-            Ok(records) => drop(console::write_records(input.raw(), records)),
-        }
+        crate::console_signals::check_window_size();
     }
 
     fn add_line(&mut self, line: &[u16]) {

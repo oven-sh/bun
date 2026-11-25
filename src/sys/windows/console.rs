@@ -70,6 +70,12 @@ unsafe extern "system" {
         hConsoleInput: HANDLE,
         lpNumberOfEvents: &mut DWORD,
     ) -> BOOL;
+    fn PeekConsoleInputW(
+        hConsoleInput: HANDLE,
+        lpBuffer: *mut InputRecord,
+        nLength: DWORD,
+        lpNumberOfEventsRead: &mut DWORD,
+    ) -> BOOL;
     fn ReadConsoleInputW(
         hConsoleInput: HANDLE,
         lpBuffer: *mut InputRecord,
@@ -275,6 +281,18 @@ pub fn read_records(
             check(unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), len, &mut read_count) })?;
         }
     }
+    Ok(&records[..read_count.min(len) as usize])
+}
+
+/// Non-blocking. The records stay in the input queue.
+pub fn peek_records(
+    input: HANDLE,
+    records: &mut [InputRecord],
+) -> Result<&[InputRecord], Win32Error> {
+    let len = records.len() as DWORD;
+    let mut read_count = 0;
+    // SAFETY: `records` is writable for `len` records.
+    check(unsafe { PeekConsoleInputW(input, records.as_mut_ptr(), len, &mut read_count) })?;
     Ok(&records[..read_count.min(len) as usize])
 }
 

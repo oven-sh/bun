@@ -165,9 +165,9 @@ pub(crate) fn do_send(
             match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
-                        .get_socket()
-                        .get_fd();
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),
@@ -272,10 +272,11 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
         // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, pause_target)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(

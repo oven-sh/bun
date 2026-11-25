@@ -769,7 +769,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         bunServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
+        // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and
         // token bits for the headers the dispatcher consults, so no header
         // object or array is materialized unless user code reads them.
         dispatchBits: number,
@@ -1364,7 +1364,7 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
-// uWS::HttpParserError
+// RequestError in src/http1/request/error.rs
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
   HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
@@ -2538,7 +2538,7 @@ function renderNativeHeaders(res) {
     if (headersMap !== null && headersMap !== undefined) {
       for (const key in headersMap) {
         const entry = headersMap[key];
-        const name = entry[0];
+        const name = String(entry[0]);
         const value = entry[1];
         if (key === "date") hasDate = true;
         else if (key === "connection") {
@@ -2562,7 +2562,7 @@ function renderNativeHeaders(res) {
             valueLength >= 2 &&
             (key === "cookie" || (res[kUniqueHeaders] != null && res[kUniqueHeaders].$has(key)))
           ) {
-            flat.push(name, value.join("; "));
+            flat.push(name, String(value.join("; ")));
           } else {
             for (let i = 0; i < valueLength; i++) {
               flat.push(name, String(value[i]));
@@ -3229,7 +3229,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 
 // Native dispatch bitfield: presence/token bits for the request headers the
 // dispatcher consults, computed in one native pass over the raw headers
-// (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+// (Dispatch in src/runtime/server/NodeHTTPResponse.rs - keep in sync). This is what
 // lets the framework never materialize req.headers/req.rawHeaders unless
 // user code reads them.
 const DISPATCH_CONN_CLOSE = 1 << 0;

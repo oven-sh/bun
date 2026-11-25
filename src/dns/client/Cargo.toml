@@ -1,0 +1,23 @@
+[package]
+name = "bun_dns_client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+enum-map.workspace = true
+hashbrown.workspace = true
+smallvec.workspace = true
+strum.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_wyhash.workspace = true
+
+[[test]]
+name = "client"
+path = "tests/client/main.rs"

@@ -181,25 +181,27 @@ fn session(level: i32, mut strategy: i32, seed: u64, next: Next) -> u32 {
 
 #[test]
 fn calls_in_any_order_give_what_zlib_ng_gives() {
-    /// From zlib-ng 2.3.3, by the level and the strategy at the start.
+    /// The first of 24 seeds and the result with zlib-ng 2.3.3, by the level and the strategy at the start.
     #[rustfmt::skip]
-    const EXPECTED: [[u32; 5]; 10] = [
-        [0x7456_c348, 0xca2c_f35a, 0xb7a3_f7e0, 0x50b8_fec1, 0x4721_0046],
-        [0xb6d8_b25b, 0xa7d2_807a, 0x7a9a_3e41, 0x2bb7_0661, 0x7b2f_62e2],
-        [0xf04f_7c39, 0xad33_f143, 0x04fe_9f99, 0x0950_ca5f, 0x51d2_101f],
-        [0x4be2_87ba, 0x7ae5_df72, 0xdfa5_0dae, 0xfd0e_4369, 0xda68_da84],
-        [0xc751_9b89, 0xeca7_820b, 0xcfc5_afa2, 0xbe46_838f, 0x7867_1b97],
-        [0x55cc_c07e, 0x3203_5aa3, 0x90a4_f9a8, 0xb7fe_6797, 0x67cf_6dbe],
-        [0x4fa1_d2a0, 0xbdc6_1165, 0xca25_1029, 0x1872_17ab, 0x4aa9_9c4f],
-        [0x95be_e3a9, 0x02e4_9533, 0x047b_ed37, 0x4fd7_950e, 0x72e1_e0a0],
-        [0xb4ba_d80b, 0xfa24_0a61, 0x0580_4370, 0x883b_eeac, 0x7bdb_3e1e],
-        [0x7c01_7d43, 0xbe1e_b051, 0x9623_575b, 0xe7c2_11fd, 0x5591_d790],
+    const EXPECTED: [[(u64, u32); 5]; 10] = [
+        [(24, 0x4aa3_f145), (0, 0xca2c_f35a), (0, 0xb7a3_f7e0), (0, 0x50b8_fec1), (24, 0x090a_2718)],
+        [(0, 0xb6d8_b25b), (0, 0xa7d2_807a), (0, 0x7a9a_3e41), (0, 0x2bb7_0661), (48, 0x3460_44bb)],
+        [(24, 0x8780_d345), (0, 0xad33_f143), (24, 0xc322_e46f), (72, 0xa0f6_9601), (0, 0x51d2_101f)],
+        [(0, 0x4be2_87ba), (0, 0x7ae5_df72), (0, 0xdfa5_0dae), (0, 0xfd0e_4369), (0, 0xda68_da84)],
+        [(0, 0xc751_9b89), (0, 0xeca7_820b), (0, 0xcfc5_afa2), (0, 0xbe46_838f), (24, 0x5ab7_23ed)],
+        [(0, 0x55cc_c07e), (24, 0x5516_3ad9), (0, 0x90a4_f9a8), (0, 0xb7fe_6797), (0, 0x67cf_6dbe)],
+        [(0, 0x4fa1_d2a0), (0, 0xbdc6_1165), (0, 0xca25_1029), (48, 0x2b2b_88e3), (0, 0x4aa9_9c4f)],
+        [(48, 0x242d_dff9), (24, 0x5649_6296), (0, 0x047b_ed37), (0, 0x4fd7_950e), (0, 0x72e1_e0a0)],
+        [(24, 0x5865_dce4), (0, 0xfa24_0a61), (24, 0x17d4_4b9b), (24, 0x18eb_d2a9), (24, 0x9f3a_9040)],
+        [(0, 0x7c01_7d43), (48, 0x516a_c3bb), (0, 0x9623_575b), (0, 0xe7c2_11fd), (48, 0x5a42_c4f6)],
     ];
-    let found: [[u32; 5]; 10] = std::array::from_fn(|level| {
+    let found: [[_; 5]; 10] = std::array::from_fn(|level| {
         std::array::from_fn(|strategy| {
-            (0..24).fold(0, |hash, seed| {
+            let first = EXPECTED[level][strategy].0;
+            let hash = (first..first + 24).fold(0, |hash, seed| {
                 hash ^ session(level as i32, strategy as i32, seed, Next::New)
-            })
+            });
+            (first, hash)
         })
     });
     assert_eq!(found, EXPECTED, "{found:x?}");
@@ -208,29 +210,44 @@ fn calls_in_any_order_give_what_zlib_ng_gives() {
 /// The first arguments of `session()`, and the result with zlib-ng 2.3.3.
 #[rustfmt::skip]
 const RARE: &[(i32, i32, u64, u32)] = &[
-    (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c), (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0),
-    (2, 0, 91, 0x06ff_1791), (2, 0, 141, 0x49ab_3ea9), (2, 0, 220, 0x50f3_16d3), (2, 0, 387, 0xf632_0ead),
-    (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (5, 0, 21359, 0x1a0f_de83), (6, 0, 1774, 0xc12f_eeb3),
-    (6, 2, 205, 0x11f0_a577), (6, 2, 2224, 0x2954_e4ca), (6, 3, 339, 0xdda6_19ed), (7, 0, 75, 0xb795_0925),
-    (7, 0, 236, 0x6eb7_f4a7), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
-    (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 51, 0xaaed_8204), (8, 1, 140, 0x7753_210c),
-    (8, 1, 1076, 0x958a_7ff9), (9, 0, 182, 0xea16_3040), (9, 0, 270, 0x0cb9_ce59), (9, 0, 279, 0x3205_5af5),
-    (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550), (9, 4, 665, 0x38c1_ccee), (9, 4, 1340, 0x6ddc_d3f7),
-    (9, 4, 1474, 0xd885_d9ad), (9, 4, 1861, 0x475c_bdbd), (9, 4, 2217, 0xc947_f92f), (0, 0, 64, 0x7338_3b5e),
-    (0, 0, 163, 0x7cc7_2afb), (7, 0, 103, 0x47a1_485f), (9, 0, 90, 0xa2b0_5f94),
+    (0, 0, 64, 0x7338_3b5e), (0, 0, 163, 0x7cc7_2afb), (0, 0, 1153, 0xfa28_4898), (0, 0, 2998, 0xfcee_8f7c),
+    (1, 0, 130, 0x3a3c_eed9), (1, 0, 1811, 0x996b_a1f0), (2, 0, 141, 0x49ab_3ea9), (2, 0, 387, 0xf632_0ead),
+    (5, 0, 248, 0x5331_8687), (5, 0, 296, 0xa03a_5b17), (6, 0, 1774, 0xc12f_eeb3), (6, 2, 2224, 0x2954_e4ca),
+    (7, 0, 75, 0xb795_0925), (7, 0, 1446, 0x11d1_bf7a), (8, 0, 116, 0x44b9_e4a8), (8, 0, 420, 0x6661_01d5),
+    (8, 0, 576, 0x1e19_a825), (8, 0, 1220, 0x98ca_b372), (8, 1, 140, 0x7753_210c), (8, 1, 1076, 0x958a_7ff9),
+    (9, 0, 90, 0xa2b0_5f94), (9, 0, 270, 0x0cb9_ce59), (9, 0, 290, 0x0dee_141e), (9, 0, 1958, 0x074c_9550),
+    (9, 4, 1340, 0x6ddc_d3f7), (9, 4, 1861, 0x475c_bdbd),
 ];
 
-#[test]
-fn and_so_do_some_that_few_sequences_are_like() {
-    for &(level, strategy, seed, expected) in RARE {
+/// More of them, with the result that this crate gives.
+#[rustfmt::skip]
+const MORE_RARE: &[(i32, i32, u64, u32)] = &[
+    (2, 0, 91, 0x918a_3124), (2, 0, 220, 0x075f_93a6), (5, 0, 21359, 0x9d30_4111), (6, 2, 205, 0xbecf_d0c7),
+    (6, 3, 339, 0x81b5_4edc), (7, 0, 103, 0xbf91_eb2e), (7, 0, 236, 0xab45_2993), (8, 1, 51, 0xb3f7_aed1),
+    (9, 0, 182, 0xb18a_3c09), (9, 0, 279, 0x9714_3e61), (9, 4, 665, 0x9768_6613), (9, 4, 1474, 0x1211_565e),
+    (9, 4, 2217, 0x6c78_f705),
+];
+
+fn assert_results(sessions: &[(i32, i32, u64, u32)]) {
+    for &(level, strategy, seed, expected) in sessions {
         let found = session(level, strategy, seed, Next::New);
         assert_eq!(found, expected, "{level} {strategy} {seed}");
     }
 }
 
 #[test]
+fn and_so_do_some_that_few_sequences_are_like() {
+    assert_results(RARE);
+}
+
+#[test]
+fn others_give_what_was_recorded_with_this_crate() {
+    assert_results(MORE_RARE);
+}
+
+#[test]
 fn a_deflater_is_as_good_as_new_after_reset() {
-    let rare = RARE.iter().map(|it| (it.0, it.1, it.2));
+    let rare = RARE.iter().chain(MORE_RARE).map(|it| (it.0, it.1, it.2));
     let all = (0..2000).map(|it| (it % 10, it / 10 % 5, it as u64 / 50));
     for (level, strategy, seed) in rare.chain(all) {
         let [new, reset] = [Next::New, Next::Reset].map(|it| session(level, strategy, seed, it));
@@ -304,6 +321,36 @@ fn a_full_flush_does_away_with_the_dictionary() {
             out,
             [&[0, 0, 0, 0xff, 0xff], &raw(&input[200..], level, 8)[..]].concat()
         );
+    }
+}
+
+#[test]
+fn and_is_a_start_like_any_other() {
+    let mut random = Random::new(2);
+    for (level, strategy) in
+        (0..4000).map(|it| (it % 10, [0, 0, 0, 1, 2, 3, 4][it as usize / 10 % 7]))
+    {
+        let options = options(level, strategy, random.pick(&[9, 10, 15]), 8);
+        let [mut used, mut new] = [(); 2].map(|()| Deflater::new(Container::Raw, options).unwrap());
+        let len = random.below(2500);
+        // Stored blocks go by the room.
+        let [mut out, mut expected] = [(); 2].map(|()| Vec::with_capacity(9999));
+        let input = random.mixed(len + 600, 512);
+        let (first, rest) = input.split_at(len);
+        used.deflate_to_vec(first, &mut out, Flush::Full).unwrap();
+        out.clear();
+        for piece in rest.chunks(1 + random.up_to(40)) {
+            let (flush, other) = (
+                random.pick(&FLUSHES[1..4]),
+                random.pick(&[level, level, 9 - level]),
+            );
+            for (deflater, out) in [(&mut used, &mut out), (&mut new, &mut expected)] {
+                deflater.deflate_to_vec(piece, out, flush).unwrap();
+                let params = (other.try_into().unwrap(), options.strategy);
+                assert_eq!(deflater.set_params(params.0, params.1), Ok(true));
+            }
+        }
+        assert!(out == expected, "{level} {strategy}");
     }
 }
 

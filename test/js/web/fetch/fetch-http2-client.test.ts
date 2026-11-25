@@ -191,7 +191,7 @@ async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pip
   return proc;
 }
 
-function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: () => void } = {}) {
+function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: (message: any) => void } = {}) {
   return spawnCapped({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
@@ -317,6 +317,38 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         expect(stderr).toBe("");
         expect(stdout).toBe(payload);
         expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("an unfinished gzip stream ends at END_STREAM, but not at RST_STREAM", async () => {
+    const flushed = zlib.gzipSync("flushed", { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    const ends: (() => void)[] = [];
+    await withRawH2Server(
+      (conn, id) => {
+        conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+        conn.data(id, flushed, id === 1);
+        ends.push({ 1: () => {}, 3: () => conn.data(id, "", true), 5: () => conn.rst(id, 2) }[id]!);
+      },
+      async url => {
+        await using proc = await spawnFetch(
+          `
+            for (let i = 0; i < 3; i++) {
+              const reader = (await fetch("${url}")).body.getReader();
+              const { value } = await reader.read();
+              process.send(i);
+              console.log(Buffer.from(value).toString(), await reader.read().then(r => r.done, e => e.code));
+            }
+            process.disconnect();
+          `,
+          { ipc: i => ends[i]() },
+        );
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: "flushed true\nflushed true\nflushed HTTP2StreamReset\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
     );
   });

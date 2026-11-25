@@ -620,11 +620,11 @@ impl DevServer {
         route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         // SAFETY: see `route!` — statement-scoped reborrow of the live app.
-        unsafe { &mut *app }.ws(
+        unsafe { &mut *app }.ws::<Self, HmrSocket>(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
             dev,
             0,
-            hmr_socket_behavior::<SSL>(),
+            Default::default(),
             dev,
         );
 

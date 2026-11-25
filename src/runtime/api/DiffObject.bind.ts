@@ -5,10 +5,16 @@ export default b.module({ rustPath: "crate::api::diff_object" });
 /** A whole number from 0 on, or `Infinity`. */
 const limit = b.f64;
 const maxEditLength = limit.optional;
-const context = limit.default(4);
+const context = limit.default(3);
+
+const off = b.bool.default(false);
+const forText = { maxEditLength, ignoreCase: off } as const;
+const forLines = { ...forText, ignoreWhitespace: off, stripTrailingCr: off } as const;
 
 export const Options = b.dictionary({ maxEditLength }, { reportedAs: "options" });
-export const HunksOptions = b.dictionary({ context, maxEditLength }, { reportedAs: "options" });
+export const TextOptions = b.dictionary(forText, { reportedAs: "options" });
+export const LinesOptions = b.dictionary(forLines, { reportedAs: "options" });
+export const HunksOptions = b.dictionary({ context, ...forLines }, { reportedAs: "options" });
 export const PatchOptions = b.dictionary(
   {
     oldFileName: b.string.utf8.optional,
@@ -16,12 +22,16 @@ export const PatchOptions = b.dictionary(
     oldHeader: b.string.optional,
     newHeader: b.string.optional,
     context,
-    maxEditLength,
+    ...forLines,
   },
   { reportedAs: "options" },
 );
 
 export const Change = b.dictionary({ value: b.string, added: b.bool, removed: b.bool, count: b.usize });
+export const ArrayChange = b.dictionary(
+  { value: b.jsArray, added: b.bool, removed: b.bool, count: b.usize },
+  { toJS: true },
+);
 export const Hunk = b.dictionary({
   oldStart: b.usize,
   oldLines: b.usize,
@@ -47,18 +57,22 @@ export const FilePatch = b.dictionary({
 });
 
 export const HunkToApply = b.dictionary({ oldStart: b.u32, lines: b.array(b.string) }, { reportedAs: "hunk" });
-export const PatchToApply = b.union({ text: b.string, hunks: b.array(HunkToApply) });
+export const FileToApply = b.dictionary(
+  { hunks: b.array(HunkToApply), isBinary: b.bool.default(false) },
+  { reportedAs: "patch" },
+);
+export const PatchToApply = b.union({ text: b.string, hunks: b.array(HunkToApply), file: FileToApply });
 
 const texts = { oldText: b.string, newText: b.string } as const;
 const throws = { capability: "heap", throws: true } as const;
 const text = {
-  args: { ...texts, options: Options.default({}) },
+  args: { ...texts, options: TextOptions.default({}) },
   returns: b.array(Change).optional,
   ...throws,
 } as const;
 
 export const diff = b.namespace({
-  lines: text,
+  lines: { ...text, args: { ...texts, options: LinesOptions.default({}) } },
   words: text,
   chars: text,
   /** An element can be a getter. */
@@ -73,8 +87,8 @@ export const diff = b.namespace({
   parsePatch: { args: { patch: b.string }, returns: b.array(FilePatch), ...throws },
   applyPatch: {
     args: { source: b.string, patch: PatchToApply },
-    expected: { patch: "patch must be a string or an array of hunks" },
-    returns: b.string.optional,
+    expected: { patch: "patch must be a string, a file from parsePatch() or an array of hunks" },
+    returns: b.string,
     ...throws,
   },
 });

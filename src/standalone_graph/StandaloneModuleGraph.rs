@@ -25,7 +25,7 @@ use bun_resolver::compiled_program::{
 };
 use bun_sourcemap as SourceMap;
 use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
-use bun_sys::{self as Syscall, E, Fd, Stat};
+use bun_sys::{self as Syscall, E, Fd, Stat, UnlinkOnDrop};
 
 use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
 use crate::executable_file::{
@@ -2390,42 +2390,24 @@ impl CompileResult {
 /// filesystem).
 pub(crate) struct Injected {
     pub file: ExecutableFile,
-    pub temp_path: path::Path,
+    pub temp_path: UnlinkOnDrop<path::Path>,
 }
 
-/// The temp copy while `inject` writes it: deleted unless `file` is taken out.
+/// The temp copy while `inject` writes it.
 struct UnfinishedCopy<'a> {
-    file: Option<ExecutableFile>,
-    name: &'a ZStr,
-}
-
-impl<'a> UnfinishedCopy<'a> {
-    fn new(file: ExecutableFile, name: &'a ZStr) -> Self {
-        Self {
-            file: Some(file),
-            name,
-        }
-    }
-}
-
-impl Drop for UnfinishedCopy<'_> {
-    fn drop(&mut self) {
-        let Some(file) = self.file.take() else { return };
-        // Make the file writable so we can delete it
-        #[cfg(unix)]
-        let _ = Syscall::fchmod(file.fd(), 0o700);
-        drop(file);
-        let _ = Syscall::unlink(self.name);
-    }
+    file: ExecutableFile,
+    name: UnlinkOnDrop<&'a ZStr>,
 }
 
 impl Injected {
     /// `copy` was opened relative to `cwd` (or by an absolute name); pin the name in
     /// `temp_path` so a later `chdir` cannot retarget the rename/unlink.
-    fn new(mut copy: UnfinishedCopy<'_>, cwd: &[u8]) -> Option<Injected> {
+    fn new(copy: UnfinishedCopy<'_>, cwd: &[u8]) -> Option<Injected> {
+        let temp_path = path::Path::resolve(&[cwd, &copy.name]).check_len().ok()?;
+        copy.name.keep();
         Some(Injected {
-            temp_path: path::Path::resolve(&[cwd, copy.name]).check_len().ok()?,
-            file: copy.file.take().expect("taken once"),
+            file: copy.file,
+            temp_path: UnlinkOnDrop::new(Fd::cwd(), temp_path),
         })
     }
 }
@@ -2505,6 +2487,7 @@ pub(crate) fn inject(
                 );
                 return None;
             }
+            let name = UnlinkOnDrop::new(Fd::cwd(), zname);
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
@@ -2525,7 +2508,7 @@ pub(crate) fn inject(
                 }
             };
 
-            break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
+            break 'brk (file.fd(), UnfinishedCopy { file, name });
         }
 
         #[cfg(target_os = "macos")]
@@ -2533,9 +2516,10 @@ pub(crate) fn inject(
             // if we're on a mac, use clonefile() if we can
             // failure is okay, clonefile is just a fast path.
             if let bun_sys::Result::Ok(()) = Syscall::clonefile(self_exe, zname) {
+                let name = UnlinkOnDrop::new(Fd::cwd(), zname);
                 let flags = bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
-                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), zname, flags, 0) {
-                    break 'brk (file.fd(), UnfinishedCopy::new(file, zname));
+                if let Ok(file) = ExecutableFile::openat(Fd::cwd(), &name, flags, 0) {
+                    break 'brk (file.fd(), UnfinishedCopy { file, name });
                 }
             }
         }
@@ -2599,7 +2583,9 @@ pub(crate) fn inject(
             unreachable!()
         };
         #[cfg(not(windows))]
-        let (fd, copy) = (file.fd(), UnfinishedCopy::new(file, zname));
+        let name = UnlinkOnDrop::new(Fd::cwd(), zname);
+        #[cfg(not(windows))]
+        let (fd, copy) = (file.fd(), UnfinishedCopy { file, name });
         #[cfg(not(windows))]
         let template = 'brk2: {
             for retry in 0..3 {
@@ -3049,13 +3035,12 @@ pub(crate) fn download_to_path(
                 refresher.start(b"Extracting", 0);
 
                 let mut tmpname_buf = [0u8; 1024];
-                let tempdir_name: &ZStr =
-                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+                let tempdir_name = bun_sys::DeleteTreeOnDrop::new(
+                    Fd::cwd(),
+                    bun_fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?,
+                );
                 let tmpdir = bun_sys::Dir::cwd()
                     .make_open_path(tempdir_name.as_bytes(), Default::default())?;
-                scopeguard::defer! {
-                    let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
-                }
                 let extract_res = bun_archive::Archiver::extract_to_dir(
                     tarball_bytes.as_slice(),
                     tmpdir.fd(),
@@ -3098,7 +3083,6 @@ pub(crate) fn download_to_path(
                     }
                     break;
                 }
-                drop(tmpdir);
                 refresher.end();
             }
             refresher.refresh();
@@ -3346,15 +3330,11 @@ pub fn to_executable(
         };
         let dest_path: &[u8] = &path::Path::resolve(&[cwd_path, outfile]);
 
-        let temp_w = bun_sys::win32_path(temp_path, bun_sys::Tag::rename);
-        let dest_w = bun_sys::win32_path(dest_path, bun_sys::Tag::rename);
+        let temp_w = bun_sys::win32_path(temp_path, bun_sys::Tag::rename)?;
+        let dest_w = bun_sys::win32_path(dest_path, bun_sys::Tag::rename)?;
 
         // Close the file handle before moving (Windows requires this)
         drop(injected.file);
-
-        let remove_temp = |_: &bun_sys::Error| _ = Syscall::unlink(&injected.temp_path);
-        let temp_w = temp_w.inspect_err(remove_temp)?;
-        let dest_w = dest_w.inspect_err(remove_temp)?;
 
         use bun_sys::windows::{self, Win32ErrorExt as _};
         if let Err(err) = windows::MoveFileExW(
@@ -3365,7 +3345,6 @@ pub fn to_executable(
                 | windows::MOVEFILE_WRITE_THROUGH,
         ) {
             let err = err.to_system_errno();
-            let _ = Syscall::unlink(&injected.temp_path);
             if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
@@ -3378,6 +3357,7 @@ pub fn to_executable(
                 err
             )));
         }
+        injected.temp_path.keep();
 
         // Set Windows icon and/or metadata using unified function
         if windows_options.icon.is_some()
@@ -3414,10 +3394,6 @@ pub fn to_executable(
         if let Err(e) =
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
-            drop(injected.file);
-
-            let _ = Syscall::unlink(temp_posix);
-
             if e.get_errno() == bun_errno::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
@@ -3432,6 +3408,7 @@ pub fn to_executable(
                 )));
             }
         }
+        injected.temp_path.keep();
 
         Ok(CompileResult::Success)
     }

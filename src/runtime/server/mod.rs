@@ -485,7 +485,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
-    /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
+    /// `HttpContext::onClose` / `HttpResponse::destroyForUpgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
     /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
@@ -2037,12 +2037,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         self.config.with_mut(|config| {
             if let Some(websocket) = config.websocket.as_mut() {
-                websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+                websocket.handler.app = Some(bun_ptr::BackRef::new(app.web_sockets()));
                 websocket.handler.server = Some(any_server);
-                websocket
-                    .handler
-                    .flags
-                    .set(web_socket_server_context::HandlerFlags::SSL, SSL);
             }
         });
 
@@ -2089,11 +2085,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         if is_star_path {
                             has_any_ws_route_for_star_path = true;
                         }
-                        app.ws(
+                        app.ws::<Self, ServerWebSocket>(
                             path,
                             ud,
                             1, // id 1 means is a user route
-                            ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            websocket.to_behavior(),
                             self_ptr.cast::<c_void>(),
                         );
                     }
@@ -2120,11 +2116,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(websocket) = websocket_ptr {
                         // Websocket upgrade is a GET request
                         if method_val == http_method::Method::GET {
-                            app.ws(
+                            app.ws::<Self, ServerWebSocket>(
                                 path,
                                 ud,
                                 1, // id 1 means is a user route
-                                ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                websocket.to_behavior(),
                                 self_ptr.cast::<c_void>(),
                             );
                         }
@@ -2335,11 +2331,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // not provided will respond with 403.
         if !has_any_ws_route_for_star_path {
             if let Some(websocket) = websocket_ptr {
-                app.ws(
+                app.ws::<Self, ServerWebSocket>(
                     b"/*",
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
-                    ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    websocket.to_behavior(),
                     self_ptr.cast::<c_void>(),
                 );
             }
@@ -2520,7 +2516,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let hostname = hostname.as_bytes();
                 if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname))
                 {
-                    let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    let _ = global.throw_value(crate::dns_jsc::answer_jsc::not_a_hostname_error(
                         global, hostname,
                     ));
                     return None;
@@ -2924,35 +2920,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Err(global.throw_invalid_arguments(format_args!("handlers must be an object")));
         }
         let mut handler = WebSocketServerHandler::from_js(global, handlers)?;
-        handler.app = Some(app.cast::<c_void>());
+        handler.app = Some(bun_ptr::BackRef::new(
+            bun_opaque::opaque_deref_mut(app).web_sockets(),
+        ));
         handler.server = Some(AnyServer::from(std::ptr::from_ref::<Self>(self)));
-        handler
-            .flags
-            .set(web_socket_server_context::HandlerFlags::SSL, SSL);
         Self::js_gc_ws_package_handlers_set(server_js, global, handlers);
         self.ws_package_handler.set(Some(Box::new(handler)));
         Ok(())
     }
 
-    /// The uWS context for `ws` sockets with these options. The app creates it on first use and owns it.
+    /// The context for `ws` sockets with these options. The app creates it on first use and owns it.
     fn ws_package_context(
         &self,
-        max_payload_length: u32,
-        auto_pong: bool,
-        skip_utf8_validation: bool,
-        compression: bool,
-    ) -> Option<core::ptr::NonNull<uws::WebSocketUpgradeContext>> {
+        behavior: uws::WebSocketBehavior,
+    ) -> Option<bun_ptr::BackRef<uws::WebSocketUpgradeContext>> {
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        core::ptr::NonNull::new(
-            bun_opaque::opaque_deref_mut(self.app()?).ws_package_context(
-                &server_web_socket::WsPackageSocket::behavior::<SSL>(
-                    max_payload_length,
-                    auto_pong,
-                    skip_utf8_validation,
-                    compression,
-                ),
-            ),
-        )
+        let web_sockets = bun_opaque::opaque_deref_mut(self.app()?).web_sockets();
+        Some(web_sockets.context::<server_web_socket::WsPackageSocket>(core::ptr::null(), behavior))
     }
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
@@ -3550,17 +3534,9 @@ impl AnyServer {
     /// See [`NewServer::ws_package_context`].
     pub(crate) fn ws_package_context(
         &self,
-        max_payload_length: u32,
-        auto_pong: bool,
-        skip_utf8_validation: bool,
-        compression: bool,
-    ) -> Option<core::ptr::NonNull<uws::WebSocketUpgradeContext>> {
-        any_server_dispatch!(self, |s| s.ws_package_context(
-            max_payload_length,
-            auto_pong,
-            skip_utf8_validation,
-            compression
-        ))
+        behavior: uws::WebSocketBehavior,
+    ) -> Option<bun_ptr::BackRef<uws::WebSocketUpgradeContext>> {
+        any_server_dispatch!(self, |s| s.ws_package_context(behavior))
     }
 
     pub(crate) fn h3_alt_svc(&self) -> Option<&[u8]> {
@@ -3628,7 +3604,9 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app() {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
+            Some(app) => bun_opaque::opaque_deref_mut(app)
+                .web_sockets()
+                .num_subscribers(topic),
             // Defensive 0
             // here for the post-stop window; assert in debug to catch misuse.
             None => {
@@ -3648,8 +3626,9 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app() {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            Some(app) =>
-                bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
+            Some(app) => bun_opaque::opaque_deref_mut(app)
+                .web_sockets()
+                .publish(topic, message, opcode, compress),
             // Defensive for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");

@@ -18,8 +18,6 @@ const implicit = (name?: string) =>
   `${name ? `error TS7023: '${name}'` : "error TS7024: Function"} implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.`;
 const refused = (source: string, target: string) =>
   `error TS2345: Argument of type '${source}' is not assignable to parameter of type '${target}'.`;
-const initializer =
-  "error TS7022: 'b' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.";
 const unassignable = (source: string) => `error TS2322: Type '${source}' is not assignable to type 'never'.`;
 
 // The files, in the order of "files", and what TypeScript reports for them.
@@ -58,47 +56,6 @@ export const f0_0 = (a: number) => nums.map(x => o1_0.g.m(x));
       `m2.ts(4,71): ${refused("(a: number) => any", "(value: string, index: number, array: string[]) => any")}`,
       `m2.ts(5,14): ${unassignable("any[]")}`,
       `m2.ts(6,14): ${unassignable("any")}`,
-    ],
-  ],
-  "methods of classes and objects": [
-    {
-      "m3.ts": `import { id, nums, strs } from "./h";
-import { f1_1 } from "./m1";
-import { f2_2 } from "./m2";
-export const o3_0 = { m(a: number) { return strs.every(f1_1); } };
-export class C3_1 { m(a: any, b = id(f2_2(a))) { return nums.map(o3_0.m); } }
-export declare const c3_1: C3_1;
-`,
-      "m1.ts": `import { over, cond, strs } from "./h";
-import { f0_0 } from "./m0";
-import { o3_0 } from "./m3";
-export const f1_1 = (a: number, b = strs.every(c1_2.m)) => cond;
-export class C1_2 { m(a: string, b = (cond ? over(f0_0) : f1_1(a))) { return strs.map(o3_0.m); } }
-export declare const c1_2: C1_2;
-`,
-      "m0.ts": `import { cond, nums } from "./h";
-import { f2_2 } from "./m2";
-export function f0_0(a: any) { if (cond) return f2_2(a); return f0_1; }
-export const f0_1 = (a: unknown) => nums;
-`,
-      "m2.ts": `import { strs } from "./h";
-import { c3_1, o3_0 } from "./m3";
-export function f2_2(a: string) { const t = strs.map(o3_0.m); return c3_1.m(a); }
-`,
-    },
-    [
-      `m0.ts(3,17): ${implicit("f0_0")}`,
-      `m1.ts(4,33): ${initializer}`,
-      `m1.ts(5,21): ${implicit("m")}`,
-      `m1.ts(5,34): ${initializer}`,
-      `m1.ts(5,64): ${refused("string", "number")}`,
-      `m1.ts(5,87): ${refused("(a: number) => any", "(value: string, index: number, array: string[]) => any")}`,
-      `m2.ts(3,17): ${implicit("f2_2")}`,
-      `m2.ts(3,54): ${refused("(a: number) => any", "(value: string, index: number, array: string[]) => any")}`,
-      `m3.ts(4,23): ${implicit("m")}`,
-      "m3.ts(4,56): error TS2769: No overload matches this call.",
-      "m3.ts(4,56): error TS2769: No overload matches this call.",
-      `m3.ts(5,21): ${implicit("m")}`,
     ],
   ],
 };

@@ -392,7 +392,7 @@ describe("Bun.Archive", () => {
     });
 
     test("gzip level affects compression ratio", async () => {
-      const largeContent = Buffer.alloc(50000, "Hello, World!");
+      const largeContent = await Bun.file(import.meta.path).bytes();
       const level1Archive = new Bun.Archive({ "large.txt": largeContent }, { compress: "gzip", level: 1 });
       const level12Archive = new Bun.Archive({ "large.txt": largeContent }, { compress: "gzip", level: 12 });
 

@@ -238,6 +238,12 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     }
 }
 
+/// BunCompiledModules.cpp. The file, or the form of it that the path names.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isParsedAsData(path: &bun_core::String) -> bool {
+    bun_aot::module_keys::is_parsed_as_data(path.to_utf8().slice())
+}
+
 /// BunCompiledModules.cpp. `Dead`: the default loader for the path does not parse data.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_core::String {

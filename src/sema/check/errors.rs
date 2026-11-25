@@ -1434,7 +1434,6 @@ impl Checker<'_, '_> {
         if self.task.file == Some(file) {
             let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
             if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
-                self.discard_task_unless_first();
                 return;
             }
         } else {

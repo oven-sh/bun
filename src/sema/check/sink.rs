@@ -605,7 +605,6 @@ impl Checker<'_, '_> {
             if self.task.file != Some(diagnostic.file) {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));
             } else {
-                self.discard_task_unless_first();
                 self.starts_of_discarded_errors.push(diagnostic.start);
                 if let Some(from) = self.expressions_checked_again() {
                     self.mark_tainted_from(from);

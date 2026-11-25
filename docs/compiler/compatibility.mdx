@@ -336,6 +336,7 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | `"useDefineForClassFields"` in `tsconfig.json`                                 | Taken from the one in the working directory | Taken from the one nearest to each file |
 | `export { x } from "./a.txt" with { type: "json" }`                            | The type is ignored: `a.txt` is text        | JSON, as with an `import`               |
 | `fn.caller` and `fn.arguments`, outside strict mode                            | The calling function and the arguments      | `null`. The build warns (`TS100302`)    |
+| `import.meta.resolveSync`, held in a variable and called in a function         | Resolves without the file that asked        | A `TypeError`                           |
 
 `process.env.NODE_ENV`, `process.platform` and `process.arch`, written out like that, are replaced by their values when you build, as in `bun build --compile`. `NODE_ENV=production ./app` still reads `"development"` unless you built with `NODE_ENV=production` or `--production`.
 
@@ -382,4 +383,5 @@ Check `error.name` or use `instanceof`, not `error.message`.
 | `import()` or `require()` with a `type` that isn't written out         | Write it out: `require("./a.json", { type: "file" })`. `require()` warns (`TS100177`)    |
 | Calling an import with `with { type: "macro" }` (`TS100053`)           | Pass `--no-aot`                                                                          |
 | A class with over 4,094 private fields (`TS100202`)                    | Pass `--no-aot`                                                                          |
+| Over 65,535 values that live across one `await` (`TS100057`)           | Pass `--no-aot`                                                                          |
 | The `console.*` diagnostics channels, for the global `console`         | Replace the methods of `console`, or log through a `new console.Console()`               |

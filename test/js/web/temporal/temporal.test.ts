@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isMacOS } from "harness";
+import { hasVersion as hasBunIcu } from "../intl/intl-golden/observe";
 
 // https://github.com/oven-sh/bun/issues/15853
 // The default-on/opt-out subprocess tests live in
@@ -90,8 +90,8 @@ describe("Temporal core operations", () => {
 
 // https://github.com/oven-sh/bun/issues/49579
 // Each amount is 2^32 days, to the nearest month. A day count that is truncated to 32 bits gives a date
-// in 2023. ICU4C truncates it, and macOS uses the system's ICU. oven-sh/WebKit#598 takes these calendars
-// off `ucal_add`.
+// in 2023. ICU4C truncates it, so a Bun that has the system's ICU does too (macOS, and Linux with a local
+// WebKit). oven-sh/WebKit#598 takes these calendars off `ucal_add`.
 describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"])("a far date of the %s calendar", calendar => {
   const date = Temporal.PlainDate.from({ year: 1445, month: 1, day: 1, calendar });
   const dateTime = date.toPlainDateTime();
@@ -101,7 +101,7 @@ describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"])("a far date
   describe.each([{ years: -12120122 }, { months: 145441464 }])("%j", duration => {
     const negated = Temporal.Duration.from(duration).negated();
 
-    test.todoIf(isMacOS).each([
+    test.todoIf(!hasBunIcu).each([
       ["PlainDate", date],
       ["PlainDateTime", dateTime],
       ["PlainYearMonth", yearMonth],
@@ -113,7 +113,7 @@ describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"])("a far date
       expect(() => start.subtract(negated, { overflow: "reject" })).toThrow(RangeError);
     });
 
-    test.todoIf(isMacOS)("Duration with relativeTo throws", () => {
+    test.todoIf(!hasBunIcu)("Duration with relativeTo throws", () => {
       const far = Temporal.Duration.from(duration);
       expect(() => far.total({ unit: "days", relativeTo: date })).toThrow(RangeError);
       expect(() => far.round({ largestUnit: "years", relativeTo: zoned })).toThrow(RangeError);
@@ -121,7 +121,7 @@ describe.each(["islamic-civil", "islamic-tbla", "islamic-umalqura"])("a far date
     });
   });
 
-  test.todoIf(isMacOS)("until and since with a far rounding increment throw", () => {
+  test.todoIf(!hasBunIcu)("until and since with a far rounding increment throw", () => {
     const years = { smallestUnit: "years", roundingIncrement: 12120122, roundingMode: "expand" } as const;
     const months = { smallestUnit: "months", roundingIncrement: 145441464, roundingMode: "expand" } as const;
     expect(() => date.until(date.subtract({ years: 1 }), years)).toThrow(RangeError);

@@ -421,6 +421,7 @@ fn with_workbench<R>(text: &str, then: impl for<'s> FnOnce(&mut Workbench<'s>) -
         experimental_decorators: false,
         every_file_is_a_module: true,
         reads_jsdoc: true,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let mut tree = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);

@@ -2243,7 +2243,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let at = (self.lx.start + 1, self.lx.end.saturating_sub(closer));
             return oxc::bad_escape_in_template(&mut self.f.diagnostics, at);
         }
-        match self.recovers() {
+        match self.recovers() || self.lx.takes_legacy_escapes_in_templates() {
             true => self.lx.rescan_template_without_tag(),
             false => self.report(),
         }

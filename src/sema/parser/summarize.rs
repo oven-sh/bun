@@ -99,6 +99,8 @@ struct ParseSettings<'a> {
     compiles: bool,
     /// `Options::reads_as_bun_run`
     reads_as_bun_run: bool,
+    /// `Options::accepts_legacy_octal`
+    accepts_legacy_octal: bool,
     /// `Options::ignores_pure_comments`
     ignores_pure_comments: bool,
     /// `Options::skips_function_blocks`
@@ -287,7 +289,7 @@ fn parse_file_as(
         accepts_legacy_octal: how.compiles
             && !is_js
             && !is_json
-            && ScriptKind::from_file_name(path).is_none(),
+            && (how.accepts_legacy_octal || ScriptKind::from_file_name(path).is_none()),
         ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
@@ -518,6 +520,7 @@ fn summarize_for_checker<'s>(
         attach_comments: false,
         compiles: false,
         reads_as_bun_run,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
@@ -555,6 +558,7 @@ pub fn summarize_top_level<'s>(
         attach_comments: false,
         compiles: false,
         reads_as_bun_run,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
         skips_function_blocks: true,
         reads_module_statements_alone: true,
@@ -615,6 +619,7 @@ pub fn summarize_in<'s>(
         attach_comments: false,
         compiles: false,
         reads_as_bun_run: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
@@ -711,6 +716,7 @@ pub fn with_summary_in_place<'s, R>(
         attach_comments,
         compiles: false,
         reads_as_bun_run: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,

@@ -14,6 +14,7 @@ fn count_imports_written(path: &str, text: &str) -> usize {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: true,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &options, text.as_bytes(), &atoms);

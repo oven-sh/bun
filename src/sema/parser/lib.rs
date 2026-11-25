@@ -156,7 +156,7 @@ pub struct Options {
     pub compiles: bool,
     /// The lexer reads text as `bun run` does. `compiles` implies it.
     pub reads_as_bun_run: bool,
-    /// With `compiles`, in a file whose name names no language, such as a script without an extension: it is read as TypeScript, and `bun run` accepts the octal forms of JavaScript in it.
+    /// With `compiles`, in TypeScript that is read as `bun run` reads it: in a test run, or in a file whose name names no language. The octal forms of JavaScript are accepted.
     pub accepts_legacy_octal: bool,
     /// With `compiles`: the engine gets the text as it is written, so a comment says of no call that it is pure.
     pub ignores_pure_comments: bool,

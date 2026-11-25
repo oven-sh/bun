@@ -400,6 +400,7 @@ pub(super) fn find_difference_in_kept_texts(
             experimental_decorators: hir.legacy_decorators,
             every_file_is_a_module: hir.is_forced_module,
             reads_jsdoc: false,
+            accepts_legacy_octal: true,
             ignores_pure_comments: false,
         },
     };
@@ -533,6 +534,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(session.arena(), &options, text_of_tree.as_bytes(), &atoms);

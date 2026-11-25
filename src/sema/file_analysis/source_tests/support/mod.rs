@@ -323,6 +323,7 @@ impl<'s> Workspace<'s> {
             experimental_decorators: source.experimental_decorators,
             every_file_is_a_module: false,
             reads_jsdoc: source.reads_jsdoc,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);

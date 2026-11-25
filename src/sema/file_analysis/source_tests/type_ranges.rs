@@ -331,6 +331,7 @@ fn parse_typescript<'s>(w: &Workspace<'s>, path: &str, text: &[u8]) -> File<'s> 
         experimental_decorators: false,
         every_file_is_a_module: true,
         reads_jsdoc: true,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let mut file = parse_for_compile(w.arena, &options, text, &w.atoms);

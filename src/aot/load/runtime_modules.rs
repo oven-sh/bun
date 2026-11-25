@@ -587,6 +587,7 @@ mod tests {
                 experimental_decorators: false,
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
+                accepts_legacy_octal: false,
                 ignores_pure_comments: false,
             };
             let text = runtime.read(path).unwrap();
@@ -625,6 +626,7 @@ mod tests {
                 experimental_decorators: false,
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
+                accepts_legacy_octal: false,
                 ignores_pure_comments: false,
             };
             let name = BStr::new(path);

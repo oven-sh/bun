@@ -324,6 +324,7 @@ fn name_that_binds_to_another_declaration_behind_the_writer_is_found() {
                 experimental_decorators: false,
                 every_file_is_a_module: true,
                 reads_jsdoc: true,
+                accepts_legacy_octal: false,
                 ignores_pure_comments: false,
             };
             parse_for_compile(arena, &options, text.as_bytes(), atoms)

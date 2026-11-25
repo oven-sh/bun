@@ -224,6 +224,7 @@ fn with_parts<R>(
         experimental_decorators: setup.emits_decorator_metadata,
         every_file_is_a_module: false,
         reads_jsdoc: true,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);

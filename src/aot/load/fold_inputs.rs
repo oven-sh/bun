@@ -347,6 +347,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
+            accepts_legacy_octal: false,
             ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), atoms);

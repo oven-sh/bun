@@ -97,9 +97,6 @@ const PAGE_NOT_NAMED_AS_ONE: &[u8] =
 const EXTENSIONS_OF_ENTRY_POINT_SOURCES: [&[u8]; 7] =
     [b"ts", b"tsx", b"jsx", b"mjs", b"mts", b"cjs", b"cts"];
 
-/// Octal literals, escapes of 8 and 9, and decimals with leading zeros: `bun run` takes them.
-const ERRORS_OF_TYPESCRIPT_ALONE: [u32; 3] = [1121, 1488, 1489];
-
 fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     let first = syntax_errors_of(hir).next()?;
     let mut sentence = Vec::new();
@@ -279,6 +276,7 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
@@ -298,6 +296,7 @@ fn parses_as_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
+        accepts_legacy_octal: false,
         ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
@@ -1814,6 +1813,7 @@ impl CodeHost for LoadHost<'_> {
                         experimental_decorators: false,
                         every_file_is_a_module: false,
                         reads_jsdoc: false,
+                        accepts_legacy_octal: false,
                         ignores_pure_comments: false,
                     };
                     return ParsedCode {
@@ -1850,6 +1850,7 @@ impl CodeHost for LoadHost<'_> {
                 experimental_decorators: false,
                 every_file_is_a_module: false,
                 reads_jsdoc: false,
+                accepts_legacy_octal: false,
                 ignores_pure_comments: false,
             };
             return ParsedCode {
@@ -1874,6 +1875,7 @@ impl CodeHost for LoadHost<'_> {
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
+            accepts_legacy_octal: load.runs_tests,
             ignores_pure_comments: self.input.options.removable.ignores_pure_annotations
                 || hir::find_transpiled_mark(text).is_some(),
         };
@@ -1902,8 +1904,7 @@ impl CodeHost for LoadHost<'_> {
         let is_entry_point = is_entry_text || self.is_entry_point(path);
         let fails_where_loaded = load.runs_tests
             && matches!(served_by, ServedBy::Disk)
-            && !is_from_plugin
-            && syntax_errors_of(&hir).any(|it| !ERRORS_OF_TYPESCRIPT_ALONE.contains(&it.code));
+            && !is_from_plugin;
         let parse_failure = match fails_where_loaded || (is_language_assumed && !is_entry_point) {
             true => describe_parse_failure(&hir, text),
             false => None,

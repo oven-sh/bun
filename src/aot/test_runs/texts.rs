@@ -529,6 +529,7 @@ impl<'t> Look<'t> {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
+            accepts_legacy_octal: true,
             ignores_pure_comments: false,
         };
         let text: &'t [u8] = arena.alloc_slice_copy(text);

@@ -991,6 +991,18 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, kind.is_entry_point(), out)
     }
 
+    /// The enclosing tsconfig's `paths` lead from `import_path` to a file on disk.
+    pub fn is_named_by_tsconfig(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
+        let mut found = MatchResult::default();
+        self.resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut found)
+            .is_success()
+    }
+
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
         // NOTE: capture `log` before partially borrowing `self.debug_logs`
         // so the method call doesn't conflict with the field borrow (`log()`

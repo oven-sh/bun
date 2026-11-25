@@ -1296,7 +1296,20 @@ impl CodeHost for LoadHost<'_> {
         let directory = to_native(request.directory);
         let is_left_to_run_time = is_import
             && ((load.runs_tests && contains_char(request.specifier, b'?'))
-                || is_external(&load.externals, request.specifier, request.kind, directory));
+                || is_external(
+                    &load.externals,
+                    request.specifier,
+                    request.kind,
+                    directory,
+                    &|| {
+                        self.input.provider.is_named_by_tsconfig(&FileSearch {
+                            directory: request.directory,
+                            specifier: request.specifier,
+                            kind: request.kind,
+                            prefers_module_field: options.code.prefers_module_field,
+                        })
+                    },
+                ));
         match is_left_to_run_time {
             true => HostResolution::External {
                 specifier: request.specifier.to_vec(),

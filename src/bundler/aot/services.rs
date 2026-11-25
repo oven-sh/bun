@@ -107,14 +107,22 @@ impl FileFinder {
         with_ast_scope(|_| self.find_in_ast_scope(search))
     }
 
+    pub fn is_named_by_tsconfig(&mut self, search: &FileSearch<'_>) -> bool {
+        with_ast_scope(|_| {
+            let resolver = &mut self.0;
+            let mut unread_log = Log::init();
+            // SAFETY: the resolver and `unread_log` outlive the guard.
+            let _log_scope =
+                unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&mut unread_log)) };
+            let directory = bun_paths::to_native(to_native(search.directory));
+            resolver.is_named_by_tsconfig(&directory, search.specifier, import_kind(search.kind))
+        })
+    }
+
     // The resolver reads `package.json` and `tsconfig.json` into the thread's store of trees.
     fn find_in_ast_scope(&mut self, search: &FileSearch<'_>) -> FoundCode {
         let resolver = &mut self.0;
-        let kind = match search.kind {
-            CodeImportKind::EntryPoint => bun_ast::ImportKind::EntryPointBuild,
-            CodeImportKind::Import => bun_ast::ImportKind::Stmt,
-            CodeImportKind::Require => bun_ast::ImportKind::Require,
-        };
+        let kind = import_kind(search.kind);
         let mut unread_log = Log::init();
         // SAFETY: the resolver and `unread_log` outlive the guard.
         let _log_scope =
@@ -153,6 +161,14 @@ impl FileFinder {
                 ),
             },
         }
+    }
+}
+
+fn import_kind(kind: CodeImportKind) -> bun_ast::ImportKind {
+    match kind {
+        CodeImportKind::EntryPoint => bun_ast::ImportKind::EntryPointBuild,
+        CodeImportKind::Import => bun_ast::ImportKind::Stmt,
+        CodeImportKind::Require => bun_ast::ImportKind::Require,
     }
 }
 
@@ -711,6 +727,21 @@ impl FilesForFileSystem {
     }
 }
 
+impl BundlerServices {
+    fn with_file_finder<R>(&self, ask: impl FnOnce(&mut FileFinder) -> R) -> R {
+        let idle = self.file_finders.lock().pop();
+        let create = || {
+            let conditions = [AOT_CONDITION.to_vec()];
+            // SAFETY: `build` keeps the carrier and its transpiler as they are until `shut_down` has returned.
+            unsafe { FileFinder::new(self.context.bundle().transpiler(), &conditions) }
+        };
+        let mut finder = idle.unwrap_or_else(create);
+        let answer = ask(&mut finder);
+        self.file_finders.lock().push(finder);
+        answer
+    }
+}
+
 impl SourceProvider for BundlerServices {
     fn work_beside_engine(&self, paths: &PathsOfProgram<'_>) {
         let wanted = &self.names_wanted;
@@ -787,16 +818,12 @@ impl SourceProvider for BundlerServices {
         self.plugins.is_some()
     }
 
+    fn is_named_by_tsconfig(&self, search: &FileSearch<'_>) -> bool {
+        self.with_file_finder(|finder| finder.is_named_by_tsconfig(search))
+    }
+
     fn find_file(&self, _host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
-        let idle = self.file_finders.lock().pop();
-        let create = || {
-            let conditions = [AOT_CONDITION.to_vec()];
-            // SAFETY: `build` keeps the carrier and its transpiler as they are until `shut_down` has returned.
-            unsafe { FileFinder::new(self.context.bundle().transpiler(), &conditions) }
-        };
-        let mut finder = idle.unwrap_or_else(create);
-        let found = finder.find(search);
-        self.file_finders.lock().push(finder);
+        let found = self.with_file_finder(|finder| finder.find(search));
         if let FoundCode::NotFound(failure) = found
             && failure.is_refusal_of_package_json()
             && search.kind != CodeImportKind::EntryPoint

@@ -1765,6 +1765,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let [definition, getter] = known_binding.functions[..] else {
             return None;
         };
+        if is_left_out(self, self.file, getter) {
+            return None;
+        }
         let (has_own_property, call_name) = self.find_has_own_property(export_star)?;
         Some(ExportStarPlan {
             create_binding,

@@ -3566,6 +3566,7 @@ fn loader_refusal_error<const DATA_ONLY: bool>(
     let is_read_from_disk = loader.is_java_script_like()
         && lr.virtual_source.is_none()
         && !lr.path.text.starts_with(b"data:")
+        && !bun_options_types::standalone_path::is_bun_standalone_file_path(lr.path.text)
         && !bun_jsc::compiled_program::is_compiled_module(lr.path.text);
     if is_read_from_disk
         && let Some(error) = unreadable_file_error(global, specifier, referrer, log, lr.path.text)

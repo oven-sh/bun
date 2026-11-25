@@ -59,6 +59,11 @@ impl ListenSocket {
         us_listen_socket_adopt_fd(self, fd) == 0
     }
 
+    /// Call before another process gets a duplicate of this socket (see `bsd_accept_socket`).
+    pub fn set_shared(&mut self) {
+        us_listen_socket_set_shared(self)
+    }
+
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close, or when `hostname` is registered again.
     ///
@@ -100,6 +105,7 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_adopt_fd(ls: &mut ListenSocket, fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
+    safe fn us_listen_socket_set_shared(ls: &mut ListenSocket);
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

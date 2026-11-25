@@ -89,7 +89,7 @@ struct Inner {
     inflight_write: Cell<Option<InflightRequest>>,
 }
 
-/// When a read of shared input consumes data.
+/// When a read on a synchronous handle consumes data.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ConsumeMode {
     Immediate,
@@ -239,10 +239,15 @@ impl Pipe {
         let mut data = match this
             .inflight_read
             .take()
-            .map(|inflight| inflight.request.cancel_and_wait())
+            .map(|inflight| inflight.request.try_take_completion())
         {
             Some(Ok(completion)) => completion.buffer,
-            // `Err` is a deferred callback, whose event is returned below or recurs on the next read, or a cancel that timed out.
+            // The pipe is empty. If the read is cancelled, a concurrent write above the quota succeeds with 0 bytes.
+            Some(Err(request)) if request.is_pending_io() => {
+                this.inflight_read.set(Some(request.into()));
+                return None;
+            }
+            // A deferred callback, whose event is returned below or recurs on the next read.
             Some(Err(_)) | None => Vec::new(),
         };
         if !this.state.has_buffered_event() {
@@ -603,18 +608,12 @@ impl Inner {
         let buffer = self.state.acquire_buffer(max_len);
         let cancel_token = worker_token.clone();
         let is_kind_known = self.io_mode.get().is_some();
-        let shared_mode = self.is_input_shared.get().then_some(mode);
         blocking::spawn(move || {
             let kind = resolve_kind(&handle, is_kind_known);
             let read = match kind {
-                Kind::Synchronous => read_synchronous(
-                    &handle,
-                    buffer,
-                    max_len,
-                    shared_mode,
-                    &worker_token,
-                    &completer,
-                ),
+                Kind::Synchronous => {
+                    read_synchronous(&handle, buffer, max_len, mode, &worker_token, &completer)
+                }
                 Kind::Overlapped | Kind::NotAPipe => BlockingRead::Readable(buffer),
             };
             // Released before completing, so that closing the pipe from the callback takes effect immediately.
@@ -780,12 +779,11 @@ enum BlockingRead {
     Readable(Vec<u8>),
 }
 
-/// `shared_mode` is `None` for input that is not shared.
 fn read_synchronous<T: Send + 'static>(
     handle: &Handle,
     mut buffer: Vec<u8>,
     max_len: usize,
-    mut shared_mode: Option<ConsumeMode>,
+    mut mode: ConsumeMode,
     cancel_token: &CancelToken,
     completer: &Completer<T>,
 ) -> BlockingRead {
@@ -805,7 +803,7 @@ fn read_synchronous<T: Send + 'static>(
     };
     let has_consumed = cancel_token.run(|| {
         for _ in 0..MAX_READABLE_WAITS {
-            if shared_mode == Some(ConsumeMode::Immediate)
+            if mode == ConsumeMode::Immediate
                 && let Some(available) = named_pipe::peek_available(handle)?
             {
                 let size = compute_buffer_size(available).min(max_len);
@@ -814,15 +812,12 @@ fn read_synchronous<T: Send + 'static>(
                 }
                 break;
             }
-            if shared_mode.is_none() {
-                break;
-            }
             read_blocking(&mut buffer, 0)?;
             // Running JS may have handed the input to a child process or be about to pause.
             if cancel_token.is_cancelled() || !completer.is_port_parked() {
                 return Ok(false);
             }
-            shared_mode = Some(ConsumeMode::Immediate);
+            mode = ConsumeMode::Immediate;
         }
         read_blocking(&mut buffer, max_len).map(|_| true)
     });

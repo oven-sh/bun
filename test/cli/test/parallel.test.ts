@@ -948,6 +948,24 @@ test("--parallel prints what a file printed under that file's name", async () =>
   expect(exitCode).toBe(1);
 });
 
+test.skipIf(!isWindows)("--parallel keeps writes that are larger than the pipe", async () => {
+  const fixture = `import {test} from "bun:test";
+    const line = Buffer.alloc(70_000, "#").toString();
+    for (let i = 0; i < 300; i++) test("t" + i, () => console.log(line));`;
+  using dir = tempDir("parallel-large-output", { "a.test.js": fixture, "b.test.js": fixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  // The report is shorter than one line.
+  expect(Math.floor(stderr.length / 70_000)).toBe(2 * 300);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel never interleaves console output across files", async () => {
   // Two files, each test logs a marker then sleeps so the other worker has
   // time to also log. Buffered-per-test flush means a MARK line is always

@@ -216,18 +216,18 @@ fn cancel_runs_callback_and_drop_does_not() {
 }
 
 #[test]
-fn cancel_and_wait_returns_completion_without_callback() {
+fn try_take_completion_returns_completion_without_callback() {
     let port = Port::new().unwrap();
     for new_file in FILE_CONSTRUCTORS {
         let (file, peer) = create_pipe(&port, new_file);
         let result = Rc::default();
         port.waker().wake();
-        let cancelled = start_read(&file, &result).cancel_and_wait().ok().unwrap();
-        assert_eq!(cancelled.status, NTSTATUS::CANCELLED);
-
         let request = start_read(&file, &result);
+        let request = request.try_take_completion().err().unwrap();
+        assert!(request.is_pending_io());
+
         peer.write_all(b"abc").unwrap();
-        assert_eq!(request.cancel_and_wait().ok().unwrap().buffer, b"abc");
+        assert_eq!(request.try_take_completion().ok().unwrap().buffer, b"abc");
         assert_eq!(run_iteration(&port, Duration::from_secs(10)), 1);
         assert!(result.borrow().is_none() && port.callback_count() == 0);
     }
@@ -1025,7 +1025,6 @@ fn delayed_set_event_still_delivers_wake() {
     }
     let port = Port::new().unwrap();
     let completed_count = Rc::default();
-    let (file, _peer) = create_pipe(&port, OverlappedFile::new_exclusive);
     for is_prefetched in [false, true] {
         let (_request, completer) = new_counted_request(&port, &completed_count);
         let waker = port.waker();
@@ -1049,7 +1048,7 @@ fn delayed_set_event_still_delivers_wake() {
         let event = unsafe { BorrowedHandle::borrow_raw(event) };
         w::set_event(&event.try_clone_to_owned().unwrap());
         if is_prefetched {
-            assert!(start_read(&file, &Rc::default()).cancel_and_wait().is_ok());
+            assert!(port.prefetch_packets(sys::Timeout::Zero));
         }
         assert_eq!(run_iteration(&port, Duration::ZERO), 1);
         assert_wait_times_out(&port);
@@ -1371,27 +1370,15 @@ fn request_is_cancelled_when_notifier_association_fails() {
 }
 
 #[test]
-fn cancel_and_wait_returns_request_when_cancel_is_ignored() {
+fn try_take_completion_leaves_pending_read_in_flight() {
     let port = Port::new().unwrap();
     for new_file in FILE_CONSTRUCTORS {
         let (file, peer) = create_pipe(&port, new_file);
         let result = Rc::default();
-        let read = start_read(&file, &result);
-        let success = to_return_value(NTSTATUS::SUCCESS);
-        let ignored_cancel = fail(Call::NtCancelIoFileEx, 1, success);
-        let timeouts = Rc::new(RefCell::new(Vec::new()));
-        let timeouts_clone = Rc::clone(&timeouts);
-        let instant_timeout = intercept(Call::NtRemoveIoCompletionEx, move |args| {
-            // SAFETY: `args[4]` is the `Timeout` pointer, which is null or valid during the call.
-            let timeout = unsafe { ptr::with_exposed_provenance::<i64>(args[4]).as_ref() };
-            timeouts_clone.borrow_mut().push(timeout.copied());
-            Some(to_return_value(NTSTATUS::TIMEOUT))
-        });
-        freeze_clock();
-        let _read = read.cancel_and_wait().err().unwrap();
-        FROZEN_TIME.set(None);
-        assert_eq!(timeouts.take(), [Some(-10_000_000)]);
-        drop((ignored_cancel, instant_timeout));
+        let _read = start_read(&file, &result)
+            .try_take_completion()
+            .err()
+            .unwrap();
         peer.write_all(b"late").unwrap();
         run_until(&port, || result.borrow().is_some());
         assert_eq!(result.take().unwrap().buffer, b"late");
@@ -1399,7 +1386,7 @@ fn cancel_and_wait_returns_request_when_cancel_is_ignored() {
 }
 
 #[test]
-fn cancel_and_wait_drains_port_after_deadline() {
+fn try_take_completion_drains_unrelated_packets() {
     let port = Port::new().unwrap();
     let (file, peer) = create_pipe(&port, OverlappedFile::new_exclusive);
     let read = start_read(&file, &Rc::default());
@@ -1407,29 +1394,7 @@ fn cancel_and_wait_drains_port_after_deadline() {
         sys::post_packet(&port.shared.handle, key::TIMER, 0);
     }
     peer.write_all(b"last").unwrap();
-    CLOCK_STEP.set(Duration::from_secs(2));
-    assert_eq!(read.cancel_and_wait().ok().unwrap().buffer, b"last");
-}
-
-#[test]
-fn cancel_and_wait_outlasts_unrelated_packets() {
-    let port = Port::new().unwrap();
-    let (file, peer) = create_pipe(&port, OverlappedFile::new_exclusive);
-    let read = start_read(&file, &Rc::default());
-    let success = to_return_value(NTSTATUS::SUCCESS);
-    let _ignored_cancel = fail(Call::NtCancelIoFileEx, 1, success);
-    let port_clone = Rc::clone(&port);
-    let mut dequeue_count = 0;
-    let _guard = intercept(Call::NtRemoveIoCompletionEx, move |_| {
-        dequeue_count += 1;
-        if dequeue_count < 2000 {
-            sys::post_packet(&port_clone.shared.handle, key::TIMER, 0);
-        } else {
-            peer.write_all(b"last").unwrap();
-        }
-        None
-    });
-    assert_eq!(read.cancel_and_wait().ok().unwrap().buffer, b"last");
+    assert_eq!(read.try_take_completion().ok().unwrap().buffer, b"last");
 }
 
 #[test]
@@ -2111,7 +2076,7 @@ fn read_to_end_reads_pipes_concurrently() {
 }
 
 #[test]
-fn cancel_and_wait_keeps_slot_until_packet_arrives() {
+fn try_take_completion_keeps_slot_until_packet_arrives() {
     if !has_wait_packets() {
         return;
     }
@@ -2120,8 +2085,8 @@ fn cancel_and_wait_keeps_slot_until_packet_arrives() {
     let read = start_read(&file, &Rc::default());
     let pending = to_return_value(NTSTATUS::PENDING);
     let _failure = fail(Call::NtCancelWaitCompletionPacket, 1, pending);
-    let completion = read.cancel_and_wait().ok().unwrap();
-    assert_eq!(completion.status, NTSTATUS::CANCELLED);
+    peer.write_all(b"data").unwrap();
+    assert_eq!(read.try_take_completion().ok().unwrap().buffer, b"data");
     assert_pending_read_completes(&port, &file, &peer);
 }
 
@@ -2131,19 +2096,15 @@ fn take_sync_completion_requires_completed_read() {
     let (file, peer) = create_pipe(&port, OverlappedFile::new_exclusive);
     let pending_read = start_read(&file, &Rc::default());
     drop(pending_read.take_sync_completion().err().unwrap());
-    drop(
-        Request::defer(&port, || {})
-            .cancel_and_wait()
-            .err()
-            .unwrap(),
-    );
+    let deferred = Request::defer(&port, || {}).try_take_completion();
+    assert!(!deferred.err().unwrap().is_pending_io());
     run_until(&port, || !port.has_abandoned_requests());
 
     peer.write_all(b"here").unwrap();
     let completed_read = start_read(&file, &Rc::default());
     completed_read.cancel();
     assert_eq!(
-        completed_read.cancel_and_wait().ok().unwrap().buffer,
+        completed_read.try_take_completion().ok().unwrap().buffer,
         b"here"
     );
 }

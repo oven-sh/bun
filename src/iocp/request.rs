@@ -15,7 +15,7 @@ use bun_sys::{Fd, FdExt as _};
 use bun_windows_sys::{HANDLE, NT_ERROR, NTSTATUS, ULONG, ntdll};
 
 use crate::notifier::Notifier;
-use crate::port::{Port, Shared, key, now_ns};
+use crate::port::{Port, Shared, key};
 use crate::slab::{Slab, Token};
 use crate::sys::{self, Packet, Timeout};
 
@@ -364,24 +364,17 @@ impl Request {
         }
     }
 
-    /// For a request on a pipe. On `Ok` the callback does not run.
-    pub fn cancel_and_wait(self) -> Result<Completion, Request> {
-        const TIMEOUT_NS: u64 = 1_000_000_000;
+    /// For a request that may have completed since the last dequeue. On `Ok` the callback does not run.
+    pub fn try_take_completion(self) -> Result<Completion, Request> {
         let requests = &self.port.requests;
         let slot = match requests.get(self.token) {
             Some(slot) if slot.state.get() == State::PendingIo => slot,
             _ => return self.take_sync_completion(),
         };
-        self.cancel();
-        let deadline_ns = now_ns() + TIMEOUT_NS;
-        let mut is_timed_out = false;
         while slot.status.get().0 == NTSTATUS::PENDING {
-            if is_timed_out {
+            if !self.port.prefetch_packets(Timeout::Zero) {
                 return Err(self);
             }
-            let remaining_ns = deadline_ns.saturating_sub(now_ns());
-            let timeout = Timeout::Relative(remaining_ns.div_ceil(100) as i64);
-            is_timed_out = !self.port.prefetch_packets(timeout);
         }
         let completion = slot.take_completion();
         let _callback = requests.take_callback(&slot);
@@ -390,6 +383,11 @@ impl Request {
             requests.slab.borrow_mut().release(self.token);
         }
         Ok(completion)
+    }
+
+    pub fn is_pending_io(&self) -> bool {
+        let slot = self.port.requests.get(self.token);
+        slot.is_some_and(|slot| slot.state.get() == State::PendingIo)
     }
 
     /// Asks the kernel to cancel pending file I/O. The callback runs either way.

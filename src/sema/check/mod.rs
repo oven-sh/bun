@@ -1097,6 +1097,7 @@ impl<'s> Program<'s> {
             has_class_or_function_declaration: Default::default(),
             flow_containers_of_classes: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
+            stack_below_generic_mapped_types: 0,
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
             recent_unions: Default::default(),
@@ -2523,6 +2524,8 @@ pub struct Checker<'p, 's> {
     identical_base_types_in_progress: Vec<(TypeId, usize)>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
+    /// `stack_in_use` when the first of them began.
+    stack_below_generic_mapped_types: isize,
     /// The ones for which it hit the `instantiation_count` limit since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
@@ -3223,26 +3226,30 @@ impl<'p, 's> Checker<'p, 's> {
             self.unwind_to = usize::MAX;
             self.restart_with = None;
         }
-        let is_low = self.is_stack_low();
-        if is_low {
-            self.reject_outermost_in_flight(q);
-            // Not every query is about an expression or a type node. One that continues regardless ends up here again.
-            self.unwind_to = 0;
-            self.unwind_work = self.work + 1;
-            self.restart_with = None;
+        if self.is_stack_low() || self.is_rejected(q) {
+            self.reject_all_in_flight(q);
+            self.last_enter = EnterOutcome::Rejected;
+            self.bailed_out();
+            return true;
         }
-        // Every later `enter` takes this path.
-        self.work_trap = if self.rejected_expressions.is_empty() && !is_low {
+        // While there are `rejected_expressions`, every later `enter` takes this path.
+        self.work_trap = if self.rejected_expressions.is_empty() {
             WORK_TRAP_DISARMED
         } else {
             self.work + 1
         };
-        if !is_low && !self.is_rejected(q) {
-            return false;
-        }
-        self.last_enter = EnterOutcome::Rejected;
-        self.bailed_out();
-        true
+        false
+    }
+
+    /// `q` is the innermost query. Nothing in flight is cacheable now, and nothing that a query in flight would still ask
+    /// for is either, so every query is rejected until `stack` is empty.
+    fn reject_all_in_flight(&mut self, q: Query) {
+        self.reject_outermost_in_flight(q);
+        // Not every query is about an expression or a type node. One that continues regardless ends up here again.
+        self.unwind_to = 0;
+        self.unwind_work = self.work + 1;
+        self.work_trap = self.work + 1;
+        self.restart_with = None;
     }
 
     /// Returns the file, start and end of the expression or type node that `q` is about.
@@ -3406,6 +3413,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if !is_resolved {
             self.ran_out_of_stack.set(true);
+            self.reject_all_in_flight(waiting);
             self.bailed_out();
         }
         is_resolved

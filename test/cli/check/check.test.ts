@@ -3379,7 +3379,7 @@ after/src/reader.ts(2,14): error TS2322: Type '"second"' is not assignable to ty
       const names = ["a", "b", "c", "d", "e"];
       const files: Record<string, string> = {
         "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
-        "shared/deep.d.ts": `type Deep = number${repeat("[]", 100_000)};\ndeclare const one: 1;\n`,
+        "shared/deep.d.ts": `type Deep = number${repeat("[]", 1_000_000)};\ndeclare const one: 1;\n`,
       };
       for (const name of names) {
         files[`${name}/tsconfig.json`] = JSON.stringify({
@@ -7015,9 +7015,9 @@ const wrong: number = "";
     });
 
     // The parser reads a run of `[]` in a loop, so nothing bounds the depth of the type.
-    test("reports running out of stack, and the file's other error, for an array type nested 100,000 deep", async () => {
+    test("reports running out of stack, and the file's other error, for an array type nested 1,000,000 deep", async () => {
       using dir = project({
-        "a.ts": `export type T = number${repeat("[]", 100_000)};\nexport const wrong: number = "";\n`,
+        "a.ts": `export type T = number${repeat("[]", 1_000_000)};\nexport const wrong: number = "";\n`,
       });
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe(`a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`);

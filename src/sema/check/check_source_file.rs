@@ -26,6 +26,9 @@ const TASK_STACK: usize = 3 << 20;
 /// The same on a thread with `bun_sema_driver::WORKER_STACK_SIZE`, which the product checks on. What recurses between two
 /// looks at the stack has the rest.
 const TASK_STACK_OF_WORKER: usize = 24 << 20;
+
+/// The same on a thread with `bun_sema_driver::LAST_ROUND_STACK_SIZE`, for the files that need more.
+const TASK_STACK_OF_LAST_ROUND: usize = 252 << 20;
 const WORKER_STACK_LEFT_OVER: usize = 4 << 20;
 
 impl<'s> Checker<'_, 's> {
@@ -37,11 +40,11 @@ impl<'s> Checker<'_, 's> {
             "the thread has too little stack for a task"
         );
         self.stack_base = stack_pointer();
-        self.stack_limit = match left >= TASK_STACK_OF_WORKER + WORKER_STACK_LEFT_OVER {
-            true => TASK_STACK_OF_WORKER,
-            false => TASK_STACK,
-        };
-        self.has_stack_for_questions = left >= 2 * TASK_STACK_OF_WORKER + WORKER_STACK_LEFT_OVER;
+        let has = |limit: &usize| left >= limit + WORKER_STACK_LEFT_OVER;
+        let mut limits = [TASK_STACK_OF_LAST_ROUND, TASK_STACK_OF_WORKER].into_iter();
+        self.stack_limit = limits.find(has).unwrap_or(TASK_STACK);
+        self.has_stack_for_questions =
+            self.stack_limit != TASK_STACK && has(&(2 * self.stack_limit));
     }
 
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this

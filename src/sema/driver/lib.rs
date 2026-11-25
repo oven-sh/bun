@@ -399,6 +399,9 @@ pub const WORKER_STACK_SIZE: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREA
 /// Whoever lowers walks the tree too and asks the checker from wherever it stands, so there is as much again for a question.
 pub const LOWERING_STACK_SIZE: u32 = 2 * WORKER_STACK_SIZE;
 
+/// For the last round, if a file in it needs more stack than a thread of the pool has. TypeScript's stack grows to 1 GB.
+const LAST_ROUND_STACK_SIZE: usize = 512 << 20;
+
 static INLINE_REGION_THREADS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
 
 /// From now on, parallel regions that start on the calling thread run only on that thread, like they do on a pool
@@ -431,6 +434,21 @@ fn runs_regions_inline() -> bool {
     INLINE_REGION_THREADS
         .lock()
         .contains(&std::thread::current().id())
+}
+
+/// Runs `work` on a thread with `LAST_ROUND_STACK_SIZE`, or on a thread of the pool if there can be no such thread.
+fn run_with_stack_of_last_round(host: &dyn Host, work: &(dyn Fn() + Sync)) {
+    let started = std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(LAST_ROUND_STACK_SIZE);
+        let started = thread.spawn_scoped(scope, || {
+            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun Check Last"));
+            host.run_regions_inline(&mut || work());
+        });
+        started.is_ok()
+    });
+    if !started {
+        host.parallel(1, &|_| work());
+    }
 }
 
 /// A pool thread that waited until other pool threads have started its tasks could wait forever, because they may all be waiting like it.
@@ -5070,6 +5088,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let emit_diagnostics: Guarded<Vec<Vec<Diagnostic>>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Incomplete>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
+    let has_run_out_of_stack = AtomicBool::new(false);
     let queries = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
@@ -5807,7 +5826,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     }
                     checker.leave_depth_limit_unreported(false);
                 }
-                checker.take_ran_out_of_stack();
+                if checker.take_ran_out_of_stack() {
+                    has_run_out_of_stack.store(true, Ordering::Relaxed);
+                }
                 if let Some(progress) = request.progress {
                     progress.checked.fetch_add(1, Ordering::Relaxed);
                     let bytes = bytes_of(index);
@@ -6068,6 +6089,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         match host.helpers_now() {
             Some(_) if workers > 1 => {
                 run_with_current_helpers(host, 0, &mut worker(false), &work);
+            }
+            _ if is_last_round && has_run_out_of_stack.load(Ordering::Relaxed) => {
+                run_with_stack_of_last_round(host, &work)
             }
             _ => host.parallel(workers, &|_| work()),
         }

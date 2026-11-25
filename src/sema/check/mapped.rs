@@ -10,6 +10,9 @@ use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppe
 use crate::util::SharedSort;
 use smallvec::SmallVec;
 
+/// How much stack `isGenericMappedType` of types from one declaration takes before it counts as having no end.
+const MOST_STACK_OF_GENERIC_MAPPED_TYPES: isize = 12 << 20;
+
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None` is an access produced by instantiation
 /// or by a constraint. `Other` is a name in a pattern, where nothing is reported yet.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -287,8 +290,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // In `{ [K in "a" as Z<T[]>]: 1 }`, every level is a different type from the same declaration.
         let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
+        if self.generic_mapped_types_in_progress.is_empty() {
+            self.stack_below_generic_mapped_types = self.stack_in_use();
+        }
         self.generic_mapped_types_in_progress.push((file, node));
-        let name = if is_in_progress && self.is_half_of_stack_in_use() {
+        let used = self.stack_in_use() - self.stack_below_generic_mapped_types;
+        let is_endless = used > MOST_STACK_OF_GENERIC_MAPPED_TYPES.min(self.stack_limit as isize / 2);
+        let name = if is_in_progress && is_endless {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;
             self.instantiation_too_deep()

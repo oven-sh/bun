@@ -1612,7 +1612,7 @@ it("indents the caret under the printed excerpt when a one-line bun.lock has man
     expect(excerpt.slice(caretAt, caretAt + 8)).toBe('"sha512-');
   }
   // Linear in the entry count: each warning prints a ~120-byte excerpt, except
-  // the ones in the last 80 bytes of the line, which print the whole line.
+  // the ones in the last 80 bytes of the line, which print the whole line, as on main.
   expect(err.length).toBeLessThan(count * 500 + 4 * lock.length);
   expect(exitCode).toBe(0);
 });

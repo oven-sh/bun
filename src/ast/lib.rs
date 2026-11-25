@@ -533,7 +533,7 @@ pub struct Location {
     pub length: u32,
     // TODO: document or remove
     pub offset: usize,
-    /// Set by [`Location::init_or_null`] when a display cuts `line_text`: the byte offset of the error in it, plus one.
+    /// The byte offset of the error in `line_text`, plus one, when [`Location::excerpt`] is to cut `line_text` around it.
     pub cut_around: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
@@ -3082,11 +3082,14 @@ mod location_tests {
         let long = format!("{}{mixed}", "\u{1f600}".repeat(251));
         let long_offsets = (0..=long.len()).filter(|at| at % 97 == 0 || long.len() - at < 84);
         let short = mixed.repeat(13);
-        for (line, offsets) in [
-            (short.as_bytes(), (0..=short.len()).collect::<Vec<_>>()),
-            (long.as_bytes(), long_offsets.collect()),
+        let every_offset: Vec<usize> = (0..=short.len()).collect();
+        // After a lone CR the column is one too small, and so is the start of the excerpt.
+        for (line, offsets, line_break, column_fault) in [
+            (short.as_bytes(), every_offset.clone(), b"\n", 0),
+            (long.as_bytes(), long_offsets.collect(), b"\n", 0),
+            (short.as_bytes(), every_offset, b"\r", 1),
         ] {
-            let contents = [b"first\n", line, b"\nlast"].concat();
+            let contents = [b"first", &line_break[..], line, line_break, b"last"].concat();
             let source = Source::init_path_string(b"excerpt.js" as &[u8], contents.as_slice());
             let mut tracker = LineColumnTracker::default();
             for offset in offsets {
@@ -3096,7 +3099,8 @@ mod location_tests {
                 };
                 let location =
                     Location::init_or_null_tracked(Some(&source), range, &mut tracker).unwrap();
-                let mut shown = line;
+                let (mut shown, mut front) = (line, 0);
+                // As on main: a line with 80 bytes or less from the error to its end is not cut.
                 if line.len() > 80 + offset {
                     let mut lo = offset.saturating_sub(40);
                     let mut hi = offset + 80;
@@ -3107,8 +3111,10 @@ mod location_tests {
                         hi += 1;
                     }
                     shown = &line[lo..hi];
+                    let units = str::from_utf8(&line[..lo]).unwrap().encode_utf16().count();
+                    front = units.saturating_sub(column_fault);
                 }
-                assert_eq!(location.excerpt().0, shown, "offset {offset}");
+                assert_eq!(location.excerpt(), (shown, front), "offset {offset}");
                 let stored = location.line_text.as_deref().unwrap();
                 let whole = line.len() <= MAX_WHOLE_LINE_LEN;
                 assert_eq!(stored, if whole { line } else { shown }, "offset {offset}");

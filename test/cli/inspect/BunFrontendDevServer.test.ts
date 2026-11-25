@@ -495,25 +495,51 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
   });
 
   test("bundleFailed says where the excerpt of a long line starts", async () => {
-    // `lineText` is the 40 bytes before the error and the 80 from it. `column` counts from the start of the line.
-    const line =
-      "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it";
-    const errors = await bundleFailedErrors(`
-      // Syntax error - missing closing parenthesis
-${line}
-        return \`Broken, \${name}!\`;
-      }
-    `);
+    // `lineText` is the 40 bytes before the position and the 80 from it. `column` counts from the start of the
+    // line, and `lineTextColumnOffset` is where `lineText` starts, both in UTF-16 units: 170 bytes in front of
+    // the excerpt of the second line are 91 characters.
+    const dashes = Buffer.alloc(96, "-").toString();
+    const accents = Buffer.alloc(192, "\u00E9").toString();
+    const asciiLine = `let a = 1;/*${dashes}*/let a = 2;/*${dashes}*/`;
+    const accentLine = `let b = 1;/*${accents}*/let b = 2;/*${accents}*/`;
+    const second = asciiLine.lastIndexOf("let ") + "let ".length;
+    const errors = await bundleFailedErrors(`${asciiLine}\n${accentLine}\n`);
 
-    const { location } = errors[0].messages[0];
-    expect(location).toEqual({
-      column: 51,
+    const location = (line: number, column: number, lineTextColumnOffset: number, lineText: string) => ({
+      line,
+      column,
       length: 1,
-      line: 3,
-      lineTextColumnOffset: 10,
-      lineText: line.slice(10, 130),
+      lineTextColumnOffset,
+      lineText,
     });
-    expect(location.lineText[location.column - 1 - location.lineTextColumnOffset]).toBe("{");
+    expect(errors[0].messages).toEqual([
+      {
+        kind: "bundler",
+        level: 0,
+        message: '"a" has already been declared',
+        location: location(1, second + 1, second - 40, asciiLine.slice(second - 40, second + 80)),
+        notes: [
+          { message: '"a" was originally declared here', location: location(1, 5, 0, asciiLine.slice(0, 4 + 80)) },
+        ],
+      },
+      {
+        kind: "bundler",
+        level: 0,
+        message: '"b" has already been declared',
+        location: location(2, second + 1, second - 23, accentLine.slice(second - 23, second + 44)),
+        notes: [
+          { message: '"b" was originally declared here', location: location(2, 5, 0, accentLine.slice(0, 4 + 44)) },
+        ],
+      },
+    ]);
+    for (const [name, message] of [
+      ["a", errors[0].messages[0]],
+      ["b", errors[0].messages[1]],
+    ] as const) {
+      for (const { location } of [message, ...message.notes]) {
+        expect(location.lineText[location.column - 1 - location.lineTextColumnOffset]).toBe(name);
+      }
+    }
   });
 
   test("should notify on clientNavigated events", async () => {

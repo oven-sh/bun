@@ -231,14 +231,21 @@ test.concurrent.each([["build"], ["run"]])(
 // The printed line is cut when more than 80 bytes start at the error, and the
 // cut drops a prefix when more than 40 bytes precede the error. A line is
 // stored whole up to 1,000 bytes, and that limit does not change what is printed.
+// With 80 bytes or less from the error to the end, the whole line is printed
+// at any length. That is the rule of main, kept here.
 test.concurrent.each([
   ["a 1,000-byte line", fill(100, "a") + "]" + fill(899, "b"), 60, 180],
   ["a 1,001-byte line", fill(100, "a") + "]" + fill(900, "b"), 60, 180],
-  ["80 bytes from the error to the end keep the whole line", fill(1000, "a") + "]" + fill(79, "b"), 0, 1080],
+  ["80 bytes from the error to the end: the whole line, as on main", fill(1000, "a") + "]" + fill(79, "b"), 0, 1080],
   ["81 bytes from the error to the end cut the line", fill(1000, "a") + "]" + fill(80, "b"), 960, 1080],
   ["40 bytes before the error drop no prefix", fill(40, "a") + "]" + fill(1000, "b"), 0, 120],
   ["41 bytes before the error drop one byte", "c" + fill(40, "a") + "]" + fill(1000, "b"), 1, 121],
-  ["a 200-byte line, 80 bytes from the error to the end", fill(120, "a") + "]" + fill(79, "b"), 0, 200],
+  [
+    "a 200-byte line, 80 bytes from the error to the end: whole, as on main",
+    fill(120, "a") + "]" + fill(79, "b"),
+    0,
+    200,
+  ],
   ["a 201-byte line, 81 bytes from the error to the end", fill(120, "a") + "]" + fill(80, "b"), 80, 200],
   ["a 141-byte line, 40 bytes before the error", fill(40, "a") + "]" + fill(100, "b"), 0, 120],
   ["a 142-byte line, 41 bytes before the error", "c" + fill(40, "a") + "]" + fill(100, "b"), 1, 121],

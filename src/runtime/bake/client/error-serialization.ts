@@ -19,7 +19,7 @@ export interface BundlerMessage {
 export interface BundlerMessageLocation {
   /** One-based */
   line: number;
-  /** One-based */
+  /** One-based. 0 when the message has a line but no column; nothing is underlined then. */
   column: number;
   /** Byte length */
   length: number;

@@ -3788,6 +3788,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
 #if ENABLE(AOT)
+            // A CommonJS file that required a module that isn't compiled.
+            auto requirer = vm.hasCompiledCode() && !testFile && !stays && importer != key && !isBuiltinModuleKey(key) && !Bun::compiledModuleForPath(key) ? Bun::compiledModuleForPath(importer) : std::nullopt;
+            if (requirer && !JSC::AOT::isESModule(*requirer) && !JSC::AOT::wasLoadedInPreload(globalObject, *requirer) && evicted.add(importer).isNewEntry) {
+                JSC::AOT::releaseModuleAndImporters(globalObject, *requirer, std::nullopt);
+                evictReleased();
+                continue;
+            }
             if (auto compiled = vm.hasCompiledCode() && importer != key && !loader->registryEntry(JSC::Identifier::fromString(vm, importer)) ? Bun::compiledModuleForPath(importer) : std::nullopt; compiled && JSC::AOT::isESModule(*compiled) && JSC::AOT::hasInstances(globalObject, *compiled)) {
                 auto loadedBy = JSC::AOT::evaluatedBy(globalObject, *compiled);
                 bool leaves = loadedBy == JSC::AOT::LoadedBy::EarlierTestFile || (loadedBy == JSC::AOT::LoadedBy::ThisTestFile && !(stays && evict.onlyImportersFromEarlierTestFiles));

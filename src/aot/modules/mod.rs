@@ -260,7 +260,12 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         is_reloadable[file.idx()] = false;
     }
     modules.reloadable_commonjs_files =
-        test_run_evictions::find_reloadable_commonjs_files(input, &scans, &is_reloadable);
+        test_run_evictions::find_reloadable_commonjs_files(
+            input,
+            &scans,
+            &absent_modules,
+            &is_reloadable,
+        );
     let commonjs_files = modules.reloadable_commonjs_files.iter();
     run_again.extend(commonjs_files.map(|&file| ModuleRef::File(file)));
     let compiled_files = input.files.compiled_files().iter();

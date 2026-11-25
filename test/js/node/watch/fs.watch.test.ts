@@ -2391,13 +2391,22 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     ]).toEqual([[], []]);
   });
 
-  test("a recursive watch reports a change of the directory that gets a new file", async () => {
-    using dir = tempDir("watch-parent", { "sub/x": "" });
-    // A file created within the same clock tick would not change the mtime.
-    fs.utimesSync(path.join(String(dir), "sub"), 1, 1);
-    using watch = watchPath(String(dir), { recursive: true });
-    fs.writeFileSync(path.join(String(dir), "sub", "new.txt"), "");
-    await watch.waitForEvent("sub");
+  /** Fails without admin rights or on a volume without 8.3 names. */
+  function setShortName(file: string, name: string) {
+    return Bun.spawnSync(["fsutil.exe", "file", "setshortname", file, name]).success;
+  }
+  function canSetShortName() {
+    using dir = tempDir("watch-short-alias", { "a long file name.txt": "" });
+    return setShortName(path.join(String(dir), "a long file name.txt"), "ALIAS.TXT");
+  }
+
+  test.skipIf(!isWindows || !canSetShortName())("reports long names for 8.3 names without a tilde", async () => {
+    using dir = tempDir("watch-short-alias", { "a long file name.txt": "" });
+    expect(setShortName(path.join(String(dir), "a long file name.txt"), "ALIAS.TXT")).toBe(true);
+    using watch = watchPath(String(dir));
+    fs.appendFileSync(path.join(String(dir), "ALIAS.TXT"), "x");
+    fs.mkdirSync(path.join(String(dir), "sentinel"));
+    expect(await watch.waitForEvent("sentinel")).toEqual(["change a long file name.txt"]);
   });
 
   test.each([

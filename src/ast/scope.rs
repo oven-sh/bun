@@ -409,6 +409,18 @@ impl Scope {
         (first != u32::MAX && first <= last).then_some((first, last))
     }
 
+    /// The scopes a reference must stay out of for a binding of this scope
+    /// not to capture it: `visit_span`, which for a function body or a catch
+    /// block is the span of its parameter scope, whose bindings it cannot
+    /// redeclare.
+    pub fn capture_span(&self) -> Option<(u32, u32)> {
+        match (self.kind, self.parent.as_deref()) {
+            (Kind::FunctionBody, Some(parent)) => parent.visit_span(),
+            (Kind::Block, Some(parent)) if parent.kind == Kind::CatchBinding => parent.visit_span(),
+            _ => self.visit_span(),
+        }
+    }
+
     #[inline]
     pub fn get_member_hash(name: &[u8]) -> u32 {
         Members::hash(name)

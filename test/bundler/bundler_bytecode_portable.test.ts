@@ -442,7 +442,8 @@ describe("bytecode cache portability", () => {
   // Last moved on every platform at once by a new instruction of JavaScriptCore (op_call_varargs_with_spread): a call
   // with a spread argument among other arguments, `f(a, ...b)`, is that one instruction, and every opcode behind it in
   // the list has another number. Every hash of bytecode, and the sizes of the sources with such a call (records.js,
-  // typescript.js, and seven bundles): 8 to 248 bytes less.
+  // typescript.js, and seven bundles): 8 to 248 bytes less. After that, the three `--minify` bundles moved with the
+  // minifier: a nested scope takes the name of an outer binding that it does not read.
   function expectOutputs(outputs: Record<string, unknown>) {
     expect(
       outputs,
@@ -458,24 +459,24 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "997cd9f623e21f9ff1b9f383b63371d53b808b74371bdd5ebca462add8da89db",
+          "js": "67514995c74bb3ac8fca5120b4d7f18e753a777a158fa0d9df0f89c1ce190688",
           "jsc": {
-            "bytes": 1732432,
-            "sha256": "7e201b6b70eda2aa69d5734b29fee86a57246880e282b62c6c89a7d9ad980a60",
+            "bytes": 1732472,
+            "sha256": "982cf62bb8d0adb7b4c7085b743ae2707dacaa41c44c9bc5d7e0873209a0a351",
           },
         },
         "bun build --bytecode --minify features.js": {
-          "js": "4987c5357aa981b9377c173749b78cf1d8cb49b494727665d7220eee55cdcc46",
+          "js": "b0936afb076e902a2a29852c1f06bd1987e7e734f95a263b63c69c6a4039668e",
           "jsc": {
             "bytes": 42528,
-            "sha256": "b7225dc953650e8d2a95a87571164dc9395684fa6b895653c534077c586685ab",
+            "sha256": "c5538ea1350acd5a461720dd06e79e51f0400c0fcae0994588b8f98195c7122c",
           },
         },
         "bun build --bytecode --minify records.js": {
-          "js": "eba33198824cc48f618cb7be37d1321a9fa2daa7b3a1dee17bc67e9e81fc5a62",
+          "js": "8ca719a98b4813c2cab22c63fef23d5fdb74bb01c05c7fc79c26bd5bc31b4d23",
           "jsc": {
-            "bytes": 80952,
-            "sha256": "c6b333756f3485fccedcbc2031f9a7486bb853c2b19bd0b79970c4769a917cf4",
+            "bytes": 80936,
+            "sha256": "0245ac0431b37ad45dc5f14d3e20571250892b0a5811c7d6766349be82fc25f9",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {

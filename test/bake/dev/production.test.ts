@@ -436,6 +436,43 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  // `--minify` also sets identifier minification for the module loader of the
+  // VM that loads the app configuration. What that loader prints is cached, so
+  // it keeps the names that it had: no nested scope shares a name with a scope
+  // around it, as in the output of `bun build --minify` since then.
+  test("--minify does not change the names that the module loader of the build prints", async () => {
+    using dir = tempDir("bake-production-minify-loader-names", {
+      "app.ts": `
+        function outer(alpha, beta) {
+          alpha(beta);
+          return function (gamma, delta) {
+            return gamma + delta;
+          };
+        }
+        console.log("NAMES:" + outer.toString());
+        export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
+      `,
+      "routes/index.ts": `
+        export default function () {
+          return new Response("Hello");
+        }
+      `,
+    });
+
+    // The build stops later: the minimal framework renders no static pages.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "--minify", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const names = stdout.match(/NAMES:function \w+\((\w+),(\w+)\)\{[^{}]*return function\((\w+),(\w+)\)/);
+    expect(names?.slice(1)).toHaveLength(4);
+    expect(new Set(names?.slice(1)).size).toBe(4);
+  });
+
   test('a framework entry point that a "browser" map disables is reported', async () => {
     using dir = tempDir("bake-production-disabled-entry", {
       "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),

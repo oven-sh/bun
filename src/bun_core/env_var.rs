@@ -271,6 +271,10 @@ pub mod feature_flag {
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
 
+    // Minified names as in esbuild: no nested scope takes the name of a
+    // binding of an enclosing scope.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE, "BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE", {});
+
     // Disable "ignoreScripts" in package.json
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS, "BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", {});
 

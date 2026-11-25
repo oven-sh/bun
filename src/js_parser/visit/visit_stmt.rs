@@ -7,6 +7,7 @@ use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     StrictModeFeature, statement_cares_about_scope,
 };
+use crate::renamer::slot_mark;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
 use bun_ast::flags;
@@ -92,6 +93,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Self::s_enum(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
             }
             StmtData::SLocal(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark_declarations(stmt);
+                }
                 Self::s_local(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
             }
 
@@ -100,15 +104,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StmtData::SExportFrom(mut sr) => Self::s_export_from(p, stmts, stmt, &mut *sr),
             StmtData::SExportStar(mut sr) => Self::s_export_star(p, stmts, stmt, &mut *sr),
             StmtData::SExportDefault(mut sr) => Self::s_export_default(p, stmts, stmt, &mut *sr),
-            StmtData::SFunction(mut sr) => Self::s_function(p, stmts, stmt, &mut *sr),
-            StmtData::SClass(mut sr) => Self::s_class(p, stmts, stmt, &mut *sr),
+            StmtData::SFunction(mut sr) => {
+                if !p.reuse_nested_slots {
+                    return Self::s_function(p, stmts, stmt, &mut *sr);
+                }
+                p.slot_mark(slot_mark::FUNCTION, 0);
+                let result = Self::s_function(p, stmts, stmt, &mut *sr);
+                p.slot_mark(slot_mark::FUNCTION_END, 0);
+                result
+            }
+            StmtData::SClass(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark_declarations(stmt);
+                }
+                Self::s_class(p, stmts, stmt, &mut *sr)
+            }
             StmtData::SExportEquals(mut sr) => Self::s_export_equals(p, stmts, stmt, &mut *sr),
-            StmtData::SBreak(mut sr) => Self::s_break(p, stmts, stmt, &mut *sr),
-            StmtData::SContinue(mut sr) => Self::s_continue(p, stmts, stmt, &mut *sr),
+            StmtData::SBreak(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark(slot_mark::JUMP, 0);
+                }
+                Self::s_break(p, stmts, stmt, &mut *sr)
+            }
+            StmtData::SContinue(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark(slot_mark::JUMP, 0);
+                }
+                Self::s_continue(p, stmts, stmt, &mut *sr)
+            }
             StmtData::SLabel(mut sr) => Self::s_label(p, stmts, stmt, &mut *sr),
             StmtData::SExpr(mut sr) => Self::s_expr(p, stmts, stmt, &mut *sr),
-            StmtData::SThrow(mut sr) => Self::s_throw(p, stmts, stmt, &mut *sr),
-            StmtData::SReturn(mut sr) => Self::s_return(p, stmts, stmt, &mut *sr),
+            StmtData::SThrow(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark(slot_mark::JUMP, 0);
+                }
+                Self::s_throw(p, stmts, stmt, &mut *sr)
+            }
+            StmtData::SReturn(mut sr) => {
+                if p.reuse_nested_slots {
+                    p.slot_mark(slot_mark::JUMP, 0);
+                }
+                Self::s_return(p, stmts, stmt, &mut *sr)
+            }
             StmtData::SBlock(mut sr) => Self::s_block(p, stmts, stmt, &mut *sr),
             StmtData::SWith(mut sr) => Self::s_with(p, stmts, stmt, &mut *sr),
             StmtData::SWhile(mut sr) => Self::s_while(p, stmts, stmt, &mut *sr),
@@ -2084,6 +2121,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);
+        // The binding of `for (using x of y)` is declared in the loop body
+        // once it is lowered, here or by a tool that reads the output: a
+        // scope further in than the one that holds it, and `y` is outside
+        // that declaration.
+        if p.reuse_nested_slots {
+            if let StmtData::SLocal(local) = data.init.data {
+                if local.kind.is_using() {
+                    if let js_ast::binding::Data::BIdentifier(b) = local.decls.at(0).binding.data {
+                        let symbol = b.r#ref.inner_index();
+                        p.span_uses.push((Some(p.current_scope), symbol));
+                        p.slot_notes.unique(symbol);
+                    }
+                }
+            }
+        }
         p.visit_expr(&mut data.value);
         data.body = p.visit_loop_body(data.body);
 
@@ -2248,6 +2300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
+            let locals_before = p.switch_case_locals.len();
             let cases = data.cases.slice_mut();
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value.as_mut() {
@@ -2256,12 +2309,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Check("case", *c.Value, c.Value.Loc)
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
+                let first_local = p.switch_case_locals.len();
+                if p.reuse_nested_slots {
+                    for stmt in cases[i].body.slice() {
+                        crate::renamer::lexical_declarations(stmt, |symbol| {
+                            p.switch_case_locals.push((symbol, 0));
+                        });
+                        // Printed as a `let`.
+                        if let StmtData::SFunction(function) = stmt.data {
+                            if let Some(name) = function.func.name {
+                                p.switch_case_locals.push((name.ref_.inner_index(), 0));
+                            }
+                        }
+                    }
+                }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
                 p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
+                for at in first_local..p.switch_case_locals.len() {
+                    let symbol = p.switch_case_locals[at].0;
+                    p.switch_case_locals[at].1 = p.symbols[symbol as usize].use_count_estimate;
+                }
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+            // A case is minified when the cases after it are not visited yet
+            // (here, or when Bun loads the output), and a `let` with one use
+            // so far is inlined into that use. A read in a later case is then
+            // outside every declaration. So is a read of a declaration that
+            // dead code removal takes out of its case (`SlotNotes`).
+            for at in locals_before..p.switch_case_locals.len() {
+                let (symbol, uses) = p.switch_case_locals[at];
+                if p.symbols[symbol as usize].use_count_estimate > uses {
+                    p.slot_notes.unique(symbol);
+                }
+            }
+            p.switch_case_locals.truncate(locals_before);
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {

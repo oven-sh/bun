@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import vm from "node:vm";
+import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
+import { generateProgram } from "./minify-names-programs";
 
 describe("bundler", () => {
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
@@ -2044,6 +2047,704 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // A nested scope takes the minified name of a binding of an enclosing scope
+  // that nothing in the nested scope reads, as oxc and terser do. esbuild
+  // numbers a nested scope on from the scopes around it, so the inner
+  // functions here took names of their own: `function t(n,r){return
+  // g(n,r,function(u,e){return h(u,e,function(o){return o+o})})}`.
+  const nestedNamesSource = /* js */ `
+    export function f(a, b) {
+      return g(a, b, function (x, y) {
+        return h(x, y, function (p) {
+          return p + p;
+        });
+      });
+    }
+  `;
+  // Two names for the five bindings.
+  const nestedNamesShared =
+    /function \w+\((\w+), (\w+)\) \{\s*return g\(\1, \2, function\(\1, \2\) \{\s*return h\(\1, \2, function\(\1\) \{\s*return \1 \+ \1;/;
+  const fiveNames = (output: string) => {
+    const [, a, b, x, y, p] = output.match(
+      /function \w+\((\w+), (\w+)\) \{\s*return g\(\1, \2, function\((\w+), (\w+)\) \{\s*return h\(\3, \4, function\((\w+)\)/,
+    )!;
+    return new Set([a, b, x, y, p]).size;
+  };
+  itBundled("minify/NestedScopeTakesNameOfUnreadOuterBinding", {
+    files: { "/entry.js": nestedNamesSource },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(nestedNamesShared);
+    },
+  });
+  itBundled("minify/NestedScopeTakesNameOfUnreadOuterBindingNoBundle", {
+    files: { "/entry.js": nestedNamesSource },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(nestedNamesShared);
+    },
+  });
+  // The variable turns this off: the five bindings have five names, as before.
+  itBundled("minify/NestedScopeKeepsOwnNameWithFeatureFlag", {
+    files: { "/entry.js": nestedNamesSource },
+    backend: "cli",
+    env: { BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE: "1" },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(fiveNames(api.readFile("/out.js"))).toBe(5);
+    },
+  });
+
+  // In each source below, `canary` has two parameters that its inner function
+  // does not read, so that function has the same two names for its own.
+  const canaryShared = /function \w+\((\w+), ?(\w+)\)\s*\{[^{}]*function\s*\(\1, ?\2\)/;
+
+  // Each function here is a shape where a nested binding must keep a name of
+  // its own, or where the name that is printed for a binding is declared in
+  // another scope than the one that holds the binding: a parameter that the
+  // body does not read, a `var` that a block hoists past a `let`, a catch
+  // binding, a class field, the binding of a lowered `for (using x of y)`, the
+  // parameter of a TypeScript namespace closure, a member of a TypeScript enum
+  // or namespace that another block of it reads (printed as a property of the
+  // closure parameter). In `fromParameter`, the body declares the parameter
+  // `value` again, and a closure in a default value reads it: both bun and
+  // esbuild gave the parameter `P` of that closure the name of `value`.
+  const everyReadSource = /* ts */ `
+    const out: unknown[] = [];
+
+    function closure(a: number, b: number) {
+      return function (x: number, y: number) {
+        return function (p: number) {
+          return [a, b, x, y, p].join("");
+        };
+      };
+    }
+    out.push(closure(1, 2)(3, 4)(5));
+
+    function unusedParameter(a: number, b: number) {
+      let c = 7;
+      return function () {
+        let d = c + 1;
+        return d;
+      };
+    }
+    out.push(unusedParameter(1, 2)());
+
+    function hoisted(a: number, b: number) {
+      return function (c: number) {
+        {
+          let between = c + 1;
+          {
+            var inner = between + 1;
+          }
+        }
+        return inner;
+      };
+    }
+    out.push(hoisted(1, 2)(3));
+
+    function caught(a: number, b: number) {
+      return function () {
+        try {
+          throw a;
+        } catch (e) {
+          let f = 1;
+          return (e as number) + f;
+        }
+      };
+    }
+    out.push(caught(4, 5)());
+
+    function fields(seed: number, unused: number) {
+      return class {
+        value = seed + 1;
+        constructor(first = 2, second = 3) {
+          this.value += first + second;
+        }
+      };
+    }
+    out.push(new (fields(10, 0))().value);
+
+    function usingLoop(items: Disposable[], unused: number) {
+      return function () {
+        let count = 0;
+        for (using item of items) {
+          let step = 1;
+          count += step;
+        }
+        return count;
+      };
+    }
+    const disposable = () => ({ [Symbol.dispose]() {} });
+    out.push(usingLoop([disposable(), disposable()], 0)());
+
+    let fromParameter: any;
+    (function (value: string, keep = (fromParameter = (P: any, Q?: any) => class extends P { read() { return value; } })) {
+      var value = "body";
+      out.push(new (fromParameter(Object))().read(), value);
+    })("parameter");
+
+    namespace Shapes {
+      export const unit = 2;
+      export function scale(by: number) {
+        return function (value: number) {
+          return unit * by * value;
+        };
+      }
+      export namespace Inner {
+        export const twice = (n: number) => scale(2)(n) + unit;
+      }
+    }
+    out.push(Shapes.scale(3)(4), Shapes.Inner.twice(5));
+
+    function enumInside(a: number, b: number) {
+      enum Level {
+        Low = 1,
+        High = Low + 1,
+      }
+      return function (c: number) {
+        return Level.High + a + c;
+      };
+    }
+    out.push(enumInside(1, 0)(2));
+
+    function labelled(list: number[], unused: number) {
+      return function () {
+        let total = 0;
+        outer: for (const x of list) {
+          inner: for (const y of list) {
+            if (y > x) continue outer;
+            if (y < 0) break inner;
+            total += y;
+          }
+        }
+        return total;
+      };
+    }
+    out.push(labelled([1, 2, 3], 0)());
+
+    function named(a: number, b: number) {
+      return function self(n: number): number {
+        return n <= 0 ? a : self(n - 1) + 1;
+      };
+    }
+    out.push(named(5, 0)(3));
+
+    function defaults(a: number, b = a + 1, { c, d = b + c }: { c: number; d?: number } = { c: 1 }) {
+      return (e = d + 1) => [a, b, c, d, e].join(",");
+    }
+    out.push(defaults(1)());
+
+    function switched(kind: number, base: number) {
+      return function (n: number) {
+        switch (kind) {
+          case 1: {
+            const local = n + base;
+            return local * 2;
+          }
+          default: {
+            const other = n - base;
+            return other;
+          }
+        }
+      };
+    }
+    out.push(switched(1, 2)(3), switched(0, 2)(3));
+
+    function seed() {
+      return 5;
+    }
+    enum Merged {
+      A = seed(),
+    }
+    enum Merged {
+      D = ((q1: number, q2: number) => A + q1 + q2)(10, 1),
+    }
+    out.push(Merged.D);
+
+    namespace Parts {
+      export const unit = 3;
+    }
+    namespace Parts {
+      export const twice = ((q1: number, q2: number) => unit + q1 + q2)(10, 1);
+    }
+    out.push(Parts.twice);
+
+    function canary(first: number, second: number) {
+      out.push(first, second);
+      return function (third: number, fourth: number) {
+        return third + fourth;
+      };
+    }
+    out.push(canary(1, 2)(3, 4));
+
+    console.log(JSON.stringify(out));
+  `;
+  const everyReadOutput = `["12345",8,5,5,16,2,"parameter","body",24,22,5,10,8,"1,2,1,3,4",10,1,16,14,1,2,7]`;
+  itBundled("minify/NestedNamesKeepEveryRead", {
+    files: { "/entry.ts": everyReadSource },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: everyReadOutput },
+  });
+  itBundled("minify/NestedNamesKeepEveryReadAllMinify", {
+    files: { "/entry.ts": everyReadSource },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: everyReadOutput },
+  });
+  itBundled("minify/NestedNamesKeepEveryReadNoBundle", {
+    files: { "/entry.ts": everyReadSource },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: everyReadOutput },
+  });
+  // The same for what only sloppy code has: a block-level function that is
+  // also a `var` of the function around it, a `var` with the name of the catch
+  // binding, `with`, a direct `eval`, `arguments`. In `blockedByLet` and
+  // `blockedByPattern` a `let` or a destructured catch binding stops the `var`
+  // of a block-level function on its way out, and a catch binding of the same
+  // name is the only scope that holds it: it is still a `var` of the function.
+  const everyReadSloppySource = /* js */ `
+    function blockFunction(a, b) {
+      return function (c) {
+        {
+          let between = c;
+          {
+            function inner() {
+              return between + 1;
+            }
+          }
+        }
+        return inner();
+      };
+    }
+    function catchVar(a, b) {
+      return function () {
+        try {
+          throw a;
+        } catch (e) {
+          var e = e + 1;
+          return e;
+        }
+      };
+    }
+    function withBody(obj, a) {
+      var t = a;
+      with (obj) {
+        return function (b) {
+          return t + b;
+        };
+      }
+    }
+    function evaluated(a, b) {
+      return function (c) {
+        var d = c + 1;
+        return eval("a + b + c + d");
+      };
+    }
+    function argumentsObject(a, b) {
+      return function (c) {
+        return arguments.length + a + c;
+      };
+    }
+    function blockedByLet(q) {
+      return function () {
+        let g = 1;
+        try {
+          q();
+          throw 2;
+        } catch (g) {
+          {
+            function g() {}
+          }
+        }
+        return [g, typeof q];
+      };
+    }
+    function blockedByPattern(q, r) {
+      return function () {
+        try {
+          throw { d: 1 };
+        } catch ({ d }) {
+          try {
+            q(r);
+            throw 2;
+          } catch (d) {
+            q(r);
+            {
+              function d() {}
+            }
+          }
+          return d;
+        }
+      };
+    }
+    function canary(first, second) {
+      blockFunction(first, second);
+      return function (third, fourth) {
+        return third + fourth;
+      };
+    }
+    console.log(
+      JSON.stringify([
+        blockFunction(0, 0)(1),
+        catchVar(1, 0)(),
+        withBody({}, 1)(2),
+        withBody({ t: 10 }, 1)(2),
+        evaluated(1, 2)(3),
+        argumentsObject(1, 0)(2, 3),
+        blockedByLet(function () {})(),
+        blockedByPattern(function () {}, 0)(),
+        canary(1, 2)(3, 4),
+      ]),
+    );
+  `;
+  const everyReadSloppyOutput = `[2,2,3,12,10,5,[1,"function"],1,7]`;
+  itBundled("minify/NestedNamesKeepEveryReadSloppy", {
+    files: { "/entry.cjs": everyReadSloppySource },
+    format: "cjs",
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: everyReadSloppyOutput },
+  });
+  itBundled("minify/NestedNamesKeepEveryReadSloppyNoBundle", {
+    files: { "/entry.cjs": everyReadSloppySource },
+    bundling: false,
+    format: "cjs",
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: everyReadSloppyOutput },
+  });
+
+  // A read that is printed where no declaration binds its name. Dead code
+  // removal takes out a `let`, `const` or class that follows a `return`
+  // (here, or when Bun loads the output, which folds `if (true)` and a block
+  // first) and keeps what reads it: code before the `return`, a class body, a
+  // hoisted function, another case of the `switch`. A `let` or function of one case
+  // is inlined into its use before the later cases are looked at. The binding
+  // of a lowered `for (using x of y)` is declared in the loop body. A
+  // TypeScript enum or abstract class that is the whole body of an `if` is
+  // printed in a block. Each of these reads throws a ReferenceError or gives
+  // "undefined" to `typeof`, so the name must stay free: each enclosing
+  // function has three parameters, with the value 42, that the inner function
+  // does not read, and whose names are free to take.
+  const freeNamesSource = /* ts */ `
+    const results: string[] = [];
+    const attempt = (read: () => unknown) => {
+      try {
+        const value = read();
+        results.push(value === 42 || value === "number" ? "captured" : "free");
+      } catch (e) {
+        results.push("free");
+      }
+    };
+    const nothing = (...a: unknown[]) => {};
+
+    function afterReturn(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        return x;
+        let x = 1;
+      };
+    }
+    attempt(afterReturn(42, 42, 42));
+
+    function classAfterReturn(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        return typeof K;
+        class K {}
+      };
+    }
+    attempt(classAfterReturn(42, 42, 42));
+
+    function afterFoldedTest(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        if (true) return x;
+        let x = 1;
+      };
+    }
+    attempt(afterFoldedTest(42, 42, 42));
+
+    function afterBlock(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        const read = () => x;
+        {
+          return read();
+        }
+        let x = 1;
+      };
+    }
+    attempt(afterBlock(42, 42, 42));
+
+    function fromHoistedFunction(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        if (true) return read();
+        let x = 1;
+        function read() {
+          return x;
+        }
+      };
+    }
+    attempt(fromHoistedFunction(42, 42, 42));
+
+    function fromClassBody(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function () {
+        class K {
+          static s = x;
+        }
+        return K.s;
+        let x = 1;
+      };
+    }
+    attempt(fromClassBody(42, 42, 42));
+
+    function otherCase(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function (c: number) {
+        switch (c) {
+          case 1:
+            nothing(c);
+            if (true) break;
+            class K {}
+            break;
+          default:
+            return typeof K;
+        }
+      };
+    }
+    attempt(() => otherCase(42, 42, 42)(0));
+
+    function usingOfItself(n: Disposable[], o: Disposable[], p: Disposable[]) {
+      nothing(n, o, p);
+      return function () {
+        for (using r of r) {
+        }
+        return 42;
+      };
+    }
+    attempt(usingOfItself([], [], []));
+
+    function laterCase(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function (c: number) {
+        switch (c) {
+          case 1:
+            let v = [c];
+            nothing(v);
+          default:
+            return v;
+        }
+      };
+    }
+    attempt(() => laterCase(42, 42, 42)(0));
+
+    function functionInCase(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function (c: number) {
+        switch (c) {
+          case 1:
+            function f() {
+              return 7;
+            }
+            nothing(f, c);
+            break;
+          default:
+            return typeof f;
+        }
+      };
+    }
+    attempt(() => functionInCase(42, 42, 42)(0));
+
+    function enumBody(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function (c: boolean) {
+        if (c) enum E { X = 1 }
+        return typeof E;
+      };
+    }
+    attempt(() => enumBody(42, 42, 42)(false));
+
+    function abstractClassBody(n: number, o: number, p: number) {
+      nothing(n, o, p);
+      return function (c: boolean) {
+        if (c) abstract class K {}
+        return typeof K;
+      };
+    }
+    attempt(() => abstractClassBody(42, 42, 42)(false));
+
+    function canary(first: number, second: number) {
+      nothing(first, second);
+      return function (third: number, fourth: number) {
+        return third + fourth;
+      };
+    }
+    results.push(String(canary(1, 2)(3, 4)));
+
+    console.log(results.join(" "));
+    export {};
+  `;
+  const freeNamesOutput = "free free free free free free free free free free free free 7";
+  itBundled("minify/NameOutsideItsDeclarationStaysFree", {
+    files: { "/entry.ts": freeNamesSource },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: freeNamesOutput },
+  });
+  itBundled("minify/NameOutsideItsDeclarationStaysFreeAllMinify", {
+    files: { "/entry.ts": freeNamesSource },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: freeNamesOutput },
+  });
+  itBundled("minify/NameOutsideItsDeclarationStaysFreeNoBundle", {
+    files: { "/entry.ts": freeNamesSource },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: freeNamesOutput },
+  });
+
+  // `emitDecoratorMetadata` prints the name of a parameter type behind the
+  // class, with a `typeof` guard. Here the type has the name of an earlier
+  // parameter of the method, and the metadata read the parameter `secret` of
+  // the function around the class once the two shared a name.
+  itBundled("minify/DecoratorMetadataNameStaysFree", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const seen: Record<string, string[]> = {};
+        (Reflect as any).metadata = (key: string, value: unknown) => (target: object, property: string) => {
+          seen[key] = [value].flat().map(type => (typeof type === "function" ? type.name : String(type)));
+        };
+        const dec = () => (target: object, property: string, descriptor: PropertyDescriptor) => {};
+        interface Config {
+          a: number;
+        }
+        function typeNamedAsParameter(secret: string, unused: number) {
+          class C {
+            @dec() m(Config: unknown, c: Config): void {}
+          }
+          return C;
+        }
+        typeNamedAsParameter("SECRET", 0);
+        function canary(first: number, second: number) {
+          dec()(seen, String(first + second), Object.prototype);
+          return function (third: number, fourth: number) {
+            return third + fourth;
+          };
+        }
+        console.log(JSON.stringify([seen["design:paramtypes"], canary(1, 2)(3, 4)]));
+      `,
+      "/tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": true, "emitDecoratorMetadata": true } }`,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(canaryShared);
+    },
+    run: { stdout: `[["Object","Object"],7]` },
+  });
+
+  // Bun keeps `using` for itself. A tool that lowers this output declares the
+  // binding of `for (using x of y)` in the loop body, so a `const` of the body
+  // cannot have its name: `for (using t of ...) { const t = ... }`.
+  itBundled("minify/ForUsingBindingNotSharedWithLoopBody", {
+    files: {
+      "/entry.js": /* js */ `
+        function drain(pool, jobs, done) {
+          for (using lease of pool.leases()) {
+            const job = jobs.shift();
+            done.push(job * 2);
+            pool.count++;
+          }
+          return done;
+        }
+        function canary(first, second) {
+          drain(pool, [first, second], []);
+          return function (third, fourth) {
+            return third + fourth;
+          };
+        }
+        const pool = {
+          count: 0,
+          leases() {
+            return [{ [Symbol.dispose]() {} }, { [Symbol.dispose]() {} }];
+          },
+        };
+        console.log(JSON.stringify([drain(pool, [1, 2], []), pool.count, canary(1, 2)(3, 4)]));
+      `,
+    },
+    target: "bun",
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      const [, binding, inBody] = output.match(/for \(using (\w+) of [^)]*\)\) \{\s*const (\w+) =/)!;
+      expect({ shared: binding === inBody, canary: canaryShared.test(output) }).toEqual({
+        shared: false,
+        canary: true,
+      });
+    },
+    run: { stdout: "[[2,4],2,7]" },
+  });
+
+  // JavaScriptCore checks a read for the temporal dead zone by name: the read
+  // of a parameter pays that check once the parameter has the name of a `let`
+  // or `const` of an enclosing function. So `x` takes the name of `seed`, and
+  // `y` takes no name of `first`, `second` or `early`.
+  itBundled("minify/ParameterTakesNoNameOfOuterLet", {
+    files: {
+      "/entry.js": /* js */ `
+        export function mech(seed) {
+          let first = seed + 1,
+            second = seed + 2;
+          const early = () => first + second;
+          function hoisted(x, y) {
+            return x + y;
+          }
+          return [early(), hoisted(1, 2)];
+        }
+        console.log(JSON.stringify(mech(1)));
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const [, seed, first, second, early, x, y] = api
+        .readFile("/out.js")
+        .match(
+          /function \w+\((\w+)\) \{\s*let (\w+) = \1 \+ 1, (\w+) = \1 \+ 2;\s*const (\w+) = \(\) => \2 \+ \3;\s*function \w+\((\w+), (\w+)\)/,
+        )!;
+      expect({ x: x === seed, y: [first, second, early].includes(y) }).toEqual({ x: true, y: false });
+    },
+    run: { stdout: "[5,3]" },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables
@@ -2114,3 +2815,88 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// `Bun.Transpiler` assigns the names as `bun build` does: a nested scope takes
+// the name of a binding of an enclosing scope that it does not read.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s gives a nested scope the name of an outer binding that it does not read",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } } as any)[method](
+      "export function f(a, b) { return g(a, b, function (x, y) { return h(x, y, function (p) { return p + p; }); }); }",
+    );
+    expect(output).toMatch(
+      /function f\((\w+), (\w+)\) \{\s*return g\(\1, \2, function\(\1, \2\) \{\s*return h\(\1, \2, function\(\1\) \{\s*return \1 \+ \1;/,
+    );
+  },
+);
+
+// Dead code that is printed reads the binding that it read before.
+test("minify.identifiers: a nested scope keeps off the name of a binding that its dead code reads", () => {
+  const output = new Bun.Transpiler({
+    loader: "js",
+    deadCodeElimination: false,
+    minify: { identifiers: true },
+  } as any).transformSync("export function f(a, c) { c(); return function (b) { if (false) return a; return b; }; }");
+  const [, a, c, b, dead] = output.match(
+    /function f\((\w+), (\w+)\) \{\s*\2\(\);\s*return function\((\w+)\) \{\s*if \(false\)\s*return (\w+);/,
+  )!;
+  expect({ dead: dead === a, parameter: b === c }).toEqual({ dead: true, parameter: true });
+});
+
+// Generated programs in which the same six names are declared and read at
+// every depth. Each is minified twice: with names that nested scopes share
+// with the scopes around them, and, with the variable, with the names that
+// they had before. The two have to log the same. The first seeds are programs
+// that went wrong while this was written: a `var` that took the name of a
+// `let` or of a catch binding that it is hoisted through, and a binding that
+// took a name that an enclosing function reads.
+test("minify.identifiers: generated programs run the same with shared and with own names", async () => {
+  const harness = new vm.Script(`
+    var __log = [], fuel = 400, depth = 0, fns = [];
+    function log(x) { if (__log.length < 500) __log.push(String(x)); }
+    function show(x) { return typeof x === "function" ? "F" : x && typeof x === "object" ? "O" : String(x); }
+    function call(f) {
+      if (typeof f !== "function") return "NF";
+      if (depth > 4 || --fuel < 0) return "X";
+      depth++;
+      try { return f(); } finally { depth--; }
+    }
+    var a = "Ga", b = "Gb", c = "Gc", d = "Gd", e = "Ge", f = "Gf";
+  `);
+  const run = (code: string) => {
+    const context = vm.createContext({});
+    harness.runInContext(context);
+    let end = "done";
+    try {
+      vm.runInContext(code, context, { timeout: 5000 });
+    } catch (error) {
+      end = "throw " + (error as Error)?.constructor?.name;
+    }
+    return vm.runInContext(`__log.join("|") + " " + [a, b, c, d, e, f].map(show).join()`, context) + " " + end;
+  };
+  // prettier-ignore
+  const seeds = [
+    62782, 68780, 95323, 60106, 74698, 13552, 62310, 106755, 36893,
+    // The first seeds that give a valid program.
+    9, 16, 46, 48, 51, 52, 56, 59, 60, 76, 99, 100, 115, 119, 123, 127, 135, 140, 150, 159,
+    161, 163, 165, 179, 181, 183, 184, 185, 195, 201, 215, 223, 235, 237, 243, 280, 303, 314, 318, 324,
+  ];
+  const minified = async (env: Record<string, string>) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "minify-names-programs.ts"), ...seeds.map(String)],
+      env: { ...bunEnv, ...env },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout) as string[];
+  };
+  const [shared, own] = await Promise.all([
+    minified({}),
+    minified({ BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE: "1" }),
+  ]);
+  expect({
+    different: seeds.filter((seed, at) => run(shared[at]) !== run(own[at])),
+    withSharedNames: seeds.filter((seed, at) => shared[at] !== own[at]).length > seeds.length / 2,
+  }).toEqual({ different: [], withSharedNames: true });
+}, 30_000);

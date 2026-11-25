@@ -1843,7 +1843,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    return Ok(Some(p.parse_class_stmt(p.lexer.loc(), opts)?));
+                    // `abstract class` is accepted as the whole body of `if`,
+                    // `else`, a loop or `with`. It is printed in a block, but
+                    // its name is declared around the statement.
+                    let in_block = p.reuse_nested_slots
+                        && matches!(
+                            opts.lexical_decl,
+                            LexicalDecl::Forbid | LexicalDecl::AllowFnInsideIf
+                        );
+                    let stmt = p.parse_class_stmt(p.lexer.loc(), opts)?;
+                    if in_block {
+                        if let js_ast::StmtData::SClass(class) = stmt.data {
+                            if let Some(name) = class.class.class_name {
+                                p.slot_notes.unique(name.ref_.inner_index());
+                            }
+                        }
+                    }
+                    return Ok(Some(stmt));
                 }
                 if opts.ts_decorators.is_some() {
                     let r = js_lexer::range_of_identifier(p.source, loc);

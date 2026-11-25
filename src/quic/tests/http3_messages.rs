@@ -208,6 +208,32 @@ fn well_formed_responses() {
 }
 
 #[test]
+fn te_outside_the_head_of_a_request() {
+    let events = |side, is_tolerated, frames: &str| {
+        let raw = Raw::http3(side).http3_config(|it| it.tolerates_te_anywhere = is_tolerated);
+        let mut raw = raw.exchange();
+        raw.write_http3(0, frames, true);
+        raw.events()
+    };
+    for frame in encodings(&format!("{OK} te=trailers")) {
+        assert_eq!(events(Server, false, &frame), "0 reset 0x10e, 0 closed");
+        let head = format!("0 Head {OK} te=trailers, 0 fin -, 0 closed");
+        assert_eq!(events(Server, true, &frame), head);
+    }
+    for frame in encodings(":status=103 te=Trailers") {
+        let events = events(Server, true, &format!("{frame}, headers {OK}"));
+        assert!(events.starts_with("0 Interim :status=103 te=Trailers, 0 Head "));
+    }
+    for (side, head) in [(Client, GET), (Server, OK)] {
+        for frame in encodings("te=trailers") {
+            let events = events(side, true, &format!("headers {head}, {frame}"));
+            let start = format!("0 Head {head}, 0 Trailers te=trailers, 0 fin -");
+            assert!(events.starts_with(&start), "{events}");
+        }
+    }
+}
+
+#[test]
 fn content_that_a_response_cannot_have_is_not_awaited() {
     for (rest, events, frames) in [
         ("data", "", ""),

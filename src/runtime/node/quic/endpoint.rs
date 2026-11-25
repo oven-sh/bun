@@ -545,6 +545,8 @@ fn http3_config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<H
             size: MAX_HEADER_LENGTH,
             count: usize::MAX,
         },
+        // nghttp3_http.c, `http_response_on_header`
+        tolerates_te_anywhere: true,
         datagrams: true,
         ..Http3Config::default()
     };

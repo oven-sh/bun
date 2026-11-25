@@ -58,6 +58,8 @@ pub struct Http3Config {
     pub tolerated_fields: FieldLimits,
     /// What a field counts for on top of its name and value in `kept_fields`.
     pub field_overhead: usize,
+    /// Whether `te: trailers` passes outside the head of a request, the only place that RFC 9114 §4.2 has for it.
+    pub tolerates_te_anywhere: bool,
     pub advertises_max_field_section_size: bool,
     pub encodes_with_dynamic_table: bool,
     /// RFC 9297 §2.1.1.

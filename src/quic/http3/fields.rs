@@ -188,7 +188,13 @@ pub(super) struct Summary {
 
 impl Summary {
     #[inline]
-    fn add(&mut self, name: &Name, value: &[u8], expected: Expected) -> Option<()> {
+    fn add(
+        &mut self,
+        name: &Name,
+        value: &[u8],
+        expected: Expected,
+        config: &Http3Config,
+    ) -> Option<()> {
         if let Name::Pseudo(bit) = *name {
             return self.add_pseudo(bit, value, expected);
         }
@@ -206,8 +212,10 @@ impl Summary {
                 self.seen |= Seen::HOST;
             }
             Name::Priority => self.priority.get_or_insert_default().update(value),
-            Name::Te => (expected == Expected::Request && value.eq_ignore_ascii_case(b"trailers"))
-                .then_some(())?,
+            Name::Te => {
+                let is_allowed = expected == Expected::Request || config.tolerates_te_anywhere;
+                (is_allowed && value.eq_ignore_ascii_case(b"trailers")).then_some(())?;
+            }
             Name::Pseudo(_) | Name::Host | Name::Other => {}
         }
         self.seen |= Seen::REGULAR;
@@ -311,7 +319,7 @@ pub(super) fn decode(
                 (strings::trim_right(start, b" \t"), leading)
             }
         };
-        (summary.add(&name, value, expected)).ok_or(MALFORMED)?;
+        (summary.add(&name, value, expected, config)).ok_or(MALFORMED)?;
         if kept_size + len + config.field_overhead > config.kept_fields.size
             || out.entries.len() >= config.kept_fields.count
         {

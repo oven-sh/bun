@@ -3212,6 +3212,8 @@ enum Delivery {
     Replace,
     /// The outfile leads to the null device: the executable is built, and none of it is written there.
     Discard,
+    /// The outfile leads to another device. The error names its kind.
+    Refuse(&'static str),
 }
 
 #[cfg(not(windows))]
@@ -3234,6 +3236,9 @@ impl Delivery {
         use bun_sys::FileKind;
         match bun_sys::kind_from_mode(mode) {
             FileKind::CharacterDevice if null_device() == Some(rdev) => Delivery::Discard,
+            FileKind::CharacterDevice => Delivery::Refuse("character device"),
+            FileKind::BlockDevice => Delivery::Refuse("block device"),
+            // A named pipe and a socket too: test/aot/pipes-beside-code.test.ts builds over a pipe.
             _ => Delivery::Replace,
         }
     }
@@ -3265,8 +3270,17 @@ pub fn to_executable(
     let _ = root_dir;
     #[cfg(not(windows))]
     let outfile_posix = path::Path::from(bun_paths::basename(outfile));
+    // Before anything is staged: a refused outfile costs no copy of the executable.
     #[cfg(not(windows))]
     let delivery = Delivery::plan(root_dir, &outfile_posix);
+    #[cfg(not(windows))]
+    if let Delivery::Refuse(kind) = delivery {
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "the executable would replace {}, which is a {}. Choose another output path",
+            bstr::BStr::new(outfile),
+            kind
+        )));
+    }
     let image_place = place_of_image(target, additions.compiled_program.as_deref());
     let GraphBytes { mut bytes, image } = match to_bytes(
         target,
@@ -3941,20 +3955,32 @@ mod tests {
     }
 
     #[test]
-    fn rename_replaces_what_is_not_the_null_device() {
-        for kind in [S::IFREG, S::IFDIR, S::IFIFO, S::IFSOCK, S::IFBLK] {
-            assert_eq!(delivery(kind, NULL_DEVICE), Delivery::Replace);
+    fn rename_replaces_what_is_no_device() {
+        for kind in [S::IFREG, S::IFDIR, S::IFIFO, S::IFSOCK] {
+            assert_eq!(delivery(kind, 0), Delivery::Replace);
         }
-        assert_eq!(delivery(S::IFCHR, NULL_DEVICE + 4), Delivery::Replace);
-        assert_eq!(
-            Delivery::of(S::IFCHR | 0o666, 0, || None),
-            Delivery::Replace
-        );
     }
 
     #[test]
     fn null_device_gets_nothing() {
         assert_eq!(delivery(S::IFCHR, NULL_DEVICE), Delivery::Discard);
+    }
+
+    #[test]
+    fn other_devices_are_refused() {
+        let character_device = Delivery::Refuse("character device");
+        assert_eq!(delivery(S::IFCHR, NULL_DEVICE + 4), character_device);
+        assert_eq!(delivery(S::IFCHR, 0), character_device);
+        assert_eq!(
+            delivery(S::IFBLK, NULL_DEVICE),
+            Delivery::Refuse("block device")
+        );
+    }
+
+    #[test]
+    fn no_character_device_is_the_null_device_where_there_is_none() {
+        let without_null_device = Delivery::of(S::IFCHR | 0o666, 0, || None);
+        assert_eq!(without_null_device, Delivery::Refuse("character device"));
     }
 
     #[test]
@@ -3979,6 +4005,7 @@ mod tests {
             ("file", "to-file"),
             ("nothing", "to-nothing"),
             ("/dev/null", "to-null"),
+            ("/dev/zero", "to-zero"),
         ] {
             let target = ZBox::from_bytes(target.as_bytes());
             bun_sys::symlink(&target, &path(link)).unwrap();
@@ -3991,6 +4018,7 @@ mod tests {
             assert_eq!(plan(name), Delivery::Replace, "{name}");
         }
         assert_eq!(plan("to-null"), Delivery::Discard);
+        assert_eq!(plan("to-zero"), Delivery::Refuse("character device"));
         assert_eq!(
             Delivery::plan(Fd::cwd(), zstr!("/dev/null")),
             Delivery::Discard

@@ -828,7 +828,7 @@ for (const request of requests) {
 
 // A rename puts the executable at its output path, and a rename replaces whatever has the name: as root,
 // `--outfile=/dev/null` left a regular file in place of the null device. Windows has no device among its directory entries.
-describe.skipIf(isWindows)("an executable never replaces the null device", () => {
+describe.skipIf(isWindows)("an executable never replaces a device", () => {
   const commands = [
     { command: ["compile", "--no-aot"], aot: false },
     { command: ["build", "--compile"], aot: false },
@@ -845,6 +845,8 @@ for (const outfile of outfiles) {
   }
 }
 `;
+  const refusal = (outfile: string, kind = "character device") =>
+    `the executable would replace ${outfile}, which is a ${kind}. Choose another output path\n`;
 
   /** What has the name. A rename over it changes the inode, and the mode holds the kind. */
   function node(path: string) {
@@ -858,17 +860,24 @@ for (const outfile of outfiles) {
       return false;
     }
   }
-  // A device node takes root.
+  // A device node takes root, but for a whiteout (0, 0): any user makes one on Linux 5.8 and later, though not on overlayfs.
   const can = (() => {
-    if (!isLinux) return { makeDevices: false };
+    if (!isLinux) return { makeWhiteout: false, makeDevices: false };
     using dir = tempDir("compile-mknod", {});
-    return { makeDevices: mknod(join(String(dir), "null"), "c", 1, 3) };
+    const make = (name: string, type: "c" | "b", major: number, minor: number) =>
+      mknod(join(String(dir), name), type, major, minor);
+    return {
+      makeWhiteout: make("whiteout", "c", 0, 0),
+      makeDevices: make("null", "c", 1, 3) && make("other", "c", 0, 1) && make("block", "b", 0, 0),
+    };
   })();
-  // As root the device is a scratch node: (1, 3) are the numbers of the null device of Linux. No root build names an entry
-  // of /dev. Without root a build can neither replace nor change one, so a link to it stands in.
+  // As root every device is a scratch node: (1, 3) are the numbers of the null device of Linux, and no driver has (0, 1).
+  // No root build names an entry of /dev. Without root a build can neither replace nor change one, so a link to it stands in.
   const hasDevices = isRoot ? can.makeDevices : true;
   const makeNullDevice = (path: string) =>
     isRoot ? expect(mknod(path, "c", 1, 3)).toBe(true) : symlinkSync("/dev/null", path);
+  const makeDevice = (path: string) =>
+    isRoot ? expect(mknod(path, "c", 0, 1)).toBe(true) : symlinkSync("/dev/zero", path);
   // The copy to another file system removes the name and makes a file, where the rename replaces it.
   const otherVolume = ["/dev/shm", "/tmp"].find(dir => {
     try {
@@ -882,18 +891,24 @@ for (const outfile of outfiles) {
   /** Resolves to a function that resolves to every name that appeared in `dir` in between, also one that is gone again. */
   async function namesThatAppearIn(dir: string) {
     const names = new Set<string>();
-    let mark = Promise.withResolvers<void>();
-    const watcher = watch(dir, (_, name) => (name === ".mark" ? mark.resolve() : void (name && names.add(`${name}`))));
-    const passMark = async () => {
-      writeFileSync(join(dir, ".mark"), "");
-      await mark.promise;
-      rmSync(join(dir, ".mark"));
-      mark = Promise.withResolvers<void>();
+    const marks = new Map<string, () => void>();
+    const watcher = watch(dir, (_, name) => {
+      const passed = marks.get(`${name}`);
+      if (passed) passed();
+      else if (name) names.add(`${name}`);
+    });
+    // The watcher reports names in the order they appear, so it has reported every earlier one when it reports the mark.
+    const passMark = async (mark: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      marks.set(mark, resolve);
+      writeFileSync(join(dir, mark), "");
+      await promise;
+      rmSync(join(dir, mark));
     };
-    await passMark();
+    await passMark(".start");
     names.clear();
     return async () => {
-      await passMark();
+      await passMark(".end");
       watcher.close();
       return [...names];
     };
@@ -903,6 +918,61 @@ for (const outfile of outfiles) {
   describe.each(commands)("bun %s", (_, { command, aot }) => {
     const build = (cwd: string, outfile: string) =>
       bun(cwd, ...command, ...withoutDebugInformation, "app.ts", "--outfile", outfile);
+
+    test.skipIf(!hasDevices).concurrent("a character device", async () => {
+      using dir = tempDir("compile-device", files);
+      const cwd = String(dir);
+      mkdirSync(join(cwd, "sub"));
+      const out = join(cwd, "sub", "out");
+      makeDevice(out);
+      const before = node(out);
+      const built = await build(cwd, join("sub", "out"));
+      expect(built.stderr).toContain(refusal(join("sub", "out")));
+      expect({
+        exitCode: built.exitCode,
+        out: node(out),
+        beside: readdirSync(join(cwd, "sub")),
+        files: readdirSync(cwd).sort(),
+      }).toEqual({ exitCode: 1, out: before, beside: ["out"], files: ["app.ts", "sub"] });
+    });
+
+    test.skipIf(isRoot || !can.makeWhiteout).concurrent("a character device that any user can make", async () => {
+      using dir = tempDir("compile-device", files);
+      const out = join(String(dir), "out");
+      expect(mknod(out, "c", 0, 0)).toBe(true);
+      const before = node(out);
+      const built = await build(String(dir), "out");
+      expect(built.stderr).toContain(refusal("out"));
+      expect({ exitCode: built.exitCode, out: node(out), files: readdirSync(String(dir)).sort() }).toEqual({
+        exitCode: 1,
+        out: before,
+        files: ["app.ts", "out"],
+      });
+    });
+
+    test.skipIf(!isRoot || !can.makeDevices).concurrent("a block device", async () => {
+      using dir = tempDir("compile-device", files);
+      const out = join(String(dir), "out");
+      // No disk has the number (0, 0): the open that an ahead-of-time build makes at its output path fails with ENXIO.
+      expect(mknod(out, "b", 0, 0)).toBe(true);
+      const before = node(out);
+      const built = await build(String(dir), "out");
+      expect(built.stderr).toContain(refusal("out", "block device"));
+      expect({ exitCode: built.exitCode, out: node(out) }).toEqual({ exitCode: 1, out: before });
+    });
+
+    // An ahead-of-time build reads the template before it builds.
+    test.skipIf(!hasDevices || aot).concurrent("a device is refused before the executable is staged", async () => {
+      using dir = tempDir("compile-device", files);
+      makeDevice(join(String(dir), "out"));
+      const build = (outfile: string) =>
+        bun(String(dir), ...command, "--compile-executable-path", "app.ts", "app.ts", "--outfile", outfile);
+      // Staging fails on a template that is no executable.
+      expect((await build("elsewhere")).stderr).toContain("failed to write compiled executable elsewhere\n");
+      const built = await build("out");
+      expect(built.stderr).toContain(refusal("out"));
+      expect(built.exitCode).toBe(1);
+    });
 
     // Not concurrent: each build stages a copy of Bun.
     test.skipIf(!hasDevices)("the null device, which gets nothing", async () => {
@@ -933,21 +1003,25 @@ for (const outfile of outfiles) {
     });
 
     // Not concurrent: a build that replaces the device writes a copy of Bun to that file system, which can be memory.
-    test.skipIf(!hasDevices || !otherVolume || aot)("the null device on another file system", async () => {
-      using dir = tempDir("compile-null", files);
+    test.skipIf(!hasDevices || !otherVolume || aot)("a device on another file system", async () => {
+      using dir = tempDir("compile-device", files);
       const volume = mkdtempSync(join(otherVolume!, "bun-compile-device-"));
       try {
-        const nullDevice = join(volume, "null");
+        const [device, nullDevice] = [join(volume, "device"), join(volume, "null")];
+        makeDevice(device);
         makeNullDevice(nullDevice);
-        const before = node(nullDevice);
-        const built = await build(String(dir), nullDevice);
-        expect(built.stderr).not.toContain("error");
+        const before = { device: node(device), nullDevice: node(nullDevice) };
+        const refused = await build(String(dir), device);
+        expect(refused.stderr).toContain(refusal(device));
+        const discarded = await build(String(dir), nullDevice);
+        expect(discarded.stderr).not.toContain("error");
         expect({
-          exitCode: built.exitCode,
+          exitCodes: [refused.exitCode, discarded.exitCode],
+          device: node(device),
           nullDevice: node(nullDevice),
-          volume: readdirSync(volume),
+          volume: readdirSync(volume).sort(),
           files: readdirSync(String(dir)),
-        }).toEqual({ exitCode: 0, nullDevice: before, volume: ["null"], files: ["app.ts"] });
+        }).toEqual({ exitCodes: [1, 0], ...before, volume: ["device", "null"], files: ["app.ts"] });
       } finally {
         rmSync(volume, { recursive: true, force: true });
       }
@@ -955,6 +1029,25 @@ for (const outfile of outfiles) {
   });
 
   describe.each(unsupported ? ["no-aot"] : ["no-aot", "aot"])("Bun.build, %s", aot => {
+    test.skipIf(!hasDevices).concurrent("a character device", async () => {
+      using dir = tempDir("api-device", { ...files, "build.ts": buildScript });
+      const cwd = String(dir);
+      mkdirSync(join(cwd, "sub"));
+      const [out, link] = [join(cwd, "sub", "out"), join(cwd, "link")];
+      makeDevice(out);
+      symlinkSync(join("sub", "out"), link);
+      const before = { out: node(out), link: node(link) };
+      // One path is relative, and one is absolute with another directory than the working directory. Without `aot` the
+      // message names the last part of the path alone, as the one for a directory does.
+      const built = await bun(cwd, "build.ts", aot, "link", out);
+      expect({ stdout: built.stdout, exitCode: built.exitCode, out: node(out), link: node(link) }).toEqual({
+        stdout: refusal("link") + refusal(aot === "aot" ? join("sub", "out") : "out"),
+        exitCode: 0,
+        ...before,
+      });
+      expect(readdirSync(join(cwd, "sub"))).toEqual(["out"]);
+    });
+
     test.skipIf(!hasDevices)("the null device, which gets nothing", async () => {
       using dir = tempDir("api-null", { ...files, "build.ts": buildScript });
       const cwd = String(dir);

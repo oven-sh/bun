@@ -5991,6 +5991,16 @@ extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
+// What getCachedCwd() answers while it has a string, and empty otherwise. It makes no process object, asks the system nothing and throws nothing.
+extern "C" EncodedJSValue Process__cachedCwdIfAny(JSC::JSGlobalObject* globalObject)
+{
+    auto* global = defaultGlobalObject(globalObject);
+    if (!global->hasProcessObject())
+        return {};
+    auto* cached = global->processObject()->cachedCwd();
+    return cached ? JSValue::encode(cached) : EncodedJSValue {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(getCachedCwd(globalObject));

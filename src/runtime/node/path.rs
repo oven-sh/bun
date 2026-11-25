@@ -648,6 +648,12 @@ fn relative_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     if WINDOWS {
         return Ok(None);
     }
+    // Node answers "" for `from === to` before it reads either, and one string is that in any form.
+    if FLAT_ONLY && from.to_js() == to.to_js() {
+        // As a likely branch this cost two different operands an inlined call: 7 instructions each time.
+        core::hint::cold_path();
+        return Ok(Some(heap.create_latin1_string(b"")));
+    }
     let (Some(from), Some(to)) = (
         latin1_of::<FLAT_ONLY>(heap, from)?,
         latin1_of::<FLAT_ONLY>(heap, to)?,
@@ -724,7 +730,8 @@ fn relative_of_absolute_posix<'a>(
 ) -> Option<Text<'a>> {
     let (from, to) = (from.characters(), to.characters());
     if !is_absolute_posix_t(from) || !is_absolute_posix_t(to) {
-        return None;
+        // Node answers "" for equal operands before it asks for the working directory.
+        return (from == to).then(|| heap.create_latin1_string(b""));
     }
     let buf_len = relative_buf_len(from, to);
     let mut scratch = PathScratch::new(heap, buf_len * 3);
@@ -739,6 +746,10 @@ fn relative_utf8<'a, const WINDOWS: bool>(
     from: Text<'a>,
     to: Text<'a>,
 ) -> TextResult<'a> {
+    // `path.win32` has no route but this one. Node answers "" for `from === to` before it reads either.
+    if WINDOWS && from.to_js() == to.to_js() {
+        return Ok(heap.create_latin1_string(b""));
+    }
     let from_view = from.view(heap)?;
     let to_view = to.view(heap)?;
     if from_view.is_empty() && to_view.is_empty() {
@@ -761,6 +772,8 @@ by_form_of_operands!(relative, relative_other, relative_latin1, relative_utf8, (
 #[cfg(unix)]
 unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
+    /// The string that `process.cwd()` keeps until the working directory changes, or empty: it asks the system nothing and throws nothing.
+    safe fn Process__cachedCwdIfAny(global: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue;
 }
 
 /// `None` unless the paths that count are 8-bit strings and [`SHORT`] together.
@@ -796,8 +809,16 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             return Ok(resolve_joined_posix(heap, joined.characters()));
         }
     }
-    // `process.cwd()` itself is kept as a string.
+    // `process.cwd()` itself is kept as a string. Where there is none yet, the system is asked for it, which can fail.
     if matches!(joined.characters(), b"" | b"." | b"./") {
+        #[cfg(unix)]
+        {
+            // SAFETY: the global object is only asked for a string that it keeps.
+            let cwd = Process__cachedCwdIfAny(unsafe { heap.global() });
+            if !cwd.is_empty() {
+                return Ok(JsLocal::new(heap, cwd).as_string());
+            }
+        }
         return Ok(None);
     }
     #[cfg(not(windows))]

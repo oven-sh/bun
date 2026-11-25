@@ -159,6 +159,19 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     expect(different).toEqual([]);
   });
 
+  // Node answers "" for `from === to` before it looks at either: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1360
+  test.each(Object.entries(forms))("relative of a %s and the same characters is the empty string", (_, form) => {
+    const wrong: unknown[][] = [];
+    for (const text of createPaths(3, 400)) {
+      const one = form(text);
+      if (p.relative(one, one) !== "") wrong.push([text, "one string"]);
+      if (p.relative(form(text), form(text)) !== "") wrong.push([text, "two strings"]);
+      if (p.relative(form(text), wide(text)) !== "") wrong.push([text, "to 16-bit storage"]);
+      if (p.relative(wide(text), form(text)) !== "") wrong.push([text, "from 16-bit storage"]);
+    }
+    expect(wrong).toEqual([]);
+  });
+
   test("every length around the widths that are read at once", () => {
     const { different, compare } = createComparison();
     for (let length = 0; length <= 70; ++length) {

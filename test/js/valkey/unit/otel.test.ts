@@ -63,6 +63,24 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     ]);
   });
 
+  test("replies as bytes: inside MULTI, and with a key that an object cannot hold", async () => {
+    const key = ctx.generateKey("otel-bytes");
+    await ctx.redis.send("HSET", [key, Buffer.from([0xff]), "secret"]);
+    await ctx.redis.send("MULTI", []);
+    await ctx.redis.send("HLEN", [key]);
+    await ctx.redis.send("EXEC", [], { buffer: true });
+    await ctx.redis.hgetall(key, { buffer: true }).catch(() => {});
+    const got = await collect();
+    expect(got.map(s => [s.name, s.status.code, s.attributes["error.type"]])).toEqual([
+      ["HSET 0", 0, undefined],
+      ["MULTI 0", 0, undefined],
+      ["HLEN 0", 0, undefined],
+      ["EXEC 0", 0, undefined],
+      ["HGETALL 0", 2, "ERR_ENCODING_INVALID_ENCODED_DATA"],
+    ]);
+    expect(JSON.stringify(got)).not.toContain("secret");
+  });
+
   test("neither ECHO nor the reply to an unknown command reveals a value", async () => {
     await ctx.redis.send("ECHO", ["secret"]);
     await ctx.redis.send("MADEUP", ["key", "secret"]).catch(() => {});

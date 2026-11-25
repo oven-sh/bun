@@ -711,7 +711,6 @@ describe("@types/bun integration test", () => {
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",
       // `pendingDeclarations` in test/internal/source-lints/redis-client-types.test.ts.
       "valkey.bind.ts: new RedisClient().psubscribe is not published",
-      "valkey.bind.ts: new RedisClient().pubsub is not published",
       "valkey.bind.ts: new RedisClient().punsubscribe is not published",
       "valkey.bind.ts: new RedisClient().select is not published",
     ]);

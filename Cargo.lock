@@ -853,6 +853,7 @@ version = "0.0.0"
 dependencies = [
  "bun_collections",
  "bun_core",
+ "bun_icu_format",
  "bun_icu_macros",
  "bun_paths",
  "bun_sema_standalone",
@@ -869,8 +870,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_icu_format"
+version = "0.0.0"
+
+[[package]]
 name = "bun_icu_macros"
 version = "0.0.0"
+
+[[package]]
+name = "bun_icu_pack"
+version = "0.0.0"
+dependencies = [
+ "bun_icu_format",
+]
 
 [[package]]
 name = "bun_ini"
@@ -2167,6 +2179,7 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
  "bun_exe_format",
+ "bun_icu_format",
  "bun_options_types",
  "bun_removable_features",
  "bun_sema_standalone",

@@ -12,6 +12,7 @@ use crate::i18n::collationfcd::{
     may_have_lccc, maybe_tibetan_composite_vowel,
 };
 use crate::i18n::collationiterator::{BufferId, INPUT_BUFFER, Text};
+use crate::i18n::collationtrie::Mapping;
 
 /// Returns the code point at `*pos` and its CE32, and advances `*pos`.
 #[inline(always)]
@@ -19,7 +20,7 @@ fn next_ce32(data: &CollationData, u8: &[u8], pos: &mut usize) -> Option<(u32, u
     let &b = u8.get(*pos)?;
     if utf8::is_single(b) {
         *pos += 1;
-        return Some((u32::from(b), data.trie.get32_from_ascii(b)));
+        return Some((u32::from(b), data.trie.get_from_ascii(b)));
     }
     if (0xe0..0xf0).contains(&b)
         && let (Some(&t1), Some(&t2)) = (u8.get(*pos + 1), u8.get(*pos + 2))
@@ -29,21 +30,18 @@ fn next_ce32(data: &CollationData, u8: &[u8], pos: &mut usize) -> Option<(u32, u
         // U+0800..U+FFFF except surrogates
         let c = (u16::from(b & 0xf) << 12) | (u16::from(t1 & 0x3f) << 6) | u16::from(t2 - 0x80);
         *pos += 3;
-        Some((u32::from(c), data.trie.get32_from_u16_single_lead(c)))
+        Some((u32::from(c), data.trie.get_from_u16_single_lead(c)))
     } else if (0xc2..0xe0).contains(&b)
         && let Some(&t1) = u8.get(*pos + 1)
         && t1.wrapping_sub(0x80) <= 0x3f
     {
         // U+0080..U+07FF
-        let t1 = t1 - 0x80;
+        let c = (u16::from(b & 0x1f) << 6) | u16::from(t1 - 0x80);
         *pos += 2;
-        Some((
-            (u32::from(b & 0x1f) << 6) | u32::from(t1),
-            data.trie.get32_from_utf8_2b(b, t1),
-        ))
+        Some((u32::from(c), data.trie.get_from_u16_single_lead(c)))
     } else {
         let c = utf8::next_or_fffd(u8, pos);
-        Some((c, data.ce32(c)))
+        Some((c, data.trie.get(c)))
     }
 }
 
@@ -231,7 +229,7 @@ impl<'a> FcdUtf8Text<'a> {
 
 impl Text for FcdUtf8Text<'_> {
     /// Returns lead surrogates inside a normalized segment.
-    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, u32)>, UErrorCode> {
+    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, Mapping)>, UErrorCode> {
         loop {
             match self.state {
                 State::CheckFwd => {
@@ -240,20 +238,21 @@ impl Text for FcdUtf8Text<'_> {
                         return Ok(None);
                     };
                     if !self.may_fail_fcd_after(c) {
-                        return Ok(Some((c, ce32)));
+                        return Ok(Some((c, Mapping::Ce32(ce32))));
                     }
                     self.pos = before;
                     self.enter_segment(false)?;
                 }
                 State::InFcdSegment if self.pos != self.limit => {
-                    return Ok(next_ce32(data, self.u8, &mut self.pos));
+                    let next = next_ce32(data, self.u8, &mut self.pos);
+                    return Ok(next.map(|(c, ce32)| (c, Mapping::Ce32(ce32))));
                 }
                 State::InNormalized if self.pos != self.normalized.len() => {
                     let c = self.normalized.at(self.pos);
                     self.pos += 1;
                     return Ok(Some((
                         u32::from(c),
-                        data.trie.get32_from_u16_single_lead(c),
+                        data.trie.mapping_of_u16_single_lead(c),
                     )));
                 }
                 _ => self.switch_to_forward(),

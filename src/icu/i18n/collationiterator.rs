@@ -1,7 +1,7 @@
 //! Maps text to collation elements (CEs). ICU4C: collationiterator.cpp
 
 use crate::common::memory::{
-    Appendable, check_oom, set_oom, try_box, try_heap_push, try_insert, try_push,
+    Appendable, check_oom, drop_out_of_line, set_oom, try_box, try_heap_push, try_insert, try_push,
 };
 use crate::common::normalizer2impl::{get_fcd16, hangul};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
@@ -12,6 +12,8 @@ use crate::common::utypes::*;
 use crate::i18n::collation;
 use crate::i18n::collationdata::CollationData;
 use crate::i18n::collationfcd;
+use crate::i18n::collationtrie::Mapping;
+use bun_icu_format::collation::{HANJA_LOW_BYTE, PAIR_LOW_BYTE};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::ops::{Deref, DerefMut};
@@ -28,7 +30,7 @@ pub(crate) trait Text {
     fn previous(&mut self) -> Result<Option<u32>, UErrorCode>;
 
     /// Returns the next code point (or lead surrogate of UTF-16 text) and its CE32 in `data`, without fallback.
-    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, u32)>, UErrorCode>;
+    fn next_ce32(&mut self, data: &CollationData) -> Result<Option<(u32, Mapping)>, UErrorCode>;
 
     /// Moves forward over at most `n` code points that have been read before.
     fn forward(&mut self, n: usize) {
@@ -477,6 +479,14 @@ pub(crate) struct CollationIterator<T: Text + ?Sized> {
     text: T,
 }
 
+/// Perf: what is left to drop is small enough to be inlined.
+impl<T: Text + ?Sized> Drop for CollationIterator<T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        drop_out_of_line(&mut self.skipped);
+    }
+}
+
 impl<T: Text> CollationIterator<T> {
     #[inline(always)]
     pub(crate) fn new(is_numeric: bool, text: T) -> Self {
@@ -498,10 +508,11 @@ impl<T: Text> CollationIterator<T> {
         }
         let ce = match self.text.next_ce32(data)? {
             None => collation::NO_CE,
-            Some((_, ce32)) if (ce32 as u8) < collation::SPECIAL_CE32_LOW_BYTE => {
+            Some((_, Mapping::Primary(primary))) => collation::make_ce(primary << 16),
+            Some((_, Mapping::Ce32(ce32))) if (ce32 as u8) < collation::SPECIAL_CE32_LOW_BYTE => {
                 collation::ce_from_simple_ce32(ce32)
             }
-            Some((c, ce32)) => {
+            Some((c, Mapping::Ce32(ce32))) => {
                 let is_fallback = ce32 as u8 == collation::SPECIAL_CE32_LOW_BYTE;
                 let (d, ce32) = if is_fallback {
                     data.fall_back(c)
@@ -637,6 +648,12 @@ impl<'a, 't> Appender<'a, 't> {
                 collation::LONG_SECONDARY_TAG => {
                     break collation::ce_from_long_secondary_ce32(ce32);
                 }
+                collation::LAZY_TAG => {
+                    ce32 = d.trie.fill(c).ok_or(U_INTERNAL_PROGRAM_ERROR)?;
+                    if ce32 == collation::FALLBACK_CE32 {
+                        (d, ce32) = d.look_up(c);
+                    }
+                }
                 collation::LATIN_EXPANSION_TAG => {
                     self.iter.ces.add(collation::latin_ce0_from_ce32(ce32));
                     break collation::latin_ce1_from_ce32(ce32);
@@ -650,6 +667,23 @@ impl<'a, 't> Appender<'a, 't> {
                     expansion().for_each(|i| self.iter.ces.add(d.ces.at(i)));
                     return Ok(None);
                 }
+                collation::PACKED_EXPANSION_TAG if d.trie.is_packed() => match ce32 as u8 {
+                    PAIR_LOW_BYTE => {
+                        let [first, second] = d.pair(ce32);
+                        self.iter.ces.add(first);
+                        break second;
+                    }
+                    HANJA_LOW_BYTE => {
+                        let ([l, v, t], secondary) = d.hanja(ce32);
+                        self.iter.ces.add(collation::make_ce(l));
+                        if t << 8 == 0 {
+                            break collation::make_ce_with_secondary(v, secondary);
+                        }
+                        self.iter.ces.add(collation::make_ce(v));
+                        break collation::make_ce_with_secondary(t, secondary);
+                    }
+                    _ => return Err(U_INTERNAL_PROGRAM_ERROR),
+                },
                 collation::PREFIX_TAG => ce32 = self.iter.ce32_from_prefix(d, index)?,
                 collation::CONTRACTION_TAG => {
                     let default = d.default_ce32(index);
@@ -720,12 +754,11 @@ impl<'a, 't> Appender<'a, 't> {
                         ce32 = collation::UNASSIGNED_CE32;
                         continue;
                     };
-                    self.steps = 0;
-                    c = utf16::get_supplementary(c, trail);
+                    (c, self.steps, is_first) = (utf16::get_supplementary(c, trail), 1, true);
                     ce32 = match ce32 & collation::LEAD_TYPE_MASK {
                         collation::LEAD_ALL_UNASSIGNED => collation::UNASSIGNED_CE32,
                         collation::LEAD_ALL_FALLBACK => collation::FALLBACK_CE32,
-                        _ => d.ce32_from_supplementary(c),
+                        _ => d.trie.get_from_supp(c),
                     };
                     if ce32 == collation::FALLBACK_CE32 {
                         (d, ce32) = d.fall_back(c);

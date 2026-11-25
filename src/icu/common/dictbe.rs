@@ -125,7 +125,7 @@ impl PossibleWord {
     fn candidates(
         &mut self,
         text: &mut Cursor,
-        dictionary: DictionaryMatcher,
+        dictionary: &DictionaryMatcher,
         range_end: i32,
     ) -> usize {
         let start = text.index;
@@ -195,7 +195,7 @@ impl WordBreakEngine {
         loop {
             if words
                 .word(number + 1)
-                .candidates(text, self.dictionary, range_end)
+                .candidates(text, &self.dictionary, range_end)
                 > 0
             {
                 words.word(number).mark_current();
@@ -205,7 +205,7 @@ impl WordBreakEngine {
                 loop {
                     if words
                         .word(number + 2)
-                        .candidates(text, self.dictionary, range_end)
+                        .candidates(text, &self.dictionary, range_end)
                         > 0
                     {
                         return;
@@ -231,7 +231,7 @@ impl WordBreakEngine {
             }
             if (self.script.begins_word)(text.current())
                 && (self.script.ends_word)(before)
-                && next.candidates(text, self.dictionary, range_end) > 0
+                && next.candidates(text, &self.dictionary, range_end) > 0
             {
                 text.index = index;
                 return;
@@ -242,7 +242,7 @@ impl WordBreakEngine {
     /// Moves `text` past the suffix characters that extend the Thai word before it.
     fn skip_suffixes(&self, next: &mut PossibleWord, text: &mut Cursor, range_end: i32) {
         let word_end = text.index;
-        if next.candidates(text, self.dictionary, range_end) > 0 {
+        if next.candidates(text, &self.dictionary, range_end) > 0 {
             text.index = word_end;
             return;
         }
@@ -277,7 +277,7 @@ impl WordBreakEngine {
             let (start, mut can_combine) = (text.index, true);
             let candidates = words
                 .word(words_found)
-                .candidates(text, self.dictionary, range_end);
+                .candidates(text, &self.dictionary, range_end);
             if candidates > 1 {
                 self.mark_best_candidate(&mut words, words_found, text, range_end);
             }
@@ -290,7 +290,7 @@ impl WordBreakEngine {
             // Following text that is not a dictionary word is combined with a word below the threshold.
             if text.index < range_end && can_combine {
                 let (next, word_end) = (words.word(words_found), text.index);
-                if next.candidates(text, self.dictionary, range_end) == 0
+                if next.candidates(text, &self.dictionary, range_end) == 0
                     && (word_end == start || next.prefix < PREFIX_COMBINE_THRESHOLD)
                 {
                     self.resynchronize(words.word(words_found + 1), text, range_end);

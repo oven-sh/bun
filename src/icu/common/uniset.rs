@@ -1,6 +1,7 @@
 //! A set of code points and strings. A change for which an allocation fails has no effect. ICU4C: uniset.cpp
 
 use crate::common::bmpset::BMPSet;
+use crate::common::bytes::U16s;
 use crate::common::memory::{Appendable, defer_oom, is_oom, try_box, try_splice, try_to_vec};
 use crate::common::slice_ext::SliceExt;
 use crate::common::sorting::sort_in_place;
@@ -53,9 +54,12 @@ impl UnicodeSet {
         }
     }
 
-    pub(crate) fn contains_some_range(&self, start: u32, end: u32) -> bool {
-        let i = find_code_point(&self.list, start);
-        i & 1 != 0 || self.list.get(i).is_some_and(|&next| next <= end)
+    /// Returns the first code point from `c` on.
+    pub(crate) fn first_from(&self, c: u32) -> Option<u32> {
+        match find_code_point(&self.list, c) {
+            i if i & 1 != 0 => Some(c),
+            i => self.list.get(i).copied(),
+        }
     }
 
     pub(crate) fn ranges(&self) -> impl ExactSizeIterator<Item = RangeInclusive<u32>> {
@@ -136,8 +140,30 @@ impl UnicodeSet {
         self.combine(&Self::new(), |a, _| !a);
     }
 
+    /// Like `add_range` for each range, but each element moves once.
     pub(crate) fn add_all(&mut self, other: &Self) {
-        self.combine(other, |a, b| a || b);
+        let (mut merged, mut rest) = (Vec::new(), &*self.list);
+        _ = merged.reserve_append(rest.len() + other.list.len());
+        for &[start, limit] in other.list.as_chunks().0 {
+            while let [first, more @ ..] = rest
+                && *first < start
+            {
+                merged.add(*first);
+                rest = more;
+            }
+            // An odd number is left inside a range.
+            if rest.len() & 1 == 0 {
+                merged.add(start);
+            }
+            rest = rest.slice(rest.iter().take_while(|&&it| it <= limit).count()..);
+            if rest.len() & 1 == 0 {
+                merged.add(limit);
+            }
+        }
+        merged.add_all(rest);
+        if !is_oom() {
+            self.list = merged;
+        }
     }
 
     pub(crate) fn retain_all(&mut self, other: &Self) {
@@ -156,37 +182,34 @@ impl UnicodeSet {
     }
 
     /// Returns `None` if `units` is too short or a range is not valid. ICU4C: uset.cpp, uset_getSerializedSet
-    pub(crate) fn add_serialized(
-        &mut self,
-        units: impl ExactSizeIterator<Item = u16>,
-    ) -> Option<()> {
-        let mut units = units.map(u32::from);
-        let first = units.next()?;
+    pub(crate) fn from_serialized(units: U16s) -> Option<Self> {
+        let first = usize::from(units.get(0)?);
         let length = first & 0x7fff;
-        let bmp_length = if first & 0x8000 != 0 {
-            units.next()?
-        } else {
-            length
+        let (header, bmp_length) = match first & 0x8000 {
+            0 => (1, length),
+            _ => (2, units.get(1)?.into()),
         };
-        let mut start = None;
+        let (bmp, rest) = (units.as_bytes().get(2 * header..2 * (header + length))?)
+            .split_at_checked(2 * bmp_length)?;
+        let mut list = Vec::new();
+        _ = list.reserve_append(length + 1);
+        list.add_each(U16s::of(bmp).iter().map(u32::from));
         // The boundaries above U+FFFF have two units each.
-        for i in 0..bmp_length + length.checked_sub(bmp_length)? / 2 {
-            let mut boundary = units.next()?;
-            if i >= bmp_length {
-                boundary = boundary << 16 | units.next()?;
-            }
-            match start.take() {
-                None => start = Some(boundary).filter(|&start| start <= MAX_VALUE),
-                Some(start) if start < boundary && boundary <= MAX_VALUE + 1 => {
-                    self.add_range(start, boundary - 1);
-                }
-                Some(_) => return None,
-            }
+        list.add_each(rest.as_chunks().0.iter().map(|&[a, b, c, d]| {
+            u32::from(u16::from_ne_bytes([a, b])) << 16 | u32::from(u16::from_ne_bytes([c, d]))
+        }));
+        if list.len() & 1 != 0 && list.pop_if(|last| *last > MAX_VALUE).is_none() {
+            list.add(MAX_VALUE + 1);
         }
-        if let Some(start) = start {
-            self.add_range(start, MAX_VALUE);
+        let mut set = Self::new();
+        if list.is_sorted_by(|a, b| a < b) && list.last() <= Some(&(MAX_VALUE + 1)) {
+            set.list = list;
+            return Some(set);
         }
-        Some(())
+        for &[start, limit] in list.as_chunks().0 {
+            (start < limit && limit <= MAX_VALUE + 1).then(|| set.add_range(start, limit - 1))?;
+        }
+        Some(set)
     }
 
     /// Builds the tables that speed up `contains`. The set must not change afterwards.

@@ -3,7 +3,7 @@
 use crate::common::bytes::U_IS_BIG_ENDIAN;
 use crate::common::udata::UDataInfo;
 use crate::common::utypes::{U_INVALID_FORMAT_ERROR, UErrorCode};
-use crate::sys::package::{decompress, prefix_binary_search};
+use std::cmp::Ordering;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Package<'a> {
@@ -43,8 +43,7 @@ impl Package<'static> {
         let Self { toc, count } = self;
         let word = |index: usize, at| u32::from_ne_bytes(zero_padded(toc, index * 8 + at));
         let index = prefix_binary_search(name, count, |index| {
-            let name = toc.get(word(index, 4) as usize..).unwrap_or_default();
-            move |at| name.get(at).copied().unwrap_or(0)
+            toc.get(word(index, 4) as usize..).unwrap_or_default()
         })?;
         let start = word(index, 8);
         let rest = toc.get(start as usize..).unwrap_or_default();
@@ -57,6 +56,43 @@ impl Package<'static> {
             .map(|length| length as usize)
             .filter(|&length| length >= header_size);
         let item = length.and_then(|length| rest.get(..length));
-        Some(decompress(item.unwrap_or(rest)))
+        Some(item.unwrap_or(rest))
     }
+}
+
+/// `name_at(index)` begins with the name of that entry. ICU4C: ucmndata.cpp, offsetTOCPrefixBinarySearch
+fn prefix_binary_search<'a>(
+    name: &[u8],
+    count: usize,
+    name_at: impl Fn(usize) -> &'a [u8],
+) -> Option<usize> {
+    // strcmpAfterPrefix
+    let compare = |index: usize, prefix: &mut usize| {
+        let entry_name = name_at(index);
+        loop {
+            let [c1, c2] = [name, entry_name].map(|it| it.get(*prefix).copied().unwrap_or(0));
+            if c1 != c2 || c1 == 0 {
+                return c1.cmp(&c2);
+            }
+            *prefix += 1;
+        }
+    };
+    let (mut start, mut limit) = (1, count.checked_sub(1)?);
+    let (mut start_prefix, mut limit_prefix) = (0, 0);
+    if compare(0, &mut start_prefix).is_eq() {
+        return Some(0);
+    }
+    if compare(limit, &mut limit_prefix).is_eq() {
+        return Some(limit);
+    }
+    while start < limit {
+        let middle = start + (limit - start) / 2;
+        let mut prefix = start_prefix.min(limit_prefix);
+        match compare(middle, &mut prefix) {
+            Ordering::Less => (limit, limit_prefix) = (middle, prefix),
+            Ordering::Greater => (start, start_prefix) = (middle + 1, prefix),
+            Ordering::Equal => return Some(middle),
+        }
+    }
+    None
 }

@@ -1,9 +1,10 @@
 //! A small package of data in the place of ICU's.
 
 use std::cell::UnsafeCell;
-use std::ffi::c_void;
-use std::fmt::Display;
-use std::sync::{Once, OnceLock};
+use std::sync::Once;
+
+use bun_icu_format::locales::File;
+use bun_icu_format::package::{ALIGNMENT, FILES, MAGIC};
 
 use Resource::{Alias, Array, Int, Ints, Str, Table};
 
@@ -213,35 +214,18 @@ const INDEX: Resource = Table(&[(
     Table(&[("de", Str("")), ("en", Str(""))]),
 )]);
 
-/// Stands for an item that the hook decompresses.
-const COMPRESSED: &[u8; 16] = b"compressed de\0\0\0";
-
 #[repr(C, align(16))]
 struct Package(UnsafeCell<[u8; 4096]>);
 
 // SAFETY: `install` writes it once, before anything reads it.
 unsafe impl Sync for Package {}
 
-#[unsafe(export_name = "icudt79_dat")]
+#[unsafe(export_name = "bun_icu_package")]
 static PACKAGE: Package = Package(UnsafeCell::new([0; _]));
-static DECOMPRESSED: OnceLock<Vec<u8>> = OnceLock::new();
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn bun_icu_maybe_decompress(
-    item: *const c_void,
-    length: &mut i32,
-) -> *const c_void {
-    // SAFETY: each item has 16 bytes or more.
-    if unsafe { item.cast::<[u8; 16]>().read() } != *COMPRESSED {
-        return item;
-    }
-    let bytes = DECOMPRESSED.get().unwrap();
-    *length = bytes.len() as i32;
-    bytes.as_ptr().cast()
-}
-
-/// The names are sorted.
-pub(crate) fn package(package: &str, items: &[(impl Display, Vec<u8>)]) -> Vec<u8> {
+/// In the format of ICU. The names are sorted.
+#[cfg(not(miri))]
+pub(crate) fn package(package: &str, items: &[(impl std::fmt::Display, Vec<u8>)]) -> Vec<u8> {
     let (mut entries, mut rest) = (vec![items.len() as u32], Vec::new());
     let entries_size = 4 + 8 * items.len();
     for (name, _) in items {
@@ -271,27 +255,60 @@ pub(crate) fn german_of(package: &str) -> Vec<u8> {
     bundle(Table(vec![("NumberElements", alias)].leak()), 0)
 }
 
+/// Has literal bytes only.
+fn squeezed(file: &[u8]) -> Vec<u8> {
+    let mut item = vec![0, file.len() as u8 | 0x80, (file.len() >> 7) as u8, 0];
+    for literal in file.chunks(32) {
+        item.push(literal.len() as u8 - 1);
+        item.extend(literal);
+    }
+    item
+}
+
+/// In the format of the linked package. The paths are sorted.
+fn linked(files: &[(&str, u16, Vec<u8>)]) -> Vec<u8> {
+    let (mut directory, mut paths) = (vec![files.len() as u16], String::new());
+    for (item, (path, flags, _)) in (FILES + 1..).zip(files) {
+        let name = 2 * (1 + File::WORDS * files.len()) + paths.len();
+        directory.extend([name as u16, item as u16 | flags, 0, 0]);
+        paths.extend([path, "\0"]);
+    }
+    let directory = directory.iter().flat_map(|word| word.to_le_bytes());
+    let directory: Vec<u8> = directory.chain(paths.bytes()).collect();
+    let items = [&[][..], &[], &directory].into_iter();
+    let (mut words, mut rest) = (vec![0, (FILES + 1 + files.len()) as u32], Vec::<u8>::new());
+    let first = MAGIC.len() + 4 * (words.len() + FILES + 2 + files.len());
+    for item in items
+        .chain(files.iter().map(|file| &file.2[..]))
+        .chain([&[][..]])
+    {
+        words.push((first + rest.len()) as u32);
+        rest.extend(item);
+        rest.resize(rest.len().next_multiple_of(ALIGNMENT), 0);
+    }
+    let words = words.iter().flat_map(|word| word.to_le_bytes());
+    MAGIC.into_iter().chain(words).chain(rest).collect()
+}
+
 /// Each test calls it first.
 pub(crate) fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        DECOMPRESSED.set(bundle(GERMAN, 0)).unwrap();
-        let items = [
-            ("curr/root.res", bundle(CURRENCIES, 0)),
-            ("de.res", COMPRESSED.to_vec()),
-            ("frame.res", [0x28, 0xb5, 0x2f, 0xfd].repeat(4)),
-            ("nomagic.res", vec![0; 16]),
+        let package = linked(&[
+            ("curr/root.res", 0, bundle(CURRENCIES, 0)),
+            ("de.res", File::SQUEEZED, squeezed(&bundle(GERMAN, 0))),
+            ("nomagic.res", 0, vec![0; 16]),
             (
                 "numberingSystems.res",
+                0,
                 bundle(NUMBERING_SYSTEMS, NO_FALLBACK),
             ),
-            ("pluralRanges.res", bundle(INDEX, NO_FALLBACK)),
-            ("plurals.res", bundle(PLURALS, NO_FALLBACK)),
-            ("res_index.res", bundle(INDEX, NO_FALLBACK)),
-            ("root.res", bundle(ROOT, 0)),
-            ("supplementalData.res", bundle(SUPPLEMENTAL, NO_FALLBACK)),
-        ];
-        let package = package("icudt79l", &items);
+            ("pluralRanges.res", 0, bundle(INDEX, NO_FALLBACK)),
+            ("plurals.res", 0, bundle(PLURALS, NO_FALLBACK)),
+            ("res_index.res", 0, bundle(INDEX, NO_FALLBACK)),
+            ("root.res", 0, bundle(ROOT, 0)),
+            ("supplementalData.res", 0, bundle(SUPPLEMENTAL, NO_FALLBACK)),
+        ]);
         // SAFETY: nothing has read it yet.
         let room = unsafe { &mut *PACKAGE.0.get() };
         room[..package.len()].copy_from_slice(&package);

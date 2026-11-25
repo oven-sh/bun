@@ -395,6 +395,17 @@ pub(crate) fn try_cstring(bytes: &[u8]) -> Result<CString, UErrorCode> {
     CString::from_vec_with_nul(exact).or(Err(U_ILLEGAL_ARGUMENT_ERROR))
 }
 
+/// `*value = None` for what is rarely `Some`.
+#[inline(always)]
+pub(crate) fn drop_out_of_line<T>(value: &mut Option<Box<T>>) {
+    #[cold]
+    #[inline(never)]
+    fn consume<T>(_: Box<T>) {}
+    if let Some(value) = value.take() {
+        consume(value);
+    }
+}
+
 /// `Box::new(value)`
 pub(crate) fn try_box<T>(value: T) -> Result<Box<T>, UErrorCode> {
     Ok(Box::write(try_box_uninit()?, value))

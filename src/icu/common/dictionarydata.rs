@@ -2,10 +2,13 @@
 
 use crate::common::bytes::{I32s, U16s};
 use crate::common::bytestrie::BytesTrie;
+use crate::common::linked;
 use crate::common::slice_ext::to_index;
 use crate::common::ucharstrie::UCharsTrie;
+use crate::common::udata::UDataMemory;
 use crate::common::ustringtrie::UStringTrieResult;
 use crate::common::utf16;
+use bun_icu_format::dictionary::{DATA_FORMAT, Dictionary};
 
 const IX_STRING_TRIE_OFFSET: usize = 0;
 const IX_TRIE_TYPE: usize = 4;
@@ -23,8 +26,41 @@ const MAX_DELTA: i32 = 0xFD;
 /// A final value at the root, as bytes and as units.
 const EMPTY_TRIE: &[u8] = &[0xFF, 0xFF];
 
-#[derive(Clone, Copy)]
 pub(crate) enum DictionaryMatcher {
+    Packed(Dictionary<'static>),
+    File(FileMatcher),
+}
+
+impl DictionaryMatcher {
+    /// `item` can have another format than that of a dictionary.
+    pub(crate) fn new(item: &UDataMemory) -> Option<Self> {
+        if item.info.data_format == DATA_FORMAT && linked::contains(item.memory) {
+            Dictionary::new(item.memory).map(Self::Packed)
+        } else {
+            FileMatcher::new(item.memory).map(Self::File)
+        }
+    }
+
+    /// Calls `found(units, code points, value)` for each word that starts `text`, shortest first. Returns the code points read.
+    #[inline(always)]
+    pub(crate) fn matches(
+        &self,
+        text: &[u16],
+        max_length: usize,
+        mut found: impl FnMut(usize, usize, i32),
+    ) -> usize {
+        match self {
+            Self::Packed(dictionary) => dictionary
+                .matches(text.get(..max_length).unwrap_or(text), |length, value| {
+                    found(length, length, value.into())
+                }),
+            Self::File(matcher) => matcher.matches(text, max_length, &mut found),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum FileMatcher {
     UChars(UCharsTrie<'static>),
     Bytes {
         trie: BytesTrie<'static>,
@@ -50,9 +86,8 @@ fn transform(delta: i32, offset: i32, transform_constant: i32) -> i32 {
     }
 }
 
-impl DictionaryMatcher {
-    /// `data` can have another format than that of a dictionary.
-    pub(crate) fn new(data: &'static [u8]) -> Option<Self> {
+impl FileMatcher {
+    fn new(data: &'static [u8]) -> Option<Self> {
         let indexes = I32s::of(data);
         let offset = to_index(indexes.get(IX_STRING_TRIE_OFFSET)?);
         let trie = data.get(offset..).unwrap_or(EMPTY_TRIE);
@@ -96,12 +131,11 @@ impl DictionaryMatcher {
         }
     }
 
-    /// Calls `found(units, code points, value)` for each word that starts `text`, shortest first. Returns the code points read.
-    pub(crate) fn matches(
+    fn matches(
         mut self,
         text: &[u16],
         max_length: usize,
-        mut found: impl FnMut(usize, usize, i32),
+        found: &mut dyn FnMut(usize, usize, i32),
     ) -> usize {
         let (mut length, mut matched) = (0, 0);
         while let Some(&unit) = text.get(length) {

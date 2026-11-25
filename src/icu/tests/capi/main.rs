@@ -1,36 +1,21 @@
 //! Calls the exported functions as C++ does: with buffers that are not initialized, and with pointers that it keeps.
 #![cfg(not(any(target_os = "macos", bun_system_icu)))]
 
+mod calls;
 mod package;
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, c_char};
 use std::fmt::Debug;
 use std::ptr::{null, null_mut};
 
 use bun_icu as _;
 #[cfg(not(miri))]
 use bun_sema_standalone as _;
-
-type Handle = *mut c_void;
-type Status = i32;
-type Result<T> = std::result::Result<T, Status>;
+use calls::*;
 
 const MISSING_RESOURCE: Status = 2;
-const MEMORY_ALLOCATION: Status = 7;
 const UNSUPPORTED: Status = 16;
-const BUFFER_OVERFLOW: Status = 15;
-const NOT_TERMINATED: Status = -124;
 
-macro_rules! declare {
-    ($($name:ident($($parameter:ty),*) $(-> $result:ty)?;)+) => {
-        unsafe extern "C" {$(
-            #[link_name = concat!(stringify!($name), "_79")]
-            fn $name($(_: $parameter),*) $(-> $result)?;
-        )+}
-    };
-}
 declare! {
     u_strToLower(*mut u16, i32, *const u16, i32, *const c_char, *mut Status) -> i32;
     u_strToUpper(*mut u16, i32, *const u16, i32, *const c_char, *mut Status) -> i32;
@@ -89,118 +74,6 @@ declare! {
     ures_open(*const c_char, *const c_char, *mut Status) -> Handle;
 }
 
-thread_local! {
-    /// How many allocations are granted, and how many are refused after them.
-    static GRANTS: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
-    static IS_IN_CALL: Cell<bool> = const { Cell::new(false) };
-}
-
-struct Refusing;
-
-// SAFETY: what is not refused is left to `System`.
-unsafe impl GlobalAlloc for Refusing {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match GRANTS.get().filter(|_| IS_IN_CALL.get()) {
-            Some((0, refusals)) => {
-                GRANTS.set((refusals > 1).then_some((0, refusals - 1)));
-                return null_mut();
-            }
-            Some((grants, refusals)) => GRANTS.set(Some((grants - 1, refusals))),
-            None => {}
-        }
-        // SAFETY: the caller's promises are passed on.
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: as above.
-        unsafe { System.dealloc(pointer, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: Refusing = Refusing;
-
-fn with_status<T>(function: impl FnOnce(*mut Status) -> T) -> (T, Status) {
-    let mut status = 0;
-    IS_IN_CALL.set(true);
-    let result = function(&raw mut status);
-    IS_IN_CALL.set(false);
-    (result, status)
-}
-
-fn call<T>(function: impl FnOnce(*mut Status) -> T) -> Result<T> {
-    let (result, status) = with_status(function);
-    if status > 0 { Err(status) } else { Ok(result) }
-}
-
-/// Closes the handle when it is dropped.
-struct Open(Handle, unsafe extern "C" fn(Handle));
-
-impl Drop for Open {
-    fn drop(&mut self) {
-        // SAFETY: `open` has paired them.
-        unsafe { self.1(self.0) }
-    }
-}
-
-fn open(
-    close: unsafe extern "C" fn(Handle),
-    function: impl FnOnce(*mut Status) -> Handle,
-) -> Result<Open> {
-    let (handle, status) = with_status(function);
-    let handle = Open(handle, close);
-    if status > 0 { Err(status) } else { Ok(handle) }
-}
-
-/// Calls `function` with no buffer, and with each capacity up to one that holds the NUL.
-fn written<T: Copy + Default + PartialEq + Debug>(
-    function: impl Fn(*mut T, i32, *mut Status) -> i32,
-) -> Result<Vec<T>> {
-    let (length, status) = with_status(|status| function(null_mut(), 0, status));
-    if status > 0 && status != BUFFER_OVERFLOW {
-        return Err(status);
-    }
-    let mut last = Vec::new();
-    for capacity in [0, length / 2, length, length + 1] {
-        let mut buffer = Vec::with_capacity(capacity as usize);
-        let (result, status) =
-            with_status(|status| function(buffer.as_mut_ptr(), capacity, status));
-        match status {
-            MEMORY_ALLOCATION => return Err(status),
-            BUFFER_OVERFLOW => assert!(capacity < length),
-            _ => {
-                assert_eq!(
-                    status,
-                    if capacity == length {
-                        NOT_TERMINATED
-                    } else {
-                        0
-                    },
-                    "{capacity} {length}"
-                );
-                // SAFETY: success means that the text is there, and the NUL if there is room.
-                unsafe { buffer.set_len(capacity as usize) };
-                assert!(buffer.starts_with(&last));
-                last = buffer;
-            }
-        }
-        assert_eq!(result, length);
-    }
-    assert_eq!(last.pop(), Some(T::default()));
-    Ok(last)
-}
-
-fn text(function: impl Fn(*mut u16, i32, *mut Status) -> i32) -> Result<String> {
-    Ok(String::from_utf16(&written(function)?).unwrap())
-}
-
-fn utf16(text: &str) -> (Vec<u16>, i32) {
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let length = units.len() as i32;
-    (units, length)
-}
-
 /// SAFETY: `units` points to `length` units and a NUL.
 unsafe fn kept(units: *const u16, length: i32) -> String {
     // SAFETY: the caller's.
@@ -235,14 +108,7 @@ fn check<T: PartialEq<E> + Debug, E: Debug>(expected: E, run: impl Fn() -> Resul
     let step = if cfg!(miri) { 7 } else { 1 };
     for refusals in [1, usize::MAX] {
         for grants in (0..).step_by(step) {
-            GRANTS.set(Some((grants, refusals)));
-            let result = run();
-            let was_refused = GRANTS.take().is_none_or(|it| it.1 < refusals);
-            match result {
-                Err(status) => assert!(was_refused && status == MEMORY_ALLOCATION, "{status}"),
-                Ok(result) => assert_eq!(result, expected, "{grants}"),
-            }
-            if !was_refused {
+            if !refuses(grants, refusals, &expected, &run) {
                 break;
             }
         }
@@ -424,14 +290,6 @@ fn files() {
     let status = again.env("ICU_DATA", &directory).status();
     fs::remove_dir_all(directory).unwrap();
     assert!(status.unwrap().success());
-}
-
-#[test]
-fn what_stays_compressed_is_a_refused_allocation() {
-    set_up();
-    // SAFETY: as above.
-    let opened = with_status(|status| unsafe { ures_open(null(), c"frame".as_ptr(), status) });
-    assert_eq!(opened, (null_mut(), MEMORY_ALLOCATION));
 }
 
 #[test]

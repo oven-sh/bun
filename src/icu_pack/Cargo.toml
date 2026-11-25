@@ -1,0 +1,15 @@
+[package]
+name = "bun_icu_pack"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bun-icu-pack"
+path = "main.rs"
+test = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_icu_format.workspace = true

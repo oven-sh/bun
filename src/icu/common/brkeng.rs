@@ -36,7 +36,7 @@ fn load_dictionary(script_name: &[u8]) -> Result<DictionaryMatcher, UErrorCode> 
     let (name, type_) = file.split_soft(find_last_byte(&file, b'.').unwrap_or(file.len()));
     let type_ = until_nul(type_.get(1..).unwrap_or_default());
     let item = udata::open(U_ICUDATA_BRKITR, type_, until_nul(name))?;
-    DictionaryMatcher::new(item.memory).ok_or(U_INVALID_FORMAT_ERROR)
+    DictionaryMatcher::new(&item).ok_or(U_INVALID_FORMAT_ERROR)
 }
 
 // ICU4C: brkeng.cpp, ICULanguageBreakFactory::loadEngineFor

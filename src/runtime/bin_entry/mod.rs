@@ -38,7 +38,7 @@ mod c_abi_exports;
 // (`sys_epoll_pwait2`, …) reach the linker.
 use bun_platform as _;
 
-// Likewise, for the allocator, for ICU and for what its hook calls.
+// Likewise, for the allocator, for ICU and for what WebKit's own programs read their ICU's data with.
 use bun_global_allocator as _;
 use bun_icu as _;
 use bun_icu_data as _;

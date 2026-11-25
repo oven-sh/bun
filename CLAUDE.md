@@ -143,7 +143,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/css/` - CSS parser and processor
 - `src/dns/` - `getaddrinfo` types, and the resolver behind `dns.resolve*()`: `client/` is a crate of its own without I/O, `os.rs` is what it runs on
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
-- `src/icu/` - the part of ICU's C API that JavaScriptCore, WTF and Bun call, and a part of `ubidi.h` (not on macOS); the headers and the data come with WebKit
+- `src/icu/` - the part of ICU's C API that JavaScriptCore, WTF and Bun call, and a part of `ubidi.h` (not on macOS); the headers come with WebKit, and `src/icu_pack/` writes the data
 - `src/zstd/` - zstd (`decoder/` and `encoder/` are crates of their own)
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
 - `src/bake/` - Server-side rendering / dev server framework

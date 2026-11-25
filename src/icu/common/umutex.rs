@@ -3,7 +3,7 @@
 use crate::common::memory::try_box;
 pub(crate) use crate::common::static_map::StaticMap;
 use crate::common::utypes::UErrorCode;
-pub(crate) use crate::sys::ptr::AtomicRef;
+pub(crate) use crate::sys::ptr::{AtomicRef, LoadOnly, OnceUnits};
 pub(crate) use bun_core::Mutex;
 use std::sync::OnceLock;
 

@@ -15,6 +15,7 @@ mod dictbe;
 mod dictionarydata;
 pub(crate) mod emojiprops;
 mod filteredbrk;
+pub(crate) mod linked;
 mod localefallback_data;
 pub(crate) mod locavailable;
 pub(crate) mod locdspnm;

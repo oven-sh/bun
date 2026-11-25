@@ -1,21 +1,27 @@
 //! Reads binary collation data. ICU4C: collationdatareader.h
 
 use crate::common::bytes::{I32s, U_IS_BIG_ENDIAN, U16s, U32s, U64s};
-use crate::common::memory::{try_make_mut, try_shared_result};
+use crate::common::linked;
+use crate::common::memory::{try_box, try_filled, try_make_mut, try_shared_result};
 use crate::common::slice_ext::{to_index, to_length};
 use crate::common::udata::{self, UDataInfo};
 use crate::common::uniset::UnicodeSet;
 use crate::common::uresdata::DataString;
 use crate::common::uresimp::U_ICUDATA_COLL;
-use crate::common::utrie2::{UTrie2, UTrie2ValueBits};
 use crate::common::utypes::*;
 use crate::i18n::collation;
 use crate::i18n::collationdata::{self, CollationData, UnsafeSet};
 use crate::i18n::collationfastlatin;
 use crate::i18n::collationsettings::CollationSettings;
+use crate::i18n::collationtrie::{self, BmpIndex, CollationTrie};
 use crate::i18n::collunsafe::UNSAFE_SERIALIZED_DATA;
 use crate::i18n::unicode::ucol::UCOL_REORDER_CODE_FIRST;
-use std::sync::Arc;
+use bun_core::slice_as_bytes;
+use bun_icu_format::collation::{
+    DATA_FORMAT as PACKED_FORMAT, MAX_TRIES, Mappings, Root, Tailoring,
+};
+use std::sync::atomic::AtomicU16;
+use std::sync::{Arc, OnceLock};
 
 pub(crate) struct CollationTailoring {
     pub(crate) data: Arc<CollationData>,
@@ -94,9 +100,17 @@ impl Image {
             .ok_or(U_INVALID_FORMAT_ERROR)
     }
 
-    fn numeric_primary(&self) -> u32 {
-        self.index(IX_OPTIONS) as u32 & 0xff00_0000
+    fn options(&self) -> u32 {
+        self.index(IX_OPTIONS) as u32
     }
+}
+
+fn numeric_primary(options: u32) -> u32 {
+    options & 0xff00_0000
+}
+
+fn has_fast_latin_table(options: u32) -> bool {
+    (options >> 16) & 0xff == u32::from(collationfastlatin::VERSION)
 }
 
 /// `bytes` includes the header.
@@ -124,46 +138,181 @@ pub(crate) fn read_tailoring(
     let codes_length = codes_and_ranges.len() / 4 - ranges_length;
     let reorder_table = image.part(REORDER_TABLE)?.and_then(<[u8]>::first_chunk);
     check((codes_length != 0) == reorder_table.is_some())?;
-    check(image.numeric_primary() == base.data.numeric_primary)?;
+    check(numeric_primary(image.options()) == base.data.numeric_primary)?;
 
     let data = match image.part(TRIE)? {
-        Some(trie) => read_data(CollationData::for_tailoring(&base.data), trie, &image)?,
+        Some(trie) => read_data(
+            CollationData::for_tailoring(&base.data, open(trie)?),
+            &image,
+        )?,
         None => Arc::clone(&base.data),
     };
 
-    let mut settings = Arc::clone(&base.settings);
     let options = image.index(IX_OPTIONS) & 0xffff;
-    // The base settings have no reordering.
-    if options != settings.options
-        || reorder_table.is_some()
-        || !collationfastlatin::options_are_current(&data, &settings)
-    {
-        let settings = try_make_mut(&mut settings)?;
-        set_options(settings, options, &data)?;
+    let reorder_codes = I32s::of(codes_and_ranges).slice(0..codes_length);
+    tailor(base, data, options, reorder_codes, &|settings| {
         if let Some(table) = reorder_table {
             let ranges = U32s::of(codes_and_ranges).slice(codes_length..);
             settings.set_reorder_arrays(codes_length, ranges.try_to_vec()?, table);
         }
+        Ok(())
+    })
+}
+
+fn tailor(
+    base: &CollationTailoring,
+    data: Arc<CollationData>,
+    options: i32,
+    reorder_codes: I32s<'static>,
+    reorder: &dyn Fn(&mut CollationSettings) -> Result<(), UErrorCode>,
+) -> Result<CollationTailoring, UErrorCode> {
+    let mut settings = Arc::clone(&base.settings);
+    // The base settings have no reordering.
+    if options != settings.options
+        || !reorder_codes.is_empty()
+        || !collationfastlatin::options_are_current(&data, &settings)
+    {
+        let settings = try_make_mut(&mut settings)?;
+        set_options(settings, options, &data)?;
+        reorder(settings)?;
         collationfastlatin::set_options(&data, settings);
     }
     Ok(CollationTailoring {
         data,
         settings,
-        reorder_codes: I32s::of(codes_and_ranges).slice(0..codes_length),
+        reorder_codes,
         ..*base
     })
 }
 
-pub(crate) fn load_root() -> Result<CollationTailoring, UErrorCode> {
-    let item = udata::open_choice(Some(U_ICUDATA_COLL), b"icu", b"ucadata", is_acceptable)?;
-    let image = Image::new(item.memory)?;
+fn linked_root() -> Result<(UDataInfo, Root<'static>), UErrorCode> {
+    let item = linked::file(b"coll/ucadata.icu").and_then(UDataInfo::split_item);
+    let (info, bytes) = item.ok_or(U_MISSING_RESOURCE_ERROR)?;
+    Ok((info, Root::new(bytes)))
+}
+
+/// `bytes` is in the linked package.
+pub(crate) fn read_packed_tailoring(
+    base: &'static CollationTailoring,
+    bytes: &'static [u8],
+) -> Result<CollationTailoring, UErrorCode> {
+    let (info, root) = linked_root()?;
+    if base.uca_version != uca_version(&info) {
+        return Err(U_COLLATOR_VERSION_MISMATCH);
+    }
+    check(numeric_primary(root.options) == base.data.numeric_primary)?;
+    let tailoring = Tailoring::new(bytes, &root);
+    let data = match tailoring.mappings {
+        Some(mappings) => read_mappings(&base.data, &mappings, &root, tailoring.options)?,
+        None => Arc::clone(&base.data),
+    };
+    let (options, codes) = (
+        tailoring.options & 0xffff,
+        I32s::of(tailoring.reorder_codes),
+    );
+    tailor(base, data, options as i32, codes, &|settings| {
+        if codes.is_empty() {
+            return Ok(());
+        }
+        settings.set_reordering(&base.data, &codes.try_to_vec()?)
+    })
+}
+
+struct Expanded {
+    index: BmpIndex,
+    fast_latin_table: Vec<[u8; 2]>,
+}
+
+fn expand(mappings: &Mappings, root: &Root) -> Result<&'static Expanded, UErrorCode> {
+    static EXPANDED: [OnceLock<Box<Expanded>>; MAX_TRIES] = [const { OnceLock::new() }; _];
+    let cell = EXPANDED
+        .get(mappings.number)
+        .ok_or(U_INVALID_FORMAT_ERROR)?;
+    if let Some(expanded) = cell.get() {
+        return Ok(expanded);
+    }
+    let mut new = try_box(Expanded {
+        index: [const { AtomicU16::new(0) }; _],
+        fast_latin_table: try_filled([0; 2], mappings.fast_latin_units())?,
+    })?;
+    Ok(cell.get_or_init(|| {
+        collationtrie::expand(mappings, root, &mut new.index);
+        if !new.fast_latin_table.is_empty() {
+            mappings.expand_fast_latin(root, &mut new.fast_latin_table);
+        }
+        new
+    }))
+}
+
+/// The fast Latin table of the result is empty if it is that of the root.
+fn open_packed(
+    base: Option<&'static CollationData>,
+    mappings: &Mappings<'static>,
+    root: &Root<'static>,
+) -> Result<CollationData, UErrorCode> {
+    let expanded = expand(mappings, root)?;
+    let trie = CollationTrie::open_packed(mappings, &expanded.index);
+    let trie = trie.ok_or(U_INVALID_FORMAT_ERROR)?;
+    let mut data = match base {
+        Some(base) => CollationData::for_tailoring(base, trie),
+        None => CollationData::new(trie),
+    };
+    (data.ces, data.ce32s) = (U64s::of(root.pool), U32s::of(root.pool));
+    data.contexts = U16s::of(root.pool);
+    if mappings.jamo != 0 {
+        data.jamo_ce32s = data.ce32s.slice(mappings.jamo..);
+    }
+    data.fast_latin_table = U16s::from_chunks(&expanded.fast_latin_table);
+    Ok(data)
+}
+
+fn read_mappings(
+    base: &'static CollationData,
+    mappings: &Mappings<'static>,
+    root: &Root<'static>,
+    options: u32,
+) -> Result<Arc<CollationData>, UErrorCode> {
+    let mut data = open_packed(Some(base), mappings, root)?;
+    if !mappings.unsafe_backward.is_empty() {
+        let own = U16s::of(mappings.unsafe_backward);
+        data.unsafe_backward_set = unsafe_backward_set(data.base, own)?;
+    }
+    if has_fast_latin_table(options) && data.fast_latin_table.is_empty() {
+        data.fast_latin_table = base.fast_latin_table;
+    }
+    try_shared_result(&mut Ok(data))
+}
+
+fn read_packed_root(root: &Root<'static>) -> Result<Arc<CollationData>, UErrorCode> {
+    let mut data = open_packed(None, &root.mappings(), root)?;
+    data.numeric_primary = numeric_primary(root.options);
+    data.unsafe_backward_set = unsafe_backward_set(None, U16s::EMPTY)?;
+    data.fast_latin_table = U16s::of(root.fast_latin);
+    read_scripts(U16s::of(root.scripts), &mut data)?;
+    try_shared_result(&mut Ok(data))
+}
+
+fn read_root(image: &Image) -> Result<Arc<CollationData>, UErrorCode> {
     let trie = image.part(TRIE)?.ok_or(U_INVALID_FORMAT_ERROR)?;
     check(image.index(IX_JAMO_CE32S_START) >= 0 && image.has(UNSAFE_BWD))?;
-    let mut data = CollationData::empty();
-    data.numeric_primary = image.numeric_primary();
-    let data = read_data(data, trie, &image)?;
+    let mut data = CollationData::new(open(trie)?);
+    data.numeric_primary = numeric_primary(image.options());
+    read_data(data, image)
+}
+
+pub(crate) fn load_root() -> Result<CollationTailoring, UErrorCode> {
+    let item = udata::open_choice(Some(U_ICUDATA_COLL), b"icu", b"ucadata", |info| {
+        is_acceptable(info) || info.data_format == PACKED_FORMAT
+    })?;
+    let (data, options) = if item.info.data_format == PACKED_FORMAT {
+        let (_, root) = linked_root()?;
+        (read_packed_root(&root)?, root.options)
+    } else {
+        let image = Image::new(item.memory)?;
+        (read_root(&image)?, image.options())
+    };
     let mut settings = CollationSettings::new();
-    set_options(&mut settings, image.index(IX_OPTIONS) & 0xffff, &data)?;
+    set_options(&mut settings, (options & 0xffff) as i32, &data)?;
     collationfastlatin::set_options(&data, &mut settings);
     Ok(CollationTailoring {
         data,
@@ -185,14 +334,12 @@ fn set_options(
     check(settings.variable_top != 0)
 }
 
+fn open(trie: &'static [u8]) -> Result<CollationTrie, UErrorCode> {
+    CollationTrie::open_from_serialized(trie).ok_or(U_INVALID_FORMAT_ERROR)
+}
+
 /// Overwrites the defaults in `data` with the parts that `image` has.
-fn read_data(
-    mut data: CollationData,
-    trie: &'static [u8],
-    image: &Image,
-) -> Result<Arc<CollationData>, UErrorCode> {
-    data.trie = UTrie2::open_from_serialized(UTrie2ValueBits::Bits32, trie)
-        .ok_or(U_INVALID_FORMAT_ERROR)?;
+fn read_data(mut data: CollationData, image: &Image) -> Result<Arc<CollationData>, UErrorCode> {
     data.ces = U64s::of(image.part(CES)?.unwrap_or_default());
     data.ce32s = U32s::of(image.part(CE32S)?.unwrap_or_default());
     if let Ok(start) = usize::try_from(image.index(IX_JAMO_CE32S_START)) {
@@ -203,7 +350,7 @@ fn read_data(
     if let Some(bytes) = image.part(UNSAFE_BWD)? {
         data.unsafe_backward_set = unsafe_backward_set(data.base, U16s::of(bytes))?;
     }
-    if (image.index(IX_OPTIONS) >> 16) & 0xff == i32::from(collationfastlatin::VERSION) {
+    if has_fast_latin_table(image.options()) {
         data.fast_latin_table = match image.part(FAST_LATIN_TABLE)? {
             Some(bytes) => fast_latin_table(U16s::of(bytes))?,
             None => data.base.map_or(U16s::EMPTY, |base| base.fast_latin_table),
@@ -216,15 +363,14 @@ fn read_data(
 }
 
 fn unsafe_backward_set(base: Option<&CollationData>, own: U16s) -> Result<UnsafeSet, UErrorCode> {
+    let read = |units| UnicodeSet::from_serialized(units).ok_or(U_INVALID_FORMAT_ERROR);
     let mut set = match base {
         Some(base) => base.unsafe_backward_set.clone_as_thawed(),
-        None => {
-            let mut set = UnicodeSet::new();
-            set.add_serialized(UNSAFE_SERIALIZED_DATA.iter().copied());
-            set
-        }
+        None => read(U16s::of(slice_as_bytes(&UNSAFE_SERIALIZED_DATA)))?,
     };
-    check(set.add_serialized(own.iter()).is_some())?;
+    if !own.is_empty() {
+        set.add_all(&read(own)?);
+    }
     UnsafeSet::new(set)
 }
 

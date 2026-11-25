@@ -1242,6 +1242,7 @@ root{
 mkdir -p icudt79l/brkitr
 genrb -q -e UTF-8 -s . -d icudt79l/brkitr es.txt
 genrb -q -e UTF-8 -s . -d icudt79l/brkitr it.txt
+for name in line line_loose_cj line_normal title; do icupkg -x brkitr/$name.brk -d icudt79l "$ICU_DATA/icudt79l.dat"; done
 -- line-and-title-rules/es.txt --
 es{
     boundaries{
@@ -1375,6 +1376,17 @@ root{
 }
 -- lstm-code-points/thai_small.txt --
 thai_small:table(nofallback){
+    model{"thai_small"}
+    type{"codepoints"}
+    embeddings:int{1}
+    hunits:int{1}
+    dict{ "เ", "แ", "โ", "ใ", "ไ" }
+    data:intvector{
+        1073741824, 1073741824, 1073741824, 1073741824, 1073741824, -1073741824, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 1077936128, -1069547520, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1082130432
+    }
+}
+-- lstm-named-by-root/brkitr/Thai_graphclust_model4_heavy.txt --
+Thai_graphclust_model4_heavy:table(nofallback){
     model{"thai_small"}
     type{"codepoints"}
     embeddings:int{1}
@@ -2035,6 +2047,11 @@ two{
     Languages{ de{"shared name"} fr{"fr in two"} }
     list:array{ "b", "shared item" }
 }
+-- pool-missing/make.sh --
+mkdir -p icudt79l/curr icudt79l/lang icudt79l/region icudt79l/unit icudt79l/zone
+for name in de_AT curr/de_LU curr/root lang/de_AT region/de_AT unit/de_CH zone/en_GB; do
+  icupkg -x $name.res -d icudt79l "$ICU_DATA/icudt79l.dat"
+done
 -- range-patterns/eo.txt --
 eo{
     NumberElements{
@@ -2335,6 +2352,7 @@ for pair in $(cat properties.txt); do
   echo "${pair%%:*}{currencySpacing{afterCurrency{$rule} beforeCurrency{$rule}}}" > work/${pair%%:*}.txt
   genrb -q -s work -d icudt79l/curr ${pair%%:*}.txt
 done
+for name in nfkc_cf.nrm ulayout.icu; do icupkg -x $name -d icudt79l "$ICU_DATA/icudt79l.dat"; done
 rm -r work
 -- set-each-property/properties.txt --
 af:AHex ak:Alpha am:Bidi_C as:Bidi_M ba:Dash be:DI bg:Dep bm:Dia bn:Ext bo:Comp_Ex br:Gr_Base ca:Gr_Ext ce:Gr_Link
@@ -2356,6 +2374,7 @@ QBO:\U0001F1E6 QBP:\U0001F3FB QBQ:\U0001F44D QBR:\U000E0001 QBS:\u0378 QBT:\u002
 -- set-properties/make.sh --
 mkdir -p icudt79l/curr
 genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt
+icupkg -x ulayout.icu -d icudt79l "$ICU_DATA/icudt79l.dat"
 -- set-properties/root.txt --
 root{
     currencySpacing{
@@ -2870,6 +2889,227 @@ metadata:table(nofallback){
             }
         }
         variant{
+        }
+    }
+}
+-- unit-aliases/unit/de.txt --
+de{
+    units{
+        area{
+            square-meter{case{accusative{one{"{0} Quadratmeter"} other{"{0} Quadratmeter"}} dative{one{"{0} Quadratmeter"} other{"{0} Quadratmetern"}} genitive{one{"{0} Quadratmeters"} other{"{0} Quadratmeter"}}} gender{"masculine"} one{"{0} Quadratmeter"} other{"{0} Quadratmeter"} per{"{0} pro Quadratmeter"}}
+        }
+        compound{
+            10p-1{"Dezi{0}"}
+            10p3{"Kilo{0}"}
+            per{"{0} pro {1}"}
+            power2{one{_{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}} feminine{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}} masculine{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}}} other{_{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}} feminine{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}} masculine{_{"Quadrat{0}"} accusative{"Quadrat{0}"} dative{"Quadrat{0}"} genitive{"Quadrat{0}"}}}}
+            power3{one{_{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}} feminine{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}} masculine{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}}} other{_{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}} feminine{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}} masculine{_{"Kubik{0}"} accusative{"Kubik{0}"} dative{"Kubik{0}"} genitive{"Kubik{0}"}}}}
+        }
+        concentr{
+            permille{case{accusative{one{"{0} Promille"} other{"{0} Promille"}} dative{one{"{0} Promille"} other{"{0} Promille"}} genitive{one{"{0} Promille"} other{"{0} Promille"}}} gender{"neuter"} one{"{0} Promille"} other{"{0} Promille"}}
+        }
+        duration{
+            day{case{accusative{one{"{0} Tag"} other{"{0} Tage"}} dative{one{"{0} Tag"} other{"{0} Tagen"}} genitive{one{"{0} Tages"} other{"{0} Tage"}}} gender{"masculine"} one{"{0} Tag"} other{"{0} Tage"} per{"{0} pro Tag"}}
+            second{case{accusative{one{"{0} Sekunde"} other{"{0} Sekunden"}} dative{one{"{0} Sekunde"} other{"{0} Sekunden"}} genitive{one{"{0} Sekunde"} other{"{0} Sekunden"}}} gender{"feminine"} one{"{0} Sekunde"} other{"{0} Sekunden"} per{"{0} pro Sekunde"}}
+        }
+        length{
+            kilometer{case{accusative{one{"{0} Kilometer"} other{"{0} Kilometer"}} dative{one{"{0} Kilometer"} other{"{0} Kilometern"}} genitive{one{"{0} Kilometers"} other{"{0} Kilometer"}}} gender{"masculine"} one{"{0} Kilometer"} other{"{0} Kilometer"} per{"{0} pro Kilometer"}}
+            meter{case{accusative{one{"{0} Meter"} other{"{0} Meter"}} dative{one{"{0} Meter"} other{"{0} Metern"}} genitive{one{"{0} Meters"} other{"{0} Meter"}}} gender{"masculine"} one{"{0} Meter"} other{"{0} Meter"} per{"{0} pro Meter"}}
+        }
+        mass{
+            gram{case{accusative{one{"{0} Gramm"} other{"{0} Gramm"}} dative{one{"{0} Gramm"} other{"{0} Gramm"}} genitive{one{"{0} Gramms"} other{"{0} Gramm"}}} gender{"neuter"} one{"{0} Gramm"} other{"{0} Gramm"} per{"{0} pro Gramm"}}
+        }
+        speed{
+            kilometer-per-hour{case{accusative{one{"{0} Kilometer pro Stunde"} other{"{0} Kilometer pro Stunde"}} dative{one{"{0} Kilometer pro Stunde"} other{"{0} Kilometern pro Stunde"}} genitive{one{"{0} Kilometers pro Stunde"} other{"{0} Kilometer pro Stunde"}}} gender{"masculine"} one{"{0} Kilometer pro Stunde"} other{"{0} Kilometer pro Stunde"}}
+        }
+    }
+    unitsNarrow{
+        concentr{
+            permille{one{"{0}‰"} other{"{0}‰"}}
+        }
+        duration{
+            day{one{"{0} T"} other{"{0} T"}}
+        }
+    }
+    unitsShort{
+        concentr{
+            permille{one{"{0} ‰"} other{"{0} ‰"}}
+        }
+        duration{
+            day{one{"{0} Tg."} other{"{0} Tg."} per{"{0}/T"}}
+            second{one{"{0} Sek."} other{"{0} Sek."}}
+        }
+    }
+}
+-- unit-aliases/unit/en.txt --
+en{
+    units{
+        area{
+            square-meter{one{"{0} square meter"} other{"{0} square meters"} per{"{0} per square meter"}}
+        }
+        compound{
+            10p-1{"deci{0}"}
+            10p3{"kilo{0}"}
+            per{"{0} per {1}"}
+            power2{one{_{_{"square {0}"}}} other{_{_{"square {0}"}}}}
+            power3{one{_{_{"cubic {0}"}}} other{_{_{"cubic {0}"}}}}
+            times{"{0}-{1}"}
+        }
+        concentr{
+            permille{one{"{0} permille"} other{"{0} permille"}}
+        }
+        duration{
+            day{one{"{0} day"} other{"{0} days"} per{"{0} per day"}}
+            second{one{"{0} second"} other{"{0} seconds"} per{"{0} per second"}}
+        }
+        length{
+            kilometer{one{"{0} kilometer"} other{"{0} kilometers"} per{"{0} per kilometer"}}
+            meter{one{"{0} meter"} other{"{0} meters"} per{"{0} per meter"}}
+        }
+        mass{
+            gram{one{"{0} gram"} other{"{0} grams"} per{"{0} per gram"}}
+        }
+        speed{
+            kilometer-per-hour{one{"{0} kilometer per hour"} other{"{0} kilometers per hour"}}
+        }
+    }
+    unitsNarrow{
+        area{
+            square-meter{one{"{0}m²"} other{"{0}m²"} per{"{0}/m²"}}
+        }
+        compound{
+            10p-1{"d{0}"}
+            10p3{"k{0}"}
+            per{"{0}/{1}"}
+            power2{one{_{_{"{0}²"}}} other{_{_{"{0}²"}}}}
+            power3{one{_{_{"{0}³"}}} other{_{_{"{0}³"}}}}
+            times{"{0}⋅{1}"}
+        }
+        concentr{
+            permille{one{"{0}‰"} other{"{0}‰"}}
+        }
+        duration{
+            day{one{"{0}d"} other{"{0}d"} per{"{0}/d"}}
+            second{one{"{0}s"} other{"{0}s"} per{"{0}/s"}}
+        }
+        length{
+            kilometer{one{"{0}km"} other{"{0}km"} per{"{0}/km"}}
+            meter{one{"{0}m"} other{"{0}m"} per{"{0}/m"}}
+        }
+        mass{
+            gram{one{"{0}g"} other{"{0}g"} per{"{0}/g"}}
+        }
+        speed{
+            kilometer-per-hour{one{"{0}km/h"} other{"{0}km/h"}}
+        }
+    }
+    unitsShort{
+        area{
+            square-meter{one{"{0} m²"} other{"{0} m²"} per{"{0}/m²"}}
+        }
+        compound{
+            10p-1{"d{0}"}
+            10p3{"k{0}"}
+            per{"{0}/{1}"}
+            power2{one{_{_{"{0}²"}}} other{_{_{"{0}²"}}}}
+            power3{one{_{_{"{0}³"}}} other{_{_{"{0}³"}}}}
+            times{"{0}⋅{1}"}
+        }
+        concentr{
+            permille{one{"{0}‰"} other{"{0}‰"}}
+        }
+        duration{
+            day{one{"{0} day"} other{"{0} days"} per{"{0}/d"}}
+            second{one{"{0} sec"} other{"{0} sec"} per{"{0}/s"}}
+        }
+        length{
+            kilometer{one{"{0} km"} other{"{0} km"} per{"{0}/km"}}
+            meter{one{"{0} m"} other{"{0} m"} per{"{0}/m"}}
+        }
+        mass{
+            gram{one{"{0} g"} other{"{0} g"} per{"{0}/g"}}
+        }
+        speed{
+            kilometer-per-hour{one{"{0} km/h"} other{"{0} km/h"}}
+        }
+    }
+}
+-- unit-aliases/unit/fr.txt --
+fr{
+    units{
+        area{
+            square-meter{gender{"masculine"} one{"{0} mètre carré"} other{"{0} mètres carrés"} per{"{0} par mètre carré"}}
+        }
+        compound{
+            10p-1{"déci{0}"}
+            10p3{"kilo{0}"}
+            per{"{0} par {1}"}
+            power2{one{_{_{"{0} carré"}} feminine{_{"{0} carrée"}}} other{_{_{"{0} carrés"}} feminine{_{"{0} carrées"}}}}
+            power3{one{_{_{"{0} cube"}} feminine{_{"{0} cube"}}} other{_{_{"{0} cubes"}} feminine{_{"{0} cubes"}}}}
+        }
+        concentr{
+            permille{gender{"masculine"} one{"{0} pour mille"} other{"{0} pour mille"}}
+        }
+        duration{
+            day{gender{"masculine"} one{"{0} jour"} other{"{0} jours"} per{"{0} par jour"}}
+            second{gender{"feminine"} one{"{0} seconde"} other{"{0} secondes"} per{"{0} par seconde"}}
+        }
+        length{
+            kilometer{gender{"masculine"} one{"{0} kilomètre"} other{"{0} kilomètres"} per{"{0} par kilomètre"}}
+            meter{gender{"masculine"} one{"{0} mètre"} other{"{0} mètres"} per{"{0} par mètre"}}
+        }
+        mass{
+            gram{gender{"masculine"} one{"{0} gramme"} other{"{0} grammes"} per{"{0} par gramme"}}
+        }
+        speed{
+            kilometer-per-hour{gender{"masculine"} one{"{0} kilomètre par heure"} other{"{0} kilomètres par heure"}}
+        }
+    }
+    unitsNarrow{
+        area{
+            square-meter{one{"{0}m²"} other{"{0}m²"}}
+        }
+        concentr{
+            permille{one{"{0}‰"} other{"{0}‰"}}
+        }
+        duration{
+            day{one{"{0}j"} other{"{0}j"}}
+            second{one{"{0}s"} other{"{0}s"}}
+        }
+        length{
+            kilometer{one{"{0}km"} other{"{0}km"}}
+            meter{one{"{0}m"} other{"{0}m"}}
+        }
+        mass{
+            gram{one{"{0}g"} other{"{0}g"}}
+        }
+        speed{
+            kilometer-per-hour{one{"{0}km/h"} other{"{0}km/h"}}
+        }
+    }
+    unitsShort{
+        area{
+            square-meter{one{"{0} m²"} other{"{0} m²"}}
+        }
+        compound{
+            times{"{0}-{1}"}
+        }
+        concentr{
+            permille{one{"{0} ‰"} other{"{0} ‰"}}
+        }
+        duration{
+            day{one{"{0} j"} other{"{0} j"} per{"{0}/j"}}
+            second{one{"{0} s"} other{"{0} s"}}
+        }
+        length{
+            kilometer{one{"{0} km"} other{"{0} km"}}
+            meter{one{"{0} m"} other{"{0} m"}}
+        }
+        mass{
+            gram{one{"{0} g"} other{"{0} g"}}
+        }
+        speed{
+            kilometer-per-hour{one{"{0} km/h"} other{"{0} km/h"}}
         }
     }
 }

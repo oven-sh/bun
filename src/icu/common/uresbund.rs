@@ -12,7 +12,7 @@ use crate::common::memory::{
 };
 use crate::common::resource::{ResourceSink, ResourceValue};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
-use crate::common::udata::{bundle_may_be_replaced, searches_files};
+use crate::common::udata::{Places, bundle_may_be_replaced, searches_files};
 use crate::common::uinvchar::{append_invariant_chars, invariant_chars, invariant_prefix};
 use crate::common::uloc::{
     Language, Script, Subtag, Subtags, UKeywordsContext, find_row, uloc_get_default,
@@ -54,7 +54,6 @@ pub(crate) struct UResourceDataEntry {
     pub(crate) data: ResourceData,
     /// `U_MISSING_RESOURCE_ERROR` for a placeholder, another error if the pool bundle or the alias is unusable.
     bogus: UErrorCode,
-    /// Whether the root table can have a key like "%%Parent", which sorts before digits and letters.
     may_have_links: bool,
 }
 
@@ -193,7 +192,7 @@ fn look_up(name: &[u8], tree: Tree) -> Result<Found, UErrorCode> {
     if let Some(entry) = CACHE.with_lock(|cache| cache.get(&CacheKey { name, tree }).copied()) {
         return Ok(Found::Cached(entry.resolved()));
     }
-    match res_load(tree, name) {
+    match res_load(tree, name, Places::All) {
         Ok(data) => UResourceDataEntry::new(name, tree, data).map(Found::New),
         Err(U_MEMORY_ALLOCATION_ERROR) => Err(U_MEMORY_ALLOCATION_ERROR),
         Err(_) => Ok(Found::Missing),
@@ -261,16 +260,29 @@ fn prepare_entry(
         let attached = if is_for_pool || entry.name() == POOL {
             Err(U_TOO_MANY_ALIASES_ERROR)
         } else {
-            init_entry(POOL, entry.tree, true).and_then(|pool| entry.data.use_pool(&pool.data))
+            attach_pool(entry)
         };
         if let Err(code) = attached {
             entry.bogus = code;
             return oom_checked(None);
         }
     }
-    let first_key = entry.data.key_by_index(entry.data.root_res, 0);
-    entry.may_have_links = first_key.is_some_and(|key| key.first_byte() <= b'%');
+    entry.may_have_links = entry.data.may_have_links();
     Ok(entry.link(b"%%ALIAS").filter(|alias| !alias.is_empty()))
+}
+
+/// The linked data have no pools. They take the place of a file that comes without its pool.
+#[cold]
+fn attach_pool(entry: &mut UResourceDataEntry) -> Result<(), UErrorCode> {
+    let pool = init_entry(POOL, entry.tree, true)?;
+    if pool.bogus == U_MISSING_RESOURCE_ERROR
+        && let Ok(linked) = res_load(entry.tree, entry.name(), Places::ExceptDirectories)
+        && !linked.uses_pool_bundle
+    {
+        entry.data = linked;
+        return Ok(());
+    }
+    entry.data.use_pool(&pool.data)
 }
 
 #[inline(never)]
@@ -682,6 +694,7 @@ pub(crate) struct UResourceBundle {
     has_fallback: bool,
     /// The index of the next item of the iteration.
     next: usize,
+    /// See `get_size`.
     size: usize,
 }
 
@@ -1023,8 +1036,12 @@ impl UResourceBundle {
         self.key
     }
 
+    #[inline]
     pub(crate) fn get_size(&self) -> usize {
-        self.size
+        match self.size {
+            UNCOUNTED => self.data().count_present(self.resource.res),
+            size => size,
+        }
     }
 
     /// The name of the bundle file that contains the resource.
@@ -1110,7 +1127,7 @@ impl UResourceBundle {
     /// Returns `None` if this resource is neither a table nor an array: it is its own only item.
     #[inline]
     fn find_by_index(&self, i: usize) -> Result<Option<ResourceValue>, UErrorCode> {
-        if i >= self.size {
+        if i >= self.get_size() {
             return Err(U_MISSING_RESOURCE_ERROR);
         }
         let res = self.data().item_by_index(self.resource.res, i);
@@ -1158,14 +1175,17 @@ impl UResourceBundle {
     }
 
     /// Yields the key of `get_by_index(i)` for each `i`.
+    #[inline(always)]
     pub(crate) fn keys_of_items(
         &self,
     ) -> impl Iterator<Item = Result<Option<DataKey>, UErrorCode>> {
         let table = self.resource.get_table().ok();
-        (0..self.size).map(
-            move |i| match table.and_then(|table| table.key_unless_alias(i)) {
-                None => self.key_of_item(i),
-                key => Ok(key),
+        let mut items = table.map(|table| table.iter_data_keys());
+        (0..self.get_size()).map(
+            #[inline(always)]
+            move |i| match items.as_mut().and_then(Iterator::next) {
+                Some((key, value)) if !value.is_alias() => Ok(Some(key)),
+                _ => self.key_of_item(i),
             },
         )
     }
@@ -1191,7 +1211,7 @@ impl UResourceBundle {
     }
 
     pub(crate) fn has_next(&self) -> bool {
-        self.next < self.size
+        self.next < self.get_size()
     }
 
     /// Returns the index of the next item and increments it. The increment stays if reading the item fails.

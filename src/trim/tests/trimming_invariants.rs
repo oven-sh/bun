@@ -8,6 +8,7 @@ mod support;
 
 use bun_exe_format::builtins::Image;
 use bun_exe_format::image::{AddressRange, Architecture, ExecutableFormat, read_bytes_at};
+use bun_icu_format::package::{Package, REMOVED, TOMBSTONED};
 use bun_options_types::trim::TrimRequest;
 use bun_removable_features::{
     EnteredFrom, FEATURES_HASH, Feature, FeatureSet, RemovableFeatureState, Removal, RemovedRange,
@@ -24,7 +25,7 @@ use support::toy_executable::{
 };
 use support::toy_table::{
     ABORTING_GUARD, RECOVERABLE_GUARD, REFERENCE, ToyIcuPackage, ToyRange, ToyTable, encode_table,
-    find_icu_item, icu_package,
+    icu_package,
 };
 
 const STATE_IS_TRIMMED_OFFSET: usize = 8;
@@ -33,11 +34,10 @@ const STATE_RANGES_OFFSET_OFFSET: usize = 16;
 const STATE_REMOVAL_OFFSET: usize = 24;
 const REMOVED_RANGES_HEADER_BYTES: usize = 16;
 const REMOVED_RANGE_BYTES: usize = 16;
-const ICU_ITEM_NAMES: [&str; 6] = ["a.res", "b.res", "c.res", "d.res", "e.res", "f.res"];
+const ICU_ITEMS: usize = 6;
 const ICU_ITEM_BYTES: usize = 0x2_0000;
 const ICU_HEAD_BYTES: u64 = 128;
 const ICU_PACKAGE_OFFSET: u64 = 0x2_0000;
-const ICU_TOMBSTONE: [u8; 16] = *b"BUNICUREMOVED\0\0\0";
 const ICU_LANGUAGES: [(&str, u16); 3] = [("de", 0), ("nb", 1), ("no", 1)];
 const GERMAN_RUN_GROUP: u16 = 1;
 const NORWEGIAN_RUN_GROUP: u16 = 2;
@@ -490,26 +490,12 @@ impl TrimmedCheck<'_> {
     }
 
     fn icu_dead_bytes(&self) -> u64 {
-        let mut dead_bytes = 0;
-        for package in &self.table.icu_packages {
-            let mut tombstoned_end = None;
-            for (first_item, item_count, set, group) in &package.runs {
-                let run_bytes = u64::from(*item_count) * ICU_ITEM_BYTES as u64;
-                if self.is_set_removed(*set) {
-                    dead_bytes += run_bytes;
-                } else if self.unwanted_run_groups.contains(group) {
-                    let has_own_tombstone = tombstoned_end != Some(*first_item);
-                    let retained_bytes = if has_own_tombstone {
-                        ICU_TOMBSTONE.len() as u64
-                    } else {
-                        0
-                    };
-                    dead_bytes += run_bytes - retained_bytes;
-                    tombstoned_end = Some(first_item + item_count);
-                }
-            }
-        }
-        dead_bytes
+        let runs = self.table.icu_packages.iter().flat_map(|it| &it.runs);
+        runs.filter(|(_, _, set, group)| {
+            self.is_set_removed(*set) || self.unwanted_run_groups.contains(group)
+        })
+        .map(|(_, item_count, ..)| u64::from(*item_count) * ICU_ITEM_BYTES as u64)
+        .sum()
     }
 
     fn check_summary(&self) {
@@ -953,7 +939,7 @@ fn create_icu_toy(
     languages: Vec<(&'static str, u16)>,
 ) -> IcuToy {
     let layout = layout_of(target);
-    let package = icu_package(&ICU_ITEM_NAMES.map(|name| (name, ICU_ITEM_BYTES)));
+    let package = icu_package(ICU_ITEMS, ICU_ITEM_BYTES);
     let start = layout.read_only_data.start + ICU_PACKAGE_OFFSET;
     let range = AddressRange {
         start,
@@ -995,110 +981,7 @@ impl IcuToy {
     }
 }
 
-fn trim_icu_package(
-    target: Target,
-    forced: Feature,
-) -> (ToyLayout, Vec<u8>, AddressRange, Trimmed) {
-    let label = format!("{target:?} without {forced:?}");
-    let toy = create_icu_toy(target, vec![(1, 2, 0, 0), (4, 1, 1, 0)], Vec::new());
-    let trimmed = toy.trim(&label, &nothing_used(), &removing(&[forced]), &[]);
-    (toy.layout, toy.package, toy.range, trimmed)
-}
-
-#[test]
-fn icu_items_follow_feature_removal() {
-    let f = chosen_features();
-    for target in [ELF_X86_64, PE_X86_64] {
-        let (layout, package, range, trimmed) = trim_icu_package(target, f[0]);
-        let new = LoadedImage::load(&trimmed.after);
-        let head_range = AddressRange {
-            start: range.start,
-            end: range.start + ICU_HEAD_BYTES,
-        };
-        let head = new
-            .bytes(head_range)
-            .unwrap_or_else(|| panic!("{target:?}: the table of contents is not mapped"));
-        for (index, name) in ICU_ITEM_NAMES.iter().enumerate() {
-            let old_offset = find_icu_item(&package, name).expect("the toy package has the item");
-            let item_start = range.start + old_offset as u64;
-            let item_end = item_start + ICU_ITEM_BYTES as u64;
-            if index == 1 || index == 2 {
-                assert!(
-                    find_icu_item(&head, name).is_none(),
-                    "{target:?}: {name} is still listed"
-                );
-                for address in item_start..item_end {
-                    let byte = new.byte_at(address);
-                    assert!(
-                        !matches!(byte, MemoryByte::Mapped(value) if value != 0),
-                        "{target:?}: {address:#x} of {name} is {byte:?}"
-                    );
-                }
-                continue;
-            }
-            assert!(
-                find_icu_item(&head, name) == Some(old_offset),
-                "{target:?}: {name} moved"
-            );
-            let fill = MemoryByte::Mapped(0x40 + index as u8);
-            assert!(
-                new.byte_at(item_start) == fill,
-                "{target:?}: first byte of {name} changed"
-            );
-            assert!(
-                new.byte_at(item_end - 1) == fill,
-                "{target:?}: last byte of {name} changed"
-            );
-        }
-        let dead_bytes = 2 * ICU_ITEM_BYTES as u64;
-        assert!(
-            trimmed.summary.removed_bytes() == dead_bytes,
-            "{target:?}: wrong removed_bytes"
-        );
-        assert!(
-            trimmed.summary.file_bytes_saved >= dead_bytes - 2 * layout.cut_alignment,
-            "{target:?}: the dead items stayed in the file"
-        );
-
-        let (_, package, range, trimmed) = trim_icu_package(target, f[2]);
-        let head_range = AddressRange {
-            start: range.start,
-            end: range.start + ICU_HEAD_BYTES,
-        };
-        let head = LoadedImage::load(&trimmed.after)
-            .bytes(head_range)
-            .unwrap_or_else(|| panic!("{target:?}: the table of contents is not mapped"));
-        for name in ICU_ITEM_NAMES {
-            assert!(
-                find_icu_item(&head, name) == find_icu_item(&package, name),
-                "{target:?}: {name} moved"
-            );
-        }
-        assert!(
-            trimmed.summary.removed_bytes() == 0,
-            "{target:?}: an unrelated feature removed items"
-        );
-    }
-}
-
-#[derive(Copy, Clone)]
-enum IcuItem {
-    Retained,
-    Tombstoned,
-    Removed,
-}
-
-fn check_dead_bytes(label: &str, image: &LoadedImage, range: AddressRange) {
-    for address in range.start..range.end {
-        let byte = image.byte_at(address);
-        assert!(
-            !matches!(byte, MemoryByte::Mapped(value) if value != 0),
-            "{label}: dead {address:#x} is {byte:?}"
-        );
-    }
-}
-
-fn check_icu_items(label: &str, toy: &IcuToy, trimmed: &Trimmed, expected: [IcuItem; 6]) {
+fn check_icu_items(label: &str, toy: &IcuToy, trimmed: &Trimmed, flags: [u32; ICU_ITEMS]) {
     let new = LoadedImage::load(&trimmed.after);
     let head_range = AddressRange {
         start: toy.range.start,
@@ -1106,60 +989,56 @@ fn check_icu_items(label: &str, toy: &IcuToy, trimmed: &Trimmed, expected: [IcuI
     };
     let head = new
         .bytes(head_range)
-        .unwrap_or_else(|| panic!("{label}: the table of contents is not mapped"));
-    for (index, (name, item)) in ICU_ITEM_NAMES.iter().zip(expected).enumerate() {
-        let old_offset = find_icu_item(&toy.package, name).expect("the toy package has the item");
-        let start = toy.range.start + old_offset as u64;
-        let end = start + ICU_ITEM_BYTES as u64;
-        let listed_offset = find_icu_item(&head, name);
-        match item {
-            IcuItem::Retained => {
-                let fill = MemoryByte::Mapped(0x40 + index as u8);
-                assert!(listed_offset == Some(old_offset), "{label}: {name} moved");
-                assert!(
-                    new.byte_at(start) == fill,
-                    "{label}: first byte of {name} changed"
-                );
-                assert!(
-                    new.byte_at(end - 1) == fill,
-                    "{label}: last byte of {name} changed"
-                );
-            }
-            IcuItem::Tombstoned => {
-                let tombstone_end = start + ICU_TOMBSTONE.len() as u64;
-                let tombstone = new.bytes(AddressRange {
-                    start,
-                    end: tombstone_end,
-                });
-                assert!(
-                    listed_offset == Some(old_offset),
-                    "{label}: {name} is not listed at its tombstone"
-                );
-                assert!(
-                    tombstone.as_deref() == Some(&ICU_TOMBSTONE[..]),
-                    "{label}: {name} starts with {tombstone:x?}"
-                );
-                check_dead_bytes(
-                    label,
-                    &new,
-                    AddressRange {
-                        start: tombstone_end,
-                        end,
-                    },
-                );
-            }
-            IcuItem::Removed => {
-                assert!(listed_offset.is_none(), "{label}: {name} is still listed");
-                check_dead_bytes(label, &new, AddressRange { start, end });
-            }
+        .unwrap_or_else(|| panic!("{label}: the offsets are not mapped"));
+    let address_of = |item| toy.range.start + Package::new(&head).offset(item) as u64;
+    for (item, flags) in flags.into_iter().enumerate() {
+        let range = AddressRange {
+            start: address_of(item),
+            end: address_of(item + 1),
+        };
+        assert!(
+            Package::new(&head).flags(item) == flags,
+            "{label}: item {item} has other flags"
+        );
+        if flags == 0 {
+            let old = Package::new(&toy.package).item(item);
+            assert!(
+                new.bytes(range).as_deref() == Some(old),
+                "{label}: item {item} changed"
+            );
+        } else {
+            assert!(range.len() == 0, "{label}: item {item} is not empty");
+        }
+    }
+    for address in address_of(ICU_ITEMS)..toy.range.end {
+        let byte = new.byte_at(address);
+        assert!(
+            !matches!(byte, MemoryByte::Mapped(value) if value != 0),
+            "{label}: dead {address:#x} is {byte:?}"
+        );
+    }
+    let summary = &trimmed.summary;
+    assert!(
+        summary.file_bytes_saved + 2 * toy.layout.cut_alignment >= summary.removed_bytes(),
+        "{label}: the dead items stayed in the file"
+    );
+}
+
+#[test]
+fn icu_items_follow_feature_removal() {
+    let f = chosen_features();
+    for target in [ELF_X86_64, PE_X86_64] {
+        let toy = create_icu_toy(target, vec![(1, 2, 0, 0), (4, 1, 1, 0)], Vec::new());
+        for (forced, flags) in [(f[0], [0, REMOVED, REMOVED, 0, 0, 0]), (f[2], [0; _])] {
+            let label = format!("{target:?} without {forced:?}");
+            let trimmed = toy.trim(&label, &nothing_used(), &removing(&[forced]), &[]);
+            check_icu_items(&label, &toy, &trimmed, flags);
         }
     }
 }
 
 #[test]
 fn icu_items_follow_wanted_languages() {
-    use IcuItem::{Removed, Retained, Tombstoned};
-
     let f = chosen_features();
     let runs = vec![
         (0, 1, 0, GERMAN_RUN_GROUP),
@@ -1179,9 +1058,9 @@ fn icu_items_follow_wanted_languages() {
         locales: Some(vec![Box::from(&b"nb"[..])]),
         ..removing_unused()
     };
-    let without_german = [Tombstoned, Retained, Retained, Tombstoned, Removed, Removed];
-    let every_language = [Retained, Retained, Retained, Retained, Removed, Removed];
-    let cases: [(&str, &UsedFeatures, TrimRequest, &[u16], [IcuItem; 6]); 4] = [
+    let without_german = [TOMBSTONED, 0, 0, TOMBSTONED, REMOVED, REMOVED];
+    let every_language = [0, 0, 0, 0, REMOVED, REMOVED];
+    let cases: [(&str, &UsedFeatures, TrimRequest, &[u16], [u32; ICU_ITEMS]); 4] = [
         (
             "used in Norwegian",
             &used_in_norwegian,
@@ -1217,11 +1096,6 @@ fn icu_items_follow_wanted_languages() {
             let label = format!("{target:?} {name}");
             let trimmed = toy.trim(&label, used, request, unwanted_run_groups);
             check_icu_items(&label, &toy, &trimmed, *expected);
-            let summary = &trimmed.summary;
-            assert!(
-                summary.file_bytes_saved + 4 * toy.layout.cut_alignment >= summary.removed_bytes(),
-                "{label}: the dead items stayed in the file"
-            );
         }
     }
 }

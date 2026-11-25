@@ -1,7 +1,7 @@
 // Builds data-files.json.gz from data-files.txt with the tools of ICU4C (genrb, genbrk, gendict, gennorm2, icupkg), which
-// have to be in PATH and find their data:
+// have to be in PATH:
 //
-//   bun build-data-files.ts
+//   ICU_DATA=<the directory of icudt79l.dat> bun build-data-files.ts
 //
 // In data-files.txt, "-- directory/path --" begins a file. directory/make.sh builds a directory. Without it, each
 // path/name.txt is the source of icudt79l/path/name.res.

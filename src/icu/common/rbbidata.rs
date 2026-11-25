@@ -4,7 +4,8 @@ use crate::common::bytes::{I32s, U16s, U32s};
 use crate::common::slice_ext::to_index;
 use crate::common::ucptrie::{FastTrie8, FastTrie16};
 use crate::common::udata::UDataMemory;
-use crate::sys::package::RBBI_DATA_FORMAT;
+
+const RBBI_DATA_FORMAT: u8 = 7;
 
 // Indexes of the 32-bit fields of `RBBIDataHeader`. The length of a section follows its offset.
 const MAGIC: usize = 0;

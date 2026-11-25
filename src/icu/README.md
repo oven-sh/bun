@@ -1,42 +1,72 @@
 # bun_icu
 
 The functions of ICU's C API that JavaScriptCore, WTF and Bun's C++ call, for the arguments that they pass, and a part of
-`ubidi.h`. The callers are compiled against ICU4C's headers, and the data package is ICU4C's. Both come with WebKit's build
-(`scripts/build/deps/webkit.ts`). The crate is empty where the system's ICU is used: on macOS, and on Linux with a local
-WebKit without `BUN_ICU_ROOT`.
+`ubidi.h`. The callers are compiled against ICU4C's headers, which come with WebKit's build (`scripts/build/deps/webkit.ts`).
+The crate is empty where the system's ICU is used: on macOS, and on Linux with a local WebKit without `BUN_ICU_ROOT`.
 
 |                    |                                                                                                                  |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `capi/`            | The exported functions, one file per header. `capi/ffi/` turns pointers into references.                         |
 | `common/`, `i18n/` | The code of ICU4C's libraries of these names, mostly under the name of the file it is derived from. No `unsafe`. |
 | `sys/`             | The linked data package, files, and the locale and time zone of the host.                                        |
-| `data/`            | The tables that ICU4C compiles in, as in its `source/data/in`.                                                   |
+| `data/`            | The tables that ICU4C compiles in, as in its `source/data/in`, and `package.bin`, the linked data package.       |
+| `format/`          | The format of `package.bin`. A crate of its own, which `src/icu_pack` and `src/trim` use too.                    |
 
 ## When a caller changes
 
 - A function that is missing fails the link (`undefined symbol: ucal_roll_79`).
 - An argument that is not supported gives `U_UNSUPPORTED_ERROR`, or fails a debug assertion. The
   comment at the function in `capi/` says which values it takes. Compare the calls of ICU when you upgrade WebKit.
+- The linked data have only what the callers can reach. `src/icu_pack/reach.rs` lists it. What it leaves out counts as
+  missing, so that the root's text shows, or an error.
 - Nothing checks the rules for pointers under "Exported functions".
 - JavaScriptCore passes its default locale on with all its keywords, so any keyword can arrive.
 - Of the `U_USING_*` warnings only `U_USING_DEFAULT_WARNING` is set, by `ucurr_getName`, whose caller reads it.
 
 ## When ICU's version changes
 
-A `static_assert` in `bun_icu_decompress.cpp` fails.
+A `static_assert` in `bun_icu_default_locale.cpp` fails.
 
-1. Record `test/js/web/intl/intl-golden` with the new ICU4C, and set `version` in its `observe.ts`. To get such a Bun, link
-   ICU's `code` libraries (`scripts/build/deps/webkit.ts`) and set `--cfg=bun_system_icu` (`scripts/build/rust.ts`).
+1. Record `test/js/web/intl/intl-golden` with the new ICU4C, and set `version` in its `observe.ts`. To get such a Bun,
+   install that ICU4C on Linux and build with a local WebKit without `BUN_ICU_ROOT`.
 2. Port the changes of the files named in the `ICU4C:` comments, tables included, and copy `data/`.
 3. Set the version in the `static_assert`, `capi/uversion.rs`, `lib.rs`, the licence pages, and the names of the symbols
    and items (`git grep -E '_79|icudt79' src/icu test/js/web/intl`).
 4. Check what the comments say about "the linked data" (`git grep -i 'linked' src/icu`).
+5. Compare `src/icu_pack/reach.rs` with the keys that the new code reads, and write the linked data again.
+
+## The linked data
+
+```sh
+cargo run --release -p bun_icu_pack < icu/source/data/in/icudt79l.dat > new.bin && mv new.bin src/icu/data/package.bin
+```
+
+Run it after each change of `format/` or `src/icu_pack`. The input is in the sources of ICU4C's release. The output depends
+on nothing else, and the packer reads back what it has written. No call may take longer than with ICU4C's package, the first one included (`bench/snippets/intl-first-use.mjs`),
+so nothing is expanded that the call does not read.
+
+| What                                | Form                                                                    | Expanded                |
+| ----------------------------------- | ----------------------------------------------------------------------- | ----------------------- |
+| Text of locales                     | Pieces from a table of the language, and copies from a similar language | In chunks of about 1 KB |
+| Collation                           | Runs of weights, and for each tailoring what it changes                 | 32 code points          |
+| Collation of Chinese                | A weight for each character                                             | No                      |
+| Dictionaries for breaking text      | A trie with bitmaps in the place of pointers                            | No                      |
+| Break rules, `rbnf/`, `CurrencyMap` | Literal bytes and copies                                                | A file                  |
+| Other bundles                       | As in `.res` files, with shared keys and strings                        | No                      |
+| Normalization, emoji                | As in ICU4C                                                             | No                      |
+
+What has been expanded stays. `--trim` removes items (`src/trim/icu_data.rs`, `scripts/build/trim/icu-data.ts`), so files
+share an item only if they are removed together.
 
 ## Data from files
 
 `ICU_DATA` names directories and packages that replace items or add some, and `ICU_TIMEZONE_FILES_DIR` does so for the four
 time zone files. So the readers take all forms that ICU's tools write, and do not trust what they read. A file with a
-header that does not fit is passed over.
+header that does not fit is passed over, and so is a bundle that comes without its `pool.res`.
+
+Files can ask for more than the linked data do. For them the root bundles of the trees with text are complete, and so are
+the tables in `COLD` in `reach.rs`. What else they refer to has to be among the files. ICU4C's `icudt79l.dat` in one of the
+directories adds the items that are not linked, but not what has been left out of a linked bundle.
 
 If `searches_files` is false, some code skips what the linked data do not need. `ICU_DATA=nowhere` turns that off.
 

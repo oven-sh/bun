@@ -181,6 +181,9 @@ impl StandaloneModuleGraph {
     }
 
     pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        if compiled_program::is_too_long(name) {
+            return None;
+        }
         #[cfg(windows)]
         let mut buf = path::Path::new();
         #[cfg(windows)]

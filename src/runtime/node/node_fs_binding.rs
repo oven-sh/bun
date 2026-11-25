@@ -49,8 +49,9 @@ where
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
     run_sync_with::<R, A>(cx, args, |args| {
         this.node_fs.with_mut(|nfs| {
-            NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync)
-                .inspect_err(|_| nfs.release_long_path())
+            let result = NodeFS::dispatch::<R, A, F>(nfs, args, Flavor::Sync);
+            nfs.release_long_path();
+            result
         })
     })
 }
@@ -67,8 +68,9 @@ where
     run_sync_with::<R, A>(cx, args, |args| {
         crate::jsc_hooks::with_node_fs(vm, |node_fs| {
             node_fs.vm = Some(vm);
-            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
-                .inspect_err(|_| node_fs.release_long_path())
+            let result = NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync);
+            node_fs.release_long_path();
+            result
         })
     })
 }

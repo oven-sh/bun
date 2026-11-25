@@ -861,6 +861,16 @@ impl FSWatcher {
             }
             s
         };
+        let name_too_long = || bun_sys::Error {
+            errno: SystemErrno::ENAMETOOLONG as _,
+            syscall: bun_sys::Tag::watch,
+            path: args.path.slice().into(),
+            ..Default::default()
+        };
+        // No syscall gets the path as it is written, which Node's `watch` refuses for its length.
+        if slice.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(name_too_long());
+        }
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut file_path = bun_paths::Path::resolve(&[cwd, slice]);
         // After one, libuv reports `\a` for `a`.
@@ -868,12 +878,7 @@ impl FSWatcher {
             file_path.copy_trailing_sep_from(slice);
         }
         if file_path.len() >= bun_paths::MAX_PATH_BYTES {
-            return Err(bun_sys::Error {
-                errno: SystemErrno::ENAMETOOLONG as _,
-                syscall: bun_sys::Tag::watch,
-                path: args.path.slice().into(),
-                ..Default::default()
-            });
+            return Err(name_too_long());
         }
         let file_path: &bun_core::ZStr = &file_path;
 

@@ -152,6 +152,15 @@ impl<B: PathBackend, S: PathStyle> GenericPath<B, S> {
         self.truncate(0);
     }
 
+    /// Empties the path and frees its buffer if that has room for more than `capacity` units. For a scratch that outlives its calls: a buffer never shrinks.
+    #[inline]
+    pub fn release_over(&mut self, capacity: usize) {
+        if self.backend.as_uninit_slice_mut().len() > capacity {
+            core::hint::cold_path();
+            *self = Self::new();
+        }
+    }
+
     /// Replaces the path with a copy of `path`.
     #[inline]
     pub fn set<C: PathUnit>(&mut self, path: &[C]) -> B::Output<()> {

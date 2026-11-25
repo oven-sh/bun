@@ -31,16 +31,7 @@ pub use crate::lseek;
 pub use crate::symlink;
 pub use crate::unlinkat;
 
-/// `Err` for a path that has more UTF-16 units than NT takes. What libuv answers for one depends on the call.
-pub fn check_len(path: &[u8], tag: Tag) -> Result<()> {
-    if path.len() < bun_paths::MAX_PATH_BYTES {
-        return Ok(());
-    }
-    Err(Error::new(E::NAMETOOLONG, tag).with_path(path))
-}
-
 pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
-    check_len(file_path.as_bytes(), Tag::open)?;
     let mut req = uv::fs_t::uninitialized();
 
     let flags = uv::O::from_bun_o(c_flags);
@@ -77,7 +68,6 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
 }
 
 pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::mkdir)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -104,7 +94,6 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
 }
 
 pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::chmod)?;
     let mut req = uv::fs_t::uninitialized();
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
@@ -147,7 +136,6 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
 }
 
 pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
-    check_len(file_path.as_bytes(), Tag::statfs)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_statfs(uv::Loop::get(), &raw mut req, file_path.as_ptr(), None) };
@@ -173,7 +161,6 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
 }
 
 pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::chown)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -202,7 +189,6 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
 }
 
 pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::lchown)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -246,7 +232,6 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
 }
 
 pub fn rmdir(file_path: &ZStr) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::rmdir)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_rmdir(uv::Loop::get(), &raw mut req, file_path.as_ptr(), None) };
@@ -264,7 +249,6 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
 }
 
 pub fn unlink(file_path: &ZStr) -> Result<()> {
-    check_len(file_path.as_bytes(), Tag::unlink)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_unlink(uv::Loop::get(), &raw mut req, file_path.as_ptr(), None) };
@@ -282,7 +266,6 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
 }
 
 pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a ZStr> {
-    check_len(file_path.as_bytes(), Tag::readlink)?;
     let mut req = uv::fs_t::uninitialized();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
@@ -332,8 +315,6 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a ZS
 }
 
 pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
-    check_len(from.as_bytes(), Tag::rename)?;
-    check_len(to.as_bytes(), Tag::rename)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -361,8 +342,6 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
 }
 
 pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
-    check_len(from.as_bytes(), Tag::link)?;
-    check_len(to.as_bytes(), Tag::link)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -393,8 +372,6 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
 }
 
 pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
-    check_len(target.as_bytes(), Tag::symlink)?;
-    check_len(new_path.as_bytes(), Tag::symlink)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe {
@@ -480,7 +457,6 @@ pub fn fsync(fd: Fd) -> Result<()> {
 }
 
 pub fn stat(path: &ZStr) -> Result<Stat> {
-    check_len(path.as_bytes(), Tag::stat)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &raw mut req, path.as_ptr(), None) };
@@ -494,7 +470,6 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
 }
 
 pub fn lstat(path: &ZStr) -> Result<Stat> {
-    check_len(path.as_bytes(), Tag::lstat)?;
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &raw mut req, path.as_ptr(), None) };

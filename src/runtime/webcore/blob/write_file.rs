@@ -246,8 +246,7 @@ mod windows_impl {
         }
 
         fn open(self: Box<Self>) -> jsc::JsResult<()> {
-            let fits = sys::sys_uv::check_len(self.path(), sys::Tag::open).ok();
-            let Some(posix_path) = fits.and_then(|()| sys::to_posix_path(self.path()).ok()) else {
+            let Ok(posix_path) = sys::to_posix_path(self.path()) else {
                 return self.throw(sys::Error {
                     errno: sys::E::NAMETOOLONG as _,
                     syscall: sys::Tag::open,

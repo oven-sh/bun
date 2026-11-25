@@ -47,6 +47,8 @@ pub struct CompiledFunction<'a> {
     /// Every symbol referenced by `parameters`, `body` and `outlined`.
     pub symbols: &'a [ObservedSymbol<'a>],
     pub import_records: &'a [ImportRecord<'a>],
+    /// All of the file so far, without repeats, in the order they were written.
+    pub globals_written_by_defines: &'a [Loc],
 }
 
 pub struct AddedImport<'a> {
@@ -144,6 +146,7 @@ impl Observation<'_> {
         self.observer.function_compiled(&CompiledFunction {
             symbols: &symbols,
             import_records: host.import_records(),
+            globals_written_by_defines: host.globals_written_by_defines(),
             ..*function
         });
     }

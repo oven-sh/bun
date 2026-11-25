@@ -324,25 +324,27 @@ pub mod defines {
         }
     }
 
+    #[derive(Clone)]
+    pub enum Replacement {
+        Data(ExprData),
+        /// "a", "a.b.c". `root` is looked up in the scope where it is written.
+        Path {
+            root: Box<[u8]>,
+            members: Box<[Box<[u8]>]>,
+        },
+    }
+
     /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
     #[derive(Clone)]
     pub struct DefineData {
-        pub value: ExprData,
-        // The `RawDefines` value bytes are owned (`Box<[u8]>`), so borrowing
-        // would be a use-after-free once the `RawDefines` map is dropped after
-        // `Define::init`. Own the bytes here instead — these are tiny
-        // startup-time copies.
-        // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
-        // tier up for json-parser access) can construct directly.
-        pub original_name: Option<Box<[u8]>>,
+        pub value: Replacement,
         pub flags: Flags,
     }
 
     impl Default for DefineData {
         fn default() -> Self {
             Self {
-                value: ExprData::EMissing(E::Missing),
-                original_name: None,
+                value: Replacement::Data(ExprData::EMissing(E::Missing)),
                 flags: Flags::default(),
             }
         }
@@ -350,18 +352,16 @@ pub mod defines {
 
     /// Named-init shim.
     #[derive(Clone, Copy)]
-    pub struct Options<'a> {
-        pub original_name: Option<&'a [u8]>,
+    pub struct Options {
         pub value: ExprData,
         pub valueless: bool,
         pub can_be_removed_if_unused: bool,
         pub call_can_be_unwrapped_if_unused: E::CallUnwrap,
         pub method_call_must_be_replaced_with_undefined: bool,
     }
-    impl<'a> Default for Options<'a> {
+    impl Default for Options {
         fn default() -> Self {
             Self {
-                original_name: None,
                 value: ExprData::EMissing(E::Missing),
                 valueless: false,
                 can_be_removed_if_unused: false,
@@ -372,25 +372,22 @@ pub mod defines {
     }
 
     impl DefineData {
-        pub fn init(options: Options<'_>) -> DefineData {
+        pub fn init(options: Options) -> DefineData {
             DefineData {
-                value: options.value,
+                value: Replacement::Data(options.value),
                 flags: Flags::new(
                     options.valueless,
                     options.can_be_removed_if_unused,
                     options.call_can_be_unwrapped_if_unused,
                     options.method_call_must_be_replaced_with_undefined,
                 ),
-                original_name: options.original_name.map(Box::<[u8]>::from),
             }
         }
 
+        /// "a.b = 1" is valid, "2 = 1" is not.
         #[inline]
-        pub(crate) fn original_name(&self) -> Option<&[u8]> {
-            match &self.original_name {
-                Some(name) if !name.is_empty() => Some(name.as_ref()),
-                _ => None,
-            }
+        pub(crate) fn can_be_assigned(&self) -> bool {
+            matches!(self.value, Replacement::Path { .. })
         }
 
         /// True if accessing this value is known to not have any side effects.
@@ -416,9 +413,8 @@ pub mod defines {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                value: ExprData::EBoolean(E::Boolean { value }),
+                value: Replacement::Data(ExprData::EBoolean(E::Boolean { value })),
                 flags,
-                ..Default::default()
             }
         }
 
@@ -426,15 +422,13 @@ pub mod defines {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                value: ExprData::EString(StoreRef::from_static(str)),
+                value: Replacement::Data(ExprData::EString(StoreRef::from_static(str))),
                 flags,
-                ..Default::default()
             }
         }
 
         pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
-                value: b.value,
                 flags: Flags::new(
                     // TODO: investigate if this is correct. This is what it was before.
                     a.method_call_must_be_replaced_with_undefined()
@@ -444,7 +438,7 @@ pub mod defines {
                     a.method_call_must_be_replaced_with_undefined()
                         || b.method_call_must_be_replaced_with_undefined(),
                 ),
-                original_name: b.original_name,
+                value: b.value,
             }
         }
     }

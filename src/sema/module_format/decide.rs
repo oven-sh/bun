@@ -88,6 +88,11 @@ pub(crate) fn decide_module_format(
     }
 }
 
+fn begins_path_of_define(hir: &File<'_>, bound: &Bound<'_>, name: ExprId) -> bool {
+    hir.is_path_of_define(name)
+        && matches!(bound.parent_of_expr(name), Parent::Expr(path) if (hir[path].pos, hir[path].end) == (hir[name].pos, hir[name].end))
+}
+
 fn find_variable_uses(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -100,6 +105,13 @@ fn find_variable_uses(
             continue;
         };
         let is_live = !decisions.is_dead_expr(ident);
+        let is_path = matches!(
+            variable,
+            CommonJsVariable::Filename | CommonJsVariable::Dirname
+        );
+        if !is_path && begins_path_of_define(hir, bound, ident) {
+            continue;
+        }
         match variable {
             CommonJsVariable::Module => {
                 if let Some(comparison) = find_main_module_comparison(hir, bound, ident) {

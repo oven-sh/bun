@@ -190,7 +190,6 @@ bitflags::bitflags! {
 pub enum ImplicitReferenceKind {
     JsxFactory,
     JsxFragment,
-    DefinedPath,
     DecoratorMetadata(MetadataReference),
 }
 

@@ -4,8 +4,8 @@ use bun_core::StackCheck;
 use bun_react_compiler::{AddedImport, CompiledFunction, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
-    self, CaseId, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, IdList, Keyword,
-    ListAt, ModuleId, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
+    self, CaseId, ExprFlags, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, IdList,
+    Keyword, ListAt, ModuleId, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
@@ -38,6 +38,7 @@ pub(super) struct TreeWriter<'a, 's> {
     places: Option<Places>,
     outlined_into_lists: Vec<(ListHolder, StmtId, StmtId)>,
     new_body_starts: Vec<(FnId, u32)>,
+    globals_written_by_defines: FxHashSet<i32>,
 }
 
 #[derive(Default)]
@@ -300,6 +301,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
             places: None,
             outlined_into_lists: Vec::new(),
             new_body_starts: Vec::new(),
+            globals_written_by_defines: FxHashSet::default(),
             file,
             atoms,
             jsx,
@@ -399,7 +401,12 @@ impl<'a, 's> TreeWriter<'a, 's> {
             .source_range_of(loc, NodeShape::Other)
             .unwrap_or((last, last));
         let name = self.name_of(reference);
-        self.file.expr(ExprKind::Ident(name), start, end)
+        let identifier = self.file.expr(ExprKind::Ident(name), start, end);
+        if (self.globals_written_by_defines).contains(&loc.start) {
+            self.file
+                .add_flags(identifier, ExprFlags::WRITTEN_BY_DEFINE);
+        }
+        identifier
     }
 
     pub(super) fn any_type(&mut self, position: u32) -> TypeNodeId {
@@ -437,6 +444,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
             names.insert(symbol.reference.inner_index(), (name, symbol.origin));
         }
         let path_of = |record: &ImportRecord<'_>| Box::from(record.path.text);
+        let known = &mut self.globals_written_by_defines;
+        let written = compiled.globals_written_by_defines.iter().skip(known.len());
+        known.extend(written.map(|loc| loc.start));
         FunctionContext {
             names,
             import_paths: compiled.import_records.iter().map(path_of).collect(),

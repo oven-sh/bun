@@ -93,6 +93,7 @@ impl Manifests {
             every_file_is_a_module: false,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let literal = [b"(", text, b");"].concat();
         let hir = parse_for_compile(session.arena(), &parse_options, &literal, &atoms);
@@ -482,6 +483,7 @@ fn read_what_file_writes_by(
         every_file_is_a_module: false,
         reads_jsdoc: false,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let text: &[u8] = arena.alloc_slice_copy(text);
     let mut hir = parse_for_compile_in((arena, &session), &parse_options, text, atoms);

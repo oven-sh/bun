@@ -9,8 +9,9 @@ mod writer;
 
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{Loader, Loc};
+use bun_ast::{ExprData, Loader, Loc};
 use bun_js_parser::Define;
+use bun_js_parser::defines::Replacement;
 use bun_react_compiler::diagnostics::CompilerError;
 use bun_react_compiler::environment::is_hook_name;
 use bun_react_compiler::{AddedImport, CompiledFunction, Observer};
@@ -196,10 +197,23 @@ impl<'a> ReactCompiler<'a> {
 fn writes_hook_name(define: &Define) -> bool {
     let of_names = define.identifiers.values();
     let of_paths = define.dots.values().flatten().map(|it| &it.data);
-    of_names.chain(of_paths).any(|it| {
-        let written = it.original_name.as_deref().unwrap_or_default();
-        (0..written.len()).any(|start| is_hook_name(&written[start..]))
+    of_names.chain(of_paths).any(|it| match &it.value {
+        Replacement::Data(data) => holds_hook_name(data),
+        Replacement::Path { root, members } => {
+            is_hook_name(root) || members.iter().any(|member| is_hook_name(member))
+        }
     })
+}
+
+fn holds_hook_name(data: &ExprData) -> bool {
+    match data {
+        ExprData::EString(text) => text.is_utf8() && is_hook_name(text.slice8()),
+        ExprData::EArray(array) => array.items.iter().any(|item| holds_hook_name(&item.data)),
+        ExprData::EObject(object) => (object.properties.iter())
+            .filter_map(|property| property.value.as_ref())
+            .any(|value| holds_hook_name(&value.data)),
+        _ => false,
+    }
 }
 
 fn may_hold_component_or_hook(tree: &hir::File<'_>, atoms: &Interner<'_>) -> bool {

@@ -401,6 +401,7 @@ pub(super) fn find_difference_in_kept_texts(
             every_file_is_a_module: hir.is_forced_module,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         },
     };
     let (reader_of_file, reader) = match (hir.is_js, hir.kind) {
@@ -534,6 +535,7 @@ mod tests {
             every_file_is_a_module: false,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let mut hir = parse_for_compile(session.arena(), &options, text_of_tree.as_bytes(), &atoms);
         assert!(hir.syntax_errors().next().is_none());

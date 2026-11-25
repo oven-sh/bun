@@ -56,6 +56,7 @@ fn is_commonjs_to_build<'s>(
         every_file_is_a_module: false,
         reads_jsdoc: false,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let mut hir = parse_for_compile(arena, &parse_options, text.as_bytes(), atoms);
     hir.text = Cow::Owned(text.as_bytes().to_vec());

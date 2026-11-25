@@ -67,7 +67,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_global_path_callee(&mut self, inner: ExprId, path: &[Atom]) -> Callee {
-        let last = self.lower_global_path_holder(inner, path);
+        let last = self.lower_global_path_holder(path);
         let name = Some(self.file.intern_atom(last.name));
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
             return Callee::without_key(self.emit_locked_builtin(builtin), last.holder, name);
@@ -78,7 +78,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function = self.emit_get(holder, PropertyName::Constant(key));
                 (function, Some(key))
             }
-            None => (self.get_root_of_global_path(inner, last.name), None),
+            None => (self.emit_free_name_get(last.name, false), None),
         };
         Callee {
             function: self.expect_resolved_path(inner, function),

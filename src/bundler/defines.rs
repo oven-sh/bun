@@ -1,5 +1,4 @@
 use bun_ast::ExprData;
-use bun_ast::Ref;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 
@@ -15,12 +14,12 @@ use bun_js_parser::lexer as js_lexer;
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, Replacement,
+    UserDefines, UserDefinesArray, are_parts_equal,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
-pub(crate) type DefineDataInit<'a> = Options<'a>;
+pub(crate) type DefineDataInit = Options;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
@@ -310,24 +309,17 @@ impl DefineDataExt for DefineData {
             // Special-case undefined. it's not an identifier here
             // https://github.com/evanw/esbuild/issues/1407
             let value = if value_is_undefined || value_str == b"undefined" {
-                ExprData::EUndefined(bun_ast::E::Undefined)
+                Replacement::Data(ExprData::EUndefined(bun_ast::E::Undefined))
             } else {
-                ExprData::EIdentifier(
-                    bun_ast::E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
-                )
+                let mut parts = strings::split(value_str, b".").map(Box::<[u8]>::from);
+                Replacement::Path {
+                    root: parts.next().unwrap_or_default(),
+                    members: parts.collect(),
+                }
             };
 
             return Ok(DefineData {
                 value,
-                // upstream `DefineData` now owns `original_name:
-                // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of a
-                // borrowed `ptr`/`len` pair. Dupe
-                // the value bytes — these are tiny startup-time copies.
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
-                },
                 flags: Flags::new(
                     /* valueless: */ value_is_undefined,
                     /* can_be_removed_if_unused: */ true,
@@ -350,12 +342,7 @@ impl DefineDataExt for DefineData {
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
             return Ok(DefineData {
-                value,
-                original_name: if !value_str.is_empty() {
-                    Some(Box::<[u8]>::from(value_str))
-                } else {
-                    None
-                },
+                value: Replacement::Data(value),
                 flags: Flags::new(
                     /* valueless: */ value_is_undefined,
                     /* can_be_removed_if_unused: */ can_be_removed_if_unused,
@@ -393,12 +380,7 @@ impl DefineDataExt for DefineData {
         let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
-            value: data,
-            original_name: if !value_str.is_empty() {
-                Some(Box::<[u8]>::from(value_str))
-            } else {
-                None
-            },
+            value: Replacement::Data(data),
             flags: Flags::new(
                 /* valueless: */ value_is_undefined,
                 /* can_be_removed_if_unused: */ can_be_removed_if_unused,

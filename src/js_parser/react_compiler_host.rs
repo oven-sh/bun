@@ -69,6 +69,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     fn is_raw_template(&self, ref_: js_ast::Ref) -> bool {
         self.p.runtime_imports.at(b"__rawTemplate") == Some(ref_)
     }
+    fn globals_written_by_defines(&self) -> &[bun_ast::Loc] {
+        self.p.globals_written_by_defines.keys()
+    }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }

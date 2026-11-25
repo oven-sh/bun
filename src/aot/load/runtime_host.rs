@@ -193,6 +193,7 @@ impl CodeHost for RuntimeHost<'_> {
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
             ignores_pure_comments: false,
+            room_for_defines: request.room_for_defines,
         };
         let source = ParsedSource::new(self.source_kind(path), loader_by_name(path));
         ParsedCode {

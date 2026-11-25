@@ -12,7 +12,8 @@ use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{
-    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind, rare,
+    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, RoomForDefines, Stmt,
+    StmtKind, rare,
 };
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
@@ -101,6 +102,7 @@ struct ParseSettings<'a> {
     reads_as_bun_run: bool,
     /// `Options::ignores_pure_comments`
     ignores_pure_comments: bool,
+    room_for_defines: RoomForDefines,
     /// `Options::skips_function_blocks`
     skips_function_blocks: bool,
     /// `Options::reads_module_statements_alone`
@@ -289,6 +291,7 @@ fn parse_file_as(
             && !is_json
             && ScriptKind::from_file_name(path).is_none(),
         ignores_pure_comments: how.ignores_pure_comments,
+        room_for_defines: how.room_for_defines,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
         drops_comments: how.drops_comments,
@@ -519,6 +522,7 @@ fn summarize_for_checker<'s>(
         compiles: false,
         reads_as_bun_run,
         ignores_pure_comments: false,
+        room_for_defines: RoomForDefines::NONE,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments,
@@ -556,6 +560,7 @@ pub fn summarize_top_level<'s>(
         compiles: false,
         reads_as_bun_run,
         ignores_pure_comments: false,
+        room_for_defines: RoomForDefines::NONE,
         skips_function_blocks: true,
         reads_module_statements_alone: true,
         drops_comments: false,
@@ -616,6 +621,7 @@ pub fn summarize_in<'s>(
         compiles: false,
         reads_as_bun_run: false,
         ignores_pure_comments: false,
+        room_for_defines: RoomForDefines::NONE,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,
@@ -712,6 +718,7 @@ pub fn with_summary_in_place<'s, R>(
         compiles: false,
         reads_as_bun_run: false,
         ignores_pure_comments: false,
+        room_for_defines: RoomForDefines::NONE,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,

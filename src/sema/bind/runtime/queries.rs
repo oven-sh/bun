@@ -4,8 +4,8 @@ use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName, PrivateNameId,
-    RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, has_mapped_arguments, stability,
+    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
+    StoreKind, SymbolStore, has_mapped_arguments, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -384,13 +384,9 @@ impl RuntimeBindings<'_> {
         &self.references.implicit_references
     }
 
-    pub fn binding_of_defined_path(&self, path: ExprId) -> Binding {
-        let mut references = self.implicit_references().iter();
-        let found = references.find(|it| {
-            it.kind == ImplicitReferenceKind::DefinedPath
-                && matches!(it.node, NodeData::Expr(at) if at == path)
-        });
-        found.map_or(Binding::Free, |it| it.binding)
+    /// The expressions that a define replaces with a path from a name at hand, each with an index into `names_in_place`.
+    pub(crate) fn places_of_defined_paths(&self) -> &[(ExprId, u32)] {
+        &self.references.places_of_defined_paths
     }
 
     pub fn is_named_implicitly(&self, symbol: SymbolId) -> bool {

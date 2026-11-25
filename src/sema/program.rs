@@ -438,6 +438,7 @@ fn stub_of<'s>(hir: &mut hir::File<'s>) -> hir::File<'s> {
         has_module_syntax: hir.has_module_syntax,
         is_forced_module: hir.is_forced_module,
         is_script_for_project: hir.is_script_for_project,
+        rare_syntax: hir.rare_syntax & hir::rare::PATH_OF_DEFINE,
         has_errors: hir.has_errors,
         ran_out_of_stack: hir.ran_out_of_stack,
         has_parse_diagnostics: hir.has_parse_diagnostics || hir.has_parse_or_grammar_diagnostics(),

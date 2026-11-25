@@ -256,6 +256,7 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
         every_file_is_a_module: false,
         reads_jsdoc: false,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
     hir.ids(hir.body).len() != 0 && !hir.only_declares()
@@ -275,6 +276,7 @@ fn parses_as_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
         every_file_is_a_module: false,
         reads_jsdoc: false,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
     let is_refused = syntax_errors_of(&hir).next().is_some();
@@ -1760,6 +1762,7 @@ impl CodeHost for LoadHost<'_> {
                         every_file_is_a_module: false,
                         reads_jsdoc: false,
                         ignores_pure_comments: false,
+                        room_for_defines: Default::default(),
                     };
                     return ParsedCode {
                         hir: parse_for_compile(arena, &options, EMPTY_MODULE, atoms),
@@ -1795,6 +1798,7 @@ impl CodeHost for LoadHost<'_> {
                 every_file_is_a_module: false,
                 reads_jsdoc: false,
                 ignores_pure_comments: false,
+                room_for_defines: Default::default(),
             };
             return ParsedCode {
                 hir: parse_for_compile(arena, &empty_module_options, EMPTY_MODULE, atoms),
@@ -1819,6 +1823,7 @@ impl CodeHost for LoadHost<'_> {
             reads_jsdoc: request.reads_jsdoc,
             ignores_pure_comments: self.input.options.removable.ignores_pure_annotations
                 || hir::find_transpiled_mark(text).is_some(),
+            room_for_defines: request.room_for_defines,
         };
         let is_bundled_commonjs = is_bundled_commonjs(text);
         let mut body_of_bundle = match is_bundled_commonjs {

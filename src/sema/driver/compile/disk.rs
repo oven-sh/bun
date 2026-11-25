@@ -31,6 +31,7 @@ impl Disk {
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
             ignores_pure_comments: false,
+            room_for_defines: request.room_for_defines,
         };
         let file = parse_for_compile(arena, &options, text, atoms);
         let DataModuleTree { file, host_values } = match file.kind {

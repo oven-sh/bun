@@ -41,6 +41,7 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
         every_file_is_a_module: false,
         reads_jsdoc: false,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
     if hir.has_errors

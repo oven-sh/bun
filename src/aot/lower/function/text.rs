@@ -8,10 +8,10 @@ use bun_sema::erasure::{
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
     BinOp, ExprId, ExprKind, FnBody, FnId, PropKind, StmtId, StmtKind, end_of_expr,
-    find_transpiled_mark, start_of,
+    find_transpiled_mark, start_inside_parentheses, start_of,
 };
 use bun_sema::module_format::list_this_of_file;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::text_of_heads::{find_parentheses_left_by_types, find_text_of_heads};
 use super::text_of_jsx::find_text_written_for_jsx;
@@ -212,6 +212,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.counts_executions(),
             ));
         }
+        self.write_paths_of_defines(&mut replaced);
         remove_parts_inside(&mut replaced, left_out);
         let written_end = hir.written_text_end();
         replaced.retain(|it| it.start <= written_end);
@@ -293,6 +294,55 @@ impl FileLowering<'_, '_, '_, '_> {
             let code = Code::FunctionSourceReparseMismatch;
             self.diagnostics.report(code, span, &[&difference.message]);
         }
+    }
+
+    fn write_paths_of_defines(&self, replaced: &mut Vec<ReplacedText>) {
+        let (hir, bound) = (self.hir, self.bound);
+        let atoms = &self.queries.files().atoms;
+        let expressions = (0..hir.exprs.len() as u32).map(ExprId);
+        let mut paths: Vec<ReplacedText> = Vec::new();
+        for path in expressions.filter(|&it| hir.is_path_of_define(it)) {
+            if let Parent::Expr(parent) = bound.parent_of_expr(path)
+                && (hir[parent].pos, hir[parent].end) == (hir[path].pos, hir[path].end)
+            {
+                continue;
+            }
+            let (mut names, mut first) = (Vec::new(), path);
+            while let ExprKind::Dot { obj, name, .. } = hir[first].kind {
+                names.push(atoms.bytes(name));
+                first = obj;
+            }
+            let ExprKind::Ident(name) = hir[first].kind else {
+                continue;
+            };
+            if atoms.bytes(name).starts_with(b"%") {
+                continue;
+            }
+            names.push(atoms.bytes(name));
+            let container = self.find_member_container(first);
+            names.extend(container.map(|it| atoms.bytes(bound.symbol(it).name)));
+            names.reverse();
+            let (start, end) = (start_inside_parentheses(hir, path), hir[path].end);
+            let mut text = names.join(&b'.');
+            let value = match bound.parent_of_expr(path) {
+                Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Assign { .. }) => {
+                    parent
+                }
+                _ => path,
+            };
+            if let Parent::Prop(property) = bound.parent_of_expr(value)
+                && hir[property].kind != PropKind::Spread
+                && hir[property].pos == start
+                && let Some(key) = hir.text.get(start as usize..end as usize)
+            {
+                text = [key, b": ", &text].concat();
+            }
+            let text = text.into_boxed_slice();
+            paths.push(ReplacedText { start, end, text });
+        }
+        let written: FxHashSet<(u32, u32)> = paths.iter().map(|it| (it.start, it.end)).collect();
+        replaced.retain(|it| !written.contains(&(it.start, it.end)));
+        replaced.append(&mut paths);
     }
 
     fn add_names_of_containers(&self, replaced: &mut Vec<ReplacedText>) {

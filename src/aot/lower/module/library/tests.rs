@@ -44,6 +44,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         every_file_is_a_module: false,
         reads_jsdoc: true,
         ignores_pure_comments: false,
+        room_for_defines: Default::default(),
     };
     let mut hir = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());

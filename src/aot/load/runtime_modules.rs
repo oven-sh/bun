@@ -588,6 +588,7 @@ mod tests {
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
                 ignores_pure_comments: false,
+                room_for_defines: Default::default(),
             };
             let text = runtime.read(path).unwrap();
             let hir = parse_for_compile(session.arena(), &options, &text, &atoms);
@@ -626,6 +627,7 @@ mod tests {
                 every_file_is_a_module: true,
                 reads_jsdoc: false,
                 ignores_pure_comments: false,
+                room_for_defines: Default::default(),
             };
             let name = BStr::new(path);
             let whole = runtime.read(path).unwrap();

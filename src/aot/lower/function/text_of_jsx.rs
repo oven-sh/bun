@@ -39,7 +39,9 @@ impl Writer<'_, '_> {
         match self.hir[tag].kind {
             ExprKind::String(name) => Some(name),
             ExprKind::This => Some(known::this),
-            ExprKind::Ident(name) => is_intrinsic_jsx_name(self.atoms.bytes(name)).then_some(name),
+            ExprKind::Ident(name) if !self.hir.is_path_of_define(tag) => {
+                is_intrinsic_jsx_name(self.atoms.bytes(name)).then_some(name)
+            }
             _ => None,
         }
     }
@@ -241,6 +243,7 @@ mod tests {
             every_file_is_a_module: false,
             reads_jsdoc: false,
             ignores_pure_comments: false,
+            room_for_defines: Default::default(),
         };
         let mut hir = parse_for_compile(session.arena(), &options, text.as_bytes(), &atoms);
         assert!(hir.syntax_errors().next().is_none());

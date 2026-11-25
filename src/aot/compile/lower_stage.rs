@@ -642,9 +642,12 @@ impl Build<'_> {
             list_own_modules: &list_own_modules,
             is_checked_by_build: &is_checked_by_build,
         };
+        let has_paths_of_defines =
+            (files.compiled_files().iter()).any(|&file| files.hir(file).has_paths_of_defines());
         self.keep_what_project_itself_reports(&mut found, &views, |it| {
             let file = it.diagnostic.file;
             brings_declarations
+                || has_paths_of_defines
                 || REPEATED_NAME_CODES.contains(&it.diagnostic.code)
                 || file.is_some_and(|file| files.hir(file).is_script_for_project)
         });

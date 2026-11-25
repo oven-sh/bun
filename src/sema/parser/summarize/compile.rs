@@ -2,7 +2,7 @@ use super::{JsDoc, ParseSettings, SCRATCH, parse_into_arena};
 use crate::{AppendedExpression, AppendedExpressionFilter};
 use bun_alloc::Arena;
 use bun_sema::atom::Interner;
-use bun_sema::hir::{DiagnosticClass, ExprId, File, FileBuilder};
+use bun_sema::hir::{DiagnosticClass, ExprId, File, FileBuilder, RoomForDefines};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 
@@ -14,6 +14,7 @@ pub struct CompileParseOptions<'a> {
     pub every_file_is_a_module: bool,
     pub reads_jsdoc: bool,
     pub ignores_pure_comments: bool,
+    pub room_for_defines: RoomForDefines,
 }
 
 pub(super) fn has_reported_error(file: &FileBuilder, compiles: bool) -> bool {
@@ -75,6 +76,7 @@ pub fn parse_for_compile_in<'s>(
         compiles: true,
         reads_as_bun_run: true,
         ignores_pure_comments: options.ignores_pure_comments,
+        room_for_defines: options.room_for_defines,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,

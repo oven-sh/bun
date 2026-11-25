@@ -977,6 +977,26 @@ impl UsedAs {
         matches!(self, Self::CallTarget | Self::ObjectOfCallTarget)
     }
 
+    /// The use of "x" when this is the use of "x.a".
+    #[inline]
+    pub(crate) const fn of_object(self) -> Self {
+        match self {
+            Self::DeleteTarget => Self::Value,
+            _ if self.leads_to_call() => Self::ObjectOfCallTarget,
+            _ => Self::Object,
+        }
+    }
+
+    /// The use of "x" when this is the use of "x" and that many more ".a".
+    #[inline]
+    pub(crate) const fn of_object_before(self, members: usize) -> Self {
+        match members {
+            0 => self,
+            1 => self.of_object(),
+            _ => self.of_object().of_object(),
+        }
+    }
+
     /// The use of "x" when this is the use of "[x]" or "{ a: x }".
     #[inline]
     pub(crate) const fn of_item(self) -> Self {

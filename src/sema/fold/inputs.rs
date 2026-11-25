@@ -41,8 +41,13 @@ pub struct Define<'s> {
 pub struct PathInPlace<'s> {
     pub path: DefinePath<'s>,
     pub first_name: Atom,
-    pub is_one_name: bool,
+    pub members: &'s [Atom],
     pub is_in_bundle: bool,
+    pub may_end_in_brackets: bool,
+    /// The members of the defined paths that go on from this one, and win over it.
+    pub longer_paths: &'s [&'s [Atom]],
+    /// The same for `--drop`.
+    pub longer_dropped_paths: &'s [&'s [Atom]],
 }
 
 #[derive(Copy, Clone, Default, Debug)]

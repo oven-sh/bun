@@ -11,7 +11,7 @@ import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 
-type Row = { files: Record<string, string>; errors: string[]; stdout?: string };
+type Row = { files: Record<string, string>; errors: string[]; stdout?: string; flags?: string[] };
 
 const withoutTypes = (library: string) =>
   JSON.stringify({
@@ -510,6 +510,22 @@ for (const [name, [text, stdout]] of Object.entries(provided)) {
   };
 }
 
+rows["a define writes a path that the types do not allow where it stands"] = {
+  files: {
+    ...scriptWithTypesOfBunInstalled(""),
+    "main.ts": `declare const LEVEL: number;
+const settings = { level: 1 };
+export function read(settings: unknown): number {
+  return LEVEL;
+}
+console.log(LEVEL, read({ level: 2 }));
+`,
+  },
+  flags: ["--define=LEVEL=settings.level"],
+  errors: [],
+  stdout: "1 2\n",
+};
+
 const placesOfBuild = (stderr: string) => {
   const lines = stderr.split("\n");
   return lines.flatMap((line, index) => {
@@ -527,13 +543,23 @@ const placesOfCheck = (stdout: string) =>
   });
 
 describe.skipIf(!!unsupported)("what a build reports is a part of what bun check reports", () => {
-  for (const [name, { files, errors, stdout }] of Object.entries(rows)) {
+  for (const [name, { files, errors, stdout, flags = [] }] of Object.entries(rows)) {
     test(name, () =>
       slot(async () => {
         using dir = tempDir("aot-a-build-asks-bun-check", files);
         const folder = String(dir);
         const built = await spawned(
-          [bunExe(), "build", "--compile", "--aot", ...withoutDebugInformation, "./main.ts", "--outfile", "main"],
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...withoutDebugInformation,
+            ...flags,
+            "./main.ts",
+            "--outfile",
+            "main",
+          ],
           folder,
           env,
         );

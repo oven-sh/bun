@@ -151,7 +151,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
             let last_name = *last_name.get_or_insert(name);
             let obj = self.without_type_syntax(obj);
             match self.hir[obj].kind {
-                ExprKind::Ident(_) => {
+                ExprKind::Ident(_) if !self.hir.is_path_of_define(obj) => {
                     let api = self.find_api(obj)?;
                     return (!is_chain || api == MockApi::Jest).then_some((api, last_name));
                 }

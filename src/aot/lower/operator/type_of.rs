@@ -1,4 +1,3 @@
-use bun_sema::bind::Binding;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{ExprId, ExprKind};
 
@@ -17,10 +16,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Decision::GlobalPath(&[name]) => {
                 self.set_position(hir[target].pos);
                 let is_written_as_name = matches!(hir[target].kind, ExprKind::Ident(_));
-                let value = match self.file.binding_of_defined_root(target) {
-                    Binding::Free => self.emit_free_name_get(name, is_written_as_name),
-                    binding => self.get_binding_without_expression(binding, name),
-                };
+                let value = self.emit_free_name_get(name, is_written_as_name);
                 self.expect_resolved_path(target, value)
             }
             Decision::Unknown => {

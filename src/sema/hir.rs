@@ -25,7 +25,7 @@ mod stretch;
 mod tests;
 
 pub use crate::check::aot::DiagnosticClass;
-pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
+pub use expr_flags::{ExprFlags, MemberKey, RoomForDefines, TemplatePart, kind_flags};
 pub use runtime_syntax::{
     find_runtime_constructor, find_super_call_statement, find_transpiled_mark, has_runtime_member,
     is_marked_as_commonjs, is_moved_to_file_start, is_proto_setter, parameter_properties,
@@ -1740,6 +1740,8 @@ pub mod rare {
     /// The text was read in a short form, and a part of it was not parsed: the blocks of functions, or what follows the
     /// `import` and `export` statements at its head.
     pub const LEFT_OUT: u32 = 1 << 30;
+    /// `ExprFlags::PATH_OF_DEFINE`
+    pub const PATH_OF_DEFINE: u32 = 1 << 31;
     /// The bits that the parser only sets for oxc's dialect. In another dialect a clear bit means nothing.
     pub const ONLY_IN_OXC_DIALECT: u32 = NESTED_MODULE_SYNTAX | MAY_REDECLARE | ODD_EXPORT;
 }

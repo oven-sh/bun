@@ -1,13 +1,13 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
+    DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
 };
 use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, PatParent, ScopeKind,
+    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, Parent, PatParent, ScopeKind,
     SymbolId,
 };
 use crate::hir::{Chain, ExprId, ExprKind, Flags, FnId, ImportId, MemberKey, NodeData, UnOp};
@@ -19,18 +19,11 @@ use std::cell::Cell;
 impl<'s> Folder<'_, 's> {
     pub(super) fn fold_ident(&mut self, e: ExprId, name: Atom) -> Folded {
         let binding = self.bound.binding(e);
-        let is_bound_through_name_in_place = self.is_bound_through_name_in_place(binding, name);
-        if is_bound_through_name_in_place
-            && let Some(root) = self.inputs.root(DefineRoot::Global(name))
-            && let Some(DefineValue::GlobalPath(path @ &[_, _, ..])) = self.inputs.value_of(root)
-        {
-            return self.decide(e, Decision::GlobalPath(path));
-        }
         match binding {
             Binding::Free
             | Binding::CommonJs(
                 CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname,
-            ) if self.is_define_root(e) && !is_bound_through_name_in_place => {
+            ) if self.is_define_root(e) => {
                 let root = self.inputs.root(DefineRoot::Global(name));
                 let root = root.filter(|_| self.may_be_replaced(e, name));
                 let state = root.map(|root| PathState {
@@ -49,9 +42,10 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn may_be_replaced(&self, e: ExprId, name: Atom) -> bool {
-        !self.hir.is_in_known_evaluation(self.hir[e].pos)
-            || (matches!(name, known::undefined | known::NaN | known::Infinity)
-                && self.has_static_lookup(e))
+        !self.hir.is_written_by_define(e)
+            && (!self.hir.is_in_known_evaluation(self.hir[e].pos)
+                || (matches!(name, known::undefined | known::NaN | known::Infinity)
+                    && self.has_static_lookup(e)))
     }
 
     fn fold_symbol_read(&mut self, e: ExprId, symbol: SymbolId) -> Folded {
@@ -143,22 +137,6 @@ impl<'s> Folder<'_, 's> {
             })
     }
 
-    fn is_bound_through_name_in_place(&self, binding: Binding, name: Atom) -> bool {
-        let written = DefinePath {
-            root: DefineRoot::Global(name),
-            members: &[],
-        };
-        let mut names_in_place = self.inputs.names_in_place.iter();
-        if !names_in_place.any(|it| it.path == written) {
-            return false;
-        }
-        match binding {
-            Binding::Free => false,
-            Binding::Symbol(symbol) => self.bound.symbol(symbol).name != name,
-            Binding::Arguments(_) | Binding::CommonJs(_) => true,
-        }
-    }
-
     fn is_process_import(&self, symbol: SymbolId) -> bool {
         if self.bound.binding_kind(symbol) != BindingKind::Import {
             return false;
@@ -242,7 +220,9 @@ impl<'s> Folder<'_, 's> {
         *self.is_main_of_import_meta_written.get_or_init(|| {
             let mut exprs = (0..self.hir.exprs.len()).map(|index| ExprId(index as u32));
             exprs.any(|e| {
-                if !matches!(self.hir[e].kind, ExprKind::ImportMeta) {
+                if !matches!(self.hir[e].kind, ExprKind::ImportMeta)
+                    || self.bound.parent_of_expr(e) == Parent::None
+                {
                     return false;
                 }
                 let meta = self.find_outermost_cast(e);

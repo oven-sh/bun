@@ -61,7 +61,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match hir[target].kind {
             ExprKind::Ident(_) => match self.file.decisions().decision(target) {
                 Decision::GlobalPath(path) => {
-                    let member = self.lower_global_path_holder(target, path);
+                    let member = self.lower_global_path_holder(path);
                     match member.holder {
                         Some(object) => Reference::Property {
                             object,

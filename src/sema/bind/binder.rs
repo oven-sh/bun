@@ -4956,7 +4956,8 @@ impl<'f, 's> Binder<'f, 's> {
     /// `isJsxIntrinsicTagName` for a tag name that is an identifier.
     fn is_intrinsic_jsx_identifier(&self, tag: ExprId) -> bool {
         matches!(self.f[tag].kind, ExprKind::Ident(name)
-            if crate::hir::is_intrinsic_jsx_name(self.atoms.bytes(name)))
+            if !self.f.is_path_of_define(tag)
+                && crate::hir::is_intrinsic_jsx_name(self.atoms.bytes(name)))
     }
 
     /// `checkJsxOpeningLikeElementOrOpeningFragment`, `checkJsxElementDeferred`: an intrinsic name is looked up in

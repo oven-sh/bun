@@ -3863,6 +3863,11 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             continue;
         }
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
+#if ENABLE(AOT)
+        // A compiled test file that required a mock which isn't compiled.
+        if (auto file = leavesRequireCache && vm.hasCompiledCode() && !evict.all ? Bun::compiledModuleForPath(key) : std::nullopt)
+            JSC::AOT::didEvictTestFile(globalObject, *file);
+#endif
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
             ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));

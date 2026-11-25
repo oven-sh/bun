@@ -3132,8 +3132,10 @@ pub fn fast_random() -> u64 {
             .take()
             .or_else(|| random_seed().map(rand::DefaultPrng::init));
         let Some(mut prng) = prng else {
-            let now = crate::time::nano_timestamp() as u64;
-            return rand::DefaultPrng::init(now ^ (u64::from(std::process::id()) << 32)).next_u64();
+            static CALLS: AtomicU64 = AtomicU64::new(0);
+            let now = crate::time::nano_timestamp() as u64 ^ (u64::from(std::process::id()) << 32);
+            let first = rand::DefaultPrng::init(now).next_u64();
+            return first.wrapping_add(CALLS.fetch_add(1, O::Relaxed));
         };
         let v = prng.next_u64();
         p.set(Some(prng));

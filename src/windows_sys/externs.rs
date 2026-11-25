@@ -1106,7 +1106,18 @@ pub mod ws2_32 {
             service_len: u32,
             flags: c_int,
         ) -> c_int;
+        pub fn GetNameInfoW(
+            address: *const sockaddr,
+            address_len: socklen_t,
+            node: *mut u16,
+            node_len: u32,
+            service: *mut u16,
+            service_len: u32,
+            flags: c_int,
+        ) -> c_int;
     }
+
+    pub const NI_NAMEREQD: c_int = 0x04;
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]

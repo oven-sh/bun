@@ -34,9 +34,9 @@ describe.each([
   });
 
   test.each([
-    ["resolve", "ERR_INVALID_ARG_TYPE"],
-    ["resolveAny", "ERR_INVALID_ARG_TYPE"],
-    ["reverse", "ERR_INVALID_ARG_TYPE"],
+    ["queryA", "ERR_INVALID_ARG_TYPE"],
+    ["queryAny", "ERR_INVALID_ARG_TYPE"],
+    ["getHostByAddr", "ERR_INVALID_ARG_TYPE"],
     ["setLocalAddress", "ERR_INVALID_ARG_VALUE"],
     ["setServers", "ERR_INVALID_ARG_TYPE"],
   ])("_handle.%s() treats a missing argument as undefined", (method, code) => {

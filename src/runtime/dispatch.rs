@@ -416,11 +416,11 @@ pub(crate) fn run_task(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> { run.call() }
         )?,
-        task_tag::DnsErrorDeferred => boxed_arm!(
-            task,
-            [Dns],
-            |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
-        )?,
+        task_tag::DnsAnswers => {
+            boxed_arm!(task, [Dns], |answers: crate::dns_jsc::DeferredAnswers| {
+                answers.run()
+            })
+        }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
         }
@@ -1638,9 +1638,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RunTestsTask => {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
-        task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
-        }
+        task_tag::DnsAnswers => release_boxed_in!([Dns], crate::dns_jsc::DeferredAnswers),
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()
         }

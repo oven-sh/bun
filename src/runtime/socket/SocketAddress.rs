@@ -839,7 +839,7 @@ pub(crate) extern "C" fn Bun__formatIpAddress(buffer: &mut [u8; 64], is_ipv6: bo
 }
 
 /// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
-fn scope_index(zone: &[u8]) -> u32 {
+pub(crate) fn scope_index(zone: &[u8]) -> u32 {
     #[cfg(not(windows))]
     {
         let mut buf = [0u8; 64];

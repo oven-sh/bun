@@ -168,3 +168,39 @@ fn reply_to_a_probe_is_not_kept() {
     assert_eq!(test.answer(&query, &[address("2.2.2.2", 9)]), expected);
     assert_eq!(test.resolve(RecordType::A, "b.test"), ["4: 2.2.2.2/9"]);
 }
+
+#[test]
+fn new_local_address_starts_over() {
+    let mut test = one_server().start();
+    let query = test.ask("a.test");
+    test.answer(&query, &[address("1.1.1.1", 9)]);
+    test.client.set_local_ip("10.0.0.9".parse().unwrap());
+    assert!(!is_cached(&mut test, "a.test"));
+}
+
+#[test]
+fn replies_age_while_the_machine_sleeps() {
+    let mut test = one_server().start();
+    let query = test.ask("a.test");
+    test.answer(&query, &[address("1.1.1.1", 60)]);
+    test.wait(5000);
+    for (request, on_wall, left) in [
+        (2, i64::MIN, 55),
+        (3, -99, 55),
+        (4, 6, 55),
+        (5, 7, 54),
+        (6, 60, 1),
+    ] {
+        test.world().wall_clock = on_wall.saturating_add(10);
+        let expected = format!("{request}: 1.1.1.1/{left}");
+        assert_eq!(test.resolve(RecordType::A, "a.test"), [expected]);
+    }
+    for on_wall in [71, i64::MAX] {
+        test.world().wall_clock = on_wall;
+        let query = test.ask("a.test");
+        test.answer(&query, &[address("2.2.2.2", 60)]);
+        assert!(is_cached(&mut test, "a.test"));
+    }
+    test.wait(59_000);
+    assert!(is_cached(&mut test, "a.test"));
+}

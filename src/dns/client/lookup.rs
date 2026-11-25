@@ -9,7 +9,7 @@ use bun_core::{ip_address, strings};
 use crate::client::{Answers, Client, Outcome, Purpose, Reply};
 use crate::config::{Config, Source, WHITESPACE, lines};
 use crate::hosts::Table;
-use crate::message::{Address, Message, Record, RecordType};
+use crate::message::{Address, Message, Question, Record, RecordType};
 use crate::system::{System, Variable};
 use crate::{Error, name, sort};
 
@@ -46,12 +46,23 @@ pub(crate) struct AddressLookup<R> {
     has_ipv4: Cell<bool>,
     /// Of the query that finished first.
     other_error: Cell<Option<Error>>,
+    has_ipv4_moved_on: Cell<bool>,
+    /// Likewise.
+    ipv6_elsewhere: Cell<Option<Question>>,
 }
 
 impl<R> AddressLookup<R> {
     /// While AAAA is being asked for. It is not worth waiting for then.
     pub(crate) fn can_do_without_ipv6(&self) -> bool {
         self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND)
+    }
+
+    /// To another server, after an excuse.
+    pub(crate) fn move_on(&self, kind: RecordType, question: &Question) {
+        match kind {
+            RecordType::A => self.has_ipv4_moved_on.set(true),
+            _ => self.ipv6_elsewhere.set(Some(question.clone())),
+        }
     }
 
     fn candidate(&self) -> &[u8] {
@@ -137,7 +148,7 @@ impl<S: System, R> Client<S, R> {
     /// Best first. An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
     #[must_use]
     pub fn lookup(&mut self, host: &[u8], family: Family, request: R) -> Answers<R> {
-        self.call(|this| {
+        self.request(|this| {
             if let Some(ip) = ip_address::parse_strict(host) {
                 let address = Address { ip, ttl: 0 };
                 return this.answer(request, Ok(Reply::Addresses(vec![address])));
@@ -159,6 +170,8 @@ impl<S: System, R> Client<S, R> {
                 found: Cell::default(),
                 has_ipv4: Cell::default(),
                 other_error: Cell::default(),
+                has_ipv4_moved_on: Cell::default(),
+                ipv6_elsewhere: Cell::default(),
             };
             this.look_for_addresses(lookup, Error::ENOTFOUND);
         })
@@ -216,6 +229,12 @@ impl<S: System, R> Client<S, R> {
         }
         let error = records.err().unwrap_or(Error::ENODATA);
         let other_error = lookup.other_error.replace(Some(error));
+        // The order of the replies makes no difference.
+        if let Some(question) = lookup.ipv6_elsewhere.take()
+            && !lookup.has_ipv4_moved_on.get()
+        {
+            self.let_go_of(&question);
+        }
 
         let Some(mut lookup) = Rc::into_inner(lookup) else {
             return;
@@ -254,6 +273,7 @@ impl<S: System, R> Client<S, R> {
         }
         lookup.candidates.pop();
         lookup.other_error.set(None);
+        lookup.has_ipv4_moved_on.set(false);
         let no_data = lookup.had_no_data.then_some(Error::ENODATA);
         let error = lookup.refusal.or(no_data).unwrap_or(error);
         self.look_for_addresses(lookup, error);
@@ -271,18 +291,19 @@ impl<S: System, R> Client<S, R> {
     }
 
     fn lookup_names(&mut self, ip: IpAddr, port: Option<u16>, request: R) -> Answers<R> {
-        let sources = self.config.sources;
-        self.call(|this| {
-            this.look_for_names(NameLookup {
+        self.request(|this| {
+            let lookup = NameLookup {
                 request,
                 ip,
                 port,
-                sources,
-            });
+                sources: this.config.sources,
+            };
+            this.look_for_names(lookup, Error::ENOTFOUND);
         })
     }
 
-    fn look_for_names(&mut self, mut lookup: NameLookup<R>) {
+    /// `error` is the answer if there is nowhere left to look.
+    fn look_for_names(&mut self, mut lookup: NameLookup<R>, error: Error) {
         while let &[source, ref rest @ ..] = lookup.sources {
             lookup.sources = rest;
             if source == Source::Dns {
@@ -298,16 +319,20 @@ impl<S: System, R> Client<S, R> {
                 return self.answer(lookup.request, Ok(reply));
             }
         }
-        self.answer(lookup.request, Err(Error::ENOTFOUND));
+        self.answer(lookup.request, Err(error));
     }
 
     pub(crate) fn got_names(&mut self, lookup: NameLookup<R>, outcome: Outcome) {
+        let has_answers = outcome.as_ref().is_ok_and(Message::has_answers);
         let records = match outcome.and_then(Message::into_records) {
             Ok(records) => records,
             Err(error @ (Error::ECANCELLED | Error::EDESTRUCTION)) => {
                 return self.answer(lookup.request, Err(error));
             }
-            Err(_) => return self.look_for_names(lookup),
+            Err(error @ Error::ENODATA) if has_answers => {
+                return self.look_for_names(lookup, error);
+            }
+            Err(_) => return self.look_for_names(lookup, Error::ENOTFOUND),
         };
         let mut text = Vec::new();
         let hosts = records
@@ -326,7 +351,7 @@ impl<S: System, R> Client<S, R> {
         };
         match reply {
             Some(reply) => self.answer(lookup.request, Ok(reply)),
-            None => self.look_for_names(lookup),
+            None => self.look_for_names(lookup, Error::ENOTFOUND),
         }
     }
 }

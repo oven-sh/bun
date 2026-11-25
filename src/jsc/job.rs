@@ -27,7 +27,8 @@ use core::ptr::NonNull;
 use bun_core::{from_field_ptr, heap};
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::ThreadPool;
+use bun_threading::work_pool::{Batch, Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
 use crate::virtual_machine::VirtualMachine;
@@ -188,6 +189,11 @@ pub trait JobContext: Sized + 'static {
     /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
     const OUTLIVES_SCRIPT: bool = false;
 
+    /// Where it [`run`](Self::run)s.
+    fn pool() -> &'static ThreadPool {
+        WorkPool::get()
+    }
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -215,6 +221,11 @@ pub trait OwnedJob: Sized + 'static {
 
     /// As [`JobContext::OUTLIVES_SCRIPT`].
     const OUTLIVES_SCRIPT: bool;
+
+    /// As [`JobContext::pool`].
+    fn pool() -> &'static ThreadPool {
+        WorkPool::get()
+    }
 
     /// Pool thread. Not called if the VM is in its final wait by then.
     fn run(job: Running<Self>);
@@ -256,6 +267,10 @@ impl<C: JobContext> OwnedJob for C {
     type Shared = ();
     type Resume = Infallible;
     const OUTLIVES_SCRIPT: bool = <C as JobContext>::OUTLIVES_SCRIPT;
+
+    fn pool() -> &'static ThreadPool {
+        <C as JobContext>::pool()
+    }
 
     fn run(job: Running<Self>) {
         // SAFETY: live job, whose `off` is the pool's for this callback. A `Completion` does not reach it.
@@ -431,7 +446,7 @@ impl<C: OwnedJob> Job<C> {
             if C::Shared::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).pooled.task);
+            C::pool().schedule(Batch::from(&raw mut (*job).pooled.task));
         }
     }
 

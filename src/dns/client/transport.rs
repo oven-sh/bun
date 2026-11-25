@@ -11,7 +11,7 @@ use hashbrown::{HashTable, hash_table};
 
 use crate::client::{Client, Outcome, Purpose, Step};
 use crate::message::{self, Message, Question, Received, RecordType};
-use crate::servers::{Server, ServerId, ServerSet};
+use crate::servers::{Server, ServerId, ServerSet, Substitute};
 use crate::system::{Events, Socket, SocketError, SocketId, System, Transport};
 use crate::{Error, HashMap};
 
@@ -28,6 +28,8 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const REPEAT_DELAY: Duration = Duration::from_millis(10);
 /// In a row and for each server, whatever the number of tries.
 const MAX_FAILURES_BEFORE_TIMEOUT: usize = 64;
+/// Through the servers, once one has made an excuse. `RES_DFLRETRY`
+const ROUNDS_AFTER_EXCUSE: usize = 2;
 /// One new query in this many is also sent to a server that failed.
 const PROBE_ODDS: u16 = 10;
 /// Replies that have not come after one do not all come at once.
@@ -75,6 +77,8 @@ pub(crate) struct Query<R> {
     failures_since_timeout: usize,
     /// Since then. A socket that fails counts once for all its tries, unlike a timeout.
     avoided: ServerSet,
+    /// Those that replied with [`Message::excuse`].
+    excused: ServerSet,
     last_error: Error,
 }
 
@@ -352,7 +356,11 @@ impl<T> Connections<T> {
                 && let Entry::Occupied(entry) = connection.tries.entry(id)
                 && entry.get().question.is(question)
             {
-                self.deadlines.remove(&entry.remove().deadline);
+                let deadline = entry.remove().deadline;
+                self.deadlines.remove(&deadline);
+                connection.unsent.remove(&deadline.1);
+                connection.strays_left += 1;
+                self.recent_ids.insert(id);
                 self.idle.push(socket);
             }
         }
@@ -403,6 +411,7 @@ impl<S: System, R> Client<S, R> {
                 failed_tries: 0,
                 failures_since_timeout: 0,
                 avoided: ServerSet::default(),
+                excused: ServerSet::default(),
                 last_error: Error::ETIMEOUT,
             }),
         };
@@ -484,8 +493,12 @@ impl<S: System, R> Client<S, R> {
         let (server, transport) = match (&mut query, probed) {
             (Some(query), _) => {
                 let random = self.config.rotate.then(|| self.system.random()).flatten();
-                let out_of_turn = query.last_error == Error::ECONNREFUSED;
-                let server = self.servers.choose(random, &mut query.avoided, out_of_turn);
+                let substitute = match query.last_error {
+                    Error::ETIMEOUT | Error::EBADRESP => Substitute::Equal,
+                    Error::ECONNREFUSED => Substitute::Similar,
+                    _ => Substitute::Any,
+                };
+                let server = self.servers.choose(random, &mut query.avoided, substitute);
                 (server, query.transport)
             }
             (None, Some((server, transport))) => (self.servers.get(server), transport),
@@ -616,7 +629,7 @@ impl<S: System, R> Client<S, R> {
             self.connections.forget(question, places);
         }
         if let Ok(message) = outcome {
-            self.cache.insert(question, message, self.now);
+            self.cache.insert(question, message, self.now, &self.system);
         }
         for purpose in query.waiting {
             self.finish(purpose, outcome.clone());
@@ -640,7 +653,7 @@ impl<S: System, R> Client<S, R> {
         query.last_error = error;
         query.failed_tries += 1;
         (query.failures_since_timeout, query.avoided) = match error {
-            Error::ETIMEOUT => Default::default(),
+            Error::ETIMEOUT => (0, query.excused),
             _ => (query.failures_since_timeout + 1, query.avoided),
         };
         self.steps.extend(query.let_go(error));
@@ -654,7 +667,58 @@ impl<S: System, R> Client<S, R> {
             }
             self.send(question, None);
         } else {
+            self.doubts_config |= matches!(error, Error::ETIMEOUT | Error::ECONNREFUSED);
             self.end(&question, &Err(error));
+        }
+    }
+
+    /// As `getaddrinfo` does. Whoever asked for records gets `excuse`, as in Node.js. Returns whether the query goes on.
+    fn turn_to_another(
+        &mut self,
+        question: &Question,
+        excuse: &Message,
+        from: ServerId,
+        state: State,
+    ) -> bool {
+        let (Some(error), Some(query), Some(server)) = (
+            excuse.excuse(),
+            find(&mut self.queries, question),
+            self.servers.get(from),
+        ) else {
+            return false;
+        };
+        query.excused.insert(server);
+        query.avoided.insert(server);
+        if self.servers.iter().all(|it| query.excused.contains(it))
+            || query.failed_tries + 1 >= self.servers.len() * ROUNDS_AFTER_EXCUSE
+            || !(query.waiting.iter()).any(|it| matches!(it, Purpose::Addresses(..)))
+        {
+            return false;
+        }
+        let others = query.waiting.extract_if(.., |it| match it {
+            Purpose::Addresses(lookup, kind) => {
+                lookup.move_on(*kind, question);
+                false
+            }
+            _ => true,
+        });
+        (self.steps).extend(others.map(|it| Step::Finish(it, Ok(excuse.clone()))));
+        // Another try is under way otherwise.
+        if state != State::Late {
+            (self.steps).push_back(Step::Retry(question.clone(), Some(error)));
+        }
+        true
+    }
+
+    pub(crate) fn let_go_of(&mut self, question: &Question) {
+        let Some(query) = find(&mut self.queries, question) else {
+            return;
+        };
+        let (error, last_try) = (query.last_error, query.last_try);
+        self.steps.extend(query.let_go(error));
+        if query.waiting.is_empty() {
+            self.connections.forget(question, last_try);
+            self.end(question, &Err(error));
         }
     }
 
@@ -709,7 +773,7 @@ impl<S: System, R> Client<S, R> {
 
     pub(crate) fn leave_removed_servers(&mut self) {
         for query in &mut self.queries {
-            query.avoided = ServerSet::default();
+            (query.avoided, query.excused) = Default::default();
         }
         let open = &mut self.connections.open;
         let left = open.extract_if(|_, connection| self.servers.get(connection.server).is_none());
@@ -950,8 +1014,12 @@ impl<S: System, R> Client<S, R> {
                     let until = self.now.saturating_add(REFUSAL_MEMORY);
                     (self.servers).change(connection.server, |it| it.refuses_until = until);
                 }
-                let took = message.is_resolved().then_some(took);
+                self.doubts_config = is_refusal;
+                let took = message.excuse().is_none().then_some(took);
                 self.servers.answered(connection.server, took, self.now);
+                if self.turn_to_another(&question, &message, connection.server, state) {
+                    return true;
+                }
                 if state != State::Late {
                     self.steps.push_back(Step::End(question, Ok(message)));
                     return true;

@@ -43,7 +43,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented. Missing `resolveTlsa`.
+🟢 Fully implemented. `lookup()` still accepts an empty hostname, as in Node.js 24. `resolve*()` caches answers for their TTL.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 

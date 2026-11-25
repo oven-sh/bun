@@ -20,13 +20,23 @@ pub(crate) type ServerId = u64;
 pub(crate) struct ServerSet(u64);
 
 impl ServerSet {
-    fn contains(self, server: &Server) -> bool {
+    pub(crate) fn contains(self, server: &Server) -> bool {
         self.0 >> (server.position % 64) & 1 == 1
     }
 
     pub(crate) fn insert(&mut self, server: &Server) {
         self.0 |= 1 << (server.position % 64);
     }
+}
+
+/// To whom a server that is avoided gives way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Substitute {
+    /// One that works or has timed out as often.
+    Equal,
+    /// Also one that has not timed out for much longer.
+    Similar,
+    Any,
 }
 
 pub(crate) struct Server {
@@ -93,9 +103,10 @@ impl Servers {
         self.list.iter_mut().find(|server| server.id == id)
     }
 
-    /// One that stays keeps its history.
-    pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>) {
+    /// One that stays keeps its history. Returns whether any came or went.
+    pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>) -> bool {
         let mut old = Vec::from(core::mem::take(&mut self.list));
+        let last_id = self.last_id;
         for address in addresses {
             let is_at_address = |server: &Server| {
                 (server.address.ip(), server.address.port()) == (address.ip(), address.port())
@@ -104,7 +115,12 @@ impl Servers {
                 continue;
             }
             let position = self.list.len();
-            let server = old.extract_if(.., |server| is_at_address(server)).next();
+            // An address that does not tell the interface is on the one it was on.
+            let has_interface = matches!(address, SocketAddr::V6(it) if it.scope_id() != 0);
+            let stays = |server: &mut Server| {
+                is_at_address(server) && (!has_interface || server.address == address)
+            };
+            let server = old.extract_if(.., stays).next();
             let server = server.unwrap_or_else(|| {
                 self.last_id += 1;
                 Server {
@@ -128,15 +144,15 @@ impl Servers {
             self.list.push_back(Server { position, ..server });
         }
         index_sort::sort_slice_unstable_by_key(self.list.make_contiguous(), Server::rank);
+        self.last_id != last_id || !old.is_empty()
     }
 
-    /// The best, or with `random` one of the best. One that is `avoided` gives way to one that works
-    /// or has timed out as often or, `out_of_turn`, not for much longer. Otherwise all are forgiven.
+    /// The best, or with `random` one of the best. If it is `avoided` and has no `substitute`, all are forgiven.
     pub(crate) fn choose(
         &mut self,
         random: Option<u16>,
         avoided: &mut ServerSet,
-        out_of_turn: bool,
+        substitute: Substitute,
     ) -> Option<&mut Server> {
         let fewest = self.list.front()?.failures;
         let mut index = random.map_or(0, |random| {
@@ -144,11 +160,11 @@ impl Servers {
         });
         if let Some(best) = self.list.get(index).filter(|it| avoided.contains(it)) {
             let longest = best.outage + RETRY_DELAY;
-            let will_do = |it: &Server| match it.last_error {
-                Some(Error::ETIMEOUT) => {
-                    it.failures == fewest || (out_of_turn && it.outage <= longest)
-                }
-                error => error.is_none(),
+            let will_do = |it: &Server| match (substitute, it.last_error) {
+                (Substitute::Any, _) | (_, None) => true,
+                (_, Some(Error::ETIMEOUT)) if it.failures == fewest => true,
+                (Substitute::Similar, Some(Error::ETIMEOUT)) => it.outage <= longest,
+                _ => false,
             };
             let mut others = self.list.iter();
             match others.position(|it| !avoided.contains(it) && will_do(it)) {

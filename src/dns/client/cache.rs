@@ -5,8 +5,10 @@ use core::time::Duration;
 use std::collections::BinaryHeap;
 
 use hashbrown::HashTable;
+use hashbrown::hash_table::OccupiedEntry;
 
 use crate::message::{Message, Question};
+use crate::system::System;
 
 const MAX_LIFETIME: u32 = 3600;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -17,6 +19,8 @@ struct Entry {
     message: Message,
     stored: u64,
     expires: u64,
+    /// `stored` by [`System::wall_clock`], which goes on while the machine sleeps.
+    stored_on_wall: i64,
 }
 
 impl Entry {
@@ -45,20 +49,40 @@ impl Cache {
         }
     }
 
-    fn find(&self, question: &Question) -> Option<&Entry> {
+    fn find(&mut self, question: &Question) -> Option<OccupiedEntry<'_, Entry>> {
         let matches = |entry: &Entry| question.matches(entry.message.question());
-        self.entries.find(question.hash, matches)
+        self.entries.find_entry(question.hash, matches).ok()
     }
 
-    pub(crate) fn get(&mut self, question: &Question, now: Duration) -> Option<Message> {
+    pub(crate) fn get(
+        &mut self,
+        question: &Question,
+        now: Duration,
+        system: &impl System,
+    ) -> Option<Message> {
         self.drop_expired(now.as_secs());
-        let entry = self.find(question)?;
+        let found = self.find(question)?;
+        let entry = found.get();
+        let on_wall = system.wall_clock().saturating_sub(entry.stored_on_wall);
+        // The two clocks do not start their seconds together.
+        let on_wall = u64::try_from(on_wall).unwrap_or(0).saturating_sub(1);
+        let age = on_wall.max(now.as_secs().saturating_sub(entry.stored));
+        if entry.stored.saturating_add(age) >= entry.expires {
+            self.bytes -= found.remove().0.bytes();
+            return None;
+        }
         let mut message = entry.message.clone();
-        message.age = now.as_secs().saturating_sub(entry.stored) as u32;
+        message.age = age as u32;
         Some(message)
     }
 
-    pub(crate) fn insert(&mut self, question: &Question, message: &Message, now: Duration) {
+    pub(crate) fn insert(
+        &mut self,
+        question: &Question,
+        message: &Message,
+        now: Duration,
+        system: &impl System,
+    ) {
         let stored = now.as_secs();
         self.drop_expired(stored);
         if message.lifetime == 0 || self.find(question).is_some() {
@@ -69,6 +93,7 @@ impl Cache {
             message: message.clone(),
             stored,
             expires: stored + u64::from(message.lifetime.min(MAX_LIFETIME)),
+            stored_on_wall: system.wall_clock(),
         };
         // What is in use comes back, however short its life is.
         if self.bytes + entry.bytes() > MAX_BYTES {

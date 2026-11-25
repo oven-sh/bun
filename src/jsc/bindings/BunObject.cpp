@@ -465,6 +465,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTlsa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTlsa>(), ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa>(), ImplementationVisibility::Public, NoIntrinsic,

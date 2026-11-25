@@ -6224,8 +6224,7 @@ impl VirtualMachine {
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes.get() {
             for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.starts_with_ascii(b"bun:")
-                    || frame.source_url.starts_with_ascii(b"node:")
+                if frame.is_in_builtin_module()
                     || frame.source_url.is_empty()
                     || frame.source_url.eq_ascii(b"native")
                     || frame.source_url.eq_ascii(b"unknown")
@@ -6246,6 +6245,10 @@ impl VirtualMachine {
         if frames[top].source_url.eq_ascii(b"[repl]") {
             *enable_source_code_preview = false;
         }
+
+        // `collect_source_lines` takes those of the first frame.
+        let shows_first_frame = *enable_source_code_preview
+            && !(self.hide_bun_stackframes.get() && frames[0].is_in_builtin_module());
 
         let already_remapped = frames[top].remapped;
         let resolved = {
@@ -6351,7 +6354,7 @@ impl VirtualMachine {
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
-            if *enable_source_code_preview && code.is_empty() {
+            if shows_first_frame && code.is_empty() {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -6388,7 +6391,7 @@ impl VirtualMachine {
                 }
                 exception.stack.source_lines_len = take as u8;
             }
-        } else if *enable_source_code_preview {
+        } else if shows_first_frame {
             exception.collect_source_lines(error_instance, global);
         }
 
@@ -6707,10 +6710,7 @@ impl VirtualMachine {
                 let mut top_frame: Option<&crate::ZigStackFrame<'_>> = frames.first();
                 if self.hide_bun_stackframes.get() {
                     for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.starts_with_ascii(b"bun:")
-                            || frame.source_url.starts_with_ascii(b"node:")
-                        {
+                        if frame.position.is_invalid() || frame.is_in_builtin_module() {
                             continue;
                         }
                         top_frame = Some(frame);

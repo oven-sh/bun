@@ -31,12 +31,13 @@ impl Error {
     pub fn code(self) -> &'static str {
         match self {
             Error::ENODATA => "DNS_ENODATA",
-            Error::ENOTFOUND | Error::EBADNAME => "DNS_ENOTFOUND",
+            Error::ENOTFOUND => "DNS_ENOTFOUND",
             Error::EFORMERR => "DNS_EFORMERR",
             Error::ESERVFAIL => "DNS_ESERVFAIL",
             Error::ENOTIMP => "DNS_ENOTIMP",
             Error::EREFUSED => "DNS_EREFUSED",
             Error::EBADQUERY => "DNS_EBADQUERY",
+            Error::EBADNAME => "DNS_EBADNAME",
             Error::EBADFAMILY => "DNS_EBADFAMILY",
             Error::EBADRESP => "DNS_EBADRESP",
             Error::ECONNREFUSED => "DNS_ECONNREFUSED",

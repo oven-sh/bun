@@ -635,7 +635,12 @@ export const exposedInternals = {
   "internal/assert/myers_diff": require("internal/assert/myers_diff"),
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.
-  "internal/errors": require("internal/errors"),
+  "internal/errors": {
+    ...require("internal/errors"),
+    get DNSException() {
+      return require("internal/dns").DNSException;
+    },
+  },
   // normalizeEncoding wraps the same Rust binding node:crypto and the
   // webstream adapters call; the rest are node's own JS helpers, ported
   // verbatim from lib/internal/util.js where Bun has no native equivalent.

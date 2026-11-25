@@ -124,6 +124,9 @@ mod eai {
     // `libc` lacks these.
     pub(crate) const ADDRFAMILY: c_int = if cfg!(target_os = "linux") { -9 } else { 1 };
     pub(crate) const NODATA: c_int = if cfg!(target_os = "linux") { -5 } else { 7 };
+    // Linux has neither, and no status above 0.
+    pub(crate) const BADHINTS: c_int = 12;
+    pub(crate) const PROTOCOL: c_int = 13;
     #[cfg(target_env = "gnu")]
     pub(crate) const IDN_ENCODE: c_int = -105;
 }
@@ -173,6 +176,122 @@ pub fn getaddrinfo_error(status: c_int) -> Option<Error> {
         libuv::UV_EAI_SOCKTYPE => Error::ECONNREFUSED,
         _ => Error::ENOTFOUND,
     })
+}
+
+pub const UV_EAI_NODATA: c_int = -3007;
+pub const UV_EAI_NONAME: c_int = -3008;
+
+/// Reads `errno`. https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/getaddrinfo.c#L39-L92
+#[cfg(unix)]
+fn to_uv_error(status: c_int) -> c_int {
+    match status {
+        eai::ADDRFAMILY => -3000,
+        eai::AGAIN => -3001,
+        libc::EAI_BADFLAGS => -3002,
+        libc::EAI_FAMILY => -3005,
+        libc::EAI_MEMORY => -3006,
+        eai::NODATA => UV_EAI_NODATA,
+        eai::NONAME => UV_EAI_NONAME,
+        libc::EAI_OVERFLOW => -3009,
+        libc::EAI_SERVICE => -3010,
+        libc::EAI_SOCKTYPE => -3011,
+        eai::BADHINTS => -3013,
+        eai::PROTOCOL => -3014,
+        libc::EAI_SYSTEM if bun_sys::last_errno() != 0 => -bun_sys::last_errno(),
+        // UV_EAI_FAIL
+        _ => -3004,
+    }
+}
+
+/// Why the system's resolver gave no address.
+#[derive(Clone, Copy)]
+pub struct AddrInfoError {
+    pub error: Error,
+    /// The `UV_E*` that Node.js has for it.
+    pub uv: c_int,
+}
+
+impl AddrInfoError {
+    pub const NOT_FOUND: Self = Self {
+        error: Error::ENOTFOUND,
+        uv: UV_EAI_NONAME,
+    };
+
+    /// As [`getaddrinfo_error`]. Reads `errno`.
+    pub fn new(status: c_int) -> Option<Self> {
+        Some(Self {
+            error: getaddrinfo_error(status)?,
+            #[cfg(unix)]
+            uv: to_uv_error(status),
+            #[cfg(windows)]
+            uv: status,
+        })
+    }
+}
+
+/// In UTF-8.
+pub struct NameInfo {
+    pub host: Vec<u8>,
+    pub service: Vec<u8>,
+}
+
+impl NameInfo {
+    const MAX_HOST_LEN: usize = 1025;
+    const MAX_SERVICE_LEN: usize = 32;
+
+    /// Blocks. `Err` is a `UV_E*`.
+    #[cfg(unix)]
+    pub fn lookup(address: &Address) -> Result<Self, c_int> {
+        let address = address.as_bytes();
+        let (mut host, mut service) = ([0u8; Self::MAX_HOST_LEN], [0u8; Self::MAX_SERVICE_LEN]);
+        // SAFETY: each buffer is passed with its length.
+        let status = unsafe {
+            sock::getnameinfo(
+                address.as_ptr().cast(),
+                address.len() as _,
+                host.as_mut_ptr().cast(),
+                host.len() as _,
+                service.as_mut_ptr().cast(),
+                service.len() as _,
+                libc::NI_NAMEREQD,
+            )
+        };
+        if status != 0 {
+            return Err(to_uv_error(status));
+        }
+        let [host, service] = [&host[..], &service].map(|it| bun_core::slice_to_nul(it).to_vec());
+        Ok(Self { host, service })
+    }
+
+    /// Blocks. `Err` is a `UV_E*`.
+    #[cfg(windows)]
+    pub fn lookup(address: &Address) -> Result<Self, c_int> {
+        use bun_core::strings::{index_of_scalar, to_utf8_alloc};
+        use bun_sys::windows::libuv;
+        use bun_windows_sys::ws2_32::{GetNameInfoW, NI_NAMEREQD};
+
+        libuv::uv__winsock_ensure();
+        let address = address.as_bytes();
+        let (mut host, mut service) = ([0u16; Self::MAX_HOST_LEN], [0u16; Self::MAX_SERVICE_LEN]);
+        // SAFETY: each buffer is passed with its length.
+        let status = unsafe {
+            GetNameInfoW(
+                address.as_ptr().cast(),
+                address.len() as _,
+                host.as_mut_ptr(),
+                host.len() as _,
+                service.as_mut_ptr(),
+                service.len() as _,
+                NI_NAMEREQD,
+            )
+        };
+        if status != 0 {
+            return Err(libuv::uv__getaddrinfo_translate_error(status));
+        }
+        let [host, service] = [&host[..], &service]
+            .map(|it| to_utf8_alloc(&it[..index_of_scalar(it, 0).unwrap_or(it.len())]));
+        Ok(Self { host, service })
+    }
 }
 
 /// What [`getaddrinfo_error`] takes for the `EAI_*` called `name`.

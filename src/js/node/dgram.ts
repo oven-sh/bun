@@ -327,9 +327,18 @@ interface UDPHandle {
   [kOwnerSymbol]?: $Node.DgramSocket;
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dgram.js#L31-L42
+function defaultLookup(address: string, family: number, callback: LookupCallback) {
+  if (isIP(address) === family) {
+    process.nextTick(callback, null, address, family);
+    return;
+  }
+  return require("node:dns").lookup(address, family, callback);
+}
+
 function newHandle(type: string, lookup: LookupFunction | undefined) {
   if (lookup === undefined) {
-    lookup = require("node:dns").lookup as LookupFunction;
+    lookup = defaultLookup;
   } else {
     validateFunction(lookup, "lookup");
   }

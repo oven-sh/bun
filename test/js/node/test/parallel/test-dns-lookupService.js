@@ -1,12 +1,19 @@
+// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+const { internalBinding } = require('internal/test/binding');
+const cares = internalBinding('cares_wrap');
+const { UV_ENOENT } = internalBinding('uv');
 
 // Stub `getnameinfo` to *always* error.
-Bun.dns.lookupService = (addr, port) => {
-  throw Object.assign(new Error(`getnameinfo ENOENT ${addr}`), {code: 'ENOENT', syscall: 'getnameinfo'});
-};
+cares.getnameinfo = () => UV_ENOENT;
 
+// Because dns promises is attached lazily,
+// and turn accesses getnameinfo on init
+// but this lazy access is triggered by ES named
+// instead of lazily itself, we must require
+// dns after hooking cares
 const dns = require('dns');
 
 assert.throws(

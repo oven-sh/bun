@@ -345,7 +345,7 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validateOneOf(JSC
             RETURN_IF_EXCEPTION(scope, {});
             if (element == value)
                 return JSValue::encode(jsUndefined());
-            auto same = JSC::sameValue(globalObject, value, element);
+            auto same = JSC::sameValueZero(globalObject, value, element);
             RETURN_IF_EXCEPTION(scope, {});
             if (same) {
                 return JSValue::encode(jsUndefined());

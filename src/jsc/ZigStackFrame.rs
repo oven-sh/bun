@@ -28,6 +28,13 @@ pub struct ZigStackFrame<'a> {
 }
 
 impl ZigStackFrame<'_> {
+    pub(crate) fn is_in_builtin_module(&self) -> bool {
+        let url = &self.source_url;
+        url.starts_with_ascii(b"bun:")
+            || url.starts_with_ascii(b"node:")
+            || url.starts_with_ascii(b"internal:")
+    }
+
     pub(crate) fn snapshot(
         &self,
         root_path: &[u8],

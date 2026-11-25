@@ -390,6 +390,7 @@ export const calls: Record<string, string[]> = {
     'let asked;\nconst server = Bun.serve({\n  port: 0,\n  routes: {\n    "/:name": request => {\n      request.cookies.set("first", "1");\n      asked = request.clone().cookies;\n      return new Response("x");\n    },\n  },\n});\nawait fetch(new URL("/a", server.url));\nawait server.stop(true);\nasked',
   ],
   "%BlockList%": ['import { BlockList } from "node:net";\nnew BlockList()'],
+  "%ChannelWrap%": ['import { Resolver } from "node:dns";\nnew (new Resolver()._handle.constructor)(-1, 4, 0)'],
   "%SocketAddress%": [
     'import { SocketAddress } from "node:net";\nnew SocketAddress({ address: "127.0.0.1", port: 1 })',
   ],

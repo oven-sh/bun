@@ -199,7 +199,8 @@ NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: th
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsCode_resolver_testingBindTsDescribeCodeGraph/0: it is not called: a helper of Bun's own tests that does not come back for some operands
 NativeFunctionsDeclared_results_testingBindTsDeclaredAsString/0: it is not called: a helper of Bun's own tests that answers outside the type it declares, on purpose
-NativeFunctionsDns_internalsBindTsNewResolver/0: no set of operands selects it
+NativeFunctionsDns_internalsBindTsGetaddrinfo/0: no set of operands selects it
+NativeFunctionsDns_internalsBindTsGetnameinfo/0: no set of operands selects it
 NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
 NativeFunctionsFfiBindTsCc/0: it is not called: it compiles or loads machine code

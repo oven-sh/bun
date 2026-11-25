@@ -35,7 +35,7 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
+    message: /^The "name" argument must be of type string/
   }
 );
 assert.throws(
@@ -43,7 +43,7 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: /^(The "(host)?name" argument must be of type string|Expected hostname to be a string)/
+    message: /^The "name" argument must be of type string/
   }
 );
 assert.throws(

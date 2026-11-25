@@ -687,6 +687,29 @@ test.concurrent("prints the source preview for an error positioned at the end of
   expect(exitCode).toBe(1);
 });
 
+test.concurrent.each([
+  {
+    frames: "only built-in modules",
+    source: `require("dns").resolve4("a..b", err => console.log(err));`,
+    first: "error: queryA EBADNAME a..b",
+  },
+  {
+    frames: "an internal module above the script",
+    source: `require("dns").setServers(["x"]);`,
+    first: `1 | require("dns").setServers(["x"]);`,
+  },
+])("the source preview leaves out built-in code if the stack has $frames", async ({ source, first }) => {
+  using dir = tempDir("inspect-error-built-in", { "index.js": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).split(/\r?\n/)[0]).toBe(first);
+});
+
 test.concurrent("reports the right position for a multi-line `new` expression in a 16-bit source", async () => {
   const source = `/* 中 */
 function code() {

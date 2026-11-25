@@ -49,16 +49,16 @@ fn hosts_file_first() {
 #[test]
 fn hosts_file_last() {
     let unusable = [ptr(&name("-a"))];
-    for (code, answers) in [
-        (0, &[][..]),
-        (0, &unusable),
-        (NXDOMAIN, &[]),
-        (SERVFAIL, &[]),
+    let alias = [record(CNAME, 60, &name("c.test"))];
+    for (code, answers, error) in [
+        (0, &[][..], "ENOTFOUND"),
+        (0, &unusable, "ENOTFOUND"),
+        (0, &alias, "ENODATA"),
+        (NXDOMAIN, &[], "ENOTFOUND"),
+        (NXDOMAIN, &alias, "ENOTFOUND"),
+        (SERVFAIL, &[], "ENOTFOUND"),
     ] {
-        for (ip, names, host) in [
-            ("1.1.1.1", "b", "a, 1"),
-            ("2.2.2.2", "ENOTFOUND", "ENOTFOUND"),
-        ] {
+        for (ip, names, host) in [("1.1.1.1", "b", "a, 1"), ("2.2.2.2", error, error)] {
             let setup = one_server().file(NSSWITCH, "hosts: dns files");
             let mut test = setup.file(HOSTS, "1.1.1.1 a b").start();
             test.reverse(ip);

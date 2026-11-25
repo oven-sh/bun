@@ -72,7 +72,7 @@ pub mod task_tag {
         ChromePipeEvent,
         CopyFileWindowsMkdirp,
         WriteFileWindowsMkdirp,
-        DnsErrorDeferred,
+        DnsAnswers,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,

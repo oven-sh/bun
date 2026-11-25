@@ -3,6 +3,7 @@
 use core::ffi::c_int;
 use core::net::{IpAddr, SocketAddr};
 use core::time::Duration;
+use std::time::SystemTime;
 
 use bun_core::{Fd, Timespec, TimespecMockMode, ZStr, env_var};
 use bun_dns_client::{
@@ -130,7 +131,8 @@ impl<P: Poll> System for Os<P> {
     }
 
     fn wall_clock(&self) -> i64 {
-        bun_core::time::timestamp()
+        let since_epoch = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+        since_epoch.map_or(0, |it| it.as_secs() as i64)
     }
 
     fn random(&mut self) -> Option<u16> {

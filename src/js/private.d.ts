@@ -130,61 +130,6 @@ declare module "bun" {
   }
   function spawn(options: Spawn.NodeSpawnOptions): Subprocess;
   function spawnSync(options: Spawn.NodeSpawnSyncOptions): SyncSubprocess;
-
-  // `Bun.dns` also has the methods of the native `Resolver` class, which `node:dns` calls when no resolver
-  // instance is involved. `setLocalAddress` and `cancel` exist on a `Resolver` only.
-  namespace dns {
-    type ServerTriple = [family: number, address: string, port: number];
-    interface NativeResolver {
-      getServers(): string[];
-      setServers(servers: ServerTriple[]): void;
-      setLocalAddress(first: string, second?: string): void;
-      cancel(): void;
-      resolve(hostname: string, rrtype: string): Promise<unknown[]>;
-      resolveAny(hostname: string): Promise<unknown[]>;
-      resolveCname(hostname: string): Promise<string[]>;
-      resolveCaa(hostname: string): Promise<unknown[]>;
-      resolveMx(hostname: string): Promise<unknown[]>;
-      resolveNaptr(hostname: string): Promise<unknown[]>;
-      resolveNs(hostname: string): Promise<string[]>;
-      resolvePtr(hostname: string): Promise<string[]>;
-      resolveSoa(hostname: string): Promise<unknown>;
-      resolveSrv(hostname: string): Promise<unknown[]>;
-      resolveTxt(hostname: string): Promise<string[][]>;
-      reverse(ip: string): Promise<string[]>;
-    }
-    const getServers: NativeResolver["getServers"];
-    const setServers: NativeResolver["setServers"];
-    const resolve: NativeResolver["resolve"];
-    const resolveAny: NativeResolver["resolveAny"];
-    const resolveCname: NativeResolver["resolveCname"];
-    const resolveCaa: NativeResolver["resolveCaa"];
-    const resolveMx: NativeResolver["resolveMx"];
-    const resolveNaptr: NativeResolver["resolveNaptr"];
-    const resolveNs: NativeResolver["resolveNs"];
-    const resolvePtr: NativeResolver["resolvePtr"];
-    const resolveSoa: NativeResolver["resolveSoa"];
-    const resolveSrv: NativeResolver["resolveSrv"];
-    const resolveTxt: NativeResolver["resolveTxt"];
-    const reverse: NativeResolver["reverse"];
-    function lookupService(
-      address: string,
-      port: number,
-    ): Promise<[hostname: string | undefined, service: string | undefined]>;
-    // The options as `node:dns` passes them on. It has validated `family` (0, 4 or 6) and `flags`.
-    function lookup(
-      hostname: string,
-      options: {
-        family?: number | string | null;
-        hints?: number;
-        flags?: number;
-        all?: boolean;
-        order?: string;
-        verbatim?: boolean;
-        backend?: string;
-      },
-    ): Promise<{ address: string; family: 4 | 6; ttl: number }[]>;
-  }
 }
 
 declare module "node:stream/web" {
@@ -1461,6 +1406,7 @@ interface $BunModules {
   "internal/cluster/primary": $ModuleValue<typeof import("./internal/cluster/primary")>;
   "internal/debugger": $ModuleValue<typeof import("./internal/debugger")>;
   "internal/dgram": $ModuleValue<typeof import("./internal/dgram")>;
+  "internal/dns": $ModuleValue<typeof import("./internal/dns")>;
   "internal/errors": $ModuleValue<typeof import("./internal/errors")>;
   "internal/fifo": $ModuleValue<typeof import("./internal/fifo")>;
   "internal/fixed_queue": $ModuleValue<typeof import("./internal/fixed_queue")>;

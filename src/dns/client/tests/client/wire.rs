@@ -16,6 +16,7 @@ pub(crate) const AAAA: u16 = 28;
 pub(crate) const SRV: u16 = 33;
 pub(crate) const NAPTR: u16 = 35;
 pub(crate) const OPT: u16 = 41;
+pub(crate) const TLSA: u16 = 52;
 pub(crate) const CAA: u16 = 257;
 
 pub(crate) const IN: u16 = 1;

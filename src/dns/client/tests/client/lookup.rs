@@ -1,7 +1,9 @@
-use bun_dns_client::{Family, Route, Variable};
+use bun_dns_client::{Family, RecordType, Route, Variable};
 
 use crate::config::searched;
-use crate::machine::{HOSTS, NOTHING, NSSWITCH, Sent, Setup, Test, one_server, resolv_conf};
+use crate::machine::{
+    HOSTS, NOTHING, NSSWITCH, Sent, Setup, Test, one_server, resolv_conf, two_servers,
+};
 use crate::wire::*;
 
 fn both(setup: Setup, host: &str) -> (Test, [Sent; 2]) {
@@ -312,4 +314,224 @@ fn host_aliases() {
         assert_eq!(searched(with("/aliases"), host), format!("{host}.s {host}"));
     }
     assert_eq!(searched(with("/missing"), "h"), "h.s h");
+}
+
+const FIRST: &str = "10.0.0.1:53";
+const SECOND: &str = "10.0.0.2:53";
+
+fn three_servers() -> Setup {
+    resolv_conf("nameserver 10.0.0.1 10.0.0.2 10.0.0.3")
+}
+
+/// Server `n` replies with `codes[n - 1]`, or not at all. Returns which were asked, and the outcome.
+fn tour(test: &mut Test, codes: &[Option<u16>]) -> String {
+    let (mut answers, mut asked) = (test.lookup("a.test", Family::Inet), String::new());
+    while answers.is_empty() {
+        let query = test.sent_one();
+        let number = test.server_of(&query).as_bytes()[7];
+        asked.push(number.into());
+        answers = match codes[usize::from(number - b'1')] {
+            Some(0) => test.answer(&query, &[address("1.1.1.1", 0)]),
+            Some(code) => test.decline(&query, code),
+            None => test.wait(60_000),
+        };
+    }
+    format!("{asked} {}", answers.concat())
+}
+
+#[test]
+fn excuse_leads_to_the_next_server() {
+    for (code, error) in [
+        (FORMERR, "EFORMERR"),
+        (SERVFAIL, "ESERVFAIL"),
+        (NOTIMP, "ENOTIMP"),
+        (REFUSED, "EREFUSED"),
+        (9, "ESERVFAIL"),
+    ] {
+        for tries in [1, 4] {
+            let tour = |setup: Setup, codes: &[_]| tour(&mut setup.tries(tries).start(), codes);
+            assert_eq!(tour(one_server(), &[Some(code)]), format!("1 {error}"));
+            assert_eq!(tour(two_servers(), &[Some(code), Some(0)]), "12 1.1.1.1/0");
+            assert_eq!(
+                tour(two_servers(), &[Some(code), Some(NXDOMAIN)]),
+                "12 ENOTFOUND"
+            );
+            assert_eq!(
+                tour(three_servers(), &[Some(REFUSED), Some(NOTIMP), Some(code)]),
+                format!("123 {error}")
+            );
+            assert_eq!(
+                tour(three_servers(), &[Some(code), None, Some(0)]),
+                "123 1.1.1.1/0"
+            );
+        }
+    }
+    let codes = [Some(NXDOMAIN), Some(0)];
+    assert_eq!(tour(&mut two_servers().start(), &codes), "1 ENOTFOUND");
+}
+
+#[test]
+fn excuse_does_not_count_against_a_server() {
+    let mut test = two_servers().start();
+    assert_eq!(tour(&mut test, &[Some(REFUSED), Some(0)]), "12 1.1.1.1/0");
+    assert_eq!(test.servers(), [FIRST, SECOND]);
+}
+
+#[test]
+fn next_server_is_silent() {
+    for (tries, expected) in [
+        (1, "12 ETIMEOUT"),
+        (2, "1212 ETIMEOUT"),
+        (4, "12121 EREFUSED"),
+    ] {
+        let mut test = two_servers().tries(tries).start();
+        assert_eq!(tour(&mut test, &[Some(REFUSED), None]), expected);
+        assert_eq!(
+            tour(&mut test, &[Some(REFUSED), Some(0)]),
+            "12 2: 1.1.1.1/0"
+        );
+    }
+    let mut test = two_servers().tries(1).start();
+    assert_eq!(tour(&mut test, &[None, Some(REFUSED)]), "12 EREFUSED");
+}
+
+#[test]
+fn excuse_is_final_for_the_others() {
+    let mut test = two_servers().start();
+    test.resolve(RecordType::A, "a.test");
+    test.lookup("a.test", Family::Inet);
+    test.resolve(RecordType::A, "a.test");
+    let expected = ["EREFUSED", "3: EREFUSED"];
+    assert_eq!(test.decline(&test.sent_one(), REFUSED), expected);
+    let next = test.sent_one();
+    let anew = test.ask("a.test");
+    assert_eq!([&next, &anew].map(|it| test.server_of(it)), [SECOND, FIRST]);
+    assert_eq!(
+        test.answer(&next, &[address("1.1.1.1", 9)]),
+        ["2: 1.1.1.1/9"]
+    );
+
+    let mut test = two_servers().start();
+    test.reverse("1.1.1.1");
+    assert_eq!(test.decline(&test.sent_one(), REFUSED), ["ENOTFOUND"]);
+}
+
+#[test]
+fn excuse_for_both_families() {
+    let all = [address("1.1.1.1", 1), address("1::1", 2)];
+    for first in [0, 1] {
+        for second in [0, 1] {
+            let (mut test, sent) = both(two_servers(), "a.test");
+            assert_eq!(test.decline(&sent[first], REFUSED), NOTHING);
+            assert_eq!(test.decline(&sent[1 - first], REFUSED), NOTHING);
+            let sent = test.sent_exactly::<2>();
+            assert_eq!(test.answer(&sent[second], &all), NOTHING);
+            assert_eq!(test.answer(&sent[1 - second], &all), ["1::1/2, 1.1.1.1/1"]);
+        }
+    }
+}
+
+#[test]
+fn excuse_for_ipv6() {
+    for (flags, answers, expected) in [
+        (0, &[address("1.1.1.1", 1)][..], Some("1.1.1.1/1")),
+        (NXDOMAIN, &[], Some("ENOTFOUND")),
+        (0, &[], None),
+    ] {
+        for order in [[0, 1], [1, 0]] {
+            let (mut test, sent) = both(two_servers(), "a.test");
+            let replies = [
+                reply(&sent[0].bytes, flags, [answers, &[], &[]]),
+                reply(&sent[1].bytes, SERVFAIL, [&[], &[], &[]]),
+            ];
+            let outcome = order.map(|index| test.deliver(&sent[index], &replies[index]));
+            assert_eq!(outcome.concat().pop().as_deref(), expected);
+            assert_eq!(test.is_idle(), expected.is_some());
+            let last = test.wait(2000).pop();
+            assert_eq!(last.as_deref(), expected.is_none().then_some("ETIMEOUT"));
+            assert!(test.is_idle() && !test.client.has_requests());
+        }
+    }
+}
+
+#[test]
+fn excuse_for_ipv6_that_another_needs() {
+    let (mut test, sent) = both(two_servers(), "a.test");
+    assert_eq!(test.lookup("a.test", Family::Inet6), NOTHING);
+    assert_eq!(test.decline(&sent[1], SERVFAIL), NOTHING);
+    let elsewhere = test.sent_one();
+    assert_eq!(
+        test.answer(&sent[0], &[address("1.1.1.1", 1)]),
+        ["1.1.1.1/1"]
+    );
+    assert_eq!(
+        test.answer(&elsewhere, &[address("1::1", 2)]),
+        ["2: 1::1/2"]
+    );
+}
+
+#[test]
+fn excuse_for_ipv4() {
+    for order in [[0, 1], [1, 0]] {
+        let (mut test, sent) = both(two_servers(), "a.test");
+        for index in order {
+            let outcome = match index {
+                0 => test.decline(&sent[0], SERVFAIL),
+                _ => test.answer(&sent[1], &[address("1::1", 2)]),
+            };
+            assert_eq!(outcome, NOTHING);
+        }
+        assert_eq!(
+            test.answer(&test.sent_one(), &[address("1.1.1.1", 1)]),
+            ["1::1/2, 1.1.1.1/1"]
+        );
+    }
+}
+
+#[test]
+fn each_name_of_a_search_starts_over() {
+    let setup = resolv_conf("nameserver 10.0.0.1 10.0.0.2\nsearch s");
+    let (mut test, [a, aaaa]) = both(setup, "h");
+    test.decline(&a, REFUSED);
+    test.decline(&aaaa, NXDOMAIN);
+    test.decline(&test.sent_one(), NXDOMAIN);
+    let [a, aaaa] = test.sent_exactly();
+    assert_eq!(
+        (a.question(), test.server_of(&a)),
+        ("h A".into(), FIRST.into())
+    );
+    test.decline(&aaaa, REFUSED);
+    assert_eq!(test.answer(&a, &[address("1.1.1.1", 1)]), ["1.1.1.1/1"]);
+}
+
+#[test]
+fn excuse_that_is_late() {
+    let setup = || resolv_conf("nameserver 10.0.0.1 10.0.0.2\noptions use-vc");
+    for excuses_first in [true, false] {
+        let mut test = setup().start();
+        test.lookup("a.test", Family::Inet);
+        let late = test.sent_one();
+        test.wait(2000);
+        let next = test.sent_one();
+        if excuses_first {
+            assert_eq!(test.decline(&late, REFUSED), NOTHING);
+            assert!(test.sent().is_empty());
+            assert_eq!(test.decline(&next, NOTIMP), ["ENOTIMP"]);
+        } else {
+            assert_eq!(test.decline(&next, NOTIMP), NOTHING);
+            assert_eq!(test.decline(&late, REFUSED), ["EREFUSED"]);
+        }
+        assert!(test.is_idle());
+    }
+}
+
+#[test]
+fn excuses_are_forgotten_with_the_list() {
+    let mut test = two_servers().start();
+    test.lookup("a.test", Family::Inet);
+    test.decline(&test.sent_one(), REFUSED);
+    let next = test.sent_one();
+    test.set_servers(&["10.0.0.3:53", SECOND]);
+    assert_eq!(test.decline(&next, REFUSED), NOTHING);
+    assert_eq!(test.server_of(&test.sent_one()), "10.0.0.3:53");
 }

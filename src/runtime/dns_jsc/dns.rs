@@ -7,6 +7,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
+use std::borrow::Cow;
 
 use bun_collections::{BoundedArray, IntegerBitSet};
 #[cfg(not(windows))]
@@ -18,8 +19,9 @@ use bun_core::{ZStr, strings};
 use bun_dns::GetAddrInfoResult;
 use bun_dns::os::Os;
 use bun_dns::{
-    self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, Options as GetAddrInfoOptions,
-    ResultList as GetAddrInfoResultList,
+    self, AddrInfoError, AddrInfoList, Backend as GetAddrInfoBackend, Family, GetAddrInfo,
+    NameInfo, Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList, UV_EAI_NODATA,
+    UV_EAI_NONAME,
 };
 use bun_dns_client::{Answer, Answers, DEFAULT_PORT, Error, Events, RecordType, SocketId};
 use bun_io::JsKeepAlive;
@@ -27,19 +29,21 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, StringJsc as _,
+    self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, StringJsc as _, Strong,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
+use bun_threading::{ThreadPool, WorkPool};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use super::answer_jsc;
+use super::answer_jsc::{self, Api};
+use super::options_jsc;
 use crate::generated_bindgen::dns::LookupOptions;
-use crate::generated_bindgen::dns_internals::{ResolverOptions, js_DNSResolver};
+use crate::generated_bindgen::dns_internals::{ReqWrap, js_ChannelWrap};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -112,7 +116,10 @@ pub(crate) mod lib_uv_backend {
             let (retcode, addrinfo) = (self.uv.retcode.int(), self.uv.addrinfo);
             bun_output::scoped_log!(DNSLookup, "onLibUVComplete: status={}", retcode);
             if addrinfo.is_null() {
-                return self.query.complete_native(Err(retcode));
+                let error = AddrInfoError::new(retcode);
+                return self
+                    .query
+                    .complete_native(&error.map_or(Ok(Vec::new()), Err));
             }
             // SAFETY: libuv left a list from `uv__malloc`, which only `uv_freeaddrinfo` may free.
             let list = unsafe {
@@ -120,14 +127,14 @@ pub(crate) mod lib_uv_backend {
                 libuv::uv_freeaddrinfo(addrinfo.cast());
                 list
             };
-            self.query.complete_native(Ok(list));
+            self.query.complete_native(&Ok(list));
         }
     }
     impl bun_event_loop::BoxedTask for LibuvRequest {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
         /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
-        /// its completion is what frees the request and its cache slot, and it
-        /// only settles promises (no callback runs; script is forbidden), so run it.
+        /// its completion is what frees the request and its cache slot, and no
+        /// callback runs (script is forbidden), so run it.
         fn release_unrun(self: Box<Self>) {
             self.run();
         }
@@ -186,8 +193,11 @@ pub(crate) mod lib_uv_backend {
         };
         if rc.int() < 0 {
             // SAFETY: libuv refused it before it queued any work (UV_EINVAL for a long name, UV_ENOMEM).
-            let request = unsafe { bun_core::heap::take(request) };
-            request.query.complete_native(Err(rc.int()));
+            let mut request = unsafe { bun_core::heap::take(request) };
+            request.uv.retcode = rc;
+            // There is nothing to cancel.
+            request.query.detach();
+            this.vm().enqueue_task(jsc::Task::from_boxed(request));
         }
     }
 }
@@ -201,12 +211,38 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
         if internal::is_localhost_name(name) {
             *backend = GetAddrInfoBackend::System;
             return b"localhost";
-        } else if name.ends_with(b".local") || ip_address::is_ipv6_address(name) {
+        } else if is_mdns_name(name) || ip_address::is_ipv6_address(name) {
             *backend = GetAddrInfoBackend::System;
         }
     }
 
     name
+}
+
+fn is_mdns_name(name: &[u8]) -> bool {
+    let end = name.strip_suffix(b".").unwrap_or(name).last_chunk::<6>();
+    end.is_some_and(|end| end.eq_ignore_ascii_case(b".local"))
+}
+
+/// UTS #46. `None` if `name` does not convert.
+/// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L1804-L1806
+fn name_to_ascii(name: &[u8]) -> Option<Cow<'_, [u8]>> {
+    unsafe extern "C" {
+        safe fn Bun__idnaToASCII(domain: &bun::String) -> bun::String;
+    }
+    if strings::first_non_ascii(name).is_none() {
+        return Some(Cow::Borrowed(name));
+    }
+    let ascii = Bun__idnaToASCII(&bun::StringView::borrow_utf8(name));
+    (!ascii.is_dead() && !ascii.is_empty()).then(|| Cow::Owned(ascii.to_owned_slice()))
+}
+
+/// Unlike Node.js, this leaves alone a name for mDNS, which takes UTF-8 (RFC 6762 §16).
+fn host_to_ascii(host: &[u8]) -> Option<Cow<'_, [u8]>> {
+    if is_mdns_name(host) {
+        return Some(Cow::Borrowed(host));
+    }
+    name_to_ascii(host)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -251,6 +287,9 @@ mod lib_c {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
+        fn pool() -> &'static ThreadPool {
+            WorkPool::for_resolver()
+        }
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
@@ -265,7 +304,7 @@ mod lib_c {
         ) -> bun_jsc::JsResult<()> {
             bun_output::scoped_log!(DNSLookup, "then");
             let query = request.0.take().expect("query");
-            query.complete_native(match this.backend {
+            query.complete_native(&match this.backend {
                 LibcBackend::Success(list) => Ok(list),
                 LibcBackend::Err(status) => Err(status),
                 LibcBackend::Query(_) => unreachable!(),
@@ -277,7 +316,7 @@ mod lib_c {
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     enum LibcBackend {
         Success(GetAddrInfoResultList),
-        Err(i32),
+        Err(AddrInfoError),
         Query(GetAddrInfo),
     }
 
@@ -300,6 +339,7 @@ mod lib_c {
             let host = ZStr::nul_terminate(&mut hostname, copied_len);
             let debug_timer = Output::DebugTimer::start();
             let result = AddrInfoList::lookup(Some(host), Some(port_z), hints.as_ref());
+            let error = result.as_ref().err().copied().and_then(AddrInfoError::new);
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
@@ -307,11 +347,41 @@ mod lib_c {
                 result.as_ref().err().unwrap_or(&0),
                 debug_timer,
             );
-            *self = match result {
-                Ok(list) => LibcBackend::Success(list.to_list()),
-                Err(err) => LibcBackend::Err(err),
+            *self = match error {
+                Some(error) => LibcBackend::Err(error),
+                None => LibcBackend::Success(result.map(|it| it.to_list()).unwrap_or_default()),
             };
         }
+    }
+}
+
+/// The blocking `getnameinfo` of one `dns.lookupService()`, run on the pool.
+struct ServiceLookup {
+    address: bun_dns::Address,
+    result: Result<NameInfo, c_int>,
+}
+
+impl bun_jsc::JobContext for ServiceLookup {
+    type OffThread = Self;
+    type Js = NodeRequest;
+    fn pool() -> &'static ThreadPool {
+        WorkPool::for_resolver()
+    }
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        this.result = NameInfo::lookup(&this.address);
+        Some(done)
+    }
+    fn then(this: Self, request: NodeRequest, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        let (global, number) = (cx.global(), JSValue::js_number_from_int32);
+        let utf8 = |bytes: &[u8]| bun_string_jsc::create_utf8_for_js(global, bytes);
+        let arguments = match this.result {
+            Ok(NameInfo { host, service }) => {
+                utf8(&host).and_then(|host| Ok([number(0), host, utf8(&service)?]))
+            }
+            Err(status) => Ok(NodeRequest::failed(number(status))),
+        };
+        request.complete(global, cx.context().id(), arguments);
+        Ok(())
     }
 }
 
@@ -319,24 +389,172 @@ mod lib_c {
 // DNSLookup
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What `node:dns` passes as `req`.
+#[derive(bun_jsc::JsAffine)]
+struct NodeRequest {
+    req: Strong,
+    oncomplete: Strong,
+    ttl: bool,
+}
+
+impl NodeRequest {
+    fn new(global: &JSGlobalObject, (wrap, req): (ReqWrap<'_>, JsLocal<'_>)) -> Self {
+        let oncomplete = wrap.oncomplete.to_js().with_async_context_if_needed(global);
+        Self {
+            req: Strong::create(req.to_js(), global),
+            oncomplete: Strong::create(oncomplete, global),
+            ttl: wrap.ttl,
+        }
+    }
+
+    fn failed(error: JSValue) -> [JSValue; 3] {
+        [error, JSValue::UNDEFINED, JSValue::UNDEFINED]
+    }
+
+    fn complete(
+        self,
+        global: &JSGlobalObject,
+        context: bun_jsc::ContextId,
+        arguments: JsResult<[JSValue; 3]>,
+    ) {
+        let arguments = match arguments {
+            Ok(arguments) => arguments,
+            Err(err) if global.take_exception(err).is_termination_exception() => {
+                bun_jsc::top_exception_scope::thrown(global);
+                return;
+            }
+            Err(_) => Self::failed(JSValue::js_number_from_int32(-bun_sys::UV_E::NOMEM)),
+        };
+        let (oncomplete, req) = (self.oncomplete.get(), self.req.get());
+        (global.bun_vm().event_loop()).run_callback(context, oncomplete, global, req, &arguments);
+    }
+}
+
+enum Completion {
+    /// `Bun.dns`
+    Promise(JSPromiseStrong),
+    Request(NodeRequest, Order),
+}
+
 struct DNSLookup {
     global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
-    promise: JSPromiseStrong,
+    completion: Completion,
     _keep_alive: JsKeepAlive,
     /// The context whose script asked: an answer for a stopped one settles nothing.
     context: bun_jsc::ContextId,
 }
 
 impl DNSLookup {
-    fn init(global_this: &JSGlobalObject, context: bun_jsc::ContextId) -> Self {
+    fn init(global_this: &JSGlobalObject, completion: Completion) -> Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
         Self {
             global_this: bun_ptr::BackRef::new(global_this),
+            completion,
             _keep_alive: JsKeepAlive::active(),
-            promise: JSPromiseStrong::init(global_this),
-            context,
+            context: global_this.bun_vm().context_of_caller().id(),
         }
+    }
+
+    fn with_promise(global_this: &JSGlobalObject) -> (Self, JSValue) {
+        let promise = JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        (Self::init(global_this, Completion::Promise(promise)), value)
+    }
+
+    fn with_request(
+        global_this: &JSGlobalObject,
+        req: (ReqWrap<'_>, JsLocal<'_>),
+        order: Order,
+    ) -> Self {
+        let request = NodeRequest::new(global_this, req);
+        Self::init(global_this, Completion::Request(request, order))
+    }
+
+    /// Runs script. The caller's loop scope or task drains the microtasks.
+    fn complete(self, kind: QueryKind, name: &[u8], outcome: Outcome<'_>) {
+        let global = self.global_this.get();
+        match self.completion {
+            Completion::Promise(promise) => {
+                // The lookup continues the script that asked for it.
+                let _context = global.bun_vm().enter_context(self.context);
+                crate::dispatch::fold(outcome.settle(promise, kind, name, global));
+            }
+            Completion::Request(request, order) => {
+                let arguments = outcome.to_arguments(kind, order, request.ttl, global);
+                request.complete(global, self.context, arguments);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Outcome<'a> {
+    Client(&'a Answer),
+    System(&'a Result<GetAddrInfoResultList, AddrInfoError>),
+}
+
+impl Outcome<'_> {
+    fn settle(
+        self,
+        mut promise: JSPromiseStrong,
+        kind: QueryKind,
+        name: &[u8],
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        let (error, hostname) = match (self, kind) {
+            (Self::Client(Ok(reply)), _) => {
+                return promise.settle(global, answer_jsc::reply_to_js(reply, Api::Bun, global));
+            }
+            (Self::System(Ok(list)), _) => {
+                return promise.settle(global, options_jsc::results_to_js(list, global));
+            }
+            (Self::System(Err(it)), _) => (it.error, None),
+            // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L824-L827
+            (Self::Client(Err(Error::ENODATA | Error::EBADNAME)), QueryKind::HostClient) => {
+                (Error::ENOTFOUND, None)
+            }
+            (Self::Client(&Err(error)), QueryKind::HostClient) => (error, None),
+            (Self::Client(&Err(error)), _) => (error, Some(name)),
+        };
+        let error =
+            answer_jsc::error_for_promise(error, kind.syscall(), hostname, promise.get(), global);
+        promise.reject(global, error)
+    }
+
+    /// Those of `oncomplete`.
+    fn to_arguments(
+        self,
+        kind: QueryKind,
+        order: Order,
+        ttl: bool,
+        global: &JSGlobalObject,
+    ) -> JsResult<[JSValue; 3]> {
+        let number = JSValue::js_number_from_int32;
+        Ok(match (self, kind) {
+            (Self::Client(Ok(reply)), _) => [
+                number(0),
+                answer_jsc::reply_to_js(reply, Api::Node { ttl }, global)?,
+                JSValue::UNDEFINED,
+            ],
+            (Self::System(Ok(list)), _) if list.is_empty() => {
+                NodeRequest::failed(number(UV_EAI_NODATA))
+            }
+            (Self::System(Ok(list)), _) => [
+                number(0),
+                options_jsc::addresses_to_js(list, order, global)?,
+                JSValue::UNDEFINED,
+            ],
+            (Self::System(Err(error)), _) => NodeRequest::failed(number(error.uv)),
+            // It is no host name, and the system was not asked.
+            (Self::Client(Err(_)), QueryKind::HostNative) => {
+                NodeRequest::failed(number(UV_EAI_NONAME))
+            }
+            (Self::Client(&Err(error)), _) => {
+                let code = bun::String::static_(answer_jsc::code_without_prefix(error));
+                NodeRequest::failed(code.to_js(global)?)
+            }
+        })
     }
 }
 
@@ -376,6 +594,7 @@ impl QueryKind {
             Self::Record(RecordType::PTR) => b"queryPtr",
             Self::Record(RecordType::SOA) => b"querySoa",
             Self::Record(RecordType::SRV) => b"querySrv",
+            Self::Record(RecordType::TLSA) => b"queryTlsa",
             Self::Record(RecordType::TXT) => b"queryTxt",
         }
     }
@@ -451,7 +670,7 @@ impl PendingCache {
 enum QueryWaiters {
     /// Index in the `PendingCache` of the query's kind.
     Slot(usize),
-    /// The `PendingCache` was full.
+    /// The `PendingCache` was full, or the answer is there.
     Owned(Box<Waiters>),
 }
 
@@ -463,17 +682,14 @@ pub(crate) struct PendingQuery {
 }
 
 impl PendingQuery {
-    /// The lookup's promise, and the query to send unless it joined one in flight.
+    /// The query to send, unless `lookup` joined one in flight.
     fn join_or_create(
         resolver: &RefPtr<Resolver>,
         kind: QueryKind,
         hash: u64,
         name: &[u8],
-        global_this: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) -> (JSValue, Option<Self>) {
-        let lookup = DNSLookup::init(global_this, context);
-        let promise = lookup.promise.value();
+        lookup: DNSLookup,
+    ) -> Option<Self> {
         let cache = &resolver.pending[kind];
         let turn = resolver.vm().uws_loop().iteration_number();
         let first_turn = match kind {
@@ -481,23 +697,20 @@ impl PendingQuery {
             // The client joins later ones, and can ask again for them.
             _ => turn,
         };
-        let Err(first) = cache.join(hash, name, first_turn, lookup) else {
-            return (promise, None);
-        };
+        let first = cache.join(hash, name, first_turn, lookup).err()?;
         let waiters = Box::new(Waiters {
             name: name.into(),
             first,
             joined: Vec::new(),
             turn,
         });
-        let query = Self {
+        Some(Self {
             resolver: resolver.clone(),
             kind,
             waiters: cache
                 .put(hash, waiters)
                 .map_or_else(QueryWaiters::Owned, QueryWaiters::Slot),
-        };
-        (promise, Some(query))
+        })
     }
 
     #[cfg(windows)]
@@ -509,6 +722,13 @@ impl PendingQuery {
     }
 
     /// Removes the query from the pending cache: later lookups start a new one.
+    fn detach(&mut self) {
+        if let QueryWaiters::Slot(slot) = self.waiters {
+            self.waiters = QueryWaiters::Owned(self.resolver.pending[self.kind].take(slot));
+        }
+    }
+
+    /// As [`detach`](Self::detach).
     fn into_waiters(self) -> Box<Waiters> {
         match self.waiters {
             QueryWaiters::Slot(slot) => self.resolver.pending[self.kind].take(slot),
@@ -516,138 +736,49 @@ impl PendingQuery {
         }
     }
 
-    /// `to_js` converts the answer once for each run of lookups in the same global.
-    fn resolve(self, mut to_js: impl FnMut(&JSGlobalObject) -> JsResult<JSValue>) {
-        let mut waiters = self.into_waiters();
-        let mut joined = core::mem::take(&mut waiters.joined).into_iter();
-        loop {
-            let result = to_js(&waiters.first.global_this);
-            if !Self::settle_run(result, &mut waiters.first, &mut joined) {
-                break;
-            }
-        }
-    }
-
-    /// Settles `lookup` and those after it; `true` if it stopped at one of another global, now in `lookup`.
-    fn settle_run(
-        result: JsResult<JSValue>,
-        lookup: &mut DNSLookup,
-        joined: &mut std::vec::IntoIter<DNSLookup>,
-    ) -> bool {
-        let global = lookup.global_this;
-        let outcome = Outcome::of(&global, result);
-        loop {
-            outcome.settle(&mut lookup.promise, &global, lookup.context);
-            outcome.keep_alive();
-            let Some(next) = joined.next() else {
-                return false;
-            };
-            *lookup = next;
-            if lookup.global_this != global {
-                return true;
-            }
-        }
-    }
-
-    fn reject(self, err: Error) {
-        let kind = self.kind;
-        let with_hostname = !matches!(kind, QueryKind::HostClient | QueryKind::HostNative);
-        let err = match (kind, err) {
-            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-            (QueryKind::HostClient, Error::ENODATA) => Error::ENOTFOUND,
-            _ => err,
-        };
+    fn finish(self, outcome: Outcome<'_>) {
+        let (kind, vm) = (self.kind, self.resolver.vm);
         let Waiters {
             name,
             first,
             joined,
             ..
         } = *self.into_waiters();
+        if vm.is_shutting_down() {
+            return;
+        }
         for lookup in core::iter::once(first).chain(joined) {
-            answer_jsc::reject_later(
-                lookup.promise,
-                err,
-                kind.syscall(),
-                with_hostname.then_some(&name),
-                &lookup.global_this,
-                lookup.context,
-            );
+            lookup.complete(kind, &name, outcome);
         }
     }
 
     /// Set the resolver's timer first: script can turn the loop or close the client from here.
     fn complete((query, answer): (Self, Answer)) {
-        match answer {
-            Ok(reply) => query.resolve(|global| answer_jsc::reply_to_js(&reply, global)),
-            Err(err) => query.reject(err),
-        }
+        query.finish(Outcome::Client(&answer));
     }
 
-    /// The addresses or the status that the system's resolver answered with.
-    pub(crate) fn complete_native(self, result: Result<GetAddrInfoResultList, i32>) {
-        let list = match result.map_err(bun_dns::getaddrinfo_error) {
-            Ok(list) => list,
-            Err(Some(err)) => return self.reject(err),
-            // No list and no error is an empty answer.
-            Err(None) => Vec::new(),
-        };
-        self.resolver.update_timer();
-        self.resolve(|global| super::options_jsc::results_to_js(&list, global));
+    /// The addresses or the error that the system's resolver answered with.
+    pub(crate) fn complete_native(self, result: &Result<GetAddrInfoResultList, AddrInfoError>) {
+        self.finish(Outcome::System(result));
     }
 }
 
-/// The converted answer for one global, shared by every waiter of a
-/// pending-cache entry on that global. A conversion that threw is turned into
-/// its exception value *once* (the first `reject(Err(Thrown))` would take it
-/// off the VM and leave nothing for the next waiter); a termination settles
-/// nobody.
-#[derive(Clone, Copy)]
-enum Outcome {
-    Value(JSValue),
-    Error(JSValue),
-    Stopped,
+/// Those that were there while script was still calling. The queries are detached.
+pub(crate) struct DeferredAnswers(Answers<PendingQuery>);
+
+impl DeferredAnswers {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        self.0.into_iter().for_each(PendingQuery::complete);
+    }
 }
 
-impl Outcome {
-    fn of(global: &JSGlobalObject, result: JsResult<JSValue>) -> Outcome {
-        match result {
-            Ok(v) => Outcome::Value(v),
-            Err(bun_jsc::JsError::OutOfMemory) => {
-                Outcome::Error(global.create_out_of_memory_error())
-            }
-            Err(err) => {
-                let e = global.take_exception(err);
-                if e.is_termination_exception() {
-                    Outcome::Stopped
-                } else {
-                    Outcome::Error(e.to_error().unwrap_or(e))
-                }
-            }
-        }
-    }
-
-    /// Each waiter's completion may allocate; keep the shared value alive across them.
-    #[inline]
-    fn keep_alive(&self) {
-        if let Outcome::Value(v) | Outcome::Error(v) = self {
-            v.ensure_still_alive();
-        }
-    }
-
-    /// Reads `then` of the value, which can run script. The caller's loop scope, task or script drains the microtasks.
-    fn settle(
-        self,
-        promise: &mut JSPromiseStrong,
-        global: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) {
-        // The lookup continues the script that asked for it.
-        let _context = global.bun_vm().enter_context(context);
-        crate::dispatch::fold(match self {
-            Outcome::Value(v) => promise.resolve(global, v),
-            Outcome::Error(e) => promise.reject(global, Ok(e)),
-            Outcome::Stopped => return,
-        });
+impl bun_event_loop::BoxedTask for DeferredAnswers {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsAnswers;
+    fn release_unrun(self: Box<Self>) {}
+    /// Each lookup is completed in its own.
+    fn context(&self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -681,7 +812,7 @@ impl Resolver {
             SweepResult::Idle
         };
         self.abort_handle.leave();
-        self.request_completed(client.map(Client::close).unwrap_or_default());
+        self.complete_later(client.map(Client::close).unwrap_or_default());
         result
     }
 }
@@ -1494,7 +1625,7 @@ pub(crate) mod internal {
     /// per-thread mDNSResponder connection went away with its thread is
     /// finished (see `SharedConnection::close_for_terminate`).
     pub(super) fn run_on_work_pool(req: Arc<Request>) {
-        let _ = bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
+        WorkPool::go_on(WorkPool::for_resolver(), req, work_pool_callback);
     }
 
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
@@ -1603,12 +1734,12 @@ pub(crate) mod internal {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Resolver — JSC-exposed `dns.Resolver` (a JSDNSResolver holds a ref)
+// Resolver — JSC-exposed `dns.Resolver` (a JSChannelWrap holds a ref)
 // ──────────────────────────────────────────────────────────────────────────
 
 type Client = bun_dns_client::Client<Os<DnsPoll>, PendingQuery>;
 
-/// `DNSResolver`, declared in `dns_internals.bind.ts`.
+/// `ChannelWrap`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
@@ -1626,6 +1757,8 @@ pub(crate) struct Resolver {
     pub(crate) timer_ref: Cell<Option<RefPtr<Resolver>>>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
+    /// The last turn of the event loop that had [`DeferredAnswers`], and how many.
+    deferred: Cell<(u64, u32)>,
     /// Indexed by the slot in `pending[QueryKind::HostNative]`.
     #[cfg(windows)]
     pending_uv_requests: [Cell<*mut libuv::uv_req_t>; PENDING_CACHE_SLOTS],
@@ -1779,11 +1912,13 @@ bun_core::comptime_string_map! {
         b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
         b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
         b"NAPTR" => RecordType::NAPTR, b"NS" => RecordType::NS, b"PTR" => RecordType::PTR,
-        b"SOA" => RecordType::SOA, b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
+        b"SOA" => RecordType::SOA, b"SRV" => RecordType::SRV, b"TLSA" => RecordType::TLSA,
+        b"TXT" => RecordType::TXT,
         b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
         b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
         b"naptr" => RecordType::NAPTR, b"ns" => RecordType::NS, b"ptr" => RecordType::PTR,
-        b"soa" => RecordType::SOA, b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
+        b"soa" => RecordType::SOA, b"srv" => RecordType::SRV, b"tlsa" => RecordType::TLSA,
+        b"txt" => RecordType::TXT,
     };
 }
 
@@ -1804,7 +1939,9 @@ fn throw_invalid_ip(global: &JSGlobalObject, address: &[u8]) -> jsc::JsError {
     jsc::Error::INVALID_IP_ADDRESS.throw(global, format_args!("Invalid IP address: \"{address}\""))
 }
 
-/// What Node.js takes for `reverse()` and `setLocalAddress()`.
+const UV_EINVAL: c_int = -bun_sys::UV_E::INVAL;
+
+/// What Node.js takes for an address.
 fn parse_address(text: &[u8]) -> Option<IpAddr> {
     ip_address::parse_uv_inet_pton(text).filter(|_| !strings::contains_char(text, 0))
 }
@@ -1828,6 +1965,7 @@ impl Resolver {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
             timer_ref: Cell::new(None),
             pending: Default::default(),
+            deferred: Cell::default(),
             #[cfg(windows)]
             pending_uv_requests: [const { Cell::new(ptr::null_mut()) }; PENDING_CACHE_SLOTS],
             abort_handle: bun_jsc::AbortHandle::for_owner::<Resolver>(),
@@ -1861,23 +1999,34 @@ impl Resolver {
         kind: QueryKind,
         hash: u64,
         name: &[u8],
-        global_this: &JSGlobalObject,
-        context: bun_jsc::ContextId,
+        lookup: DNSLookup,
         send: impl FnOnce(&mut Client, PendingQuery) -> Answers<PendingQuery>,
-    ) -> JSValue {
-        let (promise, query) =
-            PendingQuery::join_or_create(self, kind, hash, name, global_this, context);
-        if let Some(query) = query {
-            self.request_sent(self.with_client(|client| send(client, query)));
+    ) {
+        if let Some(query) = PendingQuery::join_or_create(self, kind, hash, name, lookup) {
+            self.complete_later(self.with_client(|client| send(client, query)));
         }
-        promise
     }
 
-    fn request_sent(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
-        // If it was answered inside the call (cache, hosts file, error), that takes a turn of the loop as in Node.
-        let now = || bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
-        self.add_timer(self.next_check().unwrap_or_else(now));
-        answers.into_iter().for_each(PendingQuery::complete);
+    /// For what is answered inside a call from script: from the cache or the hosts file, or with an error.
+    fn complete_later(self: &RefPtr<Self>, mut answers: Answers<PendingQuery>) {
+        /// Each can lead to the next. Timers and I/O have their turn after these.
+        const MAX_PER_TURN: u32 = 32;
+
+        self.update_timer();
+        if answers.is_empty() {
+            return;
+        }
+        answers.iter_mut().for_each(|(query, _)| query.detach());
+        let turn = self.vm().uws_loop().iteration_number();
+        let (last_turn, count) = self.deferred.get();
+        let count = if last_turn == turn { count } else { 0 }.saturating_add(1);
+        self.deferred.set((turn, count));
+        let task = jsc::Task::from_boxed(Box::new(DeferredAnswers(answers)));
+        if count > MAX_PER_TURN {
+            self.vm().event_loop().enqueue_task_after_yield(task);
+        } else {
+            self.vm().enqueue_task(task);
+        }
     }
 
     fn request_completed(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
@@ -1996,34 +2145,48 @@ impl Resolver {
     }
 }
 
-macro_rules! resolve_record_fns {
-    ($($global:ident, $method:ident, $js_name:literal => $record:ident;)+) => {$(
+macro_rules! record_fns {
+    ($($global:ident, $js_name:literal, $method:ident => $record:ident;)+) => {$(
         pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
-            global_resolver(cx.global()).$method(cx, name)
+            Self::resolve_hostname(cx.global(), $js_name, RecordType::$record, name)
         }
 
-        pub(crate) fn $method(self: &RefPtr<Self>, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
-            self.resolve_hostname(cx.global(), $js_name, RecordType::$record, name)
+        record_fns!($method => $record;);
+    )+};
+    ($($method:ident => $record:ident;)+) => {$(
+        pub(crate) fn $method<'a>(
+            self: &RefPtr<Self>,
+            cx: &mut JsScope<'a>,
+            req: (ReqWrap<'a>, JsLocal<'a>),
+            name: &[u8],
+        ) -> JsResult<c_int> {
+            let lookup = DNSLookup::with_request(cx.global(), req, Order::Verbatim);
+            self.resolve_record(RecordType::$record, name, lookup);
+            Ok(0)
         }
     )+};
 }
 
 impl Resolver {
-    resolve_record_fns! {
-        global_resolve_any, resolve_any, "resolveAny" => ANY;
-        global_resolve_caa, resolve_caa, "resolveCaa" => CAA;
-        global_resolve_cname, resolve_cname, "resolveCname" => CNAME;
-        global_resolve_mx, resolve_mx, "resolveMx" => MX;
-        global_resolve_naptr, resolve_naptr, "resolveNaptr" => NAPTR;
-        global_resolve_ns, resolve_ns, "resolveNs" => NS;
-        global_resolve_ptr, resolve_ptr, "resolvePtr" => PTR;
-        global_resolve_soa, resolve_soa, "resolveSoa" => SOA;
-        global_resolve_srv, resolve_srv, "resolveSrv" => SRV;
-        global_resolve_txt, resolve_txt, "resolveTxt" => TXT;
+    record_fns! {
+        query_a => A;
+        query_aaaa => AAAA;
+    }
+    record_fns! {
+        global_resolve_any, "resolveAny", query_any => ANY;
+        global_resolve_caa, "resolveCaa", query_caa => CAA;
+        global_resolve_cname, "resolveCname", query_cname => CNAME;
+        global_resolve_mx, "resolveMx", query_mx => MX;
+        global_resolve_naptr, "resolveNaptr", query_naptr => NAPTR;
+        global_resolve_ns, "resolveNs", query_ns => NS;
+        global_resolve_ptr, "resolvePtr", query_ptr => PTR;
+        global_resolve_soa, "resolveSoa", query_soa => SOA;
+        global_resolve_srv, "resolveSrv", query_srv => SRV;
+        global_resolve_tlsa, "resolveTlsa", query_tlsa => TLSA;
+        global_resolve_txt, "resolveTxt", query_txt => TXT;
     }
 
     fn resolve_hostname(
-        self: &RefPtr<Self>,
         global_this: &JSGlobalObject,
         js_name: &'static str,
         record: RecordType,
@@ -2037,32 +2200,20 @@ impl Resolver {
                 "non-empty string",
             ));
         }
-        Ok(self.resolve_record(global_this, record, name))
+        let (lookup, promise) = DNSLookup::with_promise(global_this);
+        global_resolver(global_this).resolve_record(record, name, lookup);
+        Ok(promise)
     }
 
-    fn resolve_record(
-        self: &RefPtr<Self>,
-        global_this: &JSGlobalObject,
-        record: RecordType,
-        name: &[u8],
-    ) -> JSValue {
-        let context = global_this.bun_vm().context_of_caller().id();
-        let (kind, hash) = (QueryKind::Record(record), wyhash(name));
-        self.ask(kind, hash, name, global_this, context, |client, query| {
-            client.resolve(record, name, query)
-        })
+    fn resolve_record(self: &RefPtr<Self>, record: RecordType, name: &[u8], lookup: DNSLookup) {
+        let send = |client: &mut Client, query| match name_to_ascii(name) {
+            Some(name) => client.resolve(record, &name, query),
+            None => vec![(query, Err(Error::EBADNAME))],
+        };
+        self.ask(QueryKind::Record(record), wyhash(name), name, lookup, send);
     }
 
     pub(crate) fn global_resolve(
-        cx: &mut JsScope<'_>,
-        name: &[u8],
-        record: Option<&[u8]>,
-    ) -> JsResult<JSValue> {
-        global_resolver(cx.global()).resolve(cx, name, record)
-    }
-
-    pub(crate) fn resolve(
-        self: &RefPtr<Self>,
         cx: &mut JsScope<'_>,
         name: &[u8],
         record: Option<&[u8]>,
@@ -2075,7 +2226,7 @@ impl Resolver {
                 None => {
                     return Err(global_this.throw_invalid_argument_property_value(
                         b"record",
-                        Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT"),
+                        Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TLSA, TXT"),
                         bun_string_jsc::create_utf8_for_js(global_this, label)?,
                     ));
                 }
@@ -2090,20 +2241,13 @@ impl Resolver {
             ));
         }
 
-        Ok(self.resolve_record(global_this, record_type, name))
+        let (lookup, promise) = DNSLookup::with_promise(global_this);
+        global_resolver(global_this).resolve_record(record_type, name, lookup);
+        Ok(promise)
     }
 
     pub(crate) fn global_reverse(cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
-        global_resolver(cx.global()).reverse(cx, ip)
-    }
-
-    pub(crate) fn reverse(
-        self: &RefPtr<Self>,
-        cx: &mut JsScope<'_>,
-        ip: &[u8],
-    ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller().id();
         if ip.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
@@ -2116,7 +2260,24 @@ impl Resolver {
             Some(ip) => client.reverse(ip, query),
             None => vec![(query, Err(Error::ENOTIMP))],
         };
-        Ok(self.ask(QueryKind::Addr, wyhash(ip), ip, global_this, context, send))
+        let (lookup, promise) = DNSLookup::with_promise(global_this);
+        global_resolver(global_this).ask(QueryKind::Addr, wyhash(ip), ip, lookup, send);
+        Ok(promise)
+    }
+
+    pub(crate) fn get_host_by_addr<'a>(
+        self: &RefPtr<Self>,
+        cx: &mut JsScope<'a>,
+        req: (ReqWrap<'a>, JsLocal<'a>),
+        name: &[u8],
+    ) -> JsResult<c_int> {
+        let Some(ip) = name_to_ascii(name).and_then(|name| parse_address(&name)) else {
+            return Ok(UV_EINVAL);
+        };
+        let lookup = DNSLookup::with_request(cx.global(), req, Order::Verbatim);
+        let send = |client: &mut Client, query| client.reverse(ip, query);
+        self.ask(QueryKind::Addr, wyhash(name), name, lookup, send);
+        Ok(0)
     }
 
     pub(crate) fn global_lookup(
@@ -2125,7 +2286,6 @@ impl Resolver {
         options_object: &LookupOptions<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller().id();
         if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
@@ -2140,7 +2300,7 @@ impl Resolver {
             port = to_port_number(port_value, global_this)?;
         }
 
-        let options = match super::options_jsc::options_from_js(options_object) {
+        let options = match options_jsc::options_from_js(options_object) {
             Ok(o) => o,
             Err(err) => {
                 use bun_dns::OptionsFromJsError as E;
@@ -2160,9 +2320,69 @@ impl Resolver {
             }
         };
 
-        let resolver = global_resolver(global_this);
+        let (lookup, promise) = DNSLookup::with_promise(global_this);
+        global_resolver(global_this).do_lookup(name, port, options, lookup);
+        Ok(promise)
+    }
 
-        resolver.do_lookup(name, port, options, global_this, context)
+    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L1976-L2040
+    pub(crate) fn getaddrinfo<'a>(
+        cx: &mut JsScope<'a>,
+        req: (ReqWrap<'a>, JsLocal<'a>),
+        hostname: &[u8],
+        family: i32,
+        hints: i32,
+        order: i32,
+    ) -> JsResult<c_int> {
+        // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/unix/getaddrinfo.c#L144-L170
+        let Some(host) = host_to_ascii(hostname).filter(|it| (1..256).contains(&it.len())) else {
+            return Ok(UV_EINVAL);
+        };
+        let options = GetAddrInfoOptions {
+            family: match family {
+                4 => Family::Inet,
+                6 => Family::Inet6,
+                _ => Family::Unspecified,
+            },
+            flags: hints,
+            backend: GetAddrInfoBackend::System,
+            ..Default::default()
+        };
+        let order = match order {
+            1 => Order::Ipv4first,
+            2 => Order::Ipv6first,
+            _ => Order::Verbatim,
+        };
+        let lookup = DNSLookup::with_request(cx.global(), req, order);
+        global_resolver(cx.global()).do_lookup(&host, 0, options, lookup);
+        Ok(0)
+    }
+
+    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L2043-L2080
+    pub(crate) fn getnameinfo<'a>(
+        cx: &mut JsScope<'a>,
+        req: (ReqWrap<'a>, JsLocal<'a>),
+        ip: &[u8],
+        port: u16,
+    ) -> JsResult<c_int> {
+        let Some(address) = parse_address(ip) else {
+            return Ok(UV_EINVAL);
+        };
+        // Not every system looks an IPv4-mapped address up as IPv4.
+        let mut address = bun_dns::Address::from_ip(address.to_canonical(), port);
+        if let Some((_, zone)) = strings::split_once_char(ip, b'%') {
+            address.set_scope_id(crate::socket::socket_address::scope_index(zone));
+        }
+        let global_this = cx.global();
+        bun_jsc::Job::<ServiceLookup>::schedule(
+            &global_this.js_thread_of_caller(),
+            ServiceLookup {
+                address,
+                result: Err(0),
+            },
+            NodeRequest::new(global_this, req),
+        );
+        Ok(0)
     }
 
     fn do_lookup(
@@ -2170,27 +2390,24 @@ impl Resolver {
         name: &[u8],
         port: u16,
         options: GetAddrInfoOptions,
-        global_this: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) -> JsResult<JSValue> {
-        if !bun_dns::is_valid_hostname(name) {
-            let promise = JSPromiseStrong::init(global_this);
-            let promise_value = promise.value();
-            answer_jsc::reject_later(
-                promise,
-                Error::ENOTFOUND,
-                b"getaddrinfo",
-                Some(name),
-                global_this,
-                context,
-            );
-            return Ok(promise_value);
+        lookup: DNSLookup,
+    ) {
+        let host = host_to_ascii(name);
+        let host = host.as_deref().unwrap_or(name);
+        if !bun_dns::is_valid_hostname(host) {
+            let fail = |query| (query, Err(Error::ENOTFOUND));
+            let query = PendingQuery::join_or_create(self, QueryKind::HostNative, 0, name, lookup);
+            return self.complete_later(query.map(fail).into_iter().collect());
         }
 
         let mut opts = options;
-        let mut backend = opts.backend;
-        let normalized = normalize_dns_name(name, &mut backend);
-        opts.backend = backend;
+        let normalized = normalize_dns_name(host, &mut opts.backend);
+        // The system may have other ways, such as nss-resolve(8).
+        if opts.backend == GetAddrInfoBackend::CAres
+            && self.with_client(|client| client.guesses_server())
+        {
+            opts.backend = GetAddrInfoBackend::System;
+        }
         let query = GetAddrInfo {
             options: opts,
             port,
@@ -2200,28 +2417,28 @@ impl Resolver {
         if opts.backend == GetAddrInfoBackend::CAres {
             let (kind, hash) = (QueryKind::HostClient, query.hash());
             let send = |client: &mut Client, it| client.lookup(&query.name, opts.family, it);
-            return Ok(self.ask(kind, hash, &query.name, global_this, context, send));
+            return self.ask(kind, hash, &query.name, lookup, send);
         }
 
+        #[cfg(not(windows))]
+        let global_this = lookup.global_this;
         let (kind, hash) = (QueryKind::HostNative, query.hash());
-        let (promise, pending) =
-            PendingQuery::join_or_create(self, kind, hash, &query.name, global_this, context);
-        let Some(pending) = pending else {
-            return Ok(promise);
+        let Some(pending) = PendingQuery::join_or_create(self, kind, hash, &query.name, lookup)
+        else {
+            return;
         };
         #[cfg(windows)]
         lib_uv_backend::start(self, &query, pending);
         #[cfg(target_os = "macos")]
         let pending = match opts.backend {
             GetAddrInfoBackend::System => match dns_sd::start(&query, pending) {
-                Ok(()) => return Ok(promise),
+                Ok(()) => return,
                 Err(refused) => refused,
             },
             _ => pending,
         };
         #[cfg(not(windows))]
-        lib_c::start(self, query, pending, global_this);
-        Ok(promise)
+        lib_c::start(self, query, pending, &global_this);
     }
 
     // ───────── servers / local address ─────────
@@ -2251,6 +2468,7 @@ impl Resolver {
         Ok(values)
     }
 
+    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L2207-L2270
     pub(crate) fn set_local_address(
         &self,
         cx: &mut JsScope<'_>,
@@ -2258,23 +2476,28 @@ impl Resolver {
         second: Option<bun_core::String>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        let set = |value: &bun_core::String| {
-            let ip = parse_address(&value.to_utf8()).ok_or_else(|| {
-                let message = format_args!("Invalid IP address.");
-                jsc::Error::INVALID_ARG_VALUE.throw(global_this, message)
-            })?;
-            self.with_client(|client| client.set_local_ip(ip));
-            JsResult::Ok(ip)
+        let throw = |message: &str| {
+            jsc::Error::INVALID_ARG_VALUE.throw(global_this, format_args!("{message}"))
+        };
+        let parse = |value: &bun_core::String| {
+            parse_address(&value.to_utf8()).ok_or_else(|| throw("Invalid IP address."))
         };
 
-        let first = set(first)?;
-        match (first, second.map(|second| set(&second)).transpose()?) {
-            (IpAddr::V4(_), Some(IpAddr::V4(_))) => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
-            (IpAddr::V6(_), Some(IpAddr::V6(_))) => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
-            _ => Ok(()),
-        }
+        let first = parse(first)?;
+        self.with_client(|client| client.set_local_ip(first));
+        let second = match (first, second.map(|second| parse(&second)).transpose()?) {
+            (IpAddr::V4(_), Some(IpAddr::V4(_))) => {
+                return Err(throw("Cannot specify two IPv4 addresses."));
+            }
+            (IpAddr::V6(_), Some(IpAddr::V6(_))) => {
+                return Err(throw("Cannot specify two IPv6 addresses."));
+            }
+            (_, Some(second)) => second,
+            (IpAddr::V4(_), None) => Ipv6Addr::UNSPECIFIED.into(),
+            (IpAddr::V6(_), None) => Ipv4Addr::UNSPECIFIED.into(),
+        };
+        self.with_client(|client| client.set_local_ip(second));
+        Ok(())
     }
 
     /// Runs script: the elements are coerced.
@@ -2302,9 +2525,8 @@ impl Resolver {
             let family = triple
                 .get_index(global_this, 0)?
                 .coerce_to_i32(global_this)?;
-            let port = triple
-                .get_index(global_this, 2)?
-                .coerce_to_i32(global_this)?;
+            let port = triple.get_index(global_this, 2)?.to_number(global_this)?;
+            let port = to_port_number(if port.is_nan() { 0.0 } else { port }, global_this)?;
 
             if family != 4 && family != 6 {
                 return Err(
@@ -2313,69 +2535,66 @@ impl Resolver {
             }
 
             let address = triple.get_index(global_this, 1)?.to_utf8(global_this)?;
-            let ip = ip_address::parse_strict(&address)
+            let ip = parse_address(&address)
                 .filter(|ip| ip.is_ipv4() == (family == 4))
                 .ok_or_else(|| throw_invalid_ip(global_this, &address))?;
-            entries.push((ip, port as u16));
+            entries.push((ip, port));
         }
         Ok(entries)
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
-        global_resolver(cx.global()).set_servers(cx, servers)
+        global_resolver(cx.global()).set_servers(cx, servers)?;
+        Ok(())
     }
 
     pub(crate) fn set_servers(
         self: &RefPtr<Self>,
         cx: &mut JsScope<'_>,
         servers: JsLocal<'_>,
-    ) -> JsResult<()> {
-        let global_this = cx.global();
+    ) -> JsResult<bool> {
         let busy = self.with_client(|client| client.has_requests());
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if busy && self.made_in.is_some() {
-            return Err(global_this
-                .err(
-                    jsc::Error::DNS_SET_SERVERS_FAILED,
-                    format_args!("Failed to set servers: there are pending queries"),
-                )
-                .throw());
+            return Ok(false);
         }
 
-        let entries = Self::servers_from_js(global_this, servers.to_js());
+        let entries = Self::servers_from_js(cx.global(), servers.to_js());
         let entries = entries.inspect_err(|_| self.update_timer())?;
-        self.request_completed(self.with_client(|client| client.set_servers(&entries)));
-        Ok(())
+        self.complete_later(self.with_client(|client| client.set_servers(&entries)));
+        Ok(true)
     }
 
-    pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
-        let global_this = cx.global();
-        let vm = global_this.bun_vm();
+    pub(crate) fn constructor(
+        cx: &mut JsScope<'_>,
+        timeout: i32,
+        tries: i32,
+        max_timeout: u32,
+    ) -> RefPtr<Self> {
+        let vm = cx.global().bun_vm();
         let options = bun_dns_client::Options {
-            timeout: (options.timeout > 0).then(|| Duration::from_millis(options.timeout as u64)),
-            max_timeout: (options.max_timeout > 0)
-                .then(|| Duration::from_millis(options.max_timeout.into())),
-            tries: options.tries.max(1) as u32,
+            timeout: (timeout > 0).then(|| Duration::from_millis(timeout as u64)),
+            max_timeout: (max_timeout > 0).then(|| Duration::from_millis(max_timeout.into())),
+            tries: tries.max(1) as u32,
         };
         bun_output::scoped_log!(DNSResolver, "init");
-        let made_in = Some(vm.context_of_caller().id());
-        js_DNSResolver::to_js(RefPtr::new(Self::setup(vm, made_in, options)), global_this)
+        RefPtr::new(Self::setup(vm, Some(vm.context_of_caller().id()), options))
+    }
+
+    pub(crate) fn global_channel(cx: &mut JsScope<'_>) -> JSValue {
+        js_ChannelWrap::to_js(global_resolver(cx.global()).clone(), cx.global())
     }
 
     pub(crate) fn cancel(self: &RefPtr<Self>) {
-        self.request_completed(self.with_client(Client::cancel));
+        self.complete_later(self.with_client(Client::cancel));
     }
 
-    // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
-    // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
-    // If it is not a legal port, a TypeError will be thrown.
     pub(crate) fn global_lookup_service(
         cx: &mut JsScope<'_>,
         addr_s: &[u8],
         port_value: f64,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let context = global_this.bun_vm().context_of_caller().id();
         if addr_s.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
@@ -2393,12 +2612,13 @@ impl Resolver {
             ));
         };
 
-        let resolver = global_resolver(global_this);
         // For one address, the hashes are equal only if the ports are.
         let (kind, hash) = (QueryKind::NameInfo, wyhash(addr_s) ^ u64::from(port));
         // An IPv4-mapped address has no name in ip6.arpa.
         let send = |client: &mut Client, query| client.name_info(ip.to_canonical(), port, query);
-        Ok(resolver.ask(kind, hash, addr_s, global_this, context, send))
+        let (lookup, promise) = DNSLookup::with_promise(global_this);
+        global_resolver(global_this).ask(kind, hash, addr_s, lookup, send);
+        Ok(promise)
     }
 
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {

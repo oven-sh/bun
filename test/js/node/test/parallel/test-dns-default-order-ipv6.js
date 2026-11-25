@@ -1,26 +1,24 @@
-// Flags: --dns-result-order=ipv6first
+// Flags: --expose-internals --dns-result-order=ipv6first
 'use strict';
 const common = require('../common');
 const assert = require('assert');
+const { internalBinding } = require('internal/test/binding');
+const cares = internalBinding('cares_wrap');
 const { promisify } = require('util');
 
-// Test that --dns-result-order=ipv6first works as expected.
+// Test that --dns-result-order=verbatim works as expected.
 
-if (!process.execArgv.includes("--dns-result-order=ipv6first")) {
-  process.exit(0);
-}
-
-const originalLookup = Bun.dns.lookup;
+const originalGetaddrinfo = cares.getaddrinfo;
 const calls = [];
-Bun.dns.lookup = common.mustCallAtLeast((...args) => {
+cares.getaddrinfo = common.mustCallAtLeast((...args) => {
   calls.push(args);
-  return originalLookup(...args);
+  originalGetaddrinfo(...args);
 }, 1);
 
 const dns = require('dns');
 const dnsPromises = dns.promises;
 
-// We want to test the parameter of ipv6first only so that we
+// We want to test the parameter of verbatim only so that we
 // ignore possible errors here.
 function allowFailed(fn) {
   return fn.catch((_err) => {
@@ -30,22 +28,22 @@ function allowFailed(fn) {
 
 (async () => {
   let callsLength = 0;
-  const checkParameter = (expected) => {
+  const checkParameter = common.mustCallAtLeast((expected) => {
     assert.strictEqual(calls.length, callsLength + 1);
-    const { order } = calls[callsLength][1];
+    const order = calls[callsLength][4];
     assert.strictEqual(order, expected);
     callsLength += 1;
-  };
+  });
 
   await allowFailed(promisify(dns.lookup)('example.org'));
-  checkParameter('ipv6first');
+  checkParameter(cares.DNS_ORDER_IPV6_FIRST);
 
   await allowFailed(dnsPromises.lookup('example.org'));
-  checkParameter('ipv6first');
+  checkParameter(cares.DNS_ORDER_IPV6_FIRST);
 
   await allowFailed(promisify(dns.lookup)('example.org', {}));
-  checkParameter('ipv6first');
+  checkParameter(cares.DNS_ORDER_IPV6_FIRST);
 
   await allowFailed(dnsPromises.lookup('example.org', {}));
-  checkParameter('ipv6first');
+  checkParameter(cares.DNS_ORDER_IPV6_FIRST);
 })().then(common.mustCall());

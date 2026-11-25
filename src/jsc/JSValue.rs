@@ -904,6 +904,15 @@ impl JSValue {
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
+    /// The same for an error whose own frames are not the user's: they make way, if anything awaits
+    /// `promise`. Returns whether it does.
+    pub fn prefer_async_stack_from_promise(
+        self,
+        global: &JSGlobalObject,
+        promise: &JSPromise,
+    ) -> bool {
+        Bun__preferAsyncStackFromPromise(global, self, promise)
+    }
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
     }
@@ -1998,6 +2007,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
+    safe fn Bun__preferAsyncStackFromPromise(
+        global: &JSGlobalObject,
+        err: JSValue,
+        promise: &JSPromise,
+    ) -> bool;
     safe fn Bun__attachAsyncStackFromPromise(
         global: &JSGlobalObject,
         err: JSValue,

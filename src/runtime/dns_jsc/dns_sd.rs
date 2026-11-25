@@ -330,8 +330,8 @@ impl Inflight {
         match self.request {
             Request::Jsc(pending) => {
                 bun_output::scoped_log!(DNSLookup, "completeDnsSd: {}", results.len());
-                pending.complete_native(if results.is_empty() {
-                    Err(EMPTY_STATUS)
+                pending.complete_native(&if results.is_empty() {
+                    Err(bun_dns::AddrInfoError::NOT_FOUND)
                 } else {
                     Ok(results)
                 });

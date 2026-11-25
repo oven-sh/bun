@@ -127,6 +127,8 @@ pub struct Code<'c> {
     pub path: &'c [u8],
     pub text: &'c [u8],
     pub is_script: bool,
+    /// [`InHtml::is_read_by_babel`]
+    pub is_read_by_babel: bool,
 }
 
 /// The callback that gets the file parsed from [`Code`], with or without errors.
@@ -197,6 +199,20 @@ pub struct InHtml {
     pub has_single_quotes: bool,
     /// The parser is `babel-ts`: TypeScript in Babel's tree.
     pub has_babel_tree: bool,
+    /// The code is the `<script>` of a Svelte component.
+    pub is_svelte_script: bool,
+}
+
+impl InHtml {
+    /// True if the code runs as Babel or acorn-typescript read it, where TypeScript's own parser reads something else
+    /// (`Dialect::babel_ts`). That's an expression in a template, which Prettier parses with Babel too, and a Svelte
+    /// component, which Svelte's compiler parses with acorn-typescript. Prettier parses a `<script lang="ts">` with
+    /// `typescript`, in Svelte too.
+    pub fn is_read_by_babel(&self) -> bool {
+        self.has_babel_tree
+            || self.is_svelte_script
+            || !matches!(self.root, HtmlRoot::None | HtmlRoot::Program)
+    }
 }
 
 /// The kind of code.

@@ -557,6 +557,10 @@ pub struct Dialect {
     /// fails or the text has a `<!--`, and the file has no `import`, `export` or `import.meta`, it's read again as a script,
     /// where `await` is a name and `<!--` starts a comment. Not with `script` or `oxc`.
     pub module_or_script: bool,
+    /// TypeScript is read as Babel and acorn-typescript read it where TypeScript's own parser differs: after `as` and
+    /// `<`, `const` starts a type reference and no other type, so `a as const | b` is a bitwise OR. For the code that
+    /// those parsers run: the expressions of a Vue template, and a Svelte component.
+    pub babel_ts: bool,
 }
 
 impl Dialect {
@@ -571,6 +575,7 @@ impl Dialect {
             oxc: false,
             oxc_names: false,
             module_or_script: false,
+            babel_ts: false,
         }
     }
 

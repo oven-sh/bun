@@ -954,25 +954,26 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
-  // After `as` or `<`, `const` is the first word of a type like any other, so `|`, `&`, `extends`, `[]`, `!` and `.`
-  // after it continue the type. Prettier 3.9.9 prints each of these as `bun fmt` does with its `typescript` parser.
-  // With `babel-ts` it prints `(a as const) | "b"`, a bitwise OR, for a cast to a union, and rejects most of the others.
+  // To TypeScript, `const` after `as` or `<` is the first word of a type like any other, so `|`, `&`, `extends`, `[]`, `!`
+  // and `.` after it continue the type. Prettier 3.9.9 prints each of these as `bun fmt` does with its `typescript`
+  // parser. With `babel-ts` it prints `(a as const) | "b"`, a bitwise OR, and rejects most of the others.
   describe("a type that continues after `as const`", () => {
     const rows = [
       ["let a = 'NEW' as const | 'X';", 'let a = "NEW" as const | "X";'],
       ["let b = x as const & y;", "let b = x as const & y;"],
       ["let c = x as const\n  | y\n  | z;", "let c = x as const | y | z;"],
-      ["let d = <const | 'X'>'NEW';", 'let d = <const | "X">"NEW";'],
-      ["let e = x as const extends string ? 1 : 2;", "let e = x as const extends string ? 1 : 2;"],
-      ["let f = [x] as const[];", "let f = [x] as const[];"],
-      ["let g = x as const!;", "let g = x as const!;"],
-      ["let h = x as const.b;", "let h = x as const.b;"],
+      ["let d = (x as const | y) + 1;", "let d = (x as const | y) + 1;"],
+      ["let e = <const | 'X'>'NEW';", 'let e = <const | "X">"NEW";'],
+      ["let f = x as const extends string ? 1 : 2;", "let f = x as const extends string ? 1 : 2;"],
+      ["let g = [x] as const[];", "let g = [x] as const[];"],
+      ["let h = x as const!;", "let h = x as const!;"],
+      ["let i = x as const.b;", "let i = x as const.b;"],
       // Where no type continues, the operator is one of expressions.
-      ["let i = (x as const) | y;", "let i = (x as const) | y;"],
-      ["let j = x as const || y;", "let j = (x as const) || y;"],
-      ["let k = x as const ? 1 : 2;", "let k = (x as const) ? 1 : 2;"],
-      ["let l = x as const satisfies T;", "let l = x as const satisfies T;"],
-      ["let m = x as const\n[y].length;", "let m = x as const;\n[y].length;"],
+      ["let j = (x as const) | y;", "let j = (x as const) | y;"],
+      ["let k = x as const || y;", "let k = (x as const) || y;"],
+      ["let l = x as const ? 1 : 2;", "let l = (x as const) ? 1 : 2;"],
+      ["let m = x as const satisfies T;", "let m = x as const satisfies T;"],
+      ["let n = x as const\n[y].length;", "let n = x as const;\n[y].length;"],
     ];
     const text = rows.map(([written]) => `${written}\n`).join("");
     const printed = rows.map(([, printed]) => `${printed}\n`).join("");
@@ -982,14 +983,6 @@ describe.concurrent("bun fmt", () => {
       expect({ ...result.files, stderr: result.stderr }).toEqual({ "a.ts": printed, stderr: "" });
       expect(result.exitCode).toBe(0);
       expect(await different({ "a.ts": printed }, [...flags, "a.ts"])).toEqual([]);
-    });
-
-    test("in Svelte and Vue", async () => {
-      const files = {
-        "a.svelte": `<script lang="ts">\n  let a = x as const | "X";\n</script>\n\n<p>{x as const | "X"}</p>\n`,
-        "b.vue": `<script setup lang="ts">\nlet a = x as const | "X";\n</script>\n\n<template>\n  <p :a="x as const | 'X'">{{ x as const | "X" }}</p>\n</template>\n`,
-      };
-      expect(await different(files, ["--svelte"])).toEqual([]);
     });
 
     test("and the formatted file runs like the one that was written", async () => {
@@ -1006,13 +999,62 @@ describe.concurrent("bun fmt", () => {
       expect([await run(written), await run(result.files["a.ts"]!)]).toEqual([expected, expected]);
     });
 
-    // As TypeScript and Prettier's `typescript` parser read them: `const?` and `const<` start something of types.
+    // As TypeScript and Prettier's `typescript` parser read them: after `const`, a `?` before what starts no type is
+    // the end of a type, and `<<` starts type arguments. The third is an error for every parser.
     test.each(["x as const ? +a : b", "x as const << 2", "x as const < y"])("%s is a syntax error", async code => {
       const result = await format({ "a.ts": `let a = ${code};\n` }, [], { reads: ["a.ts"] });
       expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
       expect(result.files).toEqual({ "a.ts": `let a = ${code};\n` });
       expect(result.exitCode).toBe(2);
     });
+
+    // A `<script lang="ts">` is TypeScript's. Vue's compiler reads the expressions of the template with Babel, which
+    // takes `const` for all of the type. Prettier 3.9.9 prints the same.
+    test("a Vue component has TypeScript's reading in the script and Babel's in the template", async () => {
+      const vue = (script: string, bound: string, text: string) =>
+        `<script setup lang="ts">\n${script}\n</script>\n\n<template>\n  <p :a="${bound}">{{ ${text} }}</p>\n</template>\n`;
+      const files = { "a.vue": vue("let a = x as const|y+1;", "x as const|y+1", "x as const?+y:x") };
+      const result = await formatChecked(files, [], { reads: ["a.vue"] });
+      expect({ ...result.files, stderr: result.stderr }).toEqual({
+        "a.vue": vue("let a = (x as const | y) + 1;", "(x as const) | (y + 1)", "(x as const) ? +y : x"),
+        stderr: "",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Svelte's compiler reads all of a component with acorn-typescript, which takes `const` for all of the type: with
+    // `x` 5 and `y` 2 the component renders 7, 7, 2 and 20 before and after. prettier-plugin-svelte 4.2.0 prints the
+    // same in the template, and `(x as const | y) + 1` in the script, which Svelte 5.59.2 renders as 8.
+    test("a Svelte component has acorn-typescript's reading in the script and in the template", async () => {
+      const svelte = (script: string, expressions: string[]) =>
+        `<script lang="ts">\n  ${script}\n</script>\n\n<p>${expressions.map(it => `{${it}}`).join(" ")}</p>\n`;
+      const files = {
+        "a.svelte": svelte("let s = x as const|y+1;", ["x as const|y+1", "s", "x as const?+y:x", "x as const<<2"]),
+      };
+      const result = await formatChecked(files, ["--svelte"], { reads: ["a.svelte"] });
+      expect({ ...result.files, stderr: result.stderr }).toEqual({
+        "a.svelte": svelte("let s = (x as const) | (y + 1);", [
+          "(x as const) | (y + 1)",
+          "s",
+          "(x as const) ? +y : x",
+          "(x as const) << 2",
+        ]),
+        stderr: "",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // Svelte's compiler rejects these too.
+    test.each(["x as const[]", "x as const!", "x as const extends y ? 1 : 2"])(
+      "{%s} in a Svelte template is a syntax error",
+      async code => {
+        const text = `<script lang="ts">\n  let x = 1;\n</script>\n\n<p>{${code}}</p>\n`;
+        const result = await format({ "a.svelte": text }, ["--svelte"], { reads: ["a.svelte"] });
+        expect(result.stderr).toMatch(syntaxErrorIn("a.svelte"));
+        expect(result.files).toEqual({ "a.svelte": text });
+        expect(result.exitCode).toBe(2);
+      },
+    );
   });
 
   test("keeps two comments before an arrow function's `=>` on the same line", async () => {

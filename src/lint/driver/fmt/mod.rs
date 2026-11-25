@@ -298,6 +298,8 @@ struct How<'h> {
     is_script: bool,
     /// Parse it as Flow.
     is_flow: bool,
+    /// `Dialect::babel_ts`
+    is_read_by_babel: bool,
     resolved: &'h Resolved,
     verifies: bool,
     /// Interns the names in a file with syntax errors. They're freed when the run ends.
@@ -337,6 +339,10 @@ impl How<'_> {
             true => Dialect::flow_parser(self.is_script),
             false if is_oxfmt => options.dialect,
             false => Dialect::babel(self.is_script),
+        };
+        let dialect = Dialect {
+            babel_ts: self.is_read_by_babel,
+            ..dialect
         };
         (language, dialect, options)
     }
@@ -536,6 +542,7 @@ fn parse_code(
         path: code.path,
         is_script: code.is_script,
         is_flow: false,
+        is_read_by_babel: code.is_read_by_babel,
         resolved,
         verifies: false,
         atoms,
@@ -552,6 +559,7 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
         path,
         is_script: false,
         is_flow: false,
+        is_read_by_babel: true,
         resolved: &plain,
         verifies: false,
         atoms: &atoms,
@@ -840,6 +848,7 @@ fn format(
                 path,
                 is_script: false,
                 is_flow,
+                is_read_by_babel: false,
                 resolved,
                 verifies: false,
                 atoms,
@@ -861,6 +870,7 @@ fn format(
             path,
             is_script: script_modes(name).first() == Some(&true),
             is_flow,
+            is_read_by_babel: false,
             resolved,
             verifies,
             atoms,
@@ -876,6 +886,7 @@ fn format(
             path,
             is_script,
             is_flow,
+            is_read_by_babel: false,
             resolved,
             verifies,
             atoms,

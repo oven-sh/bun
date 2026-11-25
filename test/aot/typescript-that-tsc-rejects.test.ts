@@ -51,3 +51,23 @@ for (const { error, declaration, read, plain } of rejected) {
     expect(exitCode).toBe(1);
   });
 }
+
+// tsc reports these in its checker alone (TS2304: Cannot find name 'const'), so the build goes on under // @ts-nocheck.
+test("The type that follows `as const` is dropped as plain Bun drops it", async () => {
+  const values = [
+    `"NEW" as const | "X"`,
+    `"NEW" as const\n  | "Y"`,
+    `<const | "X">"NEW"`,
+    `([1] as const[]).length`,
+    `"Q" as const extends 1 ? 1 : 2`,
+    `3 as const ? +1 : 2`,
+    `3 as const << 2`,
+  ];
+  using dir = tempDir("as-const", { "main.ts": `// @ts-nocheck\nconsole.log(\n  ${values.join(",\n  ")},\n);\n` });
+  const plain = await run([bunExe(), "main.ts"], String(dir), env);
+  expect(plain.stdout).toBe("NEW NEW NEW 1 Q 1 12\n");
+  const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "out"], String(dir), env);
+  expect(built.stderr).not.toContain("error: ");
+  expect(built.exitCode).toBe(0);
+  expect(await run(["./out"], String(dir), env)).toEqual(plain);
+});

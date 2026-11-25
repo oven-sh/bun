@@ -123,6 +123,17 @@ async function run(cwd: string, args: string[]) {
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 describe.concurrent("bun lint", () => {
+  test("the type that follows `as const` has no operator for no-bitwise", async () => {
+    const files = {
+      "a.ts": "declare const x: 1;\nexport const a = x as const | 2;\nexport const b = (x as const) | 2;\n",
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--rule", "no-bitwise: error"]);
+    expect(stdout.split("\n").filter(line => line.includes("no-bitwise"))).toEqual([
+      "<dir>/a.ts:3:18: Unexpected use of '|'. [Error/no-bitwise]",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("prints problems like ESLint's stylish formatter and exits with 1", async () => {
     const { stdout, stderr, exitCode } = await lint(
       { "eslint.config.js": basic, "a.js": bad, "b.js": "export {};\n" },

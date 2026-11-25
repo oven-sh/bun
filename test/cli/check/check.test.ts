@@ -8270,6 +8270,27 @@ export type After = 2;
       expect(exitCode).toBe(0);
     });
 
+    test("parses the type that follows `as const` or `<const`", async () => {
+      using dir = project({
+        "a.ts": `declare const x: "NEW";
+export const a = x as const | "X";
+export const b = <const | "X">x;
+export const c = [x] as const[];
+export const d = x as const.b;
+export const e = x as const || "X";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,23): error TS2304: Cannot find name 'const'.
+        a.ts(3,19): error TS2304: Cannot find name 'const'.
+        a.ts(4,25): error TS2304: Cannot find name 'const'.
+        a.ts(5,23): error TS2503: Cannot find namespace 'const'.
+        a.ts(6,18): error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("instantiates a `typeof C<T>` constraint with the type inferred for `T`", async () => {
       using dir = project({
         "a.ts": `type Map1 = Record<string, (...args: any[]) => void>;

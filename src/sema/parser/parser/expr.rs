@@ -830,14 +830,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn const_assertion_type(&mut self) -> Option<TypeNodeId> {
         let at_const = self.lx.mark();
-        // `parseType` reads the word as a name.
-        self.take_as_name();
+        // The error about an escape in the keyword stays, so nothing is made of what follows.
+        let is_escaped = GENERAL && self.lx.has_escape;
         self.next();
         let token = self.token();
         // No type continues with these, so most const assertions end here.
         let is_whole_type = token.ends_expression()
             || matches!(token, T::GreaterThan | T::As | T::Satisfies)
-            || self.newline_before() && token.is_identifier_or_keyword();
+            || self.newline_before() && token.is_identifier_or_keyword()
+            || is_escaped;
         if is_whole_type && !self.options.is_javascript {
             return None;
         }
@@ -861,10 +862,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             return None;
         }
-        // `bun run` ends the type before these.
-        is_whole_type |= self.options.compiles
-            && is_on_same_line
-            && matches!(token, T::Question | T::LessThanLessThan);
+        // `Dialect::babel_ts`
+        let is_reference = self.options.dialect.babel_ts;
+        // `bun run` ends the type before these, and neither starts the type arguments of Babel's reference.
+        is_whole_type |= is_on_same_line
+            && match token {
+                T::Question => self.options.compiles,
+                T::LessThanLessThan => self.options.compiles || is_reference,
+                _ => false,
+            };
         self.lx.reset(at_const);
         let at = (self.lx.start, self.lx.end);
         // `const<>` is a const assertion too, and `checkGrammarTypeArguments` reports the list.
@@ -882,8 +888,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         if !is_whole_type && !has_empty_type_arguments {
             let checkpoint = self.checkpoint();
-            let ty = self.ty();
-            if self.prev_end() != at.1 {
+            let ty = match is_reference {
+                true => self.type_reference_alone(),
+                false => self.ty(),
+            };
+            if self.has_failed() || self.prev_end() != at.1 {
                 if self.options.is_javascript {
                     self.js_error_at_type(ty, 8016);
                 }

@@ -35,34 +35,35 @@ fn parse(value: &str, options: Options) -> Result<(Box<FileBuilder>, String), Re
     }
 }
 
-/// The casts and operators of `e` with their operands, and the text of every other node and of a type.
-fn reading(file: &FileBuilder, text: &str, e: ExprId) -> String {
-    let Some(expr) = file.exprs.get(e.idx()) else {
-        return "<none>".to_owned();
-    };
-    let of = |e: ExprId| reading(file, text, e);
+/// The casts and operators of the `value` with their operands, and the text of every other node and of a type.
+fn reading_of(value: &str, options: Options) -> Result<String, Rejection> {
+    let (file, text) = parse(value, options)?;
     let ty = |ty: TypeNodeId| match file.types.get(ty.idx()) {
         Some(ty) => &text[ty.pos as usize..ty.end as usize],
         None => "<none>",
     };
-    match expr.kind {
-        ExprKind::AsConst(inner) => format!("const({})", of(inner)),
-        ExprKind::As { expr, ty: to } => format!("as({}, {})", of(expr), ty(to)),
-        ExprKind::Satisfies { expr, ty: to } => format!("satisfies({}, {})", of(expr), ty(to)),
-        ExprKind::Binary { left, right, .. } => format!("binary({}, {})", of(left), of(right)),
-        ExprKind::Cond { test, .. } => format!("cond({})", of(test)),
-        _ => text[expr.pos as usize..expr.end as usize].to_owned(),
+    // An operand has a lower index than the node that it is an operand of.
+    let mut readings: Vec<String> = Vec::with_capacity(file.exprs.len());
+    let mut assigned = None;
+    for expr in &file.exprs {
+        let of = |e: ExprId| readings.get(e.idx()).map_or("<none>", String::as_str);
+        let reading = match expr.kind {
+            ExprKind::AsConst(inner) => format!("const({})", of(inner)),
+            ExprKind::As { expr, ty: to } => format!("as({}, {})", of(expr), ty(to)),
+            ExprKind::Satisfies { expr, ty: to } => format!("satisfies({}, {})", of(expr), ty(to)),
+            ExprKind::Binary { left, right, .. } => format!("binary({}, {})", of(left), of(right)),
+            ExprKind::Cond { test, .. } => format!("cond({})", of(test)),
+            ExprKind::Assign { value, .. } => {
+                assigned = Some(of(value).to_owned());
+                String::new()
+            }
+            _ => (text.get(expr.pos as usize..expr.end as usize))
+                .unwrap_or("<none>")
+                .to_owned(),
+        };
+        readings.push(reading);
     }
-}
-
-/// [`reading`] of `value`.
-fn reading_of(value: &str, options: Options) -> Result<String, Rejection> {
-    let (file, text) = parse(value, options)?;
-    let assigned = file.exprs.iter().find_map(|it| match it.kind {
-        ExprKind::Assign { value, .. } => Some(value),
-        _ => None,
-    });
-    Ok(reading(&file, &text, assigned.unwrap()))
+    Ok(assigned.unwrap())
 }
 
 /// The `(code, start, end)` of each diagnostic, where `start` and `end` count from the start of `value`.
@@ -222,19 +223,19 @@ fn empty_type_arguments_after_const() {
 }
 
 #[test]
-fn escaped_const() {
+fn escaped_const_stays_an_error() {
     let [without_recovery, _, recovering] = parsers();
     let found = reading_of("x as \\u0063onst | y", without_recovery);
     assert_eq!(found, Err(Rejection::EscapedKeyword));
     let cases = [
         ("x as \\u0063onst", "const(x)"),
         ("x as \\u0063onst || y", "binary(const(x), y)"),
-        ("x as \\u0063onst | y", "as(x, \\u0063onst | y)"),
+        ("x as \\u0063onst | y", "binary(const(x), y)"),
     ];
     expect_reading(recovering, &cases);
-    // The word is a name, where an escape is no error.
     for (value, _) in cases {
-        assert_eq!(diagnostics_of(value, recovering), [], "{value}");
+        let reported = diagnostics_of(value, recovering);
+        assert_eq!(reported, [(1260, 5, 15)], "{value}");
     }
 }
 
@@ -253,6 +254,54 @@ fn type_after_const_that_bun_run_ends() {
             ("x as const\n| y", "as(x, const\n| y)"),
         ],
     );
+}
+
+// Each text is read as @babel/parser 7 and @sveltejs/acorn-typescript read it, or is an error as it is to them.
+#[test]
+fn const_as_babel_reads_it() {
+    let babel_ts = |options: Options| Options {
+        dialect: Dialect {
+            babel_ts: true,
+            ..Dialect::babel(false)
+        },
+        ..options
+    };
+    for options in parsers().map(babel_ts) {
+        expect_reading(
+            options,
+            &[
+                ("x as const", "const(x)"),
+                ("x as const | y", "binary(const(x), y)"),
+                ("x as const & y", "binary(const(x), y)"),
+                ("x as const\n| y", "binary(const(x), y)"),
+                ("x as const | y + 1", "binary(const(x), binary(y, 1))"),
+                ("x as const ? +a : b", "cond(const(x))"),
+                ("x as const << 2", "binary(const(x), 2)"),
+                ("x as const.b", "as(x, const.b)"),
+                ("x as const.b | y", "binary(as(x, const.b), y)"),
+                ("x as const<T>", "as(x, const<T>)"),
+                ("x as any | y", "as(x, any | y)"),
+                ("<const>e", "const(e)"),
+            ],
+        );
+        // Without recovery a text that has an error is refused.
+        let rejected = [
+            "x as const[]",
+            "x as const!",
+            "x as const extends T ? 1 : 2",
+            "<const | T>e",
+        ];
+        for value in rejected {
+            match options.recovers {
+                true => assert_ne!(diagnostics_of(value, options), [], "{value}"),
+                false => assert_eq!(
+                    reading_of(value, options),
+                    Err(Rejection::Syntax),
+                    "{value}"
+                ),
+            }
+        }
+    }
 }
 
 #[test]

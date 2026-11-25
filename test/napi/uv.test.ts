@@ -541,14 +541,25 @@ describe("uv stubs", () => {
     },
   );
 
-  test.concurrent.skipIf(!isWindows)("UV_THREADPOOL_SIZE takes effect when the script sets it", async () => {
+  test.concurrent.skipIf(!isWindows).each(["1", "1.5"])("a script can set UV_THREADPOOL_SIZE to %s", async size => {
     const { stdout, stderr, exitCode } = await runInChild(
-      `process.env.UV_THREADPOOL_SIZE = "1";
+      `process.env.UV_THREADPOOL_SIZE = "${size}";
        addon.queueOverlappingWorks();
        process.on("exit", () => console.log(addon.didWorksOverlap()));`,
     );
     expect(stderr).toBe("");
     expect(stdout).toBe("false\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isWindows).each(["2.5", "+2"])("UV_THREADPOOL_SIZE=%s starts two threads", async size => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `addon.queueBlockingWorks();
+       addon.releaseBlockingWorks();`,
+      { UV_THREADPOOL_SIZE: size },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   });
 

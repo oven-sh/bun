@@ -172,10 +172,18 @@ impl FilePool {
         static POOL: std::sync::LazyLock<FifoPool> = std::sync::LazyLock::new(|| {
             // Not `env_var`: scripts assign it to `process.env` before their first call.
             let size = bun_sys::windows::getenv_w(bun_core::wstr!("UV_THREADPOOL_SIZE"));
-            let parse = |size: Vec<u16>| String::from_utf16_lossy(&size).trim().parse();
+            let atoi = |text: Vec<u16>| {
+                let text = String::from_utf16_lossy(&text);
+                let digits = text
+                    .trim_start()
+                    .trim_start_matches('+')
+                    .chars()
+                    .map_while(|char| char.to_digit(10));
+                digits.fold(0, |value, digit| (value * 10 + digit as usize).min(1024))
+            };
             FifoPool::new(Config {
                 name: "File I/O",
-                max_threads: size.map_or(Ok(4), parse).unwrap_or(1).clamp(1, 1024),
+                max_threads: size.map_or(4, atoi).max(1),
                 // Addons run on these threads, and libuv gives them this much.
                 stack_size: 8 * 1024 * 1024,
                 on_thread_start: bun_core::Output::Source::configure_thread_no_js,

@@ -4,6 +4,7 @@ use super::runtime_reach::{
     find_reached_runtime_code, find_uses_of_kept_code,
 };
 use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     DiagnosticBuffer, Diagnostics, InternalError, describe_first_fold_error, syntax_errors_of,
@@ -1152,9 +1153,12 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources, in_parallel: InParal
             return false;
         }
         let decisions = &files.analysis(file).decisions;
+        let asks_for_file_names = parsed_source(files, file).is_some_and(|it| {
+            (it.builtins.mentioned()).contains(&BuiltinId::NodeModule_resolveFilename)
+        });
         let mut names = files.bound(file).ident_bindings().iter();
         let mut sites = files.analysis(file).import_sites.iter();
-        names.any(|&(name, binding)| {
+        asks_for_file_names || names.any(|&(name, binding)| {
             matches!(
                 binding,
                 Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)

@@ -541,8 +541,8 @@ static bool isCommonJSModuleUnderActualKey(Zig::GlobalObject* globalObject, cons
     return original && original == module->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().exportsPublicName());
 }
 
-// The build names what a file is under a type `file?type`. In a test run no compiled file has a query, and a file of code is no data under one.
-static bool isPathOfForm(JSGlobalObject* globalObject, const String& path)
+// The build names what a file is under a type `file?type`. A query of the program is another thing. In a test run no compiled file has a query.
+static bool isPathOfForm(const String& path)
 {
     size_t mark = path.reverseFind('?');
     if (mark == notFound)
@@ -558,14 +558,18 @@ static bool isPathOfForm(JSGlobalObject* globalObject, const String& path)
     if (isBunTest)
         return true;
     auto module = findModuleForPath(path);
-    auto loader = Bun__getDefaultLoader(globalObject, &fileArgument, nullptr);
-    bool isCode = loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
-    return isCode && module && AOT::isDataFile(*module);
+    return module && AOT::isDataFile(*module);
+}
+
+// The loader has an entry under the path where the program has loaded the form.
+static bool isPathOfFormInExecutable(const String& path)
+{
+    return hasCompiledModules() && !Bun__compiledProgramRunsInPlace() && isPathOfForm(path);
 }
 
 static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path, AOT::LoadKind way)
 {
-    auto module = isPathOfForm(globalObject, path) ? std::nullopt : findModuleForPath(path);
+    auto module = isPathOfForm(path) ? std::nullopt : findModuleForPath(path);
     if (!module)
         module = findDefaultForm(path);
     if (!module) {
@@ -852,6 +856,8 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
 JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, int64_t referrerAsyncOrder)
 {
     auto module = attributes ? findModuleWithAttributes(globalObject, key, *attributes) : compiledModuleForRequest(globalObject, key, false, AOT::LoadKind::Import);
+    if (!module && !attributes && isPathOfFormInExecutable(key)) [[unlikely]]
+        return JSPromise::rejectedPromise(globalObject, createNotInExecutableError(globalObject, ErrorCode::ERR_MODULE_NOT_FOUND, key, NotInExecutable::Code));
     if (!module)
         return nullptr;
     return AOT::importModule(globalObject, *module, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder));
@@ -990,6 +996,8 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
         JSValue refused = hasImportAttributes ? JSValue() : JSValue::decode(Bun__compiledProgramErrorOfRefusedData(globalObject, &pathOfForm));
         if (refused)
             throwException(globalObject, scope, refused);
+        else if (!hasImportAttributes && isPathOfFormInExecutable(path)) [[unlikely]]
+            throwException(globalObject, scope, createNotInExecutableError(globalObject, ErrorCode::MODULE_NOT_FOUND, path, NotInExecutable::Code));
         return false;
     }
     // In a test run willSetExtensionLoader() already removed files of this kind from the program.

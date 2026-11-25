@@ -237,10 +237,12 @@ function resistStopPropagation<T extends object>(options: T): T & AddEventListen
 function withMembers<T extends object, M extends object>(options: T, members: M): Omit<T, keyof M> & M {
   const result = { __proto__: options, ...members };
   // The getters of a Request, or of a class with private fields, throw for any receiver but `options`.
-  for (let object = options; object && object !== Object.prototype; object = Object.getPrototypeOf(object)) {
-    for (const key of Object.getOwnPropertyNames(object)) {
-      if (!Object.hasOwn(result, key) && Object.getOwnPropertyDescriptor(object, key)?.get) {
-        Object.defineProperty(result, key, { __proto__: null, get: () => options[key] } as PropertyDescriptor);
+  for (let object = options; object && object !== $Object.prototype; object = $Object.$getPrototypeOf(object)) {
+    const keys = $Object.$getOwnPropertyNames(object);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (!$Object.$getOwnPropertyDescriptor(result, key) && $Object.$getOwnPropertyDescriptor(object, key)?.get) {
+        $Object.$defineProperty(result, key, { __proto__: null, get: () => options[key] } as PropertyDescriptor);
       }
     }
   }

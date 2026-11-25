@@ -1976,6 +1976,33 @@ describe("client TLS options", () => {
       }).toEqual({ checkServerIdentity: anonymous, pfx: identified, both: "refused" });
     });
 
+    it("wraps the `tls` option without the functions of `Object` that a program replaced", async () => {
+      using server = await serve(agent1);
+      class Options {
+        checkServerIdentity = () => undefined;
+        get ca() {
+          return ca1;
+        }
+      }
+      const tls = new Options();
+      const names = ["getOwnPropertyNames", "defineProperty"];
+      const originals = names.map(name => Object[name]);
+      const called = new Set<string>();
+      let outcome;
+      try {
+        names.forEach((name, i) => {
+          Object[name] = (object, ...rest) => {
+            if (object instanceof Options) called.add(name);
+            return originals[i](object, ...rest);
+          };
+        });
+        outcome = dial(server.url, { tls });
+      } finally {
+        names.forEach((name, i) => (Object[name] = originals[i]));
+      }
+      expect({ called: [...called], outcome: await outcome }).toEqual({ called: [], outcome: anonymous });
+    });
+
     it("an own `pfx` in the `tls` option keeps the inherited options", async () => {
       using server = await serve(agent1);
       const connect = (inherited: object, own: object) =>

@@ -331,6 +331,13 @@ fn with_undefined(values: Values) -> Values {
     with(values, Held::Primitive(Constant::Undefined))
 }
 
+fn read_absent(key: &[u8]) -> Held {
+    match is_member_of_every_object(key) {
+        true => Held::Other,
+        false => Held::Primitive(Constant::Undefined),
+    }
+}
+
 fn keep_last_of_each_key(written: &mut Vec<(Vec<u8>, ExprId)>) {
     let mut later = FxHashSet::default();
     let entries = written.iter().rev();
@@ -5671,8 +5678,18 @@ impl Follower<'_, '_, '_> {
         let mut values = Distinct::new();
         let mut beside_spreads = Vec::new();
         let looks_beside_spreads = self.follows_fields && self.keeps_known_alternatives;
+        let mut adds_what_is_absent = true;
         for object in objects {
             let read = match object {
+                Held::Object(literal)
+                    if keys.is_some_and(|keys| self.writes_none_of(*literal, keys)) =>
+                {
+                    if !std::mem::take(&mut adds_what_is_absent) {
+                        continue;
+                    }
+                    let absent = keys.unwrap_or_default().iter();
+                    absent.map(|key| read_absent(key)).collect()
+                }
                 Held::Object(literal) => match self.read_property(*literal, keys) {
                     Some(read) => read,
                     None if looks_beside_spreads
@@ -5959,6 +5976,14 @@ impl Follower<'_, '_, '_> {
         Some(written)
     }
 
+    fn writes_none_of(&mut self, literal: ExprId, keys: &[Vec<u8>]) -> bool {
+        !self.findings.stored_under_keys.contains_key(&literal)
+            && self.list_written(literal).is_some_and(|written| {
+                written.computed.is_empty()
+                    && !keys.iter().any(|key| written.by_key.contains_key(key))
+            })
+    }
+
     fn read_property(&mut self, literal: ExprId, keys: Option<&[Vec<u8>]>) -> Option<Values> {
         let Some(keys) = keys else {
             let written = self.properties_of(literal)?;
@@ -5981,8 +6006,7 @@ impl Follower<'_, '_, '_> {
                         add(&mut values, value);
                     }
                 }
-                false if is_member_of_every_object(key) => add(&mut values, Held::Other),
-                false => add(&mut values, Held::Primitive(Constant::Undefined)),
+                false => add(&mut values, read_absent(key)),
             }
         }
         Some(values.all)

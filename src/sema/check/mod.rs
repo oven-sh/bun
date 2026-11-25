@@ -3428,11 +3428,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// Called when the checker has come back around to `stack[i]`. Calls `Task::close_cycle`, unless the ring
     /// gives the same result no matter where it's entered. tsgo goes around until it reaches a member that it
     /// guards. Type syntax and conditional types have no guard, so a ring with only one other member closes at
-    /// that member, wherever it was entered. And base constraints that lead to each other are all circular.
+    /// that member, wherever it was entered. And base constraints that lead to each other are all circular. The default
+    /// of a type parameter isn't a query, and is guarded.
     pub(super) fn close_ring_from(&self, i: usize) {
         let mut guarded = self.stack[i..].iter().filter(|&&q| is_guarded(q));
         let are_constraints = matches!(guarded.next(), Some(Query::Constraint(_)));
-        if guarded.any(|q| !are_constraints || !matches!(q, Query::Constraint(_))) {
+        let has_default = (self.defaults_in_progress.last()).is_some_and(|it| it.1 > i);
+        if has_default || guarded.any(|q| !are_constraints || !matches!(q, Query::Constraint(_))) {
             self.close_cycle(i);
         }
     }

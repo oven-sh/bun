@@ -2129,7 +2129,10 @@ impl<'p, 's> Checker<'p, 's> {
                 self.note_limit();
                 self.mark_tainted_from(0);
             }
-            return known;
+            return match (self.p.circular_mapped_constraints).get(&self.task, &key) {
+                Some(()) => TypeId::ERROR,
+                None => known,
+            };
         }
         let (hits, limits, cycles) = (self.instantiation_limit_hits, self.limits, self.cycles);
         self.mapped_constraints_in_progress

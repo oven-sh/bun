@@ -21,6 +21,8 @@ pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
+mod page_buffer;
+pub use page_buffer::PageBuffer;
 pub mod result;
 pub mod scoped;
 pub mod thread_id;

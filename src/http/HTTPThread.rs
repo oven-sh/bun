@@ -209,7 +209,7 @@ pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
 
 pub struct LibdeflateState {
     pub(crate) compressor: bun_deflate::Compressor,
-    pub(crate) shared_buffer: Box<[u8; LIBDEFLATE_SHARED_BUFFER_LEN]>,
+    pub(crate) shared_buffer: bun_core::PageBuffer<LIBDEFLATE_SHARED_BUFFER_LEN>,
 }
 
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
@@ -291,7 +291,7 @@ impl HttpThread {
         self.lazy_libdeflater
             .get_or_insert_with(|| LibdeflateState {
                 compressor: Default::default(),
-                shared_buffer: bun_core::boxed_zeroed(),
+                shared_buffer: bun_core::PageBuffer::new(),
             })
     }
 

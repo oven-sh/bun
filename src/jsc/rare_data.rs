@@ -289,7 +289,7 @@ impl Default for RareData {
 pub struct PathBuf {
     pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
     pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    pub(crate) large: Option<bun_core::PageBuffer<{ 32 * MAX_PATH_BYTES }>>,
 }
 
 impl PathBuf {
@@ -307,9 +307,7 @@ impl PathBuf {
                 .medium
                 .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
         } else {
-            &mut **self
-                .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
+            &mut **self.large.get_or_insert_default()
         }
     }
 }

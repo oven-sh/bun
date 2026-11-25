@@ -745,7 +745,7 @@ impl Linux {
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let manager = DEFAULT_MANAGER.wait();
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        let mut buf: Box<[u8; 64 * 1024]> = bun_core::boxed_zeroed();
+        let mut buf = bun_core::PageBuffer::<{ 64 * 1024 }>::new();
         let mut rel_path = path::Path::new();
 
         loop {

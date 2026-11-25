@@ -1,12 +1,12 @@
 use core::cell::Cell;
 
 pub const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
-type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
+type PipeReadBuffer = bun_core::PageBuffer<PIPE_READ_BUFFER_SIZE>;
 
 /// Per-loop scratch for blocking pipe/file reads. Chunks are delivered straight out of it, and a consumer may run user code that starts a nested read while still parsing the chunk, so only one borrower on the thread may hold it at a time.
 pub struct PipeReadScratch {
     in_use: Cell<bool>,
-    buffer: Cell<Option<Box<PipeReadBuffer>>>,
+    buffer: Cell<Option<PipeReadBuffer>>,
 }
 
 impl PipeReadScratch {
@@ -32,12 +32,12 @@ impl PipeReadScratch {
 /// Exclusive claim on the scratch; released on drop.
 pub struct PipeReadScratchGuard<'a> {
     scratch: &'a PipeReadScratch,
-    buffer: Option<Box<PipeReadBuffer>>,
+    buffer: Option<PipeReadBuffer>,
 }
 
 impl PipeReadScratchGuard<'_> {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buffer.get_or_insert_with(bun_core::boxed_zeroed)[..]
+        &mut self.buffer.get_or_insert_default()[..]
     }
 }
 

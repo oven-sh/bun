@@ -43,7 +43,7 @@ use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtId, StmtKind};
-use bun_sema::import_sites::{ImportSiteKind, NamedPath};
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::{CodeImportKind, parent_directory};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -1332,18 +1332,45 @@ fn find_excluded_named_paths(
     let is_of_project = provider.is_own_module_of_project(to_native(module));
     let folder = parent_directory(module);
     let mut found = Vec::new();
-    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     let all_named = files.analysis(file).named_paths;
+    let mut paths: FxHashMap<Atom, Vec<u8>> = FxHashMap::default();
     for named in all_named {
-        let path = from_argument(folder, files.atoms.bytes(named.path));
+        (paths.entry(named.path))
+            .or_insert_with(|| from_argument(folder, files.atoms.bytes(named.path)));
+    }
+    let mut paths_of_calls: FxHashMap<ExprId, Vec<&[u8]>> = FxHashMap::default();
+    for named in all_named {
+        if let Some(callee) = named.callee {
+            let of_call = paths_of_calls.entry(callee).or_default();
+            of_call.push(&paths[&named.path]);
+        }
+    }
+    for of_call in paths_of_calls.values_mut() {
+        of_call.sort_unstable();
+    }
+    let read_paths = |is_asked: fn(&FileRead) -> bool| -> FxHashSet<&[u8]> {
+        let asked = reads.iter().filter(|it| is_asked(it));
+        asked.map(|it| &it.path[..]).collect()
+    };
+    let (mut listed_paths, mut run_paths) = (None, None);
+    for named in all_named {
+        let path = &paths[&named.path][..];
+        if seen.contains(path) {
+            continue;
+        }
         // Where the call says which file of the folder it is, that file is a read.
         let names_folder_alone = || {
-            let mut of_call = all_named.iter().filter(|it| it.callee == named.callee);
-            let is_below = |it: &NamedPath| {
-                let other = from_argument(folder, files.atoms.bytes(it.path));
-                other != path && is_at_or_below(&other, &path)
-            };
-            !of_call.any(is_below)
+            let of_call = named.callee.and_then(|it| paths_of_calls.get(&it));
+            let mut first_below = path.to_vec();
+            if !path.ends_with(b"/") {
+                first_below.push(b'/');
+            }
+            !of_call.is_some_and(|of_call| {
+                let at = of_call.partition_point(|it| *it < &first_below[..]);
+                let mut from = of_call[at..].iter().skip_while(|it| **it == path);
+                from.next().is_some_and(|it| it.starts_with(&first_below))
+            })
         };
         let is_read_below = !named.is_needed_on_disk
             && !named.is_passed_to_package
@@ -1358,38 +1385,42 @@ fn find_excluded_named_paths(
             _ if is_read_below => Code::NamedPathNotEmbedded,
             _ => continue,
         };
-        let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
-        let is_around_module = is_at_or_below(module, &path) && !named.becomes_working_folder;
-        if is_around_module || is_code || !seen.insert(path.clone()) {
+        let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
+        let is_around_module = is_at_or_below(module, path) && !named.becomes_working_folder;
+        if is_around_module || is_code || !seen.insert(path) {
             continue;
         }
         let is_left_out = match code {
-            Code::PathNeededOnDisk => provider.is_on_disk(to_native(module), to_native(&path)),
+            Code::PathNeededOnDisk => provider.is_on_disk(to_native(module), to_native(path)),
             _ => {
                 let holds_files = || {
-                    let listed = provider.list_excluded_folder(to_native(&path));
+                    let listed = provider.list_excluded_folder(to_native(path));
                     listed.is_some_and(|it| !it.is_empty())
-                        && is_excluded_folder(files, sources, provider, &path, None)
+                        && is_excluded_folder(files, sources, provider, path, None)
                 };
                 match is_read_below {
                     true => {
                         let is_asset = |it: &Vec<u8>| provider.is_in_asset(it);
-                        let listed = provider.list_excluded_folder(to_native(&path));
-                        !reads.iter().any(|it| it.path == path && it.is_listing)
+                        let listed = provider.list_excluded_folder(to_native(path));
+                        let listed_paths =
+                            listed_paths.get_or_insert_with(|| read_paths(|it| it.is_listing));
+                        !listed_paths.contains(path)
                             && !listed.unwrap_or_default().iter().any(is_asset)
                             && holds_files()
                     }
                     false => {
-                        !reads.iter().any(|it| it.path == path && !it.is_ruled_out)
+                        let run_paths =
+                            run_paths.get_or_insert_with(|| read_paths(|it| !it.is_ruled_out));
+                        !run_paths.contains(path)
                             && (provider
-                                .is_embeddable_only_by_asset(to_native(module), to_native(&path))
+                                .is_embeddable_only_by_asset(to_native(module), to_native(path))
                                 || holds_files())
                     }
                 }
             }
         };
         if is_left_out && !is_in_left_out_code(files, left_out, file, named.operand) {
-            found.push((named.operand, path, code));
+            found.push((named.operand, path.to_vec(), code));
         }
     }
     found

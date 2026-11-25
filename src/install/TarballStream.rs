@@ -782,6 +782,7 @@ impl TarballStream {
                     break 'insert_tag;
                 }
                 let dest = self.extraction.dest.as_ref().unwrap().fd();
+                crate::published_files::prune_to_published_files(bun_sys::Dir::borrow(&dest))?;
                 if File::openat(
                     dest,
                     bun_core::zstr!(".bun-tag"),

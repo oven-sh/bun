@@ -1488,6 +1488,363 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Like npm, which packs a git dependency the way it would for a publish: only what "files" and
+// .npmignore select ends up in node_modules.
+test.concurrent('a git dependency installs only what "files" and .npmignore select', async () => {
+  using dir = tempDir("git-dep-published-files", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "with-files",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "src/index.js", files: ["src"] }),
+        "src/index.js": "export const x = 1;\n",
+        "docs/guide.md": "docs\n",
+        "extras/script.js": "extra\n",
+        "index.test.js": "tests\n",
+        "LICENSE": "license\n",
+        ".npmignore": "docs\n",
+      },
+    },
+    {
+      branch: "with-npmignore",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "src/index.js" }),
+        "src/index.js": "export const x = 1;\n",
+        "src/skip.test.js": "tests\n",
+        "docs/guide.md": "docs\n",
+        "README.md": "readme\n",
+        ".npmignore": "docs\n*.test.js\n",
+      },
+    },
+  ]);
+  const url = `git+${pathToFileURL(bare)}`;
+
+  const results: Record<string, string[]> = {};
+  for (const branch of ["with-files", "with-npmignore"]) {
+    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
+    const cache = join(root, `cache-${branch}`);
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    const installed = join(project, "node_modules", "demo-lib");
+    const fresh = treeOf(installed).filter(path => path !== ".bun-tag");
+
+    // The same files come out of the cache.
+    rmSync(join(project, "node_modules"), { recursive: true });
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    expect(treeOf(installed).filter(path => path !== ".bun-tag")).toEqual(fresh);
+    results[branch] = fresh;
+  }
+
+  expect(results).toEqual({
+    "with-files": ["LICENSE", "package.json", "src", "src/index.js"],
+    "with-npmignore": ["README.md", "index.js", "package.json", "src", "src/index.js"],
+  });
+});
+
+test.concurrent.each(["hoisted", "isolated"])(
+  'a %s git dependency keeps its "main" and the sources of a trusted prepare script',
+  async linker => {
+    using dir = tempDir("git-dep-published-files-main", {});
+    const root = String(dir);
+    const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
+    const bare = await makeSharedRepo(root, [
+      {
+        branch: "main-not-in-files",
+        files: {
+          "package.json": pkg({ main: "lib/main.js", files: ["src"] }),
+          "lib/main.js": "m\n",
+          "src/a.js": "a\n",
+        },
+      },
+      {
+        branch: "main-extensionless",
+        files: { "package.json": pkg({ main: "lib/entry", files: ["src"] }), "lib/entry.js": "m\n", "src/a.js": "a\n" },
+      },
+      {
+        branch: "main-directory",
+        files: { "package.json": pkg({ main: "lib", files: ["src"] }), "lib/index.js": "m\n", "src/a.js": "a\n" },
+      },
+      {
+        branch: "main-npmignored",
+        files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
+      },
+      {
+        branch: "main-root",
+        files: { "package.json": pkg({ main: ".", files: ["src"] }), "src/a.js": "a\n" },
+      },
+      {
+        branch: "prepare-empty",
+        files: {
+          "package.json": pkg({ files: ["dist"], scripts: { prepare: "" } }),
+          "src/a.js": "a\n",
+          "dist/a.js": "a\n",
+        },
+      },
+      {
+        branch: "prepare",
+        files: {
+          "package.json": pkg({
+            files: ["dist"],
+            scripts: { prepare: `"${bunExe()}" -e "require('fs').cpSync('src/a.js', 'dist/built.js')"` },
+          }),
+          "src/a.js": "a\n",
+          "dist/a.js": "a\n",
+        },
+      },
+    ]);
+    const url = `git+${pathToFileURL(bare)}`;
+
+    const results: Record<string, string[]> = {};
+    for (const branch of [
+      "main-not-in-files",
+      "main-extensionless",
+      "main-directory",
+      "main-npmignored",
+      "main-root",
+      "prepare-empty",
+      "prepare",
+      "trusted",
+    ]) {
+      const project = writeProject(join(root, branch), {
+        "demo-lib": `${url}#${branch === "trusted" ? "prepare" : branch}`,
+      });
+      if (branch === "trusted") {
+        const json = JSON.parse(readFileSync(join(project, "package.json"), "utf8"));
+        writeFileSync(join(project, "package.json"), JSON.stringify({ ...json, trustedDependencies: ["demo-lib"] }));
+      }
+      expect((await runInstall(project, join(root, `cache-${branch}`), {}, "--linker", linker)).exitCode).toBe(0);
+      results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
+    }
+
+    expect(results).toEqual({
+      "main-not-in-files": ["lib", "lib/main.js", "package.json", "src", "src/a.js"],
+      "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
+      "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
+      "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
+      "main-root": ["index.js", "package.json", "src", "src/a.js"],
+      "prepare-empty": ["dist", "dist/a.js", "package.json"],
+      prepare: ["dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"],
+      trusted: ["dist", "dist/a.js", "dist/built.js", "index.js", "package.json", "src", "src/a.js"],
+    });
+  },
+);
+
+// The script runs in the installed copy, so that copy keeps the files it builds from.
+test.concurrent("bun pm trust can run the prepare script of a git dependency installed untrusted", async () => {
+  using dir = tempDir("git-dep-published-files-trust", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "prepare",
+      files: {
+        "package.json": JSON.stringify({
+          name: "demo-lib",
+          version: "1.0.0",
+          files: ["dist"],
+          scripts: { prepare: `"${bunExe()}" -e "require('fs').cpSync('src/a.js', 'dist/built.js')"` },
+        }),
+        "src/a.js": "a\n",
+        "dist/a.js": "a\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#prepare` });
+  const cache = join(root, "cache");
+  const install = await runInstall(project, cache, {});
+  expect(install.stdout).toContain("Blocked 1 postinstall");
+  expect(install.exitCode).toBe(0);
+  const trust = await runBun(project, cache, {}, "pm", "trust", "demo-lib");
+  const built = join(project, "node_modules", "demo-lib", "dist", "built.js");
+  expect(existsSync(built) ? readFileSync(built, "utf8") : trust).toBe("a\n");
+  expect(trust.exitCode).toBe(0);
+});
+
+test.concurrent('a git dependency follows the last duplicate "files"', async () => {
+  using dir = tempDir("git-dep-published-files-dup", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "dup",
+      files: {
+        "package.json": '{"name":"demo-lib","version":"1.0.0","files":["src"],"files":["dist"]}',
+        "src/a.js": "a\n",
+        "dist/b.js": "b\n",
+        "README": "readme\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "dup"), { "demo-lib": `git+${pathToFileURL(bare)}#dup` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "README",
+    "dist",
+    "dist/b.js",
+    "package.json",
+  ]);
+});
+
+test.concurrent("a git dependency keeps a normalized extensionless TypeScript main that files leaves out", async () => {
+  using dir = tempDir("git-dep-published-files-main", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "ts-main",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "./lib/./entry", files: ["dist"] }),
+        "lib/entry.ts": "export {};\n",
+        "lib/other.ts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#ts-main` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/entry.ts",
+    "package.json",
+  ]);
+});
+
+// An ignore file that the selection would read but cannot leaves the package whole. One in a folder
+// that "files" leaves out is never read.
+test.concurrent("a git dependency with a directory named .npmignore installs whole instead of crashing", async () => {
+  using dir = tempDir("git-dep-npmignore-dir", {});
+  const root = String(dir);
+  const pkg = (extra: object) => JSON.stringify({ name: "demo-lib", version: "1.0.0", ...extra });
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "ignore-dir",
+      files: { "package.json": pkg({}), "sub/.npmignore/keep.txt": "x\n", "index.js": "module.exports = 1;\n" },
+    },
+    {
+      branch: "nested-node-modules",
+      files: {
+        "package.json": pkg({}),
+        "sub/node_modules/x/.npmignore/keep.txt": "x\n",
+        "index.js": "module.exports = 1;\n",
+      },
+    },
+    {
+      branch: "outside-files",
+      files: { "package.json": pkg({ files: ["dist"] }), "sub/.npmignore/keep.txt": "x\n", "dist/a.js": "a\n" },
+    },
+  ]);
+  const url = `git+${pathToFileURL(bare)}`;
+
+  const results: Record<string, string[]> = {};
+  for (const branch of ["ignore-dir", "nested-node-modules", "outside-files"]) {
+    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
+    const { stdout, exitCode } = await runInstall(project, join(root, `cache-${branch}`), {});
+    expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+    expect(exitCode).toBe(0);
+    results[branch] = treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag");
+  }
+
+  expect(results).toEqual({
+    "ignore-dir": ["index.js", "package.json", "sub", "sub/.npmignore", "sub/.npmignore/keep.txt"],
+    "nested-node-modules": [
+      "index.js",
+      "package.json",
+      "sub",
+      "sub/node_modules",
+      "sub/node_modules/x",
+      "sub/node_modules/x/.npmignore",
+      "sub/node_modules/x/.npmignore/keep.txt",
+    ],
+    "outside-files": ["dist", "dist/a.js", "package.json"],
+  });
+});
+
+test.concurrent("a git dependency keeps the .mts file behind a .js main that files leaves out", async () => {
+  using dir = tempDir("git-dep-published-files-main-mts", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "mts-main",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "lib/index.js", files: ["dist"] }),
+        "lib/index.mts": "export {};\n",
+        "lib/other.mts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#mts-main` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/index.mts",
+    "package.json",
+  ]);
+});
+
+test.concurrent("a git dependency keeps the TypeScript file behind a main with parent segments", async () => {
+  using dir = tempDir("git-dep-published-files-main-js", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "js-main",
+      files: {
+        "package.json": JSON.stringify({
+          name: "demo-lib",
+          version: "1.0.0",
+          main: "src/../lib/index.js",
+          files: ["dist"],
+        }),
+        "lib/index.ts": "export {};\n",
+        "dist/b.js": "b\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#js-main` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "dist",
+    "dist/b.js",
+    "lib",
+    "lib/index.ts",
+    "package.json",
+  ]);
+});
+
+test.concurrent("a .npmignore file wins over a .gitignore directory in a git dependency", async () => {
+  using dir = tempDir("git-dep-npmignore-precedence", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "precedence",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0" }),
+        ".npmignore": "junk.txt\n",
+        ".gitignore/keep.txt": "x\n",
+        "junk.txt": "junk\n",
+        "index.js": "module.exports = 1;\n",
+      },
+    },
+  ]);
+  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#precedence` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  const tree = treeOf(join(project, "node_modules", "demo-lib"));
+  expect(tree).toContain("index.js");
+  expect(tree).toContain("package.json");
+  expect(tree).not.toContain("junk.txt");
+});
+
 test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
   async () => {

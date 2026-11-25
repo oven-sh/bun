@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use bstr::BStr;
 use bun_bundler::bundle_v2::FileMap;
+use bun_core::decimal_options::DecimalOptions;
 use bun_core::{Global, Output, ZBox, env_var};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::aot_options::ReadListener;
@@ -1198,6 +1199,11 @@ pub(crate) fn graph_flag_of_test_worker() -> Option<Vec<u8>> {
 #[inline]
 pub(crate) fn runs_compiled_code() -> bool {
     IS_FROM_DESCRIPTOR.load(Ordering::Relaxed)
+}
+
+pub(crate) fn decimal_options() -> DecimalOptions {
+    let graph = Graph::get_ref().filter(|_| runs_compiled_code());
+    graph.map_or_else(DecimalOptions::default, |it| it.runtime_options.decimal)
 }
 
 /// `--isolate=modules`: a module graph for each test file in one global object, whose properties are put back between files. What puts them back is a

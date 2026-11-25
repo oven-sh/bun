@@ -7,7 +7,6 @@ const marked = (mark: b.BuiltinMark, paths: readonly b.BuiltinPath[]) =>
 export default b.declarations(
   marked("IsAddedByOption", [
     "$vm",
-    "Decimal",
     "Loader",
     "__disableSamplingProfiler",
     "__disableSuperSampler",

@@ -592,7 +592,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_require = find_own_require(hir, bound, decisions, made);
         // In a closed world the loader refuses a call that is left as written, so the call checks at run time that the real createRequire() made its callee.
         let is_checked_by_identity = is_maker_replaced
-            && modules.is_closed_world()
+            && self.checks_require_identity()
             && matches!(site.kind, ImportSiteKind::Require(_))
             && matches!(
                 own_require,
@@ -822,6 +822,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(loaded)
     }
 
+    fn checks_require_identity(&self) -> bool {
+        let modules = self.file.inputs.modules;
+        modules.is_closed_world()
+            || (modules.runs_tests()
+                && matches!(modules.kind(self.file.file), ModuleKind::CommonJs))
+    }
+
     fn try_lower_create_require(
         &mut self,
         call: ExprId,
@@ -834,7 +841,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_require = find_own_require(hir, bound, Some(decisions), call);
         let is_behind_test = is_create_require_behind_get_builtin_module(hir, bound, written);
         let modules = self.file.inputs.modules;
-        let is_checked_by_identity = modules.is_closed_world() && self.may_maker_be_replaced(call);
+        let is_checked_by_identity =
+            self.checks_require_identity() && self.may_maker_be_replaced(call);
         let kept = match own_require {
             Some(OwnRequire::Made)
                 if is_checked_by_identity

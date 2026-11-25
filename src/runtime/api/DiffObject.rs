@@ -20,12 +20,16 @@ use crate::generated_bindgen::diff_object::{
 
 trait JsUnit: Unit {
     fn of(string: &String) -> Cow<'_, [Self]>;
+    fn extend(out: &mut Vec<Self>, string: &String, range: Range<usize>);
     /// `operation`, which is ASCII, and then `text`. If there is no memory, a string that throws when it is converted.
     fn line(operation: u8, text: &[Self]) -> String;
 }
 impl JsUnit for u8 {
     fn of(string: &String) -> Cow<'_, [u8]> {
         Cow::Borrowed(string.latin1())
+    }
+    fn extend(out: &mut Vec<u8>, string: &String, range: Range<usize>) {
+        out.extend_from_slice(&string.latin1()[range]);
     }
     fn line(operation: u8, text: &[u8]) -> String {
         let (line, units) = String::create_uninitialized_latin1(1 + text.len());
@@ -42,6 +46,12 @@ impl JsUnit for u16 {
             Cow::Borrowed(string.utf16())
         } else {
             Cow::Owned(string.latin1().iter().map(|&unit| unit.into()).collect())
+        }
+    }
+    fn extend(out: &mut Vec<u16>, string: &String, range: Range<usize>) {
+        match units(string) {
+            CodeUnits::U8(latin1) => out.extend(latin1[range].iter().map(|&unit| u16::from(unit))),
+            CodeUnits::U16(utf16) => out.extend_from_slice(&utf16[range]),
         }
     }
     fn line(operation: u8, text: &[u16]) -> String {
@@ -72,6 +82,14 @@ macro_rules! by_width {
             $function::<u8>($($argument),*)
         }
     };
+}
+
+fn units(string: &String) -> CodeUnits<'_> {
+    if string.is_utf16() {
+        CodeUnits::U16(string.utf16())
+    } else {
+        CodeUnits::U8(string.latin1())
+    }
 }
 
 fn clone_units<T: Unit>(units: &[T]) -> String {
@@ -172,7 +190,7 @@ struct Compare {
 }
 
 impl Compare {
-    fn diff<T: Unit>(self, split: Split, a: &[T], b: &[T]) -> Option<Vec<Edit>> {
+    fn diff(self, split: Split, a: CodeUnits<'_>, b: CodeUnits<'_>) -> Option<Vec<Edit>> {
         diff_text_ignoring(split, a, b, self.ignore, self.max_edits)
     }
 }
@@ -234,16 +252,14 @@ fn without_cr(texts: [&String; 2]) -> Option<Box<[String; 2]>> {
 }
 
 #[inline(never)]
-fn text_runs<T: JsUnit>(
-    split: Split,
-    old: &String,
-    new: &String,
-    compare: Compare,
-) -> Option<Vec<Run>> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(split, &a, &b)?;
-    let kept_at_end = |from| split.count(&b[from..]);
-    Some(runs(edits.into_iter(), b.len(), kept_at_end))
+fn text_runs(split: Split, old: &String, new: &String, compare: Compare) -> Option<Vec<Run>> {
+    let b = units(new);
+    let edits = compare.diff(split, units(old), b)?;
+    let kept_at_end = |from| match b {
+        CodeUnits::U8(b) => split.count(&b[from..]),
+        CodeUnits::U16(b) => split.count(&b[from..]),
+    };
+    Some(runs(edits.into_iter(), new.length(), kept_at_end))
 }
 
 #[inline(always)]
@@ -253,7 +269,7 @@ fn changes<'s>(
     compare: Compare,
 ) -> Option<impl Iterator<Item = Change> + use<'s>> {
     let [old, new] = texts.get();
-    let runs = by_width!([old, new], text_runs(split, old, new, compare));
+    let runs = text_runs(split, old, new, compare);
     let change = move |Run { kind, range, count }| Change {
         value: texts.get()[usize::from(kind != Kind::Removed)].shared_substring(range),
         added: kind == Kind::Added,
@@ -404,17 +420,15 @@ fn hunk_with<L>(hunk: patch::PatchHunk<L>, line: impl FnMut(L) -> String) -> Hun
     }
 }
 
-fn hunks_of<T: JsUnit>(
-    old: &String,
-    new: &String,
-    context: usize,
-    compare: Compare,
-) -> Option<Vec<Hunk>> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(Split::Lines, &a, &b)?;
-    let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
+fn hunks_of(old: &String, new: &String, context: usize, compare: Compare) -> Option<Vec<Hunk>> {
+    let (a, b) = (units(old), units(new));
+    let edits = compare.diff(Split::Lines, a, b)?;
+    let hunks = patch::hunks(a, b, &edits, context).map(|hunk| {
         hunk_with(hunk, |line| match line {
-            patch::Line::Text(operation, text) => T::line(operation, text),
+            patch::Line::Text(operation, range) => match if operation == b'-' { a } else { b } {
+                CodeUnits::U8(text) => u8::line(operation, &text[range]),
+                CodeUnits::U16(text) => u16::line(operation, &text[range]),
+            },
             patch::Line::NoNewline => String::clone_latin1(patch::NO_NEWLINE),
         })
     });
@@ -431,7 +445,7 @@ pub(crate) fn hunks<'a>(
     let compare = compare_lines!(heap, options);
     let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
     let [old, new] = texts.get();
-    Ok(by_width!([old, new], hunks_of(old, new, context, compare)))
+    Ok(hunks_of(old, new, context, compare))
 }
 
 struct FileHeader<'a> {
@@ -447,8 +461,8 @@ fn format_patch<T: JsUnit>(
     context: usize,
     compare: Compare,
 ) -> Option<String> {
-    let (a, b) = (T::of(old), T::of(new));
-    let edits = compare.diff(Split::Lines, &a, &b)?;
+    let (a, b) = (units(old), units(new));
+    let edits = compare.diff(Split::Lines, a, b)?;
     let mut out = Vec::new();
     // As `diff -u`: no differences, no output.
     if !edits.is_empty() {
@@ -456,8 +470,10 @@ fn format_patch<T: JsUnit>(
             patch::write_file_header(&mut out, file.marker, file.name, &T::of(file.header));
         }
     }
-    for hunk in patch::hunks(&a, &b, &edits, context) {
-        patch::write_hunk(&mut out, &hunk);
+    for hunk in patch::hunks(a, b, &edits, context) {
+        patch::write_hunk(&mut out, hunk, |out, operation, range| {
+            T::extend(out, if operation == b'-' { old } else { new }, range);
+        });
     }
     Some(clone_units(&out))
 }
@@ -585,7 +601,9 @@ fn apply<'a, T: JsUnit>(
     source: &String,
     hunks: &[patch::HunkToApply<'_, T>],
 ) -> bindgen::Result<'a, String> {
-    match patch::apply(&T::of(source), hunks) {
+    // A widened source is freed before the result is copied.
+    let patched = patch::apply(&T::of(source), hunks);
+    match patched {
         Ok(patched) => Ok(clone_units(&patched)),
         Err(patch::ApplyError::Mismatch { hunk, reason }) => Err(heap.error_with_code(
             ErrorCode::PATCH_DOES_NOT_APPLY,

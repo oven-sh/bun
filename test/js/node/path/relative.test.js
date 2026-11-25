@@ -101,4 +101,99 @@ describe("path.relative", () => {
     assert.ok(result.startsWith(".."));
     assert.ok(result.includes("b"));
   });
+
+  // Node answers "" for `from === to` before it looks at either operand:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1360
+  test("equal operands answer the empty string, whatever they hold", () => {
+    // A copy out of bytes is another string: a literal and JSON.parse hand out one string for equal short texts.
+    const anotherString = text =>
+      /^[\x00-\xff]*$/.test(text)
+        ? Buffer.from(text, "latin1").toString("latin1")
+        : Buffer.from(text, "utf16le").toString("utf16le");
+    const texts = [
+      "",
+      ".",
+      "..",
+      "a",
+      "a/b",
+      "../a",
+      "/",
+      "//",
+      "/a/./b",
+      "/a/../b",
+      "/var/lib",
+      "/var/lib/",
+      "c:/aaaa/bbbb",
+      "C:\\a\\..\\b",
+      "\\\\server\\share\\a",
+      "é",
+      "/é/ü.txt",
+      "/日本/語",
+      "x".repeat(600),
+      "/" + "y".repeat(5000),
+    ];
+    const failures = [];
+    for (const [flavor, { relative }] of Object.entries({ posix: path.posix, win32: path.win32 })) {
+      for (const text of texts) {
+        const answers = [
+          relative(text, text),
+          relative(text, anotherString(text)),
+          relative(anotherString(text), text),
+          relative(anotherString(text), anotherString(text)),
+        ];
+        if (answers.some(answer => answer !== "")) failures.push([flavor, text.slice(0, 40), answers]);
+      }
+      const noString = {};
+      for (const operand of [5, noString, undefined]) {
+        assert.throws(() => relative(operand, operand), { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+      }
+    }
+    assert.deepStrictEqual(failures, []);
+  });
+
+  test("operands of one length that differ", () => {
+    const failures = [];
+    for (const [relative, cases] of [
+      [
+        path.posix.relative,
+        [
+          ["/", "/", ""],
+          ["/a", "/b", "../b"],
+          ["/aaa", "/aab", "../aab"],
+          ["/a/b", "/a/c", "../c"],
+          ["/ab/c", "/ab/d", "../d"],
+          ["/a/b/c", "/a/b/d", "../d"],
+          ["/var/lib", "/var/bin", "../bin"],
+          ["/a/bb", "/a/b/", "../b"],
+          ["/a/b/", "/a/bb", "../bb"],
+          ["/a/", "/a/", ""],
+          ["/a/.", "/a/b", "b"],
+          ["/a/b", "/a/.", ".."],
+          ["/a/..", "/b/..", ""],
+          ["/a/./b", "/a/./c", "../c"],
+          ["/a//b", "/a/c/", "../c"],
+          ["/x/../a", "/y/../b", "../b"],
+          ["a/b", "a/c", "../c"],
+          ["./a", "./b", "../b"],
+          ["/" + "a".repeat(600) + "/b", "/" + "a".repeat(600) + "/c", "../c"],
+        ],
+      ],
+      [
+        path.win32.relative,
+        [
+          ["c:/aaaa/bbbb", "c:/aaaa/cccc", "..\\cccc"],
+          ["c:\\a\\b", "c:\\a\\c", "..\\c"],
+          ["C:\\a", "c:\\A", ""],
+          ["\\\\s\\h\\a", "\\\\s\\h\\b", "..\\b"],
+        ],
+      ],
+    ]) {
+      for (const [from, to, expected] of cases) {
+        assert.strictEqual(from.length, to.length);
+        const actual = relative(from, to);
+        if (actual !== expected) failures.push([from.slice(0, 40), to.slice(0, 40), actual, expected]);
+      }
+    }
+    assert.deepStrictEqual(failures, []);
+  });
 });

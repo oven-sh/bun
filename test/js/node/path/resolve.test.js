@@ -276,4 +276,66 @@ describe("path.resolve", () => {
     expect(JSON.parse(stdout)).toEqual([cwd + "/z", cwd, "e\\/z"]);
     expect(exitCode).toBe(0);
   });
+
+  // `process.cwd()` keeps one string until `process.chdir()`. Operands that name the working directory and nothing else
+  // answer that string, whether or not there is one yet.
+  test.concurrent("operands that name the working directory alone answer process.cwd()", async () => {
+    using first = tempDir("resolve-cwd-first", {});
+    using second = tempDir("resolve-cwd-second", {});
+    const script = `const path = require("node:path");
+      const dot = String.fromCharCode(46);
+      const slash = String.fromCharCode(47);
+      const forms = [[], [""], ["."], ["./"], ["", ""], ["", "."], [".", ""], [dot + slash]];
+      const wrong = [];
+      if (path.resolve() !== process.cwd()) wrong.push("the first use in the process");
+      for (const dir of ${JSON.stringify([String(first), String(second)])}) {
+        for (const form of forms) {
+          process.chdir(dir);
+          const withoutAString = path.resolve(...form);
+          const withAString = path.resolve(...form);
+          const cwd = process.cwd();
+          if (withoutAString !== cwd || withAString !== cwd || path.basename(cwd) !== path.basename(dir))
+            wrong.push([dir, form, withoutAString, withAString, cwd]);
+        }
+      }
+      console.log(JSON.stringify(wrong));`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent.skipIf(isWindows)("a working directory that was removed", async () => {
+    using dir = tempDir("resolve-cwd-removed", {});
+    const script = `const path = require("node:path");
+      const fs = require("node:fs");
+      const answers = () =>
+        [[], [""], ["."], ["./"]].map(form => {
+          try {
+            return path.resolve(...form);
+          } catch (error) {
+            return [error.code, error.syscall];
+          }
+        });
+      const base = ${JSON.stringify(String(dir))};
+      // Nothing has asked for the working directory since it changed, so the system is asked, and it has none.
+      fs.mkdirSync(path.join(base, "asked-after"));
+      process.chdir(path.join(base, "asked-after"));
+      fs.rmdirSync(path.join(base, "asked-after"));
+      const askedAfter = answers();
+      // process.cwd() has answered, and that string is the answer until the next process.chdir().
+      fs.mkdirSync(path.join(base, "asked-before"));
+      process.chdir(path.join(base, "asked-before"));
+      const cwd = process.cwd();
+      fs.rmdirSync(cwd);
+      const askedBefore = answers().map(answer => answer === cwd);
+      console.log(JSON.stringify({ askedAfter, askedBefore }));`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      askedAfter: Array(4).fill(["ENOENT", "uv_cwd"]),
+      askedBefore: [true, true, true, true],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

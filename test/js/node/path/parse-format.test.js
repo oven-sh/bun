@@ -254,4 +254,107 @@ describe("path.format", () => {
     expect(stdout).toBe("true\ntrue\n/tmp/file.txt\n");
     expect(exitCode).toBe(0);
   });
+
+  // Node v26.3.0 answers every case below in the same way. Its format is _format of lib/path.js:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L156-L180
+  describe.each([
+    ["posix", path.posix, "/"],
+    ["win32", path.win32, "\\"],
+  ])("path.%s.format", (_, { format }, sep) => {
+    test("a member that is falsy counts as absent, whatever it is", () => {
+      expect(format({ dir: 0, root: "/r/", base: "b" })).toBe("/r/b");
+      expect(format({ dir: "/a", base: false, name: "n", ext: ".e" })).toBe(`/a${sep}n.e`);
+      expect(format({ name: 0, ext: ".e" })).toBe(".e");
+      expect(format({ base: NaN, name: "n" })).toBe("n");
+      expect(format({ dir: null, root: undefined, base: "b" })).toBe("b");
+      expect(format({ dir: "", root: "", base: "", name: "", ext: "" })).toBe("");
+    });
+
+    test("a member that is no string is converted where the answer is put together", () => {
+      expect(format({ dir: 12, base: "b" })).toBe(`12${sep}b`);
+      expect(format({ dir: true, base: "b" })).toBe(`true${sep}b`);
+      expect(format({ dir: "/a", base: [] })).toBe(`/a${sep}`);
+      expect(format({ name: "n", ext: 5 })).toBe("n.5");
+      // Nothing is put together around a base alone: it is answered as it is.
+      expect(format({ base: 5 })).toBe(5);
+      expect(() => format({ dir: Symbol("s"), base: "b" })).toThrow(TypeError);
+    });
+
+    test("dir is the root where the two are one value", () => {
+      expect(format({ dir: "/a", root: "/a", base: "b" })).toBe("/ab");
+      expect(format({ root: "/", base: "b" })).toBe("/b");
+      expect(format({ dir: "1", root: 1, base: "b" })).toBe(`1${sep}b`);
+    });
+
+    test("members are read where they are needed, inherited ones too", () => {
+      const readsOf = object => {
+        const seen = [];
+        format(new Proxy(object, { get: (target, key) => (seen.push(key), target[key]) }));
+        return seen.join();
+      };
+      expect(readsOf({ dir: "/d", root: "/", base: "b", name: "n", ext: ".e" })).toBe("dir,base,root");
+      expect(readsOf({ root: "/", name: "n", ext: ".e" })).toBe("dir,root,base,name,ext,root");
+      expect(readsOf({})).toBe("dir,root,base,name,ext");
+
+      class Getters {
+        get dir() {
+          return "/c";
+        }
+        get base() {
+          return "d";
+        }
+      }
+      expect(format(new Getters())).toBe(`/c${sep}d`);
+      expect(format(Object.create({ dir: "/a", base: "b" }))).toBe(`/a${sep}b`);
+      expect(format(Object.assign(Object.create(null), { dir: "/n", base: "b" }))).toBe(`/n${sep}b`);
+      expect(() =>
+        format({
+          get dir() {
+            throw new RangeError("from the getter");
+          },
+        }),
+      ).toThrow(new RangeError("from the getter"));
+    });
+
+    test("objects are converted in the order of the answer", () => {
+      const log = [];
+      const noisy = (name, text) => ({ toString: () => (log.push(name), text) });
+      expect(format({ dir: noisy("dir", "/d"), base: noisy("base", "b"), root: noisy("root", "/") })).toBe(`/d${sep}b`);
+      expect(log.splice(0).join()).toBe("dir,base");
+      // An object has no first character, so its extension gets a dot.
+      expect(format({ root: noisy("root", "/"), name: noisy("name", "n"), ext: noisy("ext", ".e") })).toBe("/n..e");
+      expect(log.join()).toBe("name,ext,root");
+    });
+
+    test("a lone surrogate is kept", () => {
+      expect(format({ dir: "/a", base: "\ud800" })).toBe(`/a${sep}\ud800`);
+    });
+
+    test("only the first argument is looked at, and `this` is not", () => {
+      expect(format({ dir: "/a", base: "b" }, { dir: "/x" })).toBe(`/a${sep}b`);
+      expect(format.call({ dir: "/t" }, { dir: "/a", base: "b" })).toBe(`/a${sep}b`);
+      expect(format(new Date(0))).toBe("");
+      expect(format(new Map([["dir", "/m"]]))).toBe("");
+    });
+
+    test("what is no object, an array or a function is refused in Node's words", () => {
+      for (const [value, received] of [
+        [[], "an instance of Array"],
+        [new Proxy([], {}), "an instance of Array"],
+        [function named() {}, "function named"],
+        [class A {}, "function A"],
+        [Symbol("s"), "type symbol (Symbol(s))"],
+        [5n, "type bigint (5n)"],
+      ]) {
+        expect(() => format(value)).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            name: "TypeError",
+            message: `The "pathObject" argument must be of type object. Received ${received}`,
+          }),
+        );
+      }
+      expect(() => format()).toThrow('The "pathObject" argument must be of type object. Received undefined');
+    });
+  });
 });

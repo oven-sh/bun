@@ -256,7 +256,6 @@ pub(crate) struct ImportScan<'s> {
     pub folders_entered: &'s [(ExprId, Atom)],
     pub reads_below_working_folder: &'s [(ExprId, Atom)],
     pub named_paths: &'s [NamedPath],
-    pub folders_passed_to_packages: &'s [ExprId],
     pub paths_created: &'s [Atom],
     pub web_assembly_names: &'s [(ExprId, Atom)],
     pub reading_functions: &'s [SymbolId],

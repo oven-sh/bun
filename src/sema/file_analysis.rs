@@ -61,8 +61,6 @@ pub struct FileAnalysis<'s> {
     /// The reads of paths that start at the working directory.
     pub reads_below_working_folder: &'s [(ExprId, Atom)],
     pub named_paths: &'s [NamedPath],
-    /// Of `own_folder_arguments`, what a function of a package gets.
-    pub folders_passed_to_packages: &'s [ExprId],
     /// Files and folders that the file creates or writes to, relative to its own folder.
     pub paths_created: &'s [Atom],
     /// Written names of WebAssembly files, as in `folder + "a.wasm"` where `folder` may be the file's own.

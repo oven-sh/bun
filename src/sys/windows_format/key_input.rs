@@ -158,7 +158,7 @@ pub fn translate(record: &InputRecord, decoder: &mut Utf16Decoder, out: &mut Vec
         out.push(0);
     }
     let end = out.len();
-    for _ in 1..record.repeat_count.min(256) {
+    for _ in 1..record.repeat_count {
         out.extend_from_within(start..end);
     }
 }
@@ -278,6 +278,7 @@ mod tests {
             ..key_down(0x26, 0, 0)
         };
         assert_eq!(translate_all(&[with_repeat_count(1)]), b"\x1b[A");
+        assert_eq!(translate_all(&[with_repeat_count(1000)]).len(), 3000);
         assert_eq!(
             translate_all(&[with_repeat_count(3)]),
             b"\x1b[A\x1b[A\x1b[A"

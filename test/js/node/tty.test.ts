@@ -564,6 +564,7 @@ describe.concurrent("stdio in a terminal", () => {
       GetStdHandle: { args: ["i32"], returns: "i64" },
       GetConsoleMode: { args: ["i64", "ptr"], returns: "i32" },
       SetConsoleMode: { args: ["i64", "u32"], returns: "i32" },
+      ReadConsoleInputW: { args: ["i64", "ptr", "u32", "ptr"], returns: "i32" },
       GetConsoleScreenBufferInfo: { args: ["i64", "ptr"], returns: "i32" },
       GetConsoleCP: { args: [], returns: "u32" },
       GetConsoleOutputCP: { args: [], returns: "u32" },
@@ -624,6 +625,7 @@ describe.concurrent("stdio in a terminal", () => {
       cmd: [bunExe(), "main.js"],
       cwd: String(dir),
       env: { ...bunEnv, CONTROL_PORT: String((server.address() as AddressInfo).port) },
+      windowsHide: true,
       terminal: { cols: 80, rows: 24, data: (_, chunk) => void (screen += decoder.decode(chunk, { stream: true })) },
     });
     const earlyExit = proc.exited.then(code => Promise.reject(new Error(`exited with ${code}:\n${screen}`)));
@@ -1136,6 +1138,7 @@ describe.concurrent("stdio in a terminal", () => {
       it.each([
         ["a letter", keystroke(0x41, 0x61), "a"],
         ["a repeated letter", keystroke(0x41, 0x61, 0, 3), "aaa"],
+        ["a letter that is held down", keystroke(0x41, 0x61, 0, 300), Buffer.alloc(300, "a").toString()],
         ["a lone modifier to no input", keystroke(VK.SHIFT, 0, SHIFT_PRESSED), ""],
         ["F1", keystroke(VK.F1), "\x1b[[A"],
         ["F5", keystroke(VK.F5), "\x1b[[E"],
@@ -1514,6 +1517,29 @@ describe.concurrent("stdio in a terminal", () => {
       expect(await proc.exited).toBe(0);
     });
 
+    it("reads a line after the process moves to another console", async () => {
+      await using child = await spawnChild(`
+        const { AllocConsole, FreeConsole, CreateFileA, SetStdHandle } = require("bun:ffi").dlopen("kernel32.dll", {
+          AllocConsole: { args: [], returns: "i32" },
+          FreeConsole: { args: [], returns: "i32" },
+          CreateFileA: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+          SetStdHandle: { args: ["i32", "i64"], returns: "i32" },
+        }).symbols;
+        forwardData(process.stdin).on("data", () => process.stdin.pause());
+        await waitForContinue();
+        FreeConsole();
+        AllocConsole();
+        const GENERIC_READ_WRITE = 0xc0000000;
+        SetStdHandle(STD_INPUT_HANDLE, CreateFileA(Buffer.from("CONIN$\\0"), GENERIC_READ_WRITE, 3, null, 3, 0, null));
+        writeKeyEvents([[1, 0, 0x62], [1, 0x0d, 0x0d]]);
+        process.stdin.resume();
+      `);
+      child.type("a\r");
+      await child.expectData("a\r\n");
+      child.sendContinue();
+      await child.expectData("b\r\n");
+    });
+
     it("tty_wrap setRawMode() accepts uv_tty_mode_t values on the input handle only", async () => {
       await using child = await spawnChild(`
         const { TTY } = process.binding("tty_wrap");
@@ -1536,6 +1562,69 @@ describe.concurrent("stdio in a terminal", () => {
         [EINVAL, 0x200],
         [0, 7],
       ]);
+    });
+
+    const ENABLE_WINDOW_AND_VT_INPUT = 0x208;
+    const inputModePrelude = `
+      const getInputMode = () => {
+        const mode = new Uint32Array(1);
+        k32.GetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), mode);
+        return mode[0];
+      };
+    `;
+
+    it("setRawMode(false) keeps the console mode if raw mode was never enabled", async () => {
+      await using child = await spawnChild(`${inputModePrelude}
+        k32.SetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), ${ENABLE_WINDOW_AND_VT_INPUT});
+        process.stdin.setRawMode(false);
+        send(getInputMode());
+      `);
+      expect(await child.receive()).toBe(ENABLE_WINDOW_AND_VT_INPUT);
+    });
+
+    it("setRawMode() fails on a read-only console handle", async () => {
+      await using child = await spawnChild(`${inputModePrelude}
+        const before = getInputMode();
+        const grandchild = Bun.spawnSync({
+          cmd: [process.execPath, "-e", "process.stdin.on('error', () => console.log('failed')).setRawMode(true)"],
+          stdio: [fs.openSync("\\\\\\\\.\\\\CONIN$", "r"), "pipe", "inherit"],
+        });
+        send({ stdout: String(grandchild.stdout), isModeKept: getInputMode() === before });
+      `);
+      expect(await child.receive()).toEqual({ stdout: "failed\n", isModeKept: true });
+    });
+
+    it("delivers input that fills the read buffer while line input is off", async () => {
+      await using child = await spawnChild(`
+        k32.SetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), ${ENABLE_WINDOW_AND_VT_INPUT});
+        writeKeyEvents(Array(8192).fill([1, 0, 0x61]));
+        forwardData(process.stdin);
+      `);
+      await child.expectData(Buffer.alloc(8192, "a").toString());
+    });
+
+    it("pause() adds nothing to typed-ahead lines that are left for the next program", async () => {
+      await using child = await spawnChild(
+        `
+          const leftover = new Set();
+          for (let i = 0; i < 20; i++) {
+            writeKeyEvents([..."a\\ra\\ra\\ra\\r"].map(char => [1, 0, char.charCodeAt(0)]));
+            Bun.spawnSync([process.execPath, "grandchild.js"], { stdio: ["inherit", "inherit", "inherit"] });
+            // Keeps the read below from blocking.
+            writeKeyEvents([[1, 0, 0x61]]);
+            const records = Buffer.alloc(INPUT_RECORD_SIZE * 64);
+            const count = new Uint32Array(1);
+            k32.ReadConsoleInputW(k32.GetStdHandle(STD_INPUT_HANDLE), records, 64, count);
+            for (let j = 0; j < count[0]; j++) {
+              const isKeyEvent = records.readUInt16LE(INPUT_RECORD_SIZE * j) === 1;
+              if (isKeyEvent) leftover.add(records.readUInt16LE(INPUT_RECORD_SIZE * j + 14));
+            }
+          }
+          send([...leftover].filter(char => char !== 0x61 && char !== 0x0d));
+        `,
+        { "grandchild.js": `process.stdin.once("data", () => setImmediate(() => process.stdin.pause()));` },
+      );
+      expect(await child.receive()).toEqual([]);
     });
 
     it("SIGWINCH reaches a listener added after the previous one was removed", async () => {

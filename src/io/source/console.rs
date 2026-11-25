@@ -209,6 +209,19 @@ impl Shared {
         }
     }
 
+    /// For wake keys that arrived after the read had ended.
+    fn remove_wake_keys(&mut self, input: &Input, keys: [InputRecord; 3]) {
+        if !matches!(console::queued_record_count(input.raw()), Ok(1..=3)) {
+            return;
+        }
+        let mut records = keys;
+        match console::read_records(input.raw(), &mut records) {
+            Ok([]) | Err(_) => {}
+            Ok(records) if keys.ends_with(records) => self.pending_wake_count -= 1,
+            Ok(records) => drop(console::write_records(input.raw(), records)),
+        }
+    }
+
     fn add_line(&mut self, line: &[u16]) {
         const CTRL_Z: u16 = 0x1A;
         if let [CTRL_Z, .., LF] = line {
@@ -237,9 +250,12 @@ fn watch_line_reads(input: &Input) {
         {
             continue;
         }
-        input.watcher_gate.post_on_signal(input.handle.as_handle());
         // The console handles requests in order, so it has seen the read once this round trip returns.
-        let is_signaled = console::is_input(input.raw()) && input.is_signaled();
+        if !console::is_input(input.raw()) {
+            continue;
+        }
+        input.watcher_gate.post_on_signal(input.handle.as_handle());
+        let is_signaled = input.is_signaled();
         last_signaled_read = current_read.filter(|_| is_signaled);
         if !is_signaled {
             // A line read discards `WINDOW_BUFFER_SIZE_EVENT` records.
@@ -248,16 +264,23 @@ fn watch_line_reads(input: &Input) {
     }
 }
 
+/// Without line input a full buffer can be all there is, and without processed input a line ends with CR.
+fn has_line_remainder(handle: HANDLE, text: &[u16]) -> bool {
+    console::mode(handle).is_ok_and(|mode| {
+        mode & w::ENABLE_LINE_INPUT != 0
+            && (mode & w::ENABLE_PROCESSED_INPUT != 0 || text.last() != Some(&CR))
+    })
+}
+
 fn read_line(input: &'static Input) {
     /// Older consoles stop accepting keys once the buffer is full.
     const BUFFER_LEN: usize = 8192;
     let mut buffer = vec![0; BUFFER_LEN];
     let mut shared = SHARED.lock();
     if !shared.readers.is_empty() && !IS_RAW.load(Ordering::SeqCst) {
-        let private_handle = shared
-            .spare_line_handle
-            .take()
-            .or_else(|| open_input().ok());
+        let spare_handle = shared.spare_line_handle.take();
+        let is_spare = spare_handle.is_some();
+        let private_handle = spare_handle.or_else(|| open_input().ok());
         let cancel_token = CancelToken::default();
         shared.has_watcher_thread =
             shared.has_watcher_thread || blocking::try_spawn_dedicated(|| watch_line_reads(input));
@@ -279,14 +302,19 @@ fn read_line(input: &'static Input) {
                 Ok(line) => shared.add_line(line),
                 // Cancelled, or the console failed to process a character.
                 Err(Win32Error::OPERATION_ABORTED | Win32Error::INVALID_PARAMETER) => {}
+                // The process has moved to another console.
+                Err(Win32Error::INVALID_HANDLE) if is_spare => {}
                 Err(err) => shared.record_error(err),
             }
             // The rest of a line longer than `buffer` has already left the input buffer.
             let is_partial_line = |line: &[u16]| {
-                line.len() == BUFFER_LEN && !matches!(line, [.., CR, LF] | [.., WAKE_CHAR])
+                line.len() == BUFFER_LEN
+                    && !matches!(line, [.., CR, LF] | [.., WAKE_CHAR])
+                    && (shared.pending_wake_count > 0 || has_line_remainder(handle, line))
             };
             if !line.is_ok_and(is_partial_line) {
-                shared.spare_line_handle = private_handle.filter(|_| !cancel_token.is_cancelled());
+                shared.spare_line_handle =
+                    private_handle.filter(|_| line.is_ok() && !cancel_token.is_cancelled());
                 break shared;
             }
         };
@@ -308,6 +336,13 @@ fn notify_readers(mut shared: GuardedLock<'_, Shared, Mutex>) {
 /// Whatever the read returns is buffered for the next reader, even if the read outlasts the timeout.
 fn stop_line_read(input: &Input) {
     let mut shared = SHARED.lock();
+    // A blocked read leaves nothing queued. One that ends on typed-ahead input would leave the keys to the next program.
+    if shared.is_reading_line()
+        && console::queued_record_count(input.raw()).is_ok_and(|count| count > 0)
+        && wait_for_line_read(&mut shared)
+    {
+        return;
+    }
     let LineReadState::Reading(cancel_token) = &shared.line_state else {
         return;
     };
@@ -317,6 +352,7 @@ fn stop_line_read(input: &Input) {
     // While output is paused, the first key only resumes it. `WAKE_CHAR` replaces the text after the cursor, so End goes first.
     let write_wake_keys = || input.write_keys(&[spare, end, wake]);
     let is_written = write_wake_keys().is_ok_and(|count| count > 0 || write_wake_keys().is_ok());
+    let earlier_wake_count = shared.pending_wake_count;
     if is_written {
         shared.pending_wake_count += 1;
     } else if let Some(cancel_token) = cancel_token {
@@ -324,6 +360,9 @@ fn stop_line_read(input: &Input) {
         cancel_token.cancel();
     }
     if wait_for_line_read(&mut shared) || !is_written {
+        if shared.pending_wake_count > earlier_wake_count && !shared.is_reading_line() {
+            shared.remove_wake_keys(input, [spare, end, wake]);
+        }
         return;
     }
     if input.deliver_queued_keys() {
@@ -382,17 +421,20 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
     let was_raw = IS_RAW.fetch_or(mode != Mode::Normal, Ordering::SeqCst);
     if mode != Mode::Normal {
         stop_line_read(input);
+    } else if !was_raw {
+        return Ok(());
     }
     // Other processes attached to the console change its mode too.
     let is_set =
         console::mode(input.raw()).is_ok_and(|current| (current ^ flags) & (COOKED | VT) == 0);
     if !is_set {
-        console::set_mode(input.raw(), flags)
-            .or_else(|_| console::set_mode(input.raw(), flags & !VT))
+        // The mode is restored through `handle` at exit, so it must have the access to change it.
+        console::set_mode(handle, flags)
+            .or_else(|_| console::set_mode(handle, flags & !VT))
             .inspect_err(|_| IS_RAW.store(was_raw, Ordering::SeqCst))
             .map_err(map_error)?;
     }
-    if mode == Mode::Normal && was_raw {
+    if mode == Mode::Normal {
         IS_RAW.store(false, Ordering::SeqCst);
         notify_readers(SHARED.lock());
     }
@@ -455,9 +497,9 @@ impl Console {
     pub(super) fn enable_escape_sequences(&self) {
         const VT: u32 = w::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         let handle = self.fd().native();
-        if !console::is_input(handle)
-            && let Ok(mode) = console::mode(handle)
+        if let Ok(mode) = console::mode(handle)
             && mode & VT == 0
+            && !console::is_input(handle)
         {
             let _ = console::set_mode(handle, mode | VT);
         }

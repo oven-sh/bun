@@ -265,7 +265,7 @@ impl Walker {
             }
             E::ESpread(x) => self.expr(&x.value),
             E::ETemplate(x) => {
-                self.opt_expr(&x.tag);
+                self.opt_expr(&x.tag.map(|tag| tag.expr));
                 for part in x.parts.slice() {
                     self.expr(&part.value);
                 }

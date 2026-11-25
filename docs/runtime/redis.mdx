@@ -420,6 +420,7 @@ const client = new RedisClient("redis://localhost:6379", {
   //   cert: "path/to/cert.pem",
   //   key: "path/to/key.pem",
   //   serverName: "redis.example.com", // SNI and the name the certificate must match (default: the URL host)
+  //   checkServerIdentity: (hostname, cert) => undefined, // replaces the name check; return an Error to refuse
   // }
 });
 ```

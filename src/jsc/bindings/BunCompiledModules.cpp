@@ -1426,6 +1426,15 @@ JSValue compiledRequireCacheEntry(Zig::GlobalObject* globalObject, const String&
     return {};
 }
 
+AbstractModuleRecord* recordOfRequiredFile(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& vm = getVM(globalObject);
+    auto module = vm.hasCompiledCode() && !vm.synchronousModuleQueue() ? compiledModuleForPath(key) : std::nullopt;
+    if (!module || !AOT::isImportedByHost(globalObject, *module))
+        return nullptr;
+    return AOT::moduleRecord(globalObject, AOT::moduleFormOf(globalObject, *module).value_or(*module));
+}
+
 bool isRecordOfCompiledModule(AbstractModuleRecord* record)
 {
     return record->vm().hasCompiledCode() && AOT::isCompiledModuleRecord(record);
@@ -2776,6 +2785,7 @@ std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
+AbstractModuleRecord* recordOfRequiredFile(Zig::GlobalObject*, const String&) { return nullptr; }
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }

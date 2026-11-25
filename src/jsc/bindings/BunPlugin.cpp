@@ -9482,7 +9482,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     global->onResolvePlugins.clear();
 #if ENABLE(AOT)
     if (global->vm().hasCompiledCode())
-        JSC::AOT::didChangePlugins(global);
+        JSC::AOT::didClearPlugins(global);
 #endif
 
     return JSC::JSValue::encode(JSC::jsUndefined());

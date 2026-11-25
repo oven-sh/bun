@@ -66,6 +66,7 @@ declare! {
     uloc_getDefault() -> *const c_char;
     uloc_openKeywords(*const c_char, *mut Status) -> Handle;
     uloc_setDefault(*const c_char, *mut Status);
+    uloc_toLanguageTag(*const c_char, *mut u8, i32, i8, *mut Status) -> i32;
     uloc_setKeywordValue(*const c_char, *const c_char, *mut u8, i32, *mut Status) -> i32;
     unorm2_getNFCInstance(*mut Status) -> Handle;
     unorm2_getNFDInstance(*mut Status) -> Handle;
@@ -341,6 +342,31 @@ fn locale_ids() {
             set(c"numbers", c"".as_ptr())?,
         ])
     });
+}
+
+#[test]
+fn language_tags() {
+    for (id, tag) in [
+        (c"EN_us", "en-US"),
+        (c"eng", "en"),
+        (c"deu_DD", "de-DE"),
+        (c"iw_hebr_il", "he-Hebr-IL"),
+        (c"es_419", "es-419"),
+        (c"und_Latn", "und-Latn"),
+        (c"fra_FRA", "fr-FR"),
+        // Only the canonicalization knows these.
+        (c"zh_GAN", "gan"),
+        (c"zh_YUE", "yue"),
+        (c"en_US_POSIX", "en-US-u-va-posix"),
+    ] {
+        check(tag, || {
+            // SAFETY: the buffer has the capacity, and the ID ends with a NUL.
+            let tag = written(|dest, capacity, status| unsafe {
+                uloc_toLanguageTag(id.as_ptr(), dest, capacity, 0, status)
+            })?;
+            Ok(String::from_utf8(tag).unwrap())
+        });
+    }
 }
 
 #[test]

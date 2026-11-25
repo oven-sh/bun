@@ -512,8 +512,11 @@ fn answer_require_with_what_the_loader_holds(
             && (is_any_required || is_required[file.idx()]);
         let is_text = stands_for_string(input, file);
         let is_value = is_text
-            || parsed_source(input.files, file)
-                .is_some_and(|it| parses_text_as_data(it.loader) || it.loader == Loader::Css);
+            || parsed_source(input.files, file).is_some_and(|it| {
+                parses_text_as_data(it.loader)
+                    || it.loader == Loader::Css
+                    || input.runs_in_place && it.loader == Loader::Wasm
+            });
         if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
             is_named_both_ways
                 && is_value

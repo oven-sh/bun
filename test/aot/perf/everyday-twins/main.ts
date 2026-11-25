@@ -4,10 +4,12 @@ import { loops as aCompoundAssignment } from "./a-compound-assignment.js";
 import { loops as aFieldThatIsCounted } from "./a-field-that-is-counted.ts";
 import { loops as aKeyedStore } from "./a-keyed-store.js";
 import { loops as aListFilledToABound } from "./a-list-filled-to-a-bound.ts";
+import { loops as aMethodOfAFreshObject } from "./a-method-of-a-fresh-object.js";
 import { loops as aRecordSpread } from "./a-record-spread.ts";
 import { loops as aRecordWithoutOneOfItsNames } from "./a-record-without-one-of-its-names.ts";
 import { loops as aRouter } from "./a-router.js";
 import { loops as aRowWithoutTwoOfItsNames } from "./a-row-without-two-of-its-names.js";
+import { loops as aStaticCounter } from "./a-static-counter.js";
 import { loops as anEmitter } from "./an-emitter.js";
 import { loops as characters } from "./characters.js";
 import { loops as filter } from "./filter.ts";
@@ -24,10 +26,12 @@ const all: Record<string, Record<string, (n: number) => number>> = {
   "a-field-that-is-counted.ts": aFieldThatIsCounted,
   "a-keyed-store.js": aKeyedStore,
   "a-list-filled-to-a-bound.ts": aListFilledToABound,
+  "a-method-of-a-fresh-object.js": aMethodOfAFreshObject,
   "a-record-spread.ts": aRecordSpread,
   "a-record-without-one-of-its-names.ts": aRecordWithoutOneOfItsNames,
   "a-router.js": aRouter,
   "a-row-without-two-of-its-names.js": aRowWithoutTwoOfItsNames,
+  "a-static-counter.js": aStaticCounter,
   "an-emitter.js": anEmitter,
   "characters.js": characters,
   "filter.ts": filter,

@@ -284,7 +284,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let member = &hir[id];
             match hir.runtime_member_key(id) {
                 PropKey::None => {}
-                PropKey::Computed(_) if member.flags.contains(Flags::STATIC) => {}
                 PropKey::Computed(key) => {
                     let is_field = member.kind == MemberKind::Property
                         && !member.flags.contains(Flags::ACCESSOR);
@@ -295,7 +294,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                         Some(name) => {
                             members.extend(self.written_member(ClassRef { file, class }, id, name));
                         }
-                        None => computed.has_instance_name = true,
+                        None => {
+                            computed.has_instance_name |= !member.flags.contains(Flags::STATIC);
+                        }
                     }
                 }
                 PropKey::Name(name) | PropKey::Private(name) => {

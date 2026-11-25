@@ -1163,9 +1163,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
                 return self.put_value_immediately(task, key, value);
             }
             task.hold_back();
-            if MAY_STAY_IN_TASK && task.has_error_since(stored) {
-                return self.insert_for_this_task(task, key, value);
-            }
         }
         self.insert_in_task(task, key, value)
     }
@@ -1328,11 +1325,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
             && task.shares_what_it_stores()
             && !value.is_bound(&task.own);
         let is_immediate = task.may_write_immediately(self.handles.slot, stored);
-        let has_error = !is_immediate && task.has_error_since(stored);
-        if is_for_all && (has_error || is_immediate && stays_in_task(task, &key)) {
-            if has_error {
-                task.hold_back();
-            }
+        if is_for_all && is_immediate && stays_in_task(task, &key) {
             let new_handle = store_in_task(&self.in_task, task, u64::from(key.number()), value);
             return self.handles.insert_for_this_task(task, key, new_handle);
         }
@@ -1395,11 +1388,11 @@ where
         stored: Stored,
     ) -> Result<V, (bool, Option<crate::local::Vacancy>)> {
         if !task.writes_immediately() || key.is_bound(&task.own) || value.is_bound(&task.own) {
-            return Err((!task.has_error_since(stored), None));
+            return Err((true, None));
         }
         if !task.may_write_immediately(self.slot.number(), stored) {
             task.hold_back();
-            return Err((!task.has_error_since(stored), None));
+            return Err((true, None));
         }
         // If the task already has a deferred entry under the key, it keeps using that one.
         let vacancy = match task.buffer().typed(&self.slot) {

@@ -577,7 +577,6 @@ impl Checker<'_, '_> {
             }
         }
         self.work_at_last_error = self.work;
-        self.task.note_error();
     }
 
     /// True if this task doesn't report an error in `file` because it checks a later file. tsc never collects such an

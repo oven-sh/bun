@@ -10,7 +10,12 @@ const numbers = Array.from({ length: size }, (_, index) => index);
 const interfaces = (prefix: string) =>
   numbers.map(i => `interface ${prefix}${i} { kind: "k${i}"; v${i}: number }\n`).join("");
 const union = (name: string, members: string[]) => `type ${name} = ${members.join(" | ")};\n`;
-const all = interfaces("T") + union("All", numbers.map(i => `T${i}`));
+const all =
+  interfaces("T") +
+  union(
+    "All",
+    numbers.map(i => `T${i}`),
+  );
 const third = numbers.filter(i => i % 3 === 0).map(i => `T${i}`);
 const related = "declare const some: Some; export const all: All = some;\n";
 
@@ -31,10 +36,23 @@ async function check(source: string) {
 
 test.concurrent.each([
   ["every third member", union("Some", third) + related],
-  ["members of the same shapes", interfaces("U") + union("Some", numbers.map(i => `U${i}`)) + related],
+  [
+    "members of the same shapes",
+    interfaces("U") +
+      union(
+        "Some",
+        numbers.map(i => `U${i}`),
+      ) +
+      related,
+  ],
   [
     "members of the same shapes among its own",
-    interfaces("U") + union("Some", numbers.map(i => (i % 5 ? `T${i}` : `U${i}`))) + related,
+    interfaces("U") +
+      union(
+        "Some",
+        numbers.map(i => (i % 5 ? `T${i}` : `U${i}`)),
+      ) +
+      related,
   ],
   [
     "what Exclude leaves of it",
@@ -44,7 +62,10 @@ test.concurrent.each([
     "what a chain of type guards leaves of it",
     "const is = <T extends All>(t: All, kind: T['kind']): t is T => t.kind === kind;\n" +
       "declare function take(t: All): void;\nexport function f(t: All) {\n" +
-      numbers.slice(0, 40).map(i => `  if (is<T${i}>(t, "k${i}")) return t.v${i};\n  take(t);\n`).join("") +
+      numbers
+        .slice(0, 40)
+        .map(i => `  if (is<T${i}>(t, "k${i}")) return t.v${i};\n  take(t);\n`)
+        .join("") +
       "  return -1;\n}\n",
   ],
 ])("a large union takes %s", async (_, source) => {
@@ -70,9 +91,7 @@ test.concurrent.each([
   [
     "a literal with a property more",
     `export const all: All = Math.random() > 0.5 ? { kind: "k1", v1: 2 } : { kind: "k2", v2: 2, extra: 1 };\n`,
-    [
-      "error TS2353: Object literal may only specify known properties, and 'extra' does not exist in type 'T2'.",
-    ],
+    ["error TS2353: Object literal may only specify known properties, and 'extra' does not exist in type 'T2'."],
   ],
 ])("a large union does not take %s", async (_, source, errors) => {
   expect(await check(all + source)).toEqual({ errors, exitCode: 1 });

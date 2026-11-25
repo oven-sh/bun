@@ -1638,7 +1638,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `typeToTypeNode`
     fn type_to_node(&mut self, ty: TypeId) -> Node {
         if self.c.is_stack_low_for_printing() {
-            self.c.note_elided_for_lack_of_stack(self.stack_in_use_below);
+            self.c
+                .note_elided_for_lack_of_stack(self.stack_in_use_below);
             return self.elided_information_placeholder();
         }
         self.type_to_node_worker(ty)

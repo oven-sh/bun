@@ -78,7 +78,9 @@ test("the errors of a long chain name the types", async () => {
     ...bunEnv,
     NO_COLOR: "1",
   });
-  const told = [...(stdout + stderr).matchAll(/error TS(?:7034|7005): Variable 'a' implicitly has (?:type|an) '(.*?)'/g)];
+  const told = [
+    ...(stdout + stderr).matchAll(/error TS(?:7034|7005): Variable 'a' implicitly has (?:type|an) '(.*?)'/g),
+  ];
   expect(new Set(told.map(([, type]) => type))).toEqual(new Set(["any[]"]));
   expect(told).toHaveLength(2 * size);
 });

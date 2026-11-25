@@ -1269,7 +1269,9 @@ fn find_excluded_named_paths(
         let is_read_below = !named.is_needed_on_disk
             && !named.is_passed_to_package
             && is_of_project
-            && named.callee.is_some_and(|it| may_read_where_called(files, graph, file, it))
+            && named
+                .callee
+                .is_some_and(|it| may_read_where_called(files, graph, file, it))
             && names_folder_alone();
         let code = match (named.is_needed_on_disk, named.is_passed_to_package) {
             (true, _) => Code::PathNeededOnDisk,

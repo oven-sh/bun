@@ -1921,9 +1921,8 @@ impl CodeHost for LoadHost<'_> {
                 && !is_from_plugin
                 && loader_named_by_path(&load.loaders, path).is_none());
         let is_entry_point = is_entry_text || self.is_entry_point(path);
-        let fails_where_loaded = load.runs_tests
-            && matches!(served_by, ServedBy::Disk)
-            && !is_from_plugin;
+        let fails_where_loaded =
+            load.runs_tests && matches!(served_by, ServedBy::Disk) && !is_from_plugin;
         let parse_failure = match fails_where_loaded || (is_language_assumed && !is_entry_point) {
             true => describe_parse_failure(&hir, text),
             false => None,

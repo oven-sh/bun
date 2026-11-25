@@ -1990,17 +1990,8 @@ impl StandaloneModuleGraph {
         }
         let key = Self::key_under_own_root(program, name)?;
         let named_at_root = || self.root_asset_key(&key);
-        if self.files.contains(&key) {
-            return Some(key);
-        }
-        let through_own_root = || Self::key_through_own_root(name);
-        Some(named_at_root().or_else(through_own_root).unwrap_or(key))
-    }
-
-    /// `/$bunfs/root/../root/a` leaves the root and comes back by its name.
-    fn key_through_own_root(name: &[u8]) -> Option<Vec<u8>> {
-        let key = absolute_key(name)?;
-        (key.starts_with(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())).then(|| key.to_vec())
+        let is_file = self.files.contains(&key);
+        Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
 
     /// `File::display_name`, with `_.._` for each folder above the root directory.
@@ -2550,8 +2541,7 @@ impl StandaloneModuleGraph {
             let as_read = Self::key_under_own_root(program?, written)?;
             let as_read = match is_directory(&as_read) {
                 true => as_read,
-                false => (self.key_of_mounted_asset(&as_read))
-                    .or_else(|| Self::key_through_own_root(name))?,
+                false => self.key_of_mounted_asset(&as_read)?,
             };
             if !is_directory(&as_read) {
                 return None;

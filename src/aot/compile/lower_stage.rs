@@ -975,7 +975,6 @@ impl Build<'_> {
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
             obfuscates: self.options.aot.hides_names(),
-            counts_executions: self.options.aot.counts_executions,
             runs_tests: self.options.load.runs_tests,
             divides_small_files: self.options.aot.lowers_small_files_in_parts,
         }

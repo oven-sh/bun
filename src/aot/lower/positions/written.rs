@@ -291,7 +291,6 @@ mod tests {
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
-            counts_executions: false,
             runs_tests: false,
             divides_small_files: false,
         };

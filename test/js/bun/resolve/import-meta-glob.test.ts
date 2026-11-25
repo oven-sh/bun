@@ -341,7 +341,7 @@ describe.concurrent("import.meta.glob", () => {
         .split("\n")
         .filter(line => /^ (glob|hand)\.ts/.test(line))
         .map(line => line.replace(/\s+/g, "")),
-    ).toEqual(["glob.ts|100.00|100.00|", "hand.ts|100.00|100.00|"]);
+    ).toEqual(["glob.ts|100.00|100.00|100.00|100.00|", "hand.ts|100.00|100.00|100.00|100.00|"]);
     expect(exitCode).toBe(0);
   });
 

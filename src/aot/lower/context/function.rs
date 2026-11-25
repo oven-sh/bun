@@ -47,7 +47,7 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) birth: Option<Birth>,
     pub(in crate::lower) statements_lowered_at_super_call:
         smallvec::SmallVec<[bun_sema::hir::StmtId; 8]>,
-    pub(in crate::lower) counted_expression: Option<u32>,
+    pub(in crate::lower) counted_expression: bun_sema::hir::ExprId,
     pub(in crate::lower) does_file_name_library_modules: Option<bool>,
     pub(in crate::lower) created_require_of_site: Option<CreatedRequire>,
     pub(in crate::lower) destructured_position: Option<u32>,
@@ -95,7 +95,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             lists_inside_literals: Default::default(),
             birth: None,
             statements_lowered_at_super_call: smallvec::SmallVec::new(),
-            counted_expression: None,
+            counted_expression: bun_sema::hir::ExprId::NONE,
             does_file_name_library_modules: None,
             created_require_of_site: None,
             destructured_position: None,

@@ -124,7 +124,7 @@ math.test.ts:
 
 `bun test --aot` compiles your test files, your preloads and everything they import the way `bun compile` does, and runs the compiled code. Every [difference from `bun run`](/compiler/compatibility) shows up in your tests as it would in the executable.
 
-`--isolate`, `--parallel`, `--rerun-each`, `--coverage` and snapshots work as in `bun test`. `--isolate=modules` runs like `--isolate`. `--watch`, `--hot` and `--inspect` exit with an error.
+`--isolate`, `--parallel`, `--rerun-each`, `--coverage` and snapshots work as in `bun test`. `--coverage` reports each compiled file as it is written: it doesn't read the source map of a bundle, and `coverageIgnoreSourcemaps` has no effect. `--isolate=modules` runs like `--isolate`. `--watch`, `--hot` and `--inspect` exit with an error.
 
 `--shard=i/n` can split the files differently from `bun test`. Test files that import the same code go into the same shard, so each part of your project is compiled on one machine. Every machine needs the same checkout, and the same `--timings` file if you pass one.
 

@@ -58,7 +58,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let ExprKind::Binary { op, left, .. } = hir[tested].kind else {
                 return None;
             };
-            if self.file.is_statically_resolved(tested) {
+            if self.file.is_statically_resolved(tested) || self.file.counts_executions() {
                 return None;
             }
             match op {
@@ -165,6 +165,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         step: Option<ExprId>,
         body: StmtId,
     ) -> Option<SuspendingLoop> {
+        if self.file.counts_executions() {
+            return None;
+        }
         let [update, other] = repeated;
         let repeated = [update, step.unwrap_or(other)];
         let arm = self.find_suspending_arm(repeated, body);
@@ -217,7 +220,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
-        if self.is_falsy_literal(test) {
+        if self.is_falsy_literal(test) && !self.file.counts_executions() {
             self.lower_body_run_once(statement, body);
             return;
         }

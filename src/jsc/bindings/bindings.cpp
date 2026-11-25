@@ -7156,14 +7156,6 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map)
     return map->size();
 }
 
-// Enable only: compiled instrumented code holds raw pointers into the profiler,
-// so it lives as long as the VM (see JSInspectorProfiler.cpp).
-CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* vm)
-{
-    if (!vm->controlFlowProfiler())
-        vm->enableControlFlowProfiler();
-}
-
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);

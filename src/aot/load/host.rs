@@ -1135,7 +1135,7 @@ impl LoadHost<'_> {
         // A coverage report has no lines for what a string holds.
         match source.kind == SourceKind::Program
             && options.code_generation_from_strings == CodeGenerationFromStrings::Allowed
-            && !options.counts_executions
+            && options.covered_files.is_none()
         {
             true => {
                 let beside = CodeBeside {
@@ -1980,7 +1980,7 @@ impl CodeHost for LoadHost<'_> {
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
         // A coverage report counts the lines of a factory.
-        match source.kind == SourceKind::Program && !self.input.options.aot.counts_executions {
+        match source.kind == SourceKind::Program && self.input.options.aot.covered_files.is_none() {
             true => match copied_factories::copy_factories(arena, atoms, hir, bound, decisions) {
                 // A test may replace the functions of `Object`.
                 TreeChange::Unchanged if !self.input.options.load.runs_tests => {

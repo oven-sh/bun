@@ -89,7 +89,7 @@
         },
         {
           "name": "coverage-reporter",
-          "description": "Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.",
+          "description": "Report coverage in 'text', 'lcov', 'json' and/or 'json-summary'. Defaults to 'text'. Implies --coverage.",
           "hasValue": true,
           "valueType": "val",
           "defaultValue": "'text'",
@@ -102,6 +102,14 @@
           "hasValue": true,
           "valueType": "val",
           "defaultValue": "'coverage'",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "coverage-include",
+          "description": "Report coverage for the files that match this glob, even if no test loads them. Implies --coverage.",
+          "hasValue": true,
+          "valueType": "val",
           "required": false,
           "multiple": false
         },

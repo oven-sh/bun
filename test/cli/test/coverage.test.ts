@@ -1,7 +1,26 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  MAX_PATH_BYTES,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
+import { mkfifo } from "mkfifo";
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "path";
+import {
+  branches,
+  bundled,
+  functions,
+  lines,
+  statements,
+  statementsWithExperimentalDecorators,
+} from "./coverage-corpus";
 
 test("coverage crash", () => {
   using dir = tempDir("cov", {
@@ -216,7 +235,6 @@ test("coverage leaves out the modules generated for ?worker, ?init and ?inline, 
   expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
     "SF:lib.ts",
     "SF:lib.ts?supplied",
-    "SF:preload.ts",
   ]);
   expect(exitCode).toBe(0);
 });
@@ -311,13 +329,13 @@ test("should call both functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call both functions
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |  100.00 |  100.00 |
- include-me.ts |  100.00 |  100.00 | 
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|---------|----------|-------------------
+File           | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+---------------|---------|---------|---------|----------|-------------------
+All files      |  100.00 |  100.00 |  100.00 |   100.00 |
+ include-me.ts |  100.00 |  100.00 |  100.00 |   100.00 | 
+ test.test.ts  |  100.00 |  100.00 |  100.00 |   100.00 | 
+---------------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -368,12 +386,12 @@ test("calls one function", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "lib.test.js:
 (pass) calls one function
------------|---------|---------|-------------------
-File       | % Funcs | % Lines | Uncovered Line #s
------------|---------|---------|-------------------
-All files  |   50.00 |   62.50 |
- lib.cjs   |   50.00 |   62.50 | 6-8
------------|---------|---------|-------------------
+-----------|---------|---------|---------|----------|-------------------
+File       | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+-----------|---------|---------|---------|----------|-------------------
+All files  |   50.00 |   62.50 |   66.66 |   100.00 |
+ lib.cjs   |   50.00 |   62.50 |   66.66 |   100.00 | 6-8
+-----------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -432,13 +450,13 @@ test("should call only some functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call only some functions
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |   75.00 |   75.00 |
- include-me.ts |   50.00 |   50.00 | 6-7
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|---------|----------|-------------------
+File           | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+---------------|---------|---------|---------|----------|-------------------
+All files      |   66.66 |   75.00 |   80.00 |   100.00 |
+ include-me.ts |   50.00 |   50.00 |   50.00 |   100.00 | 6-7
+ test.test.ts  |  100.00 |  100.00 |  100.00 |   100.00 | 
+---------------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -497,13 +515,13 @@ test("should call all functions", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call all functions
---------------|---------|---------|-------------------
-File          | % Funcs | % Lines | Uncovered Line #s
---------------|---------|---------|-------------------
-All files     |  100.00 |  100.00 |
- src/main.ts  |  100.00 |  100.00 | 
- test.test.ts |  100.00 |  100.00 | 
---------------|---------|---------|-------------------
+--------------|---------|---------|---------|----------|-------------------
+File          | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+--------------|---------|---------|---------|----------|-------------------
+All files     |  100.00 |  100.00 |  100.00 |   100.00 |
+ src/main.ts  |  100.00 |  100.00 |  100.00 |   100.00 | 
+ test.test.ts |  100.00 |  100.00 |  100.00 |   100.00 | 
+--------------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -566,13 +584,13 @@ test("should call all functions", () => {
 (pass) should call all functions
 
 src/feature.spec.ts:
-----------------|---------|---------|-------------------
-File            | % Funcs | % Lines | Uncovered Line #s
-----------------|---------|---------|-------------------
-All files       |  100.00 |  100.00 |
- main.test.ts   |  100.00 |  100.00 | 
- src/feature.ts |  100.00 |  100.00 | 
-----------------|---------|---------|-------------------
+----------------|---------|---------|---------|----------|-------------------
+File            | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+----------------|---------|---------|---------|----------|-------------------
+All files       |  100.00 |  100.00 |  100.00 |   100.00 |
+ main.test.ts   |  100.00 |  100.00 |  100.00 |   100.00 | 
+ src/feature.ts |  100.00 |  100.00 |  100.00 |   100.00 | 
+----------------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -626,26 +644,31 @@ test("should call both functions", () => {
   expect(lcovContent).toMatchInlineSnapshot(`
 "TN:
 SF:include-me.ts
+FN:2,includeMe
 FNF:1
 FNH:1
+FNDA:1,includeMe
 DA:2,1
 DA:3,1
 LF:2
 LH:2
+BRF:0
+BRH:0
 end_of_record
 TN:
 SF:test.test.ts
+FN:6,(anonymous_0)
 FNF:1
 FNH:1
-DA:2,1
-DA:3,1
-DA:4,1
+FNDA:1,(anonymous_0)
 DA:6,1
 DA:7,1
 DA:8,1
 DA:9,1
-LF:7
-LH:7
+LF:4
+LH:4
+BRF:0
+BRH:0
 end_of_record"
 `);
   expect(result.exitCode).toBe(0);
@@ -766,13 +789,13 @@ test("should call function", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call function
----------------|---------|---------|-------------------
-File           | % Funcs | % Lines | Uncovered Line #s
----------------|---------|---------|-------------------
-All files      |  100.00 |  100.00 |
- include-me.ts |  100.00 |  100.00 | 
- test.test.ts  |  100.00 |  100.00 | 
----------------|---------|---------|-------------------
+---------------|---------|---------|---------|----------|-------------------
+File           | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+---------------|---------|---------|---------|----------|-------------------
+All files      |  100.00 |  100.00 |  100.00 |   100.00 |
+ include-me.ts |  100.00 |  100.00 |  100.00 |   100.00 | 
+ test.test.ts  |  100.00 |  100.00 |  100.00 |   100.00 | 
+---------------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -819,11 +842,11 @@ test("should call function", () => {
   expect(stderr).toMatchInlineSnapshot(`
 "test.test.ts:
 (pass) should call function
------------|---------|---------|-------------------
-File       | % Funcs | % Lines | Uncovered Line #s
------------|---------|---------|-------------------
-All files  |    0.00 |    0.00 |
------------|---------|---------|-------------------
+-----------|---------|---------|---------|----------|-------------------
+File       | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+-----------|---------|---------|---------|----------|-------------------
+All files  |    0.00 |    0.00 |    0.00 |     0.00 |
+-----------|---------|---------|---------|----------|-------------------
 
  1 pass
  0 fail
@@ -834,11 +857,7 @@ Ran 1 test across 1 file."
 });
 
 // https://github.com/oven-sh/bun/issues/39930
-// One worker executes count(), the other only imports the module. The
-// import-only worker reports the unexecuted function's whole line range
-// (blank line 5 included) as executable with zero hits. The merge must not
-// let that over-approximation mark the fully executed function as
-// partially covered.
+// One worker executes count(), the other only imports the module.
 test("--parallel merges line coverage across workers", async () => {
   using dir = tempDir("cov-parallel-merge", {
     "subject.ts": `await Bun.sleep(100);
@@ -877,11 +896,10 @@ test("only imports the function", () => {
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toBeDefined();
-  // Blank line 5 is only "executable" in the worker that never ran count().
   expect(record).not.toContain("DA:5,");
   expect(record).toMatch(/LF:4\nLH:4\n/);
 
-  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(stderr).toMatch(/ subject\.ts +\|( +100\.00 \|){4} \n/);
   expect(exitCode).toBe(0);
 });
 
@@ -934,17 +952,13 @@ test("calls second", () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("2 pass");
-  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(stderr).toMatch(/ subject\.ts +\|( +100\.00 \|){4} \n/);
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
 
-// JSC records coverage per SourceProvider, and a file has one for each time
-// it is loaded. Each case has a subject file of its own. Where a case loads
-// its subject twice, one load runs the `if` branch and the other runs the
-// `return` after it.
 test("what is after a rejected await at the top level of a module did not run", async () => {
   using dir = tempDir("cov-top-level-await", {
     "subject.ts": `let ran = 0;
@@ -988,12 +1002,13 @@ test("ran", () => {
     "DA:7,1",
     "DA:8,1",
     "DA:10,1",
-    "DA:11,1",
   ]);
   expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
 
+// Each case has a subject file of its own. Where a case loads its subject twice,
+// one load runs the `if` branch and the other runs the `return` after it.
 describe("a file loaded more than once counts every load", () => {
   const esm = `export function covered(n: number): number {
   if (n > 5) {
@@ -1200,7 +1215,7 @@ test("b", () => {
 `,
   };
 
-  type Row = { functions: string; lines: string; uncovered: string };
+  type Row = Record<"functions" | "lines" | "statements" | "branches" | "uncovered", string>;
   async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
     using dir = tempDir("cov-loaded-twice", fixture);
     await using proc = Bun.spawn({
@@ -1214,8 +1229,8 @@ test("b", () => {
     if (exitCode !== 0) throw new Error(stderr);
     const rows: Record<string, Row> = {};
     for (const line of stderr.split("\n")) {
-      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
-      if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
+      const [file, functions, lines, statements, branches, uncovered] = line.split("|").map(column => column.trim());
+      if (uncovered !== undefined) rows[file] = { functions, lines, statements, branches, uncovered };
     }
     const lcov: Record<string, string> = {};
     for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
@@ -1238,7 +1253,13 @@ test("b", () => {
     ]);
   });
 
-  const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
+  const fullyCovered: Row = {
+    functions: "100.00",
+    lines: "100.00",
+    statements: "100.00",
+    branches: "100.00",
+    uncovered: "",
+  };
 
   describe.each([
     ["by the host and by a Bun.ModuleGraph", "host-and-graph.ts"],
@@ -1263,11 +1284,13 @@ test("b", () => {
   });
 
   test("a function counts if any load ran it, and not if none did", () => {
-    // The host runs first(), a graph runs second(). third() spans lines 7 to 9.
+    // The host runs first(), a graph runs second().
     expect(loaded.rows["functions.ts"]).toEqual({
-      functions: "66.67",
-      lines: expect.any(String),
-      uncovered: expect.stringMatching(/^[789](-[89])?$/),
+      functions: "66.66",
+      lines: "66.66",
+      statements: "66.66",
+      branches: "100.00",
+      uncovered: "7-8",
     });
   });
 
@@ -1276,16 +1299,13 @@ test("b", () => {
     expect(loaded.rows["cjs-graph-alone.cjs"]).toEqual(oneLoad.rows["cjs-graph-alone.cjs"]);
   });
 
-  // module._compile() names a file and brings a text of its own, which no
-  // line table describes. In a graph it runs under a wrapping SourceProvider,
-  // like the graph's load of the file itself, and must not count as one.
+  // It names a file and brings a text of its own. In a graph it runs under a
+  // wrapping SourceProvider, like the graph's load of the file itself.
   test("module._compile() in a Bun.ModuleGraph does not count as a load of the file it names", () => {
     expect(oneLoad.rows["compile-target.cjs"].uncovered).not.toBe("");
     expect(loaded.rows["compile-target.cjs"]).toEqual(oneLoad.rows["compile-target.cjs"]);
   });
 
-  // The line table and the source map on record describe one text, so a load
-  // of another text starts the file's coverage over.
   test("a file that changed between two loads reports the last text alone", () => {
     expect(oneLoad.rows["changed.ts"].functions).toBe("50.00");
     expect(loaded.rows["changed.ts"]).toEqual(oneLoad.rows["changed.ts"]);
@@ -1293,8 +1313,8 @@ test("b", () => {
 
   test("bun:jsc codeCoverageForFile()", () => {
     expect(JSON.parse(loaded.stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
-      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
-      both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
+      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +75\.00 \| +66\.66 \| +50\.00 \| 3$/),
+      both: expect.stringMatching(/host-and-graph\.ts \|( +100\.00 \|){4} $/),
     });
   });
 });
@@ -1501,42 +1521,6 @@ test("lib", () => { Object(lib); });
   expect(exitCode).toBe(0);
 });
 
-test("node:inspector turns the profiler on and no brace is listed", async () => {
-  const lib = `export const never = () => (
-  {
-    one: 1,
-  }
-);
-`;
-  using dir = tempDir("cov-inspector", {
-    "lib.ts": lib,
-    "bundled.js": "// @bun\n" + lib,
-    "main.ts": `
-import { codeCoverageForFile } from "bun:jsc";
-import inspector from "node:inspector";
-import { join } from "node:path";
-const session = new inspector.Session();
-session.connect();
-session.post("Profiler.enable");
-session.post("Profiler.startPreciseCoverage");
-for (const file of ["lib.ts", "bundled.js"]) {
-  await import("./" + file);
-  console.log(codeCoverageForFile(join(import.meta.dir, file), false).split("|").at(-1));
-}
-`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe(" 3\n 4\n");
-  expect(exitCode).toBe(0);
-});
-
 test("an error has the same position with --coverage", async () => {
   using dir = tempDir("cov-error-position", {
     "lib.ts": `export function disposes() {
@@ -1599,4 +1583,1562 @@ test("reports an error for a coverage directory longer than the path buffer", as
   expect(stderr).toContain("(pass) covered");
   expect(stderr).toContain("ENAMETOOLONG: File name too long: Failed to write lcov.info");
   expect(exitCode).toBe(1);
+});
+
+async function bun(cwd: string, args: string[], env: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: { ...bunEnv, ...env },
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+/** The rows of the table but for the first, without white space. */
+const rowsOf = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(line => / \d+\.\d\d \|/.test(line))
+    .map(line => line.replaceAll(" ", "").replaceAll("\\", "/"));
+/** But for those of the type checker and about `Bun.plugin`, which come where this file is run with `--aot`. */
+const messagesOf = (stderr: string) =>
+  stderr.split("\n").filter(line => /^(error|warn|note): (?!TS2|TS1\d{3}:|TS100079:)/.test(line));
+
+// The check needs threads at the exit, and waits for them.
+const withoutLeakCheck = {
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  BUN_DESTRUCT_VM_ON_EXIT: undefined,
+};
+
+// A build with assertions reports test files unless it is told not to.
+const bunfig = (...lines: string[]) => ["[test]", "coverageSkipTestFiles = true", ...lines, ""].join("\n");
+
+type Kind = "branches" | "statements" | "functions" | "lines";
+const unmarked = (text: string) => text.replace(/«.*?»/g, "");
+const repeated = (text: string, times: number) => text.replace(/(\d+)»/g, (_, count) => `${count * times}»`);
+
+/** `text` with the entries of a member of `coverage-final.json`. */
+function mark(kind: Kind, text: string, file: any) {
+  const marks: { line: number; column: number; mark: string }[] = [];
+  const add = ({ start }: any, mark: string) => marks.unshift({ ...start, mark });
+  if (kind === "statements") for (const key in file.s) add(file.statementMap[key], file.s[key]);
+  if (kind === "functions")
+    for (const key in file.f)
+      add(file.fnMap[key].loc, `${file.fnMap[key].name.replace(`(anonymous_${key})`, "?")} ${file.f[key]}`);
+  if (kind === "branches")
+    for (const key in file.b) {
+      const { loc, locations } = file.branchMap[key];
+      locations.forEach((arm: any, index: number) => add(arm.start.line ? arm : loc, file.b[key][index]));
+    }
+  const lines = text.split("\n");
+  for (const { line, column, mark } of marks.sort((a, b) => b.column - a.column)) {
+    lines[line - 1] = `${lines[line - 1].slice(0, column)}«${mark}»${lines[line - 1].slice(column)}`;
+  }
+  return lines.join("\n");
+}
+
+/** `text` with the lines of a record of `lcov.info`. */
+function markLines(text: string, record: string) {
+  const counts = new Map(record.matchAll(/^DA:(\d+),(\d+)$/gm).map(([, line, count]) => [Number(line), `«${count}»`]));
+  let line = 0;
+  return text.replace(/\r?\n/g, end => (counts.get(++line) ?? "") + end);
+}
+
+/** What the reports in `dir` say about `programs`, the first folder of which is the kind of their marks. */
+function reported(dir: string, programs: Record<string, string>) {
+  const read = (name: string) => readFileSync(path.join(dir, "coverage", name), "utf8");
+  const json = JSON.parse(read("coverage-final.json"));
+  return mapValues(programs, (text, name) => {
+    const [file, kind] = [json[path.join(dir, name)], name.split("/")[0] as Kind];
+    if (kind !== "lines") return file && mark(kind, unmarked(text), file);
+    return markLines(
+      unmarked(text),
+      read("lcov.info")
+        .split(`SF:${path.normalize(name)}\n`)[1]
+        .split("LF:")[0],
+    );
+  });
+}
+
+const mapValues = <T>(object: Record<string, string>, map: (value: string, key: string) => T) =>
+  Object.fromEntries(Object.entries(object).map(([key, value]) => [key, map(value, key)]));
+
+describe.concurrent("what is counted", () => {
+  const corpus = Object.fromEntries(
+    Object.entries({ branches, statements, functions, lines }).flatMap(([kind, programs]) =>
+      Object.entries(programs).map(([name, text]) => [`${kind}/${name}`, text.slice(1)]),
+    ),
+  );
+  const javascript = Object.fromEntries(Object.entries(corpus).filter(([name]) => name.endsWith(".js")));
+  const each = (programs: object, load: (specifier: string) => string) =>
+    Object.keys(programs)
+      .map(name => load(`"./${name}"`))
+      .join("\n");
+  const imports = (programs: object) => each(programs, it => `import ${it};`);
+
+  async function check(
+    programs: Record<string, string>,
+    others: Record<string, string>,
+    { flags = [] as string[], env = {}, times = 1, bom = "" } = {},
+  ) {
+    using dir = tempDir("cov-corpus", { ...mapValues(programs, text => bom + unmarked(text)), ...others });
+    const args = ["test", "--coverage-reporter=json", "--coverage-reporter=lcov", ...flags];
+    const { stderr, exitCode } = await bun(String(dir), args, env);
+    expect(messagesOf(stderr)).toEqual([]);
+    expect(reported(String(dir), programs)).toEqual(mapValues(programs, text => repeated(text, times)));
+    expect(exitCode).toBe(0);
+  }
+
+  test("imported", () => check(corpus, { "a.test.ts": imports(corpus) }));
+
+  test.each(["", "\uFEFF"])("not loaded, after %j", bom =>
+    check(corpus, { "a.test.ts": "" }, { flags: ["--coverage-include=**"], times: 0, bom }),
+  );
+
+  test.each(["// @bun\n", "#!/usr/bin/env bun\n// @bun\n"])("%j", pragma => {
+    const programs = mapValues(javascript, text => pragma + text);
+    return check(programs, { "a.test.ts": imports(programs) });
+  });
+
+  test("import()", () => check(corpus, { "a.test.ts": each(corpus, it => `await import(${it});`) }));
+
+  // An `import` reads every export.
+  const required = mapValues(corpus, text => text.replace("«1»return 3", "«0»return 3"));
+  const requires = (programs: object) => each(programs, it => `require(${it});`);
+
+  test("require()", () => check(required, { "a.test.ts": requires(required) }));
+
+  test("--preload", () =>
+    check(corpus, { "a.test.ts": "", "preload.ts": imports(corpus) }, { flags: ["--preload=./preload.ts"] }));
+
+  test.each(["--isolate", "--parallel=2"])("%s", flag => {
+    const files = { "a.test.ts": imports(corpus), "b.test.ts": imports(corpus) };
+    return check(corpus, files, { flags: [flag], env: { BUN_TEST_PARALLEL_SCALE_MS: "0" }, times: 2 });
+  });
+
+  test("in workers", () => {
+    const files = {
+      "worker.ts": `${imports(javascript)}\npostMessage("loaded");`,
+      "a.test.ts": `${imports(javascript)}
+        const start = event =>
+          new Promise((resolve, onerror) =>
+            Object.assign(new Worker("./worker.ts"), { onerror }).addEventListener(event, resolve),
+          );
+        await start("close");
+        await Promise.all([start("message"), start("message")]);`,
+    };
+    return check(javascript, files, { times: 4 });
+  });
+
+  test("by threads at the same time", () => {
+    const programs = { "statements/spin.js": `export function spin(i) { «200»while (i--) «200000»continue; }` };
+    const files = {
+      "worker.ts": `
+        import { spin } from "./statements/spin.js";
+        onmessage = ({ data: arrived }) => {
+          for (let round = 1; round <= 100; round++) {
+            Atomics.add(arrived, 0, 1);
+            while (Atomics.load(arrived, 0) < 2 * round);
+            spin(1000);
+          }
+          postMessage("done");
+        };`,
+      "a.test.ts": `
+        const arrived = new Int32Array(new SharedArrayBuffer(4));
+        const start = () =>
+          new Promise((onmessage, onerror) =>
+            Object.assign(new Worker("./worker.ts"), { onmessage, onerror }).postMessage(arrived),
+          );
+        await Promise.all([start(), start()]);`,
+    };
+    return check(programs, files);
+  });
+
+  test.each([
+    ["another operator", `exports?.a?.b;`, `exports.a = exports ? «1»1 : «0»2;`],
+    ["another statement", `{} exports.a = exports ? 1 : 2;`, `Object(); exports.a = exports ? «1»1 : «0»2;`],
+    [
+      "another order",
+      `exports ? 1 : 2; class A { constructor() { a; } m() { b; } }`,
+      `exports ? «1»1 : «0»2; class A { m() { b; } constructor() { a; } }`,
+    ],
+    ["another value and a comment", `/**/ exports.a = exports ? 3 : 4;`, `exports.a = exports ? «2»1 : «0»2;`],
+  ])("a file that had %s when it was loaded before", (_, before, now) => {
+    const load = (text: string) => `
+      require("node:fs").writeFileSync(file, "${text}");
+      delete require.cache[file];
+      require(file);`;
+    return check(
+      { "branches/edited.cjs": now },
+      { "a.test.ts": `const file = require.resolve("./branches/edited.cjs");${load(before)}${load(unmarked(now))}` },
+    );
+  });
+
+  test("a file that is loaded in two languages", () => {
+    const programs = { "statements/both.ts": `«1»Object<((a) => «0»1)>(2);` };
+    return check(programs, {
+      "a.test.ts": `
+        const file = process.cwd() + "/statements/both.ts";
+        await import(file);
+        await import(file + "?again", { with: { type: "js" } });`,
+    });
+  });
+
+  describe.each(["--isolate", "--parallel=2"])("%s", flag => {
+    test.each([
+      ["each time", ["1", "2"]],
+      ["the first time", ["'longer'", "0"]],
+      ["the second time", ["0", "'longer'"]],
+    ])("a file in which a plugin replaces a value %s", (_, values) => {
+      const text = `export const id = 0, pick = v => (v ? «1»1 : «1»2);`;
+      // They wait for each other, so that one worker does not run both.
+      const [a, b] = values.map(
+        (value, index) => `
+          import { existsSync, writeFileSync } from "node:fs";
+          const contents = ${JSON.stringify(unmarked(text).replace("0", value))};
+          Bun.plugin({ setup: build => void build.onLoad({ filter: /lib.js$/ }, () => ({ contents, loader: "js" })) });
+          require("./branches/lib.js").pick(${index});
+          writeFileSync("started-${index}", "");
+          while (${flag !== "--isolate"} && !existsSync("started-${1 - index}")) await new Promise(setImmediate);`,
+      );
+      const options = { flags: [flag], env: { BUN_TEST_PARALLEL_SCALE_MS: "0" } };
+      return check({ "branches/lib.js": text }, { "a.test.ts": a, "b.test.ts": b }, options);
+    });
+  });
+
+  test("a file that is too large for one message of --parallel", () => {
+    const programs = { "branches/large.js": `//${Buffer.alloc(3 << 20, "-")}\nObject ? «1»1 : «0»2;` };
+    return check(programs, { "a.test.ts": imports(programs), "b.test.ts": "" }, { flags: ["--parallel=2"] });
+  });
+
+  test("CRLF", () => {
+    const programs = mapValues(corpus, text => text.replaceAll("\n", "\r\n"));
+    return check(programs, { "a.test.ts": imports(programs) });
+  });
+
+  test.each(["", "// @bun\n"])("columns are in UTF-16 code units after %j", pragma => {
+    const programs = mapValues(pragma ? javascript : corpus, text => pragma + text.replace(/^(?=.)/gm, "/*é汉🎉*/ "));
+    return check(programs, { "a.test.ts": imports(programs) }, { bom: pragma ? "" : "\uFEFF" });
+  });
+
+  test.each([
+    ["the interpreter alone", { BUN_JSC_useJIT: "0" }],
+    ["no interpreter", { BUN_JSC_useLLInt: "0" }],
+    ["no source maps", { BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS: "1" }],
+  ])("with %s", (_, env) => check(corpus, { "a.test.ts": imports(corpus) }, { env }));
+
+  test.each([
+    `"experimentalDecorators": true`,
+    `"experimentalDecorators": true, "emitDecoratorMetadata": true, "useDefineForClassFields": false`,
+  ])("%s", options => {
+    const programs = { "statements/decorators.ts": statementsWithExperimentalDecorators };
+    return check(programs, {
+      "a.test.ts": imports(programs),
+      "tsconfig.json": `{ "compilerOptions": { ${options} } }`,
+    });
+  });
+
+  test.each([
+    ["import", corpus, imports],
+    ["require()", required, requires],
+  ])("from the transpiler cache, by %s", async (_, small, loads) => {
+    // It leaves out a file of less than 4 KB.
+    const programs = mapValues(small, text => `//${Buffer.alloc(4096, "-")}\n${text}`);
+    using cache = tempDir("cov-corpus-cache", {});
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    const written = () =>
+      readdirSync(String(cache)).map(name => statSync(path.join(String(cache), name), { bigint: true }).mtimeNs);
+    await check(programs, { "a.test.ts": loads(programs) }, { env });
+    const entries = written();
+    expect(entries).not.toBeEmpty();
+    await check(programs, { "a.test.ts": loads(programs) }, { env });
+    expect(written()).toEqual(entries);
+  });
+
+  // The bundler drops what has no effect.
+  const withEffects = Object.fromEntries(Object.entries(javascript).filter(([name]) => !/hints|lines/.test(name)));
+
+  test.each([
+    ["--sourcemap=linked", withEffects],
+    ["--sourcemap=inline", withEffects],
+    ["--sourcemap=external", withEffects],
+    ["--sourcemap --minify-syntax", bundled],
+  ])("from a bundle with %s", async (flags, programs) => {
+    using dir = tempDir("cov-corpus-bundle", {
+      ...mapValues(programs, unmarked),
+      "entry.js": imports(programs),
+      "a.test.ts": `import "./out/entry.js";`,
+      "bunfig.toml": bunfig(),
+    });
+    const built = await bun(String(dir), ["build", "entry.js", "--target=bun", "--outdir=out", ...flags.split(" ")]);
+    expect(built.exitCode).toBe(0);
+    const reporters = ["json", "lcov", "text"].map(it => `--coverage-reporter=${it}`);
+    const { stderr, exitCode } = await bun(String(dir), ["test", ...reporters]);
+    expect(reported(String(dir), programs)).toEqual(programs);
+    expect(stderr).not.toContain("entry.js");
+    expect(exitCode).toBe(0);
+  });
+
+  test("from a bundle that is built again with what the first build left out", () => {
+    const programs = { "branches/lib.js": `globalThis.a = process.env.ON ? «0»Object() : «2»Array();` };
+    return check(programs, {
+      "a.test.ts": `
+        for (const define of [{ "process.env.ON": "0" }, {}]) {
+          const options = { outdir: "out", target: "bun", sourcemap: "inline", define };
+          const [{ path }] = (await Bun.build({ entrypoints: ["./branches/lib.js"], ...options })).outputs;
+          await import(path + "?" + Object.keys(define));
+        }`,
+    });
+  });
+
+  test("from a bundle that is built again from other files", () => {
+    const programs = { "statements/a.js": `«2»Object();`, "statements/b.js": `«2»Object();` };
+    return check(programs, {
+      "a.test.ts": `
+        for (const names of [["a"], ["b"], ["a", "b"]]) {
+          const sources = names.map(it => "statements/" + it + ".js");
+          const sourcesContent = names.map(() => "Object();");
+          const mappings = ";AAAA;ACAA".slice(0, 5 * names.length);
+          await Bun.write("bundle.js.map", JSON.stringify({ version: 3, sources, sourcesContent, mappings, names: [] }));
+          await Bun.write("bundle.js", ["// @bun", ...sourcesContent].join("\\n"));
+          await import(process.cwd() + "/bundle.js?" + names);
+        }`,
+    });
+  });
+
+  test("from a bundle without a loop that its source has", () => {
+    const programs = { "lines/lib.js": `Object();«1»\nwhile (Object«1»\n.none) Object();\n` };
+    const map = { version: 3, sources: Object.keys(programs), mappings: ";AAAA", names: [] };
+    return check(programs, {
+      "bundle.js": "// @bun\nObject();\n",
+      "bundle.js.map": JSON.stringify({ ...map, sourcesContent: Object.values(programs).map(unmarked) }),
+      "a.test.ts": `import "./bundle.js";`,
+    });
+  });
+
+  // Without a place: the function in `typeof function () {}`.
+  test("JavaScriptCore generates code for every place that the printer marks", async () => {
+    using dir = tempDir("cov-corpus-places", {
+      ...mapValues(corpus, unmarked),
+      "a.test.ts": `
+        import { checkCoverageCounters } from "bun:internal-for-testing";
+        for (const name of ${JSON.stringify(Object.keys(corpus))}) {
+          const [printed, counters, placed, ...offsets] = checkCoverageCounters(require.resolve("./" + name));
+          if (placed < counters) console.log(name, counters - placed, "without a place");
+          for (const offset of offsets) console.log(name, printed.slice(offset).split("\\n")[0]);
+        }`,
+    });
+    const { stdout, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun test <version> (<revision>)
+      functions/functions.ts 1 without a place"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("code that is optimized", () => {
+    const programs = {
+      "branches/hot.js": `
+        const some = [null, { a: null }, { a: { b: 1 } }];
+        function inlined(i) {
+          return i % 3 ? «2000»1 : «1000»2;
+        }
+        function hot(i, given = «1500»inlined) {
+          «1»«2999»if (i === 2999) some.length.toString();
+          try {
+            «30»«2970»if (i % 100 === 0) null.throws;
+          } «30»catch {}
+          switch (i % 3) {
+            «1000»case 0:
+            «2000»case 1:
+          }
+          return «3000»some[i % 3]«2000»?.a«1000»?.b ?? «2000»given;
+        }
+        for (let i = 0; i < 3000; i++) inlined(i), hot(i, i % 2 ? «1500»inlined : «1500»undefined);
+      `,
+    };
+    const env = { BUN_JSC_jitPolicyScale: "0.0005", BUN_JSC_useConcurrentJIT: "0" };
+    return check(programs, { "a.test.ts": imports(programs) }, { env });
+  });
+
+  test("code that is thrown away and generated again", () => {
+    const programs = { "branches/again.js": `export const pick = v => (v ? «2»1 : «1»2);` };
+    return check(programs, {
+      "a.test.ts": `
+        import inspector from "node:inspector/promises";
+        import { pick } from "./branches/again.js";
+        pick(1);
+        const session = new inspector.Session();
+        session.connect();
+        await session.post("Profiler.enable");
+        await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+        pick(0);
+        await session.post("Profiler.stopPreciseCoverage");
+        pick(1);`,
+    });
+  });
+
+  test("a function that is called before its module runs", () => {
+    const programs = {
+      "branches/cycle.ts": `import "../early.ts";\nexport function hoisted(v: unknown) { return v ? «1»1 : «0»2; }`,
+    };
+    const early = `import { hoisted } from "./branches/cycle.ts"; hoisted(1);`;
+    return check(programs, { "early.ts": early, "a.test.ts": imports(programs) });
+  });
+
+  test("a module that throws while it loads", () => {
+    const programs = { "statements/throws.ts": `«1»Object(1); «1»null!.a; «0»Object(2);` };
+    return check(programs, { "a.test.ts": `await import("./statements/throws.ts").catch(() => {});` });
+  });
+
+  test("a file that runs though TypeScript reports a syntax error", () => {
+    const programs = { "statements/lib.jsx": `/** @jsxRuntime classic */\n/** @jsx Object */\n«1»<p>></p>;` };
+    return check(programs, { "a.test.ts": imports(programs) });
+  });
+
+  test("the values of macros and of --define", () => {
+    const programs = {
+      "branches/values.ts": `
+        import { object } from "../macro.ts" with { type: "macro" };
+        const OBJECT = object();
+        const { list: LIST } = object();
+        const all = (v?: unknown) => [«2»v ?? «1»OBJECT, «2»v ?? «1»OBJECT.a, «2»v ?? «1»LIST, v ? «1»DEFINED : «1»DEFINED.a];
+        all(), all(1);
+      `,
+      "branches/define.ts": `globalThis.a = LONG, v => [«0»v ?? «0»1, «0»v ?? «0»1, «0»v ?? «0»1];`,
+      "branches/json.ts": `import { json } from "../macro.ts" with { type: "macro" };\nglobalThis.a = json(), v => [«0»v ?? «0»1, «0»v ?? «0»1, «0»v ?? «0»1];`,
+    };
+    // An item starts at the offset that one `1` has in its file.
+    const long = JSON.stringify({ items: Array(100).fill([]) });
+    const macro = `
+      export const object = () => ({ a: 1, list: [2, 3] });
+      export const json = () => Response.json(${long});`;
+    const flags = ["--define", `DEFINED={"a":[{}]}`, "--define", `LONG=${long}`];
+    // A macro that returns a Response leaks.
+    return check(programs, { "macro.ts": macro, "a.test.ts": imports(programs) }, { flags, env: withoutLeakCheck });
+  });
+
+  test("a test file whose mocks are hoisted", () => {
+    const programs = {
+      "statements/a.test.ts": `
+        import { test, vi } from "vitest";
+        import { value } from "../mocked.ts";
+        const { made } = «1»vi.hoisted(() => («1»{ made: 1 }));
+        «1»test("a", () => { «1»value; «1»value.toString(); });
+        «1»vi.mock("../mocked.ts", () => («1»{ value: made }));
+      `,
+    };
+    const others = { "mocked.ts": "export const value = 0;", "bunfig.toml": "[test]\ncoverageSkipTestFiles = false\n" };
+    return check(programs, others);
+  });
+
+  test("--react-compiler", () => {
+    const programs = {
+      "branches/component.jsx": `
+        function Component({ items, title = «1»"none" }) {
+          «1»«1»if (!items) return <p>{title}</p>;
+          const shown = items.filter(item => «2»item«1»?.shown ?? «1»false);
+          return <ul title={«1»title && «1»title.trim()}>{shown.length ? «1»shown : «0»<li />}</ul>;
+        }
+        Component({});
+        Component({ items: [null, { shown: true }], title: "some" });
+        «0»«1»if (!globalThis.isCompiled) throw new Error("It is not compiled");
+      `,
+      "statements/inlined.jsx": `
+        import { useMemo } from "react";
+        function Component({ item }) {
+          const first = «1»useMemo(() => «1»[item], [item]);
+          const value = «1»useMemo(() => { «1»return [first]; }, [first]);
+          const named = «1»useMemo(() => { const list = «1»[value]; «1»list.push(item); «1»return list; }, [value, item]);
+          «1»return <p>{named.map(() => { «2»<br />; })}{named.map(() => { «2»<br />; «2»return item; })}</p>;
+        }
+        «1»Component({});
+        const useList = «1»item => «1»useMemo(() => «1»[item], [item]);
+        «1»useList();
+        const Memoized = «1»() => «2»<br />;
+        «1»globalThis.cache = [Symbol.for("react.memo_cache_sentinel")];
+        «1»Memoized(), Memoized();
+      `,
+    };
+    const others = {
+      "node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+      "node_modules/react/index.js": `export const useMemo = null;`,
+      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({});`,
+      "node_modules/react/compiler-runtime.js": `
+        globalThis.isCompiled = true;
+        export const c = size => globalThis.cache ?? Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "a.test.ts": imports(programs),
+    };
+    return check(programs, others, { flags: ["--react-compiler"] });
+  });
+});
+
+test.concurrent("the code that runs does not change", async () => {
+  using dir = tempDir("cov-same-code", {
+    "lib.js": `
+      export const named = [(() => { let a; a ??= () => {}; return a.name; })(), (({ b = class {} }) => b.name)({})];
+      export const text = String(function (a = 1) { return a ? a?.b : a && 2; });
+      export const countDown = n => (n ? countDown(n - 1) : "no stack overflow");
+      export const catchDown = n => { try { if (n) throw n; } catch { return catchDown(n - 1); } };
+      export const keys = Reflect.ownKeys(globalThis).length;
+      export { default as textInPackage } from "package";`,
+    "node_modules/package/index.js": `export default String(function () { if (false) return true; });`,
+    "a.test.js": `import * as lib from "./lib.js"; console.log({ ...lib }, lib.countDown(100_000), lib.catchDown(100_000));`,
+  });
+  const [plain, covered] = await Promise.all([bun(String(dir), ["test"]), bun(String(dir), ["test", "--coverage"])]);
+  expect(plain.stdout).toContain("no stack overflow");
+  expect(covered.stdout).toBe(plain.stdout);
+  expect(covered.exitCode).toBe(0);
+});
+
+test.concurrent("the last tier of the JIT waits for code that is very hot", async () => {
+  using dir = tempDir("cov-last-tier", { "a.test.js": "" });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"], { BUN_JSC_dumpOptions: "2" });
+  expect(stderr).toContain("thresholdForFTLOptimizeAfterWarmUp=1000000");
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("reporters", () => {
+  const files = {
+    "bunfig.toml": bunfig(),
+    "lib.ts": `export function pick(v?: number) {
+  if (v) return 1;
+  return v ?? 2;
+}
+export const never = (v: number) => (v ? 1 : 2);
+`,
+    "empty.ts": "",
+    "a.test.ts": `import { pick } from "./lib.ts"; import "./empty.ts"; pick(0), pick(1);`,
+  };
+  async function report(reporter: string, name: string, ...flags: string[]) {
+    using dir = tempDir("cov-reporters", { ...files, coverage: { [name]: "an older report" } });
+    const { stderr, exitCode } = await bun(String(dir), ["test", `--coverage-reporter=${reporter}`, ...flags]);
+    expect(rowsOf(stderr)).toEqual([]);
+    expect(readdirSync(path.join(String(dir), "coverage"))).toEqual([name]);
+    expect(exitCode).toBe(0);
+    const text = readFileSync(path.join(String(dir), "coverage", name), "utf8");
+    return text.replaceAll(JSON.stringify(String(dir) + path.sep).slice(1, -1), "<dir>/");
+  }
+
+  test("text has the lines that ran in part where all ran", async () => {
+    using dir = tempDir("cov-reporters", files);
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr)).toEqual([
+      "Allfiles|50.00|100.00|80.00|50.00|",
+      "empty.ts|100.00|100.00|100.00|100.00|",
+      "lib.ts|50.00|100.00|80.00|50.00|3,5",
+    ]);
+    expect(existsSync(path.join(String(dir), "coverage"))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test("text has colors", async () => {
+    using dir = tempDir("cov-colors", { ...files, "never.ts": "export function f() {}" });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=*.ts"], { FORCE_COLOR: "1" });
+    const colors = { 31: "<red>", 32: "<green>", 33: "<yellow>" };
+    expect(rowsOf(stderr.replace(/\x1b\[(\d+)m/g, (_, code) => colors[code] ?? "")).slice(1)).toEqual([
+      "<green>empty.ts|<green>100.00|<green>100.00|<green>100.00|<green>100.00|",
+      "<red>lib.ts|<red>50.00|<green>100.00|<red>80.00|<red>50.00|<yellow>3,<yellow>5",
+      "<red>never.ts|<red>0.00|<red>0.00|<green>100.00|<green>100.00|<red>1",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/28620
+  test("are empty if there is nothing to cover", async () => {
+    using dir = tempDir("cov-nothing", { "bunfig.toml": bunfig(), "a.test.ts": "", "coverage/lcov.info": "older" });
+    const flags = ["--coverage-reporter=text", "--coverage-reporter=lcov"];
+    const { stderr, exitCode } = await bun(String(dir), ["test", ...flags]);
+    expect(rowsOf(stderr)).toEqual(["Allfiles|0.00|0.00|0.00|0.00|"]);
+    expect(messagesOf(stderr)).toEqual([]);
+    expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("nothing is written or checked if no test file runs", async () => {
+    using dir = tempDir("cov-nothing", {
+      "bunfig.toml": bunfig(`coverageInclude = "."`, "coverageThreshold = 1"),
+      "lib.ts": "export function f() {}",
+      "a.test.ts": "",
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov", "--shard=2/2"]);
+    expect(messagesOf(stderr)).toEqual([]);
+    expect(readdirSync(String(dir))).not.toContain("coverage");
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.chdir() does not move them", async () => {
+    using dir = tempDir("cov-chdir", {
+      "bunfig.toml": bunfig(`coveragePathIgnorePatterns = "src/ignored.ts"`),
+      "src/lib.ts": "",
+      "src/ignored.ts": "",
+      "a.test.ts": `process.chdir("src"); require("./src/lib.ts"); require("./src/ignored.ts");`,
+    });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect(lcov.match(/^SF:.*$/gm)).toEqual([`SF:${path.join("src", "lib.ts")}`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("do not wait for reads that a test has left behind", async () => {
+    using dir = tempDir("cov-blocked", {
+      "bunfig.toml": bunfig(),
+      "lib.ts": "",
+      "a.test.ts": `
+        import "./lib.ts";
+        import { openSync, readFile } from "node:fs";
+        for (const pipe of ["1", "2"]) {
+          readFile(pipe, () => {});
+          // Returns when a thread has opened the other end.
+          openSync(pipe, "w");
+        }`,
+    });
+    for (const pipe of ["1", "2"]) mkfifo(path.join(String(dir), pipe));
+    const env = { ...withoutLeakCheck, UV_THREADPOOL_SIZE: "2" };
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"], env);
+    expect(rowsOf(stderr)).toContain("lib.ts|100.00|100.00|100.00|100.00|");
+    expect(exitCode).toBe(0);
+  });
+
+  const limitTo1 = (resource: "RLIMIT_FSIZE" | "RLIMIT_NPROC") => `
+    import { dlopen } from "bun:ffi";
+    const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setrlimit: { args: ["i32", "ptr"], returns: "i32" } });
+    const [RLIMIT_FSIZE, RLIMIT_NPROC] = [1, 6];
+    console.log(libc.symbols.setrlimit(${resource}, new BigUint64Array([1n, 1n])));`;
+
+  // The limit is not for root.
+  test.skipIf(!isLinux || process.getuid?.() === 0)("are written where no thread can be started", async () => {
+    using dir = tempDir("cov-no-thread", {
+      "bunfig.toml": bunfig(),
+      "lib.ts": "",
+      "a.test.ts": `
+        import "./lib.ts";
+        ${limitTo1("RLIMIT_NPROC")}`,
+    });
+    const env = { ...withoutLeakCheck, BUN_JSC_numberOfGCMarkers: "1", BUN_JSC_useConcurrentJIT: "0" };
+    const { stdout, stderr, exitCode } = await bun(String(dir), ["test", "--coverage"], env);
+    expect(stdout).toEndWith("\n0\n");
+    expect(rowsOf(stderr)).toContain("lib.ts|100.00|100.00|100.00|100.00|");
+    expect(exitCode).toBe(0);
+  });
+
+  test("text aligns names by the columns that they take", async () => {
+    using dir = tempDir("cov-width", {
+      "bunfig.toml": bunfig(),
+      "汉汉汉汉汉汉.js": "",
+      "a.test.js": `
+        import "./汉汉汉汉汉汉.js";
+        console.log(require("bun:jsc").codeCoverageForFile(require.resolve("./汉汉汉汉汉汉.js")));`,
+    });
+    const { stdout, stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(stdout).toContain("汉.js |");
+    expect(stderr).toContain("\n 汉汉汉汉汉汉.js |");
+    expect(new Set(stderr.match(/^[^|\n]*\|/gm)!.map(it => Bun.stringWidth(it))).size).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("text does not round up to 100", async () => {
+    using dir = tempDir("cov-rounding", {
+      "bunfig.toml": bunfig(),
+      "lib.js": `export const f = () => 0;\n${Buffer.alloc(20_001 * 2, "f;")}`,
+      "a.test.js": `import "./lib.js";`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr)[1]).toBe("lib.js|0.00|100.00|99.99|100.00|1");
+    expect(exitCode).toBe(0);
+  });
+
+  test("lcov", async () => {
+    expect(await report("lcov", "lcov.info")).toMatchInlineSnapshot(`
+      "TN:
+      SF:empty.ts
+      FNF:0
+      FNH:0
+      LF:0
+      LH:0
+      BRF:0
+      BRH:0
+      end_of_record
+      TN:
+      SF:lib.ts
+      FN:1,pick
+      FN:5,never
+      FNF:2
+      FNH:1
+      FNDA:2,pick
+      FNDA:0,never
+      DA:1,2
+      DA:2,2
+      DA:3,1
+      DA:5,1
+      LF:4
+      LH:4
+      BRDA:2,0,0,1
+      BRDA:2,0,1,1
+      BRDA:3,1,0,1
+      BRDA:3,1,1,0
+      BRDA:5,2,0,0
+      BRDA:5,2,1,0
+      BRF:6
+      BRH:3
+      end_of_record
+      "
+    `);
+  });
+
+  test("json", async () => {
+    expect(await report("json", "coverage-final.json")).toMatchInlineSnapshot(`
+      "{"<dir>/empty.ts": {"path":"<dir>/empty.ts","statementMap":{},"fnMap":{},"branchMap":{},"s":{},"f":{},"b":{}}
+      ,"<dir>/lib.ts": {"path":"<dir>/lib.ts","statementMap":{"0":{"start":{"line":2,"column":2},"end":{"line":2,"column":18}},"1":{"start":{"line":2,"column":9},"end":{"line":2,"column":18}},"2":{"start":{"line":3,"column":2},"end":{"line":3,"column":16}},"3":{"start":{"line":5,"column":21},"end":{"line":5,"column":47}},"4":{"start":{"line":5,"column":37},"end":{"line":5,"column":46}}},"fnMap":{"0":{"name":"pick","decl":{"start":{"line":1,"column":16},"end":{"line":1,"column":20}},"loc":{"start":{"line":1,"column":33},"end":{"line":4,"column":1}},"line":1},"1":{"name":"never","decl":{"start":{"line":5,"column":21},"end":{"line":5,"column":22}},"loc":{"start":{"line":5,"column":37},"end":{"line":5,"column":46}},"line":5}},"branchMap":{"0":{"loc":{"start":{"line":2,"column":2},"end":{"line":2,"column":18}},"type":"if","locations":[{"start":{"line":2,"column":2},"end":{"line":2,"column":18}},{"start":{},"end":{}}],"line":2},"1":{"loc":{"start":{"line":3,"column":9},"end":{"line":3,"column":15}},"type":"binary-expr","locations":[{"start":{"line":3,"column":9},"end":{"line":3,"column":10}},{"start":{"line":3,"column":14},"end":{"line":3,"column":15}}],"line":3},"2":{"loc":{"start":{"line":5,"column":37},"end":{"line":5,"column":46}},"type":"cond-expr","locations":[{"start":{"line":5,"column":41},"end":{"line":5,"column":42}},{"start":{"line":5,"column":45},"end":{"line":5,"column":46}}],"line":5}},"s":{"0":2,"1":1,"2":1,"3":1,"4":0},"f":{"0":2,"1":0},"b":{"0":[1,1],"1":[1,0],"2":[0,0]}}
+      }
+      "
+    `);
+  });
+
+  test("json-summary", async () => {
+    expect(await report("json-summary", "coverage-summary.json")).toMatchInlineSnapshot(`
+      "{"total": {"functions":{"total":2,"covered":1,"skipped":0,"pct":50},"lines":{"total":4,"covered":4,"skipped":0,"pct":100},"statements":{"total":5,"covered":4,"skipped":0,"pct":80},"branches":{"total":6,"covered":3,"skipped":0,"pct":50}}
+      ,"<dir>/empty.ts": {"functions":{"total":0,"covered":0,"skipped":0,"pct":100},"lines":{"total":0,"covered":0,"skipped":0,"pct":100},"statements":{"total":0,"covered":0,"skipped":0,"pct":100},"branches":{"total":0,"covered":0,"skipped":0,"pct":100}}
+      ,"<dir>/lib.ts": {"functions":{"total":2,"covered":1,"skipped":0,"pct":50},"lines":{"total":4,"covered":4,"skipped":0,"pct":100},"statements":{"total":5,"covered":4,"skipped":0,"pct":80},"branches":{"total":6,"covered":3,"skipped":0,"pct":50}}
+      }
+      "
+    `);
+  });
+
+  test("json without files", async () => {
+    expect(await report("json", "coverage-final.json", "--coverage-include=!*.ts")).toBe("{}\n");
+  });
+
+  test("json-summary without files", async () => {
+    const none = { total: 0, covered: 0, skipped: 0, pct: "Unknown" };
+    expect(JSON.parse(await report("json-summary", "coverage-summary.json", "--coverage-include=!*.ts"))).toEqual({
+      total: { functions: none, lines: none, statements: none, branches: none },
+    });
+  });
+
+  // It is what istanbul-lib-coverage merges by.
+  test("json has a range for the first arm of each branch, which that of no other has", async () => {
+    using dir = tempDir("cov-json-keys", { ...mapValues(branches, unmarked), "a.test.ts": "" });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=json", "--coverage-include=**"]);
+    const json = JSON.parse(readFileSync(path.join(String(dir), "coverage", "coverage-final.json"), "utf8"));
+    const keys = Object.values<any>(json).flatMap(file =>
+      Object.values<any>(file.branchMap).map(it => path.basename(file.path) + JSON.stringify(it.locations[0])),
+    );
+    expect(keys.filter((key, index) => key.includes("{}") || keys.indexOf(key) < index)).toEqual([]);
+    expect(keys.length).toBeGreaterThan(150);
+    expect(exitCode).toBe(0);
+  });
+
+  test("json has what Istanbul lacks after what it has", async () => {
+    const line = `a ??= b?.c.d; try {} catch {} class A { #e() {} f() {} } /* istanbul ignore if */ if (a || b);`;
+    using dir = tempDir("cov-json-order", { "lib.js": line, "a.test.ts": "" });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=json", "--coverage-include=lib.js"]);
+    const [file] = Object.values<any>(await Bun.file(path.join(String(dir), "coverage", "coverage-final.json")).json());
+    const text = ({ start, end }: any) => line.slice(start.column, end.column);
+    expect({
+      branches: Object.values<any>(file.branchMap).map(it => [it.type, text(it.loc), ...it.locations.map(text)]),
+      functions: Object.values<any>(file.fnMap).map(it => it.name),
+      statements: Object.values(file.statementMap).map(it => text(it).split(" ")[0]),
+    }).toEqual({
+      branches: [
+        ["else", "if (a || b);", "if"],
+        ["binary-expr", "a || b", "a", "b"],
+        ["logical-assignment", "a ??= b?.c.d", "b?.c.d"],
+        ["optional-chain", "?.c.d", "?.c.d"],
+        ["catch", "catch", "catch"],
+      ],
+      functions: ["A.f", "A.#e"],
+      statements: ["a", "try", "if", "class"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // genhtml refuses the file otherwise.
+  test("lcov has a line for each branch and function, which ran if that did", async () => {
+    using dir = tempDir("cov-lcov-lines", {
+      ...mapValues({ ...branches, ...functions }, unmarked),
+      "lines.js": `
+        export function pattern(
+          {
+            a = 1,
+          } = {},
+        ) {}
+        pattern();
+        export const afterBrace = function () {
+        }
+        || 2;
+        export const chain = null
+          ?.a;
+        export
+        function
+        split() {}
+        split();`,
+      "a.test.ts": ["lines.js", ...Object.keys({ ...branches, ...functions })].map(it => `import "./${it}";`).join(""),
+    });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8").split("end_of_record")) {
+      const lines = new Map(record.matchAll(/^DA:(\d+),(\d+)$/gm).map(([, line, count]) => [line, Number(count)]));
+      const calls = new Map(record.matchAll(/^FNDA:(\d+),(.*)$/gm).map(([, count, name]) => [name, count]));
+      for (const [entry, line, last] of record.matchAll(/^(?:BRDA|FN):(\d+),(?:\d+,\d+,)?(.*)$/gm)) {
+        checked++;
+        if (!(lines.get(line)! >= (Number(calls.get(last) ?? last) > 0 ? 1 : 0))) wrong.push(entry);
+      }
+    }
+    expect(wrong).toEqual([]);
+    expect(checked).toBeGreaterThan(300);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("lcov has a path on one line", async () => {
+    using dir = tempDir("cov-lcov-path", { "a\nb\rc.ts": "", "a.test.ts": "", "bunfig.toml": bunfig() });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov", "--coverage-include=."]);
+    expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8")).toStartWith("TN:\nSF:a?b?c.ts\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bunfig.toml names them", async () => {
+    using dir = tempDir("cov-reporters", {
+      ...files,
+      "bunfig.toml": bunfig("coverage = true", `coverageReporter = ["json", "json-summary", "lcov", "text"]`),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test"]);
+    expect(rowsOf(stderr)).toHaveLength(3);
+    expect(readdirSync(path.join(String(dir), "coverage")).sort()).toEqual([
+      "coverage-final.json",
+      "coverage-summary.json",
+      "lcov.info",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("leave the mode of their folder to the umask", async () => {
+    using dir = tempDir("cov-reporters", { ...files, "a.test.ts": `${files["a.test.ts"]} process.umask(0o002);` });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    expect(statSync(path.join(String(dir), "coverage")).mode & 0o777).toBe(0o775);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a report that cannot be written fails the run", async () => {
+    using dir = tempDir("cov-reporters", { ...files, "coverage": "a file" });
+    const flags = ["--coverage-reporter=json", "--coverage-reporter=json-summary", "--coverage-reporter=text"];
+    const { stderr, exitCode } = await bun(String(dir), ["test", ...flags]);
+    expect(rowsOf(stderr)).toHaveLength(3);
+    expect(stderr).toContain("Failed to write coverage-final.json");
+    expect(stderr).toContain("Failed to write coverage-summary.json");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(!isLinux)("a report that is cut short leaves the older one", async () => {
+    using dir = tempDir("cov-reporters", {
+      ...files,
+      "a.test.ts": `${files["a.test.ts"]} process.on("SIGXFSZ", () => {}); ${limitTo1("RLIMIT_FSIZE")}`,
+      "coverage/lcov.info": "an older report",
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    expect(stderr).toContain("EFBIG: File too large: Failed to write lcov.info");
+    expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+    expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8")).toBe("an older report");
+    expect(exitCode).toBe(1);
+  });
+
+  // The child waits for the pipe, which takes less than it prints.
+  test.skipIf(isWindows).each([
+    ["its warnings", "const = ;", "Failed to parse", "an older report"],
+    ["the table", "", "All files", "TN:"],
+  ])("a run that is killed while it prints %s leaves no other file", async (_, code, printed, start) => {
+    const names = Array.from({ length: 400 }, (_, index) => `${index}.js`.padStart(200, "a"));
+    using dir = tempDir("cov-killed", {
+      ...Object.fromEntries(names.map(name => [name, code])),
+      "a.test.ts": "",
+      "coverage/lcov.info": "an older report",
+    });
+    mkfifo(path.join(String(dir), "pipe"));
+    await using pipe = await open(path.join(String(dir), "pipe"), "r+");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage-include=*.js", "--coverage-reporter=lcov", "--coverage-reporter=text"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: pipe.fd,
+    });
+    for (let stderr = ""; !stderr.includes(printed);) stderr += (await pipe.read(Buffer.alloc(1024))).buffer;
+    proc.kill("SIGKILL");
+    await proc.exited;
+    expect(proc.signalCode).toBe("SIGKILL");
+    expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+    expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8")).toStartWith(start);
+  });
+
+  test("a report that is written in parts is whole", async () => {
+    const name = Buffer.alloc(9 << 20, "a").toString();
+    using dir = tempDir("cov-large", { "a.js": `function ${name}() {}`, "b.js": "", "a.test.ts": "" });
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov", "--coverage-include=*.js"]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect(lcov.replaceAll(name, "a").match(/^(SF|FN|FNDA):.*$/gm)).toEqual([
+      "SF:a.js",
+      "FN:1,a",
+      "FNDA:0,a",
+      "SF:b.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a report does not take the place of a folder with files", async () => {
+    using dir = tempDir("cov-reporters", { ...files, "coverage/lcov.info/kept": "" });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    expect(stderr).toContain("Failed to write lcov.info");
+    expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+    expect(readdirSync(path.join(String(dir), "coverage", "lcov.info"))).toEqual(["kept"]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("coverageThreshold", () => {
+  const below = (what: string, is: string, threshold: number) =>
+    `error: Coverage of ${what} is ${is}%, which is below the threshold of ${threshold}%`;
+  const above = (what: string, is: number, threshold: number) =>
+    `error: The number of uncovered ${what} is ${is}, which is above the threshold of ${threshold}`;
+  const unchecked = (pattern: string) =>
+    `warn: No file in the coverage report matches "${pattern}", so its thresholds are not checked`;
+  const range = "note: A threshold is a number from 0 to 1, such as 0.9 for 90%";
+  const keys = `note: The keys are "lines", "functions", "statements", "branches" and "perFile". A glob pattern takes a table of them.`;
+
+  test.each<[string, string[]]>([
+    ["0.75", []],
+    ["0.76", [below("functions", "75.00", 76)]],
+    ["0.9", [below("functions", "75.00", 90), below("lines", "80.00", 90)]],
+    ["{ lines = 0.8 }", []],
+    ["{ lines = 0.8001 }", [below("lines", "80.00", 80.01)]],
+    ["{ functions = 0.75 }", []],
+    ["{ statements = 0.88 }", []],
+    ["{ statements = 0.89 }", [below("statements", "88.88", 89)]],
+    ["{ branches = 0.5 }", []],
+    ["{ branches = 0.51 }", [below("branches", "50.00", 51)]],
+    ["{ branches = 0.5, perFile = true }", []],
+    ["{ functions = 0.75, perFile = false }", []],
+    [
+      "{ functions = 0.75, branches = 1, perFile = true }",
+      [below(`branches in "large.ts"`, "50.00", 100), below(`functions in "small.ts"`, "0.00", 75)],
+    ],
+    ["80", [below("functions", "75.00", 8000), below("lines", "80.00", 8000), range]],
+    ["{ lines = nan }", [below("lines", "80.00", NaN), range]],
+    ["{ lines = 0 }", []],
+    ["{ lines = -1 }", []],
+    ["{ lines = -0.5 }", [above("lines", 1, 0.5)]],
+    ["{ branches = -0.5, perFile = true }", [above(`branches in "large.ts"`, 1, 0.5)]],
+    [
+      "{ line = 1, function = 1 }",
+      [`warn: Ignoring "line" in "coverageThreshold"`, `warn: Ignoring "function" in "coverageThreshold"`, keys],
+    ],
+    // https://github.com/oven-sh/bun/issues/5099
+    [`{ "l*" = { lines = 1 } }`, []],
+    [`{ "s*" = { lines = 1 } }`, [below(`lines in "s*"`, "0.00", 100)]],
+    [`{ "./small.ts" = { lines = -0.5 } }`, [above(`lines in "./small.ts"`, 1, 0.5)]],
+    [`{ "." = { lines = 0.8 } }`, []],
+    [`{ "." = { lines = 0.8 }, perFile = true }`, []],
+    [`{ "." = { lines = 0.8, perFile = true } }`, [below(`lines in "small.ts"`, "0.00", 80)]],
+    [`{ "s*" = { lines = 0 }, lines = 0.9 }`, [below("lines", "80.00", 90)]],
+    [
+      `{ "s*" = { lines = 1 }, "l*" = { branches = 1 } }`,
+      [below(`lines in "s*"`, "0.00", 100), below(`branches in "l*"`, "50.00", 100)],
+    ],
+    [`{ "l*" = { lines = 80 } }`, [below(`lines in "l*"`, "100.00", 8000), range]],
+    [`{ "!small.ts" = { lines = 1 } }`, []],
+    [`{ "!**/small.ts" = { lines = 1 } }`, []],
+    [`{ "!(small).ts" = { lines = 1 } }`, []],
+    [`{ "!l*" = { lines = 1 } }`, [below(`lines in "!l*"`, "0.00", 100)]],
+    [`{ "!." = { lines = 1 } }`, [unchecked("!.")]],
+    [`{ "unloaded.ts" = { lines = 1 } }`, [unchecked("unloaded.ts")]],
+    [`{ "scr/**" = { lines = 1 } }`, [`error: No file matches "scr/**" in "coverageThreshold"`]],
+    [`{ "s*" = 1 }`, [`warn: Ignoring "s*" in "coverageThreshold"`, keys]],
+    [`{ "l*" = { "s*" = { lines = 1 } } }`, [`warn: Ignoring "s*" in "coverageThreshold"`, keys]],
+    ["{ global = { lines = 0.9 } }", [below("lines", "80.00", 90)]],
+    ["{ global = { global = { lines = 0.9 } } }", [`warn: Ignoring "global" in "coverageThreshold"`, keys]],
+  ])("%s", async (threshold, messages) => {
+    using dir = tempDir("cov-threshold", {
+      "bunfig.toml": bunfig(`coverageThreshold = ${threshold}`),
+      "large.ts": `const a = () => 1;\nconst b = () => 2;\nconst c = (v: number) => (v ? a() : 0);\nb(), c(1); b();\n`,
+      "small.ts": `export function never() { return 1; }\n`,
+      "unloaded.ts": "Object();",
+      "a.test.ts": `import "./large.ts"; import "./small.ts";`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    // Of all that there is to cover, and not the mean of the rows.
+    expect(rowsOf(stderr)[0]).toBe("Allfiles|75.00|80.00|88.88|50.00|");
+    expect(messagesOf(stderr)).toEqual(messages);
+    expect(exitCode).toBe(messages[0]?.startsWith("error") ? 1 : 0);
+  });
+
+  test.each([
+    ["--coverage", ["", "a.", "(p", "wa", "no", "--", "Fi", "--", "Al", " l", "--", "er", "", " 1"]],
+    ["--dots", [".", "wa", "no", "--", "Fi", "--", "Al", " l", "--", "er", "", "1 "]],
+  ])("has its messages around the table with %s", async (flag, starts) => {
+    using dir = tempDir("cov-threshold", {
+      "bunfig.toml": bunfig("coverageThreshold = { line = 1, lines = 1 }"),
+      "lib.ts": `export function never() {}`,
+      "a.test.ts": `test("a", () => {});`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=lib.ts", flag]);
+    expect(stderr.split("\n", starts.length).map(line => line.slice(0, 2))).toEqual(starts);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["1", 1],
+    ["-1", 1],
+    [`{ "lib.ts" = { lines = 1 } }`, 1],
+    ["0", 0],
+  ])("of %s is said not to be checked if no file is reported", async (threshold, warnings) => {
+    using dir = tempDir("cov-threshold", {
+      "bunfig.toml": bunfig(`coverageThreshold = ${threshold}`),
+      "lib.ts": `export function never() {}`,
+      "a.test.ts": "",
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(messagesOf(stderr)).toEqual(
+      Array(warnings).fill(`warn: No file is in the coverage report, so "coverageThreshold" is not checked`),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["functions", "lines", "statements", "branches"])("for a pattern colors its %s", async key => {
+    const code = `export function never(v) { return v ? 1 : 2; }`;
+    using dir = tempDir("cov-threshold", {
+      "bunfig.toml": bunfig(
+        `coverageThreshold = { functions = 0, lines = 0, statements = 0, branches = 0, "a.js" = { ${key} = 1 } }`,
+      ),
+      "a.js": code,
+      "b.js": code,
+      "a.test.ts": "",
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=*.js"], { FORCE_COLOR: "1" });
+    const cells = ["functions", "lines", "statements", "branches"].map(it => (it === key ? "<red>0.00" : "0.00"));
+    expect(rowsOf(stderr.replace(/\x1b\[(\d+)m/g, (_, code) => (code === "31" ? "<red>" : "")))).toEqual([
+      "Allfiles|0.00|0.00|0.00|0.00|",
+      `<red>a.js|${cells.join("|")}|<red>1`,
+      "b.js|0.00|0.00|0.00|0.00|<red>1",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/5928
+describe.concurrent("coverageInclude", () => {
+  const code = `export function f() {}\n`;
+  const files = {
+    "app/src/loaded.ts": code + "f();",
+    "app/src/unloaded.ts": code,
+    "app/src/.hidden/unloaded.jsx": code,
+    "app/src/generated/unloaded.cjs": "exports.a = 1;",
+    "app/src/types.d.ts": "export declare function f(): void;",
+    "app/src/data.json": "{}",
+    "app/src/notes.txt": "",
+    "app/src/LICENSE": "",
+    "app/src/.git/hooks/pre-commit.js": code,
+    "app/src/other.test.ts": code,
+    "app/src/ignored.ts": "/* istanbul ignore file */" + code,
+    "app/src/node_modules/package/index.js": code,
+    "app/tools/loaded.ts": code + "f();",
+    "app/coverage/sorter.js": code,
+    "shared/loaded.ts": code + "f();",
+    "shared/unloaded.ts": code,
+    "app/a.test.ts": `import "./src/loaded.ts"; import "./tools/loaded.ts"; import "../shared/loaded.ts";`,
+    "app/b.test.ts": "",
+  };
+  const linesByFile = (stderr: string) =>
+    rowsOf(stderr)
+      .slice(1)
+      .map(row => row.replace(/\|.*?\|(.*?)\|.*/, " $1"));
+  const hidden = "src/.hidden/unloaded.jsx 0.00";
+  const generated = "src/generated/unloaded.cjs 0.00";
+  const shared = "../shared/loaded.ts 100.00";
+  const [loaded, unloaded, tool] = ["src/loaded.ts 100.00", "src/unloaded.ts 0.00", "tools/loaded.ts 100.00"];
+
+  test.each<[string, string[], string[]]>([
+    ["", [], [loaded, tool]],
+    ["coverageInclude = []", [], [loaded, tool]],
+    [`coverageInclude = "src/**"`, [], [hidden, generated, loaded, unloaded]],
+    [`coverageInclude = "src"`, [], [hidden, generated, loaded, unloaded]],
+    [`coverageInclude = "./src/"`, [], [hidden, generated, loaded, unloaded]],
+    [`coverageInclude = "."`, [], [hidden, generated, loaded, unloaded, tool]],
+    [`coverageInclude = "./src/*.ts"`, [], [loaded, unloaded]],
+    [`coverageInclude = "src/loaded.ts"`, [], [loaded]],
+    [`coverageInclude = "**/*.{jsx,cjs}"`, [], [hidden, generated]],
+    [`coverageInclude = "{src/generated,tools}/**"`, [], [generated, tool]],
+    [`coverageInclude = "src/!(generated)/**"`, [], [hidden]],
+    [`coverageInclude = "!(src)/**"`, [], [tool]],
+    [`coverageInclude = "!!tools/**"`, [], [tool]],
+    [`coverageInclude = ["src/*.ts", "src/un*", "tools"]`, [], [loaded, unloaded, tool]],
+    [`coverageInclude = ["!src/generated", "src"]`, [], [hidden, loaded, unloaded]],
+    [`coverageInclude = ["!src", "src/loaded.ts", "tools"]`, [], [tool]],
+    [`coverageInclude = "!src"`, [], [tool]],
+    [`coverageInclude = "!src"`, ["--coverage-dir=tools"], ["coverage/sorter.js 0.00", tool]],
+    [`coverageInclude = "!src"`, ["--coverage-dir=."], ["coverage/sorter.js 0.00", tool]],
+    [`coverageInclude = "coverage"`, [], ["coverage/sorter.js 0.00"]],
+    [`coverageInclude = "src//*.ts"`, [], [loaded, unloaded]],
+    [`coverageInclude = "src/*"`, [], [loaded, unloaded]],
+    [`coverageInclude = "src/*/"`, [], [hidden, generated]],
+    [`coverageInclude = "*/generated"`, [], [generated]],
+    [`coverageInclude = "*/loaded.ts"`, [], [loaded, tool]],
+    [`coverageInclude = "{tools,none}"`, [], [tool]],
+    [`coverageInclude = ["src", "!**/generated"]`, [], [hidden, loaded, unloaded]],
+    [`coveragePathIgnorePatterns = "tools"`, [], [loaded, tool]],
+    [`coverageInclude = "../shared"`, [], [shared, "../shared/unloaded.ts 0.00"]],
+    [`coverageInclude = ["../shared", "!**/un*"]`, [], [shared]],
+    [`coverageInclude = "src"\ncoveragePathIgnorePatterns = "**/unloaded.*"`, [], [loaded]],
+    [`coverageInclude = "src"`, ["--coverage-include=tools", "--coverage-include", "src/u*"], [unloaded, tool]],
+    [`coverageInclude = "src/*.ts"`, ["--parallel=2"], [loaded, unloaded]],
+    ["", ["--parallel=2", "--coverage-include=src/*.ts"], [loaded, unloaded]],
+  ])("%j %j", async (option, flags, expected) => {
+    using dir = tempDir("cov-include", { ...files, "app/bunfig.toml": bunfig(option) });
+    const args = ["test", "--coverage", ...flags, "./a.test.ts", "./b.test.ts"];
+    const { stderr, exitCode } = await bun(path.join(String(dir), "app"), args);
+    expect(linesByFile(stderr)).toEqual(expected);
+    expect(messagesOf(stderr)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an absolute path", async () => {
+    using dir = tempDir("cov-include", files);
+    const app = path.join(String(dir), "app");
+    const include = `--coverage-include=${path.join(app, "src", "unloaded.ts")}`;
+    const { stderr, exitCode } = await bun(app, ["test", include, "./a.test.ts"]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["src/unloaded.ts|0.00|0.00|100.00|100.00|1"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each<[string, string[], string[]]>([
+    ["**", [], ["real/loaded.ts 100.00", "real/unloaded.ts 0.00"]],
+    ["in/link", [], ["real/loaded.ts 100.00", "real/unloaded.ts 0.00"]],
+    ["in/link/*.ts", [], ["real/loaded.ts 100.00", "real/unloaded.ts 0.00"]],
+    ["in/link/loaded.ts", [], ["real/loaded.ts 100.00"]],
+    ["!in/link/loaded.ts", [], ["real/unloaded.ts 0.00"]],
+    ["*/link/*.ts", [], []],
+    ["**", ["--coverage-dir=in/link"], ["real/loaded.ts 100.00"]],
+    ["real", ["--preserve-symlinks"], ["in/link/loaded.ts 100.00", "real/unloaded.ts 0.00"]],
+  ])("%s %j, for a file that is loaded through a link", async (entry, flags, expected) => {
+    using dir = tempDir("cov-include", {
+      "real/loaded.ts": code + "f();",
+      "real/unloaded.ts": code,
+      "in/a.test.ts": `import "./link/loaded.ts";`,
+      "bunfig.toml": bunfig(),
+    });
+    symlinkSync(path.join(String(dir), "real"), path.join(String(dir), "in", "link"), "junction");
+    const { stderr, exitCode } = await bun(String(dir), ["test", `--coverage-include=${entry}`, ...flags]);
+    expect(linesByFile(stderr)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each<[string, string[]]>([
+    ["app/[id]", ["app/[id]/[slug].ts 0.00", "app/[id]/page.ts 100.00"]],
+    ["app/[id]/p*", ["app/[id]/page.ts 100.00"]],
+    ["app/[id]/[slug].ts", ["app/[id]/[slug].ts 0.00"]],
+    ["!app/[id]", ["app/i/page.ts 0.00"]],
+    ["app/[ij]/*", ["app/i/page.ts 0.00"]],
+    ["app/\\[id\\]/p*", ["app/[id]/page.ts 100.00"]],
+    ["**/\\[slug\\].ts", ["app/[id]/[slug].ts 0.00"]],
+    ["*/i/p\\age.ts", ["app/i/page.ts 0.00"]],
+  ])("%s, where names have brackets", async (entry, expected) => {
+    using dir = tempDir("cov-include", {
+      "app/[id]/page.ts": code + "f();",
+      "app/[id]/[slug].ts": code,
+      "app/i/page.ts": code,
+      "a.test.ts": `import "./app/[id]/page.ts";`,
+      "bunfig.toml": bunfig(),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", `--coverage-include=${entry}`]);
+    expect(linesByFile(stderr)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["!(group)", "src/!a.ts 0.00"],
+    ["src/!*", "src/!a.ts 0.00"],
+  ])("%s, where names look like what negates", async (entry, expected) => {
+    using dir = tempDir("cov-include", {
+      "(group)/a.ts": code,
+      "src/!a.ts": code,
+      "a.test.ts": "",
+      "bunfig.toml": bunfig(),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", `--coverage-include=${entry}`]);
+    expect(linesByFile(stderr)).toEqual([expected]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("the name of a pipe", async () => {
+    using dir = tempDir("cov-include", { "a.test.ts": "" });
+    mkfifo(path.join(String(dir), "pipe.js"));
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=pipe.js"]);
+    expect(messagesOf(stderr)).toEqual([`warn: No file matches the coverage include pattern "pipe.js"`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each<[string[], string[]]>([
+    [["*.ts"], ["lib.ts?query 100.00"]],
+    [["lib.ts"], ["lib.ts?query 100.00"]],
+    [["!l*.ts"], []],
+    [["*.ts", "!*query"], ["lib.ts 0.00"]],
+  ])("%j, for a file that a plugin loads with a query", async (entries, expected) => {
+    using dir = tempDir("cov-include", {
+      "lib.ts": code,
+      "a.test.ts": `
+        const contents = "Object();";
+        Bun.plugin({ setup: build => void build.onLoad({ filter: /query$/ }, () => ({ contents, loader: "ts" })) });
+        require("./lib.ts?query");`,
+      "bunfig.toml": bunfig(`coverageInclude = ${JSON.stringify(entries)}`),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(linesByFile(stderr)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each<[string, string[]]>([
+    ["made", ["made/loaded.ts 0.00", "made/unloaded.ts 0.00"]],
+    ["!made", []],
+  ])("%s, for a folder that a test makes", async (entry, expected) => {
+    using dir = tempDir("cov-include", {
+      "a.test.ts": `
+        for (const name of ["loaded", "unloaded"]) await Bun.write("made/" + name + ".ts", ${JSON.stringify(code)});
+        await import(process.cwd() + "/made/loaded.ts");`,
+      "bunfig.toml": bunfig(),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", `--coverage-include=${entry}`]);
+    expect(linesByFile(stderr)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test("with --parallel, where no worker loads any of the files", async () => {
+    using dir = tempDir("cov-include", { "lib.ts": code, "a.test.ts": "", "b.test.ts": "" });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--parallel=2", "--coverage-include=lib.ts"]);
+    expect(linesByFile(stderr)).toEqual(["lib.ts 0.00"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file that is bundled with its test", async () => {
+    using dir = tempDir("cov-include", {
+      "src/lib.ts": code + "f();",
+      "src/a.test.ts": `import "./lib.ts";`,
+      "bunfig.toml": bunfig(),
+    });
+    const built = await bun(String(dir), ["build", "src/a.test.ts", "--target=bun", "--sourcemap", "--outdir=out"]);
+    expect(built.exitCode).toBe(0);
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=.", "./out/a.test.js"]);
+    expect(linesByFile(stderr)).toEqual(["src/lib.ts 100.00"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file with a source map that no test loads is left out if Bun would report its sources", async () => {
+    const map = JSON.stringify({ version: 3, sources: ["a.js"], sourcesContent: [code], mappings: "", names: [] });
+    using dir = tempDir("cov-include", {
+      "a.js": code,
+      "bundle.js": "// @bun\n" + code,
+      "bundle.js.map": map,
+      "emitted.js": code,
+      "emitted.js.map": map,
+      "a.test.ts": "",
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=*.js"]);
+    expect(linesByFile(stderr)).toEqual(["a.js 0.00", "emitted.js 0.00"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows || process.getuid?.() === 0)("what cannot be read does not hide the rest", async () => {
+    using dir = tempDir("cov-include", {
+      "src/a/a.ts": code,
+      "src/b/b.ts": code,
+      "src/c/c.ts": code,
+      "src/d.ts": code,
+      "a.test.ts": "",
+    });
+    const locked = [path.join(String(dir), "src", "b"), path.join(String(dir), "src", "d.ts")];
+    for (const it of locked) chmodSync(it, 0);
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=src", "./a.test.ts"]);
+    chmodSync(locked[0], 0o755);
+    expect(messagesOf(stderr)).toEqual(
+      locked.map(it => `warn: Failed to read "${it}" (EACCES). It is not in the coverage report.`),
+    );
+    expect(linesByFile(stderr)).toEqual(["src/a/a.ts 0.00", "src/c/c.ts 0.00"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["0.1", 1],
+    ["{ branches = 0.1, perFile = true }", 1],
+    ["0", 0],
+  ])("no file and a threshold of %s", async (value, errors) => {
+    using dir = tempDir("cov-include", {
+      "a.test.ts": "",
+      "bunfig.toml": bunfig(`coverageInclude = "scr"`, `coverageThreshold = ${value}`),
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(messagesOf(stderr)).toEqual([
+      `warn: No file matches the coverage include pattern "scr"`,
+      ...Array(errors).fill(`error: No file is in the coverage report, so "coverageThreshold" is not met`),
+    ]);
+    expect(exitCode).toBe(errors);
+  });
+
+  test("a file that is not loaded does not run, and counts against a threshold", async () => {
+    using dir = tempDir("cov-include", {
+      "lib.ts": `console.log("ran");`,
+      "a.test.ts": "",
+      "bunfig.toml": bunfig(`coverageInclude = "*.ts"`, "coverageThreshold = 0.1"),
+    });
+    const { stdout, stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(stdout).not.toContain("ran");
+    expect(messagesOf(stderr)).toEqual(["error: Coverage of lines is 0.00%, which is below the threshold of 10%"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("warns about a pattern that matches nothing and a file that cannot be parsed", async () => {
+    using dir = tempDir("cov-include", {
+      "broken.ts": "const = ;",
+      "broken-deep.ts": Buffer.alloc(200_000, "[").toString(),
+      "fine.ts": code,
+      "a.test.ts": "",
+    });
+    const flags = ["--coverage-include=scr/**", "--coverage-include={broken*,fine}.ts"];
+    const { stderr, exitCode } = await bun(String(dir), ["test", ...flags]);
+    expect(messagesOf(stderr).map(it => it.replace(/".*broken/, `"broken`))).toEqual([
+      `warn: No file matches the coverage include pattern "scr/**"`,
+      `warn: Failed to parse "broken-deep.ts". It is not in the coverage report.`,
+      `warn: Failed to parse "broken.ts". It is not in the coverage report.`,
+    ]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["fine.ts|0.00|0.00|100.00|100.00|1"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("what is no source file is not listed", async () => {
+  using dir = tempDir("cov-no-source-file", {
+    "bunfig.toml": bunfig(),
+    "as-text.ts": `export const a = 1;`,
+    "data.json": `{}`,
+    "style.css": ``,
+    "lib.ts": `export const a = 1;`,
+    "a.test.ts": `
+      import text from "./as-text.ts" with { type: "text" };
+      import data from "./data.json";
+      import "./lib.ts";
+      import "data:text/javascript,export default 1";
+      await import(URL.createObjectURL(new Blob(["export default 1"], { type: "text/javascript" })));
+      const contents = "export default 1";
+      Bun.plugin({ setup: build => void build.onLoad({ filter: /css$/ }, () => ({ contents, loader: "js" })) });
+      await import("./style.css");
+      Object(text, data);`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(["lib.ts|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each(["istanbul", "c8", "v8"])("%s ignore file", async tool => {
+  using dir = tempDir("cov-ignore-file", {
+    "bunfig.toml": bunfig(),
+    "ignored.ts": `// ${tool} ignore file\nexport function f() {}`,
+    "kept.ts": `export const text = "/* ${tool} ignore file */";`,
+    "a.test.ts": `import "./ignored.ts"; import "./kept.ts";`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(["kept.ts|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("a // @bun file is reported as it is", () => {
+  const map = (source: string, mappings: string) =>
+    JSON.stringify({ version: 3, sources: [source], sourcesContent: ["export {};"], mappings, names: [] });
+
+  test.each<[string, string, string]>([
+    ["the files that it was made from are not there", map("gone.ts", ";AAAA"), ""],
+    ["its source map is not JSON", "{", ""],
+    ["its mappings cannot be decoded", map("source.ts", ";!"), ""],
+    ["source maps are ignored", map("source.ts", ";AAAA"), "coverageIgnoreSourcemaps = true"],
+  ])("if %s", async (_, sourceMap, option) => {
+    using dir = tempDir("cov-bundle", {
+      "bunfig.toml": bunfig(option),
+      "source.ts": "export {};",
+      "bundle.js": "// @bun\nexport function f() {\n  return 1;\n}\n",
+      "bundle.js.map": sourceMap,
+      "a.test.ts": `import "./bundle.js";`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["bundle.js|0.00|0.00|0.00|100.00|2-3"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("without the function around CommonJS, and from its text if it has bytecode", async () => {
+    using dir = tempDir("cov-bytecode", {
+      "bunfig.toml": bunfig(),
+      "lib.cjs": `exports.pick = function (v) { return v ? 1 : 2; };`,
+      "a.test.ts": `require("./out/lib.js").pick(1);`,
+    });
+    const built = await bun(String(dir), ["build", "lib.cjs", "--target=bun", "--bytecode", "--outdir=out"]);
+    expect(built.exitCode).toBe(0);
+    const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
+    expect(lcov).toContain("FNF:1\nFNH:1\nFNDA:1,pick\n");
+    expect(lcov).toContain("BRF:2\nBRH:1\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent.each<[string, string[]]>([
+  ["", ["out/unmapped.js", "src/a.js", "src/b.js"]],
+  [`coverageInclude = "src/a.js"`, ["src/a.js"]],
+  [`coverageInclude = "."`, ["out/unmapped.js", "src/a.js", "src/b.js"]],
+  [`coverageInclude = "!out"`, ["src/a.js", "src/b.js"]],
+  [`coveragePathIgnorePatterns = "src/a.js"`, ["out/unmapped.js", "src/b.js"]],
+  [`coveragePathIgnorePatterns = "out/**"`, []],
+])("the files that are listed for a // @bun file, with %j", async (option, listed) => {
+  const sources = ["../src/a.js", "../src/b.js", "../node_modules/c/source.js"];
+  const sourcesContent = sources.map(() => "Object();");
+  using dir = tempDir("cov-bundle", {
+    ...Object.fromEntries(sources.map(it => [it.slice(3), "Object();"])),
+    "bunfig.toml": bunfig(option),
+    "out/mapped.js": "// @bun\nObject();\nObject();\nObject();\n",
+    "out/mapped.js.map": JSON.stringify({
+      version: 3,
+      sources,
+      sourcesContent,
+      mappings: ";AAAA;ACAA;ACAA",
+      names: [],
+    }),
+    "out/unmapped.js": "// @bun\nObject();\n",
+    "node_modules/c/index.js": "// @bun\nObject();\n",
+    "a.test.ts": `import "./out/mapped.js"; import "./out/unmapped.js"; import "c";`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(listed.map(it => `${it}|100.00|100.00|100.00|100.00|`));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("the sources of a // @bun file are listed wherever it is", async () => {
+  const map = { version: 3, sources: ["app/a.js", "b.js"], mappings: ";AAAA;ACAA", names: [] };
+  using dir = tempDir("cov-bundle", {
+    "app/bunfig.toml": bunfig(),
+    "app/a.js": "Object();",
+    "b.js": "Object();",
+    "mapped.js": "// @bun\nObject();\nObject();\n",
+    "mapped.js.map": JSON.stringify({ ...map, sourcesContent: ["Object();", "Object();"] }),
+    "unmapped.js": "// @bun\nObject();\n",
+    "app/a.test.ts": `import "../mapped.js"; import "../unmapped.js";`,
+  });
+  const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(["a.js|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each<[string, string[], string[]]>([
+  [bunfig(`preload = "./setup.ts"`), [], ["helper.ts"]],
+  [bunfig(`preload = "./setup"`), ["--parallel=2"], ["helper.ts"]],
+  [bunfig(), ["--preload=./setup.ts", "--coverage-include=."], ["helper.ts"]],
+  [bunfig(), ["--preload=file://./setup.ts"], ["helper.ts"]],
+  ["[test]\ncoverageSkipTestFiles = false", ["-r", "./setup.ts"], ["a.test.ts", "b.test.ts", "helper.ts", "setup.ts"]],
+])("a preload is listed if test files are: %j %j", async (config, flags, listed) => {
+  using dir = tempDir("cov-preload", {
+    "bunfig.toml": config,
+    "setup.ts": `import "./helper.ts";`,
+    "helper.ts": "",
+    "a.test.ts": "",
+    "b.test.ts": "",
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage", ...flags]);
+  expect(rowsOf(stderr).slice(1)).toEqual(listed.map(it => `${it}|100.00|100.00|100.00|100.00|`));
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/15538
+test.concurrent.each(["--coverage", "--coverage-include=.", "--coverage-include=.."])(
+  "%s in a project that is in node_modules",
+  async flag => {
+    using dir = tempDir("cov-in-node-modules", {
+      "node_modules/app/bunfig.toml": bunfig(),
+      "node_modules/app/package.json": `{ "name": "app", "sideEffects": false }`,
+      "node_modules/app/lib.js": "export const unused = 1;",
+      "node_modules/app/node_modules/nested/index.js": "",
+      "node_modules/hoisted/index.js": "",
+      "node_modules/app/a.test.js": `import "./lib.js"; import "nested"; import "hoisted";`,
+    });
+    const { stderr, exitCode } = await bun(path.join(String(dir), "node_modules", "app"), ["test", flag]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["lib.js|100.00|100.00|100.00|100.00|"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a module that a plugin makes up is listed", async () => {
+  using dir = tempDir("cov-virtual", {
+    "bunfig.toml": bunfig(),
+    "a.test.ts": `
+      Bun.plugin({ setup: build => void build.module("made-up", () => ({ contents: "Object();", loader: "js" })) });
+      require("made-up");`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(["made-up|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([[[]], [["--parallel=2"]]])("the flags override bunfig.toml: %j", async parallel => {
+  using dir = tempDir("cov-flags", {
+    "bunfig.toml": bunfig(`coverage = false`, `coverageReporter = "lcov"`, `coverageDir = "from-bunfig"`),
+    "lib.ts": "",
+    "a.test.ts": `import "./lib.ts";`,
+    "b.test.ts": "",
+  });
+  const fromBunfig = await bun(String(dir), ["test", "--coverage", ...parallel]);
+  expect(readFileSync(path.join(String(dir), "from-bunfig", "lcov.info"), "utf8")).toContain("SF:lib.ts\n");
+  expect(fromBunfig.exitCode).toBe(0);
+
+  const flags = ["--coverage-reporter=json-summary", "--coverage-dir=from-flag"];
+  const fromFlags = await bun(String(dir), ["test", ...flags, ...parallel]);
+  expect(readdirSync(path.join(String(dir), "from-flag"))).toEqual(["coverage-summary.json"]);
+  expect(fromFlags.exitCode).toBe(0);
+});
+
+test.concurrent.each<[string, string[], string]>([
+  [
+    "",
+    ["--coverage-reporter=html"],
+    `invalid coverage reporter 'html'. Available options: 'text' (console output), 'lcov' (lcov.info), 'json' (coverage-final.json), 'json-summary' (coverage-summary.json)`,
+  ],
+  [`coverageReporter = ["text", "html"]`, [], `Invalid coverage reporter "html"`],
+  [`coverageInclude = 1`, [], `coverageInclude must be a string or array of strings`],
+  [`coverageInclude = [1]`, [], `coverageInclude must be a string or array of strings`],
+  [`coverageThreshold = { branches = "1" }`, [], `expected number but received string`],
+  [`coverageThreshold = { src = { branches = "1" } }`, [], `expected number but received string`],
+  [`coverageThreshold = { perFile = 1 }`, [], `expected boolean but received number`],
+])("%s %j is an error", async (option, flags, message) => {
+  using dir = tempDir("cov-invalid", { "bunfig.toml": bunfig(option), "a.test.ts": "" });
+  const { stderr, exitCode } = await bun(String(dir), ["test", ...flags]);
+  expect(stderr).toContain(`error: ${message}`);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("bun:jsc codeCoverageForFile() throws for what is not counted", async () => {
+  using dir = tempDir("cov-for-file", {
+    "lib.ts": `export const a = 1;`,
+    "a.test.ts": `
+      import { codeCoverageForFile } from "bun:jsc";
+      import "./lib.ts";
+      try {
+        console.log(codeCoverageForFile(require.resolve("./lib.ts"), true));
+      } catch (error) {
+        console.log(error.message);
+      }`,
+    "ignores.toml": bunfig("coverageIgnoreSourcemaps = true"),
+  });
+  const [plain, covered, ignored] = await Promise.all(
+    [[], ["--coverage"], ["--coverage", "--config=ignores.toml"]].map(flags => bun(String(dir), ["test", ...flags])),
+  );
+  expect(ignored.stdout).toContain("lib.ts | ");
+  expect(plain.stdout).toEndWith("\nNo source for file\n");
+  expect(covered.stdout).toEndWith(`\nTo ignore source maps, set "coverageIgnoreSourcemaps" in bunfig.toml\n`);
 });

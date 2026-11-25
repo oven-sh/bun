@@ -2033,6 +2033,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         .is_some_and(|d| d.set_breakpoint_on_first_line)
                     && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
 
+                let collector = jsc_vm.coverage.get();
+                let coverage = collector.filter(|it| it.covers(path.text, loader));
+
                 let options = &jsc_vm.transpiler.get().options;
                 let mut parse_options = ParseOptions {
                     // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
@@ -2054,6 +2057,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     module_type: module_type_only_for_wrappables,
                     inject_jest_globals: options.rewrite_jest_for_tests,
                     is_test_entry_point: (is_main || is_preload) && options.rewrite_jest_for_tests,
+                    is_covered: coverage.is_some(),
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
@@ -2289,6 +2293,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         already_bundled: true,
+                        coverage: collector
+                            .and_then(|it| it.count_bundle(path.text, &source.contents)),
                         bytecode_cache,
                         is_commonjs_module,
                         ..Default::default()
@@ -2304,6 +2310,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
+                            coverage: coverage.map(|it| it.count_as_written(path.text, b"")),
                             ..Default::default()
                         });
                     }
@@ -2350,6 +2357,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     } else {
                         None
                     };
+                    let coverage = entry.take_coverage(coverage, &parse_result);
                     let source_code = core::mem::take(&mut entry.output_code);
                     // When the cached entry was detected as
                     // CJS but lives inside a `"type":"module"` package, emit
@@ -2383,6 +2391,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
                         module_info,
+                        coverage,
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                         ..Default::default()
@@ -2432,6 +2441,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         printer_slot.set(Some(printer))
                     });
                 printer.ctx.reset();
+                let mut coverage = cache.will_print(coverage, &parse_result);
                 {
                     let mapper = jsc_vm.source_map_handler(&cache);
                     let print_result = jsc_vm.transpiler.get().print_with_source_map(
@@ -2442,6 +2452,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         bun_js_printer::Format::EsmAscii,
                         &mapper,
                         module_info.as_deref_mut(),
+                        coverage.as_mut().map(|it| &mut it.printing),
                     );
                     // The printer never took ownership of `module_info`;
                     // drop it here mirroring the async-path error arm.
@@ -2457,6 +2468,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     use bun_bundler::analyze_transpiled_module::ModuleInfoExt;
                     mi.into_deserialized()
                 });
+
+                let coverage = coverage.map(|it| it.finish(printer.ctx.get_written()));
 
                 // Watcher path uses ref-counted source.
                 if jsc_vm.is_watcher_enabled() {
@@ -2478,6 +2491,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         )
                         .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;
+                    resolved_source.coverage = coverage;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
                     return Ok(resolved_source);
                 }
@@ -2536,6 +2550,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     module_info,
+                    coverage,
                     tag,
                     bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
                     ..ResolvedSource::printed(printed_ast, source_code)
@@ -3994,42 +4009,6 @@ fn transpile_error_value(
             to_jsc_fetch_error(&err),
         )),
     }
-}
-
-/// What `bun test --coverage` runs of the file at `path` with the text `source`: what the transpiler prints. Its source map is saved as for a
-/// file that is loaded.
-pub(crate) fn transpile_as_loaded(
-    global: &JSGlobalObject,
-    path: &[u8],
-    source: &[u8],
-) -> Option<ResolvedSource> {
-    let jsc_vm = global.bun_vm();
-    let virtual_source = bun_ast::Source::init_path_string(path, source);
-    let mut log = bun_ast::Log::init();
-    let fs_path = Fs::Path::init(path);
-    let loaders = &jsc_vm.transpiler.get().options.loaders;
-    let loader = loaders.get(fs_path.name().ext).copied()?;
-    if !loader.is_java_script_like() {
-        return None;
-    }
-    let _reset_arena = ArenaResetGuard::new(jsc_vm);
-    let extra = TranspileExtra {
-        path: fs_path,
-        loader: Cell::new(loader),
-        module_type: Cell::new(ModuleType::Unknown),
-    };
-    let specifier = bun_core::StringView::from_bytes(path);
-    let args = TranspileArgs {
-        specifier: path,
-        referrer: b"",
-        input_specifier: &specifier,
-        log: &raw mut log,
-        virtual_source: Some(&virtual_source),
-        global_object: global,
-        flags: FetchFlags::Transpile,
-        extra: &extra,
-    };
-    transpile_source_code_inner::<false>(jsc_vm, &args).ok()
 }
 
 /// BunCompiledModules.cpp. An error of the class that `bun run` throws at the import of a file of data that its parser refuses, with the place that the parser named at the build. Empty where the build kept nothing under the path.

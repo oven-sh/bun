@@ -226,7 +226,7 @@ pub mod Runtime {
         /// This comment must never be used manually.
         pub dont_bundle_twice: bool,
 
-        /// Only hashed: `js_printer::Options::code_coverage` changes the source map that is cached.
+        /// The file is printed with `js_printer::Options::coverage`.
         pub code_coverage: bool,
 
         /// This is a list of packages which even when require() is used, we will
@@ -357,7 +357,7 @@ pub mod Runtime {
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
-            let bools: [bool; 19] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -370,7 +370,6 @@ pub mod Runtime {
                 self.set_breakpoint_on_first_line,
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
-                self.code_coverage,
                 self.commonjs_at_runtime,
                 self.emit_decorator_metadata,
                 self.standard_decorators,
@@ -387,6 +386,11 @@ pub mod Runtime {
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
+
+            // Another build may number the counters in another way.
+            if self.code_coverage {
+                hasher.update(bun_core::Global::package_json_version_with_revision.as_bytes());
             }
 
             if self.lists_loads {

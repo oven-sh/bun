@@ -108,6 +108,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.set_position(position);
         let counted = self.enter_counted_expression(expression);
+        let links = self.links_counted();
         match self.file.decisions().decision(expression) {
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
             Decision::GlobalPath(_) => {
@@ -121,6 +122,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             Decision::Unknown => self.lower_for_effect_by_kind(expression, usage),
         }
+        self.count_untested_links(expression, links);
         self.leave_counted_expression(counted);
         self.leave_nesting();
     }
@@ -284,11 +286,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         }
         self.set_position(position);
-        let counted = match self.file.counted_places.is_some() {
-            true => self.enter_counted_expression(expression),
-            false => self.counted_expression,
-        };
+        let counted = self.enter_counted_expression(expression);
+        let links = self.links_counted();
         let value = self.lower_by_decision(expression, evaluation);
+        self.count_untested_links(expression, links);
         let is_read = matches!(
             self.file.hir[expression].kind,
             ExprKind::Dot { .. } | ExprKind::Index { .. }

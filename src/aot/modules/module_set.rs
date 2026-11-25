@@ -178,7 +178,11 @@ impl ModuleSet {
             input.known_helpers,
             &|name| input.every_object_has(name),
             input.replaced_builtins,
-            &|file: FileId| keeps_holders[file.idx()] || sources.kind(file) != SourceKind::Program,
+            &|file: FileId| {
+                keeps_holders[file.idx()]
+                    || sources.kind(file) != SourceKind::Program
+                    || sources.is_in_coverage_report(file)
+            },
             input.in_parallel,
         );
         let callbacks_of = |&file: &FileId| {

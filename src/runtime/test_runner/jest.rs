@@ -116,7 +116,6 @@ pub(crate) struct TestRunner {
     pub(crate) retry: u32,
     pub(crate) resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
     pub(crate) environment: Option<TestEnvironment>,
-    pub(crate) coverage_skips_test_files: bool,
     /// Also true in a `--parallel` worker, whose records the coordinator replays into its own `JunitReporter`.
     pub(crate) reports_to_junit: bool,
 

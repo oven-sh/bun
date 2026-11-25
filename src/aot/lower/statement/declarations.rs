@@ -171,6 +171,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         declaration: VarDeclId,
         behind: IdList<StmtId>,
     ) {
+        let Some(initializer) = self.file.hir[declaration].init.some() else {
+            return self.lower_counted_declaration(declaration, behind);
+        };
+        let counted = self.enter_counted_expression(initializer);
+        self.lower_counted_declaration(declaration, behind);
+        self.leave_counted_expression(counted);
+    }
+
+    fn lower_counted_declaration(&mut self, declaration: VarDeclId, behind: IdList<StmtId>) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let decl = hir[declaration];
         if decl.flags.contains(Flags::AMBIENT) || self.is_unread_export(decl.pat) {
@@ -217,7 +226,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_expression(initializer)
             }
             PatKind::Ident(name) => {
-                let casts = match target.is_none() && !self.drops_returned_value() {
+                let casts = match target.is_none()
+                    && !self.drops_returned_value()
+                    && !self.file.counts_executions()
+                {
                     true => self.file.find_casts_up_to_return(declaration, behind),
                     false => None,
                 };
@@ -314,10 +326,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             id: symbol,
         };
         if copy.wraps_unmarked_answer {
-            let inputs = file.inputs;
-            // A coverage report counts the calls of a helper.
-            if inputs.options.counts_executions && inputs.sources.is_in_coverage_report(holder.file)
-            {
+            if file.counts_executions() {
                 return false;
             }
             let assigned = match hir[copy.written].kind {

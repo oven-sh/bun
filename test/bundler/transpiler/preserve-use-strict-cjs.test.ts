@@ -39,9 +39,8 @@ test.concurrent(`"use strict"; after another directive preserves strict mode wit
 });
 
 test.concurrent(`"use strict"; after another directive preserves strict mode under bun test --coverage`, async () => {
-  // --coverage turns syntax minification off for the whole process, the same
-  // way the inspector does, so a test suite used to see such modules in
-  // sloppy mode only when coverage was enabled.
+  // --coverage turns syntax minification off for the files it reports, so a test
+  // suite used to see such modules in sloppy mode only when coverage was enabled.
   using dir = tempDir("use-strict-coverage", {
     "lib.cjs": readFileSync(path.join(import.meta.dir, "strict-mode-after-directive-fixture.cjs"), "utf8"),
     "lib.test.ts": `

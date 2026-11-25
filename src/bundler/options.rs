@@ -1467,7 +1467,6 @@ pub struct BundleOptions<'a> {
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
-    pub code_coverage: bool,
     /// For a linter's configuration and plugins. See `Features::lists_loads` and `Features::defers_requires`.
     pub defers_requires: bool,
     pub debugger: bool,
@@ -1683,7 +1682,6 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: self.optimize_bytecode,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
-            code_coverage: self.code_coverage,
             defers_requires: self.defers_requires,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1940,7 +1938,6 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: true,
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
-            code_coverage: false,
             defers_requires: false,
             debugger: false,
             compile_mode: CompileMode::None,

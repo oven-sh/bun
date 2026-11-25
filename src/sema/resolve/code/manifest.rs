@@ -153,7 +153,12 @@ impl<'h> Resolver<'h> {
     }
 
     pub fn declared_side_effects(&self, path: &[u8]) -> DeclaredSideEffects<'h> {
-        if !path.starts_with(b"/") {
+        let options = self.code_options();
+        let in_project = || path.strip_prefix(&*options.working_directory);
+        if !path.starts_with(b"/")
+            || options.runs_all_files_outside_packages
+                && !search::is_in_node_modules(in_project().unwrap_or(path))
+        {
             return DeclaredSideEffects::Unspecified;
         }
         let directory = parent_directory(path);

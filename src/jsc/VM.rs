@@ -12,7 +12,6 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
     // to `callback` (never dereferenced as Rust data) — same contract as
@@ -53,10 +52,6 @@ impl VM {
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
 
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
-
-    pub fn enable_control_flow_profiler(&self) {
-        JSC__VM__enableControlFlowProfiler(self)
-    }
 
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper
     #[deprecated = "use get_api_lock"]

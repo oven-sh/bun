@@ -145,6 +145,13 @@ impl Code {
         AssignTarget::None
     }
 
+    pub fn is_logical(code: Code) -> bool {
+        matches!(
+            code,
+            Code::BinLogicalAnd | Code::BinLogicalOr | Code::BinNullishCoalescing
+        )
+    }
+
     pub fn is_prefix(code: Code) -> bool {
         (code as u8) < (Code::UnPostDec as u8)
     }

@@ -929,7 +929,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
-extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
+extern "C" JSC::EncodedJSValue BunTest__codeCoverageForFile(
     JSC::JSGlobalObject*, const BunString* sourceURL, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
@@ -944,20 +944,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
     BunString fileNameBunString = Bun::toString(fileName);
-    JSValue row = JSValue::decode(ByteRangeMapping__findExecutedLines(globalObject, &fileNameBunString, ignoreSourceMap));
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    if (row.isNull()) {
-        throwException(globalObject, throwScope,
-            createError(globalObject, "No source for file"_s));
-        return {};
-    }
-
-    if (row.isUndefined()) {
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0)));
-    }
-
-    return JSValue::encode(row);
+    RELEASE_AND_RETURN(throwScope, BunTest__codeCoverageForFile(globalObject, &fileNameBunString, ignoreSourceMap));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * globalObject, CallFrame* callFrame))

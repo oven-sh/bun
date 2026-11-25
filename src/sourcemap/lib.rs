@@ -81,6 +81,7 @@ pub enum SourceMapLoadHint {
 #[derive(Clone, Copy)]
 pub enum ParseUrlResultHint {
     MappingsOnly,
+    MappingsAndSources,
     SourceOnly(u32),
     All {
         line: i32,
@@ -94,6 +95,7 @@ pub struct ParseUrl {
     pub map: Option<std::sync::Arc<ParsedSourceMap>>,
     pub mapping: Option<Mapping>,
     pub source_contents: Option<Box<[u8]>>,
+    pub contents_of_all_sources: Vec<Option<Box<[u8]>>>,
 }
 
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
@@ -561,6 +563,33 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
     Some(parsed)
 }
 
+impl SourceProvider for [u8] {
+    fn get_source_slice(&self) -> bun_core::StringView<'_> {
+        bun_core::StringView::ascii(self)
+    }
+    fn to_source_content_ptr(&self) -> SourceContentPtr {
+        SourceContentPtr::NONE
+    }
+}
+
+/// The map of the file at `path`, and the path and the text of each source whose text it has.
+pub fn load_with_sources(
+    path: &[u8],
+    text: &[u8],
+) -> Option<(
+    std::sync::Arc<ParsedSourceMap>,
+    Vec<Option<(bun_paths::Path, Box<[u8]>)>>,
+)> {
+    let hint = ParseUrlResultHint::MappingsAndSources;
+    let parsed = get_source_map_impl(text, path, SourceMapLoadHint::None, hint)?;
+    let map = parsed.map?;
+    let sources = (map.external_source_names.iter())
+        .zip(parsed.contents_of_all_sources)
+        .map(|(name, text)| Some((mapping::path_of_source(path, name), text?)))
+        .collect();
+    Some((map, sources))
+}
+
 // ── SavedSourceMap leaf state ─────────────────────────────────────────────
 #[allow(non_snake_case)]
 pub mod SavedSourceMap {
@@ -995,7 +1024,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             let idx = u32::try_from(m.source_index).ok();
             (Some(m), idx)
         }
-        ParseUrlResultHint::MappingsOnly => (None, None),
+        ParseUrlResultHint::MappingsOnly | ParseUrlResultHint::MappingsAndSources => (None, None),
     };
 
     let content_slice: Option<Box<[u8]>> = match source_index {
@@ -1021,6 +1050,12 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         map,
         mapping: found_mapping,
         source_contents: content_slice,
+        contents_of_all_sources: match hint {
+            ParseUrlResultHint::MappingsAndSources => (sources_content.items().iter())
+                .map(|it| it.as_str().map(Box::from))
+                .collect(),
+            _ => Vec::new(),
+        },
     })
 }
 

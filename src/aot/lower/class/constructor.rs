@@ -1,3 +1,4 @@
+use bun_code_coverage::Target;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
     Binding, Bound, ClassOwner, CodeUnit, Decl, FnOwner, PrivateNameId, ScopeId, SymbolId,
@@ -63,9 +64,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let plan = self.class_plan(class);
         let is_derived = is_derived_class(self.hir, class);
         let mut lowering = FunctionLowering::begin(self, function);
-        lowering.count_function(source);
         if is_derived {
             lowering.lower_parameters(source);
+            lowering.count(Target::Function(source));
             if plan.injection_point == InjectionPoint::Start && has_injected_steps(&plan) {
                 lowering.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
             }
@@ -77,12 +78,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 let first = lowering.list_values_evaluated_first(&plan, &fields.evaluated_first);
                 let first = lowering.lower_values_evaluated_first(class, &first);
                 lowering.lower_parameters(source);
+                lowering.count(Target::Function(source));
                 lowering.begin_birth(class, &plan, fields.stores, first, object);
             } else {
                 let this = lowering.emit_allocation(class);
                 lowering.set_position(lowering.file.hir[source].anchor);
                 lowering.emit_this_binding_steps(class, &plan, this);
                 lowering.lower_parameters(source);
+                lowering.count(Target::Function(source));
                 lowering.emit_injected_steps(class, &plan, this);
             }
         }
@@ -96,7 +99,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let plan = self.class_plan(class);
         let is_derived = is_derived_class(self.hir, class);
         let mut lowering = FunctionLowering::begin(self, function);
-        lowering.count_made_constructor(class);
         let this = match is_derived {
             true => lowering.emit_implicit_super_call(class),
             false => lowering.emit_allocation(class),

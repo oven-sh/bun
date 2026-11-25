@@ -107,17 +107,19 @@ impl KnownHelpers {
 
     #[cfg(test)]
     pub(crate) fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
-        KnownHelpers::compute_below_added_names(files, &[], in_parallel)
+        KnownHelpers::compute_below_added_names(files, &[], &|_| false, in_parallel)
     }
 
     pub fn compute_below_added_names(
         files: &Files<'_>,
         names_added_to_builtins: &[(BuiltinId, Atom)],
+        runs_as_written: &dyn Fn(FileId) -> bool,
         in_parallel: InParallel<'_>,
     ) -> KnownHelpers {
         let mut found: Vec<(FileId, FileHelpers)> = files
             .compiled_files()
             .iter()
+            .filter(|&&file| !runs_as_written(file))
             .map(|&file| (file, FileHelpers::default()))
             .collect();
         let held_early = OnceLock::new();

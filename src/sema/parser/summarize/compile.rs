@@ -1,7 +1,7 @@
-use super::{JsDoc, ParseSettings, SCRATCH, parse_into_arena};
+use super::{JsDoc, ParseSettings, SCRATCH, parse_into_arena, take_scratch, with_own_atoms};
 use crate::{AppendedExpression, AppendedExpressionFilter};
 use bun_alloc::Arena;
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Intern, Interner};
 use bun_sema::hir::{DiagnosticClass, ExprId, File, FileBuilder};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
@@ -53,6 +53,33 @@ pub fn parse_for_compile_in<'s>(
     text: &[u8],
     atoms: &Interner<'_>,
 ) -> File<'s> {
+    let how = settings_for_compile(options);
+    SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        parse_into_arena(scratch, how, memory, text, atoms)
+    })
+}
+
+/// Accepts what `bun run` accepts. The tree depends on nothing but `script_kind` and `text`.
+pub fn with_file_as_written<R>(
+    script_kind: ScriptKind,
+    text: &[u8],
+    then: impl FnOnce(&mut FileBuilder, &dyn Intern) -> R,
+) -> R {
+    let mut how = settings_for_compile(&CompileParseOptions {
+        path: b"",
+        script_kind: Some(script_kind),
+        experimental_decorators: false,
+        every_file_is_a_module: true,
+        reads_jsdoc: false,
+        ignores_pure_comments: true,
+    });
+    how.dialect.module_or_script = true;
+    how.keeps_comma_statements = true;
+    with_own_atoms(take_scratch(), how, text, then)
+}
+
+fn settings_for_compile<'a>(options: &CompileParseOptions<'a>) -> ParseSettings<'a> {
     let script_kind = (options.script_kind).or_else(|| ScriptKind::from_file_name(options.path));
     let dialect = match script_kind.is_some_and(ScriptKind::is_javascript) {
         true => Dialect {
@@ -61,7 +88,7 @@ pub fn parse_for_compile_in<'s>(
         },
         false => Dialect::default(),
     };
-    let how = ParseSettings {
+    ParseSettings {
         dialect,
         path: options.path,
         script_kind: options.script_kind,
@@ -75,13 +102,10 @@ pub fn parse_for_compile_in<'s>(
         compiles: true,
         reads_as_bun_run: true,
         ignores_pure_comments: options.ignores_pure_comments,
+        keeps_comma_statements: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
         drops_comments: false,
         may_use_helpers: false,
-    };
-    SCRATCH.with_borrow_mut(|all| {
-        let scratch = all[0].get_or_insert_default();
-        parse_into_arena(scratch, how, memory, text, atoms)
-    })
+    }
 }

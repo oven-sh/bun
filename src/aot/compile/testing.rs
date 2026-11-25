@@ -16,7 +16,7 @@ use bstr::BStr;
 use bun_ast::Log;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_builtin_sources::VIRTUAL_ROOT;
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, CoveredFiles};
 use bun_sema::atom::Atom;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
@@ -26,7 +26,7 @@ use bun_sema_driver::host::from_native;
 use bun_sema_driver::{Libs, RoleDecision, ThreadCaches, check_and_lower, decide_roles};
 use std::fmt::Write;
 use std::num::NonZeroU32;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 const PROJECT_DIRECTORY: &[u8] = b"/project";
 const CONFIGURATION_FILE: &str = "tsconfig.json";
@@ -192,6 +192,16 @@ pub fn lower_program_with_limits(
 pub(crate) fn lower_test_run(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
     let mut project = TestProject::new(files, &default_settings());
     project.runs_tests = true;
+    lower_application(&project)
+}
+
+pub(crate) fn lower_covered_files(
+    files: &[(&str, &str)],
+    is_covered: impl Fn(&[u8]) -> bool + Send + Sync + 'static,
+) -> Vec<(FileId, LoweredFile)> {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    project.aot.covered_files = Some(CoveredFiles(Arc::new(move |path, _| is_covered(path))));
     lower_application(&project)
 }
 
@@ -492,6 +502,7 @@ fn with_loaded_bind_input<R>(
         let known_helpers = KnownHelpers::compute_below_added_names(
             application.files(),
             &contents.names_added_to_builtins,
+            &|file| application.sources.is_in_coverage_report(file),
             &in_parallel,
         );
         let run_of_library = crate::test_runs::RunContents::default();

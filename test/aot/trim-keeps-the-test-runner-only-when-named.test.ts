@@ -133,6 +133,12 @@ describe.skipIf(!!without("a Bun that trims"))("in a trimmed executable", () => 
     });
   }, 600_000);
 
+  test("codeCoverageForFile() of bun:jsc throws as it does wherever nothing is counted", async () => {
+    const text = `import { codeCoverageForFile } from "bun:jsc";
+try { codeCoverageForFile(import.meta.path); } catch (error) { console.log(error.message); }`;
+    expect(await shownBy(text, ["--trim"])).toEqual({ stdout: "No source for file\n", exitCode: 0 });
+  }, 600_000);
+
   test("a program that imports bun:test has its matchers", async () => {
     const shown = { stdout: "caught: Error\nheld\n", exitCode: 0 };
     expect(await shownBy(named, ["--trim"])).toEqual(shown);

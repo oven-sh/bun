@@ -44,6 +44,7 @@ bun_core.workspace = true
 bun_bundler.workspace = true
 bun_bundler_jsc.workspace = true
 bun_clap.workspace = true
+bun_code_coverage.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_cron.workspace = true

@@ -485,8 +485,8 @@ pub struct InitializeOptions {
     pub eval_mode: bool,
     /// `bun -e` / `bun -p` ([`is_one_shot_eval_invocation`]): no concurrent JIT or parallel GC marker threads.
     pub one_shot: bool,
-    /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
-    pub short_lived_globals: bool,
+    /// Only code that is very hot gets to the last tier of the JIT.
+    pub delays_last_tier: bool,
     pub runs_compiled_code: bool,
     pub locks_builtins: bool,
     /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
@@ -511,7 +511,7 @@ pub fn initialize(options: InitializeOptions) {
             on_jsc_invalid_env_var,
             options.eval_mode,
             options.one_shot,
-            options.short_lived_globals,
+            options.delays_last_tier,
             options.runs_compiled_code,
             options.locks_builtins,
             options.is_compiler,
@@ -1486,7 +1486,7 @@ unsafe extern "C" {
         cb: extern "C" fn(name: *const u8, len: usize),
         eval_mode: bool,
         one_shot_startup: bool,
-        short_lived_globals: bool,
+        delays_last_tier: bool,
         runs_compiled_code: bool,
         locks_builtins: bool,
         is_compiler: bool,

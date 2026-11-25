@@ -20,7 +20,9 @@ use bun_paths::portable::from_portable_specifier;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
-use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
+use bun_options_types::code_coverage_options::{
+    Reporters as CoverageReporters, Thresholds as CoverageThresholds,
+};
 use bun_options_types::context::{
     MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
     TestEnvironment, TestGlobals,
@@ -249,11 +251,7 @@ impl<'a> Parser<'a, '_> {
 
     fn apply_coverage_reporter_item(&mut self, item: &Expr) -> crate::Result<()> {
         let item_str = item.as_string(self.bump).unwrap_or(b"");
-        if item_str == b"text" {
-            self.ctx.test_options.coverage.reporters.text = true;
-        } else if item_str == b"lcov" {
-            self.ctx.test_options.coverage.reporters.lcov = true;
-        } else {
+        if !self.ctx.test_options.coverage.reporters.add(item_str) {
             self.add_error_format(
                 item.loc,
                 format_args!(
@@ -261,6 +259,55 @@ impl<'a> Parser<'a, '_> {
                     bstr::BStr::new(item_str)
                 ),
             )?;
+        }
+        Ok(())
+    }
+
+    fn parse_coverage_thresholds(
+        &mut self,
+        expr: &Expr,
+        thresholds: &mut CoverageThresholds,
+        is_nested: bool,
+    ) -> crate::Result<()> {
+        if let Some(threshold) = expr.as_number() {
+            thresholds.functions = Some(threshold);
+            thresholds.lines = Some(threshold);
+            return Ok(());
+        }
+        self.expect(expr, ExprTag::EObject)?;
+        let table = expr.data.e_object().expect("infallible: variant checked");
+        for property in table.properties.slice() {
+            let (Some(key), Some(value)) = (&property.key, &property.value) else {
+                continue;
+            };
+            let is_group = !is_nested && value.data.tag() == ExprTag::EObject;
+            let threshold = match key.as_string(self.bump).unwrap_or(b"") {
+                b"functions" => &mut thresholds.functions,
+                b"lines" => &mut thresholds.lines,
+                b"statements" => &mut thresholds.statements,
+                b"branches" => &mut thresholds.branches,
+                b"perFile" => {
+                    self.expect(value, ExprTag::EBoolean)?;
+                    thresholds.per_file = value.as_bool().expect("infallible: type checked");
+                    continue;
+                }
+                b"global" if is_group => {
+                    self.parse_coverage_thresholds(value, thresholds, true)?;
+                    continue;
+                }
+                pattern if is_group => {
+                    let mut group = (pattern.into(), CoverageThresholds::default());
+                    self.parse_coverage_thresholds(value, &mut group.1, true)?;
+                    (self.ctx.test_options.coverage.thresholds_by_pattern).push(group);
+                    continue;
+                }
+                key => {
+                    (self.ctx.test_options.coverage.unknown_thresholds).push(key.into());
+                    continue;
+                }
+            };
+            self.expect(value, ExprTag::ENumber)?;
+            *threshold = value.as_number();
         }
         Ok(())
     }
@@ -628,10 +675,7 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverageReporter") {
                     'brk: {
-                        self.ctx.test_options.coverage.reporters = CoverageReporters {
-                            text: false,
-                            lcov: false,
-                        };
+                        self.ctx.test_options.coverage.reporters = CoverageReporters::default();
                         if let ExprData::EString(_) = &expr.data {
                             self.apply_coverage_reporter_item(&expr)?;
                             break 'brk;
@@ -659,36 +703,16 @@ impl<'a> Parser<'a, '_> {
                 }
 
                 if let Some(expr) = test.get(b"coverageThreshold") {
-                    'outer: {
-                        if let ExprData::ENumber(n) = expr.data {
-                            let v = n.value();
-                            self.ctx.test_options.coverage.fractions.functions = v;
-                            self.ctx.test_options.coverage.fractions.lines = v;
-                            self.ctx.test_options.coverage.fractions.stmts = v;
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                            break 'outer;
-                        }
+                    let mut thresholds = CoverageThresholds::default();
+                    self.parse_coverage_thresholds(&expr, &mut thresholds, false)?;
+                    self.ctx.test_options.coverage.thresholds = thresholds;
+                }
 
-                        self.expect(&expr, ExprTag::EObject)?;
-                        if let Some(functions) = expr.get(b"functions") {
-                            self.expect(&functions, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.functions =
-                                functions.as_number().expect("infallible: type checked");
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                        if let Some(lines) = expr.get(b"lines") {
-                            self.expect(&lines, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.lines =
-                                lines.as_number().expect("infallible: type checked");
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                        if let Some(stmts) = expr.get(b"statements") {
-                            self.expect(&stmts, ExprTag::ENumber)?;
-                            self.ctx.test_options.coverage.fractions.stmts =
-                                stmts.as_number().expect("infallible: type checked");
-                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                    }
+                if let Some(expr) = test.get(b"coverageInclude") {
+                    self.ctx.test_options.coverage.include_patterns = self.strings(
+                        &expr,
+                        b"coverageInclude must be a string or array of strings",
+                    )?;
                 }
 
                 // This mostly exists for debugging.

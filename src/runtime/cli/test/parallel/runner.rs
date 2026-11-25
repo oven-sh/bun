@@ -26,8 +26,6 @@ use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
-use bun_options_types::code_coverage_options::CodeCoverageOptions;
-use bun_sourcemap_jsc::code_coverage;
 
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
@@ -50,15 +48,13 @@ pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
 }
 
 /// Returns true if files were actually run via the worker pool, false if it
-/// left them to the caller to run sequentially (≤1 effective worker). The caller uses
-/// this to decide whether to run the serial coverage/JUnit reporters.
+/// left them to the caller to run sequentially (≤1 effective worker).
 #[optimize(size)]
 pub(crate) fn run_as_coordinator(
     reporter: &CommandLineReporter,
     vm: &VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
-    coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.get().env };
@@ -115,6 +111,8 @@ pub(crate) fn run_as_coordinator(
             peak_rss_mb: 0,
             startup_failures: 0,
             first_loads: Vec::new(),
+            coverage_file: Vec::new(),
+            owes_coverage: false,
         });
     }
 
@@ -155,12 +153,12 @@ pub(crate) fn run_as_coordinator(
         } else {
             Vec::new()
         },
-        coverage_files: Default::default(),
         last_header_idx: None,
         frame: Frame::default(),
         spawned_count: 0,
         aborted: None,
         stop_reason: None,
+        lacks_coverage: false,
     };
 
     let abort_guard = abort_handler::install();
@@ -180,14 +178,19 @@ pub(crate) fn run_as_coordinator(
     crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
     aggregate::replay_test_records(&mut coord);
-    if coverage_opts.enabled {
-        aggregate::write_coverage_report(&mut coord, coverage_opts);
-    }
+    // A worker that does not get to its end sends no counts.
+    let with_counts = (vm.coverage.get()).filter(|it| it.has_counts_of_other_processes());
     if let Some(code) = coord.aborted {
+        if let Some(coverage) = with_counts {
+            coverage.write_reports();
+        }
         coord.reporter.write_junit_report_if_needed();
         coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);
+    }
+    if coord.lacks_coverage {
+        vm.coverage.set(with_counts);
     }
     Ok(true)
 }
@@ -395,7 +398,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Argv> {
         argv.option("--jsx-runtime", Some(jsx_runtime_tag_name(jsx.runtime)));
         argv.flag("--jsx-side-effects", jsx.side_effects);
     }
-    argv.flag("--coverage", opts.coverage.enabled);
+    if opts.coverage.enabled {
+        argv.flag("--coverage", true);
+        let patterns = opts.coverage.include_patterns.iter();
+        argv.pairs("--coverage-include", patterns.map(|it| &**it));
+    }
     argv.option("--environment", opts.environment.map(|it| it.name()));
     argv.option("--globals", opts.globals.map(|it| it.name()));
     // Each worker reads `include` and `exclude` from bunfig.toml itself.
@@ -746,7 +753,7 @@ pub(crate) fn run_as_worker(
         std::process::abort();
     }
 
-    worker_flush_aggregates(reporter, vm, &ctx.test_options.coverage, link);
+    worker_flush_aggregates(reporter, vm, link);
     // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
     let channel = &link.channel;
     vm.run_with_api_lock(|| tick_until(vm, || !channel.has_pending_writes() || channel.done.get()));
@@ -769,7 +776,6 @@ pub(crate) fn run_as_worker(
 fn worker_flush_aggregates(
     reporter: &CommandLineReporter,
     vm: &VirtualMachine,
-    coverage: &CodeCoverageOptions,
     link: &CoordinatorLink,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
@@ -778,21 +784,24 @@ fn worker_flush_aggregates(
     let _ = runner.with_snapshots(Snapshots::write_inline_snapshots);
     let _ = runner.with_snapshots(Snapshots::write_snapshot_file);
 
+    if let Some(coverage) = vm.coverage.get() {
+        coverage.for_each_encoded(|file| {
+            let mut parts = file.chunks(1 << 20).enumerate();
+            while let Some((before, part)) = parts.next() {
+                link.emit(frame::Kind::CoverageFile, |wf| {
+                    wf.str(part);
+                    wf.u32(before as u32);
+                    wf.u32(parts.len() as u32);
+                });
+            }
+        });
+    }
+
     link.emit(frame::Kind::RepeatBufs, |wf| {
         wf.str(&reporter.failures_to_repeat_buf.take());
         wf.str(&reporter.skips_to_repeat_buf.take());
         wf.str(&reporter.todos_to_repeat_buf.take());
     });
-
-    if coverage.enabled {
-        let mut encoded: Vec<u8> = Vec::new();
-        CommandLineReporter::add_compiled_files_to_coverage(vm);
-        CommandLineReporter::for_each_coverage_report(vm, coverage, |report| {
-            encoded.clear();
-            code_coverage::wire::encode(&report, &mut encoded);
-            link.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
-        });
-    }
 }
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the

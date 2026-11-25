@@ -198,7 +198,15 @@ public:
 
     unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
     StringView source() const final { return m_source->source(); }
-    bool hasTextOf(JSC::SourceProvider& other) const { return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source()); }
+    const JSC::CoverageCounters* coverageCounters() const final { return m_source->coverageCounters(); }
+    bool runsLike(JSC::SourceProvider& other) const
+    {
+        auto counts = [](const JSC::SourceProvider& provider) {
+            auto* counters = provider.coverageCounters();
+            return counters ? counters->counts.data() : nullptr;
+        };
+        return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source() && counts(m_source) == counts(other));
+    }
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
@@ -239,14 +247,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
         if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
             auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
-            if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {
+            if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->runsLike(*code.provider())) {
                 sharedWrapper = executable;
                 graph->keepCommonJSWrapper(vm, linked);
             }
         }
         if (!sharedWrapper) {
             RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
-            Zig::addCodeCoverageSourceID(vm, *provider);
             code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
         }
     }
@@ -1720,6 +1727,8 @@ void JSCommonJSModule::evaluate(
                 globalObject->m_moduleWrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
                 globalObject->m_moduleWrapperEnd);
+            if (source.coverage)
+                Bun__CountedText__didReplaceStart(source.coverage.get(), trimStart, globalObject->m_moduleWrapperStart.length());
         }
         source.source_code = Bun::toStringRef(string);
         // The wrapper is a JavaScript value.
@@ -1835,6 +1844,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 source.source_code.transferToWTFString(),
                 globalObject->m_moduleWrapperEnd);
             source.source_code = Bun::toStringRef(concat);
+            if (source.coverage)
+                Bun__CountedText__didReplaceStart(source.coverage.get(), 0, globalObject->m_moduleWrapperStart.length());
             // The wrapper is a JavaScript value.
             source.is_static = false;
         }

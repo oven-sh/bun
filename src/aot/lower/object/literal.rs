@@ -731,7 +731,8 @@ pub(crate) fn lower_object_literal(
 
 fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source: ExprId) -> bool {
     let hir = file.hir;
-    if file.is_statically_resolved(source) || file.is_simplified(source) {
+    if file.counts_executions() || file.is_statically_resolved(source) || file.is_simplified(source)
+    {
         return false;
     }
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);

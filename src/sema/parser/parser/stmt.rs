@@ -775,6 +775,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.s.ids.push(statement.0);
         if self.is_ecmascript
             && self.options.compiles
+            && !self.options.keeps_comma_statements
             && let Some(StmtKind::Expr(expression)) =
                 self.f.stmts.get(statement.idx()).map(|it| it.kind)
             && self.is_comma(expression)

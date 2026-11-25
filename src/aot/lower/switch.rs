@@ -2,6 +2,7 @@ mod dispatch;
 #[cfg(test)]
 mod tests;
 
+use bun_code_coverage::Target;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, FoldedValue};
@@ -108,7 +109,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         for (index, group) in groups.iter().enumerate() {
             self.continue_in(group.body);
-            self.count_case(cases.at(group.end as usize - 1));
+            self.count(Target::Case(cases.at(group.end as usize - 1)));
             self.lower_statements(hir[cases.at(group.end as usize - 1)].body);
             let next = groups.get(index + 1).map_or(after, |next| next.body);
             self.jump(next);

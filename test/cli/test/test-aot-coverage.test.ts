@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "../../aot/supported";
 
 setDefaultTimeout(60_000);
@@ -411,10 +411,146 @@ for (const name of ["first", "second", "third", "fourth"]) {
 `,
 };
 
+const fourTests = (imports: string, body: string) => `import { test } from "bun:test";
+${imports}
+for (const name of ["first", "second", "third", "fourth"]) test(name, () => { ${body} });
+`;
+
+const withoutSideEffects = {
+  "package.json": `{ "name": "pure", "type": "module", "sideEffects": false }`,
+  "index.ts": `export { used } from "./used";\nexport { unused } from "./unused";\n`,
+  "used.ts": `export const used = () => 1;\n`,
+  "unused.ts": `export const unused = () => 2;\n`,
+  "index.test.ts": fourTests(`import { used } from "./index";`, "used();"),
+};
+
+// A build has a shorter way for each.
+const shortcuts = {
+  "package.json": `{ "name": "shortcuts", "type": "module" }`,
+  "other.js": `export const a = 1, b = () => 2, fail = () => null.a;\n`,
+  "known.js": `import * as other from "./other.js";
+const ON = true;
+export const chains = () => [other?.a, other?.b(), other.b?.(), Math?.PI, Math.max?.(1), JSON?.parse("1")];
+export const folded = v => [ON ? 1 : 2, ON && v, ON || v, ON ?? v, v?.[ON ? "a" : "b"]];
+export const spreads = v => [{ ...(v && { v }) }, { ...(v ? { v } : {}) }, [...(v ? [v] : [])]];
+export const again = (n, step = 1) => (n > 0 ? again(n - step) : 0);
+export function steps(n) {
+  let i = 0;
+  while (
+    ++i < n
+  );
+  const unmade = () => 1;
+  return i;
+}
+export function unread() {
+  other?.a;
+  try {
+    other?.fail();
+  } catch {}
+}
+export const constants = v => [v?.[true ? "a" : "b"], !(true && 1), (v, 0) && v, 0 ? 1 : v ? 2 : 3];
+export const inside = v => [(true && null)?.a, v && !(true && 1), !(true && !(true && 1))];
+export const links = v => [v?.toFixed(true ? 1 : 2), v?.toFixed[true ? "a" : "b"]];
+export const dead = v => (v, 0) && import("./missing.js");
+export function resolves(v, name = "os") {
+  try {
+    require.resolve(v ? "bun:os" : name);
+    require.resolve(v ? name : (name, 1) ? "bun:os" : name);
+  } catch {}
+}
+export function tests(v) {
+  if (v) {
+  }
+  if (false) v++;
+  if (v) for (const a of [v, !(true && 1)]);
+  while (!1) break;
+  console.log(v || 1);
+}
+export function reflects() {
+  const unnamed = true && function () {};
+  return unnamed.name || String(() => true && unnamed).includes("true") || 1;
+}
+export function countDown(v) {
+  function down(n, step = 1) {
+    if (n <= 0) return 0;
+    return down(n - step, 1);
+  }
+  return down(v, 1);
+}
+export function firstStep(n) {
+  let i = Symbol();
+  try {
+    while (++i < n && n);
+  } catch {}
+}
+export function declarators() {
+  const a = () => 1,
+    b = () => a();
+  const sum = b();
+  return sum;
+}
+export async function suspends() {
+  for (let i = 0; i < 2; i++) if (i === 1) await null;
+}
+`,
+  "call.cjs": `exports.default = function () {};\nmodule.exports = exports.default;\n`,
+  "loader.cjs": `exports.dead = false && (module || Object());
+const make = n => class { get() { return n || 1; } };
+const One = make(1), Two = make(0);
+new One().get(), new Two().get();
+`,
+  "held.cjs": `const limit = 3;\nconst held = { limit };\nmodule.exports = held;\n`,
+  "owner.cjs": `exports.read = 1;\n`,
+  "alias.cjs": `var owner = require("./owner.cjs");
+Object.defineProperty(exports, "read", { enumerable: true, get: function () { return owner.read; } });
+`,
+  "reads.js": `export { read } from "./alias.cjs";\nexport { limit } from "./held.cjs";\n`,
+  "minified.cjs": `var a, call = (a = require("./call.cjs")) && a.__esModule ? a : { default: a };
+(0, call.default)();
+`,
+  "webpack.cjs": `(() => {
+  var modules = { 1: (module, exports) => { exports.a = 1; } }, cache = {};
+  function load(id) {
+    var cached = cache[id];
+    if (void 0 !== cached) return cached.exports;
+    var module = cache[id] = { exports: {} };
+    return modules[id](module, module.exports, load), module.exports;
+  }
+  globalThis.loaded = load(1).a;
+})();
+`,
+  "inner.cjs": `exports.shown = function () {};\nexports.hidden = function () {};\n`,
+  "emitted.cjs": `"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+  if (k2 === undefined) k2 = k;
+  Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+}) : (function(o, m, k, k2) {
+  if (k2 === undefined) k2 = k;
+  o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+  for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+var inner = require("./inner.cjs");
+Object.defineProperty(exports, "alias", { enumerable: true, get: function () { return inner.shown; } });
+__exportStar(require("./inner.cjs"), exports);
+`,
+  "bundled.js": `var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var require_a = __commonJS((exports) => { exports.a = 1; });
+export const a = require_a().a + require_a().a;
+`,
+  "shortcuts.test.js": fourTests(
+    `import * as known from "./known.js"; import { alias, shown } from "./emitted.cjs";
+    import "./reads.js"; import "./bundled.js"; import "./loader.cjs"; import "./minified.cjs"; import "./webpack.cjs";`,
+    "for (const f of [...Object.values(known), alias, shown]) f(0), f(2), f(null);",
+  ),
+};
+
 async function report(flags: string[], bunfig = "", project: Record<string, string> = files) {
   using dir = tempDir("test-aot-coverage", { ...project, "bunfig.toml": bunfig });
   await using proc = spawn({
-    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...flags],
+    cmd: [bunExe(), "test", ...["text", "lcov", "json"].map(name => `--coverage-reporter=${name}`), ...flags],
     cwd: String(dir),
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
@@ -427,6 +563,11 @@ async function report(flags: string[], bunfig = "", project: Record<string, stri
   return {
     table: lines.slice(rules[0], rules[2] + 1).join("\n"),
     lcov: readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8"),
+    json: readFileSync(join(String(dir), "coverage", "coverage-final.json"), "utf8").replaceAll(
+      basename(String(dir)),
+      "",
+    ),
+    warnings: lines.filter(line => line.startsWith("warn: ") && line.includes("coverage")),
     exitCode,
   };
 }
@@ -474,6 +615,61 @@ test("what nothing reads runs as it does in bun test --coverage", async () => {
   const project = neverRead;
   const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
   expect(plain.table).toContain("things.ts");
+  expect(compiled).toEqual(plain);
+});
+
+test('a file that nothing uses is listed though the package says "sideEffects": false', async () => {
+  const project = withoutSideEffects;
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.lcov).toContain("FNDA:0,unused");
+  expect(compiled).toEqual(plain);
+});
+
+test("what a build knows is counted as it is written", async () => {
+  const flags = ["--drop=console"];
+  const [plain, compiled] = await Promise.all([
+    report(flags, "", shortcuts),
+    report(["--aot", ...flags], "", shortcuts),
+  ]);
+  expect(plain.lcov).toContain("FNDA:1,load");
+  expect(compiled).toEqual(plain);
+});
+
+test("the code in a string is not counted", async () => {
+  const project = {
+    "strings.cjs": `new Function("a", "return a || 1")();\n`,
+    "strings.test.js": fourTests(`import "./strings.cjs";`, ""),
+  };
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.lcov).toContain("FNF:0");
+  expect(compiled).toEqual(plain);
+});
+
+test("an import finds a getter that is not enumerable, as it does without --coverage", async () => {
+  const project = { ...shortcuts, "alias.cjs": shortcuts["alias.cjs"].replace("enumerable: true, ", "") };
+  expect((await report(["--aot"], "", project)).exitCode).toBe(0);
+});
+
+test("coverageIgnoreSourcemaps is said to have no effect", async () => {
+  const bunfig = "[test]\ncoverageIgnoreSourcemaps = true\n";
+  const [plain, compiled] = await Promise.all([report([], "", neverRead), report(["--aot"], bunfig, neverRead)]);
+  expect(compiled).toEqual({
+    ...plain,
+    warnings: [`warn: "coverageIgnoreSourcemaps" has no effect on the files that --aot compiles`],
+  });
+});
+
+test("a bundle is reported as if it had no source map", async () => {
+  const project = {
+    "a.js": "",
+    "bundle.js": "// @bun\nObject();\n",
+    "a.test.js": fourTests(`import "./bundle.js";`, ""),
+  };
+  const map = JSON.stringify({ version: 3, sources: ["a.js"], sourcesContent: [""], mappings: "", names: [] });
+  const [plain, compiled] = await Promise.all([
+    report([], "", project),
+    report(["--aot"], "", { ...project, "bundle.js.map": map }),
+  ]);
   expect(compiled).toEqual(plain);
 });
 

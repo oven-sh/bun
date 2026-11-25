@@ -710,6 +710,10 @@ impl TranspilerJob {
             _ => ModuleType::Unknown,
         };
 
+        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
+        let collector = unsafe { (*vm).coverage.get() };
+        let coverage = collector.filter(|it| it.covers(path.text, loader));
+
         let mut parse_options = ParseOptions {
             arena: &arena,
             path,
@@ -730,6 +734,7 @@ impl TranspilerJob {
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             is_test_entry_point: false,
+            is_covered: coverage.is_some(),
             set_breakpoint_on_first_line: debugger()
                 .is_some_and(|d| d.set_breakpoint_on_first_line)
                 && is_main
@@ -810,6 +815,7 @@ impl TranspilerJob {
             };
 
             this.resolved_source = ResolvedSource {
+                coverage: entry.take_coverage(coverage, &parse_result),
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
                 module_info,
@@ -828,6 +834,8 @@ impl TranspilerJob {
             this.resolved_source = ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
+                coverage: collector
+                    .and_then(|it| it.count_bundle(path.text, &parse_result.source.contents)),
                 bytecode_cache,
                 is_commonjs_module,
                 tag: this_tag,
@@ -905,6 +913,7 @@ impl TranspilerJob {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
 
+        let mut coverage = cache.will_print(coverage, &parse_result);
         let print_result = {
             let mapper = RuntimeSourceMapHandler {
                 source_mappings,
@@ -920,6 +929,7 @@ impl TranspilerJob {
                 js_printer::Format::EsmAscii,
                 &mapper,
                 module_info.as_deref_mut(),
+                coverage.as_mut().map(|it| &mut it.printing),
             )
         };
         if let Err(err) = print_result {
@@ -932,6 +942,7 @@ impl TranspilerJob {
             dump_source(source_mappings, specifier, &source_code_printer);
         }
 
+        let coverage = coverage.map(|it| it.finish(source_code_printer.ctx.get_written()));
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
@@ -963,6 +974,7 @@ impl TranspilerJob {
                 mi.into_deserialized()
             }),
             tag: this_tag,
+            coverage,
             ..ResolvedSource::printed(printed_ast, source_code)
         };
 

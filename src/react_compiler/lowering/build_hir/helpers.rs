@@ -1322,7 +1322,7 @@ fn lower_optional_member_expression_impl(
             test: test_block,
             fallthrough: continuation_id,
             id: EvaluationOrder(0),
-            loc,
+            loc: loc_of_link(expr),
         },
         continuation_block,
     );
@@ -1507,7 +1507,7 @@ fn lower_optional_call_expression_impl(
             test: test_block,
             fallthrough: continuation_id,
             id: EvaluationOrder(0),
-            loc,
+            loc: loc_of_link(expr),
         },
         continuation_block,
     );
@@ -1515,5 +1515,20 @@ fn lower_optional_call_expression_impl(
     Ok(InstructionValue::LoadLocal {
         loc: place.loc,
         place,
+    })
+}
+
+/// Ends at the name, the index or the `)`, for codegen to put back.
+fn loc_of_link(expr: &Expr) -> Option<SourceLocation> {
+    let end = match &expr.data {
+        Data::EDot(it) => it.name_loc,
+        Data::EIndex(it) => it.index.loc,
+        Data::ECall(it) => it.close_paren_loc,
+        _ => expr.loc,
+    };
+    let start = convert_loc(expr.loc)?;
+    Some(SourceLocation {
+        end: convert_loc(end).unwrap_or(start).end,
+        ..start
     })
 }

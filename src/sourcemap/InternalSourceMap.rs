@@ -63,13 +63,11 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64
 //!     [ 8..16]  mapping_count:     u64
-//!     [16..20]  unused
-//!     [20..24]  object_brace_count: u32  -- 0 from an older Bun: the high half of its u64 line count
+//!     [16..24]  unused
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
-//!     [stream_offset..]  Window[sync_count]
-//!     [..total_len-stream_tail_pad]  ObjectBrace[object_brace_count] -- see `Builder::mark_object_brace`
+//!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
 //!     [total_len-stream_tail_pad..total_len]      zero bytes (see `STREAM_TAIL_PAD`)
 //! ```
 //!
@@ -117,7 +115,6 @@ const STREAM_TAIL_PAD: usize = 1;
 #[derive(Copy, Clone)]
 pub struct InternalSourceMap<'a> {
     mapping_count: u64,
-    object_brace_count: u32,
     sync_entries: &'a [Unaligned<SyncEntry>],
     stream: &'a [u8],
 }
@@ -127,8 +124,7 @@ pub struct InternalSourceMap<'a> {
 struct Header {
     total_len: u64,
     mapping_count: u64,
-    unused: u32,
-    object_brace_count: u32,
+    unused: u64,
     sync_count: u32,
     stream_offset: u32,
 }
@@ -148,17 +144,7 @@ struct SyncEntry {
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
 
-/// A mapping that `Builder::mark_object_brace` marked.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct ObjectBrace {
-    pub generated: LineColumnOffset,
-    pub original: LineColumnOffset,
-}
-
-const _: () = assert!(size_of::<ObjectBrace>() == 16);
-
-bun_core::impl_pod!(Header, SyncEntry, ObjectBrace);
+bun_core::impl_pod!(Header, SyncEntry);
 
 impl SyncEntry {
     #[inline]
@@ -192,7 +178,6 @@ impl<'a> InternalSourceMap<'a> {
         }
         Some(InternalSourceMap {
             mapping_count: header.mapping_count,
-            object_brace_count: header.object_brace_count,
             sync_entries: Unaligned::slice_of(&blob[HEADER_SIZE..sync_end]),
             stream: &blob[stream_offset..],
         })
@@ -200,14 +185,6 @@ impl<'a> InternalSourceMap<'a> {
 
     pub fn mapping_count(self) -> usize {
         self.mapping_count as usize
-    }
-
-    fn object_braces(self) -> &'a [Unaligned<ObjectBrace>] {
-        let len = self.object_brace_count as usize * size_of::<ObjectBrace>();
-        match self.stream.len().checked_sub(len + STREAM_TAIL_PAD) {
-            Some(start) => Unaligned::slice_of(&self.stream[start..][..len]),
-            None => &[],
-        }
     }
 }
 
@@ -538,10 +515,6 @@ impl InternalSourceMap<'_> {
 
 impl InternalSourceMap<'_> {
     /// Every mapping, in generated order.
-    pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
-        self.for_each_state(|state| each(state.to_mapping()));
-    }
-
     fn for_each_state(self, mut each: impl FnMut(&State)) {
         for entry in self.sync_entries {
             let mut state = entry.get().to_state();
@@ -557,12 +530,6 @@ impl InternalSourceMap<'_> {
                 }
                 each(&state);
             }
-        }
-    }
-
-    pub fn for_each_object_brace(self, mut each: impl FnMut(ObjectBrace)) {
-        for brace in self.object_braces() {
-            each(brace.get());
         }
     }
 
@@ -635,7 +602,6 @@ pub struct Builder {
     pending_source_index: [i32; SYNC_INTERVAL],
     pending_original_line: [i32; SYNC_INTERVAL],
     pending_original_column: [i32; SYNC_INTERVAL],
-    object_braces: Vec<ObjectBrace>,
 }
 
 impl Default for Builder {
@@ -652,7 +618,6 @@ impl Default for Builder {
             pending_source_index: [0; SYNC_INTERVAL],
             pending_original_line: [0; SYNC_INTERVAL],
             pending_original_column: [0; SYNC_INTERVAL],
-            object_braces: Vec::new(),
         }
     }
 }
@@ -692,21 +657,6 @@ impl Builder {
         if self.pending_n as usize == SYNC_INTERVAL {
             self.flush_window();
         }
-    }
-
-    /// Marks `last`, the last mapping. The printer does at a brace of an object literal, which is
-    /// code. A block's is not, and coverage sees the same character.
-    pub(crate) fn mark_object_brace(&mut self, last: &SourceMapState) {
-        self.object_braces.push(ObjectBrace {
-            generated: LineColumnOffset {
-                lines: Ordinal(self.generated_line),
-                columns: Ordinal(last.generated_column),
-            },
-            original: LineColumnOffset {
-                lines: Ordinal(last.original_line),
-                columns: Ordinal(last.original_column),
-            },
-        });
     }
 
     fn flush_window(&mut self) {
@@ -925,9 +875,8 @@ impl Builder {
         self.flush_window();
 
         let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
-        let object_braces = bun_core::slice_as_bytes(&self.object_braces);
         let stream_offset = HEADER_SIZE + sync_entries.len();
-        let total = stream_offset + self.win_stream.len() + object_braces.len() + STREAM_TAIL_PAD;
+        let total = stream_offset + self.win_stream.len() + STREAM_TAIL_PAD;
 
         let mut out = MutableString::init_empty();
         out.list.reserve_exact(total);
@@ -935,13 +884,11 @@ impl Builder {
             total_len: total as u64,
             mapping_count: u64::from(self.count),
             unused: 0,
-            object_brace_count: u32::try_from(self.object_braces.len()).expect("int cast"),
             sync_count: u32::try_from(self.sync_entries.len()).expect("int cast"),
             stream_offset: u32::try_from(stream_offset).expect("int cast"),
         }));
         out.list.extend_from_slice(sync_entries);
         out.list.extend_from_slice(&self.win_stream);
-        out.list.extend_from_slice(object_braces);
         out.list.extend_from_slice(&[0; STREAM_TAIL_PAD]);
         debug_assert_eq!(out.list.len(), total);
         out

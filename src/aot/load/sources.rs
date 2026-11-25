@@ -256,6 +256,7 @@ struct SourceEntry {
     loader: Loader,
     byte_count: u64,
     depends_on_more_than_source: bool,
+    is_in_coverage_report: bool,
     public_path: Box<[u8]>,
     display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
@@ -347,10 +348,7 @@ impl Sources {
     }
 
     pub fn is_in_coverage_report(&self, file: FileId) -> bool {
-        let path = self.diagnostic_path(file);
-        self.kind(file) == SourceKind::Program
-            && !bun_core::strings::contains(path, b"/node_modules/")
-            && !bun_core::strings::contains(path, b"\\node_modules\\")
+        self.entries[file.idx()].is_in_coverage_report
     }
 
     fn find_source_path(&self, file: FileId) -> Option<Vec<u8>> {

@@ -28,6 +28,8 @@ pub struct CodeOptions {
     pub builds_executable: bool,
     pub entry_points_that_run_first: Vec<Vec<u8>>,
     pub ignores_declared_side_effects: bool,
+    /// A file that does not run is missing from the coverage report.
+    pub runs_all_files_outside_packages: bool,
     pub looks_for_type_errors: bool,
     /// `bun check --aot`: also reports type errors in the TypeScript sources of dependencies.
     pub checks_dependency_sources: bool,
@@ -73,6 +75,7 @@ impl CodeOptions {
             builds_executable: false,
             entry_points_that_run_first: Vec::new(),
             ignores_declared_side_effects: false,
+            runs_all_files_outside_packages: false,
             looks_for_type_errors: false,
             checks_dependency_sources: false,
         };

@@ -224,6 +224,19 @@ impl List {
         None
     }
 
+    /// Those that start right there.
+    pub fn all_at(&self, line: Ordinal, column: Ordinal) -> impl Iterator<Item = Mapping> {
+        let generated = self.generated();
+        let last = Self::find_index_from_generated(generated, line, column);
+        (0..last.map_or(0, |it| it + 1))
+            .rev()
+            .take_while(move |&i| (generated[i].lines, generated[i].columns) == (line, column))
+            .map(|i| match &self.r#impl {
+                ListValue::WithoutNames(list) => list.get(i).to_named(),
+                ListValue::WithNames(list) => *list.get(i),
+            })
+    }
+
     pub fn generated(&self) -> &[LineColumnOffset] {
         both_lists!(&self.r#impl, |list| list.items_generated())
     }
@@ -364,7 +377,7 @@ impl Lookup {
 }
 
 /// `source` is an entry of the `sources` of the map for `generated_file`.
-fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
+pub(crate) fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
     let dir = bun_paths::dirname_or_root(generated_file);
     let mut path = bun_paths::Path::resolve(&[dir, &from_portable_rooted(source)]);
     path.copy_trailing_sep_from(source);

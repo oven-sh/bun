@@ -56,7 +56,7 @@ export const cases: Record<string, Case> = {
  3|  add(i);
  -|}
  1|add(1);
- 1|export { total };
+ -|export { total };
 `,
   },
   "branches.ts": {
@@ -152,7 +152,7 @@ export const cases: Record<string, Case> = {
  -|}
  1|export const a = id(
  1|  1 +
- -|    2,
+ 1|    2,
  1|);
  1|export const b = \`one
  1|two \${a}
@@ -169,7 +169,7 @@ export const cases: Record<string, Case> = {
  0|];
 `,
   },
-  // Both braces of an object literal are code, and of a pattern that is assigned to, which a `var` in a block becomes.
+  // Both braces of an object literal are code, and of a pattern that is assigned to.
   // Those of a block, a body, a class and a binding are not.
   "braces.ts": {
     functions: "5/7",
@@ -275,15 +275,15 @@ export const cases: Record<string, Case> = {
  1|  },
  1|] = [{ a: 1 }];
  1|if (typed.v) {
- -|  var
- 1|  {
+ 1|  var
+ -|  {
  1|    v: hoisted,
- 1|  }
+ -|  }
  1|  = typed;
  -|}
  1|export const spaced = {
  0|  async am
- 0|  () {},
+ -|  () {},
  1|};
 `,
   },
@@ -717,11 +717,11 @@ export const cases: Record<string, Case> = {
  1|sameLineAsCatch();
 `,
   },
-  // What is after a statement that the function was left at, and did not come back to.
+  // What is after a statement that the function was left at, and did not come back to. A function ran if its body did.
   "generators.ts": {
-    functions: "7/7",
+    functions: "6/7",
     lines: `
- 1|function* never() {
+ 0|function* never() {
  0|  yield 1;
  -|}
  1|never();
@@ -774,7 +774,8 @@ export const cases: Record<string, Case> = {
  1|rejected();
 `,
   },
-  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run.
+  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run, but for
+  // a branch that was taken in its test.
   "skipped.ts": {
     functions: "8/8",
     lines: `
@@ -827,7 +828,9 @@ export const cases: Record<string, Case> = {
  2|  node = node.next;
  -|}
  1|switch (2 as number) {
- 0|  case node?.next: at();
+ 0|  case node.next: at();
+ 1|  case node?.next:
+ 0|    at();
  -|}
 `,
   },
@@ -921,9 +924,9 @@ export const cases: Record<string, Case> = {
  1|at();
 `,
   },
-  // An enum and a namespace are compiled to a function each.
+  // An enum and a namespace are compiled to a function each, which is not in the file.
   "lowered.ts": {
-    functions: "3/3",
+    functions: "1/1",
     lines: `
  1|enum Color {
  1|  Red = 1,
@@ -1024,7 +1027,7 @@ export const cases: Record<string, Case> = {
  1|try {
  -|  (
  1|    <Missing>
- -|      text
+ 1|      text
  1|    </Missing>
  -|  );
  1|} catch (e) {
@@ -1115,10 +1118,10 @@ export const cases: Record<string, Case> = {
   "importer.ts": {
     functions: "0/0",
     lines: `
- 1|import Base from "./abstract.ts";
- 1|import awaited from "./async.ts";
- 1|import Imported from "./class.ts";
- 1|import imported from "./function.ts";
+ -|import Base from "./abstract.ts";
+ -|import awaited from "./async.ts";
+ -|import Imported from "./class.ts";
+ -|import imported from "./function.ts";
  1|imported();
  1|awaited();
  1|new Imported().method();
@@ -1136,8 +1139,8 @@ export const cases: Record<string, Case> = {
  -|}
  1|require.resolve("node:fs");
  1|require.resolve(
- -|  "node:fs",
- -|);
+ 1|  "node:fs",
+ 1|);
 `,
   },
   // The path of a chunk is put in once its length is known, which moves what follows it on the line.
@@ -1151,7 +1154,7 @@ export const cases: Record<string, Case> = {
     functions: "0/0",
     lines: `
  1|const text = "é汉🎉"; at(); import("./lazy.mjs"); at();
- 1|export { text };
+ -|export { text };
 `,
   },
   // Columns far from the start of the line.

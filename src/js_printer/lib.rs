@@ -1249,6 +1249,7 @@ pub trait OnSourceMapChunk {
         source: &bun_ast::Source,
         output: &mut MutableString,
         module_info: Option<&analyze_transpiled_module::ModuleInfo>,
+        coverage: Option<&bun_ast::coverage::PlacedInText>,
     ) -> crate::Result<()>;
 }
 
@@ -1259,6 +1260,7 @@ impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
         _: &bun_ast::Source,
         _: &mut MutableString,
         _: Option<&analyze_transpiled_module::ModuleInfo>,
+        _: Option<&bun_ast::coverage::PlacedInText>,
     ) -> crate::Result<()> {
         self.set(Some(chunk));
         Ok(())
@@ -1299,8 +1301,7 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
-    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
-    pub code_coverage: bool,
+    pub coverage: Option<&'a mut bun_ast::coverage::Printing>,
 
     pub inline_require_and_import_errors: bool,
     /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
@@ -1375,7 +1376,7 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
-            code_coverage: false,
+            coverage: None,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_source: None,
@@ -1518,6 +1519,7 @@ enum ClauseItemAs {
 pub(crate) mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
+    use bun_ast::coverage::Role;
     use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
@@ -1669,6 +1671,10 @@ pub(crate) mod __gated_printer {
             if v.wrap {
                 self.print(b"(");
                 v.flags.insert(ExprFlag::ForbidIn);
+            }
+
+            if Op::Code::is_logical(e.op) {
+                self.mark_for_coverage(Role::FirstOperand, e.left.loc);
             }
 
             v.left_level = e_level.sub(1);
@@ -2112,8 +2118,9 @@ pub(crate) mod __gated_printer {
 
             // A `using` or `await using` declaration admits only identifier
             // bindings, never a binding pattern.
-            let allow_destructuring =
-                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
+            let allow_destructuring = bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING
+                && !kind.is_using()
+                && self.options.coverage.is_none();
 
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {
@@ -2337,11 +2344,18 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn mark_object_brace(&mut self) {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
-                return;
+        pub(crate) fn mark_for_coverage(&mut self, role: Role, loc: bun_ast::Loc) {
+            if IS_BUN_PLATFORM && self.options.coverage.is_some() {
+                self.mark_for_coverage_slow(role, loc);
             }
-            self.source_map_builder.mark_object_brace();
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn mark_for_coverage_slow(&mut self, role: Role, loc: bun_ast::Loc) {
+            if let Some(coverage) = &mut self.options.coverage {
+                (coverage.placement).mark(role, loc.start as u32, self.writer.written() as u32);
+            }
         }
 
         #[inline]
@@ -2421,6 +2435,7 @@ pub(crate) mod __gated_printer {
                 false,
             );
             self.print_space();
+            self.mark_for_coverage(Role::Body, func.body.loc);
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
         }
 
@@ -3154,6 +3169,8 @@ pub(crate) mod __gated_printer {
 
             let mut flags = in_flags;
 
+            self.mark_for_coverage(Role::Expression, expr.loc);
+
             match &expr.data {
                 ExprData::EMissing(_) => {}
                 ExprData::EUndefined(_) => {
@@ -3431,6 +3448,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                        self.mark_for_coverage(Role::Chain, e.close_paren_loc);
                         self.print(b"?.");
                     }
                     self.print(b"(");
@@ -3605,6 +3623,10 @@ pub(crate) mod __gated_printer {
 
                     self.print_expr(e.target, Level::Postfix, flags);
 
+                    if is_optional_chain {
+                        self.mark_for_coverage(Role::Chain, e.name_loc);
+                    }
+
                     if lexer::is_identifier(&e.name) {
                         if is_optional_chain {
                             self.print(b"?.");
@@ -3673,6 +3695,7 @@ pub(crate) mod __gated_printer {
                     let is_optional_chain_start =
                         e.optional_chain == Some(js_ast::OptionalChain::Start);
                     if is_optional_chain_start {
+                        self.mark_for_coverage(Role::Chain, e.index.loc);
                         self.print(b"?.");
                     }
 
@@ -3737,6 +3760,7 @@ pub(crate) mod __gated_printer {
                         true,
                     );
                     self.print_whitespacer(ws!(b" => "));
+                    self.mark_for_coverage(Role::Body, e.body.loc);
 
                     let mut was_printed = false;
                     if e.body.stmts.len() == 1 && e.prefer_expr {
@@ -3870,7 +3894,6 @@ pub(crate) mod __gated_printer {
                         self.print(b"$Bun_lazy(");
                     }
                     self.add_source_mapping(expr.loc);
-                    self.mark_object_brace();
                     self.print(b"{");
                     if !props.is_empty() {
                         if !e.is_single_line || IS_JSON {
@@ -3908,7 +3931,6 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
-                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if is_lazy {
@@ -5290,6 +5312,8 @@ pub(crate) mod __gated_printer {
             // we assign `self.prev_stmt_tag = new_tag` at every return point (early + tail).
             let new_tag = stmt.data.tag();
 
+            self.mark_for_coverage(Role::Statement, stmt.loc);
+
             match &stmt.data {
                 StmtData::SComment(s) => {
                     self.print_indent();
@@ -5748,6 +5772,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
                     self.print(b"do");
+                    self.mark_for_coverage(Role::Guarded, stmt.loc);
                     match s.body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
@@ -5789,6 +5814,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.mark_for_coverage(Role::Guarded, stmt.loc);
                     self.print_body(s.body);
                 }
                 StmtData::SForOf(s) => {
@@ -5809,6 +5835,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
                     self.print(b")");
+                    self.mark_for_coverage(Role::Guarded, stmt.loc);
                     self.print_body(s.body);
                 }
                 StmtData::SWhile(s) => {
@@ -5820,6 +5847,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.mark_for_coverage(Role::Guarded, stmt.loc);
                     self.print_body(s.body);
                 }
                 StmtData::SWith(s) => {
@@ -5862,6 +5890,7 @@ pub(crate) mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
+                        self.mark_for_coverage(Role::Body, catch.body_loc);
                         self.print_block(catch.body_loc, slice_of(catch.body), None);
                     }
 
@@ -5870,6 +5899,7 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
+                        self.mark_for_coverage(Role::Body, finally.body_loc);
                         self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
@@ -5901,6 +5931,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b")");
+                    self.mark_for_coverage(Role::Guarded, stmt.loc);
                     self.print_body(s.body);
                 }
                 StmtData::SSwitch(s) => {
@@ -5921,6 +5952,7 @@ pub(crate) mod __gated_printer {
                         self.print_semicolon_if_needed();
                         self.print_indent();
                         self.add_source_mapping(c.loc);
+                        self.mark_for_coverage(Role::Case, c.loc);
 
                         if let Some(val) = &c.value {
                             self.print(b"case");
@@ -6452,6 +6484,7 @@ pub(crate) mod __gated_printer {
             self.print(b"(");
             self.print_expr(s.test, Level::Lowest, ExprFlag::none());
             self.print(b")");
+            self.mark_for_coverage(Role::Guarded, loc);
 
             match &s.yes.data {
                 StmtData::SBlock(block) => {
@@ -7686,6 +7719,8 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     }
     printer.binary_expression_stack = Vec::new();
 
+    printer.mark_for_coverage(bun_ast::coverage::Role::File, bun_ast::Loc { start: 0 });
+
     // The directive prologue comes ahead of every statement the printer adds.
     for stmt in tree.directives.slice() {
         printer.print_stmt(*stmt)?;
@@ -7733,6 +7768,10 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
             .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
+    if ASCII_ONLY && let Some(coverage) = &mut printer.options.coverage {
+        coverage.placed = coverage.placement.finish_in(printer.writer.slice());
+    }
+
     if GENERATE_SOURCE_MAP {
         if let Some(handler) = &printer.options.source_map_handler {
             // WriterTrait exposes the written buffer via `slice()`.
@@ -7744,6 +7783,7 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
                 source,
                 &mut printer.writer.ctx.buffer,
                 printer.module_info.as_deref(),
+                printer.options.coverage.as_deref().map(|it| &it.placed),
             )?;
         }
     }

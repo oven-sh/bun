@@ -345,6 +345,7 @@ describe("bun test --coverage", () => {
   });
 
   test("the table has the lines that did not run", () => {
+    const percent = (hit: number, found: number) => (found ? Math.floor((hit * 1e4) / found) / 100 : 100).toFixed(2);
     const wrong: Record<string, unknown> = {};
     for (const { file, counts, functions } of programs) {
       const row = table.split("\n").find(line =>
@@ -362,17 +363,13 @@ describe("bun test --coverage", () => {
       const executable = counts.filter(count => count !== " -");
       const [hit, found] = functions.split("/").map(Number);
       const want = [
-        (found ? (hit / found) * 100 : 100).toFixed(2),
-        (executable.length
-          ? (executable.filter(count => count !== " 0").length / executable.length) * 100
-          : 100
-        ).toFixed(2),
+        percent(hit, found),
+        percent(executable.filter(count => count !== " 0").length, executable.length),
         ranges.join(","),
       ];
-      const got = row
-        ?.split("|")
-        .slice(1)
-        .map(cell => cell.trim());
+      const [, functionsRan, linesRan, , , uncovered] = row?.split("|").map(cell => cell.trim()) ?? [];
+      // Where every line ran, the column has those that ran in part.
+      const got = [functionsRan, linesRan, ranges.length ? uncovered : ""];
       if (!Bun.deepEquals(got, want)) wrong[file] = { got, want };
     }
     expect(wrong).toEqual({});

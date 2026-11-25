@@ -636,6 +636,7 @@ fn transpile(
         allow_commonjs: true,
         inject_jest_globals: false,
         is_test_entry_point: false,
+        is_covered: false,
         set_breakpoint_on_first_line: false,
         runtime_transpiler_cache: match RuntimeTranspilerCache::is_disabled() {
             true => None,
@@ -673,11 +674,19 @@ fn transpile(
             tools.printer.ctx.reset();
             let format = bun_js_printer::Format::EsmAscii;
             transpiler
-                .print_with_source_map(&arena, parsed, &mut tools.printer, format, &chunk, None)
+                .print_with_source_map(
+                    &arena,
+                    parsed,
+                    &mut tools.printer,
+                    format,
+                    &chunk,
+                    None,
+                    None,
+                )
                 .ok()?;
             let code = tools.printer.ctx.get_written();
             let mappings = chunk.take().map_or_else(Vec::new, |it| it.buffer.list);
-            cache.put(code, &mappings, None).ok()?;
+            cache.put(code, &mappings, None, None).ok()?;
             (String::clone_latin1(code), printed, mappings)
         }
     };

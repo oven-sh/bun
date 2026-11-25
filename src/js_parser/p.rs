@@ -1003,10 +1003,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let root = Expr::init(E::If { ..*first }, arg.loc);
         let mut link = root.data.e_if().expect("infallible: variant checked");
         loop {
-            link.yes = self.transpose_each_branch(link.yes, leaf)?;
+            let yes = self.transpose_each_branch(link.yes, leaf)?;
+            link.yes = self.in_place_of(link.yes.loc, yes);
             let no = link.no;
             let js_ast::ExprData::EIf(next) = no.data else {
-                link.no = leaf(self, no);
+                let transposed = leaf(self, no);
+                link.no = self.in_place_of(no.loc, transposed);
                 return Some(root);
             };
             link.no = Expr::init(E::If { ..*next }, no.loc);
@@ -2171,7 +2173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
-                return replacement;
+                return self.in_place_of(loc, replacement);
             }
         }
 
@@ -7038,6 +7040,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // ─── helpers extracted from the gated impl block below ───
     // These are leaf utilities (no parse_*/visit_* deps) that block
     // handle_identifier / jsx_import / record_usage_of_runtime_require.
+
+    /// Coverage knows an expression by its `loc`.
+    pub(crate) fn in_place_of(&mut self, loc: bun_ast::Loc, value: Expr) -> Expr {
+        match value.data {
+            _ if !self.options.features.code_coverage => value,
+            js_ast::ExprData::EInlinedEnum(inlined) => {
+                let data = inlined.value.data;
+                self.wrap_inlined_enum(Expr { loc, data }, inlined.comment.slice())
+            }
+            data => Expr { loc, data },
+        }
+    }
+
+    /// For data that is not written in this file, which coverage would take for what is.
+    pub(crate) fn forget_locs_inside(&self, data: Expr) {
+        if !self.options.features.code_coverage {
+            return;
+        }
+        let mut parts = vec![data];
+        while let Some(part) = parts.pop() {
+            let forget = |it: &mut Expr| {
+                if !core::mem::replace(&mut it.loc, bun_ast::Loc::EMPTY).is_empty() {
+                    parts.push(*it);
+                }
+            };
+            match part.data {
+                js_ast::ExprData::EArray(mut it) => it.items.iter_mut().for_each(forget),
+                js_ast::ExprData::EObject(mut it) => (it.properties.iter_mut())
+                    .flat_map(|it| it.key.iter_mut().chain(&mut it.value))
+                    .for_each(forget),
+                _ => {}
+            }
+        }
+    }
 
     #[cold]
     #[inline(never)]

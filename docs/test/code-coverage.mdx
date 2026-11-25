@@ -7,28 +7,19 @@ Bun's test runner has built-in code coverage reporting. Use it to see how much o
 
 ## Enabling Coverage
 
-`bun:test` can report which lines of code your tests cover. Pass `--coverage` to print a coverage report to the console:
+`bun test` reports which functions, lines, statements and branches your tests cover. Pass `--coverage` to print a coverage report to the console:
 
 ```bash terminal icon="terminal"
 bun test --coverage
 
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   38.89 |   42.11 |
- index-0.ts  |   33.33 |   36.84 | 10-15,19-24
- index-1.ts  |   33.33 |   36.84 | 10-15,19-24
- index-10.ts |   33.33 |   36.84 | 10-15,19-24
- index-2.ts  |   33.33 |   36.84 | 10-15,19-24
- index-3.ts  |   33.33 |   36.84 | 10-15,19-24
- index-4.ts  |   33.33 |   36.84 | 10-15,19-24
- index-5.ts  |   33.33 |   36.84 | 10-15,19-24
- index-6.ts  |   33.33 |   36.84 | 10-15,19-24
- index-7.ts  |   33.33 |   36.84 | 10-15,19-24
- index-8.ts  |   33.33 |   36.84 | 10-15,19-24
- index-9.ts  |   33.33 |   36.84 | 10-15,19-24
- index.ts    |  100.00 |  100.00 |
--------------|---------|---------|-------------------
+--------------|---------|---------|---------|----------|-------------------
+File          | % Funcs | % Lines | % Stmts | % Branch | Uncovered Line #s
+--------------|---------|---------|---------|----------|-------------------
+All files     |   83.33 |   91.80 |   90.00 |    75.00 |
+ src/api.ts   |   75.00 |   85.71 |   83.33 |    70.00 | 15-18,25
+ src/main.ts  |  100.00 |  100.00 |  100.00 |    75.00 | 12
+ src/utils.ts |  100.00 |  100.00 |  100.00 |   100.00 |
+--------------|---------|---------|---------|----------|-------------------
 ```
 
 ### Enable by Default
@@ -41,16 +32,78 @@ To enable coverage reporting by default, add this to your `bunfig.toml`:
 coverage = true
 ```
 
-By default, coverage reports exclude test files and use sourcemaps. Both are configurable in `bunfig.toml`.
+### Report Files That No Test Loads
+
+By default, the report lists the files in the working directory that your tests load. To list a fixed set of files, set `coverageInclude`. A file that matches and is never loaded counts as not covered. Bun reads it without running it.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageSkipTestFiles = false  # default true
+coverageInclude = ["src/**/*.{ts,tsx}", "!src/generated"]
 ```
+
+```bash terminal icon="terminal"
+# Or via CLI
+bun test --coverage-include="src/**/*.{ts,tsx}" --coverage-include="!src/generated"
+```
+
+Each entry is a glob pattern, a folder or a file, relative to the working directory. A pattern can end in the name of a folder, like `packages/*/src`, and it can lead out of the working directory, like `../shared`. An entry that starts with `!` excludes files, wherever it is in the list. Wildcards don't follow symlinks and don't look for files in `coverageDir`. A file that takes a [plugin](/runtime/plugins) to load, such as `.svelte`, is listed only if a test loads it. This option corresponds to Jest's `collectCoverageFrom` and Vitest's `coverage.include`.
+
+### Report Changed Files
+
+With `--changed`, the report lists the files that changed and the files that a changed test file imports. Thresholds apply to those files.
+
+```bash terminal icon="terminal"
+bun test --coverage --changed=main
+```
+
+## What Counts as Covered
+
+Bun measures the code as you wrote it. Types, `import` statements, `export { … }` lists and code that the transpiler generates are not part of the report.
+
+| Metric     | Covered when                    |
+| ---------- | ------------------------------- |
+| Functions  | The body of the function starts |
+| Lines      | Any code on the line runs       |
+| Statements | The statement starts            |
+| Branches   | The code goes that way          |
+
+### Branches
+
+| Code                                 | Branches                           |
+| ------------------------------------ | ---------------------------------- |
+| `if (a) …`, `a ? b : c`              | `a` is truthy, `a` is falsy        |
+| `a && b`, `a \|\| b`, `a ?? b`       | `a` is evaluated, `b` is evaluated |
+| `switch`                             | Each `case` is entered             |
+| `function f(a = 1)`, `{ a = 1 } = b` | The default is used                |
+| `a &&= b`, `a \|\|= b`, `a ??= b`    | `b` is evaluated                   |
+| `a?.b`                               | `b` is evaluated                   |
+| `catch {}` with an empty body        | It is entered                      |
+
+### Differences from Istanbul
+
+Bun reports what [Istanbul](https://istanbul.js.org) reports, which is what Jest, Vitest and `nyc` go by. It also reports code that Istanbul doesn't look at:
+
+- The last three kinds of branches above.
+- Every line with code. Istanbul counts the lines on which a statement starts. A line with only the head of a function is covered when the function is called.
+- Private methods as functions, and `class`, `enum`, `namespace` and `export default` as statements.
+
+Methods and arrow functions have names like `Cart.total`. Istanbul calls them `(anonymous_0)`.
+
+### Code That Is Not Measured
+
+- Code that comes from a string: `eval()`, `new Function()`, `node:vm`, `module._compile()`, `data:` and `blob:` URLs
+- Code that runs in a subprocess
+- Code that runs in a [macro](/bundler/macros) on another thread, which is where most files that you `import` run their macros
+
+Code that runs in a `Worker` is measured.
 
 ## Coverage Thresholds
 
-Set a coverage threshold in `bunfig.toml`. If your test suite does not meet or exceed it, `bun test` exits with a non-zero exit code.
+Set a coverage threshold in `bunfig.toml`. If your test suite does not meet or exceed it, `bun test` prints an error and exits with code 1.
+
+```txt
+error: Coverage of branches is 75.00%, which is below the threshold of 80%
+```
 
 ### Simple Threshold
 
@@ -64,11 +117,40 @@ coverageThreshold = 0.9
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# To set different thresholds for lines and functions
-coverageThreshold = { lines = 0.9, functions = 0.9 }
+coverageThreshold = { lines = 0.9, functions = 0.9, statements = 0.9, branches = 0.8 }
 ```
 
-Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Bun checks only the keys you set. If `coverageInclude` leaves no file to report, the thresholds are not met.
+
+A negative number is the most that may be left uncovered:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# At most 10 lines are not covered
+coverageThreshold = { lines = -10 }
+```
+
+### Per-File Thresholds
+
+Bun compares thresholds with the `All files` row. To require them of every file, set `perFile`:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageThreshold = { lines = 0.9, functions = 0.9, perFile = true }
+```
+
+### Thresholds for Some Files
+
+A key can be a glob pattern, a folder or a file. Its thresholds apply to the matching files together, or to each of them if it sets `perFile`. A key that starts with `!` is for all other files. As in Vitest, the thresholds for all files still include these files. Jest leaves them out.
+
+```toml title="bunfig.toml" icon="settings"
+[test.coverageThreshold]
+lines = 0.8
+"src/billing" = { lines = 1, branches = 1 }
+"src/**/*.util.ts" = { functions = 0.9, perFile = true }
+```
+
+As in Jest, the key `global` holds the thresholds for all files.
 
 ## Coverage Reporters
 
@@ -84,10 +166,12 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### Available Reporters
 
-| Reporter | Description                                          |
-| -------- | ---------------------------------------------------- |
-| `text`   | Prints a text summary of the coverage to the console |
-| `lcov`   | Save coverage in lcov format                         |
+| Reporter       | Description                                                               |
+| -------------- | ------------------------------------------------------------------------- |
+| `text`         | Prints a table to the console                                             |
+| `lcov`         | Writes `lcov.info`                                                        |
+| `json`         | Writes `coverage-final.json` in Istanbul's format, with lines and columns |
+| `json-summary` | Writes `coverage-summary.json` in Istanbul's format, with totals per file |
 
 ### LCOV Coverage Reporter
 
@@ -130,6 +214,15 @@ jobs:
           file: ./coverage/lcov.info
 ```
 
+### HTML Reports
+
+Istanbul's tools read the output of the `json` reporter. To see which part of a line is not covered, generate an HTML report:
+
+```bash terminal icon="terminal"
+bun test --coverage-reporter=json --coverage-dir=.nyc_output
+bunx nyc report --reporter=html
+```
+
 ## Excluding Files from Coverage
 
 ### Skip Test Files
@@ -141,7 +234,7 @@ Coverage reports exclude test files by default. To include them:
 coverageSkipTestFiles = false  # default true
 ```
 
-When `coverageSkipTestFiles` is `true` (the default), the coverage report excludes files matching test patterns (for example `*.test.ts`, `*.spec.js`).
+When `coverageSkipTestFiles` is `true` (the default), the coverage report excludes files matching test patterns (for example `*.test.ts`, `*.spec.js`) and [preload](/test/configuration#preload-scripts) scripts.
 
 ### Ignore Specific Paths and Patterns
 
@@ -161,7 +254,7 @@ coveragePathIgnorePatterns = [
 ]
 ```
 
-The option accepts glob patterns and works like Jest's `collectCoverageFrom` ignore patterns. Bun excludes files matching any of the patterns from coverage calculation and reporting in both text and LCOV output.
+The option accepts glob patterns. Bun excludes files matching any of the patterns from every report.
 
 #### Common Use Cases
 
@@ -194,9 +287,36 @@ coveragePathIgnorePatterns = [
 ]
 ```
 
+## Excluding Code from Coverage
+
+Bun understands the comments of Istanbul, Vitest, c8 and Node.js.
+
+```ts title="config.ts" icon="/icons/typescript.svg"
+/* istanbul ignore next */
+function debugOnly() {}
+
+/* istanbul ignore else */
+if (process.platform === "linux") setup();
+```
+
+| Comment                                                               | Leaves out                                                   |
+| --------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `istanbul ignore next`, `v8 ignore next`                              | The next statement, function, `case`, property or expression |
+| `c8 ignore next`, `node:coverage ignore next`                         | The next line                                                |
+| `c8 ignore next 3`, `v8 ignore next 3`, `node:coverage ignore next 3` | The next 3 lines                                             |
+| `ignore if`                                                           | The first branch of the next `if`                            |
+| `ignore else`                                                         | The second branch of the next `if`                           |
+| `ignore start` … `ignore stop` or `ignore end`                        | The lines in between                                         |
+| `node:coverage disable` … `node:coverage enable`                      | The lines in between                                         |
+| `ignore file`                                                         | The file                                                     |
+
+`if`, `else`, `start`, `stop`, `end` and `file` work after `istanbul`, `v8` and `c8`. After code on the same line, `c8 ignore next` leaves out that line.
+
 ## Sourcemaps
 
-Bun transpiles all files by default, generating an internal source map that maps lines of your original source code onto Bun's internal representation. To make coverage reports ignore this source map, set `test.coverageIgnoreSourcemaps` to `true`. You rarely want this outside of advanced use cases.
+Bun reports positions in your source files. If a test loads the output of `bun build --target=bun --sourcemap`, Bun reports the files it was built from. The report is about their text at the time of the build. Branches and statements that the bundler removes or merges can be missing from it.
+
+To report the code that runs instead, which is the output of the transpiler or the bundle itself, set `coverageIgnoreSourcemaps` to `true`. You rarely want this outside of debugging.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -212,9 +332,11 @@ coverageIgnoreSourcemaps = true  # default false
 
 By default, coverage reports:
 
+- **Include** the files that your tests load (choose the files with `coverageInclude`)
+- **Exclude** files outside of the working directory (include them with `coverageInclude`)
 - **Exclude** `node_modules` directories
 - **Exclude** files loaded with non-JS/TS loaders (for example `.css`, `.txt`) unless you specify a custom JS loader
-- **Exclude** test files themselves (include them with `coverageSkipTestFiles = false`)
+- **Exclude** test files and preload scripts (include them with `coverageSkipTestFiles = false`)
 - Can exclude additional files with `coveragePathIgnorePatterns`
 
 ## Advanced Configuration
@@ -292,21 +414,12 @@ test:coverage:
 
 ### Text Output Explanation
 
-```
--------------|---------|---------|-------------------
-File         | % Funcs | % Lines | Uncovered Line #s
--------------|---------|---------|-------------------
-All files    |   85.71 |   90.48 |
- src/        |   85.71 |   90.48 |
-  utils.ts   |  100.00 |  100.00 |
-  api.ts     |   75.00 |   85.71 | 15-18,25
-  main.ts    |   80.00 |   88.89 | 42,50-52
--------------|---------|---------|-------------------
-```
-
-- **% Funcs**: Percentage of functions called during tests
-- **% Lines**: Percentage of executable lines run during tests
-- **Uncovered Line #s**: Line numbers that were never executed
+- **% Funcs**: Percentage of functions that ran
+- **% Lines**: Percentage of lines with code that ran
+- **% Stmts**: Percentage of statements that ran
+- **% Branch**: Percentage of branches that were taken
+- **Uncovered Line #s**: The lines that never ran, in red. If every line ran, the lines with a branch, statement or function that didn't, in yellow.
+- **All files**: The total over all files. A large file weighs more than a small one.
 
 ### What to Aim For
 
@@ -371,28 +484,19 @@ Coverage is only one metric. Also consider:
 
 ### Coverage Not Showing for Some Files
 
-If files aren't appearing in coverage reports, your tests might not import them. Coverage only tracks files that are loaded.
-
-```ts title="test.ts" icon="/icons/typescript.svg"
-// Make sure to import the modules you want to test
-import { myFunction } from "../src/my-module";
-
-test("my function works", () => {
-  expect(myFunction()).toBeDefined();
-});
-```
+By default, the report lists only the files in the working directory that your tests load. Set [`coverageInclude`](#report-files-that-no-test-loads) to list the others too.
 
 ### False Coverage Reports
 
 If you see coverage reports that don't match your expectations:
 
-1. Check if source maps are working correctly
-2. Verify file patterns in `coveragePathIgnorePatterns`
+1. Check [what counts as covered](#what-counts-as-covered).
+2. Verify file patterns in `coverageInclude` and `coveragePathIgnorePatterns`
 3. Ensure test files import the code to test
 
 ### Performance Issues with Large Codebases
 
-For large projects, coverage collection can slow down tests:
+Only files in the report pay for coverage. Exclude the code you don't need coverage for:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

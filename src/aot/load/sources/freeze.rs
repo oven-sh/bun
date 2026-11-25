@@ -288,6 +288,9 @@ fn freeze_file(
         loader,
         byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
         depends_on_more_than_source: payload.is_some_and(|it| it.depends_on_more_than_source),
+        is_in_coverage_report: kind == SourceKind::Program
+            && (input.options.aot.covered_files.as_ref())
+                .is_some_and(|it| (it.0)(&diagnostic_path, loader)),
         public_path,
         display_path,
         diagnostic_path,

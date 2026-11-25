@@ -6,6 +6,7 @@ members = [
   "src/analytics",
   "src/base64",
   "src/bundler",
+  "src/code_coverage",
   "src/collections",
   "src/css",
   "src/errno",
@@ -393,6 +394,7 @@ bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
+bun_code_coverage = { path = "src/code_coverage" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }
 bun_errno = { path = "src/errno" }

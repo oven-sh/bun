@@ -28,11 +28,34 @@ test/cli/test/bun-test.test.ts: --react-compiler > the original of a mocked modu
 test/cli/test/bun-test.test.ts: --react-compiler > true
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > --watch reports it and keeps watching
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > the next file re-evaluates the modules it left unfinished
-test/cli/test/coverage.test.ts: a file loaded more than once counts every load > (unnamed)
 test/cli/test/coverage.test.ts: a file with ? in its name is not left out of coverage: it cannot be loaded
+# A compiled run names a module by its real path, also with --preserve-symlinks.
+test/cli/test/coverage.test.ts: coverageInclude > real ["--preserve-symlinks"], for a file that is loaded through a link
+# A compiled run does not read the source map of a bundle, as docs/compiler/debugging.mdx says.
 test/cli/test/coverage.test.ts: both braces of an object are listed and no brace of a block is: // @bun with a source map
-# The next one imports a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
+test/cli/test/coverage.test.ts: coverageInclude > a file that is bundled with its test
+test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with ""
+test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \"!out\""
+test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \".\""
+test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \"src/a.js\""
+test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coveragePathIgnorePatterns = \"src/a.js\""
+test/cli/test/coverage.test.ts: the sources of a // @bun file are listed wherever it is
+test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap --minify-syntax
+test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=external
+test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=inline
+test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=linked
+test/cli/test/coverage.test.ts: what is counted > from a bundle without a loop that its source has
+# A preload that starts with file:// stops the build of a compiled run with TS100160.
+test/cli/test/coverage.test.ts: a preload is listed if test files are: "[test]\ncoverageSkipTestFiles = true\n" ["--preload=file://./setup.ts"]
+# A file with a syntax error is not compiled.
+test/cli/test/coverage.test.ts: what is counted > a file that runs though TypeScript reports a syntax error
+# These cannot pass: they look into the transpiler cache, and a compiled file is not transpiled.
+test/cli/test/coverage.test.ts: the braces of an object are listed when the file comes from the transpiler cache
+test/cli/test/coverage.test.ts: what is counted > from the transpiler cache, by import
+test/cli/test/coverage.test.ts: what is counted > from the transpiler cache, by require()
+# These import a macro. A macro stops the build of a compiled run with TS100053, as docs/compiler/compatibility.mdx says.
 test/cli/test/coverage.test.ts: objects that are not in the file do not move the lines that are listed
+test/cli/test/coverage.test.ts: what is counted > the values of macros and of --define
 # The next one cannot pass: it waits until `isolatedModuleCacheSourceType()` of bun:internal-for-testing finds a file in the cache of sources that --isolate keeps, and a compiled file never gets there. Its child run never ends.
 test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: require() of a file that an import statement is fetching
 test/cli/test/isolation-one-module-fetched-twice.test.ts: --isolate: the default loader of require.extensions is called for a CommonJS file that is cached

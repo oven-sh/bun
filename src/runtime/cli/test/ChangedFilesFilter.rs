@@ -42,6 +42,8 @@ pub(crate) struct Result<'a> {
     pub(crate) test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
     pub(crate) changed_count: usize,
+    /// The changed files, and what the test files among them import.
+    pub(crate) files_to_cover: StringSet,
     /// Number of test files before filtering.
     pub(crate) total_tests: usize,
     /// Absolute paths of every local source file that participates in the
@@ -95,6 +97,7 @@ pub(crate) fn filter<'a>(
         return Ok(Result {
             test_files: &mut test_files[0..0],
             changed_count: changed_files.count(),
+            files_to_cover: changed_files,
             total_tests: 0,
             module_graph_files: Vec::new(),
         });
@@ -107,6 +110,7 @@ pub(crate) fn filter<'a>(
         return Ok(Result {
             test_files: &mut test_files[0..0],
             changed_count: 0,
+            files_to_cover: changed_files,
             total_tests: total,
             module_graph_files: Vec::new(),
         });
@@ -173,6 +177,7 @@ pub(crate) fn filter<'a>(
             return Ok(Result {
                 test_files,
                 changed_count: changed_files.count(),
+                files_to_cover: changed_files,
                 total_tests: total,
                 module_graph_files: Vec::new(),
             });
@@ -286,6 +291,17 @@ pub(crate) fn filter<'a>(
         }
     }
 
+    let changed_count = changed_files.count();
+    let imported: Vec<_> = (slot_to_source.iter().flatten().map(|&it| it as usize))
+        .filter(|&test| changed_files.contains(sources[test].path.text))
+        .flat_map(|test| import_records[test].as_slice())
+        .filter_map(|record| sources.get(record.source_index.get() as usize))
+        .collect();
+    let mut files_to_cover = changed_files;
+    for source in imported {
+        bun_core::handle_oom(files_to_cover.insert(source.path.text));
+    }
+
     // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
@@ -294,7 +310,8 @@ pub(crate) fn filter<'a>(
 
     Ok(Result {
         test_files: &mut test_files[0..write],
-        changed_count: changed_files.count(),
+        changed_count,
+        files_to_cover,
         total_tests: total,
         module_graph_files: graph_files,
     })

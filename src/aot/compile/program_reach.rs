@@ -61,7 +61,6 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub known_helpers: &'a KnownHelpers,
     pub removable: RemovableOptions,
-    pub counts_executions: bool,
     pub any_file_is_named_at_run_time: bool,
     pub files_are_named_out_of_sight: bool,
     pub admits_inspector: bool,
@@ -917,8 +916,7 @@ impl<'a, 's> FileScan<'a, 's> {
         }
         let mut modifiers = hir.modifiers.iter();
         let has_decorators = modifiers.any(|it| matches!(it.kind, ModifierKind::Decorator(_)));
-        let is_counted =
-            self.input.counts_executions && self.input.sources.is_in_coverage_report(self.file);
+        let is_counted = self.input.sources.is_in_coverage_report(self.file);
         let removable = Removable::new(self.input.files, self.file, self.input.removable);
         let removable = removable.filter(|_| !is_counted);
         let removable = removable.map(|it| it.with_modules(self.input.graph, self.file));

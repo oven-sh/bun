@@ -1577,6 +1577,7 @@ impl Build<'_> {
         let mut known_helpers = KnownHelpers::compute_below_added_names(
             view.files(),
             &contents.names_added_to_builtins,
+            &|file| view.sources.is_in_coverage_report(file),
             &in_parallel,
         );
         known_helpers.keep_private_states_in_collections(&contents.replaced_builtins);
@@ -1721,7 +1722,6 @@ impl Build<'_> {
                     graph: &graph,
                     known_helpers: &known_helpers,
                     removable: self.options.removable,
-                    counts_executions: self.options.aot.counts_executions,
                     any_file_is_named_at_run_time: files_are_named_out_of_sight
                         || self.options.aot.admits_inspector
                         || (!self.stays_in_compiled_files && self.options.load.runs_tests),

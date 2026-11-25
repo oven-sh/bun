@@ -3,6 +3,7 @@ mod loops;
 mod loose_loops;
 mod suspending_loops;
 
+use bun_code_coverage::Target;
 use bun_sema::bind::{Decl, ScopeId};
 use bun_sema::hir::{ExprId, ExprKind, IdList, PatKind, StmtId, StmtKind, UnOp};
 
@@ -72,7 +73,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn lower_file_statements(&mut self) {
         let hir = self.file.hir;
-        self.count_file_body();
+        self.count(Target::File);
         for statement in hir.ids(hir.body) {
             if module::is_moved_to_file_start(self.file, statement)
                 && !self.file.decisions().is_dead_stmt(statement)
@@ -139,9 +140,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
             return;
         }
-        if self.file.counted_places.is_some() {
-            self.count_statement(statement);
-        }
+        self.count_statement(statement);
         if commonjs::is_erased(self.file, statement) {
             self.lower_read_of_unmade_callee(statement);
             return;
@@ -280,6 +279,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if decisions.is_dead_stmt(yes) {
             let in_bun_run = decisions.as_folded_by_bun_run();
             self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(yes));
+            self.count_skipped(yes);
             if has_live_else {
                 self.lower_statement(no);
             }
@@ -296,7 +296,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let after = self.create_block();
         let else_block = no.some().map(|no| self.create_block_of_arm(no));
         self.begin_late_continue(test, yes);
-        self.lower_condition(test, then_block, else_block.unwrap_or(after));
+        let otherwise = else_block.unwrap_or(after);
+        self.branch_past(yes, otherwise, |lowering, otherwise| {
+            lowering.lower_condition(test, then_block, otherwise);
+        });
         self.lower_if_arm(then_block, yes, after);
         self.end_late_continue(test, yes);
         if let Some(else_block) = else_block {

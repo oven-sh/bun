@@ -64,11 +64,6 @@ unsafe extern "C" {
         context: *mut core::ffi::c_void,
         each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes) -> bool,
     );
-    fn Bun__AOT__forEachCountedFile(
-        vm: *mut crate::VM,
-        context: *mut core::ffi::c_void,
-        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes, *const u64, usize),
-    );
     fn Bun__AOT__forEachFirstLoad(
         vm: *mut crate::VM,
         context: *mut core::ffi::c_void,
@@ -486,36 +481,6 @@ fn for_each_module_path_starting_with(start: &[u8], mut each: &mut dyn FnMut(&[u
     let context = (&raw mut each).cast::<core::ffi::c_void>();
     // SAFETY: `start` and `context` outlive the call, which keeps neither.
     unsafe { Bun__AOT__forEachFilePathStartingWith(FfiSlice::new(start), context, call) };
-}
-
-/// The files that have run in a program built for `bun test --aot --coverage`: what the build said of each, and how often its places ran, by
-/// the build's numbers. A place past the end has not run.
-pub fn for_each_counted_file(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u8], &[u64])) {
-    unsafe extern "C" fn call(
-        context: *mut core::ffi::c_void,
-        description: Bytes,
-        counts: *const u64,
-        count: usize,
-    ) {
-        // SAFETY: `context` is the `each` below, which outlives the walk. `description` and `counts` are readable during the call.
-        unsafe {
-            let each = &mut *context.cast::<&mut dyn FnMut(&[u8], &[u64])>();
-            let counts = match count {
-                0 => &[][..],
-                _ => core::slice::from_raw_parts(counts, count),
-            };
-            each(
-                core::slice::from_raw_parts(description.ptr, description.len),
-                counts,
-            )
-        }
-    }
-    if compiled_program().is_none() {
-        return;
-    }
-    let context = (&raw mut each).cast::<core::ffi::c_void>();
-    // SAFETY: the VM is that of this thread, and `context` outlives the call, which does not keep it.
-    unsafe { Bun__AOT__forEachCountedFile(global.vm_ptr(), context, call) };
 }
 
 /// `Bun__AOT__isLoadedSynchronously`: the first load of a CommonJS file decides for every realm of the process, as the text that

@@ -129,7 +129,6 @@ pub struct LoweringOptions {
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
-    pub counts_executions: bool,
     pub runs_tests: bool,
     pub divides_small_files: bool,
 }
@@ -350,15 +349,18 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let compiled = queries.files().compiled(file);
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
-        let path = inputs.sources.diagnostic_path(file);
-        let is_counted =
-            inputs.options.counts_executions && inputs.sources.is_in_coverage_report(file);
+        let is_counted = inputs.sources.is_in_coverage_report(file);
         let ScopesOfFile {
             analysis: scopes,
             fields_under_signed_members,
         } = scopes;
-        let counted_places = is_counted
-            .then(|| CountedPlaces::find(hir, bound, compiled, &fields_under_signed_members, path));
+        let counted_places = is_counted.then(|| {
+            let (path, loader) = (
+                inputs.sources.diagnostic_path(file),
+                inputs.sources.loader(file),
+            );
+            CountedPlaces::find(hir, &compiled.analysis.decisions, path, loader)
+        });
         let simplified_expressions = match shared {
             Some(shared) => Arc::clone(&shared.simplified_expressions),
             None if is_counted => Arc::default(),

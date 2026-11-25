@@ -3108,7 +3108,15 @@
     "default": 800,
     "asan": 108100
   },
-  "aot/runner-suites/coverage.test.ts": {
+  "aot/runner-suites/coverage-1.test.ts": {
+    "default": 63000,
+    "asan": 91300
+  },
+  "aot/runner-suites/coverage-2.test.ts": {
+    "default": 63000,
+    "asan": 91300
+  },
+  "aot/runner-suites/coverage-3.test.ts": {
     "default": 63000,
     "asan": 91300
   },

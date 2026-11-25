@@ -594,6 +594,21 @@ fn region_pool() -> &'static bun_threading::ThreadPool {
     dedicated_pool().unwrap_or_else(|| bun_threading::WorkPool::get())
 }
 
+thread_local! {
+    /// The innermost `ask` of `Region::work_off_asking` on this thread.
+    static ASK_TO_JOIN: std::cell::Cell<Option<*mut (dyn FnMut() + 'static)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Call between two steps of a run. Threads that have become idle since the run began join the region, which they
+/// otherwise do only before the next run.
+fn ask_idle_threads_to_join() {
+    if let Some(ask) = ASK_TO_JOIN.get() {
+        // SAFETY: `work_off_asking` on this thread hasn't returned, and calls nothing that calls this while it calls `ask`.
+        unsafe { (*ask)() };
+    }
+}
+
 /// State shared by the threads of [`for_each_parallel_in_runs`].
 struct Region<'a> {
     caches: &'a ThreadCaches,
@@ -791,15 +806,19 @@ impl<'a> Region<'a> {
         self.count.saturating_sub(claimed).div_ceil(self.run)
     }
 
-    /// `work_off` that calls `ask` before each run.
+    /// `work_off` that calls `ask` before each run. A run that takes long calls it with `ask_idle_threads_to_join`.
     fn work_off_asking(&self, ask: &mut dyn FnMut()) {
         let _lent = self.caches.lend();
+        // SAFETY: only the lifetime changes, and the pointer is gone from `ASK_TO_JOIN` when this returns. A run doesn't unwind.
+        let ask: *mut (dyn FnMut() + 'static) = unsafe { core::mem::transmute(ask) };
+        let outer = ASK_TO_JOIN.replace(Some(ask));
         loop {
-            ask();
+            ask_idle_threads_to_join();
             if !self.works_on_next_run() {
                 break;
             }
         }
+        ASK_TO_JOIN.set(outer);
     }
 
     /// `work_off`, for a thread that already has its caches. Before each run it looks for spare threads to help.
@@ -6042,7 +6061,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         };
         let work = || {
             let mut run_a_task = worker(true);
-            while run_a_task() {}
+            while run_a_task() {
+                ask_idle_threads_to_join();
+            }
         };
         match host.helpers_now() {
             Some(_) if workers > 1 => {

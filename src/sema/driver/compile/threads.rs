@@ -209,6 +209,43 @@ mod tests {
         start_regions_until_a_thread_joins(&|| {});
     }
 
+    #[test]
+    fn threads_that_become_idle_join_in_the_middle_of_a_run() {
+        set_up_output();
+        let threads = region_pool().max_threads();
+        if threads < 3 {
+            return;
+        }
+        let caches = ThreadCaches::default();
+        let (arrived, has_begun) = (AtomicUsize::new(0), AtomicBool::new(false));
+        let has_joined = AtomicBool::new(false);
+        let wait_until = |holds: &dyn Fn() -> bool| {
+            let began = std::time::Instant::now();
+            while !holds() {
+                assert!(began.elapsed() < std::time::Duration::from_secs(20));
+                std::thread::yield_now();
+            }
+        };
+        for_each_parallel_in_runs(&caches, threads, threads, 1, &|index| {
+            arrived.fetch_add(1, Ordering::SeqCst);
+            wait_until(&|| arrived.load(Ordering::SeqCst) == threads);
+            if index != 0 {
+                return wait_until(&|| has_begun.load(Ordering::SeqCst));
+            }
+            let starter = std::thread::current().id();
+            for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
+                if std::thread::current().id() != starter {
+                    return has_joined.store(true, Ordering::SeqCst);
+                }
+                has_begun.store(true, Ordering::SeqCst);
+                wait_until(&|| {
+                    crate::ask_idle_threads_to_join();
+                    has_joined.load(Ordering::SeqCst)
+                });
+            });
+        });
+    }
+
     #[cfg(panic = "unwind")]
     fn panic_message_of(run: impl FnOnce()) -> String {
         let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));

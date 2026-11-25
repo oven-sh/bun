@@ -79,8 +79,8 @@ test.each([
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return { threads, errors: stdout.match(/^\w+\.ts\(\d+,\d+\): error TS\d+/gm), exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { threads, errors: (stdout + stderr).match(/^\w+\.ts\(\d+,\d+\): error TS\d+/gm), exitCode };
     };
     for (const threads of [1, 2, 8, 16, 32]) {
       for (const result of await Promise.all([check(threads), check(threads), check(threads)])) {

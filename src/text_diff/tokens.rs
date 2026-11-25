@@ -8,6 +8,7 @@
 //! Lines are first searched as text (`follow`). Other tokens, and lines if that gives up, get a number each
 //! ([`diff_ids`]). Past the limits on work the script can be longer than the shortest.
 
+use bun_core::identifier::is_identifier_part;
 use bun_core::slice_as_bytes;
 use bun_core::strings::{CodeUnits, PathByte, byte_bits, count_char, is_js_whitespace};
 
@@ -84,6 +85,8 @@ fn is_low<T: Unit>(unit: T) -> bool {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Class {
     Word,
+    /// Particles follow words of other scripts without a space.
+    Hangul,
     Space,
     Return,
     Newline,
@@ -93,45 +96,85 @@ enum Class {
 }
 
 impl Class {
-    /// `Word` is `extendedWordChars` in https://github.com/kpdecker/jsdiff/blob/v9.0.0/src/diff/word.ts
-    const fn new(unit: u32) -> Self {
+    const fn of_latin1(unit: u32) -> Self {
         match unit {
             0x0A => Self::Newline,
             0x0D => Self::Return,
-            0xD7 | 0xF7 | 0x2C7 | 0x2D8..=0x2DD => Self::Other,
+            0xD7 | 0xF7 => Self::Other,
             0x30..=0x39 | 0x41..=0x5A | 0x5F | 0x61..=0x7A => Self::Word,
-            0xAD | 0xC0..=0x2FF | 0x1E00..=0x1EFF => Self::Word,
-            0xD800..=0xDBFF => Self::HighSurrogate,
-            0xDC00..=0xDFFF => Self::LowSurrogate,
+            0xAA | 0xAD | 0xB5 | 0xBA | 0xC0..=0xFF => Self::Word,
             _ if is_js_whitespace(unit) => Self::Space,
             _ => Self::Other,
         }
     }
 
-    /// The class of `unit`, and the class that the next unit needs to be in the same token.
+    /// Han, kana, Yi, Thai, Lao, Myanmar, Khmer and the Tai scripts have no spaces between words.
+    const fn by_range(unit: u32) -> Option<Self> {
+        Some(match unit {
+            0x2C7 | 0x2D8..=0x2DD | 0x387 | 0x2190..=0x2BFF => Self::Other,
+            0x100..=0x2FF | 0x400..=0x47F => Self::Word,
+            0xE00..=0xEFF | 0x1000..=0x109F | 0x1780..=0x17FF | 0x1950..=0x19FF => Self::Other,
+            0x1A20..=0x1AAF | 0xA9E0..=0xA9FF | 0xAA60..=0xAADF => Self::Other,
+            0x1100..=0x11FF | 0x3130..=0x318F | 0xAC00..=0xD7FF => Self::Hangul,
+            0x2E80..=0x2FFF | 0x3001..=0xA4CF | 0xE000..=0xFAFF | 0xFF61..=0xFF9F => Self::Other,
+            0xD800..=0xDBFF => Self::HighSurrogate,
+            0xDC00..=0xDFFF => Self::LowSurrogate,
+            // These follow emoji and other symbols.
+            0x20D0..=0x20FF | 0xFE00..=0xFE0F => Self::Other,
+            _ => return None,
+        })
+    }
+
+    /// And the class that the next unit needs to be in the same token.
+    const fn with_next(self) -> (Self, Option<Self>) {
+        let next = match self {
+            Self::Word | Self::Hangul | Self::Space => Some(self),
+            Self::Return => Some(Self::Newline),
+            Self::HighSurrogate => Some(Self::LowSurrogate),
+            Self::Newline | Self::LowSurrogate | Self::Other => None,
+        };
+        (self, next)
+    }
+
+    /// Inlined, it makes the loops over Latin-1 a call for each unit.
+    #[inline(never)]
+    fn look_up(unit: u32) -> (Self, Option<Self>) {
+        let class = match Self::by_range(unit) {
+            Some(class) => class,
+            None if is_identifier_part(unit as i32) => Self::Word,
+            None if is_js_whitespace(unit) => Self::Space,
+            None => Self::Other,
+        };
+        class.with_next()
+    }
+
     #[inline]
     fn of(unit: u32) -> (Self, Option<Self>) {
-        const fn both(unit: u32) -> (Class, Option<Class>) {
-            let class = Class::new(unit);
-            let next = match class {
-                Class::Word | Class::Space => Some(class),
-                Class::Return => Some(Class::Newline),
-                Class::HighSurrogate => Some(Class::LowSurrogate),
-                Class::Newline | Class::LowSurrogate | Class::Other => None,
-            };
-            (class, next)
-        }
         static LATIN1: [(Class, Option<Class>); 256] = {
-            let (mut table, mut unit) = ([both(0); 256], 0);
+            let (mut table, mut unit) = ([Class::Other.with_next(); 256], 0);
             while unit < table.len() {
-                table[unit] = both(unit as u32);
+                table[unit] = Class::of_latin1(unit as u32).with_next();
+                unit += 1;
+            }
+            table
+        };
+        /// For 64 units each, if they have the same class.
+        static BLOCKS: [Option<(Class, Option<Class>)>; 1024] = {
+            let (mut table, mut unit) = ([None; 1024], 0);
+            while unit <= 0xFFFF {
+                let block = &mut table[unit as usize / 64];
+                match (Class::by_range(unit), *block) {
+                    (Some(class), None) => *block = Some(class.with_next()),
+                    (Some(class), Some((first, _))) if class as u8 == first as u8 => {}
+                    _ => (*block, unit) = (None, unit | 63),
+                }
                 unit += 1;
             }
             table
         };
         match LATIN1.get(unit as usize) {
             Some(&known) => known,
-            None => both(unit),
+            None => BLOCKS[unit as usize / 64 % 1024].unwrap_or_else(|| Self::look_up(unit)),
         }
     }
 }
@@ -232,15 +275,18 @@ impl Split {
     /// The same for the tokens of [`Split::Words`].
     fn word_offsets<T: Unit>(text: &[T], from: usize, to: usize) -> Vec<u32> {
         let (mut offsets, mut tokens) = (Vec::with_capacity((to - from).min(256) + 16), 0);
-        let mut joined = Self::joined(&text[from..to]);
-        for start in (from..to).step_by(256) {
-            let end = to.min(start + 256);
-            offsets.resize(tokens + end - start + 1, 0);
+        let (mut expected, mut at) = (None, from as u32);
+        for block in text[from..to].chunks(256) {
+            offsets.resize(tokens + block.len(), 0);
+            let (starts, mut count) = (&mut offsets[tokens..], 0);
             // Written whether or not a token starts here: no branch to predict.
-            for (at, joined) in (start..end).zip(&mut joined) {
-                offsets[tokens] = at as u32;
-                tokens += usize::from(!joined);
+            for &unit in block {
+                let (class, next) = Class::of(unit.into());
+                starts[count] = at;
+                count += usize::from(expected != Some(class));
+                (expected, at) = (next, at + 1);
             }
+            tokens += count;
         }
         offsets.truncate(tokens);
         offsets.push(to as u32);

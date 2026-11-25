@@ -137,6 +137,15 @@ describe("words", () => {
     ["each punctuation mark", "f(a);", "f(a));", [["=", "f(a)", 4], ["+", ")", 1], ["=", ";", 1]]],
     ["Latin letters with diacritics", "naïve_1 x", "naïve_1 ḁ\u00ad", [["=", "naïve_1 ", 2], ["-", "x", 1], ["+", "ḁ\u00ad", 1]]],
     ["× and ˇ are not letters", "a×bˇc", "a×bˇd", [["=", "a×bˇ", 4], ["-", "c", 1], ["+", "d", 1]]],
+    ["µ is a letter", "5µs", "5ms", [["-", "5µs", 1], ["+", "5ms", 1]]],
+    ["Cyrillic", "привет мир", "привет друг", [["=", "привет ", 2], ["-", "мир", 1], ["+", "друг", 1]]],
+    ["Arabic, with its comma", "قط، كلب", "قطة، كلب", [["-", "قط", 1], ["+", "قطة", 1], ["=", "، كلب", 3]]],
+    ["Persian, with a non-joiner", "می\u200cروم", "می\u200cرود", [["-", "می\u200cروم", 1], ["+", "می\u200cرود", 1]]],
+    ["Devanagari, with its marks", "नमस्ते।", "नमस्कार।", [["-", "नमस्ते", 1], ["+", "नमस्कार", 1], ["=", "।", 1]]],
+    ["Hangul", "안녕 세계", "안녕 세상", [["=", "안녕 ", 2], ["-", "세계", 1], ["+", "세상", 1]]],
+    ["Hangul after Latin", "Bun을", "Node을", [["-", "Bun", 1], ["+", "Node", 1], ["=", "을", 1]]],
+    ["a combining accent", "cafe\u0301s", "cafe\u0301", [["-", "cafe\u0301s", 1], ["+", "cafe\u0301", 1]]],
+    ["each Thai character", "กข", "กค", [["=", "ก", 1], ["-", "ข", 1], ["+", "ค", 1]]],
     ["each CJK character", "世界", "世间", [["=", "世", 1], ["-", "界", 1], ["+", "间", 1]]],
     ["a surrogate pair", "a😀", "a😁", [["=", "a", 1], ["-", "😀", 1], ["+", "😁", 1]]],
     ["the spaces of \\s", "a\u00a0\ufeff\u2028b", "a\u0085b", [["=", "a", 1], ["-", "\u00a0\ufeff\u2028", 1], ["+", "\u0085", 1], ["=", "b", 1]]],
@@ -161,13 +170,22 @@ test("words and chars count the tokens of long texts", () => {
   }
 });
 
-test("words splits code units as the regular expression of diff does", () => {
-  const word = String.raw`a-zA-Z0-9_\u{AD}\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2C6}\u{2C8}-\u{2D7}\u{2DE}-\u{2FF}\u{1E00}-\u{1EFF}`;
-  const token = new RegExp(String.raw`(\r?\n)|[${word}]+|[^\S\n\r]+|[^${word}]`, "ug");
+test("words splits every code unit", () => {
+  const scripts = ["Han", "Hiragana", "Katakana", "Yi", "Thai", "Lao", "Myanmar", "Khmer"]
+    .concat("Tai_Le", "New_Tai_Lue", "Tai_Tham", "Tai_Viet")
+    .map(script => String.raw`\p{sc=${script}}`);
+  const hangul = String.raw`\u1100-\u11FF\u3130-\u318F\uAC00-\uD7FF`;
+  const others = String.raw`\xB7\u02C7\u02D8-\u02DD\u0387\u20D0-\u20FF\u3000-\u312F\u31A0-\u31BF\uA9E0-\uA9FF\uFE00-\uFE0F\uFF61-\uFF9F`;
+  const word = String.raw`[[\p{ID_Continue}\xAD\u0100-\u02FF\u200C\u200D]--[${scripts.join("")}${hangul}${others}\u{10000}-\u{10FFFF}]]`;
+  const token = new RegExp(String.raw`(\r?\n)|${word}+|[${hangul}]+|[^\S\n\r]+|[^${word}]`, "vg");
+  // Newer than the table of identifiers.
+  const isNew = /[\u088F\u0897\u0C5C\u0CDC\u1ACF-\u1AEB\u1C89\u1C8A\uA7CB-\uA7DC\uA7F1]/v;
   const wrong: number[] = [];
-  const step = (unit: number) => (unit > 0x3100 && unit < 0xd700 ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1);
+  const step = (unit: number) =>
+    (unit > 0x3400 && unit < 0xa400) || (unit > 0xac00 && unit < 0xd700) ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1;
   for (let unit = 0; unit <= 0xffff; unit += step(unit)) {
     const c = String.fromCharCode(unit);
+    if (isNew.test(c)) continue;
     // Each neighbor comes a different number of times, so the count tells which one it is joined to.
     const text = ["a" + c, " " + c, c + "\n", "\ud83d" + c, c + "\ude00"].map((it, i) => (it + ".").repeat(i + 1));
     for (const part of [text.slice(0, 3).join(""), text.join("")]) {
@@ -498,8 +516,8 @@ describe("options that ignore a difference", () => {
     ["lines", { ignoreCase }, "\ud800Σ", "\ud801σ", [["-", "\ud800Σ", 1], ["+", "\ud801σ", 1]]],
     ["lines", { ignoreCase }, "a \n", "A\n", [["-", "a \n", 1], ["+", "A\n", 1]]],
     ["words", { ignoreCase }, "The Fox", "the dog", [["=", "the ", 2], ["-", "Fox", 1], ["+", "dog", 1]]],
-    // The Kelvin sign is not part of a word, and `k` is.
-    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ", 2], ["-", "\u212aa", 2], ["+", "ka", 1]]],
+    ["words", { ignoreCase }, "\u212a \u212aa", "k ka", [["=", "k ka", 3]]],
+    ["words", { ignoreCase }, "ΟΔΟΣ Мир", "οδος дом", [["=", "οδος ", 2], ["-", "Мир", 1], ["+", "дом", 1]]],
     ["chars", { ignoreCase }, "aBc", "AbD", [["=", "Ab", 2], ["-", "c", 1], ["+", "D", 1]]],
     ["chars", { ignoreCase }, "ΑΣ𐐀İ", "ασ𐐨i", [["=", "ασ𐐨", 3], ["-", "İ", 1], ["+", "i", 1]]],
     ["lines", { ignoreWhitespace }, "a\n b\nc\n", "\ta \r\nb\nd\n", [["=", "\ta \r\nb\n", 2], ["-", "c\n", 1], ["+", "d\n", 1]]],
@@ -1196,6 +1214,19 @@ describe("applyPatch", () => {
     );
   });
 
+  test("a trimmed CRLF patch that ends with a hunk of one line", () => {
+    expect(diff.applyPatch("a\r\nc\r\n", "@@ -1 +1 @@\n-a\r\n+x\r\n@@ -2,0 +3 @@\n+b")).toBe("x\r\nc\r\nb\r\n");
+  });
+
+  test("a trimmed patch whose last hunk alone has CRLF", () => {
+    expect(diff.applyPatch("a\nc\r\n", "@@ -1 +1 @@\n-a\n+x\n@@ -2 +2 @@\n-c\r\n+b")).toBe("x\nb\r\n");
+  });
+
+  test("as the callback of reduce()", () => {
+    const patches = [diff.createPatch("a\n", "b\n"), diff.createPatch("b\n", "c\n")];
+    expect(patches.reduce(diff.applyPatch, "a\n")).toBe("c\n");
+  });
+
   test("a parsed file", () => {
     expect(diff.applyPatch("a\n", diff.parsePatch("--- f\n+++ f\n@@ -1 +1 @@\n-a\n+b\n")[0])).toBe("b\n");
   });
@@ -1253,6 +1284,29 @@ describe("applyPatch", () => {
       });
       expect(diff.applyPatch(a, hunks)).toBe(b);
     }
+  });
+});
+
+const forAll = { timeout: 100, callback() {}, comparator() {}, oneChangePerToken: true };
+const forLines = { ...forAll, newlineIsToken: true, ignoreNewlineAtEof: true };
+describe.each([
+  ["lines", "", forLines],
+  ["hunks", "", forLines],
+  ["createPatch", "", { ...forLines, headerOptions: {} }],
+  ["words", "", { ...forAll, intlSegmenter: {} }],
+  ["chars", "", forAll],
+  ["arrays", [], { ...forAll, ignoreCase: true }],
+  ["applyPatch", "", { fuzzFactor: 1, compareLine() {}, autoConvertLineEndings: false }],
+] as const)("%s", (name, input, options) => {
+  const call = (options: object) => (diff[name] as Function)(input, input, options);
+  test.each(Object.entries(options))("refuses %s of diff", (option, value) => {
+    expect(() => call({ [option]: value })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The property 'options.${option}' is not supported`,
+      }),
+    );
+    expect(call({ [option]: !value })).toEqual(call({}));
   });
 });
 

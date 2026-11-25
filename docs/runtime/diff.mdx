@@ -21,12 +21,14 @@ diff.applyPatch("a\nb\n", patch); // "a\nc\n"
 
 ## Compare
 
-| Function                       | A token is                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `diff.lines(oldText, newText)` | a line, with its `\n` or `\r\n`                                                                  |
-| `diff.words(oldText, newText)` | a word of Latin letters, digits and `_`, a run of spaces, a line ending, or any other code point |
-| `diff.chars(oldText, newText)` | a code point                                                                                     |
-| `diff.arrays(oldArr, newArr)`  | an element, compared with `===`                                                                  |
+| Function                       | A token is                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `diff.lines(oldText, newText)` | a line, with its `\n` or `\r\n`                                                            |
+| `diff.words(oldText, newText)` | a word of letters, digits and `_`, a run of spaces, a line ending, or any other code point |
+| `diff.chars(oldText, newText)` | a code point                                                                               |
+| `diff.arrays(oldArr, newArr)`  | an element, compared with `===`                                                            |
+
+In scripts without spaces between words, like Chinese, Japanese and Thai, `words` makes each code point a token. So it does for letters above U+FFFF. Hangul next to other letters starts a new word.
 
 Each function returns a list of changes. A change is a run of tokens, and `count` is the number of tokens in it.
 
@@ -143,9 +145,9 @@ try {
 - **Moved lines.** If a hunk doesn't match at `oldStart`, Bun uses the nearest line where it does, after the previous hunk. This search has a limit on its number of steps. If the last hunk has unchanged lines before its changes and none after them, Bun tries the end of the source first.
 - **Line endings.** If the source only has `\r\n` and the patch only has `\n`, or the reverse, Bun converts the patch first. A patch made with `context: 0` that adds the other line ending is converted too.
 - **Text around the patch**, like a Markdown fence or an email, unless a line right after a hunk starts with a space, `+` or `-`.
-- **A trimmed patch.** The last line ending, up to three empty unchanged lines before it, and the space that starts an empty unchanged line can be missing.
+- **A trimmed patch.** The last line ending can be missing, and with it up to three empty unchanged lines. So can the space that starts an empty unchanged line.
 
-Bun refuses a hunk with context when the source has its result at `oldStart`. A hunk made with `context: 0` can apply twice.
+Bun refuses a hunk that has context and adds lines when the source has its result at `oldStart`. A hunk that only removes lines, or was made with `context: 0`, can apply twice.
 
 A hunk that adds or removes a line marked `\ No newline at end of file` has to reach the end of the source.
 
@@ -169,10 +171,11 @@ Changes, hunks and parsed patches have the same shape as in [`diff`](https://git
 
 Differences:
 
+- `words` keeps words whole in all scripts that have spaces between words. `diffWordsWithSpace` only does so for Latin letters.
 - The default `context` is 3, not 4, and a range of one line is `@@ -1 +1 @@`, as in `git diff`.
 - `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts. It writes a tab after a file name with a space, as Git does.
-- `applyPatch` throws instead of returning `false`. It also throws for text that is not a patch, a binary patch, a hunk whose result is already at `oldStart`, and a hunk that only fits before the previous hunk or puts a line without a newline before the end. As `git apply` does, it tries the end of the source first for a hunk that was made there, and appends an insertion that is past the end.
+- `applyPatch` throws instead of returning `false`. It also throws for text that is not a patch, a binary patch, a hunk that adds lines and whose result is already at `oldStart`, and a hunk that only fits before the previous hunk or puts a line without a newline before the end. As `git apply` does, it tries the end of the source first for a hunk that was made there, and appends an insertion that is past the end.
 - `parsePatch` returns `[]` for text without a patch. It throws for a malformed or missing `@@` line and for a patch that ends before its last hunk does (unless it was trimmed), accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
 - `parsePatch` skips `--- text` and `+++ text` lines in the text before the header of a file, unless they form a pair or follow an `Index:` line. It returns no entry for a line of `=` that no header or hunk follows.
 - `parsePatch` and `applyPatch` accept a patch whose line endings were converted to `\r\n`. The lines of a hunk keep the `\r`. If the patch was trimmed, its last line gets it back. File names do not.
-- The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor`, `newlineIsToken` and `ignoreNewlineAtEof` are not supported.
+- The only options are the ones on this page. Bun throws for `timeout`, `callback`, `comparator`, `oneChangePerToken`, `intlSegmenter`, `newlineIsToken`, `ignoreNewlineAtEof`, `headerOptions`, `fuzzFactor` and `compareLine` unless they are falsy, for `ignoreCase` in `arrays`, and for `autoConvertLineEndings: false`. In place of `timeout`, use [`maxEditLength`](#maxeditlength).

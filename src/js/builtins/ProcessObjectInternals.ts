@@ -761,6 +761,11 @@ export function createOnWarning(
   };
 }
 
+export function variableOfReplacedEnvironment(processObject: typeof process, name: string) {
+  const value = processObject.env[name];
+  return value ? `${value}` : undefined;
+}
+
 export function loadEnvFile(path) {
   // process.loadEnvFile(path = ".env"): parse a dotenv file and apply it to
   // process.env. Reading with fs gives the Node-shaped ENOENT error

@@ -150,6 +150,18 @@ fn fold(character: u32, is_unicode: bool) -> u32 {
     }
 }
 
+/// In [`Plain::steps`], above all characters. The other bits are an index of `RegExp::classes`.
+const CLASS: u32 = 1 << 31;
+const ANY: u32 = u32::MAX;
+
+/// An expression in which each character has its place, counted from the start or from the end.
+struct Plain {
+    /// A character, [`CLASS`] or [`ANY`].
+    steps: Box<[u32]>,
+    /// How many steps are in front of the [`Node::Run`].
+    run: Option<u32>,
+}
+
 pub(super) struct RegExp {
     /// What is between `^` and `$`.
     root: Group,
@@ -163,6 +175,7 @@ pub(super) struct RegExp {
     memory: u32,
     leaves: u32,
     is_deep: bool,
+    plain: Option<Plain>,
 }
 
 impl RegExp {
@@ -191,6 +204,7 @@ impl RegExp {
                 memory: 0,
                 leaves: 0,
                 is_deep: false,
+                plain: None,
             },
         };
         let root = parser.disjunction(0)?;
@@ -199,6 +213,7 @@ impl RegExp {
         regexp.prepare_group(regexp.root, Some(0), false, work)?;
         if regexp.root.is_sequence {
             regexp.take_out_no_dot();
+            regexp.plain = regexp.as_plain();
         }
         regexp.nodes.shrink_to_fit();
         regexp.characters.shrink_to_fit();
@@ -219,6 +234,22 @@ impl RegExp {
             }
         }
         self.root.parts.length = end - start;
+    }
+
+    fn as_plain(&self) -> Option<Plain> {
+        let mut steps = Vec::new();
+        let mut run = None;
+        for part in self.root.parts.of(&self.nodes) {
+            match *part {
+                Node::Any(_) => steps.push(ANY),
+                Node::Class(_, class) => steps.push(CLASS | class),
+                Node::Literal(_, literal) => steps.extend(literal.of(&self.characters)),
+                Node::Run(_) if run.is_none() => run = Some(steps.len() as u32),
+                _ => return None,
+            }
+        }
+        let steps = steps.into();
+        Some(Plain { steps, run })
     }
 
     /// The work to try each node at one position.
@@ -242,6 +273,7 @@ impl RegExp {
         size_of_val(&self.nodes[..])
             + size_of_val(&self.characters[..])
             + size_of_val(&self.classes[..])
+            + (self.plain.as_ref()).map_or(0, |plain| size_of_val(&*plain.steps))
             + size_of::<(u32, u32)>() * ranges.sum::<usize>()
     }
 
@@ -357,6 +389,9 @@ impl RegExp {
     #[inline(always)]
     fn test_characters<C: Character>(&self, text: &[C], work: &mut Work<'_>) -> Result<bool, Stop> {
         work.spend(self.cost())?;
+        if let Some(plain) = &self.plain {
+            return Ok(Matcher::new(self, text, work).is_like(plain));
+        }
         if text.len() >= BLOCK || self.memory != 0 {
             return self.test_block_by_block(text, work);
         }
@@ -527,6 +562,27 @@ impl<'m, 'a, C: Character> Matcher<'m, 'a, C> {
                 class.looks_up(character, self.regexp.flags)
             }
         }
+    }
+
+    #[inline(always)]
+    fn is_like(&mut self, plain: &Plain) -> bool {
+        let Some(in_run) = self.text.len().checked_sub(plain.steps.len()) else {
+            return false;
+        };
+        let head = match plain.run {
+            Some(head) => head as usize,
+            None if in_run == 0 => 0,
+            None => return false,
+        };
+        plain.steps.iter().enumerate().all(|(at, &step)| {
+            let position = if at < head { at } else { at + in_run };
+            if step < CLASS {
+                self.has_literal_at(position, &[step])
+            } else {
+                step == ANY
+                    || self.has_member_at(position, &self.regexp.classes[(step ^ CLASS) as usize])
+            }
+        })
     }
 
     #[inline(never)]

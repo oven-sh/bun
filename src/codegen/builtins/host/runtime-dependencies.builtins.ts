@@ -383,6 +383,20 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
   "node:module._extensions": functionsOfDefaultLoaders,
+  "native:NewCppFunction:BunProcess.cpp:jsFunctionVariableOfReplacedEnvironment": [
+    {
+      ...b.functionUsed(
+        processInternal("variableOfReplacedEnvironment"),
+        b.calledByHost({
+          times: "Repeatedly",
+          this: b.undefined,
+          args: [processObject, b.string],
+          result: [b.inspectedByHost],
+        }),
+      ),
+      when: b.whenProgramStores("process.env"),
+    },
+  ],
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
   "process.allowedNodeEnvironmentFlags": builtBy(
     "buildAllowedNodeEnvironmentFlags",
@@ -762,6 +776,7 @@ const nativeCalls = [
     ],
     calls: environmentObjectMade(),
     otherMentions: [
+      { file: inBindings("BunProcess.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },

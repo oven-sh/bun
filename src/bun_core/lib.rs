@@ -2106,7 +2106,6 @@ pub(crate) mod strings_impl {
         fn from_u8(b: u8) -> Self;
         /// `s` as the concrete slice it is, for code with a different kernel per width.
         fn units(s: &[Self]) -> CodeUnits<'_>;
-        fn units_mut(s: &mut [Self]) -> CodeUnitsMut<'_>;
         fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
         fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
     }
@@ -2114,10 +2113,6 @@ pub(crate) mod strings_impl {
     pub enum CodeUnits<'a> {
         U8(&'a [u8]),
         U16(&'a [u16]),
-    }
-    pub enum CodeUnitsMut<'a> {
-        U8(&'a mut [u8]),
-        U16(&'a mut [u16]),
     }
     impl PathByte for u8 {
         #[inline(always)]
@@ -2127,10 +2122,6 @@ pub(crate) mod strings_impl {
         #[inline(always)]
         fn units(s: &[u8]) -> CodeUnits<'_> {
             CodeUnits::U8(s)
-        }
-        #[inline(always)]
-        fn units_mut(s: &mut [u8]) -> CodeUnitsMut<'_> {
-            CodeUnitsMut::U8(s)
         }
         #[inline(always)]
         fn index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
@@ -2149,10 +2140,6 @@ pub(crate) mod strings_impl {
         #[inline(always)]
         fn units(s: &[u16]) -> CodeUnits<'_> {
             CodeUnits::U16(s)
-        }
-        #[inline(always)]
-        fn units_mut(s: &mut [u16]) -> CodeUnitsMut<'_> {
-            CodeUnitsMut::U16(s)
         }
         #[inline(always)]
         fn index_of_unit(s: &[u16], unit: u16) -> Option<usize> {

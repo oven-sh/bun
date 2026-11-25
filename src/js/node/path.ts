@@ -54,6 +54,7 @@ const resolveWin32 = $bindgen("node_path.bind.ts", "resolveWin32");
 const resolveFromWin32 = $bindgen("node_path.bind.ts", "resolveFromWin32");
 const respell = $bindgen("node_path.bind.ts", "respell");
 const matchesGlob = $bindgen("node_path.bind.ts", "matchesGlob");
+const variableOfReplacedEnvironment = $newCppFunction("BunProcess.cpp", "jsFunctionVariableOfReplacedEnvironment", 1);
 
 const isWindows = process.platform === "win32";
 const globsIgnoreCase = process.platform === "win32" || process.platform === "darwin";
@@ -73,15 +74,15 @@ function asReceiver(value: any): string {
   return `${value}`;
 }
 
-function notAString(paths: ArrayLike<unknown>, index: number) {
+function notAString(index: number, ...paths: unknown[]) {
   return $ERR_INVALID_ARG_TYPE(`paths[${index}]`, "string", paths[index]);
 }
 
-function withFirst(first: string, others: ArrayLike<string>): [string, ...string[]] {
-  const all = $newArrayWithSize<string>(others.length + 1);
+function withFirst<T>(first: T, others: any[]): [T, ...any[]] {
+  const all = $newArrayWithSize<unknown>(others.length + 1);
   $putByValDirect(all, 0, first);
   for (let i = 0; i < others.length; i++) $putByValDirect(all, i + 1, others[i]);
-  return all as [string, ...string[]];
+  return all as [T, ...any[]];
 }
 
 function formatExt(ext: any) {
@@ -102,14 +103,16 @@ function _format(sep: string, pathObject: any) {
 function win32Cwd(needed: number): string {
   if (needed === -1) return asReceiver($process.cwd());
   const device = `${fromUppercaseA[-needed - CHAR_UPPERCASE_A]}:`;
-  const env = $process.env;
-  const cwd =
-    env[`=${device}`] ||
-    // The `process.env` that Bun has made lacks these variables.
-    (process.platform === "win32" &&
-      env === Bun.env &&
-      $bindgen("node_path.bind.ts", "workingDirectoryOfDrive")(-needed)) ||
-    $process.cwd();
+  const name = `=${device}`;
+  let cwd = variableOfReplacedEnvironment(name);
+  if (cwd === null) {
+    // On Windows the `process.env` that Bun makes lacks these variables, writes through, and is a proxy that slows down compiled programs that name it.
+    cwd =
+      (process.platform === "win32"
+        ? $bindgen("node_path.bind.ts", "workingDirectoryOfDrive")(-needed)
+        : $process.env[name]) || undefined;
+  }
+  cwd ??= $process.cwd();
   return cwd === undefined ? `${device}\\` : asReceiver(cwd);
 }
 
@@ -122,6 +125,13 @@ function resolveCwdWin32(path: string | undefined): string {
     return resolveFromWin32(text, path);
   }
   return isWindows ? cwd : respell(text, true);
+}
+
+function resolveManyWin32(...paths: any[]): string {
+  const answer = resolveWin32.$apply(undefined, paths);
+  if (typeof answer === "string") return answer;
+  if (answer < 0) return resolveFromWin32.$apply(undefined, withFirst(win32Cwd(answer), paths));
+  throw notAString.$apply(undefined, withFirst(answer, paths));
 }
 
 const win32 = {
@@ -141,12 +151,9 @@ const win32 = {
       answer = resolveWin32(a, b, $argument(2));
       if (typeof answer !== "string" && answer < 0) return resolveFromWin32(win32Cwd(answer), a, b, $argument(2));
     } else {
-      answer = resolveWin32.$apply(undefined, arguments as LazyArguments);
-      if (typeof answer !== "string" && answer < 0) {
-        return resolveFromWin32.$apply(undefined, withFirst(win32Cwd(answer), arguments as LazyArguments));
-      }
+      return resolveManyWin32.$apply(undefined, arguments as LazyArguments);
     }
-    if (typeof answer !== "string") throw notAString(arguments as LazyArguments, answer);
+    if (typeof answer !== "string") throw notAString(answer, a, b, $argument(2));
     return answer;
   },
   normalize: normalizeWin32,
@@ -227,6 +234,13 @@ function isRelativePosix(path: unknown) {
   return typeof path === "string" && (path.length === 0 || path.$charCodeAt(0) !== CHAR_FORWARD_SLASH);
 }
 
+function resolveManyPosix(...paths: any[]): string {
+  const answer = resolvePosix.$apply(undefined, paths);
+  if (typeof answer === "string") return answer;
+  if (answer < 0) return resolveFromPosix.$apply(undefined, withFirst(asReceiver(posixCwd()), paths));
+  throw notAString.$apply(undefined, withFirst(answer, paths));
+}
+
 const posix = {
   resolve() {
     const count = $argumentCount();
@@ -247,12 +261,9 @@ const posix = {
       }
       answer = resolvePosix(a, b, c);
     } else {
-      answer = resolvePosix.$apply(undefined, arguments as LazyArguments);
-      if (answer === -1) {
-        return resolveFromPosix.$apply(undefined, withFirst(asReceiver(posixCwd()), arguments as LazyArguments));
-      }
+      return resolveManyPosix.$apply(undefined, arguments as LazyArguments);
     }
-    if (typeof answer !== "string") throw notAString(arguments as LazyArguments, answer);
+    if (typeof answer !== "string") throw notAString(answer, a, b, $argument(2));
     return answer;
   },
   normalize: normalizePosix,

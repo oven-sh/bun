@@ -5579,6 +5579,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunWhenProcessExits, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionVariableOfReplacedEnvironment, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* processObject = globalObject->processObject();
+    JSValue env = processObject->getDirect(vm, Identifier::fromString(vm, "env"_s));
+    if (env ? env == globalObject->m_processEnvObject.get() : !processObject->staticPropertiesReified())
+        return JSValue::encode(jsNull());
+
+    auto* read = JSC::JSFunction::create(vm, globalObject, processObjectInternalsVariableOfReplacedEnvironmentCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(processObject);
+    args.append(callFrame->argument(0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, read, JSC::getCallData(read), jsUndefined(), args)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -83,7 +83,7 @@ pub(super) fn expand(mut pattern: Vec<u16>, work: &mut Work<'_>) -> Result<Texts
     if starts_with_empty {
         pattern[..2].fill(ESCAPED.into());
     }
-    let mut texts = Source::new(pattern).expand_all(true, work)?;
+    let mut texts = Source::new(pattern).expand_all(Scope::Pattern, work)?;
     crate::replace(&mut texts.units, ESCAPED, CLOSE);
     if starts_with_empty {
         let mut start = 0;
@@ -132,6 +132,15 @@ struct Ahead {
     close_after_comma: usize,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Scope {
+    Pattern,
+    /// A result with braces put back around it.
+    Rewritten,
+    /// Each closing brace belongs to an opening one.
+    InBraces,
+}
+
 struct Source {
     text: Vec<u16>,
     /// For each index and the end, as `text` was before a brace was escaped in it.
@@ -166,9 +175,9 @@ impl Source {
         Source { text, ahead }
     }
 
-    fn expand_all(&mut self, is_top: bool, work: &mut Work<'_>) -> Result<Texts, Stop> {
+    fn expand_all(&mut self, scope: Scope, work: &mut Work<'_>) -> Result<Texts, Stop> {
         work.spend(self.text.len())?;
-        self.expand(0..self.text.len(), is_top, true, work)
+        self.expand(0..self.text.len(), scope, work)
     }
 
     /// The first braces in `within` that belong together.
@@ -197,15 +206,15 @@ impl Source {
         options
     }
 
-    /// `may_have_spare_close`: a closing brace in `range` may belong to no opening brace in it.
     fn expand(
         &mut self,
         range: Range<usize>,
-        mut is_top: bool,
-        mut may_have_spare_close: bool,
+        scope: Scope,
         work: &mut Work<'_>,
     ) -> Result<Texts, Stop> {
         work.check_stack()?;
+        let mut is_top = scope == Scope::Pattern;
+        let mut may_have_spare_close = scope != Scope::InBraces;
         let nothing = Texts::one(&[]);
         let mut expanded = Texts::one(&[]);
         let (mut drops_empty, mut is_first_group) = (false, true);
@@ -289,20 +298,20 @@ impl Source {
         let options = self.split_at_commas(body.clone());
         if options.len() > 1 {
             for option in options {
-                if !has_room_after(self.expand(option, false, false, work)?) {
+                if !has_room_after(self.expand(option, Scope::InBraces, work)?) {
                     break;
                 }
             }
             return Ok(values);
         }
         // The commas are in braces further in. These go back around each result.
-        let inner = self.expand(body, false, false, work)?;
+        let inner = self.expand(body, Scope::InBraces, work)?;
         let embrace = |text: &[u16]| [&[OPEN.into()][..], text, &[CLOSE.into()]].concat();
         if inner.ends.len() == 1 {
             return Ok(Texts::one(&embrace(&inner.units)));
         }
         for text in inner.iter() {
-            if !has_room_after(Source::new(embrace(text)).expand_all(false, work)?) {
+            if !has_room_after(Source::new(embrace(text)).expand_all(Scope::Rewritten, work)?) {
                 break;
             }
         }

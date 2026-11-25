@@ -166,6 +166,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionRunWhenProcessExits);
 // node:events hands it EventEmitter.prototype, which goes above the native prototype of process.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeProcessInheritFrom);
 
+// process.env[name] as a string if it is truthy, or null if process.env is still the object that Bun makes.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionVariableOfReplacedEnvironment);
+
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1462c103e8fb4df9976d48c629a7e2aaa6dba33e6a8a7420f2105cd88d5d4051.
+// Written against that file with the SHA-256 d6e82c64d75706bf2cc5a0fffad97e6dfcdc6ef11b640cd25362ee0fe6db6357.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -781,6 +781,11 @@ export function createOnWarning(
     }
     writeOut(msg);
   };
+}
+
+export function variableOfReplacedEnvironment(processObject: any, name: string) {
+  const value = processObject.env[name];
+  return value ? `${value}` : undefined;
 }
 
 export function loadEnvFile(path?: string) {

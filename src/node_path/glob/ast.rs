@@ -367,7 +367,7 @@ impl Tree<'_, '_> {
         node: usize,
         place: Place,
         allows_dot: bool,
-        mut take: impl FnMut(Vec<u16>, bool),
+        take: &mut dyn FnMut(Vec<u16>, bool),
     ) -> Result<(), Stop> {
         let parts = self.parts_of(node);
         let count = parts.len();
@@ -405,7 +405,7 @@ impl Tree<'_, '_> {
         allows_dot: bool,
     ) -> Result<Vec<u16>, Stop> {
         let (mut body, mut is_first) = (Vec::new(), true);
-        self.sources_of_parts(node, place, allows_dot, |source, _| {
+        self.sources_of_parts(node, place, allows_dot, &mut |source, _| {
             if source.is_empty() && place.is_start && place.is_end {
                 return;
             }
@@ -486,7 +486,7 @@ impl Tree<'_, '_> {
         allows_dot: bool,
     ) -> Result<(Vec<u16>, bool), Stop> {
         let (mut source, mut has_magic) = (Vec::new(), false);
-        self.sources_of_parts(node, place, allows_dot, |of_part, is_magic| {
+        self.sources_of_parts(node, place, allows_dot, &mut |of_part, is_magic| {
             source.extend_from_slice(&of_part);
             has_magic |= is_magic;
         })?;

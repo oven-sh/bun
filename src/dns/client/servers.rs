@@ -70,10 +70,22 @@ impl Server {
     }
 }
 
+/// Where the servers come from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Origin {
+    /// The user or the system named them.
+    Named,
+    /// The system named none, and the one on this machine stands in.
+    StandIn,
+}
+
 /// Best first.
 #[derive(Default)]
 pub(crate) struct Servers {
     list: VecDeque<Server>,
+    is_stand_in: bool,
+    /// The failure up to which the configuration was read again.
+    read_after: u64,
     last_id: ServerId,
     last_failure: u64,
     /// There is none to probe until then.
@@ -94,7 +106,7 @@ impl Servers {
     }
 
     /// One that stays keeps its history.
-    pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>) {
+    pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>, origin: Origin) {
         let mut old = Vec::from(core::mem::take(&mut self.list));
         for address in addresses {
             let is_at_address = |server: &Server| {
@@ -128,6 +140,20 @@ impl Servers {
             self.list.push_back(Server { position, ..server });
         }
         index_sort::sort_slice_unstable_by_key(self.list.make_contiguous(), Server::rank);
+        self.is_stand_in = origin == Origin::StandIn;
+    }
+
+    /// Whether the system may name a server by now. Node.js asks so of any one loopback server that setServers() did not name: https://github.com/nodejs/node/blob/bc2e01dcf6acd5cf7d169b5f26cf89abaaeb41f1/src/cares_wrap.cc#L992-L1040
+    pub(crate) fn is_in_doubt(&self) -> bool {
+        let refuses = |server: &Server| {
+            server.last_error == Some(Error::ECONNREFUSED) && server.last_failure > self.read_after
+        };
+        self.is_stand_in && self.list.back().is_some_and(refuses)
+    }
+
+    /// The list is in doubt again once it refuses again.
+    pub(crate) fn forget_refusal(&mut self) {
+        self.read_after = self.last_failure;
     }
 
     /// The best, or with `random` one of the best. One that is `avoided` gives way to one that works

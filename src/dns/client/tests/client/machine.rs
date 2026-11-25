@@ -67,6 +67,7 @@ pub(crate) struct World {
     pub(crate) files: BTreeMap<Vec<u8>, (Option<Vec<u8>>, FileStamp)>,
     pub(crate) has_no_stamps: bool,
     pub(crate) hosts_reads: usize,
+    pub(crate) resolv_conf_reads: usize,
     pub(crate) hostname: Option<&'static str>,
     /// An address that is not listed is unreachable.
     pub(crate) routes: BTreeMap<IpAddr, Route>,
@@ -231,6 +232,7 @@ impl System for Machine {
     fn read_file(&self, path: &[u8]) -> Option<Vec<u8>> {
         let world = &mut *self.world.borrow_mut();
         world.hosts_reads += usize::from(path == HOSTS.as_bytes());
+        world.resolv_conf_reads += usize::from(path == RESOLV_CONF.as_bytes());
         world.files.get(path)?.0.clone()
     }
 

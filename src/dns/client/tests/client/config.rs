@@ -1,6 +1,8 @@
-use bun_dns_client::{Family, Transport, Variable};
+use bun_dns_client::{Family, RecordType, Transport, Variable};
 
-use crate::machine::{HOSTS, NOTHING, NSSWITCH, RESOLV_CONF, Setup, resolv_conf};
+use crate::machine::{
+    HOSTS, NOTHING, NSSWITCH, RESOLV_CONF, Sent, Setup, Test, resolv_conf, two_servers,
+};
 use crate::wire::*;
 
 fn servers(text: impl AsRef<[u8]>) -> String {
@@ -264,4 +266,366 @@ fn read_once() {
     test.world().write(RESOLV_CONF, "nameserver 2.2.2.2");
     assert_eq!(test.lookup("a.test", Family::Inet), NOTHING);
     assert_eq!(test.server_of(&test.sent_one()), "1.1.1.1:53");
+}
+
+/// Each kind of request, and its answer if the only server refuses its one try.
+const REQUESTS: [(fn(&mut Test) -> Vec<String>, &str); 4] = [
+    (|test| test.resolve(RecordType::A, "a.test"), "ECONNREFUSED"),
+    (|test| test.lookup("a.test", Family::Inet), "ECONNREFUSED"),
+    (|test| test.reverse("10.9.9.9"), "ENOTFOUND"),
+    (|test| test.name_info("10.9.9.9", 80), "ENOTFOUND"),
+];
+
+/// The socket of the one query that is out fails.
+fn refuse(test: &mut Test) -> Vec<String> {
+    let socket = test.sent_one().socket;
+    test.process_error(socket)
+}
+
+/// With one try for each query, and a name that the only server has refused.
+fn after_a_refusal(setup: Setup) -> Test {
+    let mut test = setup.tries(1).start();
+    test.resolve(RecordType::A, "refused.test");
+    assert_eq!(refuse(&mut test), ["ECONNREFUSED"]);
+    test
+}
+
+/// How often the configuration has been read once the first server has refused and one more name was asked for.
+fn reads_after_a_refusal(mut test: Test) -> usize {
+    test.resolve(RecordType::A, "refused.test");
+    refuse(&mut test);
+    test.resolve(RecordType::A, "next.test");
+    test.world().resolv_conf_reads
+}
+
+fn questions(sent: &[Sent]) -> Vec<String> {
+    sent.iter().map(Sent::question).collect()
+}
+
+#[test]
+fn read_again_after_the_stand_in_refused() {
+    for options in ["", "options use-vc"] {
+        for (request, refusal) in REQUESTS {
+            let mut test = resolv_conf(options).tries(1).start();
+            assert_eq!(test.servers(), [DEFAULT]);
+            assert_eq!(request(&mut test), NOTHING);
+            assert_eq!(refuse(&mut test), [refusal]);
+            assert_eq!(test.world().resolv_conf_reads, 1);
+
+            test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+            assert_eq!(request(&mut test), NOTHING);
+            let query = test.sent_one();
+            assert_eq!(test.server_of(&query), "10.0.0.1:53");
+            assert_eq!(test.transport_of(&query), Transport::Udp);
+            assert_eq!(test.servers(), ["10.0.0.1:53"]);
+            assert_eq!(test.world().resolv_conf_reads, 2);
+        }
+    }
+}
+
+#[test]
+fn read_again_after_no_socket_was_left() {
+    let mut setup = resolv_conf("nameserver 10.0.0.1").tries(1);
+    setup.world.files.get_mut(RESOLV_CONF.as_bytes()).unwrap().0 = None;
+    setup.world.socket_limit = Some(0);
+    let mut test = setup.start();
+    assert_eq!(test.servers(), [DEFAULT]);
+    assert_eq!(test.resolve(RecordType::A, "a.test"), ["ECONNREFUSED"]);
+    assert_eq!(test.resolve(RecordType::A, "b.test"), ["2: ECONNREFUSED"]);
+    assert_eq!(test.world().resolv_conf_reads, 2);
+
+    test.world().socket_limit = None;
+    test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+    let query = test.ask("c.test");
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+    assert_eq!(test.world().resolv_conf_reads, 3);
+}
+
+#[test]
+fn one_refusal_is_one_more_read() {
+    let mut test = after_a_refusal(resolv_conf(""));
+    let [b, c] = ["b.test", "c.test"].map(|name| test.ask(name));
+    assert_eq!(test.world().resolv_conf_reads, 2);
+    assert_eq!(test.servers(), [DEFAULT]);
+    assert_eq!(
+        (test.server_of(&b), b.socket, c.socket),
+        (DEFAULT.into(), 1, 1)
+    );
+    assert_eq!(
+        test.process_error(1),
+        ["2: ECONNREFUSED", "3: ECONNREFUSED"]
+    );
+    test.ask_many("test", 100);
+    assert_eq!(test.world().resolv_conf_reads, 3);
+}
+
+#[test]
+fn request_that_needs_no_server_does_not_read() {
+    let mut test = after_a_refusal(resolv_conf(""));
+    assert_eq!(test.lookup("10.0.0.7", Family::Inet), ["2: 10.0.0.7/0"]);
+    assert_eq!(test.lookup("a.onion", Family::Inet), ["3: ENOTFOUND"]);
+    assert_eq!(test.world().resolv_conf_reads, 1);
+
+    test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+    let query = test.ask("b.test");
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+    assert_eq!(test.world().resolv_conf_reads, 2);
+}
+
+#[test]
+fn cached_name_does_not_spend_the_read() {
+    let mut test = resolv_conf("").tries(1).start();
+    let cached = test.ask("cached.test");
+    assert_eq!(
+        test.answer(&cached, &[address("1.1.1.1", 60)]),
+        ["1.1.1.1/60"]
+    );
+    test.resolve(RecordType::A, "refused.test");
+    assert_eq!(refuse(&mut test), ["2: ECONNREFUSED"]);
+
+    assert_eq!(
+        test.resolve(RecordType::A, "cached.test"),
+        ["3: 1.1.1.1/60"]
+    );
+    assert_eq!(test.world().resolv_conf_reads, 1);
+    test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+    let query = test.ask("new.test");
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+}
+
+#[test]
+fn lists_that_are_read_again() {
+    for text in ["", "search s", "nameserver fe80::1", "nameserver x"] {
+        assert_eq!(
+            reads_after_a_refusal(resolv_conf(text).start()),
+            2,
+            "{text}"
+        );
+    }
+}
+
+/// Node.js also reads again for the first four.
+#[test]
+fn lists_that_are_final() {
+    for text in [
+        "nameserver 127.0.0.1",
+        "nameserver 127.0.0.1:54",
+        "nameserver ::1",
+        "nameserver 127.0.0.1\nnameserver 127.0.0.1",
+        "nameserver 127.0.0.2",
+        "nameserver 10.0.0.1",
+        "nameserver 127.0.0.1\nnameserver ::1",
+    ] {
+        assert_eq!(
+            reads_after_a_refusal(resolv_conf(text).start()),
+            1,
+            "{text}"
+        );
+    }
+    assert_eq!(reads_after_a_refusal(two_servers().start()), 1);
+
+    let mut test = resolv_conf("").start();
+    test.set_servers(&["127.0.0.1:53"]);
+    assert_eq!(reads_after_a_refusal(test), 1);
+
+    let mut test = after_a_refusal(resolv_conf(""));
+    test.set_servers(&["127.0.0.1:53"]);
+    test.ask("a.test");
+    assert_eq!(test.world().resolv_conf_reads, 1);
+}
+
+#[test]
+fn timeout_or_answer_leaves_the_list_as_it_is() {
+    let mut test = resolv_conf("").tries(1).start();
+    test.ask("a.test");
+    assert_eq!(test.wait(2000), ["ETIMEOUT"]);
+    test.ask("b.test");
+    assert_eq!(test.world().resolv_conf_reads, 1);
+
+    let mut test = resolv_conf("").start();
+    test.resolve(RecordType::A, "a.test");
+    assert_eq!(refuse(&mut test), NOTHING);
+    let again = test.sent_one();
+    assert_eq!(
+        test.answer(&again, &[address("1.1.1.1", 60)]),
+        ["1.1.1.1/60"]
+    );
+    test.ask("b.test");
+    assert_eq!(test.world().resolv_conf_reads, 1);
+}
+
+#[test]
+fn second_read_that_names_no_server_changes_nothing() {
+    for unreadable in [true, false] {
+        let mut test = after_a_refusal(resolv_conf("search s\noptions ndots:2 use-vc"));
+        let file = if unreadable { None } else { Some(Vec::new()) };
+        test.world()
+            .files
+            .get_mut(RESOLV_CONF.as_bytes())
+            .unwrap()
+            .0 = file;
+        assert_eq!(test.lookup("a.b", Family::Inet), NOTHING);
+        let query = test.sent_one();
+        assert_eq!(query.question(), "a.b.s A");
+        assert_eq!(test.transport_of(&query), Transport::Tcp);
+        assert_eq!(test.servers(), [DEFAULT]);
+        assert_eq!(test.world().resolv_conf_reads, 2);
+    }
+}
+
+#[test]
+fn second_read_keeps_what_still_holds() {
+    for (text, server, moves) in [
+        ("", DEFAULT, false),
+        ("nameserver 127.0.0.1\noptions ndots:0", DEFAULT, false),
+        ("nameserver 10.0.0.1", "10.0.0.1:53", true),
+    ] {
+        let mut test = resolv_conf("").start();
+        let cached = test.ask("cached.test");
+        test.answer(&cached, &[address("1.1.1.1", 60)]);
+        test.resolve(RecordType::A, "a.test");
+        assert_eq!(refuse(&mut test), NOTHING);
+        assert_eq!(test.server_of(&test.sent_one()), DEFAULT);
+
+        test.world().write(RESOLV_CONF, text);
+        assert_eq!(test.resolve(RecordType::A, "b.test"), NOTHING);
+        let sent = test.sent();
+        let moved: &[&str] = if moves { &["a.test A"] } else { &[] };
+        assert_eq!(questions(&sent), [&["b.test A"], moved].concat(), "{text}");
+        assert!(sent.iter().all(|it| test.server_of(it) == server));
+        let is_cached = !test.resolve(RecordType::A, "cached.test").is_empty();
+        assert_eq!(is_cached, !moves, "{text}");
+        assert_eq!(test.world().resolv_conf_reads, 2);
+    }
+}
+
+#[test]
+fn second_read_that_names_the_stand_in_is_final() {
+    let mut test = after_a_refusal(resolv_conf("search s"));
+    test.world()
+        .write(RESOLV_CONF, "nameserver 127.0.0.1\nsearch t");
+    assert_eq!(test.lookup("a", Family::Inet), NOTHING);
+    assert_eq!(test.sent_one().question(), "a.t A");
+    assert_eq!(test.process_error(1), ["2: ECONNREFUSED"]);
+    test.ask("b.test");
+    assert_eq!(test.world().resolv_conf_reads, 2);
+}
+
+#[test]
+fn second_read_forgets_nothing_about_a_server() {
+    let mut test = resolv_conf("").file(HOSTS, "10.1.1.1 listed").start();
+    test.resolve(RecordType::A, "refused.test");
+    let refusals: Vec<_> = (0..4).flat_map(|_| refuse(&mut test)).collect();
+    assert_eq!(refusals, ["ECONNREFUSED"]);
+    assert_eq!(test.lookup("listed", Family::Inet), ["2: 10.1.1.1/0"]);
+    assert_eq!(test.world().resolv_conf_reads, 2);
+    test.set_servers(&["10.0.0.1:53", DEFAULT]);
+    let query = test.ask("a.test");
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+    assert_eq!(test.answer(&query, &[ASKED.to_vec()]), NOTHING);
+    assert_eq!(test.server_of(&test.sent_one()), "10.0.0.1:53");
+
+    let mut test = resolv_conf("").tries(2).start();
+    test.resolve(RecordType::A, "refused.test");
+    assert_eq!(refuse(&mut test), NOTHING);
+    assert_eq!(refuse(&mut test), ["ECONNREFUSED"]);
+    test.world()
+        .write(RESOLV_CONF, "nameserver 127.0.0.1\nnameserver 10.0.0.1");
+    let query = test.ask("a.test");
+    assert_eq!(test.servers(), ["10.0.0.1:53", DEFAULT]);
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+    assert_eq!(test.answer(&query, &[ASKED.to_vec()]), NOTHING);
+    assert_eq!(test.server_of(&test.sent_one()), "10.0.0.1:53");
+}
+
+#[test]
+fn request_that_reads_again_follows_what_it_read() {
+    let mut test = after_a_refusal(resolv_conf(""));
+    test.world().write(
+        RESOLV_CONF,
+        "nameserver 10.0.0.1\nsearch s\noptions ndots:2",
+    );
+    test.world().write(NSSWITCH, "hosts: dns");
+    assert_eq!(test.lookup("a.b", Family::Inet), NOTHING);
+    assert_eq!(test.sent_one().question(), "a.b.s A");
+    assert_eq!(test.world().hosts_reads, 0);
+
+    let names: [fn(&mut Test) -> Vec<String>; 2] = [
+        |test| test.reverse("10.9.9.9"),
+        |test| test.name_info("10.9.9.9", 80),
+    ];
+    for request in names {
+        let mut test = after_a_refusal(resolv_conf("").file(HOSTS, "10.9.9.9 listed.test"));
+        test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+        test.world().write(NSSWITCH, "hosts: dns");
+        assert_eq!(request(&mut test), NOTHING);
+        assert_eq!(test.sent_one().question(), "9.9.9.10.in-addr.arpa PTR");
+        assert_eq!(test.world().hosts_reads, 0);
+    }
+
+    let mut test = after_a_refusal(resolv_conf(""));
+    test.world()
+        .write(RESOLV_CONF, "nameserver 10.0.0.1\noptions use-vc timeout:3");
+    let query = test.ask("a.test");
+    assert_eq!(test.transport_of(&query), Transport::Tcp);
+    assert_eq!(test.wait_for_timeout(), 3000);
+}
+
+#[test]
+fn second_read_has_the_same_say_as_the_first() {
+    let mut setup = resolv_conf("").timeout(500);
+    setup.variables.push((Variable::LocalDomain, "d"));
+    setup.variables.push((Variable::ResOptions, "ndots:0"));
+    let mut test = after_a_refusal(setup);
+    test.client.set_local_ip("10.0.0.9".parse().unwrap());
+    test.world().write(
+        RESOLV_CONF,
+        "nameserver 10.0.0.1\nsearch s\noptions ndots:3 timeout:3",
+    );
+    assert_eq!(test.lookup("h", Family::Inet), NOTHING);
+    let query = test.sent_one();
+    assert_eq!(query.question(), "h A");
+    assert_eq!(test.server_of(&query), "10.0.0.1:53");
+    assert_eq!(
+        test.world().opened[query.socket].local,
+        "10.0.0.9".parse().ok()
+    );
+    assert_eq!(test.decline(&query, NXDOMAIN), NOTHING);
+    assert_eq!(test.sent_one().question(), "h.d A");
+    assert_eq!(test.wait_for_timeout(), 500);
+}
+
+#[test]
+fn lookup_that_is_out_finishes_its_search_at_the_new_servers() {
+    let mut test = resolv_conf("search s").start();
+    assert_eq!(test.lookup("a", Family::Inet), NOTHING);
+    assert_eq!(refuse(&mut test), NOTHING);
+    assert_eq!(test.server_of(&test.sent_one()), DEFAULT);
+
+    test.world()
+        .write(RESOLV_CONF, "nameserver 10.0.0.1\nsearch t");
+    assert_eq!(test.resolve(RecordType::A, "b.test"), NOTHING);
+    let [b, moved] = test.sent_exactly();
+    assert_eq!(questions(&[b, moved.clone()]), ["b.test A", "a.s A"]);
+    assert_eq!(test.server_of(&moved), "10.0.0.1:53");
+    assert_eq!(test.decline(&moved, NXDOMAIN), NOTHING);
+    let last = test.sent_one();
+    assert_eq!(last.question(), "a A");
+    assert_eq!(test.decline(&last, NXDOMAIN), ["ENOTFOUND"]);
+    assert_eq!(test.lookup("a", Family::Inet), NOTHING);
+    assert_eq!(test.sent_one().question(), "a.t A");
+}
+
+#[test]
+fn no_read_while_replies_are_taken() {
+    let mut test = resolv_conf("search s").start();
+    test.ask("other.test");
+    test.lookup("a", Family::Inet);
+    let query = test.sent_one();
+    test.arrive(0, &reply(&query.bytes, NXDOMAIN, [&[], &[], &[]]));
+    assert_eq!(test.process_error(0), NOTHING);
+    assert_eq!(questions(&test.sent()), ["a A", "other.test A"]);
+    assert_eq!(test.world().resolv_conf_reads, 1);
+    test.resolve(RecordType::A, "b.test");
+    assert_eq!(test.world().resolv_conf_reads, 2);
 }

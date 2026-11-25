@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 use bun_dns_client::SocketError::{Failed, WouldBlock};
 use bun_dns_client::{Events, Family, RecordType, Transport};
 
-use crate::machine::{NOTHING, Sent, Setup, Test, one_server, resolv_conf, shown, two_servers};
+use crate::machine::{
+    NOTHING, RESOLV_CONF, Sent, Setup, Test, one_server, resolv_conf, shown, two_servers,
+};
 use crate::wire::*;
 
 fn over_tcp() -> Setup {
@@ -179,6 +181,22 @@ fn with_two_held_back(setup: Setup) -> Test {
     test.resolve(RecordType::A, "a.test");
     test.resolve(RecordType::A, "b.test");
     test
+}
+
+#[test]
+fn what_was_held_back_goes_to_the_servers_that_were_read_again() {
+    let mut test = with_two_held_back(resolv_conf(""));
+    test.process_error(0);
+    drop(test.sent());
+    test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+    assert_eq!(test.resolve(RecordType::A, "c.test"), NOTHING);
+    let mut sent = test.sent();
+    while sent.len() < 67 {
+        assert_eq!(test.wait(2), NOTHING);
+        sent.extend(test.sent());
+    }
+    assert_eq!(sent.len(), 67);
+    assert!(sent.iter().all(|it| test.server_of(it) == "10.0.0.1:53"));
 }
 
 #[test]
@@ -548,6 +566,16 @@ fn strays_left(test: &mut Test, socket: usize) -> usize {
         test.world().opened[socket].is_open
     };
     (0..).take_while(is_open).count()
+}
+
+#[test]
+fn socket_that_is_given_up_counts_as_a_refusal_of_the_stand_in() {
+    let mut test = resolv_conf("").start();
+    test.ask("a.test");
+    assert_eq!(strays_left(&mut test, 0), 32);
+    assert_eq!(test.world().resolv_conf_reads, 1);
+    test.resolve(RecordType::A, "b.test");
+    assert_eq!(test.world().resolv_conf_reads, 2);
 }
 
 #[test]

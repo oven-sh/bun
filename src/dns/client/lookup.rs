@@ -134,6 +134,13 @@ impl<S: System, R> Client<S, R> {
         self.hosts.current(&self.config.hosts_path, &self.system)
     }
 
+    /// Before a request reads the configuration.
+    fn reload_if_in_doubt(&mut self) {
+        if self.servers.is_in_doubt() {
+            self.reload();
+        }
+    }
+
     /// Best first. An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
     #[must_use]
     pub fn lookup(&mut self, host: &[u8], family: Family, request: R) -> Answers<R> {
@@ -147,6 +154,7 @@ impl<S: System, R> Client<S, R> {
             {
                 return this.answer(request, Err(Error::ENOTFOUND));
             }
+            this.reload_if_in_doubt();
             let alias = host_alias(host, &this.system);
             let lookup = AddressLookup {
                 request,
@@ -271,13 +279,13 @@ impl<S: System, R> Client<S, R> {
     }
 
     fn lookup_names(&mut self, ip: IpAddr, port: Option<u16>, request: R) -> Answers<R> {
-        let sources = self.config.sources;
         self.call(|this| {
+            this.reload_if_in_doubt();
             this.look_for_names(NameLookup {
                 request,
                 ip,
                 port,
-                sources,
+                sources: this.config.sources,
             });
         })
     }

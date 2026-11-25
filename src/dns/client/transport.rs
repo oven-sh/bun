@@ -406,10 +406,34 @@ impl<S: System, R> Client<S, R> {
                 last_error: Error::ETIMEOUT,
             }),
         };
-        if self.servers.any_failed() && self.system.random().is_multiple_of(PROBE_ODDS) {
-            self.probe(&question, self.config.transport);
+        if self.servers.any_failed() {
+            self.after_a_failure(&question);
         }
         self.send(question, None);
+    }
+
+    /// Before a new question goes out while a server fails.
+    #[cold]
+    fn after_a_failure(&mut self, question: &Question) {
+        if self.servers.is_in_doubt() {
+            self.reload_for(question);
+        }
+        if self.system.random().is_multiple_of(PROBE_ODDS) {
+            self.probe(question, self.config.transport);
+        }
+    }
+
+    /// For a request for records, whose query is new. Other requests have read the configuration by then.
+    #[cold]
+    fn reload_for(&mut self, question: &Question) {
+        let is_request =
+            |query: &mut Query<R>| matches!(query.waiting.first(), Some(Purpose::Records(_)));
+        if find(&mut self.queries, question).is_some_and(is_request) {
+            self.reload();
+            let transport = self.config.transport;
+            let query = find(&mut self.queries, question).into_iter();
+            query.for_each(|query| query.transport = transport);
+        }
     }
 
     /// If it was lost, all that come later would have to wait for the timeout.

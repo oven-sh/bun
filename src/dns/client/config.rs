@@ -1,6 +1,6 @@
 //! How the machine is set up to resolve names: resolv.conf(5) and what stands in for it.
 
-use core::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV6};
+use core::net::{IpAddr, SocketAddr, SocketAddrV6};
 use core::time::Duration;
 
 use bun_core::ip_address::parse_strict;
@@ -89,9 +89,6 @@ impl Config {
         }
         if let Some(options) = system.variable(Variable::ResOptions) {
             config.set_options(options);
-        }
-        if config.servers.is_empty() {
-            config.add_server(Ipv4Addr::LOCALHOST.into(), DEFAULT_PORT, 0);
         }
         if config.domains.is_empty()
             && let Some(hostname) = system.hostname()

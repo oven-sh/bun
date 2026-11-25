@@ -9,7 +9,7 @@ use crate::config::{Config, port_or_default};
 use crate::hosts::Hosts;
 use crate::lookup::{AddressLookup, NameLookup};
 use crate::message::{Address, Message, Question, RecordType, Records};
-use crate::servers::{ServerId, Servers};
+use crate::servers::{Origin, ServerId, Servers};
 use crate::system::{Events, SocketId, System, Transport};
 use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
@@ -63,6 +63,8 @@ pub(crate) enum Step<R> {
 pub struct Client<S: System, R> {
     pub(crate) system: S,
     pub(crate) config: Config,
+    /// Of `Options`. It goes before that of the system.
+    timeout: Option<Duration>,
     pub(crate) max_timeout: Option<Duration>,
     pub(crate) tries: usize,
     pub(crate) servers: Servers,
@@ -83,15 +85,14 @@ pub struct Client<S: System, R> {
 
 impl<S: System, R> Client<S, R> {
     pub fn new(mut system: S, options: Options) -> Self {
-        let mut config = Config::load(&mut system);
-        let timeout = options.timeout.or(config.timeout);
-        config.timeout = timeout.map(|timeout| timeout.max(MIN_TIMEOUT));
         let mut servers = Servers::default();
-        servers.replace(core::mem::take(&mut config.servers).into_iter());
+        let mut config = Self::load(&mut system, options.timeout);
+        Self::name_servers(&mut config, &mut servers);
         let seed = (0..4).fold(0, |seed, _| seed << 16 | u64::from(system.random()));
         Self {
             system,
             config,
+            timeout: options.timeout,
             max_timeout: options.max_timeout,
             tries: options.tries as usize,
             servers,
@@ -106,6 +107,41 @@ impl<S: System, R> Client<S, R> {
             steps: VecDeque::new(),
             answers: Vec::new(),
         }
+    }
+
+    /// What the system says.
+    fn load(system: &mut S, timeout: Option<Duration>) -> Config {
+        let mut config = Config::load(system);
+        let timeout = timeout.or(config.timeout);
+        config.timeout = timeout.map(|timeout| timeout.max(MIN_TIMEOUT));
+        config
+    }
+
+    /// The servers of `config`, or the one on this machine if it names none.
+    fn name_servers(config: &mut Config, servers: &mut Servers) {
+        let origin = if config.servers.is_empty() {
+            config.add_server(Ipv4Addr::LOCALHOST.into(), crate::DEFAULT_PORT, 0);
+            Origin::StandIn
+        } else {
+            Origin::Named
+        };
+        servers.replace(core::mem::take(&mut config.servers).into_iter(), origin);
+    }
+
+    /// What the system says now, if it names a server. Queries that are out move there: Node.js ends them with its channel.
+    #[cold]
+    pub(crate) fn reload(&mut self) {
+        let mut config = Self::load(&mut self.system, self.timeout);
+        if !config.servers.is_empty() {
+            let servers: Vec<SocketAddr> = self.servers().collect();
+            Self::name_servers(&mut config, &mut self.servers);
+            self.config = config;
+            if !self.servers().eq(servers) {
+                self.cache = Cache::default();
+                self.leave_removed_servers();
+            }
+        }
+        self.servers.forget_refusal();
     }
 
     /// Whether one is still to be answered.
@@ -123,7 +159,8 @@ impl<S: System, R> Client<S, R> {
     pub fn set_servers(&mut self, servers: &[(IpAddr, u16)]) -> Answers<R> {
         self.call(|this| {
             let address = |&(ip, port)| SocketAddr::new(ip, port_or_default(port));
-            this.servers.replace(servers.iter().map(address));
+            this.servers
+                .replace(servers.iter().map(address), Origin::Named);
             this.cache = Cache::default();
             this.leave_removed_servers();
             this.send_held_back();

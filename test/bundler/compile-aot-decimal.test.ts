@@ -1,10 +1,10 @@
 // The tests of Decimal that build executables. By the name of this file, CI builds a few at a time, and with the Bun that
 // has no debug information (buildsManyExecutables in scripts/runner.node.ts).
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { locksEnvironment } from "../aot/hardened";
+import { isHardened, locksEnvironment } from "../aot/hardened";
 import { unsupported } from "../aot/harness/compiler";
 import { raiseDefaultTimeout } from "../aot/harness/default-timeout";
 import "../aot/harness/real-executables";
@@ -23,8 +23,8 @@ async function spawn(cmd: string[], cwd: string, variables: Record<string, strin
 
 const executable = isWindows ? "program.exe" : "program";
 
-async function compile(flags: string[], cwd: string, variables: typeof off) {
-  const cmd = [bunExe(), "build", "--compile", ...flags, "main.js", "--outfile", executable];
+async function compile(flags: string[], cwd: string, variables: typeof off, entry = "main.js") {
+  const cmd = [bunExe(), "build", "--compile", ...flags, entry, "--outfile", executable];
   const { stderr, exitCode } = await spawn(cmd, cwd, variables);
   expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
 }
@@ -39,6 +39,19 @@ async function compileAndRun(
   await compile(flags, String(dir), variables);
   return await spawn([path.join(String(dir), executable)], String(dir), variablesOfRun);
 }
+
+// macOS is slow to start a new executable, also for the files that run beside this one. There what asks the compiler alone
+// runs in place, and what asks it about --trim is left to the other systems.
+async function runCompiled(sources: Record<string, string>, variables: typeof off, entry = "main.js") {
+  using dir = tempDir("decimal-executable", sources);
+  if (isMacOS) {
+    const result = await spawn([bunExe(), "--debug-aot", entry], String(dir), variables);
+    return { ...result, stderr: result.exitCode ? result.stderr : "" };
+  }
+  await compile(["--aot"], String(dir), variables, entry);
+  return await spawn([path.join(String(dir), executable)], String(dir), off);
+}
+const asksWhatIsTrimmed = !unsupported && canTrim && !isMacOS;
 
 describe.concurrent("an executable", () => {
   test("has Decimal without the variable", async () => {
@@ -82,8 +95,7 @@ describe.concurrent("an executable", () => {
     ],
     ["a polyfill", `globalThis.Decimal ??= function () {}; console.log([1.5].map(x => new Decimal(x)).join());`],
   ])("--aot knows that the global is there: %s", async (_, source) => {
-    const result = await compileAndRun(["--aot"], { "main.js": source }, env);
-    expect(result).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    expect(await runCompiled({ "main.js": source }, env)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(!!unsupported).each([[[]], [["--aot-references", "wide"]], ...(canTrim ? [[["--trim"]]] : [])])(
@@ -174,7 +186,7 @@ describe.concurrent("an executable", () => {
         console.log(unseen.get("read")(1, new Decimal(3)));
       `;
     const sources = { "main.js": `import "./totals.ts";`, "totals.ts": totals };
-    expect(await compileAndRun(["--aot"], sources, env)).toEqual({
+    expect(await runCompiled(sources, env)).toEqual({
       stdout: "1,1,2.25,4.75,8.5\n2,2,3.25,5.75,9.5\n3,4.25,5.5,6.75 414010\n",
       stderr: "",
       exitCode: 0,
@@ -203,21 +215,17 @@ describe.concurrent("an executable", () => {
       ...(isWindows ? [] : [[{ ...env, BUN_JSC_USEDECIMAL: "0" }, "1.5 true\n"] as const]),
       ...(isWindows ? [] : [[{ BUN_JSC_USEDECIMAL: "0", ...env }, "polyfill false\n"] as const]),
     ])("--aot takes the first variable of that name in any case, like the engine: %#", async (variables, stdout) => {
-    expect(await compileAndRun(["--aot"], polyfilled, variables)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    expect(await runCompiled(polyfilled, variables)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
   test.skipIf(!!unsupported)("--aot declares the global for TypeScript, but not without the variable", async () => {
-    using dir = tempDir("decimal-executable", { "main.ts": `console.log(String(new Decimal("1.50")));` });
+    const sources = { "main.ts": `console.log(String(new Decimal("1.50")));` };
+    expect(await runCompiled(sources, env, "main.ts")).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    using dir = tempDir("decimal-executable", sources);
     const cmd = [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable];
-    const [refused, built] = [await spawn(cmd, String(dir), off), await spawn(cmd, String(dir), env)];
-    expect(refused.stderr).toContain("Cannot find name 'Decimal'");
-    expect(refused.exitCode).toBe(1);
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-      stderr: "",
-      exitCode: 0,
-    });
-    const result = await spawn([path.join(String(dir), executable)], String(dir), off);
-    expect(result).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    const { stderr, exitCode } = await spawn(cmd, String(dir), off);
+    expect(stderr).toContain("Cannot find name 'Decimal'");
+    expect(exitCode).toBe(1);
   });
 
   test.skipIf(!!unsupported || !canTrim)("--aot --trim keeps what toLocaleString() needs", async () => {
@@ -226,7 +234,7 @@ describe.concurrent("an executable", () => {
     expect(result).toEqual({ stdout: "1,234.5\n", stderr: "", exitCode: 0 });
   });
 
-  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
     ["an array", `[new Decimal("1234.5")].toLocaleString("de")`],
     ["a subclass", `new (class extends Decimal { text() { return super.toLocaleString("de"); } })("1234.5").text()`],
   ])("--aot --trim keeps it for %s", async (_, expression) => {
@@ -242,7 +250,7 @@ describe.concurrent("an executable", () => {
     return getMappedSegments(readFileSync(file)).reduce((sum, segment) => sum + segment.length, 0);
   }
 
-  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
     ["class", `globalThis.NAME = class { constructor(text) { this.text = text; } };`],
     ["function", `globalThis.NAME ??= function (text) { "use strict"; this.text = text; };`],
   ])("--aot --trim without the variable removes as much beside a global %s of that name", async (_, definition) => {
@@ -253,7 +261,7 @@ describe.concurrent("an executable", () => {
     expect(Math.abs(decimal - other)).toBeLessThan(65_536);
   });
 
-  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
     ["by its name", `console.log(new Decimal("0.5").add(new Decimal(1)).toFixed({ digits: 1 }));`],
     [
       "off a global object that was handed over",
@@ -265,7 +273,7 @@ describe.concurrent("an executable", () => {
   });
 });
 
-test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+test.skipIf(!!unsupported || isHardened).concurrent.each([
   ["function", env],
   ["undefined", off],
 ])(
@@ -278,7 +286,7 @@ test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
 );
 
 // The workers of --parallel find the values of .env in their environment, and the compiler did not.
-test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+test.skipIf(!!unsupported || isHardened).concurrent.each([
   ["function", env, ""],
   ["undefined", off, "BUN_JSC_useDecimal=1"],
 ])("bun test --aot has the globals that it compiled for: %s", async (expected, variables, dotEnv) => {

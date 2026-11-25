@@ -51,6 +51,7 @@ pub(crate) struct LayoutState {
     variables_that_leave_whole: Option<Rc<FxHashSet<bun_sema::bind::SymbolId>>>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     layouts_seen_as_objects: FxHashSet<LayoutId>,
+    types_seen_of_objects: FxHashSet<TypeId>,
     named_types: FxHashMap<(LayoutId, ObjectTypeKey), (u32, Option<(FileId, u32)>)>,
 }
 
@@ -145,8 +146,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn note_layouts_of_objects(&mut self, ty: TypeId) {
-        let named = self.fragment.types.get(ty).layouts;
-        self.layouts.layouts_seen_as_objects.extend(named);
+        // Many positions may have one type of many layouts.
+        if self.layouts.types_seen_of_objects.insert(ty) {
+            let named = self.fragment.types.get(ty).layouts;
+            self.layouts.layouts_seen_as_objects.extend(named);
+        }
     }
 
     pub(crate) fn class_layout(&mut self, class: ClassRef) -> LayoutId {

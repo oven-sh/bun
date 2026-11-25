@@ -612,7 +612,8 @@ fn keeps_entries_of_module_cache(input: &BindInput<'_, '_>, compiled_files: &[Fi
     })
 }
 
-/// The CommonJS files that are ES modules too where an import loads them, each with that module.
+/// The CommonJS files that are ES modules too where an import loads them, each with that module. In a test run also the ES modules that an import loads
+/// under a type of code: while nothing has loaded such a file without a type, a require() is answered with that module.
 fn find_module_forms(
     input: &BindInput<'_, '_>,
     compiled_files: &[FileId],
@@ -642,7 +643,10 @@ fn find_module_forms(
         return Vec::new();
     }
     let files = compiled_files.iter().copied();
-    let files = files.filter(|&file| is_kind(file, ModuleKind::CommonJs));
+    let files = files.filter(|&file| {
+        is_kind(file, ModuleKind::CommonJs)
+            || (input.runs_tests && is_kind(file, ModuleKind::SourceText))
+    });
     let file_by_path: FxHashMap<&[u8], FileId> = files.map(|it| (path_of(it), it)).collect();
     let forms = forms.into_iter();
     forms

@@ -1,7 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_char;
 use core::ptr::NonNull;
-use std::io::Write as _;
 
 use crate::ipc as IPC;
 #[cfg(not(windows))]
@@ -219,7 +218,7 @@ fn get_argv(
                 .throw());
         }
 
-        let owned = arg.to_owned_slice_z();
+        let owned = ZBox::from_bytes(arg.to_utf8().slice());
         if is_batch_file && bun_which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
             return Err(global_this
                 .err(
@@ -1827,50 +1826,47 @@ fn append_envp_from_js<'a>(
 
         let value_bunstr = value.to_bun_string(global_this)?;
 
-        // Check for null bytes in env key and value (security: prevent null byte injection)
-        if key.index_of_ascii_char(0).is_some() {
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key,
-                        key
-                    ),
-                )
-                .throw());
-        }
-        if value_bunstr.index_of_ascii_char(0).is_some() {
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
-                        key,
-                        value_bunstr
-                    ),
-                )
-                .throw());
-        }
-
-        // PERF: per-entry allocation — profile if it shows up on a hot path.
         let line: ZBox = {
-            let mut buf: Vec<u8> = Vec::new();
-            write!(&mut buf, "{}={}", key, value_bunstr).map_err(|_| JsError::OutOfMemory)?;
+            let (key, value) = (key.to_utf8(), value_bunstr.to_utf8());
+            let (key, value) = (key.slice(), value.slice());
+            let mut buf = Vec::with_capacity(key.len() + b"=".len() + value.len() + b"\0".len());
+            buf.extend_from_slice(key);
+            buf.push(b'=');
+            buf.extend_from_slice(value);
             ZBox::from_vec(buf)
         };
+        let line_bytes = line.as_bytes();
+
+        // Check for null bytes in env key and value (security: prevent null byte injection)
+        if strings::index_of_char_usize(line_bytes, 0).is_some() {
+            let received = if key.index_of_ascii_char(0).is_some() {
+                &*key
+            } else {
+                &value_bunstr
+            };
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The property 'options.env['{}']' must be a string without null bytes. Received \"{}\"",
+                        key,
+                        received
+                    ),
+                )
+                .throw());
+        }
 
         // Windows environment variable names are case-insensitive: an env
         // object carrying `Path` (the usual casing there) must still drive
         // the executable lookup, like libuv's spawn does.
-        let line_bytes = line.as_bytes();
-        let key_end = strings::index_of_char_usize(line_bytes, b'=').unwrap_or(line_bytes.len());
-        let is_path_key = if cfg!(windows) {
-            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+        let is_path_line = if cfg!(windows) {
+            line_bytes
+                .get(..b"PATH=".len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(b"PATH="))
         } else {
-            &line_bytes[..key_end] == b"PATH"
+            line_bytes.starts_with(b"PATH=")
         };
-        if is_path_key && key_end < line_bytes.len() {
+        if is_path_line {
             path_line = Some(lines.len());
         }
 

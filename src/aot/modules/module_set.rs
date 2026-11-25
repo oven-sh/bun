@@ -507,9 +507,16 @@ fn answer_require_with_what_the_loader_holds(
             }
         }
     }
+    // require() of a text file as text answers with the file that an import has loaded without a type.
+    let mut is_required_as_text = is_required.clone();
+    for &(file, form) in forms {
+        is_required_as_text[file.idx()] |= is_required[form.idx()]
+            && stands_for_string(input, file)
+            && stands_for_string(input, form);
+    }
     for &file in compiled_files {
         let is_named_both_ways = (is_any_imported || is_imported[file.idx()])
-            && (is_any_required || is_required[file.idx()]);
+            && (is_any_required || is_required_as_text[file.idx()]);
         let is_text = stands_for_string(input, file);
         let is_value = is_text
             || parsed_source(input.files, file).is_some_and(|it| {

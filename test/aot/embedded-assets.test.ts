@@ -178,6 +178,50 @@ console.log(serve.folder(path.join(__dirname, "public"))("index.html"), app.rend
     120_000,
   );
 
+  const readByAnotherFile = {
+    "app/folder/one.txt": "one",
+    "app/folder/two.txt": "two",
+    "app/read.mjs": `import { readFileSync } from "node:fs";
+import { join } from "node:path";
+const read = path => { try { return readFileSync(path, "utf8"); } catch (error) { return error.code; } };
+export const readIn = (folder, name) => read(join(folder, name));
+export const readOne = folder => read(join(folder, "one.txt"));
+export const lengthOf = folder => typeof folder;
+`,
+  };
+  const call = {
+    unknown: `readIn(join(import.meta.dirname, "folder"), process.argv[9] ?? "one.txt")`,
+    known: `readIn(join(import.meta.dirname, "folder"), "one.txt")`,
+    inside: `readOne(join(import.meta.dirname, "folder"))`,
+    unread: `lengthOf(join(import.meta.dirname, "folder"))`,
+  };
+
+  test.each([
+    ["unknown", [], ["warn TS100172 folder"], "ENOENT\n"],
+    ["unknown", ["--asset", "./folder"], [], "one\n"],
+    ["known", [], ["warn TS100098 folder/one.txt"], "ENOENT\n"],
+    ["known", ["--asset", "./folder/one.txt"], [], "one\n"],
+    ["inside", [], ["warn TS100172 folder"], "ENOENT\n"],
+    ["inside", ["--asset", "./folder/one.txt"], [], "one\n"],
+    ["unread", [], [], "string\n"],
+  ] as [keyof typeof call, string[], string[], string][])(
+    "a warning names a folder that a function of another file reads: %s %j",
+    async (form, flags, expected, stdout) => {
+      using dir = tempDir("aot-folder-read-by-another-file", {
+        ...readByAnotherFile,
+        "app/main.mjs": `import { join } from "node:path";
+import { lengthOf, readIn, readOne } from "./read.mjs";
+console.log(${call[form]});
+`,
+      });
+      const { plain, built, compiled } = await bothWays(String(dir), "./main.mjs", ...flags);
+      expect(plain).toEqual({ stdout: form === "unread" ? "string\n" : "one\n", stderr: "", exitCode: 0 });
+      expect(warnings(built)).toEqual(expected);
+      expect(compiled).toEqual({ stdout, stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
   test("a package removes by __dirname what its ES module reads", async () => {
     using dir = tempDir("aot-module-reads-removed-file", {
       "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,

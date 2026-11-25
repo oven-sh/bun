@@ -43,7 +43,7 @@ use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtId, StmtKind};
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, NamedPath};
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::{CodeImportKind, parent_directory};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -598,6 +598,30 @@ fn find_folders_entered(
     entered
 }
 
+/// Whether the function of the program that `callee` names may read a path that it is given.
+fn may_read_where_called(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    file: FileId,
+    callee: ExprId,
+) -> bool {
+    let function = match files.bound(file).binding(callee) {
+        Binding::Symbol(id) => match graph.import_binding(file, id) {
+            ImportBinding::Variable(function) => function,
+            _ => Sym { file, id },
+        },
+        _ => match graph.member_binding(file, callee) {
+            Some(ImportBinding::Variable(function)) => function,
+            _ => return false,
+        },
+    };
+    files.compiled(function.file).is_some_and(|it| {
+        (it.analysis.reading_functions)
+            .binary_search(&function.id)
+            .is_ok()
+    })
+}
+
 fn list_file_reads(
     files: &Files<'_>,
     graph: &ModuleGraph,
@@ -625,24 +649,8 @@ fn list_file_reads(
     });
     let read = analysis.module_relative_reads.iter();
     let read = read.map(move |&(operand, path)| (operand, path, is_query(operand)));
-    let is_read_by_function_called = move |callee: ExprId| {
-        let function = match files.bound(file).binding(callee) {
-            Binding::Symbol(id) => match graph.import_binding(file, id) {
-                ImportBinding::Variable(function) => function,
-                _ => Sym { file, id },
-            },
-            _ => match graph.member_binding(file, callee) {
-                Some(ImportBinding::Variable(function)) => function,
-                _ => return false,
-            },
-        };
-        let called = files.compiled(function.file);
-        called.is_some_and(|it| {
-            (it.analysis.reading_functions)
-                .binary_search(&function.id)
-                .is_ok()
-        })
-    };
+    let is_read_by_function_called =
+        move |callee| may_read_where_called(files, graph, file, callee);
     let given = analysis.named_paths.iter();
     let given = given.filter(move |it| it.callee.is_some_and(is_read_by_function_called));
     let given = given.map(|it| (it.operand, it.path, false));
@@ -1034,7 +1042,7 @@ fn warn_about_unembedded_reads(
             }
         }
         let analysis = files.analysis(file);
-        let mut named = find_excluded_named_paths(view, left_out, file, &reads, provider);
+        let mut named = find_excluded_named_paths(view, graph, left_out, file, &reads, provider);
         named.extend(find_searches_missing_manifests(
             files, graph, left_out, file, provider,
         ));
@@ -1234,6 +1242,7 @@ fn find_searches_missing_manifests(
 /// Paths that a file of the project passes to code which may read them: `express.static(path.join(import.meta.dirname, "public"))`.
 fn find_excluded_named_paths(
     view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
     left_out: &LeftOutCode,
     file: FileId,
     reads: &[FileRead],
@@ -1245,13 +1254,29 @@ fn find_excluded_named_paths(
     let folder = parent_directory(module);
     let mut found = Vec::new();
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
-    for named in files.analysis(file).named_paths {
+    let all_named = files.analysis(file).named_paths;
+    for named in all_named {
+        let path = from_argument(folder, files.atoms.bytes(named.path));
+        // Where the call says which file of the folder it is, that file is a read.
+        let names_folder_alone = || {
+            let mut of_call = all_named.iter().filter(|it| it.callee == named.callee);
+            let is_below = |it: &NamedPath| {
+                let other = from_argument(folder, files.atoms.bytes(it.path));
+                other != path && is_at_or_below(&other, &path)
+            };
+            !of_call.any(is_below)
+        };
+        let is_read_below = !named.is_needed_on_disk
+            && !named.is_passed_to_package
+            && is_of_project
+            && named.callee.is_some_and(|it| may_read_where_called(files, graph, file, it))
+            && names_folder_alone();
         let code = match (named.is_needed_on_disk, named.is_passed_to_package) {
             (true, _) => Code::PathNeededOnDisk,
             (false, true) if is_of_project => Code::NamedPathNotEmbedded,
+            _ if is_read_below => Code::NamedPathNotEmbedded,
             _ => continue,
         };
-        let path = from_argument(folder, files.atoms.bytes(named.path));
         let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
         let is_around_module = is_at_or_below(module, &path) && !named.becomes_working_folder;
         if is_around_module || is_code || !seen.insert(path.clone()) {
@@ -1265,9 +1290,21 @@ fn find_excluded_named_paths(
                     listed.is_some_and(|it| !it.is_empty())
                         && is_excluded_folder(files, sources, provider, &path, None)
                 };
-                !reads.iter().any(|it| it.path == path && !it.is_ruled_out)
-                    && (provider.is_embeddable_only_by_asset(to_native(module), to_native(&path))
-                        || holds_files())
+                match is_read_below {
+                    true => {
+                        let is_asset = |it: &Vec<u8>| provider.is_in_asset(it);
+                        let listed = provider.list_excluded_folder(to_native(&path));
+                        !reads.iter().any(|it| it.path == path && it.is_listing)
+                            && !listed.unwrap_or_default().iter().any(is_asset)
+                            && holds_files()
+                    }
+                    false => {
+                        !reads.iter().any(|it| it.path == path && !it.is_ruled_out)
+                            && (provider
+                                .is_embeddable_only_by_asset(to_native(module), to_native(&path))
+                                || holds_files())
+                    }
+                }
             }
         };
         if is_left_out && !is_in_left_out_code(files, left_out, file, named.operand) {

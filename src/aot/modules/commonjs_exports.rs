@@ -3421,7 +3421,6 @@ pub struct CommonJsExports {
     targets: FxHashMap<(ModuleRef, Atom), Target>,
     copied_names: FxHashMap<(ModuleRef, Atom), bool>,
     stored_by_other_files: FxHashMap<(ModuleRef, Atom), bool>,
-    deletes_default: bool,
     exported_bindings: Vec<Sym>,
     /// The fixed getters that members read off an object, with the getters behind them.
     read_getters: FxHashMap<(ModuleRef, Atom), FixedGetter>,
@@ -3447,9 +3446,6 @@ impl CommonJsExports {
             dependents: vec![Vec::new(); modules.len()],
             name_sources: vec![Vec::new(); modules.len()],
             object_sources: vec![Vec::new(); modules.len()],
-            deletes_default: input.modules.compiled_files.iter().any(|&file| {
-                input.bind.files.hir(file).rare_syntax & hir::rare::DELETES_DEFAULT != 0
-            }),
             index,
             ..CommonJsExports::default()
         };

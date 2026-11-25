@@ -214,7 +214,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_module_value = name == known::default && modules.marker(module) != Some(true);
         let returned = modules.commonjs().member_behind_getter(module, name);
         let Some(Member::Binding(symbol)) = returned.filter(|_| !is_module_value) else {
-            return self.read_imported_name(module, name);
+            let value = self.read_imported_name(module, name)?;
+            let may_be_missing = name == known::default
+                && modules.marker_for_imports(module) == Some(true)
+                && !modules.commonjs().has_names(module);
+            return Some(match may_be_missing {
+                true => self.put_module_in_place_of_missing_default(module, value),
+                false => value,
+            });
         };
         let value = if symbol.file == self.file.file {
             self.get_stored(BindingRef::Symbol(symbol.id))
@@ -234,6 +241,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
         self.continue_in(join);
         Some(self.builder.read_variable(result))
+    }
+
+    /// Where another file has deleted the `default` of a file with `__esModule`, an import of it is the exports.
+    fn put_module_in_place_of_missing_default(
+        &mut self,
+        module: ModuleRef,
+        value: ValueId,
+    ) -> ValueId {
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(value, TypeTable::UNDEFINED);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.builder.switch_to(split.taken);
+        let undefined = self.builder.undefined();
+        self.builder.write_variable(result, undefined);
+        if let Some(object) = emit_module_value(self, module) {
+            let is_object = self.builder.type_test(object, TypeTable::OBJECT);
+            self.go_on_if(is_object, true, join);
+            let name = self.file.intern_atom(known::default);
+            let name = self.builder.string(name);
+            let has_name = self.emit_own_property_test(object, name);
+            self.go_on_if(has_name, false, join);
+            self.builder.write_variable(result, object);
+        }
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     pub(in crate::lower) fn read_named_export(

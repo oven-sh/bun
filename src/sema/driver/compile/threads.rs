@@ -230,15 +230,14 @@ mod tests {
             let caches = ThreadCaches::default();
             let starter = std::thread::current().id();
             let has_joined = AtomicBool::new(false);
-            for_each_parallel_in_runs(&caches, 2, 3, 1, &|index| {
+            for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
                 if std::thread::current().id() != starter {
-                    has_joined.store(true, Ordering::SeqCst);
-                } else if index == 0 {
-                    HAS_BEGUN.wait();
-                    while !has_joined.load(Ordering::SeqCst) {
-                        crate::ask_idle_threads_to_join();
-                        std::thread::yield_now();
-                    }
+                    return has_joined.store(true, Ordering::SeqCst);
+                }
+                HAS_BEGUN.wait();
+                while !has_joined.load(Ordering::SeqCst) {
+                    crate::ask_idle_threads_to_join();
+                    std::thread::yield_now();
                 }
             });
             sender.send(()).unwrap();

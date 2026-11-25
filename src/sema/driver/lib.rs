@@ -614,7 +614,7 @@ fn region_pool() -> &'static bun_threading::ThreadPool {
 
 thread_local! {
     /// The innermost `ask` of `Region::work_off_asking` on this thread.
-    static ASK_TO_JOIN: std::cell::Cell<Option<*mut (dyn FnMut() + 'static)>> =
+    static ASK_TO_JOIN: std::cell::Cell<Option<*mut (dyn FnMut(usize) + 'static)>> =
         const { std::cell::Cell::new(None) };
 }
 
@@ -623,7 +623,7 @@ thread_local! {
 fn ask_idle_threads_to_join() {
     if let Some(ask) = ASK_TO_JOIN.get() {
         // SAFETY: `work_off_asking` on this thread hasn't returned, and calls nothing that calls this while it calls `ask`.
-        unsafe { (*ask)() };
+        unsafe { (*ask)(0) };
     }
 }
 
@@ -693,11 +693,12 @@ impl JoinableRegion {
     const IS_CLOSED: u32 = 1;
     const ONE_HELPER: u32 = 2;
 
-    /// Asks the pool threads that have nothing to do right now to help, as far as there is a run for each.
+    /// Asks the pool threads that have nothing to do right now to help, as far as there is a run for each, and the next `own`
+    /// for this thread.
     ///
     /// # Safety
     /// `region` is valid: the caller started the region, or `state` counts it.
-    unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>) {
+    unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>, own: usize) {
         use bun_threading::thread_pool::{Batch, Node, Task};
         #[repr(C)]
         struct Helper {
@@ -715,7 +716,7 @@ impl JoinableRegion {
         let pool = region_pool();
         // SAFETY: the caller's.
         let runs_left = unsafe { (*self.region).runs_left() };
-        let wanted = pool.available_threads().min(runs_left.saturating_sub(1));
+        let wanted = pool.available_threads().min(runs_left.saturating_sub(own));
         if wanted == 0 {
             return;
         }
@@ -752,7 +753,7 @@ impl JoinableRegion {
             return;
         }
         // SAFETY: `state` counts this thread.
-        unsafe { (*self.region).work_off_asking(&mut || self.ask_idle_threads()) };
+        unsafe { (*self.region).work_off_asking(&mut |own| self.ask_idle_threads(own)) };
         self.state
             .fetch_or(JoinableRegion::IS_CLOSED, Ordering::Relaxed);
         let before = self
@@ -800,7 +801,7 @@ impl<'a> Region<'a> {
             return self.work_off();
         }
         let mut joinable: Option<Arc<JoinableRegion>> = None;
-        self.work_off_asking(&mut || {
+        self.work_off_asking(&mut |own| {
             if joinable.is_none() && region_pool().available_threads() == 0 {
                 return;
             }
@@ -812,7 +813,7 @@ impl<'a> Region<'a> {
                 })
             });
             // SAFETY: this thread started the region.
-            unsafe { joinable.ask_idle_threads() };
+            unsafe { joinable.ask_idle_threads(own) };
         });
         if let Some(joinable) = joinable {
             joinable.close_and_wait_for_helpers();
@@ -824,14 +825,15 @@ impl<'a> Region<'a> {
         self.count.saturating_sub(claimed).div_ceil(self.run)
     }
 
-    /// `work_off` that calls `ask` before each run. A run that takes long calls it with `ask_idle_threads_to_join`.
-    fn work_off_asking(&self, ask: &mut dyn FnMut()) {
+    /// `work_off` that calls `ask(1)` before each run. A run that takes long calls `ask(0)` with `ask_idle_threads_to_join`.
+    fn work_off_asking(&self, ask: &mut dyn FnMut(usize)) {
         let _lent = self.caches.lend();
         // SAFETY: only the lifetime changes, and the pointer is gone from `ASK_TO_JOIN` when this returns. A run doesn't unwind.
-        let ask: *mut (dyn FnMut() + 'static) = unsafe { core::mem::transmute(ask) };
+        let ask: *mut (dyn FnMut(usize) + 'static) = unsafe { core::mem::transmute(ask) };
         let outer = ASK_TO_JOIN.replace(Some(ask));
         loop {
-            ask_idle_threads_to_join();
+            // SAFETY: as in `ask_idle_threads_to_join`.
+            unsafe { (*ask)(1) };
             if !self.works_on_next_run() {
                 break;
             }

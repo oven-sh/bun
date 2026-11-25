@@ -116,6 +116,8 @@ Macros run synchronously in the transpiler during the visiting phase, after the 
 
 Bun's bundler is multi-threaded, so macros execute in parallel in multiple spawned JavaScript "workers".
 
+Macro modules are loaded apart from the modules of your program. A module that a macro and your program both import can be evaluated once for each, so do not rely on them sharing its state.
+
 ## Dead code elimination
 
 The bundler performs dead code elimination after running and inlining macros. Given the following macro:

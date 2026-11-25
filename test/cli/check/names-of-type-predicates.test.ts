@@ -60,6 +60,18 @@ const programs: Record<string, [source: string, errors: string[]]> = {
     ],
   ],
   "a type query": ["function g<T>(x: T) { return (o: T): typeof o => o; }\nexport const v = g(1);", [variable("2,14")]],
+  "a function and then one that is assigned to a property of a function": [
+    "function g<T>(x: T) { return (o: T | string): o is string => true; }\ndeclare function pair<A, B>(a: A, b: B): [A, B];\nfunction f() {}\nf.is = (<T>(x: T) => (p: T | string): p is string => true)(1);\nexport const v = pair(g(1), f.is);",
+    [inaccessible("1,47", "o is string"), inaccessible("1,47", "o"), variable("5,14")],
+  ],
+  "an assertion and then one that is assigned to a property of a function": [
+    "function g<T>(x: T) { return (o: T): asserts o => {}; }\ndeclare function pair<A, B>(a: A, b: B): [A, B];\nfunction f() {}\nf.is = (<T>(x: T) => (p: T): asserts p => {})(1);\nexport const v = pair(g(1), f.is);",
+    [inaccessible("1,38", "asserts o"), inaccessible("1,46", "o"), variable("5,14")],
+  ],
+  "a function and then one that is assigned to a property of an arrow function": [
+    "function g<T>(x: T) { return (o: T | string): o is string => true; }\ndeclare function pair<A, B>(a: A, b: B): [A, B];\nconst f = () => {};\nf.is = (<T>(x: T) => (p: T | string): p is string => true)(1);\nexport const v = pair(g(1), f.is);",
+    [inaccessible("1,47", "o is string"), inaccessible("1,47", "o"), variable("5,14")],
+  ],
 };
 
 test.concurrent.each(Object.keys(programs))("%s", async name => {

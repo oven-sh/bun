@@ -733,8 +733,12 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeNodeKind::Predicate { param, asserts, .. } = hir[predicate].kind else {
             return;
         };
+        let before = tx.reported.len();
         self.iso_report(tx, hir.node(predicate));
-        if let Some(reported) = tx.reported.last_mut().filter(|it| it.code == 9039) {
+        // `iso_report` reports nothing for a child of a bound expando.
+        if tx.reported.len() > before
+            && let Some(reported) = tx.reported.last_mut().filter(|it| it.code == 9039)
+        {
             if asserts {
                 let after = reported.start as usize + b"asserts".len();
                 reported.start = skip_trivia(&hir.text, after) as u32;

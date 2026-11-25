@@ -16,6 +16,14 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts": {
+    "default": 20000,
+    "asan": 80000
+  },
+  "aot/imports-that-another-load-comes-ahead-of.test.ts": {
+    "default": 5000,
+    "asan": 20000
+  },
   "aot/a-made-type-finds-its-file-behind-a-reset.test.ts": {
     "default": 3000,
     "asan": 12000

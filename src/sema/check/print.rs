@@ -669,6 +669,7 @@ fn with_printer<'p, T>(
     let indent = (checker.declaration_indent).filter(|_| flags & MULTILINE_OBJECT_LITERALS != 0);
     let result = {
         let mut printer = Printer {
+            stack_in_use_below: checker.stack_in_use(),
             c: &mut *checker,
             flags,
             is_transformer: false,
@@ -1175,6 +1176,8 @@ struct OuterScope {
 /// `NodeBuilderImpl` and its `NodeBuilderContext`.
 struct Printer<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
+    /// `Checker::stack_in_use` when it began.
+    stack_in_use_below: isize,
     flags: u32,
     /// True if the output is what the declaration transformer produces for a node of the file
     /// (`visitDeclarationSubtree`), not what the node builder produces to print a type
@@ -1635,6 +1638,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `typeToTypeNode`
     fn type_to_node(&mut self, ty: TypeId) -> Node {
         if self.c.is_stack_low_for_printing() {
+            self.c.note_elided_for_lack_of_stack(self.stack_in_use_below);
             return self.elided_information_placeholder();
         }
         self.type_to_node_worker(ty)

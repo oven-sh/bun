@@ -562,8 +562,21 @@ impl Checker<'_, '_> {
     /// itself, and the files the queries in progress are about. See `View::hides`.
     #[cold]
     pub(super) fn note_error_in(&mut self, file: FileId) {
-        let about = self.stack.iter().filter_map(|q| q.syntax());
-        self.files_with_errors.extend(about.chain([file]));
+        self.files_with_errors.insert(file);
+        let mut last = file;
+        for (q, frame) in self.stack.iter().zip(&self.frames).rev() {
+            // The last error was found under this one too.
+            if frame.serial <= self.work_at_last_error {
+                break;
+            }
+            if let Some(about) = q.syntax()
+                && about != last
+            {
+                self.files_with_errors.insert(about);
+                last = about;
+            }
+        }
+        self.work_at_last_error = self.work;
         self.task.note_error();
     }
 

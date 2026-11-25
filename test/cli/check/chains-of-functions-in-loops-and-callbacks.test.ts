@@ -1,7 +1,7 @@
 // The result type of each function is found from the next one's, in a loop or in an argument. A chain that takes more than the stack starts over where the
 // functions between are not in the way, which nothing in a loop or an argument did: 2,000 functions with a loop took 57 G instructions and ended for want of stack.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
 
 const tsconfig = JSON.stringify({
@@ -63,4 +63,22 @@ test.concurrent.each([120, 2400])("%d functions that each call the next, with ri
     ),
     expect.stringMatching(new RegExp(`^${size + 2} TS2322: Type '.*' is not assignable to type 'never'\\.$`)),
   ]);
+});
+
+// The errors of the functions in front are found where little of the stack is left, and their texts are written there.
+test("the errors of a long chain name the types", async () => {
+  const size = isDebug || isASAN ? 10 : 1500;
+  const link = (i: number) =>
+    `function f${i}(k: number) { let a = []; for (let i = 0; i < k; i++) { const t = f${i + 1}(k); a = a.concat(t); } return a; }`;
+  using dir = tempDir("check-texts-of-chains", {
+    "tsconfig.json": tsconfig,
+    "main.ts": lines(size, link) + `function f${size}(k: number) { return [k]; }\nexport { f0 };\n`,
+  });
+  const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty", "--all"], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
+  const told = [...(stdout + stderr).matchAll(/error TS(?:7034|7005): Variable 'a' implicitly has (?:type|an) '(.*?)'/g)];
+  expect(new Set(told.map(([, type]) => type))).toEqual(new Set(["any[]"]));
+  expect(told).toHaveLength(2 * size);
 });

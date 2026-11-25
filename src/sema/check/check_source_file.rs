@@ -47,6 +47,10 @@ impl<'s> Checker<'_, 's> {
             self.stack_limit != TASK_STACK && has(&(2 * self.stack_limit));
     }
 
+    pub(super) fn has_stack_of_last_round(&self) -> bool {
+        self.stack_limit == TASK_STACK_OF_LAST_ROUND
+    }
+
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
     /// call the checker shares nothing, and its writes are dropped with it.
     pub fn begin_task(&mut self, round: u32, index: u32) {

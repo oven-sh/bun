@@ -1193,6 +1193,7 @@ impl<'s> Program<'s> {
             unknown_symbols: Default::default(),
             withheld_until_the_file_ends: Vec::new(),
             files_with_errors: Default::default(),
+            work_at_last_error: 0,
             alias_targets_reported: Default::default(),
             alias_targets_in_progress: Vec::new(),
             is_deferred_node: Default::default(),
@@ -2080,6 +2081,8 @@ pub struct Checker<'p, 's> {
     unknown_symbols: FxHashMap<ExprId, bool>,
     /// The files in which this task has found an error since its last commit. See `View::hides`.
     files_with_errors: crate::util::FxHashSet<FileId>,
+    /// `work` at the last error since the last commit. `files_with_errors` has the files of the frames in progress then.
+    work_at_last_error: u64,
     /// The aliases that `check_target_of_alias_symbol` has reported on since `check_file` began:
     /// `aliasSymbolLinks.aliasTarget != nil`, or `resolveAlias` is in progress.
     alias_targets_reported: crate::util::FxHashSet<Sym>,
@@ -2966,7 +2969,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     #[inline]
-    fn stack_in_use(&self) -> isize {
+    pub(super) fn stack_in_use(&self) -> isize {
         self.stack_base.wrapping_sub(stack_pointer()) as isize
     }
 
@@ -2999,6 +3002,18 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub(crate) fn is_stack_low_for_printing(&self) -> bool {
         self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit - self.stack_limit / 8
+    }
+
+    /// Call when the printer elides a type for lack of stack. `in_use` was in use when it began. If most of it isn't the
+    /// printer's own, what is elided isn't nested deeply, and the last round has the stack for it.
+    #[cold]
+    pub(crate) fn note_elided_for_lack_of_stack(&self, in_use: isize) {
+        let own = self.stack_in_use() - in_use;
+        if own < self.stack_limit as isize / 16 && !self.has_stack_of_last_round() {
+            self.ran_out_of_stack.set(true);
+            self.times_cut_short.set(self.times_cut_short.get() + 1);
+            self.note_gave_up();
+        }
     }
 
     /// True if half of the stack that queries may use is in use. It's for a recursion that
@@ -5169,19 +5184,22 @@ impl<'p, 's> Checker<'p, 's> {
         if self.quick_initializers.is_empty() {
             (self.fully_marked).taint_by_incomplete_flow_from(&mut self.frames, depth);
         } else {
-            let height = self.frames.len();
-            let mut kept: smallvec::SmallVec<[(usize, QueryFrame); 8]> = Default::default();
-            for &(from, to) in &self.quick_initializers {
-                let resolutions = (from.max(depth)..to.min(height))
-                    .filter(|&at| self.is_resolution(self.stack[at]));
-                kept.extend(resolutions.map(|at| (at, self.frames[at])));
-            }
-            for frame in &mut self.frames[depth..] {
+            // Those that aren't empty are in the order of their starts.
+            let mut next = 0;
+            let mut quick_to = 0;
+            for at in depth..self.frames.len() {
+                while let Some(&(from, to)) = self.quick_initializers.get(next)
+                    && (from <= at || from >= to)
+                {
+                    quick_to = quick_to.max(if from < to { to } else { 0 });
+                    next += 1;
+                }
+                if at < quick_to && self.is_resolution(self.stack[at]) {
+                    continue;
+                }
+                let frame = &mut self.frames[at];
                 frame.marks.taint();
                 frame.incomplete_flow = true;
-            }
-            for (at, frame) in kept {
-                self.frames[at] = frame;
             }
         }
         self.taints += 1;

@@ -1217,6 +1217,7 @@ impl<'s> Checker<'_, 's> {
         let number = *committing + 1;
         *committing = number;
         // Set before the commit stores, so a task that finds one of its entries also sees these.
+        self.work_at_last_error = 0;
         for file in self.files_with_errors.drain() {
             if let Some(word) = p.commits.with_errors.get(file.idx() / 32) {
                 word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);

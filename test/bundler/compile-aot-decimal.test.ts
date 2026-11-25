@@ -41,7 +41,7 @@ async function compileAndRun(
 }
 
 // macOS is slow to start a new executable, also for the files that run beside this one. There what asks the compiler alone
-// runs in place, and what asks it about --trim is left to the other systems.
+// runs in place.
 async function runCompiled(sources: Record<string, string>, variables: typeof off, entry = "main.js") {
   using dir = tempDir("decimal-executable", sources);
   if (isMacOS) {
@@ -51,7 +51,6 @@ async function runCompiled(sources: Record<string, string>, variables: typeof of
   await compile(["--aot"], String(dir), variables, entry);
   return await spawn([path.join(String(dir), executable)], String(dir), off);
 }
-const asksWhatIsTrimmed = !unsupported && canTrim && !isMacOS;
 
 describe.concurrent("an executable", () => {
   test("has Decimal without the variable", async () => {
@@ -234,7 +233,7 @@ describe.concurrent("an executable", () => {
     expect(result).toEqual({ stdout: "1,234.5\n", stderr: "", exitCode: 0 });
   });
 
-  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
     ["an array", `[new Decimal("1234.5")].toLocaleString("de")`],
     ["a subclass", `new (class extends Decimal { text() { return super.toLocaleString("de"); } })("1234.5").text()`],
   ])("--aot --trim keeps it for %s", async (_, expression) => {
@@ -242,34 +241,34 @@ describe.concurrent("an executable", () => {
     expect(result).toEqual({ stdout: "1.234,5\n", stderr: "", exitCode: 0 });
   });
 
-  async function trimmed(source: string, variables: typeof off) {
-    using dir = tempDir("decimal-executable", { "main.js": source });
-    await compile(["--aot", "--trim"], String(dir), variables);
-    const file = path.join(String(dir), executable);
-    expect(await spawn([file], String(dir), off)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
-    return getMappedSegments(readFileSync(file)).reduce((sum, segment) => sum + segment.length, 0);
+  /** By how much the first program is larger than the second, which is only measured. */
+  async function trimmedExcess(source: string, yardstick: string, variables: typeof off) {
+    using dir = tempDir("decimal-executable", { source: { "main.js": source }, yardstick: { "main.js": yardstick } });
+    const [cwd, cwdOfYardstick] = [path.join(String(dir), "source"), path.join(String(dir), "yardstick")];
+    await Promise.all([cwd, cwdOfYardstick].map(cwd => compile(["--aot", "--trim"], cwd, variables)));
+    expect(await spawn([path.join(cwd, executable)], cwd, off)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    const size = (cwd: string) =>
+      getMappedSegments(readFileSync(path.join(cwd, executable))).reduce((sum, segment) => sum + segment.length, 0);
+    return size(cwd) - size(cwdOfYardstick);
   }
 
-  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
     ["class", `globalThis.NAME = class { constructor(text) { this.text = text; } };`],
     ["function", `globalThis.NAME ??= function (text) { "use strict"; this.text = text; };`],
   ])("--aot --trim without the variable removes as much beside a global %s of that name", async (_, definition) => {
     const source = definition + `console.log(new NAME("1.5").text);`;
-    const [decimal, other] = await Promise.all(
-      ["Decimal", "Decimax"].map(name => trimmed(source.replaceAll("NAME", name), off)),
-    );
-    expect(Math.abs(decimal - other)).toBeLessThan(65_536);
+    const excess = await trimmedExcess(source.replaceAll("NAME", "Decimal"), source.replaceAll("NAME", "Decimax"), off);
+    expect(Math.abs(excess)).toBeLessThan(65_536);
   });
 
-  test.skipIf(!asksWhatIsTrimmed).concurrent.each([
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
     ["by its name", `console.log(new Decimal("0.5").add(new Decimal(1)).toFixed({ digits: 1 }));`],
     [
       "off a global object that was handed over",
       `function find() { return this; } const root = find.call(globalThis); console.log("Decimal" in root && String(new root.Decimal("1.5")));`,
     ],
   ])("--aot --trim keeps nothing of Bun for Decimal %s", async (_, source) => {
-    const [decimal, text] = await Promise.all([trimmed(source, env), trimmed(`console.log("1.5");`, env)]);
-    expect(decimal - text).toBeLessThan(1_000_000);
+    expect(await trimmedExcess(source, `console.log("1.5");`, env)).toBeLessThan(1_000_000);
   });
 });
 

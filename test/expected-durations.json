@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/resolved-urls-keep-their-queries.test.ts": {
+    "default": 4000,
+    "asan": 16000
+  },
   "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts": {
     "default": 20000,
     "asan": 80000

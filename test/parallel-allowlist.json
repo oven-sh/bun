@@ -1915,6 +1915,7 @@
     "aot/the-build-warns-where-the-options-of-a-require-may-name-a-type-that-it-cannot-read.test.ts",
     "aot/a-build-reads-the-members-of-one-object-in-linear-time.test.ts",
     "aot/a-build-of-a-long-row-of-classes-takes-linear-time.test.ts",
-    "aot/imports-that-another-load-comes-ahead-of.test.ts"
+    "aot/imports-that-another-load-comes-ahead-of.test.ts",
+    "aot/resolved-urls-keep-their-queries.test.ts"
   ]
 }

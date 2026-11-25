@@ -181,8 +181,7 @@ fn tell_forms_from_queries(
         .collect();
     for file in others {
         let path = &mut sources.entries[file.idx()].public_path;
-        let is_of_plugin =
-            source_of(file).is_some_and(|source| source.plugin_module.is_some());
+        let is_of_plugin = source_of(file).is_some_and(|source| source.plugin_module.is_some());
         if !is_of_plugin && paths_with_query.contains(path) {
             *path = path_of_form_beside_query(path).into();
         }

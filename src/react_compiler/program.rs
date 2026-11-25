@@ -155,6 +155,15 @@ pub trait Host {
     }
 
     fn record_usage(&mut self, ref_: Ref);
+
+    /// Turns a use of `target` into a read of `target.name`. Returns the value for `E::Dot::is_import_property_use`.
+    fn record_import_property_use(&mut self, _target: &Expr, _name: &[u8]) -> bool {
+        false
+    }
+
+    /// A read that [`Host::record_import_property_use`] counted is called with the import as `this`.
+    fn record_import_property_call(&mut self, _import: Ref, _name: &[u8]) {}
+
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 

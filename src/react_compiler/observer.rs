@@ -312,6 +312,12 @@ impl Host for RecordingHost<'_> {
         self.referenced.push(ref_);
         self.host.record_usage(ref_);
     }
+    fn record_import_property_use(&mut self, target: &Expr, name: &[u8]) -> bool {
+        self.host.record_import_property_use(target, name)
+    }
+    fn record_import_property_call(&mut self, import: Ref, name: &[u8]) {
+        self.host.record_import_property_call(import, name);
+    }
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref) {
         let (index, namespace) = self.host.add_import_record(path, kind);
         self.import_paths.push((index, path.into()));

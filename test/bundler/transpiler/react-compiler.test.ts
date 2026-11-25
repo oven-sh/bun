@@ -436,6 +436,143 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("react-compiler/NamespaceMembersBindToExports", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import Parts from "./parts";
+        export function Row({ name }) {
+          const label = Parts.useLabel(name);
+          const shout = () => Parts.upper(label);
+          return <Parts.Cell text={shout() + Parts.GAP + Parts.list.map(it => Parts.upper(it)).join()} />;
+        }
+        console.log(Row({ name: "a" }));
+      `,
+      "/parts/index.js": `export * from "./parts.js"; export * as default from ".";`,
+      "/parts/parts.js": `
+        export const GAP = "-";
+        export const list = ["x", "y"];
+        export function useLabel(name) { return name + "!"; }
+        export function upper(text) { return text.toUpperCase(); }
+        export function Cell({ text }) { return "[" + text + "]"; }
+        export function unused() { return "NEVER_READ"; }
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+      `,
+      "/node_modules/react/index.js": `exports.useEffect = () => {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => type(props);`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => type(props);`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: "[A!-X,Y]" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("memo_cache_sentinel");
+      expect(out).not.toContain("exports_parts");
+      expect(out).not.toContain("NEVER_READ");
+    },
+  });
+
+  itBundled("react-compiler/NamespaceStaysWhereItIsUsedWhole", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect } from "react";
+        import Parts from "./parts";
+        export function Whole({ name }) {
+          useEffect(() => {});
+          return Parts.upper(name) + Object.keys(Parts).length;
+        }
+        export function Optional({ name }) {
+          useEffect(() => {});
+          return Parts?.upper(name) + Parts?.GAP + Parts.missing?.length;
+        }
+        export function ComputedThis() {
+          useEffect(() => {});
+          const name = "gapOfThis";
+          return Parts[name]();
+        }
+        export function AliasedThis() {
+          useEffect(() => {});
+          const alias = Parts;
+          return typeof Parts.otherGapOfThis + alias.otherGapOfThis() + alias.otherGapOfThis?.() + alias.otherGapOfThis\`\`;
+        }
+        export function Assigned() {
+          useEffect(() => {});
+          try {
+            Parts.count += 1;
+          } catch {}
+          return Parts.count;
+        }
+        console.log(Whole({ name: "a" }), Optional({ name: "b" }), ComputedThis({}), AliasedThis({}), Assigned({}));
+      `,
+      "/parts/index.js": `export * from "./parts.js"; export * as default from ".";`,
+      "/parts/parts.js": `
+        export const GAP = "-";
+        export const count = 1;
+        export function upper(text) { return text.toUpperCase(); }
+        export function gapOfThis() { return this.GAP; }
+        export function otherGapOfThis() { return this.GAP; }
+      `,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+      `,
+      "/node_modules/react/index.js": `exports.useEffect = () => {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => type(props);`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => type(props);`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: "A6 B-undefined - function--- 1" },
+  });
+
+  for (const [name, write] of Object.entries({
+    Compound: "Parts.count += 1",
+    Update: "Parts.count++",
+    Delete: "delete Parts.count",
+    Optional: "console.assert(Parts?.count)",
+  })) {
+    itBundled(`react-compiler/NamespaceStaysWhereItIsNotPlainlyRead-${name}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useEffect } from "react";
+          import Parts from "./parts";
+          export function Written({ name }) {
+            useEffect(() => {});
+            ${write};
+            return <b>{name}</b>;
+          }
+          try {
+            Written({ name: "a" });
+          } catch (error) {
+            if (error instanceof ReferenceError) throw error;
+          }
+          console.log("ran");
+        `,
+        "/parts/index.js": `export * from "./parts.js"; export * as default from ".";`,
+        "/parts/parts.js": `export const count = 1;`,
+        "/node_modules/react/compiler-runtime.js": `
+          exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        `,
+        "/node_modules/react/index.js": `exports.useEffect = () => {};`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => type(props);`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => type(props);`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      run: { stdout: "ran" },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain("__export(exports_parts");
+      },
+    });
+  }
+
   itBundled("react-compiler/RequireStringPreservesImportRecord", {
     files: {
       "/entry.jsx": /* jsx */ `

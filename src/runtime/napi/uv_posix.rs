@@ -34,8 +34,7 @@ use bun_io::KeepAlive;
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted,
-    VmHandle,
+    Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, Posted, VmHandle,
 };
 use bun_ptr::{AliasableBox, CellExt};
 use bun_threading::work_pool::WorkPool;
@@ -201,7 +200,7 @@ impl UvLoopShared {
     /// Posts the dispatch task. The state is `Pending`, so no other thread posts one.
     fn post_dispatch(&self) {
         let task = core::ptr::null_mut::<UvLoop>();
-        if let Posted::Refused(_) = self.handle.post(LoopKind::Regular, task) {
+        if let Posted::Refused(_) = self.handle.post(task) {
             // The VM is gone, so drop the callback like a closed libuv loop does.
             self.dispatch_state
                 .store(DispatchState::Idle as u8, Ordering::SeqCst);
@@ -1114,7 +1113,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
     }
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
-    let _ = (uv_loop.shared.handle).post(LoopKind::Regular, handle.ptr.as_ptr());
+    let _ = (uv_loop.shared.handle).post(handle.ptr.as_ptr());
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle
@@ -1260,10 +1259,10 @@ impl WorkRef {
 
     /// For a thread without a VM, which cannot make a [`Job`].
     fn schedule_for(self, vm: &VmHandle) -> c_int {
-        let Some(ticket) = vm.try_ticket(LoopKind::Regular) else {
+        let Some(ticket) = vm.try_ticket() else {
             return UV_ECANCELED;
         };
-        vm.add_keep_alive(LoopKind::Regular, 1);
+        vm.add_keep_alive(1);
         bun_core::handle_oom(WorkPool::go((self, ticket), |(req, ticket)| {
             req.run();
             ticket.post(ConcurrentTask::create_from(req.0.as_ptr()));

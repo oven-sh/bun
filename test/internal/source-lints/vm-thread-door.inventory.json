@@ -20,9 +20,13 @@
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
-    "WorkPool::schedule*": 1
+    "WorkPool::schedule*": 1,
+    "worker_pool.schedule(Batch)": 1
   },
   "src/jsc/hot_reloader.rs": {
+    "thread spawn": 1
+  },
+  "src/jsc/macro_host.rs": {
     "thread spawn": 1
   },
   "src/jsc/thread_isolated.rs": {
@@ -33,7 +37,8 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "OwnedByThread"
+      "OwnedByThread",
+      "ReservedPages"
     ]
   },
   "src/jsc/webcore_types.rs": {

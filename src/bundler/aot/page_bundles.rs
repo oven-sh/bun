@@ -67,6 +67,7 @@ fn create_page_outputs(
         bundle.plugin_context = carrier.plugin_context;
         bundle.completion = carrier.completion;
         bundle.file_map = carrier.file_map;
+        bundle.macro_thread = carrier.macro_thread.clone();
 
         let result = run(&mut bundle, pages, heap);
         drop(bundle);

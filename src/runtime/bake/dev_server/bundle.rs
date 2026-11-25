@@ -393,6 +393,7 @@ impl DevServer {
                 client_transpiler,
                 ssr_transpiler,
                 plugins: self.plugins.as_ref().map(Plugins::as_non_null),
+                macro_thread: self.vm().macro_thread_for_build(),
             }),
             heap_ref,
             event_loop,

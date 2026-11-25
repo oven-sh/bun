@@ -11,12 +11,13 @@ use crate::generated_bindgen::transpiler::{
 };
 use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
+use crate::removed_feature::throw_for_removed_feature;
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{MacroJSCtx, MacroLoadStates, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{MacroThread, Macros, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
@@ -24,11 +25,13 @@ use bun_js_parser::parser::ScanPassResult;
 use bun_js_printer as JSPrinter;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
+use bun_jsc::macro_host::CopiedValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
     JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
+use bun_removable_features::{Feature, call_removable_or};
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
@@ -41,7 +44,6 @@ use bun_options_types::schema::api;
 pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
     pub(crate) config: Config,
-    pub(crate) macro_load_states: MacroLoadStates,
     /// Empty between calls: kept for its capacity.
     pub(crate) scan_pass_result: Cell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: Cell<Option<JSPrinter::BufferWriter>>,
@@ -109,7 +111,7 @@ impl Default for Config {
 use bun_bundler_jsc::options_jsc::loader_from_js;
 use bun_collections::index_sort;
 
-/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and macros run JS that can
+/// Reads the `code` argument. Copies a buffer because the loader's `toString()` and the getters of the context run JS that can
 /// write to, shrink or detach it. Skips the copy when the parser will reject the buffer for its length anyway.
 fn code_from_js(
     global: &JSGlobalObject,
@@ -603,6 +605,9 @@ pub(crate) struct TransformTask {
     pub tsconfig: Option<jsc::JsPtr<TSConfigJSON>>,
     pub loader: Loader,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
+    /// Once the code is known to call macros.
+    pub macro_thread: Option<MacroThread>,
+    pub deferred_macros: Cell<bool>,
 }
 // SAFETY: see the type doc — VM-owned config is read only under the pool
 // borrow; everything else is owned.
@@ -623,6 +628,13 @@ impl jsc::JobContext for TransformTask {
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
+        if this.deferred_macros.take() {
+            this.log.reset();
+            this.err = None;
+            let thread = this.macro_thread.insert(cx.vm().macro_thread()).clone();
+            jsc::Job::<TransformTask>::schedule_on(thread.waiting_pool(), cx, this, js);
+            return Ok(());
+        }
         TransformTask::then(&mut this, js.promise.swap(), cx.global())
     }
 }
@@ -664,6 +676,8 @@ impl TransformTask {
             replace_exports: bun_ast::runtime::ReplaceableExportMap {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
+            macro_thread: None,
+            deferred_macros: Cell::new(false),
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
@@ -687,7 +701,6 @@ impl TransformTask {
         let arena = Arena::new();
 
         let transpiler = &mut *self.transpiler;
-        let macro_load_states = MacroLoadStates::default();
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -719,8 +732,7 @@ impl TransformTask {
             use_define_for_class_fields: tsconfig
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
-            macro_js_ctx: MacroJSCtx::ZERO,
-            macro_load_states: &macro_load_states,
+            macros: Macros::run_on_or_defer(self.macro_thread.as_ref(), &self.deferred_macros),
             opened_file: None,
             inject_jest_globals: false,
             is_test_entry_point: false,
@@ -932,7 +944,6 @@ impl JSTranspiler {
             config,
             _arena: arena,
             transpiler: JsCell::new(transpiler),
-            macro_load_states: MacroLoadStates::default(),
             scan_pass_result: Cell::new(ScanPassResult::init()),
             buffer_writer: Cell::new(None),
             ref_count: bun_ptr::RefCount::init(),
@@ -993,6 +1004,18 @@ impl JSTranspiler {
     }
 }
 
+#[inline(never)]
+fn copy_macro_context(global: &JSGlobalObject, value: JSValue) -> JsResult<CopiedValue> {
+    let flags = jsc::SerializedFlags {
+        for_cross_process_transfer: true,
+        for_storage: false,
+    };
+    Ok(CopiedValue {
+        bytes: value.serialize(global, flags)?.data().into(),
+        to_js: JSValue::deserialize,
+    })
+}
+
 impl JSTranspiler {
     fn get_parse_result<'p>(
         &'p self,
@@ -1000,9 +1023,46 @@ impl JSTranspiler {
         arena: &'p Arena,
         code: &'p [u8],
         loader: Option<Loader>,
-        macro_js_ctx: MacroJSCtx,
+        macro_context: Option<JSValue>,
         log: &mut bun_ast::Log,
     ) -> JsResult<Option<ParseResult<'p>>> {
+        let deferred = Cell::new(false);
+        let mut result = self.parse(arena, code, loader, Macros::Defer(&deferred), log);
+        if deferred.get() {
+            log.reset();
+            let context = match macro_context {
+                Some(value) => Some(call_removable_or!(
+                    StructuredClone,
+                    Throw,
+                    { Err(throw_for_removed_feature(global, Feature::StructuredClone)) },
+                    copy_macro_context,
+                    global,
+                    value
+                )?),
+                None => None,
+            };
+            let vm = global.bun_vm();
+            let macros = Macros::Run {
+                thread: &vm.macro_thread(),
+                context: context.as_ref().map(|it| it as _),
+            };
+            result = self.parse(arena, code, loader, macros, log);
+            vm.did_run_macros()?;
+        }
+        if (log.warnings + log.errors) > 0 {
+            return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
+        }
+        Ok(result)
+    }
+
+    fn parse<'p>(
+        &'p self,
+        arena: &'p Arena,
+        code: &'p [u8],
+        loader: Option<Loader>,
+        macros: Macros<'_>,
+        log: &mut bun_ast::Log,
+    ) -> Option<ParseResult<'p>> {
         let config = &self.config;
         let name = config.default_loader.stdin_name();
 
@@ -1042,8 +1102,7 @@ impl JSTranspiler {
             path: source.path,
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
-            macro_js_ctx,
-            macro_load_states: &self.macro_load_states,
+            macros,
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
@@ -1070,17 +1129,13 @@ impl JSTranspiler {
             allow_bytecode_cache: false,
         };
 
-        // SAFETY: JS thread. Does not hold for a macro that calls this object while this parse
-        // still borrows the transpiler.
-        let transpiler = unsafe { self.transpiler.get_mut() };
-        let old_log = transpiler.log;
-        transpiler.set_log(log);
-        let result = transpiler.parse(parse_options, None);
-        self.transpiler.with_mut(|t| t.set_log(old_log));
-        if (log.warnings + log.errors) > 0 {
-            return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
-        }
-        Ok(result)
+        self.transpiler.with_mut(|transpiler| {
+            let old_log = transpiler.log;
+            transpiler.set_log(log);
+            let result = transpiler.parse(parse_options, None);
+            transpiler.set_log(old_log);
+            result
+        })
     }
 
     pub(crate) fn scan(
@@ -1103,7 +1158,7 @@ impl JSTranspiler {
         let _ast_scope = ast_memory_allocator.enter();
 
         let Some(mut parse_result) =
-            self.get_parse_result(global, &arena, code, loader, MacroJSCtx::ZERO, &mut log)?
+            self.get_parse_result(global, &arena, code, loader, None, &mut log)?
         else {
             return Err(global.throw(format_args!("Failed to parse")));
         };
@@ -1173,7 +1228,7 @@ impl JSTranspiler {
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
 
-        let mut js_ctx_value: JSValue = JSValue::ZERO;
+        let mut macro_context = None;
         let loader: Option<Loader> = 'brk: {
             let arg = loader_or_context.to_js();
             if arg.is_number() || arg.is_string() {
@@ -1181,7 +1236,7 @@ impl JSTranspiler {
             }
 
             if arg.is_object() {
-                js_ctx_value = arg;
+                macro_context = Some(arg);
             }
             break 'brk None;
         };
@@ -1189,7 +1244,7 @@ impl JSTranspiler {
         let context = context.to_js();
         if !context.is_undefined() {
             if context.is_object() {
-                js_ctx_value = context;
+                macro_context = Some(context);
             } else {
                 return Err(global.throw_invalid_argument_type(
                     "transformSync",
@@ -1198,15 +1253,6 @@ impl JSTranspiler {
                 ));
             }
         }
-        if !js_ctx_value.is_empty() {
-            js_ctx_value.ensure_still_alive();
-        }
-
-        let _keep_ctx = if !js_ctx_value.is_empty() {
-            Some(bun_jsc::EnsureStillAlive(js_ctx_value))
-        } else {
-            None
-        };
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -1214,14 +1260,9 @@ impl JSTranspiler {
         let mut log = bun_ast::Log::init();
         log.level = self.config.log.level;
 
-        // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
-        let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        // `transformSync` does not reuse what an earlier call loaded, and a nested `scan` has to see what this call is still loading.
-        let old_states = self.macro_load_states.replace(MacroLoadStates::default());
-        let parse_result =
-            self.get_parse_result(global, &arena, code, loader, macro_js_ctx, &mut log);
-        self.macro_load_states.replace(old_states);
-        let Some(parse_result) = parse_result? else {
+        let Some(parse_result) =
+            self.get_parse_result(global, &arena, code, loader, macro_context, &mut log)?
+        else {
             return Err(global.throw(format_args!("Failed to parse code")));
         };
 

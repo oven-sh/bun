@@ -42,7 +42,6 @@
 #include "GeneratedArchive.h"
 #include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
-#include "GeneratedBunObjectInternals.h"
 #include "GeneratedColorJs.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedCryptoHasher.h"
@@ -1104,7 +1103,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     readableStreamToFormData                       WebCore::jsFunctionReadableStreamToFormData        DontDelete|Function 1
     readableStreamToJSON                           WebCore::jsFunctionReadableStreamToJSON            DontDelete|Function 1
     readableStreamToText                           WebCore::jsFunctionReadableStreamToText            DontDelete|Function 1
-    registerMacro                                  Bun::Bindgen::Generated::BunObjectInternals::jsRegisterMacro        DontEnum|DontDelete|Function 1
     resolve                                        Bun::Bindgen::Generated::BunObject::jsResolve                       DontDelete|Function 1
     resolveSync                                    Bun::Bindgen::Generated::BunObject::jsResolveSync                   DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback

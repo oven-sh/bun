@@ -127,7 +127,7 @@ void HostClient::updateKeepAlive()
     if (want == sockRefd || !global) return;
     sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(global->vm())->vmHandle.get(), BunLoopKind::Regular, want ? 1 : -1);
+        WebCore::clientData(global->vm())->vmHandle.get(), want ? 1 : -1);
 }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)

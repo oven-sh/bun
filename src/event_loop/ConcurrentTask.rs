@@ -92,6 +92,7 @@ pub mod task_tag {
         HTMLRewriterBackgroundPull,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
+        MacroHostMessage,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,

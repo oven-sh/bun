@@ -315,7 +315,6 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "BlockList.bind.ts": null,
   "BunObject.bind.ts":
     "typeof Bun & { braces: typeof Bun.$.braces; shellEscape: typeof Bun.$.escape; table: typeof Bun.inspect.table }",
-  "BunObjectInternals.bind.ts": null,
   "BunTest.bind.ts": null,
   "ByteStream.bind.ts": null,
   "BytecodeOrderRecorder.bind.ts": null,
@@ -421,6 +420,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "js_bun_spawn_bindings.bind.ts": "typeof Bun",
   "jsc_hooks.bind.ts": null,
   "linear_fifo_testing.bind.ts": null,
+  "macro_host.bind.ts": null,
   "memory_pressure.bind.ts": null,
   "mysql.bind.ts": null,
   "napi_body.bind.ts": null,

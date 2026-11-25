@@ -610,6 +610,7 @@ fn build_program(
         worker_pool: bundler.worker_pool,
         plugins: bundler.plugins,
         file_map: bundler.file_map,
+        macro_thread: bundler.macro_thread,
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {

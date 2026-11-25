@@ -1866,8 +1866,7 @@ console.log(load());
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // Debug builds also log "[macro] call load" to stdout.
-    expect(stdout).toContain("ERR_DLOPEN_FAILED\n");
+    expect(stdout).toBe("ERR_DLOPEN_FAILED\n");
     expect(exitCode).toBe(0);
   });
 

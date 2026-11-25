@@ -36,8 +36,6 @@ private:
 
     struct Subscriber {
         ScriptExecutionContextIdentifier ctxId;
-        // The loop `ctxId` was running when the channel was created there; deliveries are posted to it.
-        BunLoopKind ctxLoopKind;
         ThreadSafeWeakPtr<BroadcastChannel> channel;
         // Raw pointer used only for identity comparison under the lock;
         // never dereferenced.

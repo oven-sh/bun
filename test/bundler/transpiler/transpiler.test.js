@@ -5182,12 +5182,13 @@ console.log(foo, array);
       );
     });
 
-    describe.concurrent("a macro that calls the transpiler that is running it", () => {
+    describe.concurrent("a macro that calls a transpiler", () => {
       const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
       async function run(index) {
         using dir = tempDir("macro-reenters-transpiler", {
           "many.ts": names.map(name => `export const ${name} = () => 1;`).join("\n"),
           "macros.ts": `
+            const transpiler = new Bun.Transpiler({ loader: "ts" });
             export function scans(context) {
               transpiler.scan("1");
               return context?.name;
@@ -5197,8 +5198,9 @@ console.log(foo, array);
               return new Error("from the macro");
             }
           `,
+          "required.ts": `export const required: string = "required";`,
           "index.ts": `
-            globalThis.transpiler = new Bun.Transpiler({ loader: "ts" });
+            const transpiler = new Bun.Transpiler({ loader: "ts" });
             const imports = 'import { scans, scansMacros } from "./macros.ts" with { type: "macro" };';
             ${index}
           `,
@@ -5211,15 +5213,29 @@ console.log(foo, array);
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        // Debug builds print "[macro] call <name>" first.
         return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
       }
 
       it("can make it load other macros", async () => {
-        expect(await run(`console.log(transpiler.transformSync(imports + "f(scansMacros())"));`)).toEqual({
-          lastLine: `f(scansMacros());`,
+        const code = `imports + "f(scansMacros())"`;
+        expect(await run(`try { transpiler.transformSync(${code}); } catch (e) { console.log(e.message); }`)).toEqual({
+          lastLine: `macro threw exception`,
           stderr: expect.stringContaining("error: from the macro"),
-          exitCode: 1,
+          exitCode: 0,
+        });
+      });
+
+      it("gets a context whose getter calls the transpiler that is running the macro", async () => {
+        const context = `{
+          get name() {
+            try { transpiler.scan("const c = 1; c = 2;"); } catch {}
+            return transpiler.transformSync(imports + "g(scans())", { name: require("./required.ts").required }).trim();
+          },
+        }`;
+        expect(await run(`console.log(transpiler.transformSync(imports + "f(scans())", ${context}));`)).toEqual({
+          lastLine: `f('g("required");');`,
+          stderr: "",
+          exitCode: 0,
         });
       });
 
@@ -6508,47 +6524,95 @@ it("transformSync, scan and scanImports parse the original code when loader.toSt
 
 it.concurrent.each([
   {
-    macro: "shrinks the resizable input",
+    getter: "shrinks the resizable input",
     buffer: "new ArrayBuffer(bytes.length, { maxByteLength: bytes.length })",
-    invalidate: "globalThis.input.resize(0);",
+    invalidate: "input.resize(0);",
   },
   {
-    macro: "overwrites the input and detaches it",
+    getter: "overwrites the input and detaches it",
     buffer: "new ArrayBuffer(bytes.length)",
-    invalidate: "new Uint8Array(globalThis.input).fill(0x20); globalThis.input.transfer(); Bun.gc(true);",
+    invalidate: "new Uint8Array(input).fill(0x20); input.transfer(); Bun.gc(true);",
   },
-])("transformSync and scan parse the original code when a macro $macro", async ({ buffer, invalidate }) => {
+])("transformSync parses the original code when a getter of the context $getter", async ({ buffer, invalidate }) => {
+  using dir = tempDir("transpiler-getter-takes-input", {
+    "macro.ts": `export const read = context => context.value;`,
+    "index.ts": `
+      const bytes = new TextEncoder().encode(
+        'import { read } from "./macro.ts" with { type: "macro" };\\n' +
+        "export const fromTheMacro = read();\\n" +
+        "export const filler = " + JSON.stringify(Buffer.alloc(100_000, "x").toString()) + ";\\n" +
+        "export const afterTheMacro = 'after the macro';\\n",
+      );
+      const input = ${buffer};
+      const view = new Uint8Array(input);
+      view.set(bytes);
+
+      const code = new Bun.Transpiler({ loader: "ts" }).transformSync(view, {
+        get value() {
+          ${invalidate}
+          return "from the macro";
+        },
+      });
+      console.log(
+        input.byteLength,
+        code.includes('fromTheMacro = "from the macro"'),
+        code.includes('afterTheMacro = "after the macro"'),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "0 true true\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("transformSync and scan parse the original code when a macro overwrites the shared input", async () => {
   using dir = tempDir("transpiler-macro-takes-input", {
     "macro.ts": `
-      export function invalidate() {
-        ${invalidate}
+      const channel = new BroadcastChannel("shared");
+      const messages = [];
+      let wake;
+      channel.onmessage = event => (messages.push(event.data), wake?.());
+      export const listen = () => {};
+      export async function clobber() {
+        if (!messages.length) await new Promise(resolve => (wake = resolve));
+        new Uint8Array(messages.shift()).fill(0x20);
         return "from the macro";
       }
     `,
     "index.ts": `
-      import { join } from "node:path";
+      import { listen } from "./macro.ts" with { type: "macro" };
+      listen();
 
-      const macro = join(import.meta.dir, "macro.ts");
-      const source =
-        "import { invalidate } from " + JSON.stringify(macro) + ' with { type: "macro" };\\n' +
-        "export const fromTheMacro = invalidate();\\n" +
-        "export const filler = " + JSON.stringify(Buffer.alloc(100_000, "x").toString()) + ";\\n" +
-        "export const afterTheMacro = 'after the macro';\\n";
-
+      const bytes = new TextEncoder().encode(
+        'import { clobber } from "./macro.ts" with { type: "macro" };\\n' +
+        "export const fromTheMacro = clobber();\\n" +
+        "export const afterTheMacro = 'after the macro';\\n",
+      );
+      const channel = new BroadcastChannel("shared");
+      const inputs = [];
       function input() {
-        const bytes = new TextEncoder().encode(source);
-        globalThis.input = ${buffer};
-        const view = new Uint8Array(globalThis.input);
+        const view = new Uint8Array(new SharedArrayBuffer(bytes.length));
         view.set(bytes);
+        inputs.push(view);
+        channel.postMessage(view.buffer);
         return view;
       }
 
       const transpiler = new Bun.Transpiler({ loader: "ts" });
       const code = transpiler.transformSync(input());
       const { exports } = transpiler.scan(input());
+      channel.close();
       console.log(
         JSON.stringify({
-          byteLength: globalThis.input.byteLength,
+          overwritten: inputs.map(view => view.every(byte => byte === 0x20)),
           transformSync: [
             code.includes('fromTheMacro = "from the macro"'),
             code.includes('afterTheMacro = "after the macro"'),
@@ -6567,12 +6631,11 @@ it.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Debug builds log each macro call to stdout first.
-  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim() }).toEqual({
+  expect({ result: stdout.trim(), stderr: stderr.trim() }).toEqual({
     result: JSON.stringify({
-      byteLength: 0,
+      overwritten: [true, true],
       transformSync: [true, true],
-      exports: ["afterTheMacro", "filler", "fromTheMacro"],
+      exports: ["afterTheMacro", "fromTheMacro"],
     }),
     stderr: "",
   });

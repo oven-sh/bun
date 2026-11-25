@@ -89,7 +89,7 @@ public:
 private:
     MessagePortPipe() = default;
 
-    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind);
+    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
     void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 
@@ -102,9 +102,6 @@ private:
         // so the next owner sees everything, in order; close() drops them with the rest.
         WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
-        // The loop `ctxId` was running when this side attached there; drains and the peer-close
-        // notification are posted to it.
-        BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };

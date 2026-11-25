@@ -3,7 +3,6 @@
 #include "root.h"
 
 struct BunVmHandleRef;
-#include "BunLoopKind.h"
 #include "EventLoopKeepAlive.h"
 #include "SharedEnvStore.h"
 #include <wtf/Function.h>
@@ -119,10 +118,7 @@ public:
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
-    // target's thread when the work whose completion this is was initiated, or Regular for work no
-    // script there initiated.
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
@@ -149,13 +145,6 @@ public:
 
     JSC::VM& vm() { return *realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
-    // This thread only: the loop the VM is running now. What an object that will later be posted to
-    // from another thread records alongside identifier() when script here sets it up.
-    BunLoopKind currentLoopKind()
-    {
-        ASSERT(isContextThread());
-        return Bun__VM__currentLoopKind(m_bunVM);
-    }
 
     bool isWorker = false;
 

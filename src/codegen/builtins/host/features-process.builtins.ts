@@ -151,5 +151,5 @@ export default b.declarations(
   extendAll(["ConsoleConstructor"], "console.Console"),
 
   extendAll(["PackageFiles", "HotReload"], "Bun.build"),
-  extendAll(["PackageFiles"], "Bun.Transpiler", "Bun.registerMacro"),
+  extendAll(["PackageFiles"], "Bun.Transpiler"),
 );

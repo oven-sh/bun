@@ -1140,15 +1140,22 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
 it.concurrent("transpiles the original typed array onLoad contents when a macro overwrites them", async () => {
   using dir = tempDir("plugin-contents-macro", {
     "macro.ts": `
-      export function clobber() {
-        globalThis.contents.fill(0x20);
-        globalThis.contents.buffer.transfer();
+      const channel = new BroadcastChannel("shared");
+      const messages = [];
+      let wake;
+      channel.onmessage = event => (messages.push(event.data), wake?.());
+      export const listen = () => {};
+      export async function clobber() {
+        if (!messages.length) await new Promise(resolve => (wake = resolve));
+        new Uint8Array(messages.shift()).fill(0x20);
         return "clobbered";
       }
     `,
     "index.ts": `
       import { plugin } from "bun";
       import { join } from "node:path";
+      import { listen } from "./macro.ts" with { type: "macro" };
+      listen();
 
       const source = new TextEncoder().encode(
         "import { clobber } from " + JSON.stringify(join(import.meta.dir, "macro.ts")) + ' with { type: "macro" };\\n' +
@@ -1156,11 +1163,13 @@ it.concurrent("transpiles the original typed array onLoad contents when a macro 
         "export const afterTheMacro = 'after the macro';\\n",
       );
 
-      // The view has its own ArrayBuffer so that transfer() detaches exactly these bytes.
+      const channel = new BroadcastChannel("shared");
+      let view;
       function contents() {
-        globalThis.contents = new Uint8Array(new ArrayBuffer(source.length));
-        globalThis.contents.set(source);
-        return globalThis.contents;
+        view = new Uint8Array(new SharedArrayBuffer(source.length));
+        view.set(source);
+        channel.postMessage(view.buffer);
+        return view;
       }
 
       plugin({
@@ -1176,8 +1185,9 @@ it.concurrent("transpiles the original typed array onLoad contents when a macro 
       const results = {};
       for (const specifier of ["bytes:plain", "bytes:promise", "bytes-module"]) {
         const { fromTheMacro, afterTheMacro } = await import(specifier);
-        results[specifier] = { fromTheMacro, afterTheMacro, byteLength: globalThis.contents.byteLength };
+        results[specifier] = { fromTheMacro, afterTheMacro, overwritten: view.every(byte => byte === 0x20) };
       }
+      channel.close();
       console.log(JSON.stringify(results));
     `,
   });
@@ -1191,9 +1201,8 @@ it.concurrent("transpiles the original typed array onLoad contents when a macro 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const transpiled = { fromTheMacro: "clobbered", afterTheMacro: "after the macro", byteLength: 0 };
-  // Debug builds log each macro call to stdout first.
-  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim(), exitCode }).toEqual({
+  const transpiled = { fromTheMacro: "clobbered", afterTheMacro: "after the macro", overwritten: true };
+  expect({ result: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
     result: JSON.stringify({ "bytes:plain": transpiled, "bytes:promise": transpiled, "bytes-module": transpiled }),
     stderr: "",
     exitCode: 0,
@@ -2719,7 +2728,7 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
   });
 });
 
-// Non-entry files are transpiled off the main thread, where plugins can't run, but a macro's module may need one.
+// Macros run in a context of their own, which has the plugins that macros register.
 describe.concurrent("a macro called in a file that is not the entry point", () => {
   const files = {
     "macro.ts": `export function macro() { return "macro.ts"; }`,
@@ -2727,11 +2736,8 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     "imports-alias.ts": `import aliased from "aliased"; export function macro() { return "imports " + aliased; }`,
     "target.ts": `export default "the target";`,
     "macro.custom": `not JavaScript`,
-    "calls-plain.ts": `import { macro } from "./macro.ts" with { type: "macro" }; export default macro();`,
-    "calls-custom.ts": `import { macro } from "./macro.custom" with { type: "macro" }; export default macro();`,
-    "calls-redirected.ts": `import { macro } from "./redirected-macro.ts" with { type: "macro" }; export default macro();`,
     "redirected-macro.ts": `export function macro() { return "redirected-macro.ts"; }`,
-    "calls-alias.ts": `import { macro } from "./imports-alias.ts" with { type: "macro" }; export default macro();`,
+    "register.ts": `import "./plugin.ts"; export function register() {}`,
     "plugin.ts": `
       Bun.plugin({
         name: "plugin",
@@ -2744,13 +2750,23 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     `,
   };
   const cases = [
-    ["that no plugin is about", "plain", "macro.ts"],
-    ["that an onLoad serves", "custom", "served by onLoad"],
-    ["that an onResolve redirects", "redirected", "other-macro.ts"],
-    ["that imports what an onResolve answers about", "alias", "imports the target"],
+    ["that no plugin is about", "plain", "macro.ts", "./macro.ts"],
+    ["that an onLoad serves", "custom", "served by onLoad", "./macro.custom"],
+    ["that an onResolve redirects", "redirected", "other-macro.ts", "./redirected-macro.ts"],
+    ["that imports what an onResolve answers about", "alias", "imports the target", "./imports-alias.ts"],
   ];
+  const callers = Object.fromEntries(
+    cases.flatMap(([, name, , from]) => {
+      const imports = `import { macro } from "${from}" with { type: "macro" };`;
+      const register = `import { register } from "./register.ts" with { type: "macro" }; register();`;
+      return [
+        [`calls-${name}.ts`, `${imports} ${register} export default macro();`],
+        [`only-calls-${name}.ts`, `${imports} export default macro();`],
+      ];
+    }),
+  );
   async function run(extra: Record<string, string>, args: string[]) {
-    using dir = tempDir("plugin-macro", { ...files, ...extra });
+    using dir = tempDir("plugin-macro", { ...files, ...callers, ...extra });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
@@ -2759,9 +2775,19 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds log every macro call to stdout.
-    return { stdout: stdout.replace(/^\[macro\].*\n/gm, ""), stderr, exitCode };
+    return { stdout, stderr, exitCode };
   }
+
+  it("is not loaded through the plugins of the program", async () => {
+    const entry = `
+      for (const name of ${JSON.stringify(cases.map(([, name]) => name))})
+        console.log(await import("./only-calls-" + name + ".ts").then(module => module.default, error => error.message));
+    `;
+    const { stdout, exitCode } = await run({ "entry.ts": entry }, ["--preload", "./plugin.ts", "entry.ts"]);
+    const failed = `"MacroLoadError" error in macro`;
+    expect(stdout.trim().split("\n")).toEqual(["macro.ts", failed, "redirected-macro.ts", failed]);
+    expect(exitCode).toBe(0);
+  });
 
   it.each(cases)("%s, in a script", async (_, name, expected) => {
     const entry = `
@@ -2824,7 +2850,7 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
   });
 
   it("is reported as an error once when macros are disabled", async () => {
-    const entry = `await import("./calls-plain.ts").catch(error => console.log(error.message));`;
+    const entry = `await import("./only-calls-plain.ts").catch(error => console.log(error.message));`;
     expect(await run({ "entry.ts": entry }, ["--no-macros", "--preload", "./plugin.ts", "entry.ts"])).toEqual({
       stdout: "Macros are disabled\n",
       stderr: "",

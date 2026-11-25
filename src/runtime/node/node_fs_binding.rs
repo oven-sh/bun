@@ -202,13 +202,6 @@ pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
 
-impl Drop for Binding {
-    fn drop(&mut self) {
-        let path = &self.node_fs.get().sync_error_buf;
-        bun_core::asan::unregister_root_region((&raw const *path).cast(), size_of_val(path));
-    }
-}
-
 impl Binding {
     pub(crate) fn get_dirent(&self, cx: &mut JsScope<'_>) -> JSValue {
         crate::node::Dirent::get_constructor(cx.global())
@@ -425,19 +418,13 @@ impl Binding {
 }
 
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
-    let wrapper = Binding {
+    Binding {
         node_fs: JsCell::new(NodeFS {
             vm: Some(cx.global().bun_vm()),
             ..Default::default()
         }),
     }
-    .into_js(&cx.heap);
-    // SAFETY: the payload was just written, and nothing else can reach it yet.
-    let binding = unsafe { wrapper.payload_ptr().as_ref() };
-    let path = &binding.node_fs.get().sync_error_buf;
-    // LSAN does not scan the JS heap, and the VM that runs macros is never torn down.
-    bun_core::asan::register_root_region((&raw const *path).cast(), size_of_val(path));
-    wrapper
+    .into_js(&cx.heap)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

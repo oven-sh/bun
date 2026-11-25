@@ -23,12 +23,7 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
 use js_ast::Macro::MacroContext;
-pub use js_ast::Macro::{MacroJSCtx, MacroLoadStates};
-/// The default (zero) macro JS context value.
-#[inline]
-pub const fn default_macro_js_value() -> MacroJSCtx {
-    MacroJSCtx::ZERO
-}
+pub use js_ast::Macro::{MacroThread, Macros};
 
 /// This structure was the JavaScript transpiler before bundle_v2 was written. It
 /// now acts mostly as a configuration object, but it also contains stateful
@@ -183,13 +178,9 @@ impl<'a> Transpiler<'a> {
 
     /// # Safety
     /// The contract of [`MacroContext::new`].
-    pub unsafe fn macro_context<'p>(
-        this: *mut Self,
-        macro_load_states: &'p MacroLoadStates,
-        macro_js_ctx: MacroJSCtx,
-    ) -> MacroContext<'p> {
+    pub unsafe fn macro_context<'p>(this: *mut Self, macros: Macros<'_>) -> MacroContext<'p> {
         // SAFETY: the caller's contract.
-        unsafe { MacroContext::new(this.cast(), macro_load_states, macro_js_ctx) }
+        unsafe { MacroContext::new(this.cast(), macros) }
     }
 
     /// Returns the resolver's auto-install package-manager handle. Errs when
@@ -210,9 +201,7 @@ impl<'a> Transpiler<'a> {
         // `E::Object`) — same lifetime as the block-store. Only the bundler
         // resets it; install/`--define` (which also use the block-store) hold
         // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
+        // the block-store's early-return gate (`Store::reset`):
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
         // and the active `AstAlloc` state belongs to that scope, NOT the
@@ -221,9 +210,7 @@ impl<'a> Transpiler<'a> {
         // transpiles left while `--define`/install still hold `StoreRef`s
         // into them (and the side module's debug assert that *its* state is
         // the installed one would fire).
-        if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_null()
-        {
+        if bun_ast::stmt::data::Store::memory_allocator().is_null() {
             bun_ast::store_ast_alloc_heap::reset();
         }
     }
@@ -706,8 +693,7 @@ pub struct ParseOptions<'a, 'b> {
     /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
-    pub macro_js_ctx: MacroJSCtx,
-    pub macro_load_states: &'a MacroLoadStates,
+    pub macros: Macros<'b>,
     pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
@@ -1378,11 +1364,7 @@ impl<'a> Transpiler<'a> {
                 unsafe {
                     define = &*(*transpiler).options.define;
                     opts.macro_remap = Some(&(*transpiler).options.macro_remap);
-                    opts.macro_context = Some(Self::macro_context(
-                        transpiler,
-                        this_parse.macro_load_states,
-                        this_parse.macro_js_ctx,
-                    ));
+                    opts.macro_context = Some(Self::macro_context(transpiler, this_parse.macros));
                 }
                 // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
@@ -2433,7 +2415,7 @@ impl<'a> Transpiler<'a> {
         import_path_format: options::ImportPathFormat,
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
-        let macro_load_states = MacroLoadStates::default();
+        let macro_thread = MacroThread::default();
         while let Some(item) = self.resolve_queue.pop_front() {
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
@@ -2444,7 +2426,7 @@ impl<'a> Transpiler<'a> {
                 &item,
                 import_path_format,
                 outstream,
-                &macro_load_states,
+                &macro_thread,
             ) {
                 Ok(Some(f)) => f,
                 Ok(None) => continue,
@@ -2530,7 +2512,7 @@ impl<'a> Transpiler<'a> {
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
-        macro_load_states: &MacroLoadStates,
+        macro_thread: &MacroThread,
     ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
             return Ok(None);
@@ -2603,8 +2585,7 @@ impl<'a> Transpiler<'a> {
                     file_descriptor: None,
                     opened_file: None,
                     macro_remappings,
-                    macro_js_ctx: default_macro_js_value(),
-                    macro_load_states,
+                    macros: Macros::run_on(macro_thread),
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,

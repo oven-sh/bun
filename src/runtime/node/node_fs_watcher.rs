@@ -53,8 +53,6 @@ pub(crate) struct FSWatcher {
     /// phase, or finalize — is what ends the thread's access to `self`.
     #[cfg(not(windows))]
     handle: bun_jsc::VmHandle,
-    #[cfg(not(windows))]
-    loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
     mutex: Mutex,
@@ -197,8 +195,7 @@ impl FSWatcher {
             concurrent_task: ConcurrentTask::default(),
             ctx,
         });
-        let _ =
-            (self.handle).post_intrusive(self.loop_kind, batch, |batch| &mut batch.concurrent_task);
+        let _ = (self.handle).post_intrusive(batch, |batch| &mut batch.concurrent_task);
     }
 }
 
@@ -884,8 +881,6 @@ impl FSWatcher {
             ctx: bun_ptr::BackRef::new(vm_ref),
             #[cfg(not(windows))]
             handle: vm_ref.handle(),
-            #[cfg(not(windows))]
-            loop_kind: vm_ref.current_loop_kind(),
             #[cfg(not(windows))]
             pending_events: JsCell::new(Events::new()),
             mutex: Mutex::default(),

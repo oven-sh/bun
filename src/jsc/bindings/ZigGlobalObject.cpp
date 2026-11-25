@@ -4475,7 +4475,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Not `auto` (GCOwnedDataScope): fetchESMSourceCode can transpile the main entry synchronously and spin the event loop for an async macro, during which IncrementalSweeper asserts no scope is live with entryScope null.
     WTF::String moduleKey = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());

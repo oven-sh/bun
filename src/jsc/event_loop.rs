@@ -87,7 +87,7 @@ pub struct EventLoop {
     /// How many more times this `tick()` takes what other threads posted to `concurrent_plugin_requests`.
     plugin_request_refills_left: Cell<u32>,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
-    /// loop's queue (the VM's handle names only the VM's own two loops).
+    /// loop's queue (the VM's handle names only the VM's own loop).
     pub(crate) isolated_poster: OnceCell<std::sync::Arc<crate::vm_handle::IsolatedPoster>>,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub(crate) global: Cell<Option<NonNull<JSGlobalObject>>>,
@@ -100,7 +100,7 @@ pub struct EventLoop {
     holds_forever_poll: Cell<bool>,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
-    /// embedded loops, a private one for a spawnSync loop. Set by
+    /// embedded loop, a private one for a spawnSync loop. Set by
     /// `ensure_waker` / `with_uws_loop`.
     uws_loop: Cell<Option<&'static uws::Loop>>,
 
@@ -613,18 +613,11 @@ impl EventLoop {
     /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
-            || self
-                .macro_loop_if_not_running()
-                .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
     }
 
     /// Other threads have posted work that this loop's next drain will pick up.
     pub(crate) fn has_concurrent_tasks(&self) -> bool {
-        !self.concurrent_tasks.is_empty()
-            || !self.concurrent_plugin_requests.is_empty()
-            || self
-                .macro_loop_if_not_running()
-                .is_some_and(|m| !m.concurrent_tasks.is_empty())
+        !self.concurrent_tasks.is_empty() || !self.concurrent_plugin_requests.is_empty()
     }
 
     pub fn run_imminent_gc_timer(&self) {
@@ -652,38 +645,18 @@ impl EventLoop {
 
         self.run_imminent_gc_timer();
 
-        // SAFETY: from here on tasks are only moved between queues.
-        let tasks = unsafe { &mut *self.tasks.get() };
-        let start_count = tasks.readable_length();
-        if let Some(macro_loop) = self.macro_loop_if_not_running() {
-            macro_loop.apply_concurrent_ref_delta();
-            let batch = macro_loop.concurrent_tasks.pop_batch();
-            Self::take_concurrent_tasks(tasks, batch);
-        }
-
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
-            return tasks.readable_length() - start_count;
+            return 0;
         }
 
+        // SAFETY: from here on tasks are only moved between queues.
+        let tasks = unsafe { &mut *self.tasks.get() };
+        let start_count = tasks.readable_length();
         let _ = tasks.ensure_unused_capacity(count);
         Self::take_concurrent_tasks(tasks, concurrent);
         tasks.readable_length() - start_count
-    }
-
-    /// The macro loop, when this is the regular loop and no macro is running.
-    /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
-    /// its completion and keep-alive release there, but that loop only ticks
-    /// while a macro is being waited on; whatever finishes after the macro
-    /// returned is this loop's to run, and the platform loop both share stays
-    /// alive for it until then.
-    fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
-        let vm = self.vm_ref();
-        (vm.has_enabled_macro_mode.get()
-            && !vm.macro_mode.get()
-            && core::ptr::eq(self, &raw const vm.regular_event_loop))
-        .then_some(&vm.macro_event_loop)
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
@@ -1086,7 +1059,7 @@ impl EventLoop {
     pub fn ensure_waker(&self) {
         jsc::mark_binding();
         if self.uws_loop.get().is_none() {
-            // The VM's embedded loops run on the thread's loop, the one
+            // The VM's embedded loop runs on the thread's loop, the one
             // `vm.event_loop_handle` names below.
             #[cfg(windows)]
             debug_assert_eq!(uws::Loop::get().uv_loop(), Async::Loop::get());
@@ -1210,7 +1183,7 @@ impl EventLoop {
     }
 
     /// JS thread: the weak poster other threads use to reach the loop this
-    /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
+    /// `EventLoop` is — the VM's handle for its embedded loop, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
         match self.isolated_poster.get() {
@@ -1244,11 +1217,11 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
+        // (`VirtualMachine::init`/`init_bake`,
         // `swap_global_for_test_isolation`, `SpawnSyncEventLoop`), so
         // read it directly instead of the vm→global dependent-load chain.
         // SAFETY: set before the loop is handed out or given a task (`VirtualMachine::init`,
-        // `enable_macro_mode`, `EventLoop::with_uws_loop`); the JSGlobalObject is
+        // `EventLoop::with_uws_loop`); the JSGlobalObject is
         // GC-rooted and outlives the EventLoop.
         unsafe { self.global.get().unwrap_unchecked().as_ref() }
     }

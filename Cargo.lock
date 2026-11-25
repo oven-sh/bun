@@ -1029,6 +1029,7 @@ dependencies = [
  "bun_ptr",
  "bun_react_compiler",
  "bun_sys",
+ "bun_threading",
  "bun_url",
  "bun_wyhash",
  "criterion",
@@ -1050,13 +1051,10 @@ dependencies = [
  "bun_bundler",
  "bun_collections",
  "bun_core",
- "bun_dotenv",
  "bun_js_parser",
  "bun_jsc",
  "bun_parsers",
- "bun_ptr",
  "bun_resolver",
- "strum",
  "thiserror",
 ]
 

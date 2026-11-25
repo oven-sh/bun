@@ -2538,7 +2538,6 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
-  // A macro that no later file loads again is never replaced, so each file has its own.
   test("a macro left loaded", async () => {
     using dir = tempDir("isolate-leak-macro", {
       ...makeLeakFixture(

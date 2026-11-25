@@ -2632,7 +2632,6 @@ pub(crate) struct ThreadSafeFunction {
     blocking_condvar: Condvar,
     /// Its handle is weak: addon threads hold the function for as long as they like, so the VM cannot wait for it.
     js: VmBound<TsfnJsSide>,
-    loop_kind: bun_jsc::LoopKind,
     tracker: Debugger::AsyncTaskTracker,
     /// The context whose script created the function: its calls run in it.
     context: bun_jsc::ContextId,
@@ -2995,7 +2994,7 @@ impl ThreadSafeFunction {
             // A dispatch is queued or running and will see this, or `env_teardown` will.
             return;
         };
-        if let Posted::Refused(this) = self.js.handle().post(self.loop_kind, this) {
+        if let Posted::Refused(this) = self.js.handle().post(this) {
             // VM closed before the env cleanup hook ran here: no
             // dispatch will happen; the queued calls are released by the
             // teardown path.
@@ -3076,7 +3075,7 @@ impl ThreadSafeFunction {
         // stopped. A function already closing (napi_tsfn_abort) keeps the
         // abort contract. The finalizer runs either way.
         let target = js.target.take();
-        if vm.worker_ref().is_some() && self.call_js.is_some() {
+        if !vm.is_main_thread() && self.call_js.is_some() {
             match &target {
                 Some(target) if !was_closing => {
                     while let Some(item) = queued.read_item() {
@@ -3114,7 +3113,7 @@ impl ThreadSafeFunction {
         }
         let this = shared.threads_ref.clone().expect("held until finalized");
         let request = Box::new(TsfnRefRequest(this));
-        let _ = (self.js.handle()).post_without_waking(self.loop_kind, request);
+        let _ = (self.js.handle()).post_without_waking(request);
     }
 
     fn acquire(&self) -> NapiStatus {
@@ -3222,7 +3221,6 @@ unsafe extern "C" fn napi_create_threadsafe_function(
                 finalizer_data: thread_finalize_data,
             },
         ),
-        loop_kind: vm.current_loop_kind(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
         context: vm.context_of_caller().id(),
         max_queue_size,
@@ -5264,7 +5262,7 @@ impl NapiFinalizerTask {
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
             let handle = self.finalizer.env.vm_handle();
-            if let Posted::Refused(task) = handle.post(bun_jsc::LoopKind::Regular, self) {
+            if let Posted::Refused(task) = handle.post(self) {
                 let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
             }
             return;

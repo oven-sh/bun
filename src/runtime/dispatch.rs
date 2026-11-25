@@ -424,6 +424,11 @@ pub(crate) fn run_task(
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
         }
+        task_tag::MacroHostMessage => boxed_arm!(
+            task,
+            [RuntimeTranspiler],
+            |message: bun_jsc::macro_host::Message| -> JsResult<()> { message.run() }
+        )?,
         task_tag::GraphContextStopAgain => {
             // `ptr` packs the `ContextId`, not a pointer.
             bun_jsc::virtual_machine::GraphContextStopAgain::run(
@@ -838,7 +843,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1643,6 +1648,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()
+        }
+        task_tag::MacroHostMessage => {
+            release_boxed_in!([RuntimeTranspiler], bun_jsc::macro_host::Message)
         }
         task_tag::GraphContextStopAgain => {
             release!(bun_jsc::virtual_machine::GraphContextStopAgain)

@@ -71,7 +71,7 @@ impl bun_watcher::WatcherContext for WatchContext {
         if !pending.event.is_empty() && !core::mem::replace(&mut pending.scheduled, true) {
             drop(pending);
             let event = Arc::clone(&self.pending_reload_event);
-            let _ = self.vm_handle.post(bun_jsc::LoopKind::Regular, event);
+            let _ = self.vm_handle.post(event);
         }
     }
 

@@ -11,7 +11,7 @@ use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
-use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
+use bun_bundler::transpiler::{AlreadyBundled, MacroThread, Macros, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -25,6 +25,7 @@ use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::Guarded;
+use bun_threading::thread_pool::Batch;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
@@ -158,9 +159,15 @@ fn dump_source_string_failiable(
 // must stay shared between that path and this store — whichever transpiles the
 // main module first consumes it.
 pub fn set_break_point_on_first_line() -> bool {
-    static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
     SET_BREAK_POINT.swap(false, Ordering::SeqCst)
 }
+
+/// The parse that consumed it has to be repeated.
+pub fn give_back_break_point_on_first_line() {
+    SET_BREAK_POINT.store(true, Ordering::SeqCst);
+}
+
+static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
 
 // ──────────────────────────────────────────────────────────────────────────
 // RuntimeTranspilerStore
@@ -255,10 +262,10 @@ impl RuntimeTranspilerStore {
                 }
             }
             first = false;
-            // SAFETY: `job` is a live job popped from the intrusive queue.
-            let fulfilled = unsafe { (*job).run_from_js_thread() };
-            self.jobs_completed.update(|n| n + 1);
+            let current = job;
             job = iter.next();
+            // SAFETY: a live job popped from the intrusive queue, which `iter` has moved past.
+            let fulfilled = unsafe { (*current).run_from_js_thread() };
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
                     self.requeue(job, &mut iter);
@@ -294,22 +301,26 @@ impl RuntimeTranspilerStore {
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
         module_loader: JSValue,
+        calls_macros: Option<CallsMacros>,
     ) -> *mut c_void {
         let path_text = Box::<[u8]>::from(path.text);
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
+        let of_package = package_json.map(|pkg| pkg.module_type);
+        let module_type = match &calls_macros {
+            Some(file) => file.module_type,
+            None => of_package.unwrap_or(ModuleType::Unknown),
+        };
         let mut resolved_source = ResolvedSource::default();
-        if let Some(pkg) = package_json {
-            match pkg.module_type {
-                ModuleType::Cjs => {
-                    resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
-                    resolved_source.is_commonjs_module = true;
-                }
-                ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
-                ModuleType::Unknown => {}
+        match of_package.unwrap_or(module_type) {
+            ModuleType::Cjs => {
+                resolved_source.tag = ResolvedSourceTag::PackageJsonTypeCommonjs;
+                resolved_source.is_commonjs_module = true;
             }
+            ModuleType::Esm => resolved_source.tag = ResolvedSourceTag::PackageJsonTypeModule,
+            ModuleType::Unknown => {}
         }
 
         // Build the job by value and `get_init` it into the hive — the `Box`
@@ -339,7 +350,13 @@ impl RuntimeTranspilerStore {
                 _keep_alive: JsKeepAlive::active(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
-                has_plugins: global_object.has_plugins(),
+                test_isolation_generation: vm.test_isolation_generation.get(),
+                module_type,
+                is_test_entry_point: (calls_macros.as_ref())
+                    .is_some_and(|file| file.is_test_entry_point),
+                imports_vitest: false,
+                macro_thread: calls_macros.map(|_| vm.macro_thread()),
+                deferred_macros: Cell::new(false),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -369,8 +386,11 @@ impl RuntimeTranspilerStore {
 
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-/// Must match the parser's error text for a macro call under `no_macros`.
-const MACROS_ARE_DISABLED: &[u8] = b"Macros are disabled";
+/// A file that the JS thread would transpile if that did not mean waiting for macros.
+pub struct CallsMacros {
+    pub module_type: ModuleType,
+    pub is_test_entry_point: bool,
+}
 
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
@@ -397,8 +417,13 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     _keep_alive: JsKeepAlive,
     pub(crate) generation_number: u32,
-    /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
-    has_plugins: bool,
+    test_isolation_generation: u32,
+    module_type: ModuleType,
+    is_test_entry_point: bool,
+    imports_vitest: bool,
+    /// Once the file is known to call macros.
+    macro_thread: Option<MacroThread>,
+    deferred_macros: Cell<bool>,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -494,6 +519,19 @@ impl TranspilerJob {
     fn run_from_js_thread(&mut self) -> JsResult<()> {
         // SAFETY: the VM outlives the job, and this is its thread.
         let vm = unsafe { &*self.vm };
+        if self.deferred_macros.take()
+            && self.test_isolation_generation == vm.test_isolation_generation.get()
+        {
+            self.parse_error = None;
+            self.macro_thread = Some(vm.macro_thread());
+            self.schedule();
+            return Ok(());
+        }
+        vm.transpiler_store.jobs_completed.update(|n| n + 1);
+        let ran_macros = self.macro_thread.is_some();
+        if self.is_test_entry_point && self.parse_error.is_none() {
+            (vm.transpiler).with_mut(|t| t.options.test_file_imports_vitest = self.imports_vitest);
+        }
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -503,18 +541,7 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let loader = self.loader;
-        let calls_macro = self.has_plugins
-            && !vm.transpiler.get().options.no_macros
-            && log
-                .msgs
-                .iter()
-                .any(|msg| &*msg.data.text == MACROS_ARE_DISABLED);
-        let (specifier, mut result) = match self.parse_error {
-            Some(_) if calls_macro => (
-                core::mem::take(&mut self.non_threadsafe_input_specifier),
-                Err(crate::CrateError::ParseError),
-            ),
+        let (specifier, result) = match self.parse_error {
             Some(e) => (String::clone_utf8(&self.path_text), Err(e)),
             None => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
@@ -538,17 +565,8 @@ impl TranspilerJob {
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
 
-        if calls_macro {
-            log = bun_ast::Log::init();
-            result = VirtualMachine::fetch_without_on_load_plugins(
-                vm,
-                &global_this,
-                &specifier,
-                &referrer,
-                Some(loader),
-                &mut log,
-                crate::module_loader::FetchFlags::Transpile,
-            );
+        if ran_macros {
+            vm.did_run_macros()?;
         }
 
         fulfill(
@@ -565,7 +583,10 @@ impl TranspilerJob {
     fn schedule(&mut self) {
         // SAFETY: JS thread; the VM owns the store this slot lives in.
         self.ticket = Some(unsafe { (*self.vm).ticket() });
-        WorkPool::schedule(&raw mut self.work_task);
+        match self.macro_thread.clone() {
+            Some(thread) => (thread.waiting_pool()).schedule(Batch::from(&raw mut self.work_task)),
+            None => WorkPool::schedule(&raw mut self.work_task),
+        }
     }
 
     unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
@@ -665,12 +686,6 @@ impl TranspilerJob {
         transpiler.set_log(&raw mut *log_clone_guard.1);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
-        // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
-        transpiler.options.target = bun_ast::Target::Bun;
-        if this.has_plugins {
-            transpiler.options.no_macros = true;
-        }
-        let macro_load_states = transpiler::MacroLoadStates::default();
 
         let hash = Watcher::get_hash(path.text);
 
@@ -704,11 +719,10 @@ impl TranspilerJob {
         let is_main = vm_main
             .is_some_and(|vm_main| vm_main_hash == hash && strings::eql_long(vm_main, path.text));
 
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
+        let set_breakpoint_on_first_line = debugger()
+            .is_some_and(|d| d.set_breakpoint_on_first_line)
+            && is_main
+            && set_break_point_on_first_line();
 
         let mut parse_options = ParseOptions {
             arena: &arena,
@@ -718,8 +732,7 @@ impl TranspilerJob {
             file_descriptor: None,
             opened_file: Some(&mut input_file),
             macro_remappings,
-            macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_load_states: &macro_load_states,
+            macros: Macros::run_on_or_defer(this.macro_thread.as_ref(), &this.deferred_macros),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
@@ -729,11 +742,8 @@ impl TranspilerJob {
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
-            is_test_entry_point: false,
-            set_breakpoint_on_first_line: debugger()
-                .is_some_and(|d| d.set_breakpoint_on_first_line)
-                && is_main
-                && set_break_point_on_first_line(),
+            is_test_entry_point: this.is_test_entry_point,
+            set_breakpoint_on_first_line,
             runtime_transpiler_cache: if !RuntimeTranspilerCache::is_disabled() {
                 Some(&mut cache)
             } else {
@@ -742,7 +752,7 @@ impl TranspilerJob {
             // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
             remove_cjs_module_wrapper: is_main
                 && unsafe { (*vm).module_loader.eval_source.get().is_some() },
-            module_type,
+            module_type: this.module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
         };
@@ -765,6 +775,14 @@ impl TranspilerJob {
         let parse_result = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
+        if this.deferred_macros.get() {
+            if set_breakpoint_on_first_line {
+                give_back_break_point_on_first_line();
+            }
+            this.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
+
         if let Some(watcher) = &transpiler.resolver.watcher
             && input_file.is_some()
             && !is_node_override
@@ -778,6 +796,12 @@ impl TranspilerJob {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
+
+        if this.is_test_entry_point {
+            let records = parse_result.ast.import_records.as_slice();
+            this.imports_vitest = cache.imports_vitest()
+                || records.iter().any(|record| record.path.text == b"vitest");
+        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
@@ -867,9 +891,12 @@ impl TranspilerJob {
             }
         }
 
+        let is_on_work_pool = this.macro_thread.is_none();
         let mut source_code_printer =
             scopeguard::guard(SOURCE_CODE_PRINTER.take().unwrap_or_default(), |printer| {
-                SOURCE_CODE_PRINTER.set(Some(printer));
+                if is_on_work_pool {
+                    SOURCE_CODE_PRINTER.set(Some(printer));
+                }
             });
 
         source_code_printer.ctx.reset();

@@ -272,14 +272,14 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-static void postThroughHandle(const BunVmHandleRef* handle, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& lambda)
+static void postThroughHandle(const BunVmHandleRef* handle, Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto task = makeUnique<EventLoopTask>(WTF::move(lambda));
-    if (Bun__VmHandle__post(handle, task.get(), loopKind))
+    if (Bun__VmHandle__post(handle, task.get()))
         task.release();
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its
@@ -295,7 +295,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
             return false;
         retained = context->m_vmHandle;
     }
-    postThroughHandle(retained.get(), loopKind, WTF::move(task));
+    postThroughHandle(retained.get(), WTF::move(task));
     return true;
 }
 
@@ -376,7 +376,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        postThroughHandle(retained.get(), BunLoopKind::Regular, WTF::move(task));
+        postThroughHandle(retained.get(), WTF::move(task));
         return true;
     }
     // On its own thread the context cannot be destroyed under us.
@@ -449,7 +449,7 @@ void ScriptExecutionContext::markTerminating()
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    postThroughHandle(m_vmHandle, BunLoopKind::Regular, WTF::move(lambda));
+    postThroughHandle(m_vmHandle, WTF::move(lambda));
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)

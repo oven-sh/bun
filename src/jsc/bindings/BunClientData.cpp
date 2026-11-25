@@ -101,12 +101,15 @@ JSVMClientData::~JSVMClientData()
 
     m_normalWorld = nullptr;
 }
+
+extern "C" bool Bun__isMainThreadVM();
+
 void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
-    clientData->m_isWorkerVM = !!worker;
+    clientData->m_isWorkerVM = !Bun__isMainThreadVM();
     clientData->m_isNodeWorkerVM = worker && worker->options().kind == WorkerOptions::Kind::Node;
     clientData->vmHandle = adoptRef(Bun__VmHandle__retain(bunVM));
     clientData->vmHandleState = Bun__VmHandle__stateAddress(clientData->vmHandle.get());

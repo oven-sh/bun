@@ -40,9 +40,11 @@ The source code of the `random` function occurs nowhere in the bundle. Instead, 
 
 ## When to use macros
 
-For small things you would otherwise write a one-off build script for, bundle-time code execution can be easier to maintain. It lives with the rest of your code and runs with the rest of the build. Bun parallelizes it automatically, and if it fails, the build fails too.
+For small things you would otherwise write a one-off build script for, bundle-time code execution can be easier to maintain. It lives with the rest of your code and runs with the rest of the build. If it fails, the build fails too.
 
 If you find yourself running a lot of code at bundle-time though, consider running a server instead.
+
+Macros also run in files that you do not bundle, such as with `bun run` and `bun test`. Avoid this where you can. Bun calls the macro every time it loads the file, so a regular import does the same work with less overhead.
 
 ## Import attributes
 
@@ -114,7 +116,30 @@ When Bun's transpiler sees a macro import, it calls the function using Bun's Jav
 
 Macros run synchronously in the transpiler during the visiting phase, after the transpiler parses the file into an AST. They run in the order their calls appear in the file; the transpiler does not load or run a macro module until it reaches a call to one of its exports. The transpiler waits for each macro to finish before continuing, and awaits any Promise a macro returns.
 
-Bun's bundler is multi-threaded, so macros execute in parallel in multiple spawned JavaScript "workers".
+Bun runs macros on a dedicated thread, which it starts at the first macro call. All macros on that thread share one global object and one copy of each module. They run one at a time, but while a macro awaits a Promise, macros from other files can run.
+
+| Where the macro is called                         | The thread stops                      |
+| ------------------------------------------------- | ------------------------------------- |
+| `bun build`, `Bun.build()`, the dev server        | At the end of each build              |
+| `bun --hot`                                       | On each reload                        |
+| `bun test --isolate`                              | After each test file                  |
+| `bun run`, `bun test`, `Bun.Transpiler`, `Worker` | When the process or the `Worker` ends |
+
+Timers, servers, and other handles that a macro leaves open do not keep the process alive. File system calls that a macro starts and does not await do, until they finish. So do `fetch()` calls, except in a build, which aborts them when it ends.
+
+### What macros share with your application
+
+Only arguments and return values cross between a macro and the file that calls it.
+
+- **Globals, `mock.module()`, and `Bun.plugin()`** are not shared. A plugin that a macro registers applies to the modules that macros load afterwards.
+- **`process.env`** is copied from your application to macros, including later changes. Changes that a macro makes are only visible to other macros.
+- **`process.exit()`** exits the process, or the `Worker` that loaded the file.
+
+<Warning>
+  `require()`, `transformSync()`, and `scan()` block the calling thread until the macro finishes. A macro that waits for
+  that thread, for example by fetching from a `Bun.serve()` server that runs on it, never finishes. Use `import` or
+  `transform()` instead.
+</Warning>
 
 ## Dead code elimination
 

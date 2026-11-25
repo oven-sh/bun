@@ -3545,8 +3545,7 @@ describe("bundler", () => {
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant
-  // lives in transpiler/macro-test.test.ts: the macro VM of a worker thread
-  // outlives the build that created it, so that test needs its own process.
+  // lives in transpiler/macro-test.test.ts.
   itBundled("edgecase/MacroSeesBuildDefinesAndLoaders", {
     files: {
       "/entry.ts": /* js */ `

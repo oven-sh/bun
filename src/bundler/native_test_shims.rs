@@ -21,7 +21,6 @@ not_called_by_tests! {
     __bun_resolver_parse_dependency
     __bun_resolver_init_package_manager
     __bun_macro_context_call
-    __bun_macro_collect_vm_garbage
     __bun_jsc_wtf_string_hash
     __bun_jsc_host_builtins
     __bun_jsc_generate_internal_module_bytecode_from_source

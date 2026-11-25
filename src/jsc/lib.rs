@@ -999,7 +999,7 @@ pub use self::any_promise::AnyPromise;
 pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 
 /// `JSPromise.Unwrapped` — surfaced at the crate root as
-/// `PromiseResult` for downstream callers (Macro.rs / JSBundler.rs reference it
+/// `PromiseResult` for downstream callers (JSBundler.rs references it
 /// via `jsc::PromiseResult::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Unwrapped as PromiseResult;
 
@@ -1185,7 +1185,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmBound, VmHandle};
+pub use self::vm_handle::{ConcurrentPoster, Posted, Ticket, VmBound, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1222,6 +1222,7 @@ pub use self::js_property_iterator::{
 pub mod event_loop;
 pub use self::event_loop as EventLoop;
 pub mod job;
+pub mod macro_host;
 pub use self::event_loop::{
     AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask, DeferredTaskQueue,
     EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop, PosixSignalTask,

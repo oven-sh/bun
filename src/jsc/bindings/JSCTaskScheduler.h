@@ -5,7 +5,6 @@ class JSVMClientData;
 }
 
 #include <JavaScriptCore/DeferredWorkTimer.h>
-#include "BunLoopKind.h"
 
 namespace Bun {
 
@@ -43,10 +42,14 @@ public:
         return !m_pendingTicketsOther.isEmpty();
     }
 
+    bool hasWorkKeepingEventLoopAlive()
+    {
+        Locker<Lock> holder { m_lock };
+        return !m_pendingTicketsKeepingEventLoopAlive.isEmpty();
+    }
+
     // What was current when JSC registered the work.
     struct PendingWork {
-        // Its completion is posted to this loop.
-        BunLoopKind loopKind { BunLoopKind::Regular };
         // The identifier of the Bun.ModuleGraph context whose script asked for the work, or 0 for
         // the realm's own: the completion of a stopped one is dropped.
         uint32_t graphContext { 0 };

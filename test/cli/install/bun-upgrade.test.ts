@@ -17,8 +17,9 @@ import { copyFile, link, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 import { getCanaryLabel } from "../../../.buildkite/scripts/upload-release.ts";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
-// CI builds of a pull request or of main, and `bun bd`. Only such a build takes the canary release without a flag.
-const { is_canary: isCanary } = crash_handler.getFeatureData();
+// CI builds of a pull request or of main, and `bun bd`. Only such a build takes the canary release without a flag, and
+// it asks for the label of its asset only when it knows its commit, which a build without git does not.
+const isCanary = crash_handler.getFeatureData().is_canary && /^[0-9a-f]{40}$/.test(Bun.revision);
 
 // The asset `bun upgrade` picks for the target this test runs on, and the
 // folder inside it.

@@ -494,6 +494,13 @@ void willResolveImport(Zig::GlobalObject* globalObject, const String& key, JSVal
     rejectsRequester(globalObject, *module, AOT::LoadKind::Import);
 }
 
+// Where the build also has the file under a query that spells the type, that has the path, and the form has this one: path_of_form_beside_query in src/aot/module_keys.rs.
+static String pathOfFormInImage(const String& pathOfForm)
+{
+    String besideQuery = makeString(pathOfForm, '#');
+    return findModuleForPath(besideQuery) ? besideQuery : pathOfForm;
+}
+
 // A file that is only imported with type attributes has no module under its bare path.
 static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
 {
@@ -503,7 +510,7 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
     auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfDefaultForm(&pathArgument));
     if (pathOfForm.isDead())
         return std::nullopt;
-    return findModuleForPath(pathOfForm.transferToWTFString());
+    return findModuleForPath(pathOfFormInImage(pathOfForm.transferToWTFString()));
 }
 
 // The resolver ignores import attributes and finds a file in any form. A require() or an import() without a type treats it as missing, but its path can still be resolved and read.
@@ -636,7 +643,7 @@ static std::optional<AOT::ModuleID> findFormOfModule(JSGlobalObject* globalObjec
     auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes));
     if (pathOfForm.isDead())
         return std::nullopt;
-    std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfForm.transferToWTFString());
+    std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfFormInImage(pathOfForm.transferToWTFString()));
     // The files of an executable are not on disk, so the form compiled without the attribute is used. In place, the loader reads the file with its type, as another module.
     if (!module && isFormWithoutAttributes && formWithoutAttributes == FormWithoutAttributes::MayAnswer && !Bun__compiledProgramRunsInPlace())
         module = compiledModuleForPath(path);
@@ -1421,7 +1428,7 @@ static std::optional<AOT::ModuleID> evaluatedProgramFile(Zig::GlobalObject* glob
             if (!AOT::isDataFile(form) || AOT::moduleFilePath(form) != key || !AOT::hasRequireCacheEntry(globalObject, form))
                 continue;
             bool wasRequired = AOT::wasRequired(globalObject, form);
-            if (wasRequired || !found || AOT::modulePath(*found).endsWith("?json"_s))
+            if (wasRequired || !found || AOT::isFormOfType(globalObject, *found, "?json"_s))
                 found = form;
             if (wasRequired)
                 break;

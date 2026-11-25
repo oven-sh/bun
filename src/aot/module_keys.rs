@@ -141,6 +141,11 @@ pub fn path_of_form(path: &[u8], loader: Loader) -> Vec<u8> {
     [path, b"?", loader_name(loader).as_bytes()].concat()
 }
 
+/// Where a file is also loaded under a query that spells the type.
+pub fn path_of_form_beside_query(path_of_form: &[u8]) -> Vec<u8> {
+    [path_of_form, b"#"].concat()
+}
+
 pub fn path_without_form(path: &[u8]) -> Option<&[u8]> {
     let mark = bun_core::strings::last_index_of_char(path, b'?')?;
     Some(&path[..mark])

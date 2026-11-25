@@ -23,6 +23,7 @@ use crate::load::module_paths::{
     count_levels_above, file_ids, find_folder_named_as_parent_is_spelled, is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
+use crate::module_keys::path_of_form_beside_query;
 use crate::options::{Options, PathOptions};
 use crate::statistics::Stage;
 
@@ -127,7 +128,7 @@ pub(crate) fn freeze_sources(
     }
     let modules = &mut all.runtime_module_files;
     modules.shared_sort_unstable_by_key(|entry| entry.0.registry_id());
-    let sources = Sources {
+    let mut sources = Sources {
         #[cfg(test)]
         project: input.project,
         entry_points: collect_entry_points(input, &all.entries),
@@ -144,6 +145,7 @@ pub(crate) fn freeze_sources(
     };
     let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
     if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {
+        tell_forms_from_queries(input, linkable_files(), &mut sources);
         let paths = || linkable_files().map(|file| (file, sources.module_paths(file)));
         match find_folder_named_as_parent_is_spelled(paths()) {
             Some(diagnostic) => all.diagnostics.push(diagnostic),
@@ -162,6 +164,29 @@ pub(crate) fn freeze_sources(
         sources,
         diagnostics: all.diagnostics,
     })
+}
+
+/// `part.mjs?text` is the file under that query, and `part.mjs` read as text.
+fn tell_forms_from_queries(
+    input: &FreezeInput<'_, '_>,
+    files: impl Iterator<Item = FileId>,
+    sources: &mut Sources,
+) {
+    let source_of = |file: FileId| parsed_source_in(input.files, file);
+    let has_query =
+        |file: FileId| source_of(file).is_some_and(|source| source.file_with_query.is_some());
+    let (with_query, others): (Vec<FileId>, Vec<FileId>) = files.partition(|&it| has_query(it));
+    let paths_with_query: FxHashSet<Box<[u8]>> = (with_query.iter())
+        .map(|&file| sources.entries[file.idx()].public_path.clone())
+        .collect();
+    for file in others {
+        let path = &mut sources.entries[file.idx()].public_path;
+        let is_of_plugin =
+            source_of(file).is_some_and(|source| source.plugin_module.is_some());
+        if !is_of_plugin && paths_with_query.contains(path) {
+            *path = path_of_form_beside_query(path).into();
+        }
+    }
 }
 
 pub(crate) fn check_unique_paths_across_projects(

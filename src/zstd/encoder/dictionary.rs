@@ -86,7 +86,7 @@ impl Dictionary {
     pub(crate) fn new(bytes: &Shared<Vec<u8>>, request: &Request) -> Result<Self> {
         let tuning = request.tuning(None, Purpose::Dictionary { len: bytes.len() });
         let mut state = MatchState::new(tuning);
-        state.reset(tuning, tuning.prefers_rows(), Owner::Dictionary, 0)?;
+        state.reset(tuning, 0)?;
         let mut entropy = Entropy::EMPTY;
 
         let has_tables = bytes.len() >= WORD_LEN && u32_at(bytes, 0) == Some(DICTIONARY_MAGIC);
@@ -104,7 +104,7 @@ impl Dictionary {
             return Err(Error::DictionaryCorrupted);
         }
         if !content.is_empty() {
-            state.load::<{ Owner::Dictionary }>(content, || false);
+            state.load::<{ Owner::Dictionary }>(content, || false)?;
         }
         Ok(Self {
             content: bytes.len() - content.len()..bytes.len(),
@@ -127,8 +127,7 @@ impl Dictionary {
 
     /// Whether a frame searches these tables. Copying them only pays off for large inputs.
     pub(crate) fn is_attached_for(&self, input_len: Option<u64>) -> bool {
-        const KB_BY_STRATEGY: [u64; 10] = [8, 8, 16, 32, 32, 32, 32, 32, 8, 8];
-        let limit = KB_BY_STRATEGY.at(self.state.tuning.strategy as usize) << 10;
+        let limit = 4 << 10 << (self.state.tuning.strategy as u32).min(3);
         input_len.is_none_or(|len| len <= limit)
     }
 }
@@ -136,7 +135,7 @@ impl Dictionary {
 #[test]
 fn tables_are_copied_for_large_inputs() -> Result<()> {
     let bytes = crate::vec::shared(vec![0; 8])?;
-    for (strategy, kb) in (1..).zip([8, 16, 32, 32, 32, 32, 32, 8, 8]) {
+    for (strategy, kb) in (1..).zip([8, 16, 32, 32, 32, 32, 32, 32, 32]) {
         let mut request = Request::new(1);
         request.set(107, strategy)?;
         let dictionary = Dictionary::new(&bytes, &request)?;

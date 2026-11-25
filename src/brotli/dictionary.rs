@@ -7,7 +7,7 @@ pub(crate) const PADDED_WORD_LENGTH: usize = 40;
 
 const SIZE: usize = 122_784;
 
-static WORDS: [u8; SIZE + PADDED_WORD_LENGTH] = {
+pub(crate) static WORDS: [u8; SIZE + PADDED_WORD_LENGTH] = {
     let mut padded = [0; SIZE + PADDED_WORD_LENGTH];
     padded
         .split_at_mut(SIZE)
@@ -16,7 +16,7 @@ static WORDS: [u8; SIZE + PADDED_WORD_LENGTH] = {
     padded
 };
 
-const SIZE_BITS_BY_LENGTH: [u8; 32] = [
+pub(crate) const SIZE_BITS_BY_LENGTH: [u8; 32] = [
     0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5, 0, 0, 0, 0,
     0, 0, 0,
 ];

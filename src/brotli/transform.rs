@@ -2,6 +2,7 @@
 
 use crate::dictionary::{MAX_WORD_LENGTH, PADDED_WORD_LENGTH};
 use Kind::{Identity, OmitFirst, OmitLast, UppercaseAll, UppercaseFirst};
+use bun_highway::brotli_decoder as machine;
 
 const MAX_AFFIX_LENGTH: usize = 8;
 /// Holds the longest result, and what the copies of a fixed size write past it.
@@ -135,6 +136,28 @@ static TRANSFORMS: [Transform; LIST.len()] = {
     }
     transforms
 };
+
+#[allow(clippy::indexing_slicing)] // Runs at compile time.
+pub(crate) const fn for_machine() -> [machine::Transform; LIST.len()] {
+    const fn convert(transform: &Transform) -> machine::Transform {
+        machine::Transform {
+            prefix: transform.prefix,
+            suffix: transform.suffix,
+            prefix_length: transform.prefix_length,
+            suffix_length: transform.suffix_length,
+            skipped: transform.skipped,
+            omitted: transform.omitted,
+            uppercased: transform.uppercased,
+        }
+    }
+    let mut transforms = [convert(&TRANSFORMS[0]); LIST.len()];
+    let mut i = 0;
+    while i < LIST.len() {
+        transforms[i] = convert(&TRANSFORMS[i]);
+        i += 1;
+    }
+    transforms
+}
 
 const LIST: [(&[u8], Kind, &[u8]); 121] = [
     (b"", Identity, b""),

@@ -1,26 +1,23 @@
 //! Where a block goes, and what it can refer to.
 
+use core::mem::MaybeUninit;
+
+use bun_highway::unzstd::Tape;
+
 use crate::error::{Error, Result};
-use crate::format::BLOCK_LEN_MAX;
-use crate::frame::FrameHeader;
+use crate::format::BlockType;
+use crate::frame::{BlockHeader, Blocks, FrameHeader};
 use crate::output::Output;
 
 /// How many bytes behind the end of a copy it may read and write.
 pub(crate) const OVERSHOOT: usize = 32;
-/// Positions in it and in the block behind it fit in 32 bits. Unit tests do not get that far.
-const ADJACENT_HISTORY_MAX: usize = if cfg!(test) {
-    700
-} else {
-    (1 << 32) - (1 << 19)
-};
-const _: () = assert!(ADJACENT_HISTORY_MAX + 3 * BLOCK_LEN_MAX <= u32::MAX as usize);
 
-/// The content size in a header gets no more memory at once than this...
+/// The content size in a header, or a guess, gets no more memory at once than this...
 const RESERVED_AT_ONCE_MAX: u64 = 16 << 20;
-/// ...or this many times what is written.
+/// ...or the former this many times what is written.
 const RESERVED_AT_ONCE_FACTOR: u64 = 8;
-/// Without the overshoot. The smaller takes less time to clear.
-const STAND_IN_LENS: [usize; 2] = [224, 1024];
+/// Without the overshoot.
+const STAND_IN_LEN: usize = 2048;
 /// More output than this is not moved to make room for the overshoot, and does not double if its end is in sight.
 const CHEAP_TO_MOVE: usize = 1 << 20;
 
@@ -37,13 +34,10 @@ pub(crate) struct Destination<'o, 'a> {
     limit: usize,
     /// As far as is known.
     pub(crate) is_last_frame: bool,
-}
-
-pub(crate) struct Loan<'a> {
-    /// The end of the history before `out`.
-    pub(crate) detached: &'a [u8],
-    /// The rest of the history, and room for the block.
-    pub(crate) out: &'a mut [u8],
+    /// This one and those behind it, if they are known.
+    pub(crate) blocks: (Option<BlockHeader>, Blocks),
+    /// Of the frame, to an output that grows.
+    pub(crate) written: usize,
 }
 
 impl<'o, 'a> Destination<'o, 'a> {
@@ -57,6 +51,8 @@ impl<'o, 'a> Destination<'o, 'a> {
         Self {
             room,
             is_last_frame: false,
+            blocks: (None, Blocks::default()),
+            written: history_len,
             limit: frame.block_len_max().min(room),
             out,
             frame,
@@ -111,7 +107,7 @@ impl<'o, 'a> Destination<'o, 'a> {
 
     #[cold]
     fn reserve_more(&mut self, len: usize, wanted: usize) -> Result<()> {
-        let written = self.history_len as u64;
+        let written = self.written as u64;
         let most = written.saturating_mul(RESERVED_AT_ONCE_FACTOR);
         let most = most.max(RESERVED_AT_ONCE_MAX);
         let size = self.frame.content_size.filter(|&size| size <= most);
@@ -123,8 +119,33 @@ impl<'o, 'a> Destination<'o, 'a> {
                 self.out.reserve_exact(left.max(len_to_move / 4))
             }
             Some(left) => self.out.reserve(left),
-            None => self.out.reserve(wanted),
+            None if self.frame.content_size.is_some() => self.out.reserve(wanted),
+            None => (self.reserve_for_all_blocks(wanted)).or_else(|_| self.out.reserve(wanted)),
         }
+    }
+
+    fn reserve_for_all_blocks(&mut self, wanted: usize) -> Result<()> {
+        let ((block, left), full) = (self.blocks, self.block_len_max());
+        let block = block.filter(|it| it.block_type() == BlockType::Compressed);
+        let most = full * (left.compressed_count + 1) + left.plain_len + OVERSHOOT;
+        let capacity = self.out.capacity();
+        if self.is_last_frame && most < capacity && self.written > capacity / 2 {
+            return self.out.reserve_exact(most.min(self.room).max(wanted));
+        }
+        let size = block.map_or(0, BlockHeader::size);
+        let is_typical = left.compressed_count.saturating_sub(1) * size / 8 <= left.compressed_len;
+        let is_full = size != 0 && left.count != 0 && wanted > full / 4 && is_typical;
+        let this = if is_full { wanted.max(full) } else { wanted };
+        // In sixteenths. A short block says little about the others, and one miss is enough.
+        let ratio = match (24 * this).checked_div(size) {
+            _ if this < 1024 || self.written > full => 0,
+            ratio => ratio.unwrap_or(4 * 16),
+        };
+        let compressed =
+            (left.compressed_len.saturating_mul(ratio) / 16).min(left.decompressed_len_max);
+        let compressed = compressed.min(left.compressed_count * this);
+        let likely = (this + compressed + left.plain_len).min(RESERVED_AT_ONCE_MAX as usize);
+        self.out.reserve(likely.min(self.room).max(wanted))
     }
 
     /// Writes a sequence that fits behind the first `len` bytes of the block, and nothing behind it.
@@ -156,36 +177,24 @@ impl<'o, 'a> Destination<'o, 'a> {
         Ok(())
     }
 
-    /// `write` writes the start of the block and returns its length. A short, tight output gets a stand-in for that.
+    /// `write` writes the start of the block, and returns something and its end. A short, tight output gets a stand-in.
     #[inline(always)]
     pub(crate) fn with_overshoot<T>(
         &mut self,
-        write: impl FnOnce(&mut Destination<'_, '_>) -> Result<(usize, T)>,
-    ) -> Result<(usize, T)> {
-        let is_short = self.history_len == 0 && self.limit <= STAND_IN_LENS[1] && !self.grows();
-        let fits = matches!(self.frame.content_size, Some(size) if size <= self.limit as u64);
-        if !(is_short && fits && self.limit + OVERSHOOT > self.out.room_with_slack()) {
+        write: impl FnOnce(&mut Destination<'_, '_>) -> Result<(T, usize)>,
+    ) -> Result<(T, usize)> {
+        let is_short = self.history_len == 0 && self.limit <= STAND_IN_LEN && !self.out.grows();
+        if !(is_short && self.limit + OVERSHOOT > self.out.room_with_slack()) {
             return write(self);
         }
-        let (mut few_bytes, mut many_bytes);
-        let bytes: &mut [u8] = if self.limit <= STAND_IN_LENS[0] {
-            few_bytes = [0; STAND_IN_LENS[0] + OVERSHOOT];
-            &mut few_bytes
-        } else {
-            many_bytes = [0; STAND_IN_LENS[1] + OVERSHOOT];
-            &mut many_bytes
-        };
-        let mut out = Output::slice(bytes);
-        let (len, rest) = write(&mut Destination::new(
-            &mut out,
-            self.frame,
-            0,
-            self.external,
-            self.room,
-        ))?;
-        drop(out);
-        (self.out).write_ahead(0, bytes.get(..len).ok_or(Error::Internal)?);
-        Ok((len, rest))
+        let mut bytes = [MaybeUninit::uninit(); STAND_IN_LEN + 2 * OVERSHOOT];
+        let bytes = bytes.get_mut(..self.limit + 2 * OVERSHOOT);
+        let mut out = Output::slice(bytes.ok_or(Error::Internal)?.write_filled(0));
+        let mut stand_in = Destination::new(&mut out, self.frame, 0, self.external, self.room);
+        let (other, len) = write(&mut stand_in)?;
+        out.commit(len);
+        self.out.write_ahead(0, out.last_written(len));
+        Ok((other, len))
     }
 
     /// To where the block starts, until the output moves.
@@ -193,39 +202,33 @@ impl<'o, 'a> Destination<'o, 'a> {
         self.out.room_ptr()
     }
 
-    pub(crate) fn grows(&self) -> bool {
+    /// Whether it is about to guess how much memory to ask for.
+    pub(crate) fn has_to_guess(&self) -> bool {
         self.out.grows()
+            && self.frame.content_size.is_none()
+            && self.out.reserved_room() < OVERSHOOT
     }
 
-    /// About how far back matches can be.
-    pub(crate) fn reach(&self) -> u64 {
-        ((self.history_len + self.external.len()) as u64).min(self.frame.window_size)
-    }
-
-    /// Where the block starts in [`Loan::out`].
+    /// Where the block starts on the [`tape`](Self::tape).
     #[inline]
     pub(crate) fn position(&self) -> usize {
-        self.history_len.min(ADJACENT_HISTORY_MAX)
+        self.history_len
     }
 
-    /// What [`Self::lend`] has behind the history.
-    pub(crate) fn lend_room(&mut self, len: usize, more: usize) -> Result<&mut [u8]> {
-        let position = self.position();
-        (self.lend(len, more)?.out.get_mut(position..)).ok_or(Error::Internal)
+    /// Where it has to end there.
+    #[inline]
+    pub(crate) fn end(&self) -> usize {
+        self.history_len + self.limit
     }
 
-    /// With `len` bytes for the block, as far as it may go. If possible also `more`, and the overshoot.
-    pub(crate) fn lend(&mut self, len: usize, more: usize) -> Result<Loan<'_>> {
+    /// The history in two parts, with room for `len` bytes of the block, and if possible `more` and the overshoot.
+    #[inline]
+    pub(crate) fn tape(&mut self, len: usize, more: usize) -> Result<(&[u8], Tape<'_>)> {
         let wanted = (len + more).min(self.limit) + OVERSHOOT;
         let is_cheap_to_move = self.out.len_to_move() <= CHEAP_TO_MOVE;
         let overshoot = if is_cheap_to_move { OVERSHOOT } else { 0 };
         self.reserve(len.min(self.limit) + overshoot, wanted)?;
-        let (mut detached, detached_len) = (self.external, self.history_len - self.position());
-        let mut out = (self.out).lend_with_slack(self.history_len, wanted, self.limit + OVERSHOOT);
-        if detached_len != 0 {
-            detached = out.split_off_mut(..detached_len).ok_or(Error::Internal)?;
-        }
-        Ok(Loan { detached, out })
+        Ok((self.external, self.out.tape(self.history_len, wanted)))
     }
 }
 
@@ -234,7 +237,7 @@ mod tests {
     use crate::{Decoder, Dictionary, Output, Result, decompress};
 
     #[test]
-    fn matches_reach_beyond_the_adjacent_history() -> Result<()> {
+    fn all_kinds_of_output_get_the_same() -> Result<()> {
         /// 800 times "a", then "6789aaaa" from 804 bytes back. Like the others, it has a checksum.
         const INTO_DICTIONARY: &[u8] = b"\x28\xb5\x2f\xfd\x04\x00\x02\x19\x00a\x45\x00\x00\x00\x01\x54\x00\x09\x05\x27\x03\x5e\x3b\x9f\x43";
         let fixtures: [(&[u8], &[u8], usize); 3] = [

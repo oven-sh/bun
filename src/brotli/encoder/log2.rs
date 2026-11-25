@@ -1,5 +1,5 @@
 /// For tables. `value` is not zero.
-pub(super) const fn const_log2(value: u32) -> f32 {
+const fn const_log2(value: u32) -> f32 {
     let exponent = value.ilog2();
     let mantissa = value as f64 / (1u32 << exponent) as f64;
     // ln(m) = 2 * atanh((m - 1) / (m + 1))
@@ -23,23 +23,6 @@ static SMALL: [f64; 256] = {
     table
 };
 
-pub(super) const FRACTION_BITS: u32 = f32::MANTISSA_DIGITS - 1;
-
-#[inline(always)]
-pub(super) fn fixed_point_log2(value: u8) -> u32 {
-    static FIXED: [u32; 256] = {
-        let (mut table, mut i) = ([0; 256], 0);
-        while i < 256 {
-            let scaled = SMALL[i] * (1 << FRACTION_BITS) as f64;
-            table[i] = scaled as u32;
-            assert!(table[i] as f64 == scaled);
-            i += 1;
-        }
-        table
-    };
-    FIXED[usize::from(value)]
-}
-
 /// Zero for zero.
 #[inline(always)]
 pub(super) fn fast_log2(value: usize) -> f64 {
@@ -57,4 +40,26 @@ pub(super) fn fast_log2(value: usize) -> f64 {
 #[inline(always)]
 pub(super) fn log2_floor(value: usize) -> u32 {
     (value as u32 | 1).ilog2()
+}
+
+/// Plus 127, with 23 bits after the point. Off by up to 0.012. Many multiplications in a row make some CPUs lower their clock.
+#[inline(always)]
+pub(super) fn fixed_point_log2(value: f32) -> i32 {
+    const ONE: i32 = 1 << (f32::MANTISSA_DIGITS - 1);
+    let bits = value.to_bits() as i32;
+    let quarter = (bits & (ONE - 1)) >> 2;
+    bits + (quarter + ONE / 100)
+        .min(ONE / 4 - quarter)
+        .min(ONE * 2 / 25)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fixed_point_log2_is_close() {
+        for value in (1..5000).map(|i| i as f32 * 0.37) {
+            let found = f64::from(super::fixed_point_log2(value)) / f64::from(1 << 23) - 127.0;
+            assert!((found - f64::from(value).log2()).abs() < 0.012, "{value}");
+        }
+    }
 }

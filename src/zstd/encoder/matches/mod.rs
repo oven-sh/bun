@@ -1,18 +1,13 @@
 //! The search for matches.
 
-mod chain;
 mod double_fast;
 mod fast;
 mod gear_table;
 mod hash;
-mod lazy;
-mod lazy_tree;
+mod ladder;
 pub(crate) mod long_distance;
 mod near;
-mod optimal;
-mod prices;
-mod rows;
-mod tree;
+pub(crate) mod staged;
 
 use core::cell::Cell;
 use core::marker::ConstParamTy;
@@ -80,21 +75,16 @@ struct Tables {
     indices: Memory,
     hash_len: usize,
     chain_len: usize,
-    hash3_len: usize,
-    tags: Memory,
-    tags_len: usize,
 }
 
 struct TablesMut<'a> {
     hash: &'a mut [u32],
     chain: &'a mut [u32],
-    hash3: &'a mut [u32],
-    tags: &'a mut [u8],
 }
 
 impl Tables {
     fn indices_len(&self) -> usize {
-        self.hash_len + self.chain_len + self.hash3_len
+        self.hash_len + self.chain_len
     }
 
     /// For when indices start lower again.
@@ -105,15 +95,9 @@ impl Tables {
 
     fn split_mut(&mut self) -> TablesMut<'_> {
         let mut indices = self.indices.get_mut();
-        let [hash, chain, hash3] = [self.hash_len, self.chain_len, self.hash3_len]
+        let [hash, chain] = [self.hash_len, self.chain_len]
             .map(|len| indices.split_off_mut(..len).unwrap_or_default());
-        let tags = self.tags.get_mut().get_mut(..self.tags_len);
-        TablesMut {
-            hash,
-            chain,
-            hash3,
-            tags: tags.unwrap_or_default(),
-        }
+        TablesMut { hash, chain }
     }
 }
 
@@ -160,10 +144,7 @@ impl Bounds {
 struct Attached<'a> {
     hash: &'a [u32],
     chain: &'a [u32],
-    tags: &'a [u8],
     tuning: Tuning,
-    /// Of the byte after the last one, in terms of these tables.
-    end: u32,
     /// Added to an index of these tables, makes it one of the history.
     delta: u32,
 }
@@ -174,9 +155,7 @@ impl Attached<'_> {
         Self {
             hash: &[],
             chain: &[],
-            tags: &[],
             tuning,
-            end: FIRST_INDEX,
             delta: 0,
         }
     }
@@ -264,14 +243,14 @@ pub(crate) enum Owner {
 
 pub(crate) struct MatchState {
     pub(crate) tuning: Tuning,
-    pub(crate) uses_rows: bool,
     pub(crate) window: Window,
     /// Of the byte after a dictionary that is within reach, or 0.
     pub(crate) dictionary_end: u32,
     /// From which on the tables are not up to date.
     pub(crate) next_to_index: u32,
     tables: Tables,
-    optimal: Option<Box<optimal::State>>,
+    /// For the strategies that do without `tables`.
+    ladder: Option<Box<ladder::State>>,
 }
 
 impl MatchState {
@@ -279,50 +258,69 @@ impl MatchState {
     pub(crate) fn new(tuning: Tuning) -> Self {
         Self {
             tuning,
-            uses_rows: false,
             window: Window::starting_at(FIRST_INDEX),
             dictionary_end: 0,
             next_to_index: FIRST_INDEX,
             tables: Tables::default(),
-            optimal: None,
+            ladder: None,
         }
     }
 
-    /// What the tables hold stays, out of reach. `loaded_len` bytes are going to be [`load`](Self::load)ed.
-    pub(crate) fn reset(
-        &mut self,
-        tuning: Tuning,
-        uses_rows: bool,
-        owner: Owner,
-        loaded_len: usize,
-    ) -> Result<()> {
+    /// What the tables hold stays, out of reach.
+    fn forget(&mut self, tuning: Tuning, loaded_len: usize) {
         // Clearing the tables is faster than lowering their indices.
         if self.window.would_overflow(loaded_len + (16 << 20)) {
             self.tables.indices.0.clear();
             self.window.next = FIRST_INDEX;
         }
-        (self.tuning, self.uses_rows) = (tuning, uses_rows);
+        self.tuning = tuning;
         self.window = Window::starting_at(self.window.next.max(FIRST_INDEX));
         self.dictionary_end = 0;
         self.next_to_index = self.window.next;
+    }
 
-        let is_optimal = owner == Owner::Frame && tuning.strategy >= Strategy::Optimal;
-        let has_chain = tuning.strategy != Strategy::Fast && !uses_rows;
-        let has_hash3 = is_optimal && tuning.min_match == 3;
+    /// `loaded_len` bytes are going to be [`load`](Self::load)ed.
+    pub(crate) fn reset(&mut self, tuning: Tuning, loaded_len: usize) -> Result<()> {
+        self.forget(tuning, loaded_len);
+        self.reset_tables()
+    }
+
+    /// Takes over from another search, and indexes the last of what precedes the start of `history`.
+    pub(crate) fn resume(&mut self, history: &History<'_>) -> Result<()> {
+        let start = history.start.saturating_sub(32 << 10);
+        self.next_to_index = history.index(start);
+        self.free_tables();
+        self.reset_tables()?;
+        self.fill::<{ Owner::Frame }>(&history.part(start, history.start), || false)
+    }
+
+    fn reset_tables(&mut self) -> Result<()> {
+        let tuning = self.tuning;
+        if tuning.strategy > Strategy::DoubleFast {
+            self.tables = Tables::default();
+            let ladder = match &mut self.ladder {
+                Some(ladder) => ladder,
+                None => self.ladder.insert(ladder::State::new()?),
+            };
+            ladder.reset(&tuning, tuning.window_log, self.next_to_index);
+            return Ok(());
+        }
+        self.ladder = None;
         let tables = &mut self.tables;
         tables.hash_len = 1 << tuning.hash_log;
-        tables.chain_len = usize::from(has_chain) << tuning.chain_log;
-        tables.hash3_len = usize::from(has_hash3) << tuning.window_log.min(17);
-        tables.tags_len = usize::from(uses_rows) << tuning.hash_log;
-        tables.indices.make_room::<u32>(tables.indices_len())?;
-        tables.tags.make_room::<u8>(tables.tags_len)?;
+        tables.chain_len = usize::from(tuning.strategy != Strategy::Fast) << tuning.chain_log;
+        tables.indices.make_room::<u32>(tables.indices_len())
+    }
 
-        match &mut self.optimal {
-            Some(optimal) => optimal.forget(),
-            None if is_optimal => self.optimal = Some(optimal::State::new()?),
-            None => {}
-        }
-        Ok(())
+    /// For when only the window is needed, which starts with `loaded_len` bytes.
+    pub(crate) fn reset_window(&mut self, tuning: Tuning, loaded_len: usize) {
+        self.forget(tuning, loaded_len);
+        (self.ladder, self.tables.hash_len, self.tables.chain_len) = (None, 0, 0);
+        self.window.next += loaded_len as u32;
+    }
+
+    pub(crate) fn free_tables(&mut self) {
+        (self.tables, self.ladder) = (Tables::default(), None);
     }
 
     /// For when only searches index. The fast ones leave out the first byte, so 0 can still stand for nothing.
@@ -343,19 +341,24 @@ impl MatchState {
 
     /// How many bytes the tables take, and how many of them are needed.
     pub(crate) fn tables_len(&self) -> [usize; 2] {
-        let Tables { indices, tags, .. } = &self.tables;
-        [
-            (indices.0.capacity() + tags.0.capacity()) * size_of::<CacheLine>(),
-            self.tables.indices_len() * size_of::<u32>() + self.tables.tags_len,
-        ]
+        match &self.ladder {
+            Some(ladder) => ladder.tables_len(&self.tuning),
+            None => [
+                self.tables.indices.0.capacity() * size_of::<CacheLine>(),
+                self.tables.indices_len() * size_of::<u32>(),
+            ],
+        }
     }
 
     /// Makes room for searching `len` bytes.
-    pub(crate) fn reserve(&mut self, len: usize) -> Result<()> {
-        match &mut self.optimal {
-            Some(optimal) => optimal.reserve(len),
-            None => Ok(()),
+    pub(crate) fn reserve(&mut self, len: usize, has_long_matches: bool) -> Result<()> {
+        let Some(ladder) = &mut self.ladder else {
+            return Ok(());
+        };
+        if has_long_matches {
+            ladder.reserve_hints()?;
         }
+        ladder.reserve(&self.tuning, len)
     }
 
     /// For a history whose prefix starts at `prefix_index`.
@@ -366,40 +369,41 @@ impl MatchState {
         Attached {
             hash,
             chain,
-            tags: tables.tags.get(),
             tuning: self.tuning,
-            end,
             delta: prefix_index.wrapping_sub(end),
         }
     }
 
     /// Goes on from where the tables of a dictionary, which have the same sizes, are.
-    pub(crate) fn copy_from(&mut self, dictionary: &Self) {
-        let Attached {
-            hash, chain, tags, ..
-        } = dictionary.as_attached(0);
+    pub(crate) fn copy_from(&mut self, dictionary: &Self) -> Result<()> {
+        if let (Some(to), Some(from)) = (&mut self.ladder, &dictionary.ladder) {
+            to.copy_from(from)?;
+        }
+        let Attached { hash, chain, .. } = dictionary.as_attached(0);
         self.tables.drop_unused();
         let to = self.tables.split_mut();
-        let has_tags = self.tuning.strategy <= Strategy::DoubleFast;
-        let shift = if has_tags { TAG_BITS } else { 0 };
         for (to, from) in [(to.hash, hash), (to.chain, chain)] {
             for (to, from) in to.iter_mut().zip(from) {
-                *to = from >> shift;
+                *to = from >> TAG_BITS;
             }
-        }
-        to.hash3.fill(0);
-        for (to, from) in to.tags.iter_mut().zip(tags) {
-            *to = *from;
         }
         self.window = dictionary.window;
         self.next_to_index = dictionary.next_to_index;
         self.dictionary_end = dictionary.dictionary_end;
+        Ok(())
     }
 
     /// Leaves room below the input for the indices of a dictionary.
     pub(crate) fn attach(&mut self, dictionary: &Self) {
         self.window = Window::starting_at(dictionary.window.next.max(self.window.next));
         self.dictionary_end = self.window.next;
+        if let Some(ladder) = &mut self.ladder {
+            ladder.reset(
+                &self.tuning,
+                self.tuning.window_log.max(23),
+                self.window.next,
+            );
+        }
     }
 
     /// The end of `content` that the tables of a dictionary can tell apart.
@@ -420,8 +424,12 @@ impl MatchState {
         &mut self,
         content: &[u8],
         is_abandoned: impl Fn() -> bool,
-    ) {
+    ) -> Result<()> {
         let tuning = self.tuning;
+        if let (Owner::Dictionary, Some(ladder)) = (OWNER, &mut self.ladder) {
+            // The frames that copy the tables can have larger windows.
+            ladder.reset(&tuning, tuning.window_log.max(23), self.window.next);
+        }
         let worth_log = (tuning.hash_log + 3).max(tuning.chain_log + 1).min(31);
         let start = content.len().saturating_sub(1 << worth_log);
         let history = self
@@ -433,21 +441,31 @@ impl MatchState {
         if OWNER == Owner::Dictionary {
             self.dictionary_end = end;
         }
-        if content.len() - start <= WORD_LEN {
-            return;
-        }
+        self.fill::<OWNER>(&history.part(start as u32, history.end()), is_abandoned)
+    }
 
-        let last = history.end() - WORD;
-        match tuning.strategy {
-            Strategy::Fast => fast::fill::<OWNER>(self, &history),
-            Strategy::DoubleFast => double_fast::fill::<OWNER>(self, &history),
-            _ if self.uses_rows => rows::fill(self, &history, last),
-            Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2 => {
-                chain::fill(self, &history, last);
-            }
-            _ => drop(tree::fill(self, &history, last, is_abandoned)),
+    fn fill<const OWNER: Owner>(
+        &mut self,
+        history: &History<'_>,
+        is_abandoned: impl Fn() -> bool,
+    ) -> Result<()> {
+        let (tuning, len) = (self.tuning, history.block().len());
+        if len <= WORD_LEN {
+            return Ok(());
         }
-        self.next_to_index = end;
+        match &mut self.ladder {
+            Some(ladder) => {
+                ladder.reserve(&tuning, len)?;
+                ladder.fill(history, is_abandoned);
+                if OWNER == Owner::Dictionary {
+                    ladder.drop_work();
+                }
+            }
+            None if tuning.strategy == Strategy::Fast => fast::fill::<OWNER>(self, history),
+            None => double_fast::fill::<OWNER>(self, history),
+        }
+        self.next_to_index = history.index(history.end());
+        Ok(())
     }
 
     pub(crate) fn admit(&mut self, input: &Input<'_>) {
@@ -487,16 +505,12 @@ impl MatchState {
                 index - by
             }
         };
-        let has_marks = self.tuning.strategy == Strategy::TreeLazy2;
         self.tables.drop_unused();
-        let tables = self.tables.split_mut();
-        for index in tables.hash.iter_mut().chain(tables.hash3) {
+        for index in self.tables.indices.get_mut() {
             *index = lower(*index);
         }
-        for index in tables.chain {
-            if !(has_marks && *index == lazy_tree::UNSORTED) {
-                *index = lower(*index);
-            }
+        if let Some(ladder) = &mut self.ladder {
+            ladder.bias = ladder.bias.wrapping_add(by);
         }
         self.next_to_index = self.next_to_index.saturating_sub(by);
     }
@@ -540,6 +554,10 @@ impl MatchState {
         sequences: &mut Sequences,
         repeats: &mut Repeats,
     ) -> u32 {
+        let max_distance = self.bounds().max_distance;
+        if let Some(ladder) = &mut self.ladder {
+            return ladder.search(&self.tuning, max_distance, search, sequences, repeats);
+        }
         match search.attached {
             _ if self.window.has_older() => {
                 let none = Attached::empty(self.tuning);
@@ -566,22 +584,13 @@ impl MatchState {
         let history = &search.history;
         match self.tuning.strategy {
             Strategy::Fast => fast::search::<REACH>(self, history, attached, sequences, repeats),
-            Strategy::DoubleFast => {
-                double_fast::search::<REACH>(self, history, attached, sequences, repeats)
-            }
-            Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2 | Strategy::TreeLazy2 => {
-                lazy::search::<REACH>(self, history, attached, sequences, repeats)
-            }
-            Strategy::Optimal | Strategy::Ultra | Strategy::Ultra2 => {
-                optimal::search::<REACH>(self, search, attached, sequences, repeats)
-            }
+            _ => double_fast::search::<REACH>(self, history, attached, sequences, repeats),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::lazy::Finder;
     use super::*;
     use crate::parameters::{Purpose, Request};
 
@@ -592,67 +601,53 @@ mod tests {
         }
         let tuning = request.tuning(None, Purpose::Frame { dictionary_len: 0 });
         let mut state = MatchState::new(tuning);
-        state.reset(tuning, false, Owner::Frame, 0)?;
+        state.reset(tuning, 0)?;
         Ok(state)
     }
 
     #[test]
     fn tables_are_lowered_with_the_window() -> Result<()> {
-        const BY: u32 = INDEX_MAX - 4096 - 512;
-        for (strategy, mark) in [(6, lazy_tree::UNSORTED), (7, 0)] {
-            let mut state = state(strategy)?;
-            state.window = Window::starting_at(INDEX_MAX);
-            state.next_to_index = INDEX_MAX - 1;
-            let before = [lazy_tree::UNSORTED, BY + 1, BY + 2, INDEX_MAX - 1];
-            let tables = state.tables.split_mut();
-            for table in [tables.hash, tables.chain, tables.hash3] {
-                table
-                    .iter_mut()
-                    .zip(before)
-                    .for_each(|(to, from)| *to = from);
-            }
-            // Left by a frame with larger tables
-            state.tables.indices.0.push(CacheLine([0xFF; _]));
-
-            state.prepare_for(1);
-            assert_eq!(state.next_to_index, 4096 + 512);
-            let used = state.tables.indices_len();
-            assert_eq!(state.tables.indices.get::<u32>().len(), used);
-            let tables = state.tables.split_mut();
-            assert!(tables.hash.starts_with(&[0, 0, 2, 4607]));
-            assert!(tables.chain.starts_with(&[mark, 0, 2, 4607]));
-            assert_eq!(tables.hash3.starts_with(&[0, 0, 2, 4607]), strategy == 7);
+        const BY: u32 = INDEX_MAX - 4096 - 1024;
+        let mut state = state(2)?;
+        state.window = Window::starting_at(INDEX_MAX);
+        state.next_to_index = INDEX_MAX - 1;
+        let tables = state.tables.split_mut();
+        for table in [tables.hash, tables.chain] {
+            let before = [1, BY + 1, BY + 2, INDEX_MAX - 1];
+            (table.iter_mut().zip(before)).for_each(|(to, from)| *to = from);
         }
+        // Left by a frame with larger tables
+        state.tables.indices.0.push(CacheLine([0xFF; _]));
+
+        state.prepare_for(1);
+        assert_eq!(state.next_to_index, 4096 + 1024);
+        let used = state.tables.indices_len();
+        assert_eq!(state.tables.indices.get::<u32>().len(), used);
+        let tables = state.tables.split_mut();
+        assert!(tables.hash.starts_with(&[0, 0, 2, 5119]));
+        assert!(tables.chain.starts_with(&[0, 0, 2, 5119]));
         Ok(())
     }
 
     #[test]
-    fn what_stays_in_a_chain_counts_as_indexed() -> Result<()> {
-        let history = |prefix| History {
-            prefix,
-            prefix_index: FIRST_INDEX,
-            older: &[],
-            start: 0,
-        };
-        for (at_the_end, stays) in [(b"0123456789", false), (b"9876543210", true)] {
-            let mut state = state(4)?;
-            let none = Attached::empty(state.tuning);
-            let mut chains = chain::Chains::new(&mut state, &none);
-            chains.find::<{ Reach::Prefix }>(&history(b"0123456789"), &mut (), 1, false);
-            let next = chains.finish(&history(at_the_end));
-            assert_eq!(next, FIRST_INDEX + 1 + u32::from(stays));
-            assert!(state.tables.split_mut().hash.iter().all(|&it| it < next));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn a_tree_is_not_filled_for_nothing() -> Result<()> {
-        for is_abandoned in [false, true] {
+    fn a_ladder_finds_what_was_loaded() -> Result<()> {
+        let bytes = b"What was loaded?".repeat(2);
+        for (is_abandoned, is_lowered) in [(false, false), (false, true), (true, false)] {
             let mut state = state(7)?;
-            state.load::<{ Owner::Frame }>(b"0123456789abcdef", || is_abandoned);
-            let is_empty = state.tables.split_mut().hash.iter().all(|&it| it == 0);
-            assert_eq!(is_empty, is_abandoned);
+            state.window.next = 1 << 20;
+            state.reset(state.tuning, 16)?;
+            state.load::<{ Owner::Frame }>(b"What was loaded?", || is_abandoned)?;
+            if is_lowered {
+                state.lower_indices();
+            }
+            let search = Search {
+                history: (state.window).history(&Input::alone(&bytes, &[]), 16, 16),
+                attached: None,
+                entropy: &Entropy::EMPTY,
+                long_matches: None,
+            };
+            let end = state.search(&search, &mut Sequences::new(), &mut Repeats::default());
+            assert_eq!(end, if is_abandoned { 16 } else { 32 }, "{is_lowered}");
         }
         Ok(())
     }

@@ -62,14 +62,6 @@ unsafe extern "C" fn highway_copy_and_adler32(
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn highway_subtract_saturating(values: *mut u16, groups: usize, amount: u16) {
-    // SAFETY: the caller passes a slice of groups of 64.
-    for value in unsafe { slice::from_raw_parts_mut(values, 64 * groups) } {
-        *value = value.saturating_sub(amount);
-    }
-}
-
-#[unsafe(no_mangle)]
 unsafe extern "C" fn highway_repeat(from: *const u8, to: *mut u8, period: usize, len: usize) {
     assert!((1..32).contains(&period) && (1..=MATCH_SPAN - 31).contains(&len));
     // SAFETY: both have `MATCH_SPAN` bytes.

@@ -288,7 +288,8 @@ describe("the reader and the writer compose on Windows", () => {
 });
 
 // Each output was compared with libarchive's, byte for byte, when it was recorded. Names that npm does
-// not find in a pax header have got a GNU one since. A compressed or a long one is kept as its hash.
+// not find in a pax header have got a GNU one since. A long one is kept as its hash, a compressed one as that of
+// what it decompresses to.
 describe("the tar writer writes what libarchive did", async () => {
   const cases = (await loadCases<WriterCase>(join(import.meta.dir, "writer.json.gz"))).map((c, index) => ({
     ...c,
@@ -315,7 +316,7 @@ describe("the tar writer writes what libarchive did", async () => {
     const group = cases.filter(belongs);
     expect(group.length).toBeGreaterThan(20);
     const results = group.map(c => {
-      const actual = Buffer.from(write(c));
+      const actual = Buffer.from(c.gzipLevel === null ? write(c) : Bun.gunzipSync(write(c)));
       if (!("expected" in c)) {
         return { index: c.index, expected: `${c.length} bytes, sha256 ${c.sha256}\n`, actual: sha256(actual) };
       }

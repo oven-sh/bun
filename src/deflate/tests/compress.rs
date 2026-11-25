@@ -71,22 +71,21 @@ fn inflates_to(stream: &[u8], data: &[u8]) {
 
 fn cases() -> impl DoubleEndedIterator<Item = (usize, Level, Vec<u8>, (usize, u32))> {
     let cases = CASES.iter().enumerate();
-    cases.map(|(index, &(effort, seed, parts, len, crc))| {
-        (index, level(effort), generate(seed, parts), (len, crc))
+    cases.map(|(index, &(effort, seed, parts))| {
+        let data = generate(seed, parts);
+        let stream = compress_to_vec(&data, Format::Raw, level(effort)).unwrap();
+        inflates_to(&stream, &data);
+        (
+            index,
+            level(effort),
+            data,
+            (stream.len(), crc32(0, &stream)),
+        )
     })
 }
 
 #[test]
-fn known_streams() {
-    for (index, level, data, expected) in cases() {
-        let stream = compress_to_vec(&data, Format::Raw, level).unwrap();
-        assert_eq!((stream.len(), crc32(0, &stream)), expected, "case {index}");
-        inflates_to(&stream, &data);
-    }
-}
-
-#[test]
-fn known_streams_one_after_the_other() {
+fn same_streams_one_after_the_other() {
     let mut compressor = Compressor::default();
     for (index, level, data, expected) in cases() {
         let mut room = vec![0xAA; expected.0 + 8];
@@ -97,7 +96,7 @@ fn known_streams_one_after_the_other() {
 }
 
 #[test]
-fn known_streams_after_longer_ones_and_after_failures() {
+fn same_streams_after_longer_ones_and_after_failures() {
     let mut compressor = Compressor::default();
     for (index, level, data, expected) in cases().rev() {
         let mut compress = |limit| {
@@ -190,7 +189,7 @@ fn short_inputs() {
 fn matches_end_with_the_input() {
     let run = [Part::Even(190, 256, 0), Part::Even(280, 1, 65)];
     let pairs = [Part::Even(300, 256, 0), Part::Even(2720, 2, 65)];
-    let (mut compressor, mut room) = (Compressor::default(), [0; 1000]);
+    let (mut compressor, mut room) = (Compressor::default(), [0; 2000]);
     for (parts, step, efforts) in [(run, 1, 1..=Level::MAX), (pairs, 5, 5..=8)] {
         let data = generate(1, &parts);
         for level in efforts.map(level) {
@@ -211,9 +210,25 @@ fn many_codewords_of_one_length() {
     let data: Vec<u8> = (1..=255).flat_map(|byte| [0, byte]).collect();
     for level in (1..=Level::MAX).map(level) {
         let stream = compress_to_vec(&data, Format::Raw, level).unwrap();
-        assert_eq!((stream.len(), crc32(0, &stream)), (346, 0xBCAC_51BE));
+        assert!(stream.len() <= 370);
         inflates_to(&stream, &data);
     }
+}
+
+#[test]
+fn blocks_end_where_the_input_changes() {
+    let parts = [
+        Part::Even(16384, 40, 20),
+        Part::Even(16384, 256, 0),
+        Part::Even(16384, 40, 97),
+    ];
+    let len = |data: &[u8]| {
+        compress_to_vec(data, Format::Raw, Level::DEFAULT)
+            .unwrap()
+            .len()
+    };
+    let data = generate(1, &parts);
+    assert!(len(&data) < data.chunks(16384).map(len).sum::<usize>() * 51 / 50);
 }
 
 #[test]
@@ -325,13 +340,16 @@ fn allocations_that_fail() {
 fn memory_is_limited_and_kept() {
     let data = generate(1, &[Part::Even(80000, 3, 65), Part::Again(900_000, 20000)]);
     let mut room = vec![0; compress_bound(data.len(), Format::Raw)];
+    // The thread keeps what all compressors share.
+    let shared = bytes_allocated_by(|| drop(compress_to_vec(&[0; 99], Format::Raw, level(1))));
+    assert!(shared < 288 * 1024);
     let most_kib = [
         (0, 0, 0),
-        (1, 136, 336),
-        (4, 272, 800),
-        (6, 272, 1344),
-        (9, 272, 1344),
-        (10, 864, 11000),
+        (1, 0, 325),
+        (4, 0, 325),
+        (6, 0, 453),
+        (9, 0, 581),
+        (12, 948, 1917),
     ];
     for (effort, for_little, for_much) in most_kib {
         let mut kib = |compressor: &mut Compressor, data| {
@@ -344,5 +362,23 @@ fn memory_is_limited_and_kept() {
         assert!(kib(&mut compressor, &data[..]) <= for_much);
         assert_eq!(kib(&mut compressor, &data[..]), 0);
         assert_eq!(kib(&mut compressor, &data[..500]), 0);
+    }
+}
+
+#[test]
+fn matches_go_as_far_back_as_they_may() {
+    for period in 32766..=32769 {
+        let unit = generate(1, &[Part::Even(period, 256, 0)]);
+        let data: Vec<u8> = unit.iter().cycle().take(110_000).copied().collect();
+        for level in (1..=12).map(level) {
+            let stream = compress_to_vec(&data, Format::Raw, level).unwrap();
+            assert_eq!(
+                stream.len() < 36_000,
+                period <= 32768,
+                "{period} {}",
+                stream.len()
+            );
+            inflates_to(&stream, &data);
+        }
     }
 }

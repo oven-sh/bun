@@ -64,6 +64,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
+use crate::node::node_zlib_binding::{OutputScratch, QUICK_OUTPUT_LEN, SpareCodecMemory};
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
@@ -723,6 +724,7 @@ pub(crate) fn gc(vm: &VirtualMachine, sync: bool) -> usize {
 
 pub(crate) fn shrink(cx: &mut JsScope<'_>) {
     cx.global().vm().shrink_footprint();
+    SpareCodecMemory::free();
 }
 
 enum Resolved {
@@ -1591,6 +1593,13 @@ pub(crate) mod JSZlib {
         }
     }
 
+    fn finish<'a>(heap: &JsHeap<'a>, out: OutputScratch) -> BufferResult<'a> {
+        out.finish(
+            |out| heap.create_uint8_array(out),
+            |out| heap.create_uint8_array_from_box(out),
+        )
+    }
+
     const ZLIB_ERROR: &str = "Zlib returned an error";
 
     fn zlib_error<'a>(heap: &JsHeap<'a>, err: bun_zlib::Error) -> bindgen::Error<'a> {
@@ -1653,34 +1662,10 @@ pub(crate) mod JSZlib {
     ) -> BufferResult<'a> {
         let library = Library::from_option(heap, options.library)?;
 
-        let mut list: Vec<u8> = Vec::new();
-        let mut reserved = false;
-        if is_gzip && compressed.len() > 64 {
-            // The gzip trailer is CRC32 then ISIZE, the uncompressed size mod 2^32 (RFC 1952 2.3.1).
-            let estimated_size: u32 = u32::from_le_bytes(
-                compressed[compressed.len() - 4..][..4]
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
-            if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
-                // The trailer is untrusted; if its size cannot be reserved, start small and grow.
-                let size = estimated_size as usize;
-                let is_compressed = size > compressed.len();
-                let spare = usize::from(is_compressed) * inflate::SPARE_CAPACITY;
-                reserved = list.try_reserve_exact((size + spare).max(64)).is_ok();
-            }
-        }
-        if !reserved {
-            list.try_reserve_exact(if compressed.len() > 512 {
-                compressed.len()
-            } else {
-                4 * compressed.len() + inflate::SPARE_CAPACITY
-            })
-            .map_err(|_| bun_alloc::AllocError)?;
-        }
-
+        let mut out = OutputScratch::for_decoder(compressed);
         let max_output = ArrayBuffer::MAX_SIZE;
+        inflate::reserve_for(compressed, is_gzip, &mut out.0, max_output)
+            .map_err(|err| zlib_error(heap, err))?;
         match library {
             Library::Zlib => {
                 let window_bits = options
@@ -1688,13 +1673,11 @@ pub(crate) mod JSZlib {
                     .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32);
                 let status = Inflater::from_zlib_window_bits(window_bits)
                     .and_then(|mut inflater| {
-                        inflater.inflate_to_vec(&mut { compressed }, &mut list, max_output)
+                        inflater.inflate_to_vec(&mut { compressed }, &mut out.0, max_output)
                     })
                     .map_err(|err| zlib_error(heap, err))?;
                 match status {
-                    inflate::Status::StreamEnd => {
-                        heap.create_uint8_array_from_box(list.into_boxed_slice())
-                    }
+                    inflate::Status::StreamEnd => finish(heap, out),
                     inflate::Status::NeedsOutput => Err(too_large_error(heap)),
                     _ => Err(heap.error(format_args!("{ZLIB_ERROR}"))),
                 }
@@ -1705,9 +1688,9 @@ pub(crate) mod JSZlib {
                 } else {
                     bun_deflate::inflate
                 };
-                let (vec, limit) = (&mut list, max_output);
+                let (vec, limit) = (&mut out.0, max_output);
                 match decompress(compressed, Output::Vec { vec, limit }) {
-                    Ok(_) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
+                    Ok(_) => finish(heap, out),
                     Err(Error::Alloc(err)) => Err(err.into()),
                     Err(Error::InsufficientSpace) => Err(too_large_error(heap)),
                     Err(err) => {
@@ -1733,7 +1716,7 @@ pub(crate) mod JSZlib {
                 } else {
                     deflate::Container::Raw
                 };
-                let mut list: Vec<u8> = Vec::new();
+                let mut out = OutputScratch::for_encoder();
                 let mut compress = || {
                     let options = deflate::Options {
                         level: level.try_into()?,
@@ -1741,10 +1724,10 @@ pub(crate) mod JSZlib {
                         memory_level: options.mem_level as u8,
                         ..Default::default()
                     };
-                    deflate::compress(data, &mut list, container, options)
+                    deflate::compress(data, &mut out.0, container, options)
                 };
                 compress().map_err(|err| zlib_error(heap, err))?;
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
+                finish(heap, out)
             }
             Library::Libdeflate => {
                 let Some(level) = Level::new(level) else {
@@ -1834,13 +1817,26 @@ pub(crate) mod JSZstd {
     }
 
     /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
-    fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
+    fn compress_to_box(
+        spare: &mut bun_zstd::Spare,
+        input: &[u8],
+        level: i32,
+    ) -> Result<Box<[u8]>, Failure> {
         let mut output = Vec::new();
-        match bun_zstd::compress_append(&mut output, input, level) {
-            Ok(()) => Ok(output.into_boxed_slice()),
-            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
-            Err(err) => Err(Failure::Compression(err)),
-        }
+        compress_to(spare, &mut output, input, level)?;
+        Ok(output.into_boxed_slice())
+    }
+
+    fn compress_to(
+        spare: &mut bun_zstd::Spare,
+        output: &mut Vec<u8>,
+        input: &[u8],
+        level: i32,
+    ) -> Result<(), Failure> {
+        bun_zstd::compress_append_with(spare, output, input, level).map_err(|err| match err {
+            bun_zstd::Error::MemoryAllocation => Failure::OutOfMemory,
+            err => Failure::Compression(err),
+        })
     }
 
     fn decompress_to_box(
@@ -1858,16 +1854,20 @@ pub(crate) mod JSZstd {
         options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
         let level = level_of(heap, options)?;
-        let output = compress_to_box(data, level).map_err(|failure| failure.into_error(heap))?;
-        heap.create_buffer_from_box(output)
+        let mut out = OutputScratch::for_encoder();
+        SpareCodecMemory::with(|it| compress_to(&mut it.zstd_encoder, &mut out.0, data, level))
+            .map_err(|failure| failure.into_error(heap))?;
+        out.finish(
+            |out| heap.create_buffer(out),
+            |out| heap.create_buffer_from_box(out),
+        )
     }
 
     pub(crate) fn decompress_sync<'a>(
         heap: &JsHeap<'a>,
         data: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let output = (crate::jsc_hooks::runtime_state().zstd_tables)
-            .with_mut(|spare| decompress_to_box(spare, data))
+        let output = SpareCodecMemory::with(|it| decompress_to_box(&mut it.zstd_decoder, data))
             .map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
@@ -1879,8 +1879,26 @@ pub(crate) mod JSZstd {
         pub buffer: PinnedBytes,
         pub is_compress: bool,
         pub level: i32,
-        /// Filled in by `run`.
-        pub result: Result<Box<[u8]>, Failure>,
+        pub result: Option<Result<Box<[u8]>, Failure>>,
+    }
+
+    impl ZstdJob {
+        /// It takes less than getting to another thread and back.
+        fn is_short(&self) -> bool {
+            self.buffer.len() <= 4096
+                && match self.is_compress {
+                    true => self.level <= 4,
+                    false => bun_zstd::declared_len(&self.buffer)
+                        .is_some_and(|len| len <= QUICK_OUTPUT_LEN as u64),
+                }
+        }
+
+        fn work(&mut self, spare: &mut SpareCodecMemory) {
+            self.result.get_or_insert_with(|| match self.is_compress {
+                true => compress_to_box(&mut spare.zstd_encoder, &self.buffer, self.level),
+                false => decompress_to_box(&mut spare.zstd_decoder, &self.buffer),
+            });
+        }
     }
 
     impl jsc::JobContext for ZstdJob {
@@ -1891,13 +1909,7 @@ pub(crate) mod JSZstd {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            let input = &this.buffer[..];
-
-            this.result = if this.is_compress {
-                compress_to_box(input, this.level)
-            } else {
-                decompress_to_box(&mut bun_zstd::SpareTables::default(), input)
-            };
+            this.work(&mut SpareCodecMemory::default());
             Some(done)
         }
 
@@ -1909,7 +1921,7 @@ pub(crate) mod JSZstd {
             let global_this = cx.global();
             let promise = promise.swap();
 
-            match this.result {
+            match this.result.unwrap_or_else(|| Ok(Box::default())) {
                 Ok(output) => promise.settle(
                     global_this,
                     JSValue::create_buffer_from_box(global_this, output),
@@ -1929,16 +1941,18 @@ pub(crate) mod JSZstd {
     ) -> JSValue {
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
-        jsc::Job::<ZstdJob>::schedule(
-            &cx.js_thread(),
-            ZstdJob {
-                buffer,
-                is_compress,
-                level,
-                result: Ok(Box::default()),
-            },
-            promise,
-        );
+        let mut job = ZstdJob {
+            buffer,
+            is_compress,
+            level,
+            result: None,
+        };
+        if job.is_short() {
+            SpareCodecMemory::with(|spare| job.work(spare));
+            jsc::Job::<ZstdJob>::run_here(&cx.js_thread(), job, promise);
+        } else {
+            jsc::Job::<ZstdJob>::schedule(&cx.js_thread(), job, promise);
+        }
         promise_value
     }
 

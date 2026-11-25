@@ -1,8 +1,7 @@
 //! What the search for matches makes of a block.
 
-use core::hint::select_unpredictable;
-
 use bun_highway::with_bmi2;
+use bun_highway::zstd_stages::{Found, SLACK, Searcher, Trend};
 use bun_zstd_decoder::array::{At, grow, resize};
 use bun_zstd_decoder::format::CodeKind::{self, LiteralLength, MatchLength, Offset};
 use bun_zstd_decoder::format::{
@@ -60,14 +59,6 @@ impl Repeats {
     fn get(self, number: u32) -> u32 {
         let [first, second, third] = self.0;
         *[first, second, third, first.wrapping_sub(1)].at(number as usize)
-    }
-
-    /// The offsets that the numbers stand for.
-    #[inline(always)]
-    pub(crate) fn numbered(self, has_literals: bool) -> [u32; 3] {
-        let [first, second, third] = self.0;
-        let shifted = [second, third, first.wrapping_sub(1)];
-        select_unpredictable(has_literals, self.0, shifted)
     }
 
     #[inline(always)]
@@ -151,11 +142,6 @@ impl LengthCode {
     }
 
     #[inline(always)]
-    pub(crate) fn code(self) -> usize {
-        usize::from(self.symbol()) % SYMBOLS
-    }
-
-    #[inline(always)]
     pub(crate) fn bits(self) -> u32 {
         self.0 >> Self::BITS_SHIFT
     }
@@ -175,6 +161,8 @@ pub(crate) struct Sequence {
     /// By [`CodeKind`], and the number of extra bits.
     symbols: [u8; 4],
 }
+
+bun_pod::impl_pod!(Sequence);
 
 impl Sequence {
     #[inline(always)]
@@ -244,6 +232,10 @@ impl Sequence {
     pub(crate) fn set_offset(&mut self, offset: OffsetValue) {
         *self = Self::new(self.literal_len(), offset, self.match_base());
     }
+
+    pub(crate) fn drop_literals(&mut self, count: u32) {
+        *self = Self::new(self.literal_len() - count, self.offset(), self.match_base());
+    }
 }
 
 pub(crate) fn literals_len(sequences: &[Sequence]) -> usize {
@@ -273,6 +265,23 @@ pub(crate) fn count_codes(sequences: &[Sequence]) -> CodeCounts {
     counts
 }
 
+fn highest_offset_code(counts: &CodeCounts) -> usize {
+    let codes = (0..SYMBOLS as u32 / 2).zip(counts.iter().skip(first_symbol(Offset)));
+    // Without branches, it compiles to vector instructions.
+    codes.fold(0, |highest, (code, &count)| {
+        highest.max(if count != 0 { code } else { 0 })
+    }) as usize
+}
+
+/// On average, states take so much less than they can that it makes up for the extra bits of lengths up to 128.
+pub(crate) fn stream_len_max(sequences: &[Sequence], counts: &CodeCounts) -> usize {
+    const STATE_BITS: usize = 9 + 8 + 9;
+    if sequences.len() < 64 {
+        return sequences.len() * 12;
+    }
+    sequences.len() * (STATE_BITS + highest_offset_code(counts)) / 8 + sequences.len().min(1024) * 4
+}
+
 /// Most output starts with a page, so these do not: https://sourceware.org/bugzilla/show_bug.cgi?id=30994
 const LITERALS_START: usize = 256;
 /// How far the copy of literals may go past their end.
@@ -298,12 +307,55 @@ fn copy_literals(block: &[u8], from: u32, literals: &mut Vec<u8>, to: u32, len: 
     Some(())
 }
 
+/// Where a block could end, by what comes before.
+#[derive(Clone, Copy)]
+pub(crate) struct Mark {
+    pub(crate) sequences: u32,
+    pub(crate) literals: u32,
+    pub(crate) bytes: u32,
+    /// How many of the literals belong to the next sequence, which has more.
+    pub(crate) borrowed: u32,
+    pub(crate) codes: CodeCounts,
+    /// Left to those who need it.
+    pub(crate) histogram: [u32; 256],
+}
+
+/// `run` literals start at `start`, and get to `next`. Returns where the next mark is due.
+#[cold]
+fn mark(
+    marks: &mut Vec<Mark>,
+    codes: &CodeCounts,
+    start: [u32; 3],
+    run: u32,
+    mut next: u32,
+    spacing: u32,
+) -> u32 {
+    const CUT_FROM: u32 = 64;
+    let [sequences, literals, bytes] = start;
+    while next <= bytes.saturating_add(run) && marks.len() < marks.capacity() {
+        let borrowed = next.saturating_sub(bytes).min(run.saturating_sub(CUT_FROM));
+        marks.push(Mark {
+            sequences,
+            literals: literals - LITERALS_START as u32 + borrowed,
+            bytes: bytes + borrowed,
+            borrowed,
+            codes: *codes,
+            histogram: [0; _],
+        });
+        next = next.max(bytes) + spacing;
+    }
+    next
+}
+
 pub(crate) struct Sequences {
     /// Until they are [`finish`](Self::finish)ed, the fields hold the two lengths and the offset.
     pub(crate) list: Vec<Sequence>,
     literals: Vec<u8>,
     literals_end: usize,
+    /// All that is missing are the last literals.
+    are_coded: bool,
     pub(crate) counts: CodeCounts,
+    marks: Vec<Mark>,
 }
 
 impl Sequences {
@@ -312,22 +364,52 @@ impl Sequences {
             list: Vec::new(),
             literals: Vec::new(),
             literals_end: 0,
+            are_coded: false,
             counts: [0; _],
+            marks: Vec::new(),
         }
     }
 
     pub(crate) fn clear_for(&mut self, block_len: usize, min_match: u32) -> Result<()> {
         let shortest = if min_match == 3 { 3 } else { 4 };
-        vec::clear_for(&mut self.list, block_len / shortest)
+        self.are_coded = false;
+        vec::clear_for(&mut self.list, block_len / shortest + SLACK)
+    }
+
+    /// With what it finds from `start` on. Returns how far that goes.
+    pub(crate) fn fill(
+        &mut self,
+        searcher: Searcher<'_>,
+        start: usize,
+        repeats: &mut Repeats,
+        trend: &mut Trend,
+    ) -> Result<u32> {
+        let len = searcher.bytes.len().saturating_sub(start);
+        vec::make_room(&mut self.literals, LITERALS_START + len + SLACK)?;
+        resize(&mut self.literals, LITERALS_START, 0);
+        (self.counts, self.are_coded) = ([0; _], true);
+        let mut found = Found {
+            sequences: &mut self.list,
+            literals: &mut self.literals,
+            counts: &mut self.counts,
+            repeats: &mut repeats.0,
+            trend,
+        };
+        let end = searcher.search(start, &mut found).ok_or(Error::Internal)?;
+        Ok((end - start) as u32)
     }
 
     pub(crate) fn literals(&self) -> &[u8] {
         (self.literals.get(LITERALS_START..self.literals_end)).unwrap_or_default()
     }
 
-    pub(crate) fn split_mut(&mut self) -> (&mut [Sequence], &[u8]) {
+    pub(crate) fn split_mut(&mut self) -> (&mut [Sequence], &[u8], &mut [Mark]) {
         let literals = self.literals.get(LITERALS_START..self.literals_end);
-        (&mut self.list, literals.unwrap_or_default())
+        (
+            &mut self.list,
+            literals.unwrap_or_default(),
+            &mut self.marks,
+        )
     }
 
     #[inline(always)]
@@ -345,21 +427,40 @@ impl Sequences {
         (self.list.len() <= block.len() / 64).then(|| block.len().saturating_sub(lens.sum()))
     }
 
+    /// More than the largest new offset.
+    pub(crate) fn reach(&self) -> usize {
+        2 << highest_offset_code(&self.counts)
+    }
+
     /// `block` is what was searched, and `end` where the last match ends.
-    pub(crate) fn finish(&mut self, block: &[u8], end: u32) -> Result<()> {
+    /// Marks the ends of up to so many `pieces`, and the start of the first one.
+    pub(crate) fn finish(&mut self, block: &[u8], end: u32, pieces: usize) -> Result<()> {
+        vec::clear_for(&mut self.marks, pieces + usize::from(pieces != 0))?;
+        if self.are_coded {
+            let last = block.get(end as usize..).ok_or(Error::Internal)?;
+            self.literals.extend_from_slice(last);
+            self.literals_end = self.literals.len();
+            return Ok(());
+        }
         vec::make_room(&mut self.literals, LITERALS_START + block.len() + OVERCOPY)?;
         grow(&mut self.literals, 0, LITERALS_START)?;
         let (list, literals) = (self.list.as_mut_slice(), &mut self.literals);
-        let counts = &mut self.counts;
+        let (counts, marks) = (&mut self.counts, &mut self.marks);
+        let spacing = (block.len() / pieces.max(1)) as u32 + 1;
+        let first_due = if pieces == 0 { u32::MAX } else { 0 };
         *counts = [0; _];
         let literals_end = with_bmi2(
             #[inline(always)]
             move || {
                 let (mut from, mut to) = (0u32, LITERALS_START as u32);
-                for sequence in list {
+                let (count_all, mut due) = (list.len() as u32, first_due);
+                for (index, sequence) in (0..).zip(list) {
                     let (literal_len, match_base) =
                         (sequence.extra as u32, (sequence.extra >> 32) as u32);
                     let offset = OffsetValue(u32::from_le_bytes(sequence.symbols));
+                    if from.wrapping_add(literal_len) >= due {
+                        due = mark(marks, counts, [index, to, from], literal_len, due, spacing);
+                    }
                     let mut finish = #[inline(always)]
                     |code| {
                         let coded = Sequence::with_code(code, literal_len, offset, match_base);
@@ -381,6 +482,16 @@ impl Sequences {
                 }
                 let last = block.get(from as usize..).filter(|_| from == end)?;
                 copy_literals(block, from, literals, to, last.len() as u32)?;
+                let run = last.len() as u32;
+                mark(marks, counts, [count_all, to, from], run, due, spacing);
+                mark(
+                    marks,
+                    counts,
+                    [count_all, to + run, from + run],
+                    0,
+                    first_due,
+                    spacing,
+                );
                 Some(to as usize + last.len())
             },
         );

@@ -68,7 +68,47 @@ for (const ckey of ObjectKeys(codes)) {
   codes[codes[ckey]] = ckey;
 }
 
-function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCallback) {
+// Whether a stream would do nothing with these options but hand them to the native side.
+function isForHandleAlone(opts: ZlibOptions | undefined) {
+  if (opts === undefined) return true;
+  if (!$isObject(opts)) return false;
+  for (const key in opts) {
+    switch (key) {
+      case "level":
+      case "params":
+      case "windowBits":
+      case "memLevel":
+      case "strategy":
+      case "dictionary":
+      case "pledgedSrcSize":
+      case "chunkSize":
+      case "maxOutputLength":
+      case "info":
+        break;
+      default:
+        return false;
+    }
+  }
+  return opts.flush === undefined && opts.finishFlush === undefined;
+}
+
+// What is wrong with a larger one shows when it is used.
+const kMaxChunkSizeAtOnce = 8 * 1024 * 1024;
+
+function zlibBufferOnAll(this: ZlibHandle, output?: Buffer, read?: number) {
+  const engine = this[owner_symbol];
+  const input = this.buffer;
+  this.buffer = null;
+  if (output === undefined) return zlibBufferInChunks(engine, input);
+  engine.close();
+  engine.bytesWritten = read!;
+  const callback = takeCallback(engine);
+  const max = engine._maxOutputLength;
+  if (output.byteLength > max) callback.$call(engine, $ERR_BUFFER_TOO_LARGE(max));
+  else callback.$call(engine, null, output);
+}
+
+function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCallback, opts: ZlibOptions | undefined) {
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
   if (isArrayBufferView(buffer)) {
@@ -79,8 +119,24 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   engine.buffers = null;
   engine.nread = 0;
   engine.cb = callback;
-  engine.on("data", zlibBufferOnData);
   engine.on("error", zlibBufferOnError);
+  if (engine._chunkSize <= kMaxChunkSizeAtOnce && !engine._info && isForHandleAlone(opts)) {
+    if (typeof buffer === "string") buffer = Buffer.from(buffer) as Buffer;
+    const handle = engine._handle!;
+    if (
+      isArrayBufferView(buffer) &&
+      !(buffer.buffer as ArrayBuffer).resizable &&
+      handle.writeAll(buffer, engine._maxOutputLength, zlibBufferOnAll)
+    ) {
+      handle.buffer = buffer;
+      return;
+    }
+  }
+  zlibBufferInChunks(engine, buffer);
+}
+
+function zlibBufferInChunks(engine: $Node.ZlibBase, buffer: ZlibInput | null) {
+  engine.on("data", zlibBufferOnData);
   engine.on("end", zlibBufferOnEnd);
   engine.end(buffer);
 }
@@ -125,6 +181,39 @@ function zlibBufferOnEnd(this: $Node.ZlibBase) {
   const callback = takeCallback(this);
   if (this._info) callback.$call(this, null, { buffer: buf, engine: this });
   else callback.$call(this, null, buf);
+}
+
+type Init = (handle: any, opts: ZlibOptions | undefined, mode: number, writeState: Uint32Array) => void;
+const idleHandles: Record<number, ZlibHandle | undefined> = { __proto__: null } as {};
+const unusedWriteState = new Uint32Array(2);
+
+// Nothing if it takes a stream.
+function zlibBufferSyncAtOnce(
+  Handle: NativeConstructor<unknown>,
+  init: Init,
+  mode: number,
+  buffer: ZlibInput,
+  opts: ZlibOptions | undefined,
+) {
+  let maxOutputLength = kMaxLength;
+  if (opts !== undefined) {
+    if (!isForHandleAlone(opts) || opts.info) return;
+    const { chunkSize = Z_DEFAULT_CHUNK, maxOutputLength: max = kMaxLength } = opts;
+    if (typeof chunkSize !== "number" || !(chunkSize >= Z_MIN_CHUNK && chunkSize <= kMaxChunkSizeAtOnce)) return;
+    if (typeof max !== "number" || !(max >= 1 && max <= kMaxLength)) return;
+    maxOutputLength = max;
+  }
+  if (typeof buffer !== "string" && !$isTypedArrayView(buffer)) {
+    if (!isAnyArrayBuffer(buffer)) return;
+    buffer = Buffer.from(buffer) as Buffer;
+  }
+  // Taken out, as the getter of an option may get here again, and a handle that `init` fails for is closed.
+  const handle = idleHandles[mode] ?? new Handle(mode);
+  idleHandles[mode] = undefined;
+  init(handle, opts, mode, unusedWriteState);
+  const output = handle.writeAllSync(buffer, maxOutputLength);
+  idleHandles[mode] = handle;
+  return output;
 }
 
 function zlibBufferSync(engine: $Node.ZlibBase, buffer: ZlibInput) {
@@ -550,10 +639,11 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
     self._outBuffer, // out
     self._outOffset, // out_off
     handle.availOutBefore, // out_len
+    self._chunkSize, // next_out_len
   );
 }
 
-function processCallback(this: ZlibHandle, uncounted = 0) {
+function processCallback(this: ZlibHandle, uncounted = 0, fullChunk?: Buffer) {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
@@ -575,7 +665,9 @@ function processCallback(this: ZlibHandle, uncounted = 0) {
 
   const have = handle.availOutBefore - availOutAfter;
   let streamBufferIsFull = false;
-  if (have > 0) {
+  if (fullChunk) {
+    streamBufferIsFull = !self.push(fullChunk);
+  } else if (have > 0) {
     const out = takeOutput(self._outBuffer, self._outOffset, have);
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
@@ -600,7 +692,7 @@ function processCallback(this: ZlibHandle, uncounted = 0) {
     chunkSize ??= self._chunkSize;
     handle.availOutBefore = chunkSize;
     self._outOffset = 0;
-    self._outBuffer = Buffer.allocUnsafe(chunkSize);
+    if (fullChunk?.byteLength !== chunkSize) self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
   if (availOutAfter === 0) {
@@ -620,6 +712,7 @@ function processCallback(this: ZlibHandle, uncounted = 0) {
         self._outBuffer, // out
         self._outOffset, // out_off
         self._chunkSize, // out_len
+        self.readableLength > have ? 0 : handle.availOutBefore, // next_out_len
       );
     } else {
       const oldRead = self._read;
@@ -680,9 +773,13 @@ const zlibDefaultOpts = {
   finishFlush: Z_FINISH,
   fullFlush: Z_FULL_FLUSH,
 };
-// Base class for all streams actually backed by zlib and using zlib-specific
-// parameters.
-function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+function initZlib(
+  handle: $Bindgen.NativeZlib,
+  opts: ZlibOptions | undefined,
+  mode: number,
+  writeState: Uint32Array,
+  stream?: $Node.Zlib,
+) {
   let windowBits = Z_DEFAULT_WINDOWBITS;
   let level = Z_DEFAULT_COMPRESSION;
   let memLevel = Z_DEFAULT_MEMLEVEL;
@@ -716,14 +813,24 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
     dictionary = validateDictionary(opts.dictionary);
   }
 
-  const handle = new NativeZlib(mode);
-  this._writeState = new Uint32Array(2);
-  handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback, dictionary);
+  handle.init(windowBits, level, memLevel, strategy, writeState, processCallback, dictionary);
 
-  ZlibBase.$apply(this, [opts, mode, handle, zlibDefaultOpts]);
+  if (stream) {
+    ZlibBase.$apply(stream, [opts, mode, handle, zlibDefaultOpts]);
+    stream._level = level;
+    stream._strategy = strategy;
+  }
+}
 
-  this._level = level;
-  this._strategy = strategy;
+function initDeflateRaw(handle: $Bindgen.NativeZlib, opts: ZlibOptions | undefined, mode: number, state: Uint32Array) {
+  if (opts && opts.windowBits === 8) opts.windowBits = 9;
+  initZlib(handle, opts, mode, state);
+}
+
+// Base class for all streams actually backed by zlib and using zlib-specific
+// parameters.
+function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+  initZlib(new NativeZlib(mode), opts, mode, (this._writeState = new Uint32Array(2)), this);
 }
 $toClass(Zlib, "Zlib", ZlibBase);
 
@@ -815,30 +922,37 @@ $toClass(Unzip, "Unzip", Zlib);
 type ZlibFunction = (this: $Node.Zlib, opts?: ZlibOptions) => void;
 type ZlibClass = new (opts?: ZlibOptions) => $Node.ZlibBase;
 
-function createConvenienceMethod(
+function createSyncMethod(
   ctor: ZlibFunction | ZlibClass,
-  sync: boolean,
+  methodName: string,
+  Handle: NativeConstructor<unknown>,
+  init: Init,
+  mode: number,
+) {
+  const fn = function (buffer: ZlibInput, opts?: ZlibOptions) {
+    return (
+      zlibBufferSyncAtOnce(Handle, init, mode, buffer, opts) ?? zlibBufferSync(new (ctor as ZlibClass)(opts), buffer)
+    );
+  };
+  ObjectDefineProperty(fn, "name", { value: methodName });
+  return fn;
+}
+
+function createAsyncMethod(
+  ctor: ZlibFunction | ZlibClass,
   methodName: string,
   prepareOpts?: typeof withPledgedSrcSize,
 ) {
-  if (sync) {
-    const fn = function (buffer: ZlibInput, opts?: ZlibOptions) {
-      return zlibBufferSync(new (ctor as ZlibClass)(opts), buffer);
-    };
-    ObjectDefineProperty(fn, "name", { value: methodName });
-    return fn;
-  } else {
-    const fn = function (buffer: ZlibInput, opts: ZlibOptions | ZlibCallback | undefined, callback?: ZlibCallback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      if (prepareOpts !== undefined) opts = prepareOpts(buffer, opts);
-      return zlibBuffer(new (ctor as ZlibClass)(opts), buffer, callback!);
-    };
-    ObjectDefineProperty(fn, "name", { value: methodName });
-    return fn;
-  }
+  const fn = function (buffer: ZlibInput, opts: ZlibOptions | ZlibCallback | undefined, callback?: ZlibCallback) {
+    if (typeof opts === "function") {
+      callback = opts;
+      opts = {};
+    }
+    if (prepareOpts !== undefined) opts = prepareOpts(buffer, opts);
+    return zlibBuffer(new (ctor as ZlibClass)(opts), buffer, callback!, opts);
+  };
+  ObjectDefineProperty(fn, "name", { value: methodName });
+  return fn;
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/zlib.js#L846-L869
@@ -867,7 +981,12 @@ const brotliDefaultOpts = {
   finishFlush: BROTLI_OPERATION_FINISH,
   fullFlush: BROTLI_OPERATION_FLUSH,
 };
-function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+function initBrotli(
+  handle: $Bindgen.NativeBrotli,
+  opts: ZlibOptions | undefined,
+  mode: number,
+  writeState: Uint32Array,
+) {
   $assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
 
   TypedArrayPrototypeFill.$call(brotliInitParamsArray, -1);
@@ -888,13 +1007,14 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
 
   const dictionary = validateDictionary(opts?.dictionary);
 
-  const handle = new NativeBrotli(mode);
-
-  this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
+  if (!handle.init(brotliInitParamsArray, writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
+}
 
+function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+  const handle = new NativeBrotli(mode);
+  initBrotli(handle, opts, mode, (this._writeState = new Uint32Array(2)));
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);
 }
 $toClass(Brotli, "Brotli", Zlib);
@@ -918,55 +1038,59 @@ const zstdDefaultOpts = {
   fullFlush: ZSTD_e_flush,
 };
 
-class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
-  constructor(opts: ZlibOptions | undefined, mode: number, initParamsArray: Uint32Array, maxParam: number) {
-    $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
+const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
+const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
+const kMaxZstdDParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_d_") ? constants[key] : 0)));
+const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
+const noZstdParams = new Uint32Array(0);
 
+function initZstd(handle: $Bindgen.NativeZstd, opts: ZlibOptions | undefined, mode: number, writeState: Uint32Array) {
+  $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
+
+  let initParamsArray = noZstdParams;
+  if (opts?.params) {
+    initParamsArray = mode === ZSTD_COMPRESS ? zstdInitCParamsArray : zstdInitDParamsArray;
+    const maxParam = mode === ZSTD_COMPRESS ? kMaxZstdCParam : kMaxZstdDParam;
     initParamsArray.fill(-1);
-    if (opts?.params) {
-      ObjectKeys(opts.params).forEach(origKey => {
-        const key = +origKey;
-        if (NumberIsNaN(key) || key < 0 || key > maxParam || (initParamsArray[key] | 0) !== -1) {
-          throw $ERR_ZSTD_INVALID_PARAM(origKey);
-        }
+    ObjectKeys(opts.params).forEach(origKey => {
+      const key = +origKey;
+      if (NumberIsNaN(key) || key < 0 || key > maxParam || (initParamsArray[key] | 0) !== -1) {
+        throw $ERR_ZSTD_INVALID_PARAM(origKey);
+      }
 
-        const value = opts.params![origKey];
-        if (typeof value !== "number" && typeof value !== "boolean") {
-          throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params![origKey]);
-        }
-        initParamsArray[key] = value as number;
-      });
-    }
+      const value = opts.params![origKey];
+      if (typeof value !== "number" && typeof value !== "boolean") {
+        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params![origKey]);
+      }
+      initParamsArray[key] = value as number;
+    });
+  }
 
-    const dictionary = validateDictionary(opts?.dictionary);
+  const dictionary = validateDictionary(opts?.dictionary);
 
+  handle.init(initParamsArray, opts?.pledgedSrcSize, writeState, processCallback, dictionary);
+}
+
+class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
+  constructor(opts: ZlibOptions | undefined, mode: number) {
     const handle = new NativeZstd(mode);
-
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, opts?.pledgedSrcSize, writeState, processCallback, dictionary);
+    initZstd(handle, opts, mode, writeState);
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }
 }
 Zstd.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_ZSTD];
 
-const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
-
-const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
-
 class ZstdCompress extends Zstd {
   constructor(opts?: ZlibOptions) {
-    super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
+    super(opts, ZSTD_COMPRESS);
   }
 }
 
-const kMaxZstdDParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWith("ZSTD_d_") ? constants[key] : 0)));
-
-const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
-
 class ZstdDecompress extends Zstd {
   constructor(opts?: ZlibOptions) {
-    super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
+    super(opts, ZSTD_DECOMPRESS);
   }
 }
 
@@ -995,28 +1119,34 @@ const zlib = {
   ZstdCompress,
   ZstdDecompress,
 
-  deflate: createConvenienceMethod(Deflate, false, "deflate"),
-  deflateSync: createConvenienceMethod(Deflate, true, "deflateSync"),
-  gzip: createConvenienceMethod(Gzip, false, "gzip"),
-  gzipSync: createConvenienceMethod(Gzip, true, "gzipSync"),
-  deflateRaw: createConvenienceMethod(DeflateRaw, false, "deflateRaw"),
-  deflateRawSync: createConvenienceMethod(DeflateRaw, true, "deflateRawSync"),
-  unzip: createConvenienceMethod(Unzip, false, "unzip"),
-  unzipSync: createConvenienceMethod(Unzip, true, "unzipSync"),
-  inflate: createConvenienceMethod(Inflate, false, "inflate"),
-  inflateSync: createConvenienceMethod(Inflate, true, "inflateSync"),
-  gunzip: createConvenienceMethod(Gunzip, false, "gunzip"),
-  gunzipSync: createConvenienceMethod(Gunzip, true, "gunzipSync"),
-  inflateRaw: createConvenienceMethod(InflateRaw, false, "inflateRaw"),
-  inflateRawSync: createConvenienceMethod(InflateRaw, true, "inflateRawSync"),
-  brotliCompress: createConvenienceMethod(BrotliCompress, false, "brotliCompress"),
-  brotliCompressSync: createConvenienceMethod(BrotliCompress, true, "brotliCompressSync"),
-  brotliDecompress: createConvenienceMethod(BrotliDecompress, false, "brotliDecompress"),
-  brotliDecompressSync: createConvenienceMethod(BrotliDecompress, true, "brotliDecompressSync"),
-  zstdCompress: createConvenienceMethod(ZstdCompress, false, "zstdCompress", withPledgedSrcSize),
-  zstdCompressSync: createConvenienceMethod(ZstdCompress, true, "zstdCompressSync"),
-  zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
-  zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),
+  deflate: createAsyncMethod(Deflate, "deflate"),
+  deflateSync: createSyncMethod(Deflate, "deflateSync", NativeZlib, initZlib, DEFLATE),
+  gzip: createAsyncMethod(Gzip, "gzip"),
+  gzipSync: createSyncMethod(Gzip, "gzipSync", NativeZlib, initZlib, GZIP),
+  deflateRaw: createAsyncMethod(DeflateRaw, "deflateRaw"),
+  deflateRawSync: createSyncMethod(DeflateRaw, "deflateRawSync", NativeZlib, initDeflateRaw, DEFLATERAW),
+  unzip: createAsyncMethod(Unzip, "unzip"),
+  unzipSync: createSyncMethod(Unzip, "unzipSync", NativeZlib, initZlib, UNZIP),
+  inflate: createAsyncMethod(Inflate, "inflate"),
+  inflateSync: createSyncMethod(Inflate, "inflateSync", NativeZlib, initZlib, INFLATE),
+  gunzip: createAsyncMethod(Gunzip, "gunzip"),
+  gunzipSync: createSyncMethod(Gunzip, "gunzipSync", NativeZlib, initZlib, GUNZIP),
+  inflateRaw: createAsyncMethod(InflateRaw, "inflateRaw"),
+  inflateRawSync: createSyncMethod(InflateRaw, "inflateRawSync", NativeZlib, initZlib, INFLATERAW),
+  brotliCompress: createAsyncMethod(BrotliCompress, "brotliCompress"),
+  brotliCompressSync: createSyncMethod(BrotliCompress, "brotliCompressSync", NativeBrotli, initBrotli, BROTLI_ENCODE),
+  brotliDecompress: createAsyncMethod(BrotliDecompress, "brotliDecompress"),
+  brotliDecompressSync: createSyncMethod(
+    BrotliDecompress,
+    "brotliDecompressSync",
+    NativeBrotli,
+    initBrotli,
+    BROTLI_DECODE,
+  ),
+  zstdCompress: createAsyncMethod(ZstdCompress, "zstdCompress", withPledgedSrcSize),
+  zstdCompressSync: createSyncMethod(ZstdCompress, "zstdCompressSync", NativeZstd, initZstd, ZSTD_COMPRESS),
+  zstdDecompress: createAsyncMethod(ZstdDecompress, "zstdDecompress"),
+  zstdDecompressSync: createSyncMethod(ZstdDecompress, "zstdDecompressSync", NativeZstd, initZstd, ZSTD_DECOMPRESS),
 
   createDeflate: function (options?: ZlibOptions): $Node.ZlibBase {
     return new Deflate(options);

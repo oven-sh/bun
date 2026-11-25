@@ -83,6 +83,16 @@ impl Header {
         }
     }
 
+    #[inline(always)]
+    fn frame_len(&self, prefix: &[u8]) -> Result<FrameLen> {
+        Ok(match *self {
+            Self::Frame(header) => header.measure(prefix)?.0,
+            Self::Skippable { content_len } => FrameLen::new(skippable_len(content_len)?, prefix),
+            Self::Incomplete(len) => FrameLen::AtLeast(len),
+        })
+    }
+
+    #[inline]
     pub(crate) fn read(src: &[u8]) -> Result<Self> {
         let Some((&[m0, m1, m2, m3, descriptor], fields)) = src.split_first_chunk() else {
             if !src.is_empty() && !may_start_frame(src) {
@@ -147,15 +157,16 @@ impl FrameHeader {
     }
 
     /// The length of the frame that `prefix` starts with, and how many blocks there are as far as it goes.
-    pub(crate) fn measure(&self, prefix: &[u8]) -> Result<(FrameLen, usize)> {
-        let (mut len, mut blocks) = (self.len, 0);
+    #[inline(always)]
+    pub(crate) fn measure(&self, prefix: &[u8]) -> Result<(FrameLen, Blocks)> {
+        let (mut len, mut blocks) = (self.len, Blocks::default());
         loop {
             let Some(block) = prefix.get(len..).and_then(<[u8]>::first_chunk) else {
                 return Ok((FrameLen::AtLeast(len + BLOCK_HEADER_LEN), blocks));
             };
             let block = BlockHeader::new(*block)?;
             len += BLOCK_HEADER_LEN + block.content_len();
-            blocks += 1;
+            blocks = blocks.with(block, self, usize::wrapping_add);
             if block.is_last() {
                 len += if self.has_checksum { CHECKSUM_LEN } else { 0 };
                 return Ok((FrameLen::new(len, prefix), blocks));
@@ -176,6 +187,39 @@ impl FrameHeader {
     /// For what a block holds, and for what it decodes to.
     pub(crate) fn block_len_max(&self) -> usize {
         self.window_size.min(BLOCK_LEN_MAX as u64) as usize
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Blocks {
+    pub(crate) count: usize,
+    /// What those that are not compressed decode to.
+    pub(crate) plain_len: usize,
+    pub(crate) compressed_count: usize,
+    pub(crate) compressed_len: usize,
+    /// Few get beyond that.
+    pub(crate) decompressed_len_max: usize,
+}
+
+impl Blocks {
+    /// With one more or less.
+    #[inline(always)]
+    pub(crate) fn with(
+        mut self,
+        block: BlockHeader,
+        frame: &FrameHeader,
+        add: impl Fn(usize, usize) -> usize,
+    ) -> Self {
+        let (size, full) = (block.size(), frame.block_len_max());
+        self.count = add(self.count, 1);
+        if block.block_type() == BlockType::Compressed {
+            self.compressed_count = add(self.compressed_count, 1);
+            self.compressed_len = add(self.compressed_len, size);
+            self.decompressed_len_max = add(self.decompressed_len_max, full.min(32 * size));
+        } else {
+            self.plain_len = add(self.plain_len, full.min(size));
+        }
+        self
     }
 }
 
@@ -243,11 +287,7 @@ pub(crate) fn skippable_len(content_len: u32) -> Result<usize> {
 
 /// The length of the frame that `prefix` starts with.
 pub fn frame_len(prefix: &[u8]) -> Result<FrameLen> {
-    Ok(match Header::read(prefix)? {
-        Header::Frame(header) => header.measure(prefix)?.0,
-        Header::Skippable { content_len } => FrameLen::new(skippable_len(content_len)?, prefix),
-        Header::Incomplete(len) => FrameLen::AtLeast(len),
-    })
+    Header::read(prefix)?.frame_len(prefix)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,27 +306,33 @@ impl ContentSize {
             _ => Self::Known(size),
         }
     }
+
+    #[inline(always)]
+    fn of(header: &Result<Header>) -> Self {
+        match header {
+            Ok(Header::Frame(header)) => Self::new(header.content_size.unwrap_or(UNKNOWN_SIZE)),
+            Ok(Header::Skippable { .. }) => Self::Known(0),
+            Ok(Header::Incomplete(_)) | Err(_) => Self::Invalid,
+        }
+    }
 }
 
 /// Of the frame that `src` starts with. Only its header has to be there.
 pub fn frame_content_size(src: &[u8]) -> ContentSize {
-    match Header::read(src) {
-        Ok(Header::Frame(header)) => ContentSize::new(header.content_size.unwrap_or(UNKNOWN_SIZE)),
-        Ok(Header::Skippable { .. }) => ContentSize::Known(0),
-        Ok(Header::Incomplete(_)) | Err(_) => ContentSize::Invalid,
-    }
+    ContentSize::of(&Header::read(src))
 }
 
 /// Of all the frames that `src` consists of.
 pub fn decompressed_size(mut src: &[u8]) -> ContentSize {
     let mut total = 0u64;
     while !src.is_empty() {
-        let size = match frame_content_size(src) {
+        let header = Header::read(src);
+        let size = match ContentSize::of(&header) {
             ContentSize::Known(size) => size,
             other => return other,
         };
-        let (Some(sum), Ok(FrameLen::Complete(len))) = (total.checked_add(size), frame_len(src))
-        else {
+        let len = header.and_then(|header| header.frame_len(src));
+        let (Some(sum), Ok(FrameLen::Complete(len))) = (total.checked_add(size), len) else {
             return ContentSize::Invalid;
         };
         total = sum;

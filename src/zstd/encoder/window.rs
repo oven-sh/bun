@@ -2,11 +2,10 @@
 
 use core::hint::select_unpredictable;
 
-use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 
 use crate::bytes::{
-    AtLeast, chunk_at, common_suffix, compare, first_difference, likely, u32_at, u64_at,
+    AtLeast, chunk_at, common_prefix, common_suffix, first_difference, likely, u32_at, u64_at,
 };
 
 /// Lower ones have a meaning of their own in most tables.
@@ -75,6 +74,8 @@ impl Window {
             if ((self.prefix_start - self.older_start) as usize) < WORD_LEN {
                 self.older_start = self.prefix_start;
             }
+        } else if input.start() < (self.next - self.prefix_start) as usize {
+            self.raise_start(self.next - input.start() as u32);
         }
         let older_len = (self.prefix_start - self.older_start) as usize;
         self.older_start += older_len.saturating_sub(input.older.len()) as u32;
@@ -231,59 +232,17 @@ impl<'a> History<'a> {
     /// For the ends of runs. After the older one, the prefix follows.
     #[cold]
     #[inline(never)]
-    fn compare_bytes(prefix: &[u8], position: u32, run: &[u8], at: u32) -> (u32, bool) {
+    fn compare_bytes(prefix: &[u8], position: u32, run: &[u8], at: u32) -> u32 {
         let bytes = prefix.get(position as usize..).unwrap_or_default();
         let beyond = (at as usize).saturating_sub(run.len());
         let run = run.get(at as usize..).unwrap_or_default();
-        let (len, is_below) = compare(bytes, run);
+        let len = common_prefix(bytes, run);
         if len != run.len() {
-            return (len as u32, is_below);
+            return len as u32;
         }
         let from = |start: usize| prefix.get(start..).unwrap_or_default();
-        let (more, is_below) = compare(from(position as usize + len), from(beyond));
-        ((len + more) as u32, is_below)
-    }
-
-    /// Where the bytes from `position` on start to differ from those `distance` further in `run`, and if these are lower.
-    #[inline(always)]
-    fn compare_in(&self, position: u32, run: &[u8], distance: u32) -> (u32, bool) {
-        let mut end = position;
-        if let Some(a) = likely(u64_at(self.prefix, position))
-            && let Some(b) = likely(u64_at(run, position.wrapping_add(distance)))
-        {
-            if a != b {
-                let len = (a ^ b).trailing_zeros() / 8;
-                return (position + len, b.swap_bytes() < a.swap_bytes());
-            }
-            end += WORD_LEN as u32;
-        }
-        while let Some(a) = likely(chunk_at(self.prefix, end))
-            && let Some(b) = likely(chunk_at(run, end.wrapping_add(distance)))
-        {
-            if let Some(index) = first_difference(a, b) {
-                return (end + index, b.at(index as usize) < a.at(index as usize));
-            }
-            end = end.plus(a.len() as u32);
-        }
-        let at = end.wrapping_add(distance);
-        let (more, is_below) = Self::compare_bytes(self.prefix, end, run, at);
-        (end + more, is_below)
-    }
-
-    #[inline(always)]
-    pub(crate) fn compare(&self, position: u32, distance: u32) -> (u32, bool) {
-        self.compare_in(position, self.prefix, distance)
-    }
-
-    #[inline(always)]
-    pub(crate) fn compare_older(&self, position: u32, distance: u32) -> (u32, bool) {
-        self.compare_in(position, self.older, distance)
-    }
-
-    #[inline(always)]
-    pub(crate) fn compare_index(&self, position: u32, index: u32) -> (u32, bool) {
-        let (run, at) = self.locate(index);
-        self.compare_in(position, run, at.wrapping_sub(position))
+        let more = common_prefix(from(position as usize + len), from(beyond));
+        (len + more) as u32
     }
 
     /// How many bytes from `position` on equal those from `at` of `run` on.
@@ -300,17 +259,12 @@ impl<'a> History<'a> {
             end = end.plus(a.len() as u32);
         }
         let at = end.wrapping_add(distance);
-        end - position + Self::compare_bytes(self.prefix, end, run, at).0
+        end - position + Self::compare_bytes(self.prefix, end, run, at)
     }
 
     #[inline(always)]
     pub(crate) fn match_len(&self, position: u32, earlier: u32) -> u32 {
         self.match_len_in(position, self.prefix, earlier)
-    }
-
-    #[inline(always)]
-    pub(crate) fn older_match_len(&self, position: u32, earlier: u32) -> u32 {
-        self.match_len_in(position, self.older, earlier)
     }
 
     /// `known` bytes need no comparing.

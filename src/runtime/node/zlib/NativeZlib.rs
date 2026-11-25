@@ -4,7 +4,9 @@ use bun_core::vec::BorrowedCursor;
 use bun_zlib::deflate::{self, Flush};
 use bun_zlib::{Deflater, GZIP_ID, Inflater, inflate};
 
-use crate::node::node_zlib_binding::{CompressionContext, Error, NodeMode, Z_BUF_ERROR};
+use crate::node::node_zlib_binding::{
+    CompressionContext, Error, NodeMode, SpareCodecMemory, Unseen, Z_BUF_ERROR,
+};
 
 mod _impl {
     use super::*;
@@ -122,7 +124,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            let result = self.borrow_idle_stream(global)?.context.init(
+            let result = self.borrow_idle_stream(global)?.context_to_init().init(
                 level,
                 window_bits,
                 mem_level,
@@ -172,6 +174,9 @@ pub(crate) struct Context {
     /// `None` until `init()`: what needs it fails with `Z_STREAM_ERROR`.
     state: Option<State>,
     flush: Flush,
+    level: c_int,
+    /// With a smaller one, it depends on the room that a call has how far back a match may reach.
+    has_largest_window: bool,
     dictionary: Vec<u8>,
     gzip_id_bytes_read: u8,
     write_result: Result<[usize; 2], Error>,
@@ -205,6 +210,8 @@ impl Context {
             mode,
             state: None,
             flush: Flush::None,
+            level: 0,
+            has_largest_window: false,
             dictionary: Vec::new(),
             gzip_id_bytes_read: 0,
             write_result: Ok([0, 0]),
@@ -221,6 +228,8 @@ impl Context {
     ) -> bun_zlib::Result<()> {
         use NodeMode::*;
         self.flush = Flush::None;
+        self.level = level;
+        self.has_largest_window = matches!(window_bits, 0 | 15);
         self.dictionary = dictionary.to_vec();
 
         let window_bits = match self.mode {
@@ -251,8 +260,8 @@ impl Context {
             _ => State::Inflate(Box::new(Inflater::from_zlib_window_bits(window_bits)?)),
         });
 
-        let _ = self.set_dictionary();
-        Ok(())
+        // Nothing else can be wrong with a new stream.
+        (self.set_dictionary()).map_err(|_| bun_zlib::Error::Alloc(bun_alloc::AllocError))
     }
 
     fn set_dictionary(&mut self) -> Result<(), Error> {
@@ -279,6 +288,7 @@ impl Context {
         if !matches!(self.mode, NodeMode::DEFLATE | NodeMode::DEFLATERAW) {
             return Ok(());
         }
+        self.level = level;
         let mut set = || match &mut self.state {
             // Like Node, it keeps quiet about parameters that cannot change in the middle of a block.
             Some(State::Deflate(deflater)) => deflater
@@ -363,8 +373,80 @@ impl Context {
     }
 }
 
+/// Returns what is left of `input`.
+fn inflate_all(
+    inflater: &mut Inflater,
+    mut input: &[u8],
+    out: &mut Vec<u8>,
+    max: usize,
+    is_gzip: bool,
+    mut dictionary: &[u8],
+) -> Option<usize> {
+    inflate::reserve_for(input, is_gzip, out, max).ok()?;
+    loop {
+        match inflater
+            .inflate_to_vec(&mut input, out, max - out.len())
+            .ok()?
+        {
+            inflate::Status::NeedsDictionary if !dictionary.is_empty() => {
+                inflater.set_dictionary(dictionary).ok()?;
+            }
+            inflate::Status::StreamEnd if is_gzip && input.first().is_some_and(|&it| it != 0) => {
+                inflater.reset();
+                dictionary = &[];
+            }
+            inflate::Status::StreamEnd => return Some(input.len()),
+            _ => return None,
+        }
+    }
+}
+
 impl CompressionContext for Context {
-    fn reset(&mut self) -> Result<(), Error> {
+    const SWAPS_MEMORY: bool = false;
+
+    fn do_all_work(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        max: usize,
+    ) -> Option<Result<usize, Error>> {
+        match self.state.as_mut()? {
+            State::Deflate(deflater) => Some(match deflater.deflate_whole(input, out) {
+                Ok(()) => Ok(0),
+                Err(error) => Err(zlib_error(error, "Zlib error")),
+            }),
+            State::Inflate(_) if !self.has_largest_window => None,
+            State::Inflate(inflater) => {
+                let is_gzip = matches!(self.mode, NodeMode::GUNZIP | NodeMode::UNZIP)
+                    && input.starts_with(&GZIP_ID);
+                let left = inflate_all(inflater, input, out, max, is_gzip, &self.dictionary);
+                if left.is_none() {
+                    inflater.reset();
+                    return self.set_dictionary().err().map(Err);
+                }
+                left.map(Ok)
+            }
+        }
+    }
+
+    fn quick_input_len(&self) -> Option<usize> {
+        match self.level {
+            7.. if self.is_encoder() => Some(2048),
+            _ => Some(4096),
+        }
+    }
+
+    fn is_encoder(&self) -> bool {
+        matches!(self.state, Some(State::Deflate(_)))
+    }
+
+    fn swap_memory(&mut self, _: &mut SpareCodecMemory) {}
+
+    fn free_state(&mut self) {
+        (self.state, self.dictionary) = (None, Vec::new());
+    }
+
+    fn reset(&mut self, _: Unseen) -> Result<(), Error> {
         match (self.mode, &mut self.state) {
             (NodeMode::UNZIP, _) => {}
             (_, Some(State::Deflate(deflater))) => deflater.reset(),

@@ -156,6 +156,9 @@ const routes: Record<string, Route[]> = {
   "%NativeFunctions%.CryptoBindTsTimingSafeEqual": timingSafeEqual,
   "native:Bindgen:node_zlib_binding.bind.ts:crc32": crc32,
   "%NativeFunctions%.Node_zlib_bindingBindTsCrc32": crc32,
+  "%NativeZlib%.prototype.writeAllSync": [[view => require("node:zlib").gzipSync(view)]],
+  "%NativeBrotli%.prototype.writeAllSync": [[view => require("node:zlib").brotliCompressSync(view)]],
+  "%NativeZstd%.prototype.writeAllSync": [[view => require("node:zlib").zstdCompressSync(view)]],
   "%NodeCryptoBindingCrypto%.pbkdf2Sync": [
     [view => nodeCrypto.pbkdf2Sync(view, eight(), 1, 8, "sha1")],
     [view => nodeCrypto.pbkdf2Sync(eight(), view, 1, 8, "sha1")],

@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(allocator_ext, const_trait_impl, hint_prefetch)]
+#![feature(allocator_ext, const_trait_impl, maybe_uninit_fill)]
 
 pub mod array;
 mod bits;

@@ -1,13 +1,10 @@
 //! Compresses a whole input at once.
 
 use crate::bit_writer::SLACK;
-use crate::block::{Sequence, Stream};
-use crate::block_splitter::MIN_BLOCK_LEN;
-use crate::format::MAX_MATCH_LEN;
+use crate::block::Stream;
+use crate::encoder::{Block, Effort, Method, Parser, Scratch, Window};
 use crate::output::{Output, Sink};
-use crate::parser::{Effort, GREEDY, LAZIER, LAZY, compress_fastest, compress_with_chains};
-use crate::window::Window;
-use crate::{Result, gzip, hash_chains, hash_lists, near_optimal, zlib};
+use crate::{Error, Result, copy_prefix, gzip, zlib};
 
 /// From 0, which only stores, to [`Level::MAX`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +26,9 @@ pub enum Format {
     Zlib,
     Gzip,
 }
+
+/// The last block may be shorter.
+const MIN_BLOCK_LEN: usize = 5000;
 
 /// An output length with which [`Compressor::compress`] succeeds.
 pub fn compress_bound(input_len: usize, format: Format) -> usize {
@@ -57,11 +57,9 @@ pub fn compress_to_vec(input: &[u8], format: Format, level: Level) -> Result<Vec
 /// Memory that is kept from one input to the next.
 #[derive(Default)]
 pub struct Compressor {
-    padded: Vec<u8>,
-    sequences: Vec<Sequence>,
-    table: hash_lists::Storage,
-    chains: hash_chains::Storage,
-    near_optimal: near_optimal::Storage,
+    window: Window,
+    parser: Parser,
+    block: Block,
 }
 
 impl Compressor {
@@ -99,28 +97,62 @@ impl Compressor {
             return stream.write_stored(input, true);
         }
 
-        let window = Window::new(input, &mut self.padded)?;
-        let sequences = &mut self.sequences;
-        let (laziness, max_depth, nice_len) = match level {
-            1 => return compress_fastest(window, &mut self.table, sequences, stream),
-            2 => (GREEDY, 6, 10),
-            3 => (GREEDY, 12, 14),
-            4 => (GREEDY, 16, 30),
-            5 => (LAZY, 16, 30),
-            6 => (LAZY, 35, 65),
-            7 => (LAZY, 100, 130),
-            8 => (LAZIER, 300, MAX_MATCH_LEN),
-            9 => (LAZIER, 600, MAX_MATCH_LEN),
-            _ => {
-                let storage = &mut self.near_optimal;
-                return near_optimal::compress(level, window, storage, sequences, stream);
+        let effort = match level {
+            1..=4 => Effort::Low,
+            5..=6 => Effort::Medium,
+            7 => Effort::High,
+            8..=9 => Effort::Highest,
+            _ => Effort::Thorough(level - 9),
+        };
+        let min_len = if level == 1 { 4 } else { 3 };
+        let method = Method::Matches { effort, min_len };
+        let (window, block) = (&mut self.window, &mut self.block);
+        window.size = 1 << 15;
+        window.clear();
+        block.clear();
+        self.parser.clear();
+        let parser = &mut self.parser;
+        let (mut unread, mut unwritten) = (input, input);
+        Scratch::lend(|scratch| {
+            if Scratch::has_memory_for(method, input.len()) {
+                scratch.lend_memory(window, parser, block);
+                copy_prefix(window.extend(input.len()), input);
+                let result = match parser.parse(method, window, true, false, scratch, block) {
+                    Some(()) => stream.write_tokens(input, block, scratch, true),
+                    None => Err(Error::InsufficientSpace),
+                };
+                scratch.take_memory(window, parser, block);
+                return result;
             }
-        };
-        let effort = Effort {
-            max_depth,
-            nice_len,
-        };
-        let chains = &mut self.chains;
-        compress_with_chains(window, chains, sequences, laziness, effort, stream)
+            window.try_reserve(input.len())?;
+            block.try_reserve(usize::MAX, input.len())?;
+            parser.try_reserve(method, window)?;
+            loop {
+                let (wanted, read);
+                if !window.has_room_for_batch() {
+                    window.drop_what_is_too_far();
+                }
+                wanted = Parser::wanted(window);
+                (read, unread) = unread.split_at(wanted.min(unread.len()));
+                copy_prefix(window.extend(read.len()), read);
+                let start = window.position;
+                if start == window.end {
+                    return stream.write_tokens(unwritten, block, scratch, true);
+                }
+                if block.has_room(window.lookahead()) {
+                    parser
+                        .parse(method, window, unread.is_empty(), false, scratch, block)
+                        .ok_or(Error::InsufficientSpace)?;
+                    if !block.has_ended() {
+                        continue;
+                    }
+                }
+                let data;
+                let len = (i64::from(start) - window.block_start) as usize;
+                (data, unwritten) = unwritten.split_at(len.min(unwritten.len()));
+                window.block_start = start.into();
+                stream.write_tokens(data, block, scratch, false)?;
+            }
+        })?
     }
 }

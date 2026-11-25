@@ -1,18 +1,11 @@
 //! Finds words of the static dictionary in the input.
 
-use super::hash::{MIN_SCORE, Match, score};
-use super::matching::{bytes_at, load64, match_length};
-use super::ring_buffer::SLACK;
-use super::word_tables::{Case, PackedWord, all_words, has_likely_words, likely_words};
+use bun_highway::brotli::differences_in_case;
+
+use super::matching::{array_at, bytes_at, load32, load64};
+use super::word_tables::{Alike, Case, has_words};
 use crate::transform::Kind::{Identity, OmitLast, UppercaseAll, UppercaseFirst};
 use crate::transform::Transform;
-
-/// The index of a transform that exists.
-macro_rules! transform {
-    ($prefix:expr, $kind:expr, $suffix:expr) => {
-        const { Transform::index_of($prefix, $kind, $suffix).unwrap() }
-    };
-}
 
 /// The transform that omits the last `n` bytes.
 pub(super) const OMIT_LAST: [u8; 10] = {
@@ -24,320 +17,171 @@ pub(super) const OMIT_LAST: [u8; 10] = {
     transforms
 };
 
-#[derive(Clone, Copy)]
-enum ShortPrefix {
-    None,
-    Space,
-    Dot,
+const PREFIXES: [&[u8]; 8] = [b"", b" ", b".", b"e ", b"s ", b", ", b" the ", b".com/"];
+#[rustfmt::skip]
+const SUFFIXES: [&[u8]; 45] = [
+    b"", b" ", b" a ", b" as ", b" at ", b" and ", b" by ", b" in ", b" is ", b" for ", b" from ", b" of ", b" of the ", b" on ",
+    b" not ", b" the ", b" that ", b" to ", b" with ", b"\"", b"\">", b".", b". ", b". The ", b". This ", b",", b", ", b"\n",
+    b"\n\t", b"]", b"'", b":", b"(", b"=\"", b"='", b"al ", b"ed ", b"er ", b"est ", b"ful ", b"ive ", b"ize ", b"less ", b"ly ",
+    b"ous ",
+];
+
+struct Affixes {
+    /// By prefix, [`Case`] and suffix.
+    transforms: [[[u8; 64]; 4]; PREFIXES.len()],
+    /// A bit for each suffix that has one.
+    allowed: [[u64; 4]; PREFIXES.len()],
+    /// For each of the first bytes without its top bit, a bit for each suffix that it does not rule out.
+    possible: [[u64; 128]; 4],
+    /// In the high bits.
+    suffixes: [(u64, u32); 64],
 }
 
-/// The transforms with `suffix`, for each [`ShortPrefix`] and [`Case`].
-const fn transforms_with(suffix: &[u8]) -> [[Option<u8>; 3]; 3] {
-    const fn by_case(prefix: &[u8], suffix: &[u8]) -> [Option<u8>; 3] {
-        let mut row = [None; _];
-        row[Case::Unchanged as usize] = Transform::index_of(prefix, Identity, suffix);
-        row[Case::UppercaseFirst as usize] = Transform::index_of(prefix, UppercaseFirst, suffix);
-        row[Case::UppercaseAll as usize] = Transform::index_of(prefix, UppercaseAll, suffix);
-        row
-    }
-    let mut rows = [[None; _]; _];
-    rows[ShortPrefix::None as usize] = by_case(b"", suffix);
-    rows[ShortPrefix::Space as usize] = by_case(b" ", suffix);
-    rows[ShortPrefix::Dot as usize] = by_case(b".", suffix);
-    rows
-}
-
-/// Gives up on inputs in which it finds next to nothing.
-#[derive(Clone, Copy, Default)]
-pub(super) struct QuickWordSearch {
-    lookups: usize,
-    matches: usize,
-}
-
-impl QuickWordSearch {
-    #[inline(always)]
-    pub(super) fn is_active(&self) -> bool {
-        self.matches >= self.lookups >> 7
-    }
-
-    /// The best word at the start of `padded`, which ends with [`SLACK`] bytes. `first_distance` refers to the first word.
-    #[inline(always)]
-    pub(super) fn find(
-        &mut self,
-        padded: &[u8],
-        candidates: usize,
-        first_distance: usize,
-        max_distance: usize,
-    ) -> Option<Match> {
-        self.lookups += candidates;
-        // Fewer than four bytes never score high enough.
-        if !has_likely_words(bytes_at(padded, 0)) {
-            return None;
-        }
-        let (best, matches) = best_likely_word(padded, candidates, first_distance, max_distance);
-        if matches == 0 {
-            return None;
-        }
-        self.matches += matches;
-        Some(Match { ..best })
-    }
-}
-
-/// And how many were the best so far.
-#[cold]
-#[inline(never)]
-fn best_likely_word(
-    padded: &[u8],
-    candidates: usize,
-    first_distance: usize,
-    max_distance: usize,
-) -> (Match, usize) {
-    let (mut best, mut matches) = (Match::new(0, 0, MIN_SCORE), 0);
-    for word in likely_words(bytes_at(padded, 0))
-        .into_iter()
-        .take(candidates)
-    {
-        if word.length() != 0
-            && let Some(found) = match_of(word, padded, first_distance)
-            && found.distance <= max_distance
-            && found.score >= best.score
-        {
-            best = found;
-            matches += 1;
-        }
-    }
-    (best, matches)
-}
-
-/// How much of the word is at the start of `padded`, which ends with [`SLACK`] bytes.
-#[inline(always)]
-fn matched_length(word: PackedWord, padded: &[u8]) -> usize {
-    let most = word.length().min(padded.len() - SLACK);
-    let mut matched = 0;
-    loop {
-        let difference = load64(word.padded_spelling(), matched) ^ load64(padded, matched);
-        matched += (difference.trailing_zeros() / 8) as usize;
-        if difference != 0 || matched >= most {
-            return matched.min(most);
-        }
-    }
-}
-
-#[inline(always)]
-fn match_of(word: PackedWord, padded: &[u8], first_distance: usize) -> Option<Match> {
-    if word.length() + SLACK > padded.len() {
-        return None;
-    }
-    let length = matched_length(word, padded);
-    let omitted = word.length() - length;
-    let distance = first_distance + word.address(*OMIT_LAST.get(omitted)?);
-    Some(Match {
-        length,
-        omitted,
-        distance,
-        score: score(length, distance),
-    })
-}
-
-pub(super) const MAX_MATCH_LENGTH: usize = 37;
-
-/// For each length, the transformed word with the lowest address.
-pub(super) struct WordMatches {
-    /// A bit for each length that has one.
-    lengths: u64,
-    /// The address, and in the low 5 bits the length of the word.
-    by_length: [u32; MAX_MATCH_LENGTH + 1],
-}
-
-impl WordMatches {
-    pub(super) fn new() -> Self {
-        Self {
-            lengths: 0,
-            by_length: [0; MAX_MATCH_LENGTH + 1],
-        }
-    }
-
-    /// The address, the length in the input, and the length of the word.
-    #[inline(always)]
-    pub(super) fn from_length(
-        &self,
-        min_length: usize,
-    ) -> impl Iterator<Item = (usize, usize, usize)> {
-        let mut lengths = self.lengths & u64::MAX.unbounded_shl(min_length as u32);
-        core::iter::from_fn(move || {
-            let length = lengths.trailing_zeros() as usize;
-            let &packed = self.by_length.get(length)?;
-            lengths &= lengths - 1;
-            Some(((packed >> 5) as usize, length, (packed % 32) as usize))
-        })
-    }
-
-    #[inline(always)]
-    fn add(&mut self, word: PackedWord, transform: u8, length: usize) {
-        let packed = ((word.address(transform) << 5) + word.length()) as u32;
-        let is_first = (self.lengths >> length) & 1 == 0;
-        let best = &mut self.by_length[length];
-        *best = if is_first { packed } else { packed.min(*best) };
-        self.lengths |= 1 << length;
-    }
-
-    /// At the start of `padded`, which has at least four bytes and [`SLACK`]. Some matches below `min_length` are left out.
-    #[inline(always)]
-    pub(super) fn find(&mut self, padded: &[u8], min_length: usize) {
-        // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/static_dict.c#L72
-        self.lengths = 0;
-        let data = &padded[..padded.len() - SLACK];
-        for (word, case) in all_words(load64(padded, 0)) {
-            if word.length() + b". This ".len() < min_length {
-                break;
-            }
-            if case == Case::Unchanged {
-                self.add_unchanged(word, padded, min_length);
-            } else if let Some(after) = strip_word(word, case, data) {
-                self.add_punctuated(ShortPrefix::None, word, case, after);
-            }
-        }
-        if let [first @ (b' ' | b'.'), _, _, _, _, ..] = *data {
-            let prefix = match first {
-                b' ' => ShortPrefix::Space,
-                _ => ShortPrefix::Dot,
-            };
-            for (word, case) in all_words(load64(padded, 1)) {
-                if word.length() + 3 < min_length {
-                    break;
-                }
-                if (first == b' ' || case == Case::Unchanged)
-                    && let Some(after) = strip_word(word, case, &data[1..])
-                {
-                    self.add_punctuated(prefix, word, case, after);
-                }
-            }
-        }
-        macro_rules! add_between {
-            ($prefix:literal, $($suffix:literal),+) => {
-                for (word, after) in unchanged_words(&padded[$prefix.len()..]) {
-                    $(if after.starts_with($suffix) {
-                        let length = $prefix.len() + word.length() + $suffix.len();
-                        self.add(word, transform!($prefix, Identity, $suffix), length);
-                    })+
-                }
-            };
-        }
-        match *data {
-            [0xC2, 0xA0, _, _, _, _, ..] => add_between!(b"\xC2\xA0", b""),
-            [b'e', b' ', _, _, _, _, ..] => add_between!(b"e ", b" "),
-            [b's', b' ', _, _, _, _, ..] => add_between!(b"s ", b" "),
-            [b',', b' ', _, _, _, _, ..] => add_between!(b", ", b" "),
-            [b'.', b'c', b'o', b'm', b'/', _, _, _, _, ..] => add_between!(b".com/", b""),
-            [b' ', b't', b'h', b'e', b' ', _, _, _, _, ..] => {
-                add_between!(b" the ", b"", b" of ", b" of the ");
-            }
-            _ => {}
-        }
-    }
-
-    #[inline(never)]
-    fn add_unchanged(&mut self, word: PackedWord, padded: &[u8], min_length: usize) {
-        let data = &padded[..padded.len() - SLACK];
-        let length = word.length();
-        let matched = matched_length(word, padded);
-        if matched + 1 >= length && data[length - 1..].starts_with(b"ing ") {
-            self.add(word, transform!(b"", OmitLast(1), b"ing "), length + 3);
-        }
-        for kept in min_length.max(length.saturating_sub(9))..=matched {
-            self.add(word, OMIT_LAST[length - kept], kept);
-        }
-        if matched < length {
-            return;
-        }
-        let Some(after) = data[length..].first_chunk::<7>() else {
-            return;
-        };
-        macro_rules! add {
-            ($($suffix:literal),+) => {{
-                $(if after.starts_with($suffix) {
-                    self.add(word, transform!(b"", Identity, $suffix), length + $suffix.len());
-                })+
-            }};
-        }
-        match after[0] {
-            b' ' => {
-                add!(b" ");
-                match after[1] {
-                    b'a' => add!(b" a ", b" as ", b" at ", b" and "),
-                    b'b' => add!(b" by "),
-                    b'i' => add!(b" in ", b" is "),
-                    b'f' => add!(b" for ", b" from "),
-                    b'o' => add!(b" of ", b" on "),
-                    b'n' => add!(b" not "),
-                    b't' => add!(b" the ", b" that ", b" to "),
-                    b'w' => add!(b" with "),
-                    _ => {}
-                }
-            }
-            b'"' => add!(b"\"", b"\">"),
-            b'.' => add!(b".", b". ", b". The ", b". This "),
-            b',' => add!(b",", b", "),
-            b'\n' => add!(b"\n", b"\n\t"),
-            b']' => add!(b"]"),
-            b'\'' => add!(b"'"),
-            b':' => add!(b":"),
-            b'(' => add!(b"("),
-            b'=' => add!(b"=\"", b"='"),
-            b'a' => add!(b"al "),
-            b'e' => add!(b"ed ", b"er ", b"est "),
-            b'f' => add!(b"ful "),
-            b'i' => add!(b"ive ", b"ize "),
-            b'l' => add!(b"less ", b"ly "),
-            b'o' => add!(b"ous "),
-            _ => {}
-        }
-    }
-
-    /// For a word that has a prefix or another case.
-    fn add_punctuated(&mut self, prefix: ShortPrefix, word: PackedWord, case: Case, after: &[u8]) {
-        let length = usize::from(!matches!(prefix, ShortPrefix::None)) + word.length();
-        let mut add = |transforms: &[[Option<u8>; 3]; 3], suffix: &[u8]| {
-            if let Some(transform) = transforms[prefix as usize][case as usize] {
-                self.add(word, transform, length + suffix.len());
-            }
-        };
-        macro_rules! add_if_among {
-            ($bytes:expr, $($suffix:literal),+) => {
-                match $bytes {
-                    $($suffix => add(const { &transforms_with($suffix) }, $suffix),)+
-                    _ => {}
-                }
-            };
-        }
-        add(const { &transforms_with(b"") }, b"");
-        if let [next, second, ..] = *after {
-            add_if_among!(&[next], b" ", b"\"", b".", b",", b"'", b"(");
-            add_if_among!(&[next, second], b"\">", b". ", b", ", b"=\"", b"='");
-        }
-    }
-}
-
-/// What follows the word in `data`, if it starts with it.
-#[inline(always)]
-fn strip_word(word: PackedWord, case: Case, data: &[u8]) -> Option<&[u8]> {
-    let spelling = word.spelling();
-    let (start, after) = data.split_at_checked(spelling.len())?;
-    let matches = match case {
-        Case::Unchanged => match_length(spelling, start) == spelling.len(),
-        Case::UppercaseFirst => {
-            spelling[0] ^ 32 == start[0]
-                && match_length(&spelling[1..], &start[1..]) == spelling.len() - 1
-        }
-        Case::UppercaseAll => {
-            (spelling.iter().zip(start)).all(|(a, b)| a.to_ascii_uppercase() == *b)
-        }
+static AFFIXES: Affixes = {
+    let mut all = Affixes {
+        transforms: [[[0; _]; _]; _],
+        allowed: [[0; _]; _],
+        possible: [[0; _]; _],
+        suffixes: [(0, 0); _],
     };
-    matches.then_some(after)
+    let mut suffix = 0;
+    while suffix < SUFFIXES.len() {
+        let (text, mut i) = (SUFFIXES[suffix], 0);
+        while i < 3 * PREFIXES.len() {
+            let kind = [Identity, UppercaseFirst, UppercaseAll][i % 3];
+            if let Some(transform) = Transform::index_of(PREFIXES[i / 3], kind, text) {
+                all.transforms[i / 3][i % 3][suffix] = transform;
+                all.allowed[i / 3][i % 3] |= 1 << suffix;
+            }
+            i += 1;
+        }
+        i = 0;
+        while i < 4 * 128 {
+            let is_possible = i / 128 >= text.len() || text[i / 128] as usize == i % 128;
+            all.possible[i / 128][i % 128] |= (is_possible as u64) << suffix;
+            i += 1;
+        }
+        let mut padded = [0; 8];
+        padded.split_at_mut(8 - text.len()).1.copy_from_slice(text);
+        all.suffixes[suffix] = (u64::from_le_bytes(padded), text.len() as u32);
+        suffix += 1;
+    }
+    all
+};
+
+pub(super) const BATCH: usize = 64;
+
+/// What may be words in a batch of positions.
+#[derive(Clone, Copy)]
+pub(super) struct Words {
+    alike: [Alike; 2 * BATCH],
+    /// A bit for each prefix that is there in front of one.
+    pub(super) prefixes: [u8; BATCH],
 }
 
-fn unchanged_words(padded: &[u8]) -> impl Iterator<Item = (PackedWord, &[u8])> {
-    let data = &padded[..padded.len() - SLACK];
-    let words = all_words(load64(padded, 0)).filter(|&(_, case)| case == Case::Unchanged);
-    words.filter_map(|(word, case)| Some((word, strip_word(word, case, data)?)))
+impl Words {
+    pub(super) const NONE: Self = Self {
+        alike: [Alike::NONE; _],
+        prefixes: [0; _],
+    };
+}
+
+/// At the positions that have a bit in `wanted`.
+#[inline(always)]
+pub(super) fn find_prefixes(bytes: &[u8; 2 * BATCH + 8], mut wanted: u64, words: &mut Words) {
+    let (mut places, mut count) = ([0; 2 * BATCH], 0);
+    let mut look_at = |at: usize| {
+        places[count % (2 * BATCH)] = at as u8;
+        count += usize::from(has_words(load32(bytes, at)));
+    };
+    while wanted != 0 {
+        look_at(wanted.trailing_zeros() as usize);
+        wanted &= wanted - 1;
+    }
+    look_at(BATCH);
+    look_at(BATCH + 1);
+    let mut starts = [false; 2 * BATCH];
+    for &at in &places[..count] {
+        let at = usize::from(at) % (2 * BATCH);
+        let alike = Alike::to(load64(bytes, at));
+        (words.alike[at], starts[at]) = (alike, !alike.is_empty());
+    }
+    let prefixes = &mut words.prefixes;
+    prefixes.fill(0);
+    macro_rules! look_for {
+        ($($number:literal)+) => {$(
+            for (at, prefixes) in prefixes.iter_mut().enumerate() {
+                let mut is_there = starts[at + PREFIXES[$number].len()];
+                for (i, &byte) in PREFIXES[$number].iter().enumerate() {
+                    is_there &= bytes[at + i] == byte;
+                }
+                *prefixes |= u8::from(is_there) << $number;
+            }
+        )+};
+    }
+    look_for!(0 1 2 3 4 5 6 7);
+}
+
+/// What it takes to look at the longest prefix, word and suffix.
+pub(super) const READ: usize = 48;
+
+/// Calls `found` with the address, the length in the input, the length of the word, and whether it is there after all.
+#[inline(always)]
+pub(super) fn find_words(
+    bytes: &[u8; READ],
+    words: &Words,
+    at: usize,
+    mut found: impl FnMut(usize, usize, usize, bool),
+) {
+    static CHANGES: [[u8; 32]; 4] = {
+        let mut changes = [[0; _]; _];
+        changes[Case::UppercaseFirst as usize][0] = 32;
+        changes[Case::UppercaseAll as usize] = [32; _];
+        changes
+    };
+    static LENGTHS: [u8; 8] = [0, 1, 1, 2, 2, 2, 5, 5];
+    const ING: u8 = Transform::index_of(b"", OmitLast(1), b"ing ").unwrap();
+    let mut prefixes = words.prefixes[at % BATCH];
+    while prefixes != 0 {
+        let prefix = prefixes.trailing_zeros() as usize % PREFIXES.len();
+        prefixes &= prefixes - 1;
+        let skipped = usize::from(LENGTHS[prefix] % 8);
+        let bytes: &[u8; 40] = array_at(bytes, skipped);
+        for (word, case) in words.alike[at % BATCH + skipped] {
+            let (spelling, length) = (word.padded_spelling(), word.length());
+            let matched =
+                differences_in_case(array_at(spelling, 0), &CHANGES[case], array_at(bytes, 0))
+                    .trailing_zeros() as usize;
+            if matched >= length {
+                let after = load64(bytes, length);
+                let mut suffixes = AFFIXES.allowed[prefix][case];
+                for (i, possible) in AFFIXES.possible.iter().enumerate() {
+                    suffixes &= possible[(after >> (8 * i)) as usize % 128];
+                }
+                while suffixes != 0 {
+                    let suffix = suffixes.trailing_zeros() as usize;
+                    suffixes &= suffixes - 1;
+                    let (text, added) = AFFIXES.suffixes[suffix];
+                    let total = skipped + length + added as usize;
+                    found(
+                        word.address(AFFIXES.transforms[prefix][case][suffix]),
+                        total,
+                        length,
+                        after.unbounded_shl(64 - 8 * added) == text,
+                    );
+                }
+            } else {
+                let (omitted, is_plain) = (length - matched, prefix + case == 0);
+                found(
+                    word.address(OMIT_LAST[omitted.min(9)]),
+                    matched,
+                    length,
+                    is_plain & (omitted <= 9),
+                );
+                if (omitted == 1) & (bytes_at(bytes, matched) == *b"ing ") {
+                    found(word.address(ING), matched + 4, length, is_plain);
+                }
+            }
+        }
+    }
 }

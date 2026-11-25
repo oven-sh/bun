@@ -9,7 +9,7 @@ pub(super) struct HeldBits {
 pub(super) const REFILLED_BITS: u32 = u64::BITS - 8;
 
 pub(super) struct BitReader<'a> {
-    input: &'a [u8],
+    pub(super) input: &'a [u8],
     /// The end of `input` that `count` does not cover.
     pub(super) rest: &'a [u8],
     /// Above the first `count` bits it has zeros, or the bits that `rest` starts with.
@@ -85,6 +85,25 @@ impl<'a> BitReader<'a> {
 
     pub(super) fn skip_to_byte_boundary(&mut self) {
         self.skip(self.count % 8);
+    }
+
+    /// In `input`. It wraps around while there are bits from the last call.
+    #[inline(always)]
+    pub(super) fn position(&self) -> usize {
+        (8 * (self.input.len() - self.rest.len())).wrapping_sub(self.count as usize)
+    }
+
+    /// Forward, but not behind the end.
+    #[inline(always)]
+    pub(super) fn seek(&mut self, position: usize) {
+        let skipped = position.wrapping_sub(self.position());
+        if skipped <= self.count as usize {
+            return self.skip(skipped as u32);
+        }
+        self.rest = self.input.get(position / 8..).unwrap_or_default();
+        (self.buffer, self.count) = (0, 0);
+        self.refill();
+        self.skip(self.count.min(position as u32 % 8));
     }
 
     /// Puts the whole bytes that were read ahead back in front of `rest`.

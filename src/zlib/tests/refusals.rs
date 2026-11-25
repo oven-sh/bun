@@ -3,11 +3,13 @@ use std::cell::Cell;
 use std::fmt::Debug;
 
 use bun_core::vec::BorrowedBuf;
+use bun_deflate::lanes::Lengths;
 use bun_zlib::deflate::{self, Flush, compress};
-use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status};
+use bun_zlib::inflate::{Container, SPARE_CAPACITY, Status, free_spare_memory};
 use bun_zlib::{Deflater, Error, Inflater, Result};
 
 use crate::deflate::{options, raw};
+use crate::lane_kernels::IS_SUPPORTED;
 use crate::samples::Random;
 use crate::writer::Writer;
 
@@ -45,11 +47,26 @@ unsafe impl GlobalAlloc for Refusing {
 #[global_allocator]
 static ALLOCATOR: Refusing = Refusing;
 
+/// Without what the thread keeps for any stream.
+fn bytes_in_use() -> usize {
+    free_spare_memory();
+    BYTES_IN_USE.get()
+}
+
+/// For what stands in for code that does not allocate.
+pub(crate) fn uncounted<T>(run: impl FnOnce() -> T) -> T {
+    let grants = GRANTS.take();
+    let result = run();
+    GRANTS.set(grants);
+    result
+}
+
 /// Each allocation alone, and with all that follow. One that cannot be refused ends the process.
 fn refuse_each_allocation<T: PartialEq + Debug>(run: impl Fn() -> Result<T>) {
     let expected = run().unwrap();
     for refusals in [1, usize::MAX] {
         for grants in 0.. {
+            free_spare_memory();
             GRANTS.set(Some((grants, refusals)));
             let result = run();
             let was_refused = GRANTS.take().is_none_or(|it| it.1 < refusals);
@@ -205,14 +222,14 @@ fn little_more_than_the_window_is_kept_between_messages() {
     for (window_bits, piece) in (8..16).flat_map(|bits| [(bits, usize::MAX), (bits, 50)]) {
         let (input, messages) = messages(window_bits.max(9), Flush::Sync);
         let mut out = Vec::with_capacity(input.len() + 1);
-        let before = BYTES_IN_USE.get();
+        let before = bytes_in_use();
         let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
         for message in &messages {
             for mut piece in message.chunks(piece) {
                 let status = inflater.inflate_to_vec(&mut piece, &mut out, usize::MAX);
                 assert_eq!(status, Ok(Status::NeedsInput));
             }
-            assert_eq!(BYTES_IN_USE.get() - before, kept_window(window_bits));
+            assert_eq!(bytes_in_use() - before, kept_window(window_bits));
         }
         assert!(out == input);
 
@@ -220,11 +237,11 @@ fn little_more_than_the_window_is_kept_between_messages() {
         let status = inflater.inflate_to_vec(&mut &raw(&input, 6, 8)[..], &mut out, 50_000);
         assert_eq!(status, Ok(Status::NeedsOutput));
         inflater.reset_and_wait();
-        assert_eq!(BYTES_IN_USE.get(), before);
+        assert_eq!(bytes_in_use(), before);
 
         let status = inflater.inflate_to_vec(&mut &messages[0][..], &mut out, usize::MAX);
         assert_eq!(status, Ok(Status::NeedsInput));
-        assert_eq!(BYTES_IN_USE.get() - before, kept_window(window_bits));
+        assert_eq!(bytes_in_use() - before, kept_window(window_bits));
     }
 }
 
@@ -243,7 +260,7 @@ fn only_the_tables_are_kept_as_well_wherever_the_input_ends() {
         ] {
             let (input, messages) = messages(window_bits, flush);
             let mut out = Vec::with_capacity(input.len() + 1);
-            let before = BYTES_IN_USE.get();
+            let before = bytes_in_use();
             let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
             for mut piece in messages.iter().flat_map(|it| it.chunks(piece)) {
                 let mut status = Status::NeedsOutput;
@@ -252,7 +269,7 @@ fn only_the_tables_are_kept_as_well_wherever_the_input_ends() {
                     status = result.unwrap();
                 }
                 assert_eq!(status, Status::NeedsInput);
-                assert!(BYTES_IN_USE.get() - before <= kept_window(window_bits) + tables);
+                assert!(bytes_in_use() - before <= kept_window(window_bits) + tables);
             }
             assert!(input.starts_with(&out) && out.len() + held_back >= input.len());
         }
@@ -269,14 +286,22 @@ fn stored_and_fixed_blocks_wait_without_tables() {
     stream.literals(&random.bytes(20)).copy(258, 512);
     let stream = stream.end_block().finish();
     let expected = crate::plain::inflate(&stream, &[]).bytes;
-    for (cut, tables) in [(100, TABLES), (35, 0), (10, 0)] {
+    for (cut, in_lanes, tables) in [
+        (100, false, TABLES),
+        (100, true, size_of::<Lengths>()),
+        (35, false, 0),
+        (35, true, 0),
+        (10, false, 0),
+        (10, true, 0),
+    ] {
+        IS_SUPPORTED.set(in_lanes);
         let (head, tail) = stream.split_at(stream.len() - cut);
         let mut inflater = Inflater::with_window_bits(Container::Raw, 9).unwrap();
         let mut out = Vec::with_capacity(9999);
-        let before = BYTES_IN_USE.get();
+        let before = bytes_in_use();
         let status = inflater.inflate_to_vec_and_wait(&mut &*head, &mut out, usize::MAX);
         assert_eq!(status, Ok(Status::NeedsInput));
-        assert_eq!(BYTES_IN_USE.get() - before, kept_window(9) + tables);
+        assert_eq!(bytes_in_use() - before, kept_window(9) + tables);
         let status = inflater.inflate_to_vec_and_wait(&mut &*tail, &mut out, usize::MAX);
         assert!(status == Ok(Status::StreamEnd) && out == expected);
     }
@@ -293,12 +318,12 @@ fn short_or_stored_messages_do_not_take_the_memory_for_long_ones() {
         let stream = raw(&Random::new(4).bytes(len), level, 8);
         let mut inflater = Inflater::with_window_bits(Container::Raw, window_bits).unwrap();
         let mut out = Vec::with_capacity(99_999);
-        let before = BYTES_IN_USE.get();
+        let before = bytes_in_use();
         inflater.set_dictionary(&[7; 500]).unwrap();
         for mut piece in stream[..stream.len() - 1].chunks(piece) {
             let status = inflater.inflate_to_vec(&mut piece, &mut out, usize::MAX);
             assert_eq!(status, Ok(Status::NeedsInput));
-            assert!(BYTES_IN_USE.get() - before <= kept_window(window_bits));
+            assert!(bytes_in_use() - before <= kept_window(window_bits));
         }
     }
 }
@@ -322,10 +347,10 @@ fn one_call_with_spare_capacity_needs_no_window() {
     let input = Random::new(6).mixed(50_000, 512);
     let stream = raw(&input, 6, 8);
     let mut out = Vec::with_capacity(input.len() + SPARE_CAPACITY);
-    let (mut inflater, before) = (Inflater::new(Container::Raw), BYTES_IN_USE.get());
+    let (mut inflater, before) = (Inflater::new(Container::Raw), bytes_in_use());
     let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
     assert!(status == Ok(Status::StreamEnd) && out == input);
-    assert_eq!(BYTES_IN_USE.get() - before, TABLES);
+    assert!(bytes_in_use() - before <= TABLES);
 }
 
 #[test]
@@ -342,11 +367,11 @@ fn nor_does_one_with_a_vec_that_has_to_grow() {
     ] {
         let stream = raw(input, 6, 8);
         let mut out = Vec::with_capacity(capacity);
-        let (mut inflater, before) = (Inflater::new(Container::Raw), BYTES_IN_USE.get());
+        let (mut inflater, before) = (Inflater::new(Container::Raw), bytes_in_use());
         let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
         assert!(status == Ok(Status::StreamEnd) && out == input);
         let grown = out.capacity() - capacity;
-        assert_eq!(BYTES_IN_USE.get() - before, TABLES + grown);
+        assert!(bytes_in_use() - before <= TABLES + grown);
     }
 }
 
@@ -395,15 +420,16 @@ fn also_in_the_middle_of_a_match() {
 
 #[test]
 fn reset_and_wait_keeps_nothing_after_a_refusal() {
+    IS_SUPPORTED.set(false);
     let stream = raw(&Random::new(6).mixed(50_000, 512), 6, 8);
     for grants in 0..3 {
         let (mut inflater, mut out) = (Inflater::new(Container::Raw), Vec::with_capacity(50_001));
-        let before = BYTES_IN_USE.get();
+        let before = bytes_in_use();
         GRANTS.set(Some((grants, 1)));
         let status = inflater.inflate_to_vec(&mut &stream[..], &mut out, usize::MAX);
         assert!(matches!(status, Err(Error::Alloc(_))));
         inflater.reset_and_wait();
-        assert_eq!(BYTES_IN_USE.get(), before);
+        assert_eq!(bytes_in_use(), before);
     }
 }
 

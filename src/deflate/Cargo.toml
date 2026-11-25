@@ -14,8 +14,10 @@ workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_highway.workspace = true
-bun_pod.workspace = true
 bun_removable_features.workspace = true
+
+[dev-dependencies]
+bun_highway = { workspace = true, features = ["test_support"] }
 
 [[test]]
 name = "deflate"

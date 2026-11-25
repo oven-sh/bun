@@ -952,55 +952,6 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
 }
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_brotli_remove_pairs(
-    costs: *mut f64,
-    pairs: *mut [u32; 2],
-    count: usize,
-    a: u32,
-    b: u32,
-) -> usize {
-    use core::slice::from_raw_parts_mut as slice;
-    // SAFETY: the caller passes two slices of this length.
-    let (costs, pairs) = unsafe { (slice(costs, count), slice(pairs, count)) };
-    let rank = |(cost, [first, second]): (f64, [u32; 2])| (cost, second - first);
-    let (mut best, mut kept) = ((1e99, [u32::MAX; 2]), 0);
-    for at in 0..count {
-        let mut pair = (costs[at], pairs[at]);
-        if !pair.1.contains(&a) && !pair.1.contains(&b) {
-            if rank(pair) < rank(best) {
-                core::mem::swap(&mut pair, &mut best);
-            }
-            (costs[kept], pairs[kept]) = pair;
-            kept += 1;
-        }
-    }
-    (costs[0], pairs[0]) = best;
-    kept
-}
-/// Rougher than the kernel: the entropy, and four bits to describe each symbol.
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn highway_brotli_estimate_costs(
-    common: *const u32,
-    others: &[*const u32; 4],
-    size: usize,
-    _used: &[u64; 11],
-    totals: &[u32; 4],
-    _gaps: &[[u32; 4]; 2],
-    _table: *mut [f64; 2],
-    _limit: u32,
-    costs: &mut [f64; 4],
-) {
-    // SAFETY: the caller passes five slices of this length.
-    let counts = |of| unsafe { core::slice::from_raw_parts(of, size) };
-    for ((cost, &other), &total) in costs.iter_mut().zip(others).zip(totals) {
-        let sums = counts(common).iter().zip(counts(other)).map(|(a, b)| a + b);
-        let bits = |sum| 4.0 + f64::from(sum) * (f64::from(total) / f64::from(sum)).log2();
-        *cost = sums.filter(|&sum| sum != 0).map(bits).sum();
-    }
-}
 /// Reports `BUN_JSON_IDX_ODDITY`, so `StructuralIndex` falls back to its scalar indexer.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -1461,13 +1412,35 @@ unsafe extern "C" fn highway_common_prefix_length(a: *const u8, b: *const u8, le
     let (a, b) = unsafe { (bytes(a, len), bytes(b, len)) };
     a.iter().zip(b).take_while(|(a, b)| a == b).count()
 }
+/// Compressing is an error then.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn highway_subtract_saturating(p: *mut [u16; 64], len: usize, amount: u16) {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    for value in unsafe { core::slice::from_raw_parts_mut(p, len) }.as_flattened_mut() {
-        *value = value.saturating_sub(amount);
-    }
+extern "C" fn highway_deflate_parse() {}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_count() {}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_make_codes() -> u32 {
+    0
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_start_block() -> usize {
+    0
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_sum() {}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_end_of_run(_: *const u8, at: usize) -> usize {
+    at
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn highway_deflate_write() -> usize {
+    usize::MAX
 }
 
 /// Returns the mantissa digits of `text`, starting at the first nonzero digit.

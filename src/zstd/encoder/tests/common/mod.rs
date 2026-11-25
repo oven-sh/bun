@@ -3,6 +3,7 @@ use bun_zstd_encoder::EndDirective::{self, Continue, End, Flush};
 use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder};
 
 pub(crate) const WINDOW_LOG: u32 = 101;
+pub(crate) const STRATEGY: u32 = 107;
 pub(crate) const LONG_DISTANCE: u32 = 160;
 pub(crate) const CHECKSUM: u32 = 201;
 pub(crate) const WORKERS: u32 = 400;

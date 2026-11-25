@@ -4,8 +4,8 @@
 //   <a build of 52cf8bebe> record.ts [new-cases.json]
 //   bun bd record.ts --accept [new-cases.json]
 //
-// The results in the repository are those of 52cf8bebe, which had zlib-ng 2.3.3. So the first form is the one to add
-// cases with. The second is for after a change that is meant: it records the code under test.
+// The results for damaged streams are those of 52cf8bebe, which had zlib-ng 2.3.3. So the first form is the one to add
+// such cases with. The second records the code under test, which the results of compressing are from.
 //
 // new-cases.json replaces the cases. It is a `Cases` of observe.ts, in which a result may be empty.
 import { fixture, library, loadCases, nameOf, observeDamaged, observeDeflate, WRONG, type Cases } from "./observe";
@@ -27,7 +27,7 @@ function noted(name: string, before: string, after: string) {
   if (before !== after) changed.push(`${name}\n--- before\n${before}--- after\n${after}`);
   return after;
 }
-for (const c of [...cases.whole, ...cases.steps, ...cases.rare]) {
+for (const c of args.includes("--accept") ? [...cases.whole, ...cases.steps, ...cases.rare] : []) {
   c.result = noted(nameOf(c), c.result, observeDeflate(c));
 }
 for (const c of cases.damaged) {

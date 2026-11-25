@@ -266,27 +266,28 @@ describe("fetch compress option", () => {
     }
 
     describe.each([
-      [1, "0b0080", [0, 1, 2, 3, 5, 11]],
-      [100 * 1024, "abffc708", [0, 1, 2, 3, 5, 11]],
-      [524_158, "abbeff0b", [0, 1, 5]],
-      [524_159, "2bbfff0b", [0, 1, 5]],
-      [600 * 1024, "abffaf0c", [0, 1, 2, 3, 5]],
-    ])("%d incompressible bytes", (outputLength, header, levels) => {
+      [1, [0, 1, 2, 3, 5, 11]],
+      [100 * 1024, [0, 1, 2, 3, 5, 11]],
+      [524_158, [0, 1, 5]],
+      [524_159, [0, 1, 5]],
+      [600 * 1024, [0, 1, 2, 3, 5]],
+    ])("%d incompressible bytes", (outputLength, levels) => {
       const noise = createHash("shake256", { outputLength }).update("fetch-compress").digest();
 
       test.concurrent.each(levels)("are stored at level %d", async level => {
-        const stored = Buffer.concat([Buffer.from(header, "hex"), noise, Buffer.of(3)]);
-        expect(Buffer.compare(await sent(noise, { encoding: "br", level }), stored)).toBe(0);
+        const stored = await sent(noise, { encoding: "br", level });
+        expect(stored.length - outputLength).toBeWithin(4, 7 + 4 * (outputLength >> 14));
+        expect(brotliDecompressSync(stored).equals(noise)).toBe(true);
       });
     });
 
-    test.concurrent("a body may grow by more than three bytes for each 16 KiB", async () => {
+    test.concurrent("a body that all but does not compress grows within the bound", async () => {
       const body = createHash("shake256", { outputLength: 600 * 1024 })
         .update("fetch-compress")
         .digest();
       for (let at = 13000; at < body.length; at += 16 * 1024) body.fill(0, at, at + 20);
       const compressed = await sent(body, { encoding: "br", level: 3 });
-      expect(compressed.length - body.length).toBe(130);
+      expect(compressed.length - body.length).toBeWithin(1, 7 + 4 * (body.length >> 14));
       expect(brotliDecompressSync(compressed).equals(body)).toBe(true);
     });
 

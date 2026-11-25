@@ -1,5 +1,5 @@
 // Sequences of writes, flushes, params() and reset(), with the bytes that they give and when. See record.ts.
-// The results are those of zlib-ng 2.3.3.
+// The results are Bun's own, and the same on every CPU.
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import zlib from "node:zlib";

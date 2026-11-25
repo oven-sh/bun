@@ -4,13 +4,14 @@
 //   bun bd record.ts [new-cases.json]
 //
 // new-cases.json replaces the cases. It is a `Cases` of observe.ts, in which a result may be empty.
-import { fixture, loadCases, observeDecode, observeEncode, type Cases } from "./observe";
+import { fixture, loadCases, observeDecode, observeEncode, WRONG, type Cases } from "./observe";
 
 const [newCases] = process.argv.slice(2);
 const cases: Cases = newCases ? await Bun.file(newCases).json() : await loadCases();
 
 const changed: string[] = [];
 function noted(name: string, before: string, after: string) {
+  if (after.includes(WRONG)) throw new Error(`${name} ${WRONG}`);
   if (before !== after) changed.push(`${name}\n--- before\n${before}\n--- after\n${after}`);
   return after;
 }

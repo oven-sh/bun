@@ -68,10 +68,6 @@ pub(crate) fn zeroed_array<T: Zeroable, const N: usize>() -> Result<Box<[T; N]>>
     zeroed(N)?.try_into().map_err(|_| AllocError)
 }
 
-pub(crate) fn filled_array<T: Copy, const N: usize>(value: T) -> Result<Box<[T; N]>> {
-    filled(value, N)?.try_into().map_err(|_| AllocError)
-}
-
 /// Returns how many of `bytes` that is.
 pub(crate) fn append_what_fits(output: &mut BorrowedCursor<'_, u8>, bytes: &[u8]) -> usize {
     let (fits, _) = bytes.split_at(bytes.len().min(output.capacity()));

@@ -391,12 +391,6 @@ impl Commands {
         Ok(())
     }
 
-    #[inline(always)]
-    pub(super) fn remember_distance(&mut self, distance: usize) {
-        let [a, b, c, _] = self.last_distances;
-        self.last_distances = [distance as i32, a, b, c];
-    }
-
     pub(super) fn end_with_pending_literals(&mut self) {
         if self.pending_literals > 0 {
             self.list.push(Command::insert_only(self.pending_literals));

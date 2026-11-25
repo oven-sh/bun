@@ -884,10 +884,10 @@ const modules: [string, string[], string[]][] = [
   [
     "zlib-sync-functions-round-trip",
     [
-      "%NativeZlib%.prototype.writeSync",
+      "%NativeZlib%.prototype.writeAllSync",
       "%NativeZlib%.prototype.init",
-      "%NativeBrotli%.prototype.writeSync",
-      "%NativeZstd%.prototype.writeSync",
+      "%NativeBrotli%.prototype.writeAllSync",
+      "%NativeZstd%.prototype.writeAllSync",
     ],
     [
       'import zlib from "node:zlib";',
@@ -896,7 +896,7 @@ const modules: [string, string[], string[]][] = [
   ],
   [
     "zlib-gzip-passes-the-bytes-to-its-callback",
-    ["%NativeZlib%.prototype.write", "%NativeZlib%.prototype.close"],
+    ["%NativeZlib%.prototype.writeAll", "%NativeZlib%.prototype.close"],
     [
       'import zlib from "node:zlib";',
       'zlib.gzip("hello", function (error, bytes) {',
@@ -915,6 +915,14 @@ const modules: [string, string[], string[]][] = [
       'stream.on("data", chunk => chunks.push(chunk));',
       'stream.on("end", () => console.log(zlib.gunzipSync(Buffer.concat(chunks)).toString()));',
       'stream.end("hello");',
+    ],
+  ],
+  [
+    "zlib-sync-functions-hand-out-their-engine",
+    ["%NativeBrotli%.prototype.writeSync", "%NativeZstd%.prototype.writeSync"],
+    [
+      'import zlib from "node:zlib";',
+      'console.log(zlib.brotliCompressSync("hello", { info: true }).engine.bytesWritten, zlib.zstdCompressSync("hello", { info: true }).engine.bytesWritten);',
     ],
   ],
   [

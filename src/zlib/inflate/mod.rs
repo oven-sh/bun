@@ -8,11 +8,13 @@ mod tables;
 mod window;
 
 use core::cell::Cell;
+use core::iter::repeat;
 
 use bun_core::strings;
 use bun_core::vec::BorrowedCursor;
 use bun_deflate::format::{DYNAMIC, MAX_MATCH_LEN, STATIC, STORED};
 use bun_deflate::gzip;
+use bun_deflate::lanes::{Block, Lanes, SHORT_TURN, Sheet};
 use bun_highway::{adler32, crc32};
 
 use crate::checksum::Checksum;
@@ -22,14 +24,18 @@ use crate::format::{
     ZLIB_PRESET_DICTIONARY,
 };
 use bits::{BitReader, HeldBits};
-use codes::{FAST_INPUT, FAST_ROOM, Lap, LongestMatch, NoMatch, Reach, Step, Stop, Tape};
+use codes::{Codes, FAST_INPUT, FAST_ROOM, Lap, LongestMatch, NoMatch, Reach, Step, Stop};
+pub use dynamic::free_spare_memory;
 use dynamic::{Counts, DynamicCodes};
 use output::{Growing, Output, Target};
-use tables::Tables;
-use window::{MAX_DISTANCE, SLACK, Window, whole_periods_len};
+use window::{LAP, MAX_DISTANCE, SLACK, Window, whole_periods_len};
 
 /// `inflate_to_vec()` is faster if the `Vec` has so much more capacity than the output needs.
 pub const SPARE_CAPACITY: usize = SLACK;
+
+/// Lanes do not pay off for less at a time.
+const SHORT_INPUT: usize = 600;
+const SHORT_OUTPUT: usize = 2100;
 
 /// What may be around the compressed data.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -101,6 +107,8 @@ pub struct Inflater {
     window: Window,
     run: Option<Run>,
     dynamic: DynamicCodes,
+    /// In a row.
+    short_calls: u8,
 }
 
 /// More periods leave a window that has nothing else as it is, so they are handed out without being written there.
@@ -111,14 +119,6 @@ struct Run {
     left: usize,
     /// How far the output is into a period.
     phase: usize,
-}
-
-fn current_tables(dynamic: &DynamicCodes, fixed: bool) -> Option<&Tables> {
-    if fixed {
-        Some(&tables::FIXED)
-    } else {
-        dynamic.tables()
-    }
 }
 
 /// Of whole periods at the end of `bytes`, if there is more than one.
@@ -162,6 +162,27 @@ pub fn has_zlib_header(bytes: &[u8]) -> bool {
     matches!(window_bits, Some(Ok(..=MAX_WINDOW_BITS)))
 }
 
+/// Makes room for what all of `input` is likely to stand for, as far as that is no more than `max` bytes, unless the decoder does it better.
+pub fn reserve_for(input: &[u8], is_gzip: bool, out: &mut Vec<u8>, max: usize) -> Result<()> {
+    const MAX_TRUSTED: usize = 256 << 20;
+    // The end of the gzip trailer (RFC 1952 2.3.1).
+    let claimed = input.last_chunk().filter(|_| is_gzip && input.len() > 64);
+    if let Some(len @ 1..MAX_TRUSTED) = claimed.map(|&len| u32::from_le_bytes(len) as usize) {
+        let spare = usize::from(len > input.len()) * SPARE_CAPACITY;
+        if out
+            .try_reserve_exact((len.min(max) + spare).max(64))
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+    // The codes of a longer one tell more.
+    if input.len() < SHORT_INPUT {
+        out.try_reserve_exact((4 * input.len()).min(max) + SPARE_CAPACITY)?;
+    }
+    Ok(())
+}
+
 impl Inflater {
     pub fn new(container: Container) -> Self {
         Self {
@@ -180,6 +201,7 @@ impl Inflater {
             window: Window::new(MAX_DISTANCE),
             run: None,
             dynamic: DynamicCodes::default(),
+            short_calls: 0,
         }
     }
 
@@ -275,6 +297,10 @@ impl Inflater {
         mut out: BorrowedCursor<'_, u8>,
         stops_at_block: bool,
     ) -> Result<Status> {
+        if self.history == 0 && out.capacity() < SHORT_OUTPUT.min(2 * input.len()) {
+            self.short_calls = 3;
+            self.dynamic.avoid_lanes();
+        }
         out.ensure_init();
         out.with_unfilled_buf(|buf| self.step(input, buf, stops_at_block))
     }
@@ -286,7 +312,7 @@ impl Inflater {
         out: &mut Vec<u8>,
         max: usize,
     ) -> Result<Status> {
-        self.step(input, Growing::new(out, max), false)
+        self.step(input, Growing::new(out, max, input.len()), false)
     }
 
     /// The same, if more input is going to take a while.
@@ -331,6 +357,7 @@ impl Inflater {
             Ok(_) => bits.unread(),
             Err(error) => self.state = State::Failed(error),
         }
+        self.dynamic.end_call(input.len() - bits.rest.len());
         (self.held, *input) = bits.suspend();
         result
     }
@@ -352,7 +379,7 @@ impl Inflater {
             let result = self.run(bits, out, stops_at_block);
             self.hand_out(out);
             let status = result?;
-            if status != Status::NeedsOutput || !out.target.grow()? {
+            if status != Status::NeedsOutput || !out.target.grow(bits.rest.len())? {
                 break status;
             }
         };
@@ -360,6 +387,18 @@ impl Inflater {
         self.history = self.history.saturating_add(out.len()).min(kept);
         if !matches!(self.state, State::Checksum | State::Length | State::Done) {
             self.record(out, kept)?;
+        }
+        if let State::Codes { fixed } = self.state {
+            let is_short = match status {
+                _ if self.dynamic.takes_turns() => bits.input.len() - bits.rest.len() < SHORT_TURN,
+                Status::NeedsInput => bits.input.len() < SHORT_INPUT,
+                _ => out.len() < SHORT_OUTPUT,
+            };
+            self.short_calls = u8::from(is_short) * (self.short_calls + 1).min(3);
+            if self.short_calls == 3 {
+                self.dynamic.avoid_lanes();
+            }
+            self.dynamic.pause(fixed)?;
         }
         // A server has many streams that wait between blocks.
         if let (Status::NeedsInput, State::BlockHeader) = (status, self.state) {
@@ -374,6 +413,12 @@ impl Inflater {
         if let State::BlockHeader | State::Stored(_) | State::Codes { fixed: true } = self.state {
             self.dynamic.free_memory();
         }
+    }
+
+    #[inline(always)]
+    fn note_room(&mut self, out: &Output<impl Target>) {
+        let room = out.target.max_room().saturating_sub(self.window.pending());
+        self.dynamic.set_room(room);
     }
 
     #[inline(always)]
@@ -417,6 +462,7 @@ impl Inflater {
         end.is_some()
     }
 
+    #[inline(always)]
     fn run(
         &mut self,
         bits: &mut BitReader<'_>,
@@ -446,6 +492,14 @@ impl Inflater {
         loop {
             self.state = match self.state {
                 State::Header if self.container == Container::Raw => State::BlockHeader,
+                State::Header
+                    if let ([0x1F, 0x8B, DEFLATE_METHOD, 0, _, _, _, _, _, _, rest @ ..], 0) =
+                        (bits.rest, bits.count)
+                        && self.container != Container::Zlib =>
+                {
+                    (bits.rest, bits.buffer, self.checksum) = (rest, 0, Checksum::GZIP);
+                    State::BlockBoundary
+                }
                 State::Header => {
                     let header = (take!(16) as u16).to_le_bytes();
                     if header == GZIP_ID && self.container != Container::Zlib {
@@ -523,7 +577,8 @@ impl Inflater {
                 }
                 State::BlockBoundary | State::BlockHeader => {
                     self.state = State::BlockHeader;
-                    match self.read_block_header(bits)? {
+                    self.note_room(out);
+                    match self.read_block_header(bits, out)? {
                         Some(state) => state,
                         None => return Ok(Status::NeedsInput),
                     }
@@ -559,6 +614,7 @@ impl Inflater {
                 }
                 State::Codes { fixed } => {
                     let before = out.len() + self.window.pending();
+                    self.note_room(out);
                     let status = self.decode_codes(bits, out, fixed)?;
                     let after = out.len() + self.window.pending();
                     self.dynamic.add_decoded(after - before);
@@ -619,7 +675,11 @@ impl Inflater {
 
     /// Takes nothing if it returns `None`, for want of input.
     #[inline(always)]
-    fn read_block_header(&mut self, bits: &mut BitReader<'_>) -> Result<Option<State>> {
+    fn read_block_header(
+        &mut self,
+        bits: &mut BitReader<'_>,
+        out: &mut Output<impl Target>,
+    ) -> Result<Option<State>> {
         const TYPE_END: u32 = 3;
         const COUNTS_END: u32 = TYPE_END + Counts::BITS;
         /// Of a fixed block that has nothing but its end, which is 7 zeros.
@@ -640,6 +700,8 @@ impl Inflater {
                 if len != !complement {
                     return Err(Damage::StoredLengths.into());
                 }
+                out.target
+                    .reserve_first(|| bits.rest.len().min(32 << 20) + usize::from(len.min(8)));
                 State::Stored(len)
             }
             STATIC if bits.has(EMPTY_END) && bits.peek(EMPTY_END) >> TYPE_END == 0 => {
@@ -648,7 +710,13 @@ impl Inflater {
             }
             STATIC => {
                 bits.skip(TYPE_END);
+                self.dynamic.start_fixed();
                 State::Codes { fixed: true }
+            }
+            DYNAMIC if self.dynamic.start_in_lanes(bits) => {
+                out.target
+                    .reserve_first(|| self.dynamic.likely_output_len(bits.rest.len()) + SLACK);
+                State::Codes { fixed: false }
             }
             DYNAMIC => {
                 if !bits.has(COUNTS_END) {
@@ -666,8 +734,8 @@ impl Inflater {
         Ok(Some(state))
     }
 
-    fn start_run(&self, bits: &mut BitReader<'_>, fixed: bool) -> Option<Run> {
-        let repeated = LongestMatch::peek(current_tables(&self.dynamic, fixed)?, bits)?;
+    fn start_run(&mut self, bits: &mut BitReader<'_>, fixed: bool) -> Option<Run> {
+        let repeated = LongestMatch::peek(&self.dynamic.codes(fixed, bits.rest.len()).ok()?, bits)?;
         // A lap is longer than any window, so this holds in later calls, too.
         let is_in_reach = repeated.distance <= self.max_distance.min(self.window_size());
         (is_in_reach && self.window.has_period(repeated.distance)).then_some(Run {
@@ -726,8 +794,8 @@ impl Inflater {
     ) -> bool {
         out.check(&mut self.checksum);
         while bits.rest.len() < FAST_INPUT
-            && let Some(tables) = current_tables(&self.dynamic, fixed)
-            && let Some(taken) = codes::take_unless_match(tables, bits, out.room())
+            && let Ok(codes) = self.dynamic.codes(fixed, bits.rest.len())
+            && let Some(taken) = codes::take_unless_match(&codes, bits, out.room())
         {
             let NoMatch::Literal(literals) = taken else {
                 return true;
@@ -754,6 +822,9 @@ impl Inflater {
     ) -> Result<Option<Status>> {
         /// So that the checksum finds it in the cache.
         const STEP: usize = 16 * 1024;
+        /// Tells whether a fixed block is one for lanes.
+        const SAMPLE_LEN: usize = 400;
+        const LONG_FIXED_INPUT: usize = 1300;
         let pending = self.window.pending();
         if out.room() < pending + SLACK {
             out.target.grow_early(bits.rest.len());
@@ -769,12 +840,15 @@ impl Inflater {
         if pending != 0 {
             self.hand_out_pending(out);
         }
-        let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
         // Not before a step has brought the checksum up to date, nor behind periods that have ended, as many are short.
         let mut looks_for_periods = false;
+        let is_long = fixed && bits.rest.len() >= LONG_FIXED_INPUT;
+        let mut step = if is_long { SAMPLE_LEN + SLACK } else { STEP };
         while let (room @ SLACK.., start) = (out.room(), out.len()) {
+            let input_len = bits.rest.len();
+            let codes = self.dynamic.codes(fixed, input_len)?;
             let result = if looks_for_periods
-                && let Some(repeated) = LongestMatch::peek(tables, bits)
+                && let Some(repeated) = LongestMatch::peek(&codes, bits)
                 && repeated.distance <= self.max_distance
                 && let Some(periods_len) = last_periods_len(out.target.filled(), repeated.distance)
             {
@@ -792,9 +866,13 @@ impl Inflater {
                     from: history,
                 };
                 let distance = Cell::from_mut(&mut self.pending_distance);
-                let result = out
-                    .target
-                    .decode(tables, bits, room.min(STEP), reach, distance);
+                let (target, room) = (&mut out.target, room.min(step));
+                let result = match codes {
+                    Codes::Tables(tables) => target.decode(tables, bits, room, reach, distance),
+                    Codes::Lanes(lanes, block) => {
+                        target.decode_in_lanes((lanes, block), bits, room, reach)
+                    }
+                };
                 out.unchecked += out.len() - start;
                 looks_for_periods = true;
                 result
@@ -806,6 +884,18 @@ impl Inflater {
             }
             if status.is_some() {
                 return Ok(status);
+            }
+            if is_long {
+                let left = bits.rest.len();
+                let is_in_lanes = self.dynamic.continue_fixed(
+                    self.is_last_block,
+                    [input_len.saturating_sub(left), out.len() - start, left],
+                );
+                step = if is_in_lanes {
+                    STEP
+                } else {
+                    STEP.min(2 * step)
+                };
             }
             if out.room() < SLACK {
                 out.target.grow_early(bits.rest.len());
@@ -845,46 +935,89 @@ impl Inflater {
                 self.window
                     .grow(room.min(bits.rest.len().saturating_mul(4)))?;
             }
-            let tables = current_tables(&self.dynamic, fixed).ok_or(Error::Internal)?;
+            let input_len = bits.rest.len();
+            let codes = self.dynamic.codes(fixed, input_len)?;
             let window = &mut self.window;
             let reach = Reach {
                 max: self.max_distance,
                 available: self.history + out.len() + window.pending(),
                 from: window.end,
             };
-            let (full, limit) = (window.end.saturating_add(room), window.limit());
-            let fast_limit = limit.min(full.saturating_sub(FAST_ROOM - 1));
-            if window.end < fast_limit && bits.rest.len() >= FAST_INPUT {
-                let filled = out.target.filled().as_ptr_range().end.addr();
-                let offset = filled.wrapping_sub(window.pending_address());
-                let distance = Cell::from_mut(&mut self.pending_distance);
-                let slice = window.bytes_and_end();
-                let stop = codes::decode_to_slice(
-                    tables, bits, slice, fast_limit, offset, reach, distance,
-                )?;
-                if let Stop::EndOfBlock = stop {
-                    return Ok(Status::BlockEnd);
+            let full = window.end.saturating_add(room);
+            let distance = Cell::from_mut(&mut self.pending_distance);
+            let stop = match codes {
+                Codes::Tables(tables) => {
+                    let limit = window.limit();
+                    let fast_limit = limit.min(full.saturating_sub(FAST_ROOM - 1));
+                    if window.end < fast_limit && bits.rest.len() >= FAST_INPUT {
+                        let filled = out.target.filled().as_ptr_range().end.addr();
+                        let offset = filled.wrapping_sub(window.pending_address());
+                        let slice = window.bytes_and_end();
+                        let stop = codes::decode_to_slice(
+                            tables, bits, slice, fast_limit, offset, reach, distance,
+                        )?;
+                        if let Stop::EndOfBlock = stop {
+                            return Ok(Status::BlockEnd);
+                        }
+                    }
+                    let lap = Lap::new(window.bytes_and_end(), limit, None)?;
+                    codes::decode_past(tables, bits, (lap, full), reach, distance, repeat(()))?
                 }
+                Codes::Lanes(lanes, block) => {
+                    decode_in_lanes((lanes, block), bits, (window, full), reach, distance)?
+                }
+            };
+            if fixed && stop.is_none() {
+                let left = bits.rest.len();
+                self.dynamic.continue_fixed(
+                    self.is_last_block,
+                    [
+                        input_len.saturating_sub(left),
+                        window.end - reach.from,
+                        left,
+                    ],
+                );
             }
-            let mut lap = Lap::new(window.bytes_and_end(), limit, None)?;
-            while lap.position() <= full && lap.room() >= SLACK {
-                self.pending_distance = match codes::decode_one(tables, bits, &mut lap, reach)? {
-                    Step::NeedsInput => return Ok(Status::NeedsInput),
-                    Step::EndOfBlock => return Ok(Status::BlockEnd),
-                    Step::Literal => 0,
-                    Step::Match(distance) => distance,
-                    Step::OutOfReach if lap.position() < full => {
-                        return Err(Damage::DistanceTooFarBack.into());
-                    }
-                    Step::OutOfReach => {
-                        self.state = State::TooFarBack;
-                        return Ok(Status::NeedsOutput);
-                    }
-                };
-            }
-            if lap.position() > full {
-                return Ok(Status::NeedsOutput);
+            match stop {
+                Some(Step::NeedsInput) => return Ok(Status::NeedsInput),
+                Some(Step::EndOfBlock) => return Ok(Status::BlockEnd),
+                Some(_) => {
+                    self.state = State::TooFarBack;
+                    return Ok(Status::NeedsOutput);
+                }
+                None if window.end > full => return Ok(Status::NeedsOutput),
+                None => {}
             }
         }
     }
+}
+
+/// Like `codes::decode_past()`.
+#[inline(never)]
+fn decode_in_lanes(
+    (lanes, block): (&mut Lanes, &mut Block),
+    bits: &mut BitReader<'_>,
+    (window, full): (&mut Window, usize),
+    reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Option<Step>> {
+    let (available, limit) = (reach.available.min(reach.max), window.limit());
+    let lap = if available > window.end { LAP } else { 0 };
+    let mut sheet = Sheet::slice(
+        &mut window.bytes,
+        window.end..full,
+        available,
+        reach.max,
+        lap,
+    );
+    let has_ended = codes::decode_in_lanes((lanes, block), bits, &mut sheet);
+    window.end = sheet.position();
+    if has_ended {
+        return Ok(Some(Step::EndOfBlock));
+    }
+    let (lap, steps) = (
+        Lap::new(window.bytes_and_end(), limit, None)?,
+        0..codes::steps_between_lanes(bits),
+    );
+    codes::decode_past(lanes, bits, (lap, full), reach, last_distance, steps)
 }

@@ -1,6 +1,6 @@
 //! Reads a stream from the lowest bit of its first byte. Zeros follow the end.
 
-use crate::{Error, Result};
+use crate::{Error, Result, copy_prefix};
 
 /// How many bytes the two refills of a turn of the fast loop may load.
 pub(crate) const LOOKAHEAD: usize = 16;
@@ -11,9 +11,11 @@ pub(crate) const BITS_IN_REFILL: u32 = 56;
 pub(crate) struct Input<'a> {
     bytes: &'a [u8],
     /// `bytes[tail_start..]`, and zeros.
-    tail: [u8; LOOKAHEAD + MAX_OVERREAD + LOOKAHEAD],
+    tail: &'a Tail,
     tail_start: usize,
 }
+
+type Tail = [u8; LOOKAHEAD + MAX_OVERREAD + LOOKAHEAD];
 
 /// The read state, separate from [`Input`] so that loops keep it in registers.
 #[derive(Clone, Copy, Default)]
@@ -26,14 +28,11 @@ pub(crate) struct Bits {
 }
 
 impl<'a> Input<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        let mut tail = [0; _];
+    #[inline(always)]
+    pub(crate) fn new(bytes: &'a [u8], tail: &'a mut Tail) -> Self {
         match (bytes.last_chunk::<LOOKAHEAD>(), tail.first_chunk_mut()) {
             (Some(from), Some(to)) => *to = *from,
-            _ => tail
-                .iter_mut()
-                .zip(bytes)
-                .for_each(|(to, from)| *to = *from),
+            _ => _ = copy_prefix(tail, bytes),
         }
         Self {
             bytes,
@@ -65,6 +64,17 @@ impl Bits {
         }
     }
 
+    pub(crate) fn at_bit(position: usize, input: &Input<'_>) -> Result<Self> {
+        let mut bits = Self::at(position / 8);
+        bits.refill(input)?;
+        bits.consume(position as u32 % 8);
+        Ok(bits)
+    }
+
+    pub(crate) fn bit_position(self) -> usize {
+        8 * self.next - usize::from(self.count as u8)
+    }
+
     /// The position of the first byte of which no bit was consumed.
     pub(crate) fn byte_position(self) -> usize {
         self.next - usize::from(self.count as u8 / 8)
@@ -86,7 +96,7 @@ impl Bits {
             self.next += self.refill_with(word);
             return Ok(());
         }
-        let word = word_at(&input.tail, self.next - input.tail_start);
+        let word = word_at(input.tail, self.next - input.tail_start);
         self.next += self.refill_with(word.unwrap_or_default());
         match self.next <= input.bytes.len() + MAX_OVERREAD {
             true => Ok(()),

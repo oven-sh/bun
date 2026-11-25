@@ -4,7 +4,7 @@ use core::ops::RangeInclusive;
 
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::format::{
-    BLOCK_LEN_MAX, WINDOW_LOG_LIMIT_DEFAULT, WINDOW_LOG_MAX, WINDOW_LOG_MIN,
+    BLOCK_LEN_MAX, MIN_MATCH, WINDOW_LOG_LIMIT_DEFAULT, WINDOW_LOG_MAX, WINDOW_LOG_MIN,
 };
 use bun_zstd_decoder::{Error, Result};
 
@@ -19,7 +19,7 @@ const TARGET_BLOCK_LEN_MIN: i32 = 1340;
 pub(crate) const JOB_LEN_MIN: usize = 512 << 10;
 const JOB_LEN_MAX: i32 = 1 << 30;
 const WORKERS_MAX: i32 = 256;
-/// The bits of a hash that rows, and the tables of a dictionary for the two fast strategies, keep beside an index.
+/// The bits of a hash that the tables of a dictionary for the two fast strategies keep beside an index.
 pub(crate) const TAG_BITS: u32 = 8;
 
 /// The values of `ZSTD_cParameter`.
@@ -63,16 +63,17 @@ pub(crate) enum Strategy {
 }
 
 impl Strategy {
+    /// Whether the entropy stage cuts corners.
+    pub(crate) fn is_hurried(self) -> bool {
+        self < Self::Optimal
+    }
+
     fn new(value: i32) -> Option<Self> {
         use Strategy::*;
         let all = [
             Fast, DoubleFast, Greedy, Lazy, Lazy2, TreeLazy2, Optimal, Ultra, Ultra2,
         ];
         all.into_iter().find(|&strategy| strategy as i32 == value)
-    }
-
-    fn can_use_rows(self) -> bool {
-        (Self::Greedy..=Self::Lazy2).contains(&self)
     }
 
     /// How small `len` bytes have to get.
@@ -145,6 +146,11 @@ impl Tuning {
         tuning.fitted(input_len, purpose)
     }
 
+    /// More than the quicker searches can tell apart.
+    pub(crate) fn has_wide_window(&self) -> bool {
+        self.window_log >= 24
+    }
+
     /// With smaller tables where the input does not need large ones.
     pub(crate) fn fitted(mut self, input_len: Option<u64>, purpose: Purpose) -> Self {
         const RESIZED_UP_TO: u64 = 1 << (WINDOW_LOG_MAX - 1);
@@ -173,9 +179,6 @@ impl Tuning {
             self.hash_log = self.hash_log.min(32 - TAG_BITS);
             self.chain_log = self.chain_log.min(32 - TAG_BITS);
         }
-        if self.strategy.can_use_rows() {
-            self.hash_log = self.hash_log.min(32 - TAG_BITS + self.row_log());
-        }
         self
     }
 
@@ -197,12 +200,13 @@ impl Tuning {
         self.chain_log - u32::from(self.strategy >= Strategy::TreeLazy2)
     }
 
-    pub(crate) fn row_log(&self) -> u32 {
-        self.search_log.clamp(4, 6)
-    }
-
-    pub(crate) fn prefers_rows(&self) -> bool {
-        self.strategy.can_use_rows() && self.window_log > 14
+    /// Where matches are weighed, parts of those that were found and repeats can be shorter than what is searched for.
+    pub(crate) fn shortest_match(&self) -> u32 {
+        if self.strategy > Strategy::DoubleFast {
+            MIN_MATCH
+        } else {
+            self.min_match
+        }
     }
 
     pub(crate) fn compresses_literals(&self) -> bool {
@@ -368,14 +372,19 @@ impl Request {
     }
 
     pub(crate) fn plan(&self, tuning: Tuning) -> Plan {
-        let is_optimal = tuning.strategy >= Strategy::Optimal;
-        let matches_long_distance = self
-            .matches_long_distance
-            .unwrap_or(is_optimal && tuning.window_log >= WINDOW_LOG_LIMIT_DEFAULT);
+        let is_out_of_reach = match tuning.strategy {
+            Strategy::Fast | Strategy::DoubleFast => false,
+            it if it < Strategy::Optimal => tuning.has_wide_window(),
+            _ => tuning.window_log >= WINDOW_LOG_LIMIT_DEFAULT,
+        };
+        let matches_long_distance = self.matches_long_distance.unwrap_or(is_out_of_reach);
+        let asked = self.chain_log | self.hash_log | self.search_log | self.min_match;
+        let is_free = asked | self.target_length == 0 && self.strategy.is_none();
+        let is_staged =
+            is_free && !matches_long_distance && !tuning.has_wide_window() && self.level > 0;
         Plan {
             tuning,
-            uses_rows: tuning.prefers_rows(),
-            splits_blocks: is_optimal && tuning.window_log >= 17,
+            staged_level: is_staged.then_some(self.level.min(MAX_LEVEL) as i8),
             long_matches: if matches_long_distance {
                 LongMatches::Own(self.long_distance)
             } else {
@@ -400,12 +409,30 @@ pub(crate) enum LongMatches {
 #[derive(Clone, Copy)]
 pub(crate) struct Plan {
     pub(crate) tuning: Tuning,
-    pub(crate) uses_rows: bool,
-    pub(crate) splits_blocks: bool,
+    /// Replaces the search that the tuning asks for.
+    pub(crate) staged_level: Option<i8>,
     pub(crate) long_matches: LongMatches,
     /// 0 for none.
     pub(crate) target_block_len: usize,
     pub(crate) header: HeaderFlags,
+}
+
+impl Plan {
+    /// Once the matches are known.
+    pub(crate) fn splits_blocks(&self) -> bool {
+        let is_thorough = self.staged_level.is_none() && self.tuning.strategy >= Strategy::Lazy2;
+        is_thorough && self.target_block_len == 0
+    }
+
+    /// The strategy whose way to split blocks early is used.
+    pub(crate) fn splits_like(&self) -> Strategy {
+        match self.staged_level {
+            Some(..=4) => Strategy::Fast,
+            Some(_) => Strategy::DoubleFast,
+            None if self.splits_blocks() => Strategy::Fast,
+            None => self.tuning.strategy,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -420,7 +447,7 @@ mod tests {
 
     /// The hashes are of what `ZSTD_getCParamsFromCCtxParams()` returns.
     #[test]
-    fn tunings_are_those_of_zstd() -> Result<()> {
+    fn windows_are_those_of_zstd() -> Result<()> {
         const INPUT_LENS: [u64; 16] = [
             0,
             63,
@@ -457,20 +484,10 @@ mod tests {
             (1 << 30) + 1,
         ];
         let requests: [(&[_], _); _] = [
-            (&[], 0xE596_4A40),
-            (&[(101, 31)], 0xA529_2197),
-            (&[(101, 10)], 0x560F_2647),
-            (&[(160, 1)], 0xBB91_69F1),
-            (&[(102, 30), (103, 30), (107, 1)], 0xA40D_53E8),
-            (&[(102, 30), (103, 30), (107, 2)], 0x213D_6B66),
-            (&[(102, 30), (104, 3), (107, 3)], 0x22CC_8BAF),
-            (&[(102, 30), (104, 5), (107, 4)], 0x342E_4B09),
-            (&[(102, 30), (104, 7), (107, 5)], 0x1EC8_E829),
-            (&[(101, 31), (102, 30), (103, 30), (107, 6)], 0xA5A7_EAD3),
-            (&[(101, 27), (105, 7), (106, 9), (107, 7)], 0xF0D0_4CCA),
-            (&[(101, 26), (107, 9), (160, 2)], 0x6955_FE0D),
-            (&[(101, 30), (102, 30), (103, 30), (107, 9)], 0x4587_195A),
-            (&[(101, 10), (102, 20), (103, 20), (107, 2)], 0xF538_53F1),
+            (&[], 0x7924_0202),
+            (&[(101, 31)], 0x6499_C664),
+            (&[(101, 10)], 0xECBC_4915),
+            (&[(160, 1)], 0x8118_7665),
         ];
         for (parameters, expected) in requests {
             let mut tunings = Vec::new();
@@ -494,11 +511,7 @@ mod tests {
                     }));
                 }
             }
-            let values = tunings.iter().flat_map(|it| {
-                let logs = [it.window_log, it.chain_log, it.hash_log, it.search_log];
-                logs.into_iter()
-                    .chain([it.min_match, it.target_length, it.strategy as u32])
-            });
+            let values = tunings.iter().map(|it| it.window_log);
             assert_eq!(hash(values), expected, "{parameters:?}");
         }
         Ok(())
@@ -532,18 +545,15 @@ mod tests {
 
     #[test]
     fn large_windows_bring_more_with_them() -> Result<()> {
-        // Rows, splitting, long distances
+        // Splitting, long distances
         let plans = [
-            (14, 3, [false, false, false]),
-            (15, 2, [false, false, false]),
-            (15, 3, [true, false, false]),
-            (31, 5, [true, false, false]),
-            (31, 6, [false, false, false]),
-            (16, 7, [false, false, false]),
-            (17, 7, [false, true, false]),
-            (26, 9, [false, true, false]),
-            (27, 7, [false, true, true]),
-            (28, 9, [false, true, true]),
+            (31, 2, [false, false]),
+            (23, 4, [false, false]),
+            (24, 6, [true, true]),
+            (16, 5, [true, false]),
+            (26, 9, [true, false]),
+            (27, 7, [true, true]),
+            (28, 9, [true, true]),
         ];
         for (window_log, strategy, expected) in plans {
             let mut request = Request::new(1);
@@ -551,8 +561,7 @@ mod tests {
             request.set(107, strategy)?;
             let plan = request.plan(request.tuning(None, Purpose::Frame { dictionary_len: 0 }));
             let actual = [
-                plan.uses_rows,
-                plan.splits_blocks,
+                plan.splits_blocks(),
                 matches!(plan.long_matches, LongMatches::Own(_)),
             ];
             assert_eq!(actual, expected, "{window_log} {strategy}");

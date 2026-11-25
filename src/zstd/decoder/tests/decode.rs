@@ -278,20 +278,25 @@ fn a_stream_repeats_no_tables_that_were_swapped() -> Result<()> {
 
 #[test]
 fn refused_memory_is_an_error_for_a_growing_output() {
-    let [_, fixture, ..] = FIXTURES;
+    let ([_, fixture, ..], mut errors) = (FIXTURES, 0);
     for step in [fixture.frames.len(), fixture.frames.len() - 1] {
         for grants in 0.. {
             let mut out = Vec::new();
             let (was_granted, (_, status)) = with_grants(grants, || {
                 Decoder::new().step_growing(&fixture.frames[..step], &mut out, usize::MAX)
             });
+            // A guess is followed by a smaller request.
+            match status {
+                Ok(_) => assert_eq!(XxHash64::hash(&out), fixture.hash),
+                Err(error) => assert_eq!((error, was_granted), (Error::MemoryAllocation, false)),
+            }
+            errors += usize::from(status.is_err());
             if was_granted {
-                assert_eq!((status.is_ok(), XxHash64::hash(&out)), (true, fixture.hash));
                 break;
             }
-            assert_eq!(status, Err(Error::MemoryAllocation));
         }
     }
+    assert!(errors >= 6);
 }
 
 #[test]
@@ -600,7 +605,7 @@ fn a_refused_dictionary_replaces_the_one_before() -> Result<()> {
 fn a_window_that_stays_too_large_is_given_up() {
     // Windows of 1, 2.5 and 3.5 KiB
     let [small, medium, large] =
-        ["00", "0a", "0e"].map(|window| hex(&format!("28b52ffd 00{window} 010000")));
+        ["00", "0a", "0e"].map(|window| hex(&format!("28b52ffd 00{window} 020000 61 010000")));
     let frames_until_it_allocates = |decoder: &mut Decoder, frame: &[u8]| {
         (1..200).find(|_| {
             let mut out = Output::slice(&mut []);
@@ -631,7 +636,8 @@ fn the_default_limit_is_128_mib() -> Result<()> {
     let result = step(&mut decoder, &header((1 << 27) + 2), 0).2;
     assert_eq!(result, Err(Error::WindowTooLarge));
     decoder.reset_session();
-    let at_limit = header((1 << 27) + 1);
+    let with_block = |size| [header(size), hex("080000 61")].concat();
+    let at_limit = with_block((1 << 27) + 1);
     GRANTS.set(Some(0));
     let (_, status) = decoder.step(&at_limit, &mut Output::slice(&mut []));
     assert_eq!(status, Err(Error::MemoryAllocation));
@@ -639,7 +645,7 @@ fn the_default_limit_is_128_mib() -> Result<()> {
     decoder.reset_session();
     decoder.set_parameter(100, 0)?;
     // It gets as far as asking for the memory.
-    let at_limit = header(1 << 27);
+    let at_limit = with_block(1 << 27);
     GRANTS.set(Some(0));
     let (_, status) = decoder.step(&at_limit, &mut Output::slice(&mut []));
     assert_eq!(status, Err(Error::MemoryAllocation));
@@ -688,6 +694,87 @@ fn short_content_needs_no_window() -> Result<()> {
     let frame = hex("28b52ffd 4090 e802 431f00 61");
     Decoder::new().step_growing(&frame, &mut out, 1000).1?;
     assert_eq!(out, [b'a'; 1000]);
+    Ok(())
+}
+
+#[test]
+fn what_takes_room_for_all_is_not_decompressed_whole() {
+    let far = |offset| {
+        [
+            hex("28b52ffd 0000"),
+            hex("022000 61").repeat(5),
+            hex(offset),
+        ]
+        .concat()
+    };
+    for (frame, is_whole) in [
+        (hex("28b52ffd 4090 e802 431f00 61"), false),
+        (hex("28b52ffd 4088 e802 431f00 61"), true),
+        (far("450000 00 01 54 000c00 0310"), false),
+        (far("450000 00 01 54 000a00 0304"), true),
+    ] {
+        let (mut decoder, mut out) = (Decoder::new(), Vec::new());
+        assert!(decoder.step_growing(&frame, &mut out, usize::MAX).1.is_ok());
+        let result = decoder.decompress_whole(&frame, &mut out, usize::MAX);
+        assert_eq!(result.is_some(), is_whole);
+    }
+}
+
+#[test]
+fn the_window_is_allocated_for_the_first_block() {
+    let (mut decoder, frame) = (Decoder::new(), hex("28b52ffd 0050 080000 61"));
+    let (header, block) = frame.split_at(6);
+    assert!(with_grants(0, || step(&mut decoder, header, 0)).0);
+    let (_, (.., status)) = with_grants(0, || step(&mut decoder, block, 0));
+    assert_eq!(status, Err(Error::MemoryAllocation));
+}
+
+#[test]
+fn an_output_of_unknown_size_is_allocated_once() -> Result<()> {
+    let frame = [
+        hex("28b52ffd 0038"),
+        hex("020010 61").repeat(9),
+        hex("430000 61"),
+    ]
+    .concat();
+    let (mut decoder, mut out) = (Decoder::new(), Vec::new());
+    with_grants(1, || decoder.step_growing(&frame, &mut out, usize::MAX).1).1?;
+    assert_eq!((out.len(), out.capacity()), ((9 << 17) + 8, (9 << 17) + 8));
+    Ok(())
+}
+
+#[test]
+fn guesses_at_the_size_are_modest() -> Result<()> {
+    let frame = |blocks: &[u8]| [&hex("28b52ffd 0038 020010 61"), blocks, &hex("010000")].concat();
+    let one_match = hex("3c0000 00 01 54 000200 04");
+    for blocks in [hex("000000").repeat(999), one_match.repeat(999)] {
+        let mut out = Vec::new();
+        (Decoder::new().step_growing(&frame(&blocks), &mut out, usize::MAX)).1?;
+        assert!(out.capacity() < out.len() / 4 * 5);
+    }
+    let (frame, mut out) = (frame(&hex("020010 61")), Vec::new());
+    let refused_once = || Decoder::new().step_growing(&frame, &mut out, usize::MAX).1;
+    assert_eq!(with_grants(0, refused_once), (false, Ok(Status::Complete)));
+    let mut moves = 0;
+    for _ in 1..16 {
+        let capacity = out.capacity();
+        Decoder::new()
+            .step_growing(&frame, &mut out, usize::MAX)
+            .1?;
+        moves += usize::from(out.capacity() != capacity);
+    }
+    assert_eq!((out.len(), moves), (4 << 20, 4));
+    Ok(())
+}
+
+#[test]
+fn spare_capacity_behind_a_frame_does_not_lift_the_limit() -> Result<()> {
+    let (mut decoder, mut out) = (Decoder::new(), Vec::with_capacity(9999));
+    decoder.set_parameter(100, 10)?;
+    let frame = hex("28b52ffd 6000 07 034000 61");
+    decoder.step_growing(&frame, &mut out, usize::MAX).1?;
+    let (_, status) = decoder.step_growing(&frame, &mut out, usize::MAX);
+    assert_eq!((status, out.len()), (Err(Error::WindowTooLarge), 2048));
     Ok(())
 }
 

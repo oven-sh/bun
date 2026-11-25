@@ -103,7 +103,7 @@ async function web(stream: CompressionStream | DecompressionStream, input: Uint8
   }
 }
 
-async function encode(c: Encode): Promise<Outcome> {
+export async function encode(c: Encode): Promise<Outcome> {
   const { input, dictionary } = make(c);
   if ("chunk" in c) return web(new (CompressionStream as any)("zstd", c), input, c.chunk);
   if ("level" in c) return { error: 0, output: Bun.zstdCompressSync(input, c) };
@@ -136,7 +136,23 @@ const hex = (n: number | bigint, digits: number) => n.toString(16).padStart(digi
 const text = ({ error, output, counts = 0 }: Outcome) =>
   `${error} ${output.length} ${hex(Bun.hash.xxHash64(output), 16)} ${hex(counts, 8)}`;
 
-export const observeEncode = async (c: EncodeCase) => text(await encode(c));
+export const WRONG = "does not decompress to its input";
+
+/** The calls may stop anywhere in the input. */
+function isStartOfInput(c: Encode, frames: Uint8Array) {
+  const { input, dictionary } = make(c);
+  const ZSTD_c_format = 10;
+  if ("params" in c && c.params?.[ZSTD_c_format]) frames = Buffer.concat([Buffer.from("28b52ffd", "hex"), frames]);
+  const api = { params: { [zlib.constants.ZSTD_d_windowLogMax]: 30 }, room: input.length + 1 };
+  const back = handle(zlib.ZstdDecompress, { ...api, writes: [[frames.length, 0]] }, frames, dictionary);
+  const isWhole = "level" in c;
+  return !back.error && !Buffer.compare(back.output, isWhole ? input : input.subarray(0, back.output.length));
+}
+
+export async function observeEncode(c: EncodeCase) {
+  const outcome = await encode(c);
+  return text(outcome) + (!outcome.output.length || isStartOfInput(c, outcome.output) ? "" : ` ${WRONG}`);
+}
 export const observeDecode = async (c: DecodeCase) => text(await decode(c));
 
 async function differencesOf<T extends { name: string; result: string }>(

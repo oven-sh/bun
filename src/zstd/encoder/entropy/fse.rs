@@ -1,12 +1,15 @@
 //! Finite State Entropy.
 
+use bun_highway::zstd_stages::{self, build_table};
 use bun_zstd_decoder::array::At;
 use bun_zstd_decoder::bounded::Bounded;
 use bun_zstd_decoder::format::{Distribution, FSE_TABLE_LOG_MIN, fse_table_step};
 use bun_zstd_decoder::{Error, Result, read_normalized_counts};
 
 use super::bit_writer::BitWriter;
-use crate::bytes::{chunk_at_mut, highest_bit};
+use super::histogram::Histogram;
+use crate::bytes::{chunk_at_mut, highest_bit, put};
+use crate::sequences::Sequence;
 
 /// More than any alphabet has.
 pub(crate) const SYMBOLS: usize = 64;
@@ -18,6 +21,11 @@ pub(super) fn table_log_for(max_log: u32, len: usize, max_symbol: usize, minus: 
     let useful = highest_bit(len.wrapping_sub(1) as u32).wrapping_sub(minus);
     let needed = (highest_bit(len as u32) + 1).min(highest_bit(max_symbol as u32) + 2);
     (max_log.min(useful).max(needed)).clamp(FSE_TABLE_LOG_MIN, TABLE_LOG_MAX)
+}
+
+/// Tables without such counts are faster to build, which small blocks notice.
+pub(super) fn allows_less_than_1(total: usize) -> bool {
+    total >= 2048
 }
 
 /// Counts scaled to add up to a power of 2. -1 is a count of less than 1.
@@ -255,12 +263,15 @@ impl Normalized {
 const BITS_SHIFT: u32 = 28;
 
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Transform {
     /// From the state, once its bits are out, to where the next state is.
     state_delta: i32,
     /// Added to the state, the highest bits are the number of bits to write.
     bits_delta: u32,
 }
+
+bun_pod::impl_pod!(Transform);
 
 /// Which part of [`Tables`] a table takes.
 #[derive(Clone, Copy)]
@@ -432,6 +443,43 @@ impl<const ALL_STATES: usize, const ALL_SYMBOLS: usize> Tables<ALL_STATES, ALL_S
         }
     }
 
+    /// From counts like those for [`Normalized::new`]. Also returns the length of the description.
+    pub(super) fn build_and_describe<const N: usize>(
+        &mut self,
+        index: usize,
+        histogram: &Histogram<N>,
+        total: usize,
+        log: u32,
+        is_hurried: bool,
+        out: &mut [u8],
+    ) -> Result<(Shape, usize)> {
+        let (first_state, first_symbol) = (index * STATES, index * SYMBOLS);
+        let mut bytes = [0; _];
+        if is_hurried
+            && let Some(transforms) = self.transforms.as_chunks_mut().0.get_mut(first_symbol / N)
+            && let states = &mut self.next_states
+            && let Some(len) = build_table(
+                &histogram.counts,
+                log,
+                first_state,
+                states,
+                transforms,
+                &mut bytes,
+            )
+        {
+            let shape = Shape {
+                first_state,
+                first_symbol,
+                log,
+                max_symbol: histogram.max_symbol,
+            };
+            put(out, bytes.get(..len).unwrap_or_default()).ok_or(Error::DstSizeTooSmall)?;
+            return Ok((shape, len));
+        }
+        let normalized = Normalized::new(histogram.used(), total, log, allows_less_than_1(total))?;
+        Ok((self.build(index, &normalized), normalized.write(out)?))
+    }
+
     /// The most bits that `symbol` takes. One more than the log of the table if it cannot be encoded.
     pub(super) fn max_bits(&self, shape: Shape, symbol: usize) -> u32 {
         if symbol > shape.max_symbol {
@@ -510,6 +558,45 @@ impl<const ALL_STATES: usize, const ALL_SYMBOLS: usize> Tables<ALL_STATES, ALL_S
         shape.finish(&mut writer, due)?;
         shape.finish(&mut writer, other)?;
         writer.finish()
+    }
+}
+
+impl Tables<2048, 256> {
+    /// From the last one on. Returns how many are left.
+    #[inline(never)]
+    pub(super) fn encode_most(
+        &self,
+        shapes: &[Shape; 3],
+        sequences: &[Sequence],
+        writer: &mut BitWriter<'_>,
+        states: &mut [u32; 3],
+    ) -> usize {
+        let mut ranges = [[[0; 2]; SYMBOLS]; 3];
+        let kinds = self.transforms.as_chunks::<SYMBOLS>().0.iter().zip(shapes);
+        for (ranges, (transforms, shape)) in ranges.iter_mut().zip(kinds) {
+            // What has no range takes no bits.
+            let used = if shape.log == 0 {
+                0
+            } else {
+                shape.max_symbol + 1
+            };
+            for (range, transform) in ranges.iter_mut().zip(transforms).take(used) {
+                let bits = transform.bits_delta.div_ceil(1 << BITS_SHIFT);
+                let count = ((bits << BITS_SHIFT) - transform.bits_delta) >> bits;
+                let first = count.wrapping_add_signed(transform.state_delta);
+                *range = [first as u16, count as u16];
+            }
+        }
+        let tables = zstd_stages::Tables {
+            logs: shapes.map(|it| it.log),
+            next_states: &self.next_states,
+            ranges: &ranges,
+        };
+        let left = writer.add_sequences(&tables, sequences, states);
+        for (state, shape) in states.iter_mut().zip(shapes) {
+            *state = if shape.log == 0 { 0 } else { *state };
+        }
+        left
     }
 }
 

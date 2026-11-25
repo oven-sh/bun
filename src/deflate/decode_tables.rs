@@ -7,6 +7,7 @@ use crate::format::{
     offset_slot, repeat_slot, static_litlen_codeword, static_offset_codeword,
 };
 use crate::{Error, Result, copy_prefix, wrapped, wrapped_mut};
+use core::cell::Cell;
 use core::hint::select_unpredictable;
 
 // An entry has the number of bits to consume in bits 0-7, how many of them are the codeword's in 8-11, and a value in 16-30.
@@ -214,6 +215,38 @@ pub(crate) struct Tables<const LITLENS: usize> {
 }
 
 pub(crate) type DynamicTables = Tables<{ 1 << LITLEN_BITS }>;
+
+std::thread_local! {
+    static SPARE: Cell<Option<Box<DynamicTables>>> = const { Cell::new(None) };
+}
+
+pub(crate) fn free_spare() {
+    _ = SPARE.try_with(Cell::take);
+}
+
+/// Those of the thread, which need not be zeroed again.
+#[derive(Default)]
+pub(crate) struct Spare(Option<Box<DynamicTables>>);
+
+impl Spare {
+    #[inline]
+    pub(crate) fn tables(&mut self) -> Option<&mut DynamicTables> {
+        if self.0.is_none() {
+            let spare = SPARE.try_with(Cell::take).ok()?;
+            self.0 = spare.or_else(|| Box::try_new(Tables::new()).ok());
+        }
+        self.0.as_deref_mut()
+    }
+}
+
+impl Drop for Spare {
+    #[inline]
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            _ = SPARE.try_with(|spare| spare.set(self.0.take()));
+        }
+    }
+}
 
 impl<const LITLENS: usize> Tables<LITLENS> {
     pub(crate) const fn new() -> Self {

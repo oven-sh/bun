@@ -24,6 +24,7 @@ const write = {
     outLen: b.any,
   },
 } as const;
+const pinned = b.bytes({ from: ["buffer"], held: "pinned" });
 const int32 = b.i32.validateInteger();
 
 /** The native handle of a `node:zlib` stream: `kHandle` in `src/js/node/zlib.ts`. */
@@ -45,8 +46,15 @@ const compressionStream = <Init extends object, Params extends object>(
       onerror: { getter: b.any, setter: { capability: "js" }, passThis: true },
       params,
       reset: method,
-      write,
+      write: { ...write, args: { ...write.args, nextOutLen: b.f64.default(0) } },
       writeSync: { ...write, returns: b.f64.optional },
+      writeAll: { ...method, args: { in_: pinned, maxOutputLength: b.f64, callback: b.any }, returns: b.bool },
+      writeAllSync: {
+        ...method,
+        capability: "heap",
+        args: { in_: b.bytes({ from: ["string", "buffer"] }), maxOutputLength: b.f64 },
+        returns: b.bufferSource.optional,
+      },
     },
   });
 

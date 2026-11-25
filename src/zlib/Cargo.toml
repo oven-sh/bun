@@ -17,6 +17,9 @@ bun_core.workspace = true
 bun_deflate.workspace = true
 bun_highway.workspace = true
 
+[dev-dependencies]
+bun_highway = { workspace = true, features = ["test_support"] }
+
 [[test]]
 name = "zlib"
 path = "tests/main.rs"

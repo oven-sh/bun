@@ -2105,7 +2105,17 @@ declare namespace $Bindgen {
       output: $Node.AnyView,
       outputOffset: number,
       outputLength: number,
+      /** For the rest of the input, should `output` get full. `writeCallback` may get a `fullChunk` in its place. */
+      nextOutputLength?: number,
     ): void;
+    /** Right after `init`. It takes writes after all if this returns false, or if `output` is missing. */
+    writeAll(
+      input: $Node.AnyView,
+      maxOutputLength: number,
+      callback: (output?: Buffer, read?: number) => void,
+    ): boolean;
+    /** Right after `init`, which has to follow again. Nothing if it takes writes. */
+    writeAllSync(input: $Node.AnyView | string, maxOutputLength: number): ArrayBuffer | ArrayBufferView | undefined;
     /** Returns the bytes left in the input that `writeResult` cannot count. The callback of `write()` is called with them. */
     writeSync(
       flush: number,
@@ -2128,7 +2138,7 @@ declare namespace $Bindgen {
       memLevel: number,
       strategy: number,
       writeResult: Uint32Array,
-      writeCallback: (uncounted?: number) => void,
+      writeCallback: (uncounted?: number, fullChunk?: Buffer) => void,
       dictionary: $Node.AnyView | undefined,
     ): void;
   }
@@ -2136,7 +2146,7 @@ declare namespace $Bindgen {
     init(
       params: Uint32Array,
       writeResult: Uint32Array,
-      writeCallback: (uncounted?: number) => void,
+      writeCallback: (uncounted?: number, fullChunk?: Buffer) => void,
       dictionary?: $Node.AnyView,
     ): boolean;
   }
@@ -2145,7 +2155,7 @@ declare namespace $Bindgen {
       params: Uint32Array,
       pledgedSourceSize: number | undefined,
       writeResult: Uint32Array,
-      writeCallback: (uncounted?: number) => void,
+      writeCallback: (uncounted?: number, fullChunk?: Buffer) => void,
       dictionary?: $Node.AnyView,
     ): void;
   }

@@ -797,13 +797,9 @@ _ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [
 
 # ----------------------------------------------------------------------------
 # Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
 # ----------------------------------------------------------------------------
-_ZN3bun6N_AVX2L16BrotliAddEntriesEPdjPjm                                       [AVX, AVX2, BMI1, BMI2]
 _ZN3bun6N_AVX2L16BrotliSortLeavesEPKmmbPm                                      [AVX, AVX2, BMI1, BMI2]
-_ZN3bun6N_AVX2L17BrotliRemovePairsEPdPjmjj                                     [AVX, AVX2, BMI1, BMI2]
-_ZN3bun6N_AVX2L18BrotliFindSwitchesEPKtmPKdmmdPdPhS6_                          [AVX, AVX2, BMI1, BMI2]
-_ZN3bun6N_AVX2L19BrotliEstimateCostsEPKjPKS2_mPKmS2_S2_PdjS7_                  [AVX, AVX2, BMI1, BMI2]
 
 
 # ----------------------------------------------------------------------------
@@ -861,12 +857,8 @@ _ZN3bun9N_AVX3_DLL14ZstdWriteCodesEPKhmPKtPhmPm  [AVX, AVX2, AVX512BW, AVX512DQ,
 
 # ----------------------------------------------------------------------------
 # Bun Brotli (src/brotli).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (4 symbols)
 # ----------------------------------------------------------------------------
-_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands18read_many_literals4bmi2       [BMI2]
-_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_contexts4bmi2     [BMI2]
-_RNvNvNtNt<rust-hash>10bun_brotli7decoder8commands20run_fast_in_one_tree4bmi2     [BMI2]
-_RNvNvNtNt<rust-hash>10bun_brotli7decoder11prefix_code19read_symbol_lengths4bmi2  [BMI2]
 _RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream13write_indexed4bmi2         [BMI2]
 _RNvNvNtNt<rust-hash>10bun_brotli7encoder10bit_stream14write_literals4bmi2        [BMI2]
 _RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment11write_items4bmi2              [BMI2]
@@ -875,17 +867,269 @@ _RNvNvNtNt<rust-hash>10bun_brotli7encoder8fragment14write_literals4bmi2         
 
 # ----------------------------------------------------------------------------
 # Bun DEFLATE (src/deflate, src/zlib).
-# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (9 symbols)
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (6 symbols)
 # ----------------------------------------------------------------------------
-_RNvNvNt<rust-hash>11bun_deflate5block10write_body4bmi2                        [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_blocks4bmi2             [BMI2]
 _RNvNvNt<rust-hash>11bun_deflate12decompressor14decode_dynamic4bmi2            [BMI2]
-_RNvNvNtNt<rust-hash>8bun_zlib7deflate8encoding11put_symbols4bmi2              [BMI2]
-_RNvNvNtNt<rust-hash>8bun_zlib7deflate5quick14compress_up_to4bmi2              [BMI2]
 _RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes15decode_to_slice6masked4bmi2    [BMI2]
 _RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes15decode_to_slice8unmasked4bmi2  [BMI2]
 _RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes13decode_to_vec6masked4bmi2      [BMI2]
 _RNvNvNvNtNt<rust-hash>8bun_zlib7inflate5codes13decode_to_vec8unmasked4bmi2    [BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli encoder, qualities 10 and 11 (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (4 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L13BrotliMeasureEPKhmRKNS_6brotli5ChunkEjRNS3_4WorkEmPl           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L17BrotliFindMatchesEPKhmRKNS_6brotli5ChunkEPNS3_4RungEmPmRNS3_4WorkEPl  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L18BrotliFindSwitchesEPKtmmS2_mmtPt                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L19BrotliMeasureSlowlyEPKhS2_mmRjS3_                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli encoder, lower qualities (src/jsc/bindings/highway_brotli_quick.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (47 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L10FindStrideERKNS_12brotli_quick5InputEmjmRNS1_5StateE           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L11CountByUtf8EPKhRA64_hPjmRNS_12brotli_quick12WriteScratchE      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L11FarDistanceEjjj                                                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L11GoFarInListERNS0_7WalkersEmmm                                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L11LongCommandEjj                                                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L13FindLandmarksERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmmRNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L13FindPromisingEPKhRKNS_12brotli_quick4PathEmmNS0_6RecentEbRNS3_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L13WriteCommandsERKNS_12brotli_quick6MemoryEmPKmRKNS1_12WriteScratchERNS0_6WriterE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L14CountByContextILb0EEEvPKhPjmRNS_12brotli_quick12WriteScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L14CountByContextILb1EEEvPKhPjmRNS_12brotli_quick12WriteScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L14WriteFixedCodeILm64EEEPKmRKNS_12brotli_quick10FixedCodesIXT_EEES3_mPjiRNS0_6WriterE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L14WriteFixedCodeILm704EEEPKmRKNS_12brotli_quick10FixedCodesIXT_EEES3_mPjiRNS0_6WriterE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L15GatherCarefullyERKNS_12brotli_quick5InputEmmPj                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L15WriteContextMapERA64_KhmRNS0_6WriterE                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L16BrotliQuickCloseERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmRNS1_5StateERNS1_7ScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L16BrotliQuickIndexERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmmRNS1_5StateERNS1_7ScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L16BrotliQuickParseERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmmRNS1_5StateERNS1_7ScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L16BrotliQuickWriteERKNS_12brotli_quick8SettingsERKNS1_6MemoryERNS1_5StateERNS1_7ScratchEmPhm  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L16WriteLongInsertsERKNS_12brotli_quick6MemoryEmPKmRKNS1_12WriteScratchERNS0_6WriterE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L22BrotliQuickLooksBinaryEPKhm                                    [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L4BitsEPKjS2_mi                                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L4EmitERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputERNS1_4PathEmmRNS1_12ParseScratchERNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L4JoinERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmmiRNS1_4PathEmmSC_RNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L4PackEPjmPKmPh                                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L4WalkEPKhmmmmRNS_12brotli_quick5StateERNS3_12ParseScratchERA6_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L5CountEPjmRNS_12brotli_quick12WriteScratchE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L5GoFarERNS0_7WalkersEmmm                                         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L5IndexILm1EEEvRKNS_12brotli_quick8SettingsERKNS2_6MemoryERKNS2_5InputEmmRNS2_5StateERNS2_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L5IndexILm2EEEvRKNS_12brotli_quick8SettingsERKNS2_6MemoryERKNS2_5InputEmmRNS2_5StateERNS2_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L5IndexILm3EEEvRKNS_12brotli_quick8SettingsERKNS2_6MemoryERKNS2_5InputEmmRNS2_5StateERNS2_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L6ChooseEmmmlmiRNS_12brotli_quick12ParseScratchE                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L6EncodeERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_4PathEmmRKNS1_12ParseScratchERNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L6RepeatERKNS_12brotli_quick8SettingsERKNS1_5InputEmmRKNS1_4PathEmmRS8_RNS1_12ParseScratchERNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L6SettleERKNS_12brotli_quick8SettingsERKNS1_6MemoryERNS1_5StateEb  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L7ClusterERNS_12brotli_quick12WriteScratchEmiRA64_h               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L7FillGapERKNS_12brotli_quick5InputERmmmRNS0_6RecentERNS1_4PathEmRNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L7RegroupERA64_KhPjm                                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8AddWordsERKNS_12brotli_quick8SettingsERKNS1_6MemoryERKNS1_5InputEmmRNS1_4PathEmmSC_RNS1_12ParseScratchERNS1_5StateE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8ContinueEPKhmmmRjRNS_12brotli_quick12ParseScratchE              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8LookBackEPKhmmlRA6_KmRNS_12brotli_quick12ParseScratchE          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8MakeCodeEPKjmmPsPt                                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8OddBytesEPKhm                                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L8WalkListEPKhmmRNS_12brotli_quick5StateERNS3_12ParseScratchERA6_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L9IndexSomeILb0EEEvRKNS_12brotli_quick8SettingsERKNS2_6MemoryERKNS2_5InputEmmRNS2_5StateERNS2_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L9IndexSomeILb1EEEvRKNS_12brotli_quick8SettingsERKNS2_6MemoryERKNS2_5InputEmmRNS2_5StateERNS2_12ParseScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L9WriteCodeEPjmmjPKhPmRNS0_6WriterE                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZZN3bun6N_AVX2L6RepeatERKNS_12brotli_quick8SettingsERKNS1_5InputEmmRKNS1_4PathEmmRS8_RNS1_12ParseScratchERNS1_5StateEENK3$_2clEmj  [AVX, AVX2, BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
+# Bun DEFLATE encoder (src/jsc/bindings/highway_deflate.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (34 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun7deflate6N_AVX210StartBlockERNS0_7DynamicEPjRNS0_8BitStateE              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX23SumEPKtPNS0_4SumsE                                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX25CountEPKjmPt                                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX25ParseERKNS0_5BatchERNS0_7ScratchEPjRNS0_6ParsedE         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX25WriteEPKjmS3_PhmRNS0_8BitStateE                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX28EndOfRunEPKhmmm                                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX29MakeCodesEPKtRNS0_7DynamicE                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L10FollowPathEmmRKNS0_6LadderERNS0_7ScratchE              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L15BeforeLongMatchERKNS1_5ReachEj                         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L15ParseThoroughlyERKNS0_5BatchERKNS1_5ReachERNS0_7ScratchEPjRNS0_6ParsedE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4FoldERKNS0_5BatchEmRNS0_7ScratchE                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4HashILb0ELb1ELb1EEEvRKNS0_5BatchENS0_5TableEPKhPj       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4HashILb1ELb0ELb0EEEvRKNS0_5BatchENS0_5TableEPKhPj       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4HashILb1ELb0ELb1EEEvRKNS0_5BatchENS0_5TableEPKhPj       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4HashILb1ELb1ELb0EEEvRKNS0_5BatchENS0_5TableEPKhPj       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4HashILb1ELb1ELb1EEEvRKNS0_5BatchENS0_5TableEPKhPj       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4LinkERKNS0_5BatchEPKj                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4NoteERKNS1_5ReachEmmmRNS0_6LadderE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4SiftEmmPKjS3_PjPt                                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4WalkILb0EEEvRKNS1_5ReachEmbRNS0_7ScratchERNS1_8SegmentsE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L4WalkILb1EEEvRKNS1_5ReachEmbRNS0_7ScratchERNS1_8SegmentsE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L5MergeERKNS1_5ReachEmRNS0_7ScratchERKNS1_8SegmentsE      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L6ChooseERKNS0_5BatchEmmRNS0_7ScratchE                    [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L6ExtendERKNS0_5BatchERKNS1_5ReachEmmmiRNS0_7ScratchE     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L6SpreadEmmRNS0_6LadderE                                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L8FindPathEPKhmmmRNS1_6PricesERNS0_6LadderE               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L8FindRunsERKNS0_5BatchEPj                                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L8HashSomeERKNS0_5BatchENS0_5TableERNS0_7ScratchE         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L8MakeCodeEPKtmmRNS0_4CodeE                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L9PutPiecesERKNS1_5ReachEmmjmmbRNS0_7ScratchEPjRNS0_6ParsedE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L9PutTokensERKNS1_5ReachEmmmbRNS0_7ScratchEPjRNS0_6ParsedE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L9SetPricesEPKtS3_RNS1_6PricesE                           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L9TakeFirstILb0EEEmRKNS0_5BatchENS1_5ReachEmmRNS0_7ScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun7deflate6N_AVX2L9TakeFirstILb1EEEmRKNS0_5BatchENS1_5ReachEmmRNS0_7ScratchE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
+# Bun DEFLATE decoder (src/jsc/bindings/highway_inflate.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (8 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX2L11InflateSeekEPKjmPKtPt                                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L12InflateBuildEPKNS_12InflateListsILm288EEEPKNS1_ILm32EEEjjPjS8_  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L12InflateGuessEPKjjPKNS_12InflateUsualEPKhPmPhS8_                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L12InflateWriteEPKNS_14InflateSegmentEPNS_12InflateSheetE         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L13InflateLookUpEPKjjPNS_12InflateLanesEPjm                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L15InflateLiteralsEPKjmPPh                                        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L18InflateIsSupportedEv                                           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun6N_AVX2L7PublishEPKjjPjmss                                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
+# Bun decoders (src/highway/{brotli_decoder,inflate,unzstd}) and what with_avx2() and with_bmi2! run.
+# Gate: is_x86_feature_detected! in their only callers. (10 symbols)
+# ----------------------------------------------------------------------------
+_RINvMNtNt<rust-hash>11bun_highway6unzstd8literalsNtB3_12HuffmanTable11decode_some<generic-args>  [BMI1, BMI2]
+_RINvMNtNt<rust-hash>11bun_highway6unzstd8literalsNtB3_12HuffmanTable8decode_8<generic-args>  [BMI1, BMI2]
+_RINvNt<rust-hash>11bun_highway7inflate4avx2<generic-args>                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_RINvNtNtNt<rust-hash>11bun_highway6unzstd9sequences6kernel7overlap<generic-args>  [AVX, AVX2, BMI1, BMI2]
+_RINvNv<rust-hash>11bun_highway9with_avx24avx2<generic-args>                    [AVX, AVX2, BMI1, BMI2, LZCNT]
+_RNvMs9_Nt<rust-hash>11bun_highway14brotli_decoderNtB5_11SymbolLists12read_lengths  [AVX, BMI1, BMI2]
+_RNvNt<rust-hash>11bun_highway14brotli_decoder5enter                            [AVX, AVX2, BMI1, BMI2]
+_RNvNtNt<rust-hash>11bun_highway6unzstd8checksum9with_avx2                      [AVX, AVX2]
+_RNvNvNt<rust-hash>11bun_deflate12decompressor13decode_static4bmi2              [BMI2]
+_RNvNvNtNtNt<rust-hash>11bun_highway6unzstd9sequences6kernel3run9with_avx2      [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zstd encoder, higher levels (src/jsc/bindings/highway_zstd_ladder.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (67 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun4zstd6N_AVX26Writer5WriteEmPKiS4_S4_mm                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L10PickMarkedERNS0_4WorkEhjmm                                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L13DeriveRoughlyERKNS0_7RequestERNS0_5LinksEm                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L13OlderMatchLenERKNS0_7RequestEmmm                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L13PreferRepeatsILb0EEEmRKNS1_5ChunkEimi                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L13PreferRepeatsILb1EEEmRKNS1_5ChunkEimi                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L13SearchBrieflyERNS0_7RequestERNS0_4WorkE                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4FillEPNS0_7RequestEPNS0_4WorkEm                            [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4LinkILb0EEEmRKNS1_5ChunkElll                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4LinkILb1EEEmRKNS1_5ChunkElll                               [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4MarkERKNS1_5ChunkEmm                                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4PickILb0ELb0EEEmRKNS1_5ChunkEjjjPKjRmRiS8_                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4PickILb0ELb1EEEmRKNS1_5ChunkEjjjPKjRmRiS8_                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4PickILb1ELb0EEEmRKNS1_5ChunkEjjjPKjRmRiS8_                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4PickILb1ELb1EEEmRKNS1_5ChunkEjjjPKjRmRiS8_                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L4SkipERKNS0_7RequestEmm                                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ClimbILb0EEEmRNS1_5ChunkERNS0_6LadderEbRNS1_9LookaheadEmm  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ClimbILb1EEEmRNS1_5ChunkERNS0_6LadderEbRNS1_9LookaheadEmm  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5CoverERKNS0_7RequestERNS0_4WorkEmm                         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm1ELb0EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm1ELb1EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm2ELb0EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm2ELb1EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm3ELb0EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ParseILm3ELb1EEENS1_5MatchERKNS1_5ChunkEmRmDv4_i           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5ProbeERKNS0_7RequestERNS0_4WorkEm                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L5TrustERKNS1_5ChunkEjmm                                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6ChooseILNS0_6ParserE1EEEiRKNS1_5ChunkEmmm                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6ChooseILNS0_6ParserE2EEEiRKNS1_5ChunkEmmm                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6ChooseILNS0_6ParserE3EEEiRKNS1_5ChunkEmmm                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6DeriveERKNS0_7RequestERNS0_6PricesEm                       [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6FollowILb0EEEmRKNS1_5ChunkERNS1_6WriterEmi                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6FollowILb1EEEmRKNS1_5ChunkERNS1_6WriterEmi                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6ForgetERKNS0_7RequestEmj                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6LingerILm1EEENS1_5MatchERKNS1_5ChunkERNS1_4WalkEjmm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6LingerILm2EEENS1_5MatchERKNS1_5ChunkERNS1_4WalkEjmm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6LingerILm3EEENS1_5MatchERKNS1_5ChunkERNS1_4WalkEjmm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6RecallERNS1_6WriterERNS0_4WorkE                            [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6ReviewERKNS0_7RequestEm                                    [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6SearchEPNS0_7RequestEPNS0_4WorkE                           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6SpreadILm1EEEvRKNS1_5ChunkEmm                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6SpreadILm2EEEvRKNS1_5ChunkEmm                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L6SpreadILm3EEEvRKNS1_5ChunkEmm                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L7BitsForERKNS0_7RequestEmRNS0_6CountsE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L7MeasureILb0ELb0EEEmRNS1_5ChunkEmb                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L7MeasureILb0ELb1EEEmRNS1_5ChunkEmb                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L7MeasureILb1ELb1EEEmRNS1_5ChunkEmb                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L7RetraceERKNS1_5ChunkERNS1_6WriterEmmm                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8ExchangeILb0ELb0EEEvPjjS3_S3_m                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8ExchangeILb0ELb1EEEvPjjS3_S3_m                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8ExchangeILb1ELb1EEEvPjjS3_S3_m                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8HashSomeILb0EjEEvRKNS1_5ChunkERKNS0_6LadderERKNS0_4RungEPjPKT0_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8HashSomeILb0EtEEvRKNS1_5ChunkERKNS0_6LadderERKNS0_4RungEPjPKT0_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8HashSomeILb1EjEEvRKNS1_5ChunkERKNS0_6LadderERKNS0_4RungEPjPKT0_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8HashSomeILb1EtEEvRKNS1_5ChunkERKNS0_6LadderERKNS0_4RungEPjPKT0_m  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb0ELb0ELb1EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb0ELb1ELb0EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb0ELb1ELb1EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb1ELb0ELb1EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb1ELb1ELb0EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8IndexAllILb1ELb1ELb1EEEvRKNS0_7RequestEjRKNS0_4RungEPjjjmmS9_Ph  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8OverrideIDv4_jEEmRNS0_4WorkEmj                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8OverrideIDv8_jEEmRNS0_4WorkEmj                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8OverrideIjEEmRNS0_4WorkEmj                                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun4zstd6N_AVX2L8PickRareERKNS1_5ChunkEmm                                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZZN3bun4zstd6N_AVX2L6RecallERNS1_6WriterERNS0_4WorkEENK3$_1clEm                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZZN3bun4zstd6N_AVX2L6RecallERNS1_6WriterERNS0_4WorkEENK3$_2clEm                [AVX, AVX2, BMI1, BMI2, LZCNT]
+
+
+# ----------------------------------------------------------------------------
+# Bun zstd encoder, lower levels (src/jsc/bindings/highway_zstd_stages.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (43 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun11zstd_stages6N_AVX2L10BuildTableEPKjmjmPtPhS5_                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L10FindPeriodERKNS1_5ChunkE                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L10SameAtEdgeILj16EEEmRKNS1_5ChunkEll                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L10SameAtEdgeILj8EEEmRKNS1_5ChunkEll                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L11AssignCodesEPKjmjPmPhPt                           [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L11StartSoonerERKNS1_5ChunkEm                        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L12EstimateCostEPKj                                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L13PreferRepeatsERKNS1_5ChunkERKNS0_4SinkEim         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L13WriteLiteralsEPKhmPKmPhm                          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L14BitsPerLiteralEPKh                                [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L14EstimateCountsEPKhmmPj                            [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L14WriteSequencesEPKNS0_5CodesEPKhmPhmPNS0_8ProgressE  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4EmitERKNS1_5ChunkERNS0_4SinkEmmm                   [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4PickILm1ELm0EEEmRKNS1_5ChunkE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4PickILm1ELm2EEEmRKNS1_5ChunkE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4PickILm3ELm4EEEmRKNS1_5ChunkE                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4RankERKNS1_5ChunkE                                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4SpanILj16EEEvRKNS1_5ChunkEm                        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4SpanILj8EEEvRKNS1_5ChunkEm                         [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4WalkILm1EEEmRNS1_5ChunkERKNS0_7RequestERKNS0_4SinkEj  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L4WalkILm4EEEmRNS1_5ChunkERKNS0_7RequestERKNS0_4SinkEj  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L5CountERKNS1_5ChunkERNS0_4SinkERNS1_5TallyEm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L5IndexEPKNS0_7RequestEm                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6ChooseILb0EEEmRKNS1_5ChunkEtjm                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6ChooseILb1EEEmRKNS1_5ChunkEtjm                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6FilterILj16EEEmRKNS1_5ChunkEjm                     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6FilterILj8EEEmRKNS1_5ChunkEjm                      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6NumberILm12784ELm8528EEEjRKNS1_5ChunkEmRA3_jm      [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6NumberILm17040ELm18176EEEjRKNS1_5ChunkEmRA3_jm     [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6RejoinERKNS1_5ChunkEm                              [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L6SearchEPKNS0_7RequestEPNS0_4SinkE                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L7CompareILj16ELb0EEEvRKNS1_5ChunkEm                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L7CompareILj16ELb1EEEvRKNS1_5ChunkEm                 [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L7CompareILj8ELb0EEEvRKNS1_5ChunkEm                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L7CompareILj8ELb1EEEvRKNS1_5ChunkEm                  [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L7PickAnyERKNS1_5ChunkEt                             [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ExchangeILj4EEEvRKNS1_5ChunkENS0_5TableEm          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ExchangeILj5EEEvRKNS1_5ChunkENS0_5TableEm          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ExchangeILj6EEEvRKNS1_5ChunkENS0_5TableEm          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ExchangeILj8EEEvRKNS1_5ChunkENS0_5TableEm          [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ListOpenILNS1_5ShareE0EEEmRKNS1_5ChunkEjjhm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ListOpenILNS1_5ShareE1EEEmRKNS1_5ChunkEjjhm        [AVX, AVX2, BMI1, BMI2, LZCNT]
+_ZN3bun11zstd_stages6N_AVX2L8ListOpenILNS1_5ShareE2EEEmRKNS1_5ChunkEjjhm        [AVX, AVX2, BMI1, BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------
@@ -913,13 +1157,6 @@ _ZN3bun6N_AVX218WebpUndoPredictionEPhPKhmS3_j                                  [
 _ZN3bun6N_AVX220WebpTryDiagonalModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
 _ZN3bun6N_AVX220WebpTryStraightModesEmmhmPKNS_4webp10LumaSourceEPKNS1_9QuantizerEiPNS1_18SubblockCandidatesE  [AVX, AVX2]
 _ZN3bun6N_AVX224WebpReconstructSubblocksEPKhS2_S2_S2_PKsPh                     [AVX, AVX2]
-
-
-# ----------------------------------------------------------------------------
-# Bun zlib (src/jsc/bindings/highway_zlib.cpp).
-# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
-# ----------------------------------------------------------------------------
-_ZN3bun6N_AVX218SubtractSaturatingEPtmt  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------

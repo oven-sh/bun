@@ -9,7 +9,7 @@ use crate::format::{
     BLOCK_HEADER_LEN, BlockType, CHECKSUM_LEN, FRAME_HEADER_LEN_MAX, WINDOW_LOG_LIMIT_DEFAULT,
     WINDOW_LOG_MAX, WINDOW_LOG_MIN,
 };
-use crate::frame::{BlockHeader, FrameHeader, FrameLen, Header};
+use crate::frame::{BlockHeader, Blocks, FrameHeader, FrameLen, Header};
 use crate::output::Output;
 use crate::xxhash::XxHash64;
 
@@ -66,8 +66,9 @@ struct Frame {
 #[derive(Default)]
 struct Ring {
     bytes: Vec<u8>,
-    /// What the frame needs. `bytes` may have more from an earlier one.
+    /// What the frame needs. `bytes` may have more from an earlier one, or less for just one block.
     capacity: usize,
+    has_memory: bool,
     oversized_frames: u32,
     /// Of what is yet to be written.
     start: usize,
@@ -85,6 +86,8 @@ pub struct Decoder {
     gathered: Vec<u8>,
     ring: Ring,
     idle_steps: u32,
+    /// Even if the frame goes straight to the output.
+    sticks_to_window: bool,
     error: Option<Error>,
 }
 
@@ -123,6 +126,7 @@ impl Decoder {
             gathered: Vec::new(),
             ring: Ring::default(),
             idle_steps: 0,
+            sticks_to_window: false,
             error: None,
         }
     }
@@ -197,24 +201,53 @@ impl Decoder {
         self.step(input, &mut Output::growing(out, max))
     }
 
-    /// The length of the frame that `input` starts with, if all of it is there and can go straight to `out`.
+    /// For a decoder that is between frames. Appends what `input` stands for, if it is nothing but one or more whole frames,
+    /// that is no more than `max` bytes, and [`step`](Self::step) would find no error, however little room it has.
+    pub fn decompress_whole(
+        &mut self,
+        mut input: &[u8],
+        out: &mut Vec<u8>,
+        max: usize,
+    ) -> Option<()> {
+        let end = out.len().saturating_add(max);
+        loop {
+            self.sticks_to_window = true;
+            let (consumed, status) = self.step_growing(input, out, end - out.len());
+            self.sticks_to_window = false;
+            input = input.get(consumed..)?;
+            if status.ok()? != Status::Complete {
+                return None;
+            }
+            if input.is_empty() {
+                return Some(());
+            }
+        }
+    }
+
+    /// The length in bytes and blocks of the frame that `input` starts with, if all of it is there and can go straight to `out`.
     fn len_in_one_pass(
         &self,
         header: &FrameHeader,
         input: &[u8],
         out: &Output<'_>,
-    ) -> Option<usize> {
+    ) -> Option<(usize, Blocks)> {
         let size = header.content_size.unwrap_or(u64::MAX);
+        if self.sticks_to_window && header.window_size > self.window_size_max {
+            return None;
+        }
         let is_small = size.min(header.window_size) <= self.window_size_max;
         let may_fit = header.content_size.is_none() || size <= out.room() as u64;
-        if size > out.reserved_room() as u64 && !(out.grows() && is_small && may_fit) {
+        // What earlier frames left over is no room that the caller chose.
+        let has_room =
+            size <= out.reserved_room() as u64 && (!out.grows() || out.len_to_move() == 0);
+        if !(has_room || out.grows() && is_small && may_fit) {
             return None;
         }
         let Ok((FrameLen::Complete(len), blocks)) = header.measure(input) else {
             return None;
         };
-        let most = (blocks as u64).saturating_mul(header.block_len_max() as u64);
-        (header.content_size.unwrap_or(most) <= out.room() as u64).then_some(len)
+        let most = (blocks.count as u64).saturating_mul(header.block_len_max() as u64);
+        (header.content_size.unwrap_or(most) <= out.room() as u64).then_some((len, blocks))
     }
 
     fn try_step(&mut self, input: &[u8], out: &mut Output<'_>) -> Result<(usize, Status)> {
@@ -234,14 +267,17 @@ impl Decoder {
                     left: content_len as usize,
                 },
                 Header::Frame(header) => {
-                    if starts_here && let Some(len) = self.len_in_one_pass(header, input, out) {
+                    if starts_here
+                        && let Some((len, blocks)) = self.len_in_one_pass(header, input, out)
+                    {
                         let frame = input.get(..len).ok_or(Error::Internal)?;
                         let (is_last, dictionary) = (len == input.len(), self.dictionary.as_ref());
+                        let reach = self.sticks_to_window.then_some(header.window_size);
                         decompress_frame(
                             &mut self.blocks,
                             header,
                             frame,
-                            is_last,
+                            (is_last, blocks, reach.unwrap_or(u64::MAX)),
                             out,
                             dictionary,
                         )?;
@@ -295,7 +331,7 @@ impl Decoder {
         }
         let capacity = window_size + 2 * (header.block_len_max() + OVERSHOOT) as u64;
         let capacity = capacity.min(header.content_size.unwrap_or(u64::MAX));
-        self.ring.start_frame(capacity as usize)?;
+        self.ring.start_frame(capacity as usize);
         self.gathered.clear();
         self.blocks.start_frame(self.dictionary.as_ref());
         Ok(Frame {
@@ -401,8 +437,15 @@ impl Frame {
 }
 
 impl Ring {
-    fn start_frame(&mut self, capacity: usize) -> Result<()> {
-        let needed = capacity + OVERSHOOT;
+    fn start_frame(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        (self.start, self.end, self.previous_end) = (0, 0, None);
+        self.has_memory = false;
+    }
+
+    /// For so much of the capacity.
+    fn reserve(&mut self, len: usize) -> Result<()> {
+        let needed = len.min(self.capacity) + OVERSHOOT;
         let is_oversized = self.bytes.capacity() / OVERSIZE_FACTOR >= needed;
         self.oversized_frames = if is_oversized {
             self.oversized_frames + 1
@@ -410,11 +453,10 @@ impl Ring {
             0
         };
         if self.bytes.capacity() < needed || self.oversized_frames >= OVERSIZED_FRAMES_MAX {
-            *self = Self::default();
+            (self.bytes, self.oversized_frames) = (Vec::new(), 0);
             self.bytes.try_reserve_exact(needed)?;
         }
-        self.capacity = capacity;
-        (self.start, self.end, self.previous_end) = (0, 0, None);
+        self.has_memory = true;
         Ok(())
     }
 
@@ -448,6 +490,13 @@ impl Ring {
         blocks: &mut BlockDecoder,
         dictionary: Option<&Dictionary<'_>>,
     ) -> Result<&[u8]> {
+        if !self.has_memory {
+            self.reserve(match (header.is_last(), header.block_type()) {
+                (false, _) => usize::MAX,
+                (true, BlockType::Compressed) => frame.block_len_max(),
+                (true, _) => header.size(),
+            })?;
+        }
         let position = self.end;
         let reach = position + frame.block_len_max() + OVERSHOOT;
         let (mut out, external) = match self.previous_end {

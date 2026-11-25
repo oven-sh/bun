@@ -10,7 +10,8 @@ mod _impl {
     use bun_zstd::{Decoder, Encoder, EndDirective, Output, Status};
 
     use crate::node::node_zlib_binding::{
-        CompressionContext, CompressionStreamImpl as _, Error, Stream, Z_BUF_ERROR,
+        CompressionContext, CompressionStreamImpl as _, Error, SpareCodecMemory, Stream, Unseen,
+        Z_BUF_ERROR,
     };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
@@ -129,7 +130,7 @@ mod _impl {
 
             let result = self
                 .borrow_idle_stream(global)?
-                .context
+                .context_to_init()
                 .init(pledged_src_size, dictionary);
             result.map_err(|message| self.fail_init(global, message))?;
 
@@ -214,6 +215,8 @@ mod _impl {
         has_broken_pledge: bool,
         has_ended_frame: bool,
         has_emitted_part_of_frame: bool,
+        /// Even with little input.
+        may_be_slow: bool,
     }
 
     impl Compressor {
@@ -222,8 +225,8 @@ mod _impl {
             self.encoder.set_pledged_len(self.pledged_src_size)
         }
 
-        fn reset(&mut self) -> Result<(), Error> {
-            if self.has_emitted_part_of_frame {
+        fn reset(&mut self, drops_output: bool) -> Result<(), Error> {
+            if self.has_emitted_part_of_frame || drops_output {
                 return Err(Error::init(
                     c"Cannot reset a zstd stream with an incomplete frame; end the frame or discard the output produced so far",
                     bun_zstd::Error::StageWrong as c_int,
@@ -362,6 +365,7 @@ mod _impl {
                         has_broken_pledge: false,
                         has_ended_frame: false,
                         has_emitted_part_of_frame: false,
+                        may_be_slow: !dictionary.is_empty(),
                     });
                     // Node loads the dictionary before setting the pledged size.
                     if !dictionary.is_empty() && state.encoder.load_dictionary(dictionary).is_err()
@@ -391,7 +395,15 @@ mod _impl {
 
         fn set_params(&mut self, key: c_uint, value: u32) -> bool {
             match &mut self.state {
-                Some(State::Compress(state)) => state.encoder.set_parameter(key, value as c_int),
+                Some(State::Compress(state)) => {
+                    const ZSTD_C_COMPRESSION_LEVEL: c_uint = 100;
+                    const FRAME_PARAMETERS: core::ops::RangeInclusive<c_uint> = 200..=202;
+                    state.may_be_slow |= match key {
+                        ZSTD_C_COMPRESSION_LEVEL => value as c_int > 4,
+                        _ => !FRAME_PARAMETERS.contains(&key),
+                    };
+                    state.encoder.set_parameter(key, value as c_int)
+                }
                 Some(State::Decompress(state)) => state.decoder.set_parameter(key, value as c_int),
                 None => unreachable!(),
             }
@@ -400,10 +412,52 @@ mod _impl {
     }
 
     impl CompressionContext for Context {
-        fn reset(&mut self) -> Result<(), Error> {
+        fn do_all_work(
+            &mut self,
+            input: &[u8],
+            out: &mut Vec<u8>,
+            max: usize,
+        ) -> Option<Result<usize, Error>> {
+            match self.state.as_mut()? {
+                State::Compress(state) => (state.pledged_src_size)
+                    .is_none_or(|size| size == input.len() as u64)
+                    .then(|| state.encoder.compress_whole(input, out))
+                    .map(|result| result.map(|()| 0).map_err(codec_error)),
+                State::Decompress(state) => {
+                    let result = state.decoder.decompress_whole(input, out, max);
+                    state.reset();
+                    result.map(|()| Ok(0))
+                }
+            }
+        }
+
+        fn quick_input_len(&self) -> Option<usize> {
+            match &self.state {
+                Some(State::Compress(state)) if state.may_be_slow => None,
+                _ => Some(4096),
+            }
+        }
+
+        fn is_encoder(&self) -> bool {
+            self.mode == NodeMode::ZSTD_COMPRESS
+        }
+
+        fn swap_memory(&mut self, spare: &mut SpareCodecMemory) {
             match &mut self.state {
                 None => {}
-                Some(State::Compress(state)) => state.reset()?,
+                Some(State::Compress(it)) => it.encoder.swap_memory(&mut spare.zstd_encoder),
+                Some(State::Decompress(it)) => it.decoder.swap_tables(&mut spare.zstd_decoder),
+            }
+        }
+
+        fn free_state(&mut self) {
+            self.state = None;
+        }
+
+        fn reset(&mut self, dropped: Unseen) -> Result<(), Error> {
+            match &mut self.state {
+                None => {}
+                Some(State::Compress(state)) => state.reset(dropped.output)?,
                 Some(State::Decompress(state)) => state.reset(),
             }
             Ok(())
@@ -422,7 +476,6 @@ mod _impl {
         }
 
         fn do_work(&mut self, mut input: &[u8], mut cursor: BorrowedCursor<'_, u8>) {
-            // An `ArrayBuffer`, so there is nothing to initialize.
             let mut out = Output::slice(cursor.ensure_init());
             let result = match &mut self.state {
                 // Driven before `init()`.
@@ -431,6 +484,9 @@ mod _impl {
                 Some(State::Decompress(state)) => state.step(&mut input, &mut out, self.flush),
             };
             self.result = result.map(|()| [out.room(), input.len()]);
+            let written = out.written();
+            drop(out);
+            cursor.advance_checked(written);
         }
 
         fn write_result(&self) -> Result<[usize; 2], Error> {

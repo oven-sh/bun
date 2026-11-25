@@ -6,7 +6,7 @@ use bun_zstd_decoder::{Error, Output, Result};
 use crate::bytes::is_one_byte_repeated;
 use crate::entropy::{Changes, Entropy, Reuse};
 use crate::parameters::Tuning;
-use crate::sequences::{CodeCounts, Repeats, Sequence};
+use crate::sequences::{CodeCounts, Repeats, Sequence, stream_len_max};
 use crate::worst_case_len;
 
 pub(crate) fn header(kind: BlockType, len: usize, is_last: bool) -> [u8; BLOCK_HEADER_LEN] {
@@ -56,7 +56,7 @@ pub(crate) struct Content<'a> {
 impl Content<'_> {
     /// An attempt at compressing it that takes more is not worth it.
     fn len_max(&self) -> usize {
-        let for_parts = self.literals.len() + 12 * self.sequences.len() + 512;
+        let for_parts = self.literals.len() + stream_len_max(self.sequences, self.counts) + 512;
         for_parts.min(worst_case_len(self.bytes.len()))
     }
 }
@@ -160,7 +160,7 @@ mod tests {
         for &[literal_len, offset, match_len] in list {
             sequences.push(literal_len, OffsetValue::new(offset), match_len);
         }
-        sequences.finish(&bytes, end)?;
+        sequences.finish(&bytes, end, 0)?;
 
         let mut request = Request::new(3);
         request.set(107, strategy)?;

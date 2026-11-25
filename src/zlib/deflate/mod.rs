@@ -1,39 +1,20 @@
-//! Compression, with the methods and the parameters of zlib-ng 2.3.3.
+//! Compression, with the parameters and the flushes of zlib-ng 2.3.3.
 
-mod block;
-mod chains;
-mod encoding;
-mod greedy;
-mod header;
-mod huffman;
-mod lazy;
-mod matcher;
-mod medium;
 mod pending;
-mod quick;
-mod runs;
-mod spare_steps;
 mod stored;
-mod symbol;
-mod window;
 
-use bun_core::vec::{BorrowedCursor, append_with};
-use bun_deflate::format::{MIN_MATCH_LEN, STATIC};
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+use bun_deflate::encoder::{Block, Effort, Method, Parser, Scratch, Window};
 use bun_deflate::gzip;
 use bun_highway::adler32;
 
 use crate::checksum::Checksum;
 use crate::error::{Error, Result};
 use crate::format::{
-    DEFLATE_METHOD, MAX_WINDOW_BITS, MIN_WINDOW_BITS, ZLIB_HEADER_DIVISOR, ZLIB_PRESET_DICTIONARY,
+    DEFLATE_METHOD, MAX_STORED_LEN, MAX_WINDOW_BITS, MIN_WINDOW_BITS, ZLIB_HEADER_DIVISOR,
+    ZLIB_PRESET_DICTIONARY,
 };
-use block::Block;
-use chains::{Chains, HASHED_LEN};
-use lazy::Lazy;
-use matcher::{Effort, Matcher};
-use pending::{Bits, Pending};
-use quick::QuickBlock;
-use window::Window;
+use pending::Pending;
 
 /// What is put around the compressed data.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -50,6 +31,14 @@ pub struct Level(u8);
 impl Level {
     pub const DEFAULT: Self = Self(6);
     pub const BEST: Self = Self(9);
+
+    /// Of those between which zlib-ng changes within a block.
+    fn group(self) -> u8 {
+        match self.0 {
+            3..=6 => 3,
+            level => level.min(7),
+        }
+    }
 }
 
 impl TryFrom<i32> for Level {
@@ -124,7 +113,7 @@ pub struct Options {
     pub strategy: Strategy,
     /// 9 to 15, or 8 in a zlib container, which is taken for 9.
     pub window_bits: u8,
-    /// 1 to 9. A block has fewer than `64 << memory_level` symbols.
+    /// 1 to 9. Below 8, fewer batches of 8 KiB make a block, and stored blocks are shorter.
     pub memory_level: u8,
 }
 
@@ -139,64 +128,24 @@ impl Default for Options {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Method {
-    Stored,
-    Quick,
-    Greedy,
-    Medium,
-    Lazy,
-}
-
-#[derive(Clone, Copy)]
-struct Tuning {
-    method: Method,
-    /// So long a match is taken at once. Where all are, it limits those whose positions are hashed.
-    max_lazy: u32,
-    effort: Effort,
-}
-
-impl Tuning {
-    #[inline(always)]
-    fn matcher<'a>(&self, chains: &'a mut Chains, window: &'a Window) -> Matcher<'a> {
-        Matcher {
-            index: chains.over(&window.bytes),
-            max_distance: window.max_distance(),
-            effort: self.effort,
-        }
-    }
-}
-
-impl Level {
-    // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L102
-    fn tuning(self) -> Tuning {
-        let (method, good_len, max_lazy, nice_len, max_chain) = match self.0 {
-            0 => (Method::Stored, 0, 0, 0, 0),
-            1 => (Method::Quick, 0, 0, 0, 0),
-            2 => (Method::Greedy, 4, 4, 8, 4),
-            3 => (Method::Medium, 4, 6, 16, 6),
-            4 => (Method::Medium, 4, 12, 32, 24),
-            5 => (Method::Medium, 8, 16, 32, 32),
-            6 => (Method::Medium, 8, 16, 128, 128),
-            7 => (Method::Lazy, 8, 32, 128, 256),
-            8 => (Method::Lazy, 32, 128, 258, 1024),
-            _ => (Method::Lazy, 32, 258, 258, 4096),
-        };
-        Tuning {
-            method,
-            max_lazy,
-            effort: Effort {
-                good_len,
-                nice_len,
-                max_chain,
-                gives_up_early: self.0 < 5,
-            },
-        }
-    }
-
-    fn uses_rolling_hash(self) -> bool {
-        self == Self::BEST
-    }
+/// `None` stores.
+fn method(level: Level, strategy: Strategy) -> Option<Method> {
+    let (effort, min_len) = match level.0 {
+        0 => return None,
+        1 if strategy != Strategy::Fixed => (Effort::Lowest, 4),
+        3..=4 if strategy == Strategy::Fixed => (Effort::Medium, 4),
+        1..=2 => (Effort::Lower, 4),
+        3..=4 => (Effort::Low, 4),
+        5..=6 => (Effort::Medium, 4),
+        7..=8 => (Effort::High, 4),
+        _ => (Effort::Highest, 3),
+    };
+    Some(match strategy {
+        Strategy::HuffmanOnly => Method::Literals,
+        Strategy::Rle => Method::Runs,
+        Strategy::Filtered if level.0 >= 7 => Method::Matches { effort, min_len: 6 },
+        _ => Method::Matches { effort, min_len },
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,15 +157,6 @@ enum Phase {
     /// The last block has been written.
     Trailer,
     Done,
-}
-
-/// What may be in the chains.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hashed {
-    Nothing,
-    /// The window is still as it was when the hashes were computed.
-    FirstInput,
-    More,
 }
 
 /// How far a method has got.
@@ -258,14 +198,9 @@ pub struct Deflater {
     last_flush: Option<Flush>,
     checksum: Checksum,
     window: Window,
-    chains: Chains,
-    hashed: Hashed,
-    /// How often the window has slid at level 0, which leaves the chains alone. 2 stands for more, too.
-    missed_slides: u8,
+    parser: Parser,
     block: Block,
     pending: Pending,
-    quick_block: QuickBlock,
-    lazy: Lazy,
 }
 
 impl Deflater {
@@ -278,7 +213,6 @@ impl Deflater {
         if !(1..=9).contains(&options.memory_level) {
             return Err(Error::InvalidParameter);
         }
-        let block_size = 64 << options.memory_level;
         Box::try_new(Self {
             container,
             level: options.level,
@@ -289,16 +223,26 @@ impl Deflater {
             has_started: false,
             last_flush: None,
             checksum: Checksum::None,
-            window: Window::new(window_bits)?,
-            chains: Chains::new(1 << window_bits)?,
-            hashed: Hashed::Nothing,
-            missed_slides: 0,
-            block: Block::new(block_size - 1)?,
-            pending: Pending::new(4 * block_size)?,
-            quick_block: QuickBlock::None,
-            lazy: Lazy::default(),
+            window: Window::new(window_bits),
+            parser: Parser::default(),
+            block: Block::default(),
+            pending: Pending::new(256 << options.memory_level),
         })
         .map_err(|_| Error::Alloc(bun_alloc::AllocError))
+    }
+
+    /// Not before it is needed.
+    fn allocate(&mut self) -> Result<()> {
+        if !self.window.has_memory() {
+            (self.block).try_reserve(self.pending.size() * 3 / 16, usize::MAX)?;
+            let mut window = Window::new(self.window.size.ilog2() as u8);
+            window.try_reserve(usize::MAX)?;
+            if let Some(method) = method(self.level, self.strategy) {
+                self.parser.try_reserve(method, &window)?;
+            }
+            self.window = window;
+        }
+        Ok(())
     }
 
     /// For another stream, for which it is like a new one with the last parameters.
@@ -311,43 +255,31 @@ impl Deflater {
         self.forget_history();
         self.block.clear();
         self.pending.clear();
-        self.quick_block = QuickBlock::None;
-        self.lazy = Lazy::default();
     }
 
     /// Before anything else. gzip has no dictionaries.
     pub fn set_dictionary(&mut self, dictionary: &[u8]) -> Result<()> {
-        if self.has_started || self.window.end != 0 || self.container == Container::Gzip {
+        if self.has_started || self.window.end != Window::START || self.container == Container::Gzip
+        {
             return Err(Error::InvalidState);
         }
         if dictionary.is_empty() {
             return Ok(());
         }
+        self.allocate()?;
         self.phase = Phase::Header {
             dictionary_id: (self.container == Container::Zlib).then(|| adler32(dictionary)),
         };
         let start = dictionary.len().saturating_sub(self.window.size as usize);
         let used = dictionary.get(start..).unwrap_or_default();
-        self.window.append(used, &mut Checksum::None);
-        let end = self.window.end;
-        self.chains.grow(end);
-        self.window.position = end;
-        self.window.start_block();
-        self.window.leave_end_unhashed();
-        let hashed = end - self.window.unhashed;
-        if hashed != 0 && self.level.uses_rolling_hash() {
-            self.chains.over(&self.window.bytes).restart_rolling_hash(0);
-        }
-        self.hash_all(0, hashed);
-        self.hashed = Hashed::More;
+        self.add_history(used);
         Ok(())
     }
 
     /// `false`, and nothing changes, if a block would have to be flushed first.
     pub fn set_params(&mut self, level: Level, strategy: Strategy) -> Result<bool> {
         // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L589
-        let changes_method =
-            strategy != self.strategy || level.tuning().method != self.level.tuning().method;
+        let changes_method = strategy != self.strategy || level.group() != self.level.group();
         if changes_method && self.has_started {
             if self.is_finishing() {
                 return Err(Error::InvalidState);
@@ -356,15 +288,11 @@ impl Deflater {
                 return Ok(false);
             }
         }
-        if level != self.level {
-            if self.hashed == Hashed::FirstInput {
-                self.hashed = Hashed::More;
-            }
-            match core::mem::take(&mut self.missed_slides) {
-                0 => {}
-                1 => self.chains.slide(self.window.size),
-                _ => self.chains.clear(),
-            }
+        if let (Some(method), true) = (method(level, strategy), self.window.has_memory()) {
+            self.parser.try_reserve(method, &self.window)?;
+        }
+        if level.0 == 0 && self.level.0 != 0 {
+            self.window.drop_what_is_too_far();
         }
         (self.level, self.strategy) = (level, strategy);
         Ok(true)
@@ -386,9 +314,7 @@ impl Deflater {
         let mut io = Io { input, out };
         let result = self.run(&mut io, flush);
         *input = io.input;
-        if self.pending.has_overflowed() {
-            return Err(Error::Internal);
-        }
+        self.pending.result()?;
         if result? {
             Ok(Status::StreamEnd)
         } else if io.is_full() {
@@ -433,6 +359,12 @@ impl Deflater {
         }
     }
 
+    /// Appends a stream, which has not started, for all of `input`.
+    pub fn deflate_whole(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        out.try_reserve_exact(expected_max_len(input.len(), self.container))?;
+        self.deflate_to_vec(input, out, Flush::Finish)
+    }
+
     fn is_finishing(&self) -> bool {
         matches!(self.phase, Phase::Trailer | Phase::Done)
     }
@@ -457,8 +389,7 @@ impl Deflater {
 
         if let Phase::Header { dictionary_id } = self.phase {
             self.phase = Phase::Blocks;
-            self.write_header(dictionary_id);
-            self.pending.hand_out(&mut io.out);
+            self.write_header(dictionary_id, io);
             if !self.pending.has_no_bytes() {
                 return Ok(false);
             }
@@ -467,7 +398,21 @@ impl Deflater {
         if !is_finishing
             && (!io.input.is_empty() || self.window.lookahead() != 0 || flush != Flush::None)
         {
-            match self.compress(io, flush) {
+            // After a refusal, it is tried again.
+            self.last_flush = last_flush;
+            let is_all = flush == Flush::Finish && !self.window.has_memory();
+            let progress = match method(self.level, self.strategy) {
+                Some(method) if is_all && Scratch::has_memory_for(method, io.input.len()) => {
+                    Scratch::lend(|it| self.compress_short(io, method, it))??
+                }
+                Some(method) => {
+                    self.allocate()?;
+                    Scratch::lend(|it| self.compress(io, flush, method, it))??
+                }
+                None => self.allocate().map(|()| self.store(io, flush))?,
+            };
+            self.last_flush = Some(flush);
+            match progress {
                 Progress::NeedsMore => return Ok(false),
                 Progress::LastBlockPending => {
                     self.phase = Phase::Trailer;
@@ -475,8 +420,7 @@ impl Deflater {
                 }
                 Progress::LastBlockDone => self.phase = Phase::Trailer,
                 Progress::BlockDone => {
-                    self.write_flush_marker(flush);
-                    self.pending.hand_out(&mut io.out);
+                    self.write_flush_marker(flush, io);
                 }
             }
         }
@@ -488,17 +432,19 @@ impl Deflater {
             self.phase = Phase::Done;
             match self.checksum {
                 Checksum::None => {}
-                Checksum::Adler32(adler) => self.pending.write_bytes(&adler.to_be_bytes()),
+                Checksum::Adler32(adler) => {
+                    self.pending.write_bytes(&adler.to_be_bytes(), &mut io.out)
+                }
                 Checksum::Crc32 { crc, len } => {
-                    self.pending.write_bytes(&gzip::trailer_for(crc, len));
+                    self.pending
+                        .write_bytes(&gzip::trailer_for(crc, len), &mut io.out);
                 }
             }
-            self.pending.hand_out(&mut io.out);
         }
         Ok(self.pending.has_no_bytes())
     }
 
-    fn write_header(&mut self, dictionary_id: Option<u32>) {
+    fn write_header(&mut self, dictionary_id: Option<u32>, io: &mut Io<'_, '_>) {
         let is_fastest = self.level.0 < 2
             || matches!(
                 self.strategy,
@@ -520,9 +466,9 @@ impl Deflater {
                 }
                 let header = u16::from_be_bytes([method_and_window, flags]);
                 let header = header + ZLIB_HEADER_DIVISOR - header % ZLIB_HEADER_DIVISOR;
-                self.pending.write_bytes(&header.to_be_bytes());
+                self.pending.write_bytes(&header.to_be_bytes(), &mut io.out);
                 if let Some(id) = dictionary_id {
-                    self.pending.write_bytes(&id.to_be_bytes());
+                    self.pending.write_bytes(&id.to_be_bytes(), &mut io.out);
                 }
                 self.checksum = Checksum::ZLIB;
             }
@@ -541,40 +487,76 @@ impl Deflater {
                     _ => 0,
                 };
                 self.pending
-                    .write_bytes(&gzip::plain_header(effort, SYSTEM));
+                    .write_bytes(&gzip::plain_header(effort, SYSTEM), &mut io.out);
                 self.checksum = Checksum::GZIP;
             }
         }
     }
 
-    fn compress(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Progress {
-        let tuning = self.level.tuning();
-        match (tuning.method, self.strategy) {
-            (Method::Stored, _) => self.store(io, flush),
-            (_, Strategy::HuffmanOnly) => self.compress_literals(io, flush),
-            (_, Strategy::Rle) => self.compress_runs(io, flush),
-            (Method::Quick, _) => self.compress_quickly(io, flush),
-            (Method::Greedy, _) => self.compress_greedily(io, flush, tuning),
-            (Method::Medium, _) if tuning.effort.gives_up_early => {
-                self.compress_medium::<false>(io, flush, tuning)
+    fn compress(
+        &mut self,
+        io: &mut Io<'_, '_>,
+        flush: Flush,
+        method: Method,
+        scratch: &mut Scratch,
+    ) -> Result<Progress> {
+        loop {
+            if !io.input.is_empty() && !self.window.has_room_for_batch() {
+                let end = self.window.position;
+                let len = i64::from(end) - self.window.block_start;
+                if len > self.window.size.into()
+                    && self.block.may_be_stored(len)
+                    && !self.flush_block(io, end, false, scratch)
+                {
+                    return Ok(Progress::NeedsMore);
+                }
+                self.window.drop_what_is_too_far();
             }
-            (Method::Medium, _) => self.compress_medium::<true>(io, flush, tuning),
-            (Method::Lazy, _) if self.level.uses_rolling_hash() => {
-                self.compress_lazily::<true>(io, flush, tuning)
+            let wanted = Parser::wanted(&self.window);
+            let has_enough = wanted <= io.input.len();
+            self.read_into_window(io, wanted);
+            if !has_enough && flush == Flush::None {
+                return Ok(Progress::NeedsMore);
             }
-            (Method::Lazy, _) => self.compress_lazily::<false>(io, flush, tuning),
+            let start = self.window.position;
+            if start == self.window.end {
+                return Ok(self.flush_rest(io, flush, scratch));
+            }
+            if self.block.has_room(self.window.lookahead()) {
+                let is_fixed = self.strategy == Strategy::Fixed;
+                let (window, block) = (&mut self.window, &mut self.block);
+                (self.parser)
+                    .parse(method, window, !has_enough, is_fixed, scratch, block)
+                    .ok_or(Error::Internal)?;
+                if !self.block.has_ended() {
+                    continue;
+                }
+            }
+            if !self.flush_block(io, start, false, scratch) {
+                return Ok(Progress::NeedsMore);
+            }
         }
     }
 
-    fn write_flush_marker(&mut self, flush: Flush) {
+    /// A whole stream that makes one block, so that nothing has to be kept.
+    fn compress_short(
+        &mut self,
+        io: &mut Io<'_, '_>,
+        method: Method,
+        scratch: &mut Scratch,
+    ) -> Result<Progress> {
+        scratch.lend_memory(&mut self.window, &mut self.parser, &mut self.block);
+        let progress = self.compress(io, Flush::Finish, method, scratch);
+        scratch.take_memory(&mut self.window, &mut self.parser, &mut self.block);
+        progress
+    }
+
+    fn write_flush_marker(&mut self, flush: Flush, io: &mut Io<'_, '_>) {
         match flush {
-            Flush::Partial => {
-                self.pending.put(Bits::block_header(STATIC, false));
-                self.pending.put(encoding::FIXED.end_of_block());
-            }
-            Flush::Sync => self.pending.write_stored_header(0, false),
+            Flush::Partial => self.pending.write_empty_block(&mut io.out),
+            Flush::Sync => self.pending.write_stored_header(0, false, &mut io.out),
             Flush::Full => {
-                self.pending.write_stored_header(0, false);
+                self.pending.write_stored_header(0, false, &mut io.out);
                 self.forget_history();
             }
             Flush::None | Flush::Block | Flush::Finish => {}
@@ -582,150 +564,69 @@ impl Deflater {
     }
 
     fn forget_history(&mut self) {
-        /// Up to here it is faster than zeroing all 128 KB.
-        const MAX_REHASHED: u32 = 2048;
-        match core::mem::replace(&mut self.hashed, Hashed::Nothing) {
-            Hashed::Nothing => {}
-            Hashed::FirstInput if self.window.end <= MAX_REHASHED => {
-                let len = (self.window.end + HASHED_LEN - 1) as usize;
-                let hashed = self.window.bytes.get(..len).unwrap_or_default();
-                self.chains.clear_hashes_of(hashed);
-            }
-            _ => self.chains.clear(),
-        }
-        self.window.rewind();
-        self.window.forget_bytes();
-        self.chains.start_over();
-        self.missed_slides = 0;
+        self.window.clear();
+        self.parser.clear();
     }
 
-    fn hash_all(&mut self, start: u32, len: u32) {
-        let mut index = self.chains.over(&self.window.bytes);
-        if self.level.uses_rolling_hash() {
-            index.insert_all::<true>(start, len);
-        } else {
-            index.insert_all::<false>(start, len);
-        }
-    }
-
-    fn read_into_window(&mut self, io: &mut Io<'_, '_>) {
-        let input = io.take_input(self.window.room());
-        self.window.append(input, &mut self.checksum);
-    }
-
-    /// There is `MIN_LOOKAHEAD` afterwards, or no more input.
-    fn fill_window(&mut self, io: &mut Io<'_, '_>) {
-        // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/deflate.c#L1175
-        if self.window.position >= self.window.slide_position() {
-            self.window.slide(self.window.size);
-            self.lazy.slide(self.window.size);
-            self.chains.slide(self.window.size);
-            self.hashed = Hashed::More;
-        }
-        if io.input.is_empty() {
-            return;
-        }
-        let is_first = self.window.end == 0 && self.hashed == Hashed::Nothing;
-        self.hashed = if is_first && !self.level.uses_rolling_hash() {
-            Hashed::FirstInput
-        } else {
-            Hashed::More
-        };
-        self.read_into_window(io);
-        self.chains.grow(self.window.end);
-
-        let (lookahead, unhashed) = (self.window.lookahead(), self.window.unhashed);
-        if lookahead + unhashed >= MIN_MATCH_LEN as u32 {
-            let start = self.window.position - unhashed;
-            let mut index = self.chains.over(&self.window.bytes);
-            if self.level.uses_rolling_hash() {
-                index.restart_rolling_hash(start);
-            } else if start != 0 {
-                index.insert_at(start - 1);
-            }
-            let len = unhashed - u32::from(lookahead == 1);
-            if len != 0 {
-                self.hash_all(start, len);
-                self.window.unhashed -= len;
-            }
-        }
-    }
-
-    /// The position from which on it has to be asked again. If there is none, how to go on.
-    fn next_stretch(&mut self, io: &mut Io<'_, '_>, flush: Flush, wanted: u32) -> Stretch {
-        if self.window.lookahead() < wanted {
-            self.fill_window(io);
-            if self.window.lookahead() < wanted && flush == Flush::None {
-                return Stretch::NeedsInput;
-            }
-            if self.window.lookahead() == 0 {
-                return Stretch::End;
-            }
-        }
-        let with_lookahead = (self.window.end + 1).saturating_sub(wanted);
-        if flush == Flush::None || !io.input.is_empty() {
-            return Stretch::Until(with_lookahead);
-        }
-        let without = self.window.end.min(self.window.slide_position());
-        Stretch::Until(with_lookahead.max(without))
-    }
-
-    /// `step` goes no further than the position it is given. Both return `false` if input or room is wanted.
-    #[inline(always)]
-    fn in_stretches(
-        &mut self,
-        io: &mut Io<'_, '_>,
-        flush: Flush,
-        lookahead: u32,
-        mut step: impl FnMut(&mut Self, &mut Io<'_, '_>, u32) -> bool,
-    ) -> bool {
-        loop {
-            match self.next_stretch(io, flush, lookahead) {
-                Stretch::Until(stop) if step(self, io, stop) => {}
-                Stretch::Until(_) | Stretch::NeedsInput => return false,
-                Stretch::End => return true,
-            }
-        }
-    }
-
-    /// The same for a `fill` that also stops when the block is full.
-    #[inline(always)]
-    fn fill_blocks(
-        &mut self,
-        io: &mut Io<'_, '_>,
-        flush: Flush,
-        lookahead: u32,
-        mut fill: impl FnMut(&mut Self, u32),
-    ) -> bool {
-        self.in_stretches(io, flush, lookahead, |this, io, stop| {
-            fill(this, stop);
-            !this.block.is_full() || this.flush_block(io, false)
-        })
-    }
-
-    /// Whether there is room left.
-    fn flush_block(&mut self, io: &mut Io<'_, '_>, is_last: bool) -> bool {
-        let only_fixed = self.strategy == Strategy::Fixed;
-        self.block
-            .write(&mut self.pending, self.window.block(), only_fixed, is_last);
-        if is_last {
-            self.pending.pad_to_byte_boundary();
-        }
+    /// What needs no compressing. There is room for it.
+    fn add_history(&mut self, bytes: &[u8]) {
+        let room = self.window.extend(bytes.len());
+        Checksum::None.copy(bytes, BorrowedBuf::from(room).unfilled());
+        self.window.position = self.window.end;
         self.window.start_block();
-        self.pending.hand_out(&mut io.out);
+    }
+
+    fn read_into_window(&mut self, io: &mut Io<'_, '_>, max: usize) {
+        let input = io.take_input(max);
+        let room = self.window.extend(input.len());
+        self.checksum
+            .copy(input, BorrowedBuf::from(room).unfilled());
+    }
+
+    /// If the block ends there.
+    fn has_fixed_codes(&self, end: u32) -> bool {
+        self.strategy == Strategy::Fixed
+            || method(self.level, self.strategy)
+                .is_some_and(|it| self.parser.has_no_time_for_codes(it, &self.window, end))
+    }
+
+    /// In whichever way is shortest. It covers the window up to `end`. Returns whether there is room left.
+    fn flush_block(
+        &mut self,
+        io: &mut Io<'_, '_>,
+        end: u32,
+        is_last: bool,
+        scratch: &mut Scratch,
+    ) -> bool {
+        let plan = self.block.plan(self.has_fixed_codes(end), scratch);
+        let len = plan.bits.div_ceil(8) as usize;
+        match self.window.block(end) {
+            Some(source) if source.len() + 4 < len && source.len() <= MAX_STORED_LEN => {
+                self.pending
+                    .write_stored_block(source, is_last, &mut io.out);
+            }
+            _ => self.pending.write(len, &mut io.out, |out, bits| {
+                self.block.write(plan, is_last, out, bits)
+            }),
+        }
+        if is_last {
+            self.pending.pad_to_byte_boundary(&mut io.out);
+        }
+        self.block.start_next();
+        self.window.block_start = end.into();
         !io.is_full()
     }
 
     /// When all of the input is in the block.
-    fn flush_rest(&mut self, io: &mut Io<'_, '_>, flush: Flush) -> Progress {
+    fn flush_rest(&mut self, io: &mut Io<'_, '_>, flush: Flush, scratch: &mut Scratch) -> Progress {
         if flush == Flush::Finish {
-            return if self.flush_block(io, true) {
+            return if self.flush_block(io, self.window.end, true, scratch) {
                 Progress::LastBlockDone
             } else {
                 Progress::LastBlockPending
             };
         }
-        if self.block.is_empty() || self.flush_block(io, false) {
+        if self.block.is_empty() || self.flush_block(io, self.window.end, false, scratch) {
             Progress::BlockDone
         } else {
             Progress::NeedsMore
@@ -752,14 +653,5 @@ pub fn compress(
     container: Container,
     options: Options,
 ) -> Result<()> {
-    let mut deflater = Deflater::new(container, options)?;
-    out.try_reserve_exact(expected_max_len(input.len(), container))?;
-    deflater.deflate_to_vec(input, out, Flush::Finish)
-}
-
-enum Stretch {
-    Until(u32),
-    NeedsInput,
-    /// There is a flush, and nothing is left.
-    End,
+    Deflater::new(container, options)?.deflate_whole(input, out)
 }

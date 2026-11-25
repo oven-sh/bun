@@ -1,17 +1,18 @@
 //! Blocks, and what one leaves for the next.
 
-use crate::array::{At, get_or_allocate, grow};
-use crate::bits::BackwardBits;
+use bun_highway::unzstd::{HuffmanTable, Tape};
+
+use crate::array::resize;
 use crate::destination::Destination;
 use crate::dictionary::{Dictionary, Entropy};
 use crate::error::{Error, Result};
-use crate::format::{
-    BLOCK_LEN_MAX, BlockType, CodeKind, Encoding, INITIAL_REPEAT_OFFSETS, LONG_SEQUENCE_COUNT,
-};
+use crate::format::{BlockType, CodeKind, Encoding, INITIAL_REPEAT_OFFSETS, LONG_SEQUENCE_COUNT};
 use crate::frame::BlockHeader;
-use crate::huffman::{AMPLE_ROOM, HuffmanTable};
+use crate::huffman;
 use crate::literals::{LITERALS_PADDING, LiteralsHeader};
-use crate::sequences::{PREDEFINED_TABLES, SequenceState, SequenceTables, run_sequences};
+use crate::sequences::{
+    SequenceTables, predefined_tables, read_rle_table, read_table, run_sequences,
+};
 
 /// Where the table is that a block can repeat.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -31,20 +32,27 @@ const _: () = assert!(FEW_LITERALS >= 2 * LITERALS_PADDING);
 /// Asks for memory when a block takes it.
 #[derive(Default)]
 pub(crate) struct BlockDecoder {
-    literals: Vec<u8>,
-    /// In this frame, as far as [`AMPLE_ROOM`] speeds them up.
-    literal_count: usize,
-    huffman: HuffmanTable,
+    memory: SpareTables,
     huffman_source: Source,
-    sequence_tables: Option<Box<SequenceTables>>,
     /// By [`CodeKind`].
     sequence_sources: [Source; 3],
-    sequence_state: SequenceState,
+    repeat_offsets: [u32; 3],
 }
 
-/// Clearing new ones takes long compared to decoding a short frame. A frame reads only the rows that it has set.
+/// Asking for memory takes long compared to decoding a short frame. Up to 61 KB.
 #[derive(Default)]
-pub struct SpareTables(Option<Box<SequenceTables>>);
+pub struct SpareTables {
+    literals: Vec<u8>,
+    huffman: Option<Box<HuffmanTable>>,
+    sequences: Option<Box<SequenceTables>>,
+}
+
+fn get_or_allocate<T>(slot: &mut Option<T>, allocate: fn() -> Option<T>) -> Result<&mut T> {
+    Ok(match slot {
+        Some(item) => item,
+        None => slot.insert(allocate().ok_or(Error::MemoryAllocation)?),
+    })
+}
 
 /// The number of sequences, and how many bytes it takes.
 fn read_sequence_count(section: &[u8]) -> Result<(usize, usize)> {
@@ -61,7 +69,11 @@ fn read_sequence_count(section: &[u8]) -> Result<(usize, usize)> {
 
 impl BlockDecoder {
     pub(crate) fn swap_tables(&mut self, spare: &mut SpareTables) {
-        core::mem::swap(&mut self.sequence_tables, &mut spare.0);
+        core::mem::swap(&mut self.memory, spare);
+        if spare.literals.capacity() > 32 << 10 {
+            spare.literals = Vec::new();
+        }
+        self.huffman_source = Source::None;
         self.sequence_sources = [Source::None; 3];
     }
 
@@ -69,11 +81,9 @@ impl BlockDecoder {
     pub(crate) fn start_frame(&mut self, dictionary: Option<&Dictionary<'_>>) {
         let entropy = dictionary.and_then(Dictionary::entropy);
         let source = entropy.map_or(Source::None, |_| Source::Dictionary);
-        self.literal_count = 0;
         self.huffman_source = source;
         self.sequence_sources = [source; 3];
-        self.sequence_state.repeat_offsets =
-            entropy.map_or(INITIAL_REPEAT_OFFSETS, |it| it.repeat_offsets);
+        self.repeat_offsets = entropy.map_or(INITIAL_REPEAT_OFFSETS, |it| it.repeat_offsets);
     }
 
     /// The last `len` bytes of `src` are all or, if it is raw, some of what follows `header`. Returns how many it wrote.
@@ -89,10 +99,7 @@ impl BlockDecoder {
         let before = src.len().checked_sub(len).ok_or(Error::Internal)?;
         let content = src.get(before..).ok_or(Error::Internal)?;
         match header.block_type() {
-            BlockType::Compressed => {
-                let padded = src.get(before.saturating_sub(BackwardBits::PADDING)..);
-                self.decompress(padded.ok_or(Error::Internal)?, len, dictionary, destination)
-            }
+            BlockType::Compressed => self.decompress(src, len, dictionary, destination),
             BlockType::Raw => destination.finish(0, content),
             BlockType::Rle => destination.finish_repeated(content, header.size()),
         }
@@ -118,46 +125,57 @@ impl BlockDecoder {
         let literals = match header.in_place(block, FEW_LITERALS) {
             Some(literals) => literals,
             None => {
-                let start = header.read_tree(block, &mut self.huffman)?;
-                if header.has_tree() {
+                let (content, count) = (header.content(block)?, header.count);
+                let mut start = padded.len() - block_len + header.section_len - content.len();
+                if header.encoding == Encoding::Compressed {
+                    let own = get_or_allocate(&mut self.memory.huffman, HuffmanTable::allocate)?;
+                    start += huffman::read_table(own, content)?;
+                    own.add_pairs(count, content.len());
                     self.huffman_source = Source::Own;
                 }
-                let table = match entropy {
-                    Some(entropy) if self.huffman_source == Source::Dictionary => &entropy.huffman,
-                    _ => &self.huffman,
+                let table = match self.huffman_source {
+                    Source::Dictionary => entropy.map(|it| &it.huffman),
+                    _ => self.memory.huffman.as_ref(),
                 };
-                let room_for = |count| {
-                    if count > AMPLE_ROOM / 2 {
-                        AMPLE_ROOM
-                    } else {
-                        0
-                    }
+                let streams = padded.get(..padded.len() - section.len());
+                let decode = |out, lead| {
+                    let (streams, table) = streams.zip(table).ok_or(Error::Internal)?;
+                    header.decode((streams, start), table, out, lead)
                 };
-                let count = header.count_for_ample_room(table);
+                let (len, next) = (count + LITERALS_PADDING, destination.as_ptr().addr());
                 if has_only_literals {
-                    let out = destination.lend_room(header.count, room_for(count))?;
-                    let next_block = out.as_ptr().wrapping_add(header.count);
-                    header.decode(block, start, table, out, next_block)?;
-                    return destination.finish(header.count, &[]);
-                }
-                // The buffer is cleared once for all blocks.
-                self.literal_count += if len_max == BLOCK_LEN_MAX { count } else { 0 };
-                let len = header.count + LITERALS_PADDING;
-                let out: &mut [u8] = if len <= FEW_LITERALS {
+                    return match header.encoding {
+                        Encoding::Basic => destination.finish(0, content),
+                        Encoding::Rle => destination.finish_repeated(content, count),
+                        Encoding::Compressed | Encoding::Repeat => {
+                            let position = destination.position();
+                            decode((destination.tape(count, 0)?.1, position), 0)?;
+                            destination.finish(count, &[])
+                        }
+                    };
+                } else if len <= FEW_LITERALS {
                     few_literals = [0; FEW_LITERALS];
-                    &mut few_literals
+                    let out = few_literals.get_mut(..count).ok_or(Error::Internal)?;
+                    match header.encoding {
+                        Encoding::Basic => out.copy_from_slice(content),
+                        Encoding::Rle => out.fill(*content.first().ok_or(Error::Internal)?),
+                        _ => decode((Tape::slice(out), 0), 0)?,
+                    }
+                    few_literals.get(..len).ok_or(Error::Internal)?
                 } else {
-                    grow(
-                        &mut self.literals,
-                        0,
-                        len.max(room_for(self.literal_count.max(count))),
-                    )?;
-                    let padding = self.literals.get_mut(header.count..len);
-                    padding.ok_or(Error::Internal)?.fill(0);
-                    &mut self.literals
-                };
-                header.decode(block, start, table, out, destination.as_ptr())?;
-                out.get(..len).ok_or(Error::Internal)?
+                    let out = &mut self.memory.literals;
+                    out.clear();
+                    out.try_reserve_exact(len)?;
+                    let lead = next.wrapping_sub(out.as_ptr().addr());
+                    match header.encoding {
+                        Encoding::Rle => {
+                            resize(out, count, *content.first().ok_or(Error::Internal)?)
+                        }
+                        _ => decode((Tape::vec(out, 0), 0), lead)?,
+                    }
+                    out.extend_from_slice(&[0; LITERALS_PADDING]);
+                    out
+                }
             }
         };
 
@@ -165,17 +183,22 @@ impl BlockDecoder {
         let descriptions = section.get(count_len..).ok_or(Error::Internal)?;
         let (mut len, mut used_literals) = (0, 0);
         if count != 0 {
-            let (own, sources) = (&mut self.sequence_tables, &mut self.sequence_sources);
-            let (tables, stream) = select_tables(descriptions, count, own, sources, entropy)?;
+            let (own, sources) = (&mut self.memory.sequences, &mut self.sequence_sources);
+            let (tables, stream) = select_tables(descriptions, own, sources, entropy)?;
             if room == 0 {
                 return Err(Error::DstSizeTooSmall);
             }
             let start = padded.len() - stream.len();
-            let state = &mut self.sequence_state;
+            let state = &mut self.repeat_offsets;
             let literals = (literals, header.count);
-            (len, used_literals) = destination.with_overshoot(|destination| {
-                run_sequences(tables, padded, start, count, literals, state, destination)
-            })?;
+            (len, used_literals) = run_sequences(
+                tables,
+                (padded, start),
+                count,
+                literals,
+                state,
+                &mut destination,
+            )?;
         } else if !descriptions.is_empty() {
             return Err(Error::CorruptionDetected);
         }
@@ -184,14 +207,10 @@ impl BlockDecoder {
     }
 }
 
-/// Up to this many sequences are not worth copying tables to have them in one place.
-const SCATTERED_TABLES_COUNT_MAX: usize = 10;
-
 /// Returns where the table of each [`CodeKind`] is, and what follows their descriptions in `src`.
 #[inline(always)]
 fn select_tables<'t, 's>(
     src: &'s [u8],
-    count: usize,
     own: &'t mut Option<Box<SequenceTables>>,
     sources: &mut [Source; 3],
     entropy: Option<&'t Entropy>,
@@ -203,42 +222,29 @@ fn select_tables<'t, 's>(
     // `map()` is not inlined in hardened builds.
     let encoding = |shift| Encoding::from_low_bits(modes >> shift);
     let encodings = [encoding(6), encoding(4), encoding(2)];
-    let mut shared = [None; 3];
-    for ((source, encoding), shared) in sources.iter_mut().zip(encodings).zip(&mut shared) {
+    for (source, encoding) in sources.iter_mut().zip(&encodings) {
         *source = match encoding {
             Encoding::Basic => Source::Predefined,
+            Encoding::Repeat if *source == Source::None => return Err(Error::CorruptionDetected),
             Encoding::Repeat => *source,
             Encoding::Rle | Encoding::Compressed => Source::Own,
         };
-        *shared = match source {
-            Source::None => return Err(Error::CorruptionDetected),
-            Source::Predefined => Some(&PREDEFINED_TABLES),
-            Source::Dictionary => entropy.map(|entropy| &*entropy.sequences),
-            Source::Own => None,
-        };
     }
-    let [first, second, third] = *sources;
-    if let [Some(a), Some(b), Some(c)] = shared
-        && (count <= SCATTERED_TABLES_COUNT_MAX || (first == second && first == third))
-    {
-        return Ok(([a, b, c], src));
-    }
-
-    let own = get_or_allocate(own, || SequenceTables::EMPTY)?;
-    for &kind in &CodeKind::ALL {
-        let len = match encodings.at(kind as usize) {
-            Encoding::Compressed => own.read(kind, src)?,
-            Encoding::Rle => {
-                own.set_rle(kind, *src.first().ok_or(Error::CorruptionDetected)?)?;
-                1
-            }
-            _ => 0,
+    for (&kind, encoding) in CodeKind::ALL.iter().zip(&encodings) {
+        let read = match encoding {
+            Encoding::Compressed => read_table,
+            Encoding::Rle => read_rle_table,
+            _ => continue,
         };
+        let len = read(get_or_allocate(own, SequenceTables::allocate)?, kind, src)?;
         src = src.get(len..).ok_or(Error::Internal)?;
-        if let Some(tables) = shared.at(kind as usize) {
-            own.copy_from(tables, kind);
-        }
     }
-    *sources = [Source::Own; 3];
-    Ok(([own; 3], src))
+    let predefined = predefined_tables();
+    let tables = |source| match source {
+        Source::Own => own.as_deref().ok_or(Error::Internal),
+        Source::Dictionary => entropy.map(|it| &*it.sequences).ok_or(Error::Internal),
+        _ => Ok(predefined),
+    };
+    let [first, second, third] = *sources;
+    Ok(([tables(first)?, tables(second)?, tables(third)?], src))
 }

@@ -11,7 +11,7 @@ use core::mem::MaybeUninit;
 use bun_zstd_decoder::{ContentSize, Dictionary, FrameLen};
 
 pub use bun_zstd_decoder::{Decoder, Error, Output, SpareTables, Status, may_start_frame};
-pub use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, EndDirective, compress, compress_bound};
+pub use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, EndDirective, Spare, compress, compress_bound};
 pub use embed::{inflate_embedded, inflate_embedded_nul};
 pub use streaming_decoder::StreamingDecoder;
 
@@ -20,6 +20,17 @@ pub fn compress_append(out: &mut Vec<u8>, bytes: &[u8], level: i32) -> Result<()
     let bound = compress_bound(bytes.len()).ok_or(Error::SrcSizeWrong)?;
     out.try_reserve_exact(bound)?;
     compress(bytes, &mut Output::spare_capacity(out, bound), level)
+}
+
+pub fn compress_append_with(
+    spare: &mut Spare,
+    out: &mut Vec<u8>,
+    bytes: &[u8],
+    level: i32,
+) -> Result<(), Error> {
+    let bound = compress_bound(bytes.len()).ok_or(Error::SrcSizeWrong)?;
+    out.try_reserve_exact(bound)?;
+    spare.compress(bytes, &mut Output::spare_capacity(out, bound), level)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -72,6 +83,14 @@ fn decompress_sized(
     Ok(output)
 }
 
+/// What the headers of the frames add up to. [`decompress_alloc`] writes no more than that.
+pub fn declared_len(src: &[u8]) -> Option<u64> {
+    match bun_zstd_decoder::decompressed_size(src) {
+        ContentSize::Known(size) => Some(size),
+        ContentSize::Invalid | ContentSize::Unknown => None,
+    }
+}
+
 /// Decompresses one or more frames.
 pub fn decompress_alloc(src: &[u8]) -> Result<Vec<u8>, ZstdError> {
     decompress_alloc_with(&mut SpareTables::default(), src)
@@ -85,8 +104,7 @@ pub fn decompress_alloc_with(spare: &mut SpareTables, src: &[u8]) -> Result<Vec<
             return decompress_sized(spare, src, size as usize, None);
         }
         ContentSize::Known(_) => with_capacity(MAX_PREALLOCATE_SIZE)?,
-        // A frame's output is rarely smaller than its input.
-        ContentSize::Unknown => with_capacity(src.len().clamp(4096, MAX_PREALLOCATE_SIZE))?,
+        ContentSize::Unknown => Vec::new(),
     };
     let mut stream = StreamingDecoder::new();
     stream.decoder.swap_tables(spare);

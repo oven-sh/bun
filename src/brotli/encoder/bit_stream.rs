@@ -5,22 +5,18 @@ use bun_highway::with_bmi2;
 use super::bit_writer::{BitWriter, Bits, Code};
 use super::block_splitter::{Block, BlockSplit};
 use super::command::{Command, ROOM_FOR_LENGTHS, room_for_distance};
-use super::histogram::Histogram;
-use super::huffman::{TreeBuilder, assign_codes, max_description_size};
+use super::huffman::{TreeBuilder, max_description_size};
 use super::log2::log2_floor;
-use super::meta_block::{Literals, MetaBlock, Source};
-use super::params::Params;
-use crate::context::{ContextMode, DISTANCE_CONTEXT_BITS, DISTANCE_CONTEXTS, LITERAL_CONTEXT_BITS};
+use super::meta_block::{Literals, MetaBlock};
+use crate::context::{ContextMode, DISTANCE_CONTEXTS};
 use crate::format::{
-    Alphabet, BLOCK_LENGTH_CODES, BLOCK_LENGTH_SYMBOLS, COMMAND_SYMBOLS, DistanceParams,
+    Alphabet, BLOCK_LENGTH_CODES, BLOCK_LENGTH_SYMBOLS, COMMAND_SYMBOLS,
     FIRST_COMMAND_WITH_DISTANCE, LITERAL_SYMBOLS, MAX_BLOCK_TYPES,
 };
 use crate::memory::{self, Result};
 
 const MAX_RUN_LENGTH_CODE: u32 = 6;
 const MAX_CONTEXT_MAP_SYMBOLS: usize = MAX_BLOCK_TYPES + MAX_RUN_LENGTH_CODE as usize;
-/// Without postfix bits and direct codes.
-const PLAIN_DISTANCE_SYMBOLS: usize = DistanceParams::new(0, 0, true).alphabet.size as usize;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum MetaBlockKind {
@@ -30,7 +26,7 @@ pub(super) enum MetaBlockKind {
 }
 
 /// `length` is in `1..=1 << 24`.
-fn write_header(writer: &mut BitWriter, kind: MetaBlockKind, length: usize) {
+pub(super) fn write_header(writer: &mut BitWriter, kind: MetaBlockKind, length: usize) {
     let nibbles = match length {
         ..=0x1_0000 => 4,
         0x1_0001..=0x10_0000 => 5,
@@ -288,36 +284,6 @@ fn write_context_map(
     Ok(())
 }
 
-/// All contexts of a block type use the tree with its number.
-#[inline(never)]
-fn write_trivial_context_map(
-    type_count: usize,
-    context_bits: u32,
-    trees: &mut TreeBuilder,
-    writer: &mut BitWriter,
-) -> Result<()> {
-    write_count(writer, type_count);
-    if type_count == 1 {
-        return Ok(());
-    }
-    let run_code = context_bits - 1;
-    writer.write(5, u64::from((run_code - 1) << 1) | 1);
-    let mut histogram = [1; MAX_CONTEXT_MAP_SYMBOLS];
-    histogram[1..run_code as usize].fill(0);
-    histogram[run_code as usize] = type_count as u32;
-    let alphabet = Alphabet::new(type_count as u32 + run_code);
-    writer.try_reserve(max_description_size(alphabet) + 5 * type_count)?;
-    let mut codes = [Code::EMPTY; MAX_CONTEXT_MAP_SYMBOLS];
-    trees.build_and_write(&histogram, alphabet, &mut codes, writer);
-    for i in 0..type_count {
-        writer.write_bits(codes[if i == 0 { 0 } else { i + run_code as usize }].bits());
-        let extra = Bits::new(run_code, (1 << run_code) - 1);
-        writer.write_bits(codes[run_code as usize].bits().then(extra));
-    }
-    writer.write(1, 1);
-    Ok(())
-}
-
 #[inline(never)]
 pub(super) fn write_full_meta_block(
     length: usize,
@@ -342,25 +308,14 @@ pub(super) fn write_full_meta_block(
     for _ in 0..block.literal_split.type_count {
         writer.write(2, context_mode as u64);
     }
-    let literal_map = block.literal_context_map.as_deref();
-    let distance_map = block.distance_context_map.as_deref();
-    for (map, tree_count, context_bits) in [
-        (
-            literal_map,
-            block.literal_histograms.len(),
-            LITERAL_CONTEXT_BITS,
-        ),
-        (
-            distance_map,
-            block.distance_histograms.len(),
-            DISTANCE_CONTEXT_BITS,
-        ),
-    ] {
-        match map {
-            Some(map) => write_context_map(map, tree_count, trees, writer)?,
-            None => write_trivial_context_map(tree_count, context_bits, trees, writer)?,
-        }
-    }
+    let distance_map = &block.distance_context_map;
+    write_context_map(
+        &block.literal_context_map,
+        block.literal_histograms.len(),
+        trees,
+        writer,
+    )?;
+    write_context_map(distance_map, block.distance_histograms.len(), trees, writer)?;
     let room_for_distances = memory::collected(
         (0..distance.alphabet.size).map(|symbol| room_for_distance(distance, symbol)),
     )?;
@@ -375,15 +330,15 @@ pub(super) fn write_full_meta_block(
         trees.build_and_write(counts, alphabet, &mut all[first..], writer);
         Ok(())
     };
-    for Histogram { counts, .. } in &block.literal_histograms {
+    for counts in &block.literal_histograms {
         let room = &[Code::EMPTY; LITERAL_SYMBOLS];
         append(&mut all, counts, Alphabet::LITERALS, room)?;
     }
     memory::resize(&mut all, table_size, Code::EMPTY);
-    for Histogram { counts, .. } in &block.command_histograms {
+    for counts in &block.command_histograms {
         append(&mut all, counts, Alphabet::COMMANDS, &ROOM_FOR_LENGTHS)?;
     }
-    for Histogram { counts, .. } in &block.distance_histograms {
+    for counts in &block.distance_histograms {
         append(&mut all, counts, distance.alphabet, &room_for_distances)?;
     }
 
@@ -413,14 +368,13 @@ struct Codes<'a> {
     commands: &'a [[Code; COMMAND_SYMBOLS]],
     distances: &'a [Code],
     distance_symbols: usize,
-    distance_map: Option<&'a [u32]>,
+    distance_map: &'a [u32],
 }
 
 impl Codes<'_> {
     fn distances_by_context(&self, kind: usize) -> [&[Code]; DISTANCE_CONTEXTS] {
         core::array::from_fn(|context| {
-            let tree = (self.distance_map)
-                .map_or(kind, |map| map[kind * DISTANCE_CONTEXTS + context] as usize);
+            let tree = self.distance_map[kind * DISTANCE_CONTEXTS + context] as usize;
             &self.distances[tree * self.distance_symbols..][..self.distance_symbols]
         })
     }
@@ -553,100 +507,4 @@ fn write_commands(
             writer.write_bits(current.distance(command).bits());
         }
     }
-}
-
-/// One prefix code for each category.
-#[inline(never)]
-pub(super) fn write_plain_meta_block(
-    source: &Source<'_>,
-    commands: &[Command],
-    params: &Params,
-    kind: MetaBlockKind,
-    trees: &mut TreeBuilder,
-    writer: &mut BitWriter,
-) -> Result<()> {
-    // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/entropy_encode_static.h#L524
-    static FIXED_COMMAND_CODES: [Code; COMMAND_SYMBOLS] = {
-        let mut lengths = [11; COMMAND_SYMBOLS];
-        lengths.split_at_mut(448).0.copy_from_slice(&[9; 448]);
-        let mut codes = ROOM_FOR_LENGTHS;
-        assign_codes(&lengths, &mut codes);
-        codes
-    };
-    const ROOM_FOR_DISTANCES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
-        let (mut room, mut symbol) = ([Code::EMPTY; _], 0);
-        while symbol < room.len() {
-            room[symbol] = room_for_distance(&DistanceParams::new(0, 0, true), symbol as u32);
-            symbol += 1;
-        }
-        room
-    };
-    static FIXED_DISTANCE_CODES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
-        let mut codes = ROOM_FOR_DISTANCES;
-        assign_codes(&[6; 64], &mut codes);
-        codes
-    };
-
-    let fast = params.quality == 2;
-    write_plain_header(writer, kind, source.length);
-    let literals = Literals::gather(source, commands)?;
-    let mut literal_counts = [0; LITERAL_SYMBOLS];
-    for &literal in literals.all() {
-        literal_counts[usize::from(literal as u8)] += 1;
-    }
-    let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS + SLOTS];
-    let mut build_and_write = |counts: &[u32], alphabet, codes: &mut [Code], writer: &mut _| {
-        if fast {
-            trees.build_and_write_fast(counts, alphabet, codes, writer);
-        } else {
-            trees.build_and_write(counts, alphabet, codes, writer);
-        }
-    };
-    build_and_write(
-        &literal_counts,
-        Alphabet::LITERALS,
-        &mut literal_codes,
-        writer,
-    );
-
-    let (mut command_codes, mut distance_codes);
-    let (command_codes, distance_codes) = if fast && commands.len() <= 128 {
-        // How the stream describes these two codes.
-        writer.write(56, 0x92_6244_1630_7003);
-        writer.write(3, 0);
-        writer.write(28, 0x0369_DC03);
-        (&FIXED_COMMAND_CODES, &FIXED_DISTANCE_CODES)
-    } else {
-        let mut symbols = [0; COMMAND_SYMBOLS];
-        let mut distances = [0; PLAIN_DISTANCE_SYMBOLS];
-        for command in commands {
-            symbols[command.symbol()] += 1;
-            distances[command.distance().symbol()] += u32::from(command.has_distance_symbol());
-        }
-        command_codes = ROOM_FOR_LENGTHS;
-        distance_codes = ROOM_FOR_DISTANCES;
-        build_and_write(&symbols, Alphabet::COMMANDS, &mut command_codes, writer);
-        build_and_write(
-            &distances,
-            params.distance.alphabet,
-            &mut distance_codes,
-            writer,
-        );
-        (&command_codes, &distance_codes)
-    };
-    let codes = Codes {
-        commands: core::slice::from_ref(command_codes),
-        distances: distance_codes,
-        distance_symbols: PLAIN_DISTANCE_SYMBOLS,
-        distance_map: None,
-    };
-    let mut switchers = core::array::from_fn(|_| BlockSwitcher::single_block());
-    write_commands(
-        commands,
-        &literals,
-        &mut literal_codes,
-        &codes,
-        &mut switchers,
-        writer,
-    )
 }

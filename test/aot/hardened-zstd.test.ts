@@ -18,10 +18,10 @@ describe.skipIf(!!without("a hardened build"))("zstd gives what was recorded", (
   });
 
   test.each([
-    [0, 80409, 3043822816],
-    [64, 80423, 4202461264],
-    [128, 80430, 2141277812],
-    [192, 80433, 3801801165],
+    [0, 80453, 1594847892],
+    [64, 80467, 1782612813],
+    [128, 80473, 1689407469],
+    [192, 80477, 3779357940],
   ])("a block of literals from %i to 63 more", (from, length, checksum) => {
     let state = 1;
     const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 26;

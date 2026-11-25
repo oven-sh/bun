@@ -20,3 +20,7 @@ path = "tests/decode.rs"
 [[test]]
 name = "built"
 path = "tests/built.rs"
+
+[[test]]
+name = "kernels"
+path = "../../highway/unzstd/tests.rs"

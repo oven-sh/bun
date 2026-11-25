@@ -1,13 +1,14 @@
 //! RFC 7932 sections 7.1 and 7.2: the contexts of literals and of distances.
 
 use crate::format::LengthCode;
+use bun_highway::brotli_decoder::ContextParts;
 
 pub(crate) const LITERAL_CONTEXT_BITS: u32 = 6;
 pub(crate) const LITERAL_CONTEXTS: usize = 1 << LITERAL_CONTEXT_BITS;
 pub(crate) const DISTANCE_CONTEXT_BITS: u32 = 2;
 pub(crate) const DISTANCE_CONTEXTS: usize = 1 << DISTANCE_CONTEXT_BITS;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextMode {
     Lsb6,
     Msb6,
@@ -37,6 +38,29 @@ impl ContextMode {
             Self::Signed => &SIGNED,
         }
     }
+
+    /// Their sum is for [`context_of_sum`].
+    pub(crate) fn parts(self) -> &'static ContextParts {
+        static LSB6: ContextParts = ContextLut::new(ContextMode::Lsb6).to_parts();
+        static MSB6: ContextParts = ContextLut::new(ContextMode::Msb6).to_parts();
+        static UTF8: ContextParts = ContextLut::new(ContextMode::Utf8)
+            .without_overlap()
+            .to_parts();
+        static SIGNED: ContextParts = ContextLut::new(ContextMode::Signed).to_parts();
+        match self {
+            Self::Lsb6 => &LSB6,
+            Self::Msb6 => &MSB6,
+            Self::Utf8 => &UTF8,
+            Self::Signed => &SIGNED,
+        }
+    }
+}
+
+pub(crate) const fn context_of_sum(sum: usize) -> usize {
+    match sum.checked_sub(LITERAL_CONTEXTS) {
+        None => sum,
+        Some(pair) => (pair / 4 % 4) | (pair % 4),
+    }
 }
 
 pub(crate) struct ContextLut {
@@ -45,12 +69,14 @@ pub(crate) struct ContextLut {
 }
 
 impl ContextLut {
+    pub(crate) const ZEROS: Self = Self {
+        last: [0; 256],
+        second_last: [0; 256],
+    };
+
     #[allow(clippy::indexing_slicing)] // Runs at compile time.
     const fn new(mode: ContextMode) -> Self {
-        let mut lut = Self {
-            last: [0; 256],
-            second_last: [0; 256],
-        };
+        let mut lut = Self::ZEROS;
         let mut i = 0;
         while i < 256 {
             let byte = i as u8;
@@ -71,6 +97,26 @@ impl ContextLut {
     pub(crate) fn parts(&self, byte: u8) -> [u8; 2] {
         let byte = usize::from(byte);
         [self.last[byte], self.second_last[byte]]
+    }
+
+    pub(crate) const fn tables(mode: ContextMode) -> [[u8; 256]; 2] {
+        let lut = Self::new(mode);
+        [lut.last, lut.second_last]
+    }
+
+    /// After a byte that is not ASCII, both parts are in the low two bits.
+    #[allow(clippy::indexing_slicing)] // Runs at compile time.
+    const fn without_overlap(mut self) -> Self {
+        let mut i = 0x80;
+        while i < 256 {
+            self.last[i] = LITERAL_CONTEXTS as u8 + 4 * self.last[i];
+            i += 1;
+        }
+        self
+    }
+
+    const fn to_parts(&self) -> ContextParts {
+        ContextParts::new(&self.last, &self.second_last)
     }
 
     /// In `0..LITERAL_CONTEXTS`.

@@ -1,12 +1,19 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
-#![feature(core_io_borrowed_buf, fn_align, hint_prefetch)]
+#![feature(allocator_ext, core_io_borrowed_buf, fn_align, hint_prefetch)]
 
 pub mod brotli;
+pub mod brotli_decoder;
+pub mod brotli_quick;
 pub mod checksums;
+pub mod deflate;
+pub mod inflate;
+pub mod unzstd;
 pub mod webp;
 pub mod zlib;
 pub mod zstd;
+pub mod zstd_ladder;
+pub mod zstd_stages;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
@@ -1841,6 +1848,26 @@ pub fn with_bmi2<R>(run: impl FnOnce() -> R) -> R {
         }
         // SAFETY: the CPU has the three features.
         return unsafe { bmi2(run) };
+    }
+    out_of_line(run)
+}
+
+/// The same with AVX2 too, for loops that the compiler vectorizes.
+#[inline(always)]
+pub fn with_avx2<R>(run: impl FnOnce() -> R) -> R {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    if is_x86_feature_detected!("avx2")
+        && is_x86_feature_detected!("bmi1")
+        && is_x86_feature_detected!("bmi2")
+        && is_x86_feature_detected!("lzcnt")
+    {
+        #[target_feature(enable = "avx2,bmi1,bmi2,lzcnt")]
+        #[rustc_align(64)]
+        fn avx2<R>(run: impl FnOnce() -> R) -> R {
+            run()
+        }
+        // SAFETY: the CPU has the four features.
+        return unsafe { avx2(run) };
     }
     out_of_line(run)
 }

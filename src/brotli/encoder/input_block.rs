@@ -1,7 +1,6 @@
-use super::hash::Search;
 use super::params::Params;
 use super::prepared_dictionary::{PreparedDictionary, Query};
-use super::ring_buffer::{SLACK, Window};
+use super::ring_buffer::Window;
 
 /// The piece of input that is turned into commands in one go.
 #[derive(Clone, Copy)]
@@ -37,26 +36,6 @@ impl<'a> InputBlock<'a> {
         }
     }
 
-    pub(super) fn without_first(&self, count: usize) -> Self {
-        Self {
-            position: self.position + count,
-            length: self.length - count,
-            ..*self
-        }
-    }
-
-    /// Whether it is too early to allocate for a long input.
-    pub(super) fn may_be_all(&self) -> bool {
-        self.position == 0 && (self.is_last || self.length < self.params.block_size())
-    }
-
-    /// Whether the ring does not end within the block or the window before it.
-    #[inline(always)]
-    pub(super) fn is_contiguous(&self) -> bool {
-        self.window.index(self.position) >= self.max_backward(self.position)
-            && self.length <= self.window.before_end(self.position) + 1
-    }
-
     #[inline(always)]
     pub(super) fn end(&self) -> usize {
         self.position + self.length
@@ -82,29 +61,6 @@ impl<'a> InputBlock<'a> {
     #[inline(always)]
     pub(super) fn max_copy_distance(&self, position: usize) -> usize {
         self.dictionary_end_distance(position) + self.dictionary_size
-    }
-
-    /// Positions from here on have too little after them to be stored.
-    pub(super) fn store_end(&self, lookahead: usize) -> usize {
-        self.position + (self.length + 1).saturating_sub(lookahead)
-    }
-
-    #[inline(always)]
-    pub(super) fn padded(&self) -> &'a [u8] {
-        &self.window.from(self.position)[..self.length + SLACK]
-    }
-
-    /// `padded` is what is left of [`padded`](Self::padded).
-    #[inline(always)]
-    pub(super) fn search_at(&'a self, position: usize, padded: &'a [u8]) -> Search<'a> {
-        Search {
-            window: self.window,
-            position,
-            padded,
-            max_backward: self.max_backward(position),
-            block: self,
-            to_beat: 0,
-        }
     }
 
     pub(super) fn query_at(&self, position: usize) -> Query<'a> {

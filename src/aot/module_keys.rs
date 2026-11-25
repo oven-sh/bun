@@ -5,39 +5,11 @@ use bun_sema::resolve::normalize_slashes;
 use core::cmp::Ordering;
 use std::hash::{DefaultHasher, Hasher};
 
-/// The high half says which file it is and the low half when it was written and what it holds. The low half decides where
-/// the file is another one.
-pub fn stamp_of_file(identity: u32, written: (i64, i64), text: &[u8]) -> u64 {
-    u64::from(identity) << 32 | u64::from(hash_of_text(written, text))
-}
-
-pub fn has_identity_of_stamp(stamp: u64, identity: u32) -> bool {
-    (stamp >> 32) as u32 == identity
-}
-
-pub fn has_text_of_stamp(stamp: u64, written: (i64, i64), text: &[u8]) -> bool {
-    stamp as u32 == hash_of_text(written, text)
-}
-
-/// Device, inode and size, and the times of the last write and the last change.
-pub fn identity_of_file(numbers: [u64; 3], times: [(i64, i64); 2]) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    for number in numbers {
-        hasher.write_u64(number);
-    }
-    for (seconds, nanoseconds) in times {
-        hasher.write_i64(seconds);
-        hasher.write_i64(nanoseconds);
-    }
-    hasher.finish() as u32
-}
-
-fn hash_of_text(written: (i64, i64), text: &[u8]) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    hasher.write_i64(written.0);
-    hasher.write_i64(written.1);
-    hasher.write(text);
-    hasher.finish() as u32
+pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
+    let written = (written_seconds as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(written_nanoseconds as u64);
+    (written ^ size.rotate_left(44)) | 1
 }
 
 pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[

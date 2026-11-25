@@ -16,24 +16,12 @@ use crate::link::{
 use crate::load::contents::load_names::is_object_handed_on;
 use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
-use crate::module_keys::{identity_of_file, path_without_form, stamp_of_file};
+use crate::module_keys::{path_without_form, stamp_of_file};
 use crate::modules::Shape;
 use crate::statistics::{Stage, StatisticId, StepClock};
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
 use rustc_hash::FxHashMap;
-
-fn stamp_of_file_at(path: &[u8]) -> Option<u64> {
-    if bun_core::strings::contains_char(path, 0) {
-        return None;
-    }
-    let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
-    let stat = bun_sys::PosixStat::init(&stat);
-    let times = [stat.mtim, stat.ctim].map(|time| (time.sec, time.nsec));
-    let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path).ok()?;
-    let identity = identity_of_file([stat.dev, stat.ino, stat.size], times);
-    Some(stamp_of_file(identity, times[0], &text))
-}
 
 impl Build<'_> {
     pub(crate) fn take_unreached_runtime_files(&mut self) -> Vec<FileId> {
@@ -260,12 +248,25 @@ impl Build<'_> {
                                 map_each(lots, &in_parallel, &|lot: &[(usize, StringId)]| {
                                     let stamps = lot.iter().filter_map(|&(index, path)| {
                                         let path = strings.get(path);
+                                        let stat_at =
+                                            |path: &[u8]| match bun_core::strings::contains_char(
+                                                path, 0,
+                                            ) {
+                                                true => None,
+                                                false => {
+                                                    bun_sys::stat(&bun_core::ZBox::from_bytes(path))
+                                                        .ok()
+                                                }
+                                            };
                                         let is_data =
                                             module_records[index].kind == ModuleKind::Data;
                                         let file_of_form =
                                             path_without_form(path).filter(|_| is_data);
-                                        let stamp = stamp_of_file_at(path)
-                                            .or_else(|| stamp_of_file_at(file_of_form?))?;
+                                        let stat =
+                                            stat_at(path).or_else(|| stat_at(file_of_form?))?;
+                                        let stat = bun_sys::PosixStat::init(&stat);
+                                        let stamp =
+                                            stamp_of_file(stat.mtim.sec, stat.mtim.nsec, stat.size);
                                         Some(SourceStamp {
                                             module: ModuleId::new(index),
                                             low: stamp as u32,

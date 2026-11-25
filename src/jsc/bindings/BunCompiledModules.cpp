@@ -200,7 +200,7 @@ extern "C" bool Bun__AOT__runsTestFilesAgain();
 extern "C" bool Bun__AOT__hasImmediatesYetToRun(JSC::JSGlobalObject*);
 extern "C" uint64_t Bun__AOT__transpilerJobsScheduled(JSC::JSGlobalObject*);
 extern "C" uint64_t Bun__AOT__transpilerJobsCompleted(JSC::JSGlobalObject*);
-extern "C" bool Bun__AOT__isFileOfStamp(const char* path, size_t length, uint64_t stamp);
+extern "C" uint64_t Bun__AOT__computeFileStamp(const char* path, size_t length);
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
 extern "C" bool Bun__AOT__setResolvesForCodeFromDisk(JSC::JSGlobalObject*, bool);
@@ -2367,9 +2367,9 @@ static const AOT::MockOperations* mockOperations()
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
-static bool isFileOfStamp(std::span<const char> path, uint64_t stamp)
+static uint64_t computeFileStamp(std::span<const char> path)
 {
-    return Bun__AOT__isFileOfStamp(path.data(), path.size(), stamp);
+    return Bun__AOT__computeFileStamp(path.data(), path.size());
 }
 
 const AOT::ModuleHost compiledModuleHost = {
@@ -2401,7 +2401,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &resolveWithoutPlugins,
     &beginOrEndPluginResolutions,
     &mockOperations,
-    &isFileOfStamp,
+    &computeFileStamp,
     &shouldBypassMock,
     &wasLinkedBeforeMock,
     &isMockHiddenFromRequirer,

@@ -383,6 +383,7 @@ impl Data {
 }
 
 /// `udata_openChoice`
+#[inline(always)]
 pub(crate) fn open_choice(
     path: Option<&[u8]>,
     type_: &[u8],

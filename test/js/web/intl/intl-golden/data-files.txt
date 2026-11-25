@@ -2052,6 +2052,9 @@ mkdir -p icudt79l/curr icudt79l/lang icudt79l/region icudt79l/unit icudt79l/zone
 for name in de_AT curr/de_LU curr/root lang/de_AT region/de_AT unit/de_CH zone/en_GB; do
   icupkg -x $name.res -d icudt79l "$ICU_DATA/icudt79l.dat"
 done
+for tree in lang region; do
+  cp icudt79l/$tree/de_AT.res icudt79l/$tree/de_BE.res
+done
 -- range-patterns/eo.txt --
 eo{
     NumberElements{

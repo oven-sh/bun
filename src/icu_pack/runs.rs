@@ -8,14 +8,25 @@ pub(crate) const BLOCK_LENGTH: usize = 1 << BLOCK_SHIFT;
 
 type Values = [Option<u32>; BLOCK_LENGTH];
 
-fn write_block_as(values: &Values, shift: u32, step: u32, is_sparse: bool) -> Vec<u8> {
+/// A block with more runs is expanded faster if it is `Dense`.
+const MAX_RUNS: u32 = 39;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Form {
+    Runs,
+    Sparse,
+    Dense,
+}
+
+fn write_block_as(values: &Values, shift: u32, step: u32, form: Form) -> Vec<u8> {
     let without_steps = |(i, value): (u32, &Option<u32>)| {
         value.map(|value| i64::from(value >> shift) - i64::from(step * i))
     };
     let offsets: Vec<_> = (0..).zip(values).map(without_steps).collect();
-    let starts_run = |i: usize| match is_sparse {
-        true => offsets[i].is_some(),
-        false => i == 0 || offsets[i] != offsets[i - 1],
+    let starts_run = |i: usize| match form {
+        Form::Runs => i == 0 || offsets[i] != offsets[i - 1],
+        Form::Sparse => offsets[i].is_some(),
+        Form::Dense => true,
     };
     let starts: Vec<_> = (0..BLOCK_LENGTH).filter(|&i| starts_run(i)).collect();
     let before_lowest = offsets.iter().flatten().min().map_or(0, |it| it - 1);
@@ -27,7 +38,8 @@ fn write_block_as(values: &Values, shift: u32, step: u32, is_sparse: bool) -> Ve
     let width = fields
         .iter()
         .max()
-        .map_or(0, |it| u64::BITS - it.leading_zeros());
+        .map_or(0, |it| u64::BITS - it.leading_zeros())
+        .next_multiple_of(if form == Form::Dense { 8 } else { 1 });
     let low_bits = values
         .iter()
         .flatten()
@@ -35,6 +47,7 @@ fn write_block_as(values: &Values, shift: u32, step: u32, is_sparse: bool) -> Ve
         .map_or(0, |it| it % (1 << shift));
     let base = ((before_lowest as u32) << shift).wrapping_add(low_bits);
     let parameters = (step << Block::SHIFT_BITS | shift) << Block::WIDTH_BITS | width;
+    let is_sparse = form == Form::Sparse;
     let parameters = parameters as u16 | if is_sparse { Block::IS_SPARSE } else { 0 };
 
     let mut block = (starts.iter().map(|&i| 1u64 << i).sum::<u64>())
@@ -63,10 +76,16 @@ fn write_block(values: &Values) -> Vec<u8> {
         .fold(0, |bits, it| bits | it ^ first);
     let shifts = 0..=differing.trailing_zeros().min(31);
     let steps = shifts.flat_map(|shift| (0..1 << Block::STEP_BITS).map(move |step| (shift, step)));
-    let ways = steps.flat_map(|(shift, step)| [(shift, step, false), (shift, step, true)]);
-    let blocks =
-        ways.map(|(shift, step, is_sparse)| write_block_as(values, shift, step, is_sparse));
-    blocks.min_by_key(Vec::len).expect("a way")
+    let shortest = |forms: &[Form]| {
+        let ways = (steps.clone()).flat_map(|step| forms.iter().map(move |&form| (step, form)));
+        let blocks = ways.map(|((shift, step), form)| write_block_as(values, shift, step, form));
+        blocks.min_by_key(Vec::len).expect("a way")
+    };
+    let block = shortest(&[Form::Runs, Form::Sparse]);
+    match block[..8].iter().map(|it| it.count_ones()).sum() {
+        ..=MAX_RUNS => block,
+        _ => shortest(&[Form::Dense]),
+    }
 }
 
 /// No segment has both BMP and supplementary code points.
@@ -109,5 +128,6 @@ pub(crate) fn write(values: &BTreeMap<u32, u32>) -> Vec<u8> {
             })
         }));
     }
-    [to_bytes(&header), to_bytes(&directory), written, vec![0; 8]].concat()
+    written.extend([0; Block::PADDING]);
+    [to_bytes(&header), to_bytes(&directory), written].concat()
 }

@@ -271,18 +271,17 @@ fn prepare_entry(
     Ok(entry.link(b"%%ALIAS").filter(|alias| !alias.is_empty()))
 }
 
-/// The linked data have no pools. They take the place of a file that comes without its pool.
+/// The linked data have no pools, so a file that comes without its pool is passed over.
 #[cold]
 fn attach_pool(entry: &mut UResourceDataEntry) -> Result<(), UErrorCode> {
     let pool = init_entry(POOL, entry.tree, true)?;
-    if pool.bogus == U_MISSING_RESOURCE_ERROR
-        && let Ok(linked) = res_load(entry.tree, entry.name(), Places::ExceptDirectories)
-        && !linked.uses_pool_bundle
-    {
-        entry.data = linked;
-        return Ok(());
+    if pool.bogus != U_MISSING_RESOURCE_ERROR {
+        return entry.data.use_pool(&pool.data);
     }
-    entry.data.use_pool(&pool.data)
+    entry.data = ResourceData::empty();
+    let linked = res_load(entry.tree, entry.name(), Places::ExceptDirectories).ok();
+    entry.data = (linked.filter(|it| !it.uses_pool_bundle)).ok_or(U_MISSING_RESOURCE_ERROR)?;
+    Ok(())
 }
 
 #[inline(never)]

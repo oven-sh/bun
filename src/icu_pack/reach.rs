@@ -294,6 +294,10 @@ impl<'a> Asked<'a> {
 fn reaches(asked: &Asked, bundle: &Bundle, path: &[&str]) -> bool {
     // Files that `ICU_DATA` names fall back to the root, and can ask it for more than the linked data.
     let is_in_root = bundle.name == "root" && TREES.contains(&bundle.tree.as_bytes());
+    assert!(
+        path != ["%%ParentIsRoot"],
+        "no link of this kind is written"
+    );
     if matches!(path, ["%%ALIAS" | "%%Parent"]) || (is_in_root && path.len() > 1) {
         return true;
     }
@@ -388,7 +392,7 @@ fn is_read_without_fallback(bundle: &Bundle, path: &[&str]) -> bool {
     bundle.no_fallback
         || matches!(
             path,
-            ["calendar" | "collations"] | ["calendar" | "collations", _]
+            ["calendar" | "collations" | "NumberElements"] | ["calendar" | "collations", _]
         )
 }
 

@@ -54,13 +54,14 @@ fn set_up() {
 #[expect(clippy::disallowed_methods, clippy::disallowed_types)]
 fn check<T: PartialEq<E> + Debug, E: Debug>(test: &str, expected: E, run: impl Fn() -> Result<T>) {
     use std::{env, process};
+    const REFUSED: i32 = 98;
     const NOT_REFUSED: i32 = 99;
     set_up();
     let number = |name| Some(env::var(name).ok()?.parse::<usize>().unwrap());
     if let (Some(grants), Some(refusals)) = (number("GRANTS"), number("REFUSALS")) {
         let was_refused = refuses(grants, refusals, &expected, &run);
         assert_eq!(run().unwrap(), expected);
-        process::exit(if was_refused { 0 } else { NOT_REFUSED });
+        process::exit(if was_refused { REFUSED } else { NOT_REFUSED });
     }
     assert_eq!(run().unwrap(), expected);
     for refusals in [1, usize::MAX].into_iter().filter(|_| !cfg!(miri)) {
@@ -72,7 +73,7 @@ fn check<T: PartialEq<E> + Debug, E: Debug>(test: &str, expected: E, run: impl F
                 .output()
                 .unwrap();
             match again.status.code() {
-                Some(0) => {}
+                Some(REFUSED) => {}
                 Some(NOT_REFUSED) => break,
                 _ => panic!("{grants} {refusals} {again:?}"),
             }

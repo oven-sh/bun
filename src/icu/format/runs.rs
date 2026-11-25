@@ -37,7 +37,7 @@ pub struct Block<'a> {
 }
 
 impl<'a> Runs<'a> {
-    /// At least seven bytes follow the last field.
+    /// `Block::PADDING` bytes follow the last field.
     pub fn new(bytes: &'a [u8]) -> Self {
         let all = bytes.get(2..).unwrap_or_default().as_chunks().0;
         let segments = all.get(..Words::of(bytes).index_at(0)).unwrap_or_default();
@@ -85,6 +85,8 @@ impl<'a> Runs<'a> {
 
 impl Block<'_> {
     pub const HEADER_SIZE: usize = 14;
+    /// What is read of the fields of half a block, which have at most 32 bits.
+    pub const PADDING: usize = 4 * HALF + 8;
     pub const WIDTH_BITS: u32 = 6;
     pub const SHIFT_BITS: u32 = 5;
     pub const STEP_BITS: u32 = 4;
@@ -134,46 +136,81 @@ impl Block<'_> {
         (field != Self::ABSENT).then_some(header.value(field, index))
     }
 
-    /// Calls `put(i, value)` for each code point of the half of the block that has `c`. The last call for `i` counts.
+    /// Calls `put(i, value - bias)` once for each code point of the half of the block that has `c`.
     #[inline]
-    pub fn expand_half(self, c: u32, absent: u32, mut put: impl FnMut(usize, u32)) {
-        let (header, first) = (self.read_header(), c & HALF as u32);
-        let before = (header.starts & ((1 << first) - 1)).count_ones();
+    pub fn expand_half(self, c: u32, absent: u32, bias: u32, mut put: impl FnMut(usize, u32)) {
+        let (mut header, first) = (self.read_header(), c & HALF as u32);
+        header.base = header.base.wrapping_sub(bias);
+        let absent = absent.wrapping_sub(bias);
         let mut starts = (header.starts >> first) as u32;
-        if header.is_sparse {
-            (0..HALF).for_each(|i| put(i, absent));
-            for run in before..before + starts.count_ones() {
-                let i = starts.trailing_zeros() % HALF as u32;
-                starts &= starts - 1;
-                put(
-                    i as usize,
-                    header.value(self.field(&header, run), first + i),
-                );
+        let continues = !header.is_sparse && starts % 2 == 0;
+        let first_run = (header.starts & ((1 << first) - 1)).count_ones() - u32::from(continues);
+        let first_bit = first_run * header.width;
+        let fields = (self.fields.get((first_bit / 8) as usize..)).and_then(|it| it.first_chunk());
+        let Some::<&[_; Block::PADDING]>(fields) = fields else {
+            return;
+        };
+        let mask = ((1u64 << header.width) - 1) as u32;
+        let bits_at = |byte: u32| {
+            let bytes = fields.get(byte as usize % (4 * HALF)..);
+            (bytes.and_then(|it| it.first_chunk())).map_or(0, |&it| u64::from_le_bytes(it))
+        };
+        if starts == u32::MAX && header.width % 8 == 0 {
+            for i in 0..HALF as u32 {
+                let value = match bits_at(i * (header.width / 8)) as u32 & mask {
+                    Self::ABSENT => absent,
+                    field => header.value(field, first + i),
+                };
+                put(i as usize, value);
             }
             return;
         }
+        let (mut bit, shift) = (first_bit % 8, header.scale.trailing_zeros());
+        let mut next_scaled_field = || {
+            let bits = bits_at(bit / 8).rotate_right((bit % 8).wrapping_sub(shift));
+            bit += header.width;
+            bits as u32 & mask << shift
+        };
+        if header.is_sparse {
+            if starts == 0 {
+                return (0..HALF).for_each(|i| put(i, absent));
+            }
+            let mut values = [absent; HALF];
+            loop {
+                let i = starts.trailing_zeros();
+                let value = header.value(0, first + i);
+                values.put(i as usize, value.wrapping_add(next_scaled_field()));
+                starts &= starts - 1;
+                if starts == 0 {
+                    return (values.iter().enumerate()).for_each(|(i, &value)| put(i, value));
+                }
+            }
+        }
         let (mut differences, mut absent_bits) = ([header.step; HALF], 0);
-        let first_run = before + starts % 2 - 1;
-        starts |= 1;
         let mut last = 0;
-        for run in first_run..first_run + starts.count_ones() {
-            let (i, field) = (starts.trailing_zeros(), self.field(&header, run));
+        starts |= 1;
+        while starts != 0 {
+            let (i, field) = (starts.trailing_zeros(), next_scaled_field());
             starts &= starts - 1;
             if field == Self::ABSENT {
                 absent_bits |= starts.isolate_lowest_one().wrapping_sub(1 << i);
             }
-            let difference = field.wrapping_sub(last).wrapping_mul(header.scale);
-            differences.put(i as usize % HALF, difference.wrapping_add(header.step));
+            let difference = field.wrapping_sub(last);
+            differences.put(i as usize, difference.wrapping_add(header.step));
             last = field;
         }
         let mut value = header.value(0, first.wrapping_sub(1));
-        for (i, &difference) in differences.iter().enumerate() {
+        let values = differences.iter().enumerate().map(|(i, &difference)| {
             value = value.wrapping_add(difference);
-            put(i, value);
-        }
-        while absent_bits != 0 {
-            put(absent_bits.trailing_zeros() as usize, absent);
-            absent_bits &= absent_bits - 1;
+            (i, value)
+        });
+        let or_absent = |i, value| match absent_bits >> i & 1 {
+            0 => value,
+            _ => absent,
+        };
+        match absent_bits {
+            0 => values.for_each(|(i, value)| put(i, value)),
+            _ => values.for_each(|(i, value)| put(i, or_absent(i, value))),
         }
     }
 }

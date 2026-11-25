@@ -496,7 +496,8 @@ fn write<'w>(
 /// Compares the results for each word, and for each word with another unit in each place.
 fn verify(bytes: &[u8], words: &[Entry]) {
     let dictionary = Dictionary::new(bytes).expect("a header");
-    let set: BTreeMap<_, _> = words.iter().map(|it| (&it.0[..], it.1 as u8)).collect();
+    let with_byte = |it: &Entry| u8::try_from(it.1).expect("8 bits");
+    let set: BTreeMap<_, _> = words.iter().map(|it| (&it.0[..], with_byte(it))).collect();
     let check = |text: &[u16]| {
         let after = words.partition_point(|it| &it.0[..] <= text);
         let common = |i: usize| {

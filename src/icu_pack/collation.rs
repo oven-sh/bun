@@ -443,6 +443,7 @@ fn write_shared_values(root: &BTreeMap<u32, u32>) -> Vec<u32> {
     ]);
     uniform.for_each(|(block, value)| values[block..][..trie::BLOCK_LENGTH].fill(value));
     values.extend(trie::ASCII.chain(trie::LATIN_1).map(|c| root[&(c as u32)]));
+    (values.iter_mut()).for_each(|it| *it = it.wrapping_sub(LAZY_CE32));
     values.push((trie::USED + trie::GRANULARITY) as u32);
     values
 }
@@ -466,35 +467,75 @@ fn take_hangul(ce32s: &mut BTreeMap<u32, u32>, range: Range<u32>) -> usize {
         .expect("a block")]
 }
 
-/// The parts of the supplementary range without values have `empty`. The others get blocks from `next` on.
-fn write_index_1(in_runs: &BTreeMap<u32, u32>, empty: usize, next: &mut usize) -> Vec<u16> {
-    let parts = in_runs
-        .range(0x10000..)
-        .map(|it| (it.0 - 0x10000) >> trie::INDEX_1_SHIFT);
-    let parts: BTreeSet<_> = parts.collect();
-    let mut index = vec![empty as u16; parts.last().map_or(0, |&it| it as usize + 1)];
-    for part in parts {
-        index[part as usize] = *next as u16;
-        *next += trie::INDEX_2_BLOCK_LENGTH;
-    }
-    index
+/// Returns the code points that share an entry of the first index, for each supplementary one of `values`.
+fn supplementary_parts(values: &BTreeMap<u32, u32>) -> impl Iterator<Item = Range<u32>> + use<> {
+    let parts = (values.range(0x10000..)).map(|it| it.0 >> trie::INDEX_1_SHIFT);
+    let parts = parts.collect::<BTreeSet<_>>().into_iter();
+    parts.map(|it| it << trie::INDEX_1_SHIFT..(it + 1) << trie::INDEX_1_SHIFT)
 }
 
-/// Removes from `in_runs` what `Mappings::primaries` can have, if that is most of it.
+/// The parts with `values` get blocks from `next` on.
+fn point_index_1(
+    index: &mut Vec<u16>,
+    values: &BTreeMap<u32, u32>,
+    empty: usize,
+    next: &mut usize,
+) {
+    for part in supplementary_parts(values) {
+        let at = (part.start as usize - 0x10000) >> trie::INDEX_1_SHIFT;
+        index.resize(index.len().max(at + 1), empty as u16);
+        index[at] = u16::try_from(*next).expect("16 bits");
+        *next += trie::INDEX_2_BLOCK_LENGTH;
+    }
+}
+
+fn is_primary(ce32: u32) -> bool {
+    ce32_of_primary((ce32 >> 16) as u16) == ce32
+}
+
+/// Removes from the `in_runs` of a tailoring what `Mappings::sparse` can have.
+fn take_sparse(in_runs: &mut BTreeMap<u32, u32>) -> BTreeMap<u32, u32> {
+    let mut sparse = BTreeMap::new();
+    for part in supplementary_parts(in_runs) {
+        if in_runs.range(part.clone()).all(|it| is_primary(*it.1)) {
+            sparse.extend(in_runs.extract_if(part, |_, _| true));
+        }
+    }
+    sparse
+}
+
+fn push_sparse(packed: &mut Vec<u8>, sparse: &BTreeMap<u32, u32>) {
+    let length = SparsePrimaries::BLOCK_LENGTH;
+    let blocks: Vec<_> = (supplementary_parts(sparse).flat_map(|it| it.step_by(length))).collect();
+    push_number(packed, blocks.len());
+    for first in blocks {
+        let own = sparse.range(first..first + length as u32);
+        packed.extend(own.map(|it| 1 << (it.0 - first)).sum::<u64>().to_le_bytes());
+        packed.extend((sparse.range(..first).count() as u16).to_le_bytes());
+    }
+    push_number(packed, sparse.len());
+    packed.extend(
+        sparse
+            .values()
+            .flat_map(|it| ((it >> 16) as u16).to_le_bytes()),
+    );
+}
+
+/// Removes from `in_runs` what `Mappings::primaries` can have, unless that is little.
 fn take_primaries(in_runs: &mut BTreeMap<u32, u32>) -> Vec<u16> {
     let (han, mut rest) = (trie::UNIFIED_HAN, in_runs.clone());
     let mut primaries = vec![0; han.len()];
     for (block, own) in primaries.chunks_mut(runs::BLOCK_LENGTH).enumerate() {
         let first = (han.start + block * runs::BLOCK_LENGTH) as u32;
         let values = in_runs.range(first..first + runs::BLOCK_LENGTH as u32);
-        if (values.clone()).all(|(_, &ce32)| ce32_of_primary((ce32 >> 16) as u16) == ce32) {
+        if values.clone().all(|it| is_primary(*it.1)) {
             for (c, ce32) in values {
                 own[(c - first) as usize] = (ce32 >> 16) as u16;
                 rest.remove(c);
             }
         }
     }
-    if in_runs.len() - rest.len() < primaries.len() / 2 {
+    if in_runs.len() - rest.len() < primaries.len() / 4 {
         return Vec::new();
     }
     *in_runs = rest;
@@ -519,14 +560,18 @@ fn share_offsets(in_runs: &mut BTreeMap<u32, u32>, source: &Source, pool: &mut P
 fn push_runs(
     packed: &mut Vec<u8>,
     mut in_runs: BTreeMap<u32, u32>,
+    sparse: &BTreeMap<u32, u32>,
     empty: usize,
     next: &mut usize,
 ) {
-    let index_1 = write_index_1(&in_runs, empty, next);
+    let mut index_1 = Vec::new();
+    point_index_1(&mut index_1, &in_runs, empty, next);
+    point_index_1(&mut index_1, sparse, empty, &mut { trie::INDEX_2_LENGTH });
     for numbers in [index_1, take_primaries(&mut in_runs)] {
         push_number(packed, numbers.len());
         packed.extend(to_bytes(&numbers));
     }
+    push_sparse(packed, sparse);
     packed.extend(runs::write(&in_runs));
 }
 
@@ -593,7 +638,8 @@ pub(crate) fn pack<'a>(root_file: &[u8], files: &[&'a [u8]]) -> Packed<'a> {
             let (mut ce32s, jamo) = pool.add_values(source);
             let hangul = take_hangul(&mut ce32s, HANGUL);
             let is_large = ce32s.len() > MAX_EAGER;
-            let in_runs = ce32s.split_off(if is_large { &FIRST_CJK } else { &0x10000 });
+            let mut in_runs = ce32s.split_off(if is_large { &FIRST_CJK } else { &0x10000 });
+            let sparse = take_sparse(&mut in_runs);
             let kept =
                 |unit: u32| untailored(unit, &root_ce32s) == FALLBACK || ce32s.contains_key(&unit);
             assert!((0..0x10000).all(|it| kept(it) || in_runs.contains_key(&it)));
@@ -628,7 +674,8 @@ pub(crate) fn pack<'a>(root_file: &[u8], files: &[&'a [u8]]) -> Packed<'a> {
                 .for_each(|it| pool.push_part(&mut numbers, it));
             push_number(&mut packed, numbers.len());
             packed.extend(numbers);
-            push_runs(&mut packed, in_runs, empty_of_tailorings, &mut next_index_2);
+            let empty = empty_of_tailorings;
+            push_runs(&mut packed, in_runs, &sparse, empty, &mut next_index_2);
             all_changes.push(ce32s);
             all_layers.push(layers);
         }
@@ -648,7 +695,8 @@ pub(crate) fn pack<'a>(root_file: &[u8], files: &[&'a [u8]]) -> Packed<'a> {
     for number in [0, 0, root_jamo, hangul, 0, 0, 0, 0, 0] {
         push_number(&mut mappings, number);
     }
-    push_runs(&mut mappings, in_runs, empty_of_root, &mut next_index_2);
+    let (sparse, empty) = (BTreeMap::new(), empty_of_root);
+    push_runs(&mut mappings, in_runs, &sparse, empty, &mut next_index_2);
     assert!(next_index_2 <= trie::INDEX_2_LENGTH);
 
     let mut header = split_header(root_file).0;
@@ -720,21 +768,29 @@ fn verify(
         mappings.expand_trie(packed, &mut index, &values, first_block);
         let value = |at: usize| match at.checked_sub(trie::VALUES) {
             Some(index) => ce32_of_primary(Words::of(mappings.primaries).at(index)),
-            None => values[at].load(Relaxed),
+            None => values[at].load(Relaxed).wrapping_add(LAZY_CE32),
         };
         let high_start = 0x10000 + ((mappings.index_1.len() as u32 / 2) << trie::INDEX_1_SHIFT);
         let initial = value(mappings.null_block());
+        let index_2_of = |c: u32| {
+            Words::of(mappings.index_1).index_at((c as usize - 0x10000) >> trie::INDEX_1_SHIFT)
+                + (c as usize >> trie::BLOCK_SHIFT) % trie::INDEX_2_BLOCK_LENGTH
+        };
         let get = |c: u32| {
             let block = match c {
                 ..0x10000 => index[c as usize >> trie::BLOCK_SHIFT].load(Relaxed).into(),
-                _ if c < high_start => trie::LAZY_BLOCK,
-                _ => return initial,
+                _ if c >= high_start => return initial,
+                _ => match index_2_of(c).checked_sub(trie::INDEX_2_LENGTH) {
+                    Some(entry) => return ce32_of_primary(mappings.sparse.get(entry, c)),
+                    None => trie::LAZY_BLOCK,
+                },
             };
             match value(block * trie::GRANULARITY + c as usize % trie::BLOCK_LENGTH) {
                 LAZY_CE32 => mappings.runs.block(c).map_or(initial, |block| {
-                    let mut half = [0; trie::BLOCK_LENGTH];
-                    block.expand_half(c, initial, |i, value| half[i] = value);
-                    let ce32 = half[c as usize % trie::BLOCK_LENGTH];
+                    let mut half = [None; trie::BLOCK_LENGTH];
+                    let put = |i: usize, value| assert!(half[i].replace(value).is_none());
+                    block.expand_half(c, initial, 0, put);
+                    let ce32 = half[c as usize % trie::BLOCK_LENGTH].expect("a value");
                     assert!(ce32 == block.get(c).unwrap_or(initial));
                     ce32
                 }),

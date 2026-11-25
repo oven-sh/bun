@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU16, AtomicU32};
 
 pub const DATA_FORMAT: [u8; 4] = *b"BCol";
 
-/// In a trie: the CE32 is in the runs.
+/// In a trie: the CE32 is in the runs. The values are the CE32s less this, so a thread reads it where it misses what another has written.
 pub const LAZY_CE32: u32 = 0xc3;
 /// Two CEs: the index in the pool of the second one and of the first one.
 pub const PAIR_LOW_BYTE: u8 = 0xc7;
@@ -83,6 +83,7 @@ pub mod trie {
     pub const INDEX_1_SHIFT: u32 = 11;
     pub const INDEX_2_BLOCK_LENGTH: usize = 1 << (INDEX_1_SHIFT - BLOCK_SHIFT);
 
+    /// The entries of the first index from here on lead to `Mappings::sparse`.
     pub const INDEX_2_LENGTH: usize = 0x4000;
     /// The entries from here on lead to `Mappings::primaries`.
     pub const VALUES: usize = (1 << 18) - (UNIFIED_HAN.end - UNIFIED_HAN.start);
@@ -134,8 +135,34 @@ pub struct Mappings<'a> {
     pub index_1: &'a [u8],
     /// The count, then what `ce32_of_primary` takes for each of `UNIFIED_HAN`. The runs come first.
     pub primaries: &'a [u8],
+    pub sparse: SparsePrimaries<'a>,
     /// The rest.
     pub runs: Runs<'a>,
+}
+
+/// What `ce32_of_primary` takes for a few among many supplementary code points: the count and the blocks, the count and the weights.
+#[derive(Clone, Copy, Default)]
+pub struct SparsePrimaries<'a> {
+    /// A bit for each code point with a weight, and the number of weights before the block.
+    blocks: &'a [[u8; 10]],
+    primaries: Words<'a>,
+}
+
+impl SparsePrimaries<'_> {
+    pub const BLOCK_LENGTH: usize = 64;
+
+    /// `entry` counts blocks of the trie.
+    #[inline(always)]
+    pub fn get(&self, entry: usize, c: u32) -> u16 {
+        let block = entry / (Self::BLOCK_LENGTH / trie::BLOCK_LENGTH);
+        let [bits @ .., low, high] = self.blocks.at(block);
+        let so_far = u64::from_le_bytes(bits) << (63 - c % 64);
+        if so_far >> 63 == 0 {
+            return 0;
+        }
+        let before = usize::from(u16::from_le_bytes([low, high]));
+        (self.primaries).at(before + so_far.count_ones() as usize - 1)
+    }
 }
 
 fn take_part<'a>(numbers: &mut &[u8], pool: &'a [u8]) -> &'a [u8] {
@@ -197,7 +224,7 @@ impl Trie<'_> {
             self.next_block += length;
         }
         let at = self.block_of(unit) + unit % BLOCK_LENGTH;
-        self.values.get(at).map(|it| it.store(value, Relaxed))
+        (self.values.get(at)).map(|it| it.store(value.wrapping_sub(LAZY_CE32), Relaxed))
     }
 
     /// A byte with the distance less one and a bit for each byte of the value that changes, more distance, these bytes.
@@ -240,6 +267,10 @@ impl<'a> Mappings<'a> {
             layers: take_counted(bytes, 1),
             index_1: take_counted(bytes, 2),
             primaries: take_counted(bytes, 2),
+            sparse: SparsePrimaries {
+                blocks: take_counted(bytes, 10).as_chunks().0,
+                primaries: Words::of(take_counted(bytes, 2)),
+            },
             runs: Runs::new(bytes),
         }
     }

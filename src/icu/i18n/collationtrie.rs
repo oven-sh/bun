@@ -2,11 +2,12 @@
 
 use crate::common::bytes::U16s;
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
+use crate::common::soft_assert;
 use crate::common::umutex::LoadOnly;
 use crate::common::utrie2::{UTrie2, UTrie2ValueBits};
 use crate::i18n::collation::FALLBACK_CE32;
 use bun_icu_format::collation::trie::*;
-use bun_icu_format::collation::{LAZY_CE32, Mappings, Root, ce32_of_primary};
+use bun_icu_format::collation::{LAZY_CE32, Mappings, Root, SparsePrimaries, ce32_of_primary};
 use bun_icu_format::runs::{Block, Runs};
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -22,12 +23,16 @@ static PACKED_INDEX_2: [AtomicU16; INDEX_2_LENGTH] = [const { AtomicU16::new(0) 
 pub(crate) struct CollationTrie {
     index: &'static [LoadOnly<AtomicU16>; BMP_INDEX_LENGTH],
     values: &'static [LoadOnly<AtomicU32>],
+    /// To be added to each of `values`.
+    bias: u32,
     /// Their indexes start after those of `values`.
     primaries: U16s<'static>,
     ascii: &'static [LoadOnly<AtomicU32>; ASCII.end],
     /// From U+10000 on.
     index_1: U16s<'static>,
     index_2: &'static [LoadOnly<AtomicU16>],
+    /// Its entries start after those of `index_2`.
+    sparse: SparsePrimaries<'static>,
     high_start: u32,
     high_value: u32,
     packed: Option<Packed>,
@@ -54,11 +59,11 @@ fn allocate(count: usize, limit: usize) -> Option<usize> {
     used.ok().map(|it| it as usize)
 }
 
-/// Returns the entry of a new block with the values around `c`.
+/// Returns the entry of a new block with the values around `c`. Each is written once, so other threads read it or `LAZY_CE32`.
 fn new_entry(block: Block, c: u32, absent: u32) -> Option<u16> {
     let at = allocate(BLOCK_LENGTH, LAZY_LIMIT)?;
     let values: &[_; BLOCK_LENGTH] = PACKED_VALUES.get(at..)?.first_chunk()?;
-    block.expand_half(c, absent, |i, value| {
+    block.expand_half(c, absent, LAZY_CE32, |i, value| {
         if let Some(slot) = values.get(i) {
             slot.store(value, Relaxed);
         }
@@ -89,10 +94,12 @@ impl CollationTrie {
         Some(Self {
             index: index.first_chunk()?,
             values,
+            bias: 0,
             primaries: U16s::EMPTY,
             ascii: values.first_chunk()?,
             index_1: trie.index_1(),
             index_2: index,
+            sparse: SparsePrimaries::default(),
             high_start: trie.high_start,
             high_value: trie.data32.at(trie.high_value_index),
             packed: None,
@@ -112,12 +119,14 @@ impl CollationTrie {
         Some(Self {
             index: LoadOnly::slice_of(index).first_chunk()?,
             values,
+            bias: LAZY_CE32,
             primaries: U16s::of(mappings.primaries),
             ascii: values.get(ascii..)?.first_chunk()?,
             index_1,
             index_2: LoadOnly::slice_of(&PACKED_INDEX_2),
+            sparse: mappings.sparse,
             high_start: 0x10000 + ((index_1.len() as u32) << INDEX_1_SHIFT),
-            high_value: values.get(mappings.null_block())?.load(),
+            high_value: (values.get(mappings.null_block())?.load()).wrapping_add(LAZY_CE32),
             packed: Some(Packed {
                 index,
                 null_entry: (mappings.null_block() / GRANULARITY) as u16,
@@ -130,14 +139,11 @@ impl CollationTrie {
         self.packed.is_some()
     }
 
-    /// The address of the value depends on the entry, so the processor reads what `fill` has released with the entry.
     #[inline(always)]
     fn mapping(&self, entry: u16, c: u32) -> Mapping {
-        #[cfg(miri)]
-        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
         let index = usize::from(entry) * GRANULARITY + c as usize % BLOCK_LENGTH;
         if let Some(value) = self.values.get(index) {
-            return Mapping::Ce32(value.load());
+            return Mapping::Ce32(value.load().wrapping_add(self.bias));
         }
         match self.primaries.get(index - self.values.len()).soft_some() {
             Some(0) => Mapping::Ce32(FALLBACK_CE32),
@@ -167,9 +173,11 @@ impl CollationTrie {
         usize::from(block) + (c >> BLOCK_SHIFT) as usize % INDEX_2_BLOCK_LENGTH
     }
 
+    /// The error is the entry for `sparse`.
     #[inline(always)]
-    fn supplementary_entry(&self, c: u32) -> u16 {
-        (self.index_2.get(self.index_2_of(c)).map(|it| it.load())).soft_unwrap()
+    fn supplementary_entry(&self, c: u32) -> Result<u16, usize> {
+        let index = self.index_2_of(c);
+        (self.index_2.get(index).map(|it| it.load())).ok_or_else(|| index - self.index_2.len())
     }
 
     #[inline(always)]
@@ -192,9 +200,14 @@ impl CollationTrie {
     #[inline(always)]
     pub(crate) fn get_from_supp(&self, c: u32) -> u32 {
         if c >= self.high_start {
-            self.high_value
-        } else {
-            self.value(self.supplementary_entry(c), c)
+            return self.high_value;
+        }
+        match self.supplementary_entry(c) {
+            Ok(entry) => self.value(entry, c),
+            Err(entry) => {
+                soft_assert!(self.is_packed());
+                ce32_of_primary(self.sparse.get(entry, c))
+            }
         }
     }
 
@@ -210,7 +223,8 @@ impl CollationTrie {
 
     #[inline(always)]
     pub(crate) fn get_from_ascii(&self, c: u8) -> u32 {
-        (self.ascii.get(usize::from(c & 0x7f)).map(|it| it.load())).soft_unwrap()
+        let value = self.ascii.get(usize::from(c & 0x7f)).map(|it| it.load());
+        value.soft_unwrap().wrapping_add(self.bias)
     }
 
     /// Returns what `LAZY_CE32` stands for, and remembers the block if there is room. `c` is a code unit or supplementary.
@@ -264,10 +278,11 @@ impl CollationTrie {
         let (mut start, mut ce32, mut last_entry) = (0, self.peek(0), None);
         for first in (0..high_start).step_by(BLOCK_LENGTH) {
             let is_in_runs = (self.packed).is_some_and(|it| it.runs.block(first).is_some());
-            let entry = (!is_in_runs).then(|| match first {
-                ..0x10000 => self.entry_of_bmp_code_point(first),
-                _ => self.supplementary_entry(first),
-            });
+            let entry = match first {
+                _ if is_in_runs => None,
+                ..0x10000 => Some(self.entry_of_bmp_code_point(first)),
+                _ => self.supplementary_entry(first).ok(),
+            };
             let is_repeated = entry.is_some() && entry == last_entry;
             if is_repeated && first - start >= BLOCK_LENGTH as u32 {
                 continue;

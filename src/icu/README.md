@@ -49,7 +49,7 @@ so nothing is expanded that the call does not read.
 | ----------------------------------- | ----------------------------------------------------------------------- | ----------------------- |
 | Text of locales                     | Pieces from a table of the language, and copies from a similar language | In chunks of about 1 KB |
 | Collation                           | Runs of weights, and for each tailoring what it changes                 | 32 code points          |
-| Collation of Chinese                | A weight for each character                                             | No                      |
+| Han in Chinese and Japanese order   | A weight for each character, and above U+FFFF a bitmap to find it       | No                      |
 | Dictionaries for breaking text      | A trie with bitmaps in the place of pointers                            | No                      |
 | Break rules, `rbnf/`, `CurrencyMap` | Literal bytes and copies                                                | A file                  |
 | Other bundles                       | As in `.res` files, with shared keys and strings                        | No                      |

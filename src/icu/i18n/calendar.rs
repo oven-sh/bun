@@ -509,14 +509,14 @@ impl Calendar {
     }
 
     /// Returns the Julian day of `day` in `month`, or in the year if `month` is `None`.
-    fn julian_day_of(&self, eyear: i32, month: Option<i32>, day: i32) -> Result<i32, UErrorCode> {
+    fn julian_day_of(&self, eyear: i32, month: Option<i32>, day: i32) -> Result<i64, UErrorCode> {
         let (is_day_of_year, month) = (month.is_none(), month.unwrap_or(0));
         let is_leap_month = !is_day_of_year && self.internal_get(Field::IsLeapMonth) != 0;
         let day_before_month = match self.calendar_type {
             Gregorian | Buddhist | Roc | Japanese | Iso8601 => {
-                return self
+                return Ok(self
                     .cutover
-                    .julian_day_of(eyear, month, day, is_day_of_year);
+                    .julian_day_of(eyear, month, day, is_day_of_year));
             }
             Coptic | Ethiopic | EthiopicAmeteAlem => cecal::month_start(self, eyear, month),
             Hebrew => hebrwcal::month_start(eyear, month)?,
@@ -528,7 +528,7 @@ impl Calendar {
             Persian => persncal::month_start(eyear, month)?,
             Chinese | Dangi => chnsecal::month_start(self, eyear, month, is_leap_month)?.into(),
         };
-        checked_add32(day, day_before_month as i32)
+        Ok(i64::from(day) + day_before_month)
     }
 
     /// The fields must be computed.
@@ -982,7 +982,9 @@ impl Calendar {
 // Computing the time from the fields.
 impl Calendar {
     fn compute_time(&mut self) -> Result<UDate, UErrorCode> {
-        let julian_day = self.compute_julian_day()?;
+        // ICU4C narrows the day in `computeJulianDay` without a check, so a far date wraps to a valid one.
+        let julian_day =
+            i32::try_from(self.compute_julian_day()?).or(Err(U_ILLEGAL_ARGUMENT_ERROR))?;
         let get = |field| f64::from(self.internal_get(field));
         let millis_in_day = ((get(Field::HourOfDay) * 60.0 + get(Field::Minute)) * 60.0
             + get(Field::Second))
@@ -1014,10 +1016,10 @@ impl Calendar {
     }
 
     // ICU4C: calendar.cpp, Calendar::computeJulianDay
-    fn compute_julian_day(&mut self) -> Result<i32, UErrorCode> {
+    fn compute_julian_day(&mut self) -> Result<i64, UErrorCode> {
         let stamp = self.stamp(Field::JulianDay);
         if stamp >= MINIMUM_USER_STAMP && DATE_FIELDS.iter().all(|&it| self.stamp(it) <= stamp) {
-            return Ok(self.internal_get(Field::JulianDay));
+            return Ok(self.internal_get(Field::JulianDay).into());
         }
         let day_field = self.newer_field(Field::Date, Field::DayOfYear);
         let is_by_era = self.stamp(Field::Era).max(self.stamp(Field::Year)) >= MINIMUM_USER_STAMP;

@@ -452,6 +452,8 @@ impl UvLoop {
             if global.has_exception()
                 && bun_jsc::task::report_error_or_terminate(global, JsError::Thrown).is_err()
             {
+                // The VM outlives the termination of a `node:vm` script.
+                self.shared.schedule_dispatch();
                 break;
             }
         }

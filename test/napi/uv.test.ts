@@ -428,6 +428,31 @@ describe("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("uv_async_send calls back after a node:vm timeout in the callback of another handle", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      let events = 0;
+      let hasTimedOut = false;
+      const start = () => addon.testAsync(false, false, event => {
+        if (event === "close") console.log(event);
+        // The second callback of the first handle, after which the addon does not send again.
+        if (++events === 3) while (!hasTimedOut);
+      });
+      start();
+      start();
+      globalThis.wait = () =>
+        Bun.build({ entrypoints: ["missing.js"], plugins: [{ name: "wait", setup: () => new Promise(() => {}) }] });
+      try {
+        require("node:vm").runInThisContext("wait()", { timeout: 200 });
+      } catch (error) {
+        hasTimedOut = true;
+        console.log(error.code);
+      }
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\nclose\nclose\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("uv_async_t in a Worker uses the Worker's own loop", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       const { Worker } = require("node:worker_threads");

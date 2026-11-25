@@ -893,6 +893,8 @@ impl<'s> Program<'s> {
             loop_values: Vec::new(),
             unmarked_rejections: 0,
             non_circular_returns: Vec::new(),
+            any_returns_in_resolution: 0,
+            comparisons_waiting_for_returns: Vec::new(),
             array_or_tuple_constraint_requests: Vec::new(),
             mapped_instantiations_in_progress: Vec::new(),
             contextual_binding_patterns: Vec::new(),
@@ -975,6 +977,8 @@ impl<'s> Program<'s> {
             recent_instantiations: Default::default(),
             type_parameters_in: Default::default(),
             recent_composed: Default::default(),
+            composed_by_levels: Default::default(),
+            instantiated_by_levels: Default::default(),
             recent_with_this: Default::default(),
             recent_const_type_variables: Default::default(),
             recent_walks_outwards: Default::default(),
@@ -2310,6 +2314,11 @@ pub struct Checker<'p, 's> {
     type_parameters_in: instantiate::TypeParametersIn,
     /// The entries most recently read from or written to `Program::composed`.
     recent_composed: instantiate::Recent,
+    /// The most recent results of `compose_by_levels`, and those of `instantiate_by_levels` by type and mapper. They aren't
+    /// in `recent_composed` and `recent_instantiations`, whose readers would get past the limit of depth with them. Both are
+    /// empty until a member has a deep mapper.
+    composed_by_levels: instantiate::Recent,
+    instantiated_by_levels: instantiate::Recent,
     /// The references that `type_with_this_argument_ex` made most recently, keyed by the reference and the argument.
     recent_with_this: instantiate::Recent,
     /// `is_const_type_variable`, keyed by the type and 1 + the depth.
@@ -2400,6 +2409,10 @@ pub struct Checker<'p, 's> {
     loop_values: Vec<usize>,
     /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
     non_circular_returns: Vec<usize>,
+    /// How often `any` was read for one of those return types while it was being resolved.
+    any_returns_in_resolution: u64,
+    /// The comparisons in progress that have requested one of them.
+    comparisons_waiting_for_returns: Vec<relate::Key>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
     array_or_tuple_constraint_requests: Vec<usize>,
     /// The `getObjectTypeInstantiation` calls on mapped types that missed the cache on their key

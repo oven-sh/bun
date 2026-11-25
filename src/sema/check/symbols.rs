@@ -4061,11 +4061,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `anyType` for `isResolvingReturnTypeOfSignature`. If a comparison is waiting for a return type, it is still in
     /// progress, and `r.relation.set` stores its result over the result of this one. `relations` retains the first
-    /// entry, so this one isn't stored.
+    /// entry, so this one isn't stored there. See `keep_any_return_comparison`.
     #[cold]
     fn any_for_return_type_in_resolution(&mut self) -> TypeId {
         let height = self.stack.len();
         if self.non_circular_returns.iter().any(|&at| at < height) {
+            self.any_returns_in_resolution += 1;
             self.mark_tainted_from(self.frames.len());
         }
         TypeId::ANY

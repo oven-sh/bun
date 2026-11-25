@@ -4738,6 +4738,7 @@ impl<'p, 's> Checker<'p, 's> {
         let variance_reads = self.in_progress_variance_reads;
         let scope = self.begin_scope();
         let cuts = self.comparisons_of_deeply_nested_types;
+        let any_returns = self.any_returns_in_resolution;
         r.push_maybe_key(key);
         let save_expanding = r.expanding;
         // A member of a union or a constraint is pushed on one stack only, so an index doesn't give the push order.
@@ -4784,9 +4785,14 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.task.hold_back();
         }
+        let has_any_for_return = self.any_returns_in_resolution != any_returns
+            && self.lowest_taint == self.frames.len();
         let stored = self.end_scope(scope).ok();
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;
+        if has_any_for_return && !r.is_for_query && !r.overflow {
+            self.keep_any_return_comparison(key, result, propagating);
+        }
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
             r.source_stack.pop();
@@ -4888,6 +4894,34 @@ impl<'p, 's> Checker<'p, 's> {
             self.insert_relation(key, entry, stored);
         } else {
             (self.p.relations).rewrite(&self.task, key, entry, stored);
+        }
+    }
+
+    /// `getNonCircularReturnTypeOfSignature`, for the comparisons of `r`.
+    fn return_type_to_compare(&mut self, r: &Relater, sig: SigId) -> TypeId {
+        if let Some(cached_type) = self.cached_return_type(sig) {
+            return cached_type;
+        }
+        let waiting = self.comparisons_waiting_for_returns.len();
+        (self.comparisons_waiting_for_returns).extend_from_slice(&r.maybe_keys);
+        let ty = self.non_circular_return_type_of_signature(sig);
+        self.comparisons_waiting_for_returns.truncate(waiting);
+        ty
+    }
+
+    /// `relation.set(key, entry)` for a comparison that read `any` for a return type another comparison waits for. Nothing
+    /// replaces the entry, unless that one compares the same types. It's only valid for the task, which began there.
+    #[cold]
+    #[inline(never)]
+    fn keep_any_return_comparison(&mut self, key: Key, result: Ternary, propagating: u8) {
+        let entry = match result {
+            Ternary::TRUE => SUCCEEDED,
+            _ if result.holds() => return,
+            _ => FAILED,
+        };
+        if !self.comparisons_waiting_for_returns.contains(&key) {
+            let entries = &mut self.relations_of_this_task;
+            entries.entry(key).or_insert(entry | propagating);
         }
     }
 
@@ -7214,7 +7248,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Same, for two properties that may be copies of a member. A spread copies a member with other modifiers, and the
     /// copy is another symbol.
     pub(super) fn is_same_uninstantiated_member(&mut self, a: &Prop, b: &Prop) -> bool {
-        let differing = (a.flags ^ b.flags).difference(PropFlags::THISLESS);
+        let differing = (a.flags ^ b.flags).difference(PropFlags::OF_INHERITANCE);
         differing.is_empty() && self.have_same_uninstantiated_symbol(a, b)
     }
 
@@ -7233,7 +7267,8 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         let (own_a, own_b) = (self.mapper_of_prop(a.0), self.mapper_of_prop(b.0));
-        let (a, b) = (self.compose(own_a, a.1), self.compose(own_b, b.1));
+        let a = self.compose_for_member(a.0, own_a, a.1);
+        let b = self.compose_for_member(b.0, own_b, b.1);
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();
         let changed_pairs = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
@@ -8314,11 +8349,11 @@ impl<'p, 's> Checker<'p, 's> {
         if check_mode & IGNORE_RETURN_TYPES != 0 {
             return result;
         }
-        let target_return = self.non_circular_return_type_of_signature(target);
+        let target_return = self.return_type_to_compare(r, target);
         if target_return == TypeId::VOID || target_return == TypeId::ANY {
             return result;
         }
-        let source_return = self.non_circular_return_type_of_signature(source);
+        let source_return = self.return_type_to_compare(r, source);
         if let Some(expected) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
                 Some(actual) => {

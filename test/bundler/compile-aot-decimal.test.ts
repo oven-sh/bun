@@ -2,12 +2,13 @@
 // has no debug information (buildsManyExecutables in scripts/runner.node.ts).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { locksEnvironment } from "../aot/hardened";
 import { unsupported } from "../aot/harness/compiler";
 import { raiseDefaultTimeout } from "../aot/harness/default-timeout";
 import "../aot/harness/real-executables";
-import { canTrim } from "./compile-trim-features";
+import { canTrim, getMappedSegments } from "./compile-trim-features";
 
 raiseDefaultTimeout(120_000);
 
@@ -180,27 +181,115 @@ describe.concurrent("an executable", () => {
     });
   });
 
-  test.skipIf(!!unsupported || locksEnvironment)(
-    "--aot without the variable leaves it to the run whether the global is there",
-    async () => {
-      using dir = tempDir("decimal-executable", {
-        "main.js": `
-          const D = globalThis.Decimal ?? class { toString() { return "polyfill"; } };
-          console.log(["1.50"].map(text => new D(text)).join());
-        `,
-      });
-      await compile(["--aot"], String(dir), off);
-      const run = (variables: typeof off) => spawn([path.join(String(dir), executable)], String(dir), variables);
-      expect(await run(off)).toEqual({ stdout: "polyfill\n", stderr: "", exitCode: 0 });
-      expect(await run(env)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
-    },
-  );
+  const polyfilled = {
+    "main.js": `
+      const D = globalThis.Decimal ?? class { toString() { return "polyfill"; } };
+      console.log(["1.50"].map(text => new D(text)).join(), Object.getOwnPropertyNames(globalThis).includes("Decimal"));
+    `,
+  };
+
+  test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+    ["add the global", off, env, "polyfill false\n"],
+    ["take the global away", env, { ...off, BUN_JSC_useDecimal: "0" }, "1.5 true\n"],
+  ])("--aot: the variable of the run does not %s", async (_, variables, variablesOfRun, stdout) => {
+    const result = await compileAndRun(["--aot"], polyfilled, variables, variablesOfRun);
+    expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test
+    .skipIf(!!unsupported)
+    .concurrent.each([
+      [{ BUN_JSC_USEDECIMAL: "1", ...off }, "1.5 true\n"],
+      ...(isWindows ? [] : [[{ ...env, BUN_JSC_USEDECIMAL: "0" }, "1.5 true\n"] as const]),
+      ...(isWindows ? [] : [[{ BUN_JSC_USEDECIMAL: "0", ...env }, "polyfill false\n"] as const]),
+    ])("--aot takes the first variable of that name in any case, like the engine: %#", async (variables, stdout) => {
+    expect(await compileAndRun(["--aot"], polyfilled, variables)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported)("--aot declares the global for TypeScript, but not without the variable", async () => {
+    using dir = tempDir("decimal-executable", { "main.ts": `console.log(String(new Decimal("1.50")));` });
+    const cmd = [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable];
+    const [refused, built] = [await spawn(cmd, String(dir), off), await spawn(cmd, String(dir), env)];
+    expect(refused.stderr).toContain("Cannot find name 'Decimal'");
+    expect(refused.exitCode).toBe(1);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const result = await spawn([path.join(String(dir), executable)], String(dir), off);
+    expect(result).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+  });
 
   test.skipIf(!!unsupported || !canTrim)("--aot --trim keeps what toLocaleString() needs", async () => {
     const sources = { "main.js": `console.log(new Decimal("1234.5").toLocaleString("en-US"));` };
     const result = await compileAndRun(["--aot", "--trim"], sources, env);
     expect(result).toEqual({ stdout: "1,234.5\n", stderr: "", exitCode: 0 });
   });
+
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+    ["an array", `[new Decimal("1234.5")].toLocaleString("de")`],
+    ["a subclass", `new (class extends Decimal { text() { return super.toLocaleString("de"); } })("1234.5").text()`],
+  ])("--aot --trim keeps it for %s", async (_, expression) => {
+    const result = await compileAndRun(["--aot", "--trim"], { "main.js": `console.log(${expression});` }, env);
+    expect(result).toEqual({ stdout: "1.234,5\n", stderr: "", exitCode: 0 });
+  });
+
+  async function trimmed(source: string, variables: typeof off) {
+    using dir = tempDir("decimal-executable", { "main.js": source });
+    await compile(["--aot", "--trim"], String(dir), variables);
+    const file = path.join(String(dir), executable);
+    expect(await spawn([file], String(dir), off)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    return getMappedSegments(readFileSync(file)).reduce((sum, segment) => sum + segment.length, 0);
+  }
+
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+    ["class", `globalThis.NAME = class { constructor(text) { this.text = text; } };`],
+    ["function", `globalThis.NAME ??= function (text) { "use strict"; this.text = text; };`],
+  ])("--aot --trim without the variable removes as much beside a global %s of that name", async (_, definition) => {
+    const source = definition + `console.log(new NAME("1.5").text);`;
+    const [decimal, other] = await Promise.all(
+      ["Decimal", "Decimax"].map(name => trimmed(source.replaceAll("NAME", name), off)),
+    );
+    expect(Math.abs(decimal - other)).toBeLessThan(65_536);
+  });
+
+  test.skipIf(!!unsupported || !canTrim).concurrent.each([
+    ["by its name", `console.log(new Decimal("0.5").add(new Decimal(1)).toFixed({ digits: 1 }));`],
+    [
+      "off a global object that was handed over",
+      `function find() { return this; } const root = find.call(globalThis); console.log("Decimal" in root && String(new root.Decimal("1.5")));`,
+    ],
+  ])("--aot --trim keeps nothing of Bun for Decimal %s", async (_, source) => {
+    const [decimal, text] = await Promise.all([trimmed(source, env), trimmed(`console.log("1.5");`, env)]);
+    expect(decimal - text).toBeLessThan(1_000_000);
+  });
+});
+
+test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+  ["function", env],
+  ["undefined", off],
+])(
+  "a program that is compiled and run in place has the globals that it was compiled for: %s",
+  async (expected, variables) => {
+    using dir = tempDir("decimal-in-place", { "main.js": "console.log(typeof Decimal);" });
+    const { stdout, exitCode } = await spawn([bunExe(), "--debug-aot", "main.js"], String(dir), variables);
+    expect({ stdout, exitCode }).toEqual({ stdout: expected + "\n", exitCode: 0 });
+  },
+);
+
+// The workers of --parallel find the values of .env in their environment, and the compiler did not.
+test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+  ["function", env, ""],
+  ["undefined", off, "BUN_JSC_useDecimal=1"],
+])("bun test --aot has the globals that it compiled for: %s", async (expected, variables, dotEnv) => {
+  const test = `
+    import { expect, test } from "bun:test";
+    test("typeof", () => expect(typeof Decimal).toBe("${expected}"));
+  `;
+  using dir = tempDir("decimal-test", { ".env": dotEnv, "a.test.js": test, "b.test.js": test });
+  const { stderr, exitCode } = await spawn([bunExe(), "test", "--aot", "--parallel=2"], String(dir), variables);
+  expect(stderr).toContain(" 2 pass");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent.each([
@@ -242,6 +331,20 @@ test
     const result = await compileAndRun(["--aot"], sources, env, { ...off, BUN_JSC_useDecimalOperators: "1" });
     expect(result).toEqual({ stdout: "false false\n", stderr: "", exitCode: 0 });
   });
+
+test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+  ["on", env, "1", "TypeError\n"],
+  ["off", { ...env, BUN_JSC_useDecimalToJSON: "1" }, "0", '"1.5"\n'],
+])(
+  "the variable of the run does not turn an extension %s in an --aot executable",
+  async (_, variables, value, stdout) => {
+    const sources = {
+      "main.js": `try { console.log(JSON.stringify(new Decimal("1.5"))); } catch (error) { console.log(error.name); }`,
+    };
+    const result = await compileAndRun(["--aot"], sources, variables, { ...off, BUN_JSC_useDecimalToJSON: value });
+    expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
+  },
+);
 
 const literals = { ...env, BUN_JSC_useDecimalLiterals: "1" };
 

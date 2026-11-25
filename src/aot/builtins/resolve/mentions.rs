@@ -400,8 +400,10 @@ impl Resolver<'_, '_> {
         let stored_to = self.outermost_assertion_of(member);
         match bound.parent_of_expr(stored_to) {
             Parent::Expr(store) => match hir[store].kind {
-                ExprKind::Assign { target, value, .. } if target == stored_to => {
-                    self.may_read_this(value)
+                ExprKind::Assign { op, target, value } if target == stored_to => {
+                    // `process += x` stores what the operator makes, which is no function.
+                    matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish))
+                        && self.may_read_this(value)
                 }
                 _ => bound.is_write_only_access(hir, stored_to),
             },
@@ -659,12 +661,20 @@ impl Resolver<'_, '_> {
         if let Some(receiver) = self.find_receiver_held_as_answer(expr, id) {
             self.expose(receiver);
         }
-        if self.is_stored_over_by_what_may_read_this(expr, id)
-            && let Some((holder, _)) = self.input.hir.member_key(expr)
-            && let Some(holder) =
-                mentioned_id(self.state(self.input.hir.skip_type_assertions(holder)))
-        {
-            self.expose(holder);
+        if self.is_stored_over_by_what_may_read_this(expr, id) {
+            let holder = match self.input.hir.member_key(expr) {
+                Some((holder, _)) => {
+                    mentioned_id(self.state(self.input.hir.skip_type_assertions(holder)))
+                }
+                // `escape = reader` lays it on the global object, which may call it as a method. `saved = reader` stores into a variable alone, whatever it held.
+                None if matches!(self.state(expr), ExprState::Builtin(_)) => table::entry(id)
+                    .holder
+                    .filter(|&holder| table::canonical_id(holder) == BuiltinId::GlobalThis),
+                None => None,
+            };
+            if let Some(holder) = holder {
+                self.expose(holder);
+            }
         }
         self.mention_members_read_under_written_keys(expr);
         let mention_use = self.classify_use(expr);

@@ -2,25 +2,38 @@ use core::ops::Range;
 use std::borrow::Cow;
 
 use bun_core::String;
-use bun_core::strings::CodeUnits;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, to_js};
+use bun_core::strings::{CodeUnits, copy_u16_into_u8};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     ErrorCode, JSArray, JSArrayIterator, JSGlobalObject, JSMap, JSValue, JsResult,
     MarkedArgumentBuffer,
 };
 use bun_text_diff::patch;
-use bun_text_diff::tokens::{Edit, Split, Unit, diff_ids, diff_text};
+use bun_text_diff::tokens::{
+    Edit, Ignore, Split, Unit, diff_ids, diff_text_ignoring, strip_trailing_cr,
+};
 
 use crate::generated_bindgen::diff_object::{
-    Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions, PatchToApply,
+    ArrayChange, Change, FilePatch, FileToApply, Hunk, HunkToApply, HunksOptions, LinesOptions,
+    Options, PatchOptions, PatchToApply, TextOptions,
 };
 
 trait JsUnit: Unit {
     fn of(string: &String) -> Cow<'_, [Self]>;
+    /// `operation`, which is ASCII, and then `text`. If there is no memory, a string that throws when it is converted.
+    fn line(operation: u8, text: &[Self]) -> String;
 }
 impl JsUnit for u8 {
     fn of(string: &String) -> Cow<'_, [u8]> {
         Cow::Borrowed(string.latin1())
+    }
+    fn line(operation: u8, text: &[u8]) -> String {
+        let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation;
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 impl JsUnit for u16 {
@@ -30,6 +43,23 @@ impl JsUnit for u16 {
         } else {
             Cow::Owned(string.latin1().iter().map(|&unit| unit.into()).collect())
         }
+    }
+    fn line(operation: u8, text: &[u16]) -> String {
+        // ASCII is stored as Latin-1, as in `String::clone_utf16`. A loop without an early exit is vectorized.
+        if text.iter().fold(0, |all, &unit| all | unit) < 0x80 {
+            let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+            if let [first, rest @ ..] = units {
+                *first = operation;
+                copy_u16_into_u8(rest, text);
+            }
+            return line;
+        }
+        let (line, units) = String::create_uninitialized_utf16(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation.into();
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 
@@ -105,34 +135,109 @@ fn runs(
     runs
 }
 
+/// The options of all functions that compare text.
+#[derive(Clone, Copy)]
+struct Compare {
+    ignore: Ignore,
+    max_edits: usize,
+}
+
+impl Compare {
+    fn diff<T: Unit>(self, split: Split, a: &[T], b: &[T]) -> Option<Vec<Edit>> {
+        diff_text_ignoring(split, a, b, self.ignore, self.max_edits)
+    }
+}
+
+macro_rules! compare_lines {
+    ($heap:expr, $options:expr) => {
+        Compare {
+            ignore: Ignore {
+                case: $options.ignore_case,
+                whitespace: $options.ignore_whitespace,
+            },
+            max_edits: max_edits($heap, $options.max_edit_length)?,
+        }
+    };
+}
+
+/// The old one and the new one.
+struct Texts<'s> {
+    given: [&'s String; 2],
+    without_cr: Option<Box<[String; 2]>>,
+}
+
+impl<'s> Texts<'s> {
+    #[inline]
+    fn new<'a>(
+        heap: &JsHeap<'a>,
+        given: [&'s String; 2],
+        strip_trailing_cr: bool,
+    ) -> bindgen::Result<'a, Self> {
+        let without_cr = match strip_trailing_cr {
+            true => Some(without_cr(given).ok_or_else(|| heap.memory_allocation_failed())?),
+            false => None,
+        };
+        Ok(Self { given, without_cr })
+    }
+
+    #[inline]
+    fn get(&self) -> [&String; 2] {
+        (self.without_cr.as_ref()).map_or(self.given, |texts| texts.each_ref())
+    }
+}
+
+#[cold]
+fn without_cr(texts: [&String; 2]) -> Option<Box<[String; 2]>> {
+    let texts = texts.map(|text| {
+        let stripped = if text.is_utf16() {
+            strip_trailing_cr(text.utf16()).map(|it| clone_units(&it))
+        } else {
+            strip_trailing_cr(text.latin1()).map(|it| clone_units(&it))
+        };
+        stripped.unwrap_or_else(|| text.clone())
+    });
+    (!texts.iter().any(String::is_dead)).then(|| Box::new(texts))
+}
+
+#[inline(never)]
 fn text_runs<T: JsUnit>(
     split: Split,
     old: &String,
     new: &String,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<Vec<Run>> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(split, &a, &b, max_edits)?;
+    let edits = compare.diff(split, &a, &b)?;
     let kept_at_end = |from| split.count(&b[from..]);
     Some(runs(edits.into_iter(), b.len(), kept_at_end))
 }
 
-fn changes<'a, 's>(
-    heap: &JsHeap<'a>,
+#[inline(always)]
+fn changes<'s>(
     split: Split,
-    old: &'s String,
-    new: &'s String,
-    options: &Options,
-) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
-    let max_edits = max_edits(heap, options.max_edit_length)?;
-    let runs = by_width!([old, new], text_runs(split, old, new, max_edits));
+    texts: Texts<'s>,
+    compare: Compare,
+) -> Option<impl Iterator<Item = Change> + use<'s>> {
+    let [old, new] = texts.get();
+    let runs = by_width!([old, new], text_runs(split, old, new, compare));
     let change = move |Run { kind, range, count }| Change {
-        value: if kind == Kind::Removed { old } else { new }.shared_substring(range),
+        value: texts.get()[usize::from(kind != Kind::Removed)].shared_substring(range),
         added: kind == Kind::Added,
         removed: kind == Kind::Removed,
         count,
     };
-    Ok(runs.map(|runs| runs.into_iter().map(change)))
+    Some(runs?.into_iter().map(change))
+}
+
+pub(crate) fn lines<'a, 's>(
+    heap: &JsHeap<'a>,
+    old: &'s String,
+    new: &'s String,
+    options: &LinesOptions,
+) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    Ok(changes(Split::Lines, texts, compare))
 }
 
 macro_rules! split_by {
@@ -141,14 +246,15 @@ macro_rules! split_by {
             heap: &JsHeap<'a>,
             old: &'s String,
             new: &'s String,
-            options: &Options,
+            options: &TextOptions,
         ) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
-            changes(heap, $split, old, new, options)
+            let ignore = Ignore { case: options.ignore_case, whitespace: false };
+            let max_edits = max_edits(heap, options.max_edit_length)?;
+            Ok(changes($split, Texts::new(heap, [old, new], false)?, Compare { ignore, max_edits }))
         }
     )*};
 }
 split_by! {
-    lines: Split::Lines;
     words: Split::Words;
     chars: Split::Chars;
 }
@@ -163,8 +269,13 @@ struct ValueIds {
 }
 
 impl ValueIds {
-    /// A copy of `array`, which a getter can change, and the number of each element.
-    fn read(&mut self, global: &JSGlobalObject, array: JSValue) -> JsResult<(JSValue, Vec<u32>)> {
+    /// The number of each element. The elements go into `copy`, which is empty, because a getter can change `array`.
+    fn read(
+        &mut self,
+        global: &JSGlobalObject,
+        array: JSValue,
+        copy: &mut MarkedArgumentBuffer,
+    ) -> JsResult<Vec<u32>> {
         let Some(map) = JSMap::from_js(self.map) else {
             return Err(global.throw_out_of_memory());
         };
@@ -173,45 +284,42 @@ impl ValueIds {
         if elements.len > MAX_COPY_LENGTH {
             return Err(global.throw_out_of_memory());
         }
-        MarkedArgumentBuffer::new(|copy| {
-            let mut ids = Vec::new();
-            while let Some(element) = elements.next()? {
-                copy.append(element);
-                if copy.size() == ids.len() {
-                    return Err(global.throw_out_of_memory());
-                }
-                // To a `Map`, NaN is the same as NaN.
-                let is_nan = element.is_number() && element.as_number().is_nan();
-                if !is_nan {
-                    let known = map.get(global, element)?;
-                    if known.is_number() {
-                        ids.push(known.as_number() as u32);
-                        continue;
-                    }
-                    map.set(global, element, JSValue::js_number(self.distinct.into()))?;
-                }
-                ids.push(self.distinct);
-                self.distinct += 1;
+        let mut ids = Vec::new();
+        while let Some(element) = elements.next()? {
+            copy.append(element);
+            if copy.size() == ids.len() {
+                return Err(global.throw_out_of_memory());
             }
-            Ok((copy.construct_array(global)?, ids))
-        })
+            // To a `Map`, NaN is the same as NaN.
+            let is_nan = element.is_number() && element.as_number().is_nan();
+            if !is_nan {
+                let known = map.get(global, element)?;
+                if known.is_number() {
+                    ids.push(known.as_number() as u32);
+                    continue;
+                }
+                map.set(global, element, JSValue::js_number(self.distinct.into()))?;
+            }
+            ids.push(self.distinct);
+            self.distinct += 1;
+        }
+        Ok(ids)
     }
 }
 
-pub(crate) fn arrays<'a>(
+fn array_changes<'a>(
     cx: &mut JsScope<'a>,
-    old: JsLocal<'a, JSArray>,
-    new: JsLocal<'a, JSArray>,
-    options: &Options,
+    (old, old_copy): (JSValue, &mut MarkedArgumentBuffer),
+    (new, new_copy): (JSValue, &mut MarkedArgumentBuffer),
+    max_edits: usize,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
-    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
     let global = cx.global();
     let mut ids = ValueIds {
         map: JSMap::create(global),
         distinct: 0,
     };
-    let (old, a) = ids.read(global, old.to_js())?;
-    let (new, b) = ids.read(global, new.to_js())?;
+    let a = ids.read(global, old, old_copy)?;
+    let b = ids.read(global, new, new_copy)?;
     ids.map.ensure_still_alive();
 
     let Some(hunks) = diff_ids(&a, &b, ids.distinct as usize, max_edits) else {
@@ -222,25 +330,34 @@ pub(crate) fn arrays<'a>(
         tokens: hunk,
     });
     let runs = runs(edits, b.len(), |from| b.len() - from);
+    let (old, new) = (&*old_copy, &*new_copy);
     let changes = cx.heap.create_array(runs, |heap, run| {
         let Run { kind, range, count } = run;
         let from = if kind == Kind::Removed { old } else { new };
-        // SAFETY: each index of the copies is an own data property, so reading one runs no JavaScript.
-        let global = unsafe { heap.global() };
-        let value = heap.create_array(range, |heap, index| {
-            to_js::any(heap, from.get_index(global, index as u32)?)
-        })?;
-        let members = [
-            ("value", value.as_value()),
-            ("added", to_js::bool(heap, kind == Kind::Added)?),
-            ("removed", to_js::bool(heap, kind == Kind::Removed)?),
-            ("count", to_js::usize(heap, count)?),
-        ];
-        to_js::record(heap, members, to_js::any)
+        let change = ArrayChange {
+            value: heap.create_array_of(from, range)?,
+            added: kind == Kind::Added,
+            removed: kind == Kind::Removed,
+            count,
+        };
+        change.into_js(heap)
     })?;
-    old.ensure_still_alive();
-    new.ensure_still_alive();
     Ok(Some(changes))
+}
+
+pub(crate) fn arrays<'a>(
+    cx: &mut JsScope<'a>,
+    old: JsLocal<'a, JSArray>,
+    new: JsLocal<'a, JSArray>,
+    options: &Options,
+) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
+    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
+    MarkedArgumentBuffer::new(|old_copy| {
+        MarkedArgumentBuffer::new(|new_copy| {
+            let (old, new) = ((old.to_js(), old_copy), (new.to_js(), new_copy));
+            array_changes(cx, old, new, max_edits)
+        })
+    })
 }
 
 fn hunk_with<L>(hunk: patch::PatchHunk<L>, line: impl FnMut(L) -> String) -> Hunk {
@@ -257,16 +374,14 @@ fn hunks_of<T: JsUnit>(
     old: &String,
     new: &String,
     context: usize,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<Vec<Hunk>> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
-    let mut scratch = Vec::new();
+    let edits = compare.diff(Split::Lines, &a, &b)?;
     let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
-        hunk_with(hunk, |line| {
-            scratch.clear();
-            line.write(&mut scratch);
-            clone_units(&scratch)
+        hunk_with(hunk, |line| match line {
+            patch::Line::Text(operation, text) => T::line(operation, text),
+            patch::Line::NoNewline => String::clone_latin1(patch::NO_NEWLINE),
         })
     });
     Some(hunks.collect())
@@ -279,11 +394,10 @@ pub(crate) fn hunks<'a>(
     options: &HunksOptions,
 ) -> bindgen::Result<'a, Option<Vec<Hunk>>> {
     let context = limit(heap, "context", options.context)?;
-    let max_edits = max_edits(heap, options.max_edit_length)?;
-    Ok(by_width!(
-        [old, new],
-        hunks_of(old, new, context, max_edits)
-    ))
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    let [old, new] = texts.get();
+    Ok(by_width!([old, new], hunks_of(old, new, context, compare)))
 }
 
 struct FileHeader<'a> {
@@ -297,10 +411,10 @@ fn format_patch<T: JsUnit>(
     new: &String,
     headers: &[FileHeader<'_>],
     context: usize,
-    max_edits: usize,
+    compare: Compare,
 ) -> Option<String> {
     let (a, b) = (T::of(old), T::of(new));
-    let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
+    let edits = compare.diff(Split::Lines, &a, &b)?;
     let mut out = Vec::new();
     // As `diff -u`: no differences, no output.
     if !edits.is_empty() {
@@ -325,7 +439,9 @@ pub(crate) fn create_patch<'a>(
     options: &PatchOptions<'_>,
 ) -> bindgen::Result<'a, Option<String>> {
     let context = limit(heap, "context", options.context)?;
-    let max_edits = max_edits(heap, options.max_edit_length)?;
+    let compare = compare_lines!(heap, options);
+    let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
+    let [old, new] = texts.get();
     let (old_name, new_name) = (options.old_file_name, options.new_file_name);
     let mut headers = Vec::new();
     for (marker, name, option, header) in [
@@ -368,23 +484,46 @@ pub(crate) fn create_patch<'a>(
     let strings = headers.iter().map(|file| file.header).chain([old, new]);
     Ok(by_width!(
         strings,
-        format_patch(old, new, &headers, context, max_edits)
+        format_patch(old, new, &headers, context, compare)
     ))
 }
 
-fn parse<'a, T: Unit>(heap: &JsHeap<'a>, text: &[T]) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
-    patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))
+/// The lines of the hunks are places in `text` as it is afterwards.
+fn parse<'a, T: Unit>(
+    heap: &JsHeap<'a>,
+    text: &mut Cow<'_, [T]>,
+) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
+    let files = patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))?;
+    if files.last().is_some_and(|file| file.lost_cr) {
+        text.to_mut().push(T::from_u8(b'\r'));
+    }
+    Ok(files)
 }
 
-pub(crate) fn parse_patch<'a, 's>(
+fn parse_string<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
-    text: &'s String,
-) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<'s>> {
-    let files = if text.is_utf16() {
-        parse(heap, text.utf16())?
-    } else {
-        parse(heap, text.latin1())?
-    };
+    text: &String,
+) -> bindgen::Result<'a, (String, Vec<patch::FilePatch>)> {
+    let mut units = T::of(text);
+    let files = parse(heap, &mut units)?;
+    if units.len() == text.length() {
+        return Ok((text.clone(), files));
+    }
+    if units.len() > String::max_length() {
+        return Err(heap.string_too_long());
+    }
+    let restored = clone_units(&units);
+    if restored.is_dead() {
+        return Err(heap.memory_allocation_failed());
+    }
+    Ok((restored, files))
+}
+
+pub(crate) fn parse_patch<'a>(
+    heap: &JsHeap<'a>,
+    text: &String,
+) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<>> {
+    let (text, files) = by_width!([text], parse_string(heap, text))?;
     let name = |name: Option<patch::Name>| name.map(|name| String::clone_utf16(&name));
     let flag = |is_set: bool| is_set.then_some(true);
     let hunk = move |hunk| hunk_with(hunk, |line| text.shared_substring(line));
@@ -402,7 +541,7 @@ pub(crate) fn parse_patch<'a, 's>(
         is_create: flag(file.is_create),
         is_delete: flag(file.is_delete),
         is_binary: flag(file.is_binary),
-        hunks: file.hunks.into_iter().map(hunk).collect(),
+        hunks: file.hunks.into_iter().map(&hunk).collect(),
     }))
 }
 
@@ -410,10 +549,14 @@ fn apply<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[patch::HunkToApply<'_, T>],
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     match patch::apply(&T::of(source), hunks) {
-        Ok(patched) => Ok(patched.map(|patched| clone_units(&patched))),
-        Err(patch::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
+        Ok(patched) => Ok(clone_units(&patched)),
+        Err(patch::ApplyError::Mismatch { hunk, reason }) => Err(heap.error_with_code(
+            ErrorCode::PATCH_DOES_NOT_APPLY,
+            format_args!("Hunk {} does not apply: {reason}", hunk + 1),
+        )),
+        Err(patch::ApplyError::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
                 "The property 'patch[{hunk}].lines[{line}]' must start with \" \", \"-\", \"+\" or \"\\\""
@@ -422,14 +565,21 @@ fn apply<'a, T: JsUnit>(
     }
 }
 
+fn binary_patch<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!("The argument 'patch' must change a text file. Received a binary patch"),
+    )
+}
+
 fn apply_text<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     text: &String,
-) -> bindgen::Result<'a, Option<String>> {
-    let text = T::of(text);
-    let files = parse(heap, &text)?;
-    let [file] = &files[..] else {
+) -> bindgen::Result<'a, String> {
+    let mut text = T::of(text);
+    let files = parse(heap, &mut text)?;
+    if files.len() > 1 {
         return Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
@@ -437,14 +587,18 @@ fn apply_text<'a, T: JsUnit>(
                 files.len()
             ),
         ));
-    };
-    if file.is_binary {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_VALUE,
-            format_args!("The argument 'patch' must change a text file. Received a binary patch"),
-        ));
     }
-    let hunks = file.hunks.iter().map(|hunk| patch::HunkToApply {
+    let file = files.first();
+    if file.is_some_and(|file| file.is_binary) {
+        return Err(binary_patch(heap));
+    }
+    let hunks = file.map_or(&[][..], |file| &file.hunks);
+    if hunks.is_empty() && !patch::can_lack_hunks(&text, file) {
+        return Err(heap.syntax_error(format_args!(
+            "The patch has no line that starts with \"@@ -start,lines +start,lines @@\""
+        )));
+    }
+    let hunks = hunks.iter().map(|hunk| patch::HunkToApply {
         old_start: hunk.old_start as u32,
         lines: hunk.lines.iter().map(|line| &text[line.clone()]).collect(),
     });
@@ -455,7 +609,7 @@ fn apply_hunks<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[HunkToApply],
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     let lines = hunks.iter().map(|hunk| hunk.lines.iter().map(T::of));
     let lines: Vec<Vec<Cow<'_, [T]>>> = lines.map(Iterator::collect).collect();
     let hunks = hunks.iter().zip(&lines);
@@ -470,10 +624,11 @@ pub(crate) fn apply_patch<'a>(
     heap: &JsHeap<'a>,
     source: &String,
     patch: PatchToApply,
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
-        PatchToApply::Hunks(hunks) => {
+        PatchToApply::File(file) if file.is_binary => Err(binary_patch(heap)),
+        PatchToApply::Hunks(hunks) | PatchToApply::File(FileToApply { hunks, .. }) => {
             let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
             // One string can be in there many times.
             if lines().map(String::length).sum::<usize>() > String::max_length() {

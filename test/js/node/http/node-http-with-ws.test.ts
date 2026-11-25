@@ -1105,7 +1105,12 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
 
 // A handshake response over 16 KB is written immediately instead of being batched with the first frames.
 // Over TLS, a write that the kernel rejects closes the socket, so it can no longer be upgraded to a WebSocket.
-test.concurrent("keeps serving after a client resets its TLS connection while a long 101 is written", async () => {
+test.concurrent.each([
+  ["upgrade", ""],
+  ["upgrade", "x"],
+  ["request", ""],
+  ["request", "x"],
+])("keeps serving after a client resets its TLS connection while a long 101 is written, %s %j", async (event, body) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1118,7 +1123,8 @@ test.concurrent("keeps serving after a client resets its TLS connection while a 
 
         let socketToReset;
         const server = https.createServer({ cert: process.env.TLS_CERT, key: process.env.TLS_KEY });
-        const wss = new WebSocketServer({ server });
+        const wss = new WebSocketServer({ noServer: true });
+        server.on("${event}", req => wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => wss.emit("connection", ws)));
         wss.on("headers", headers => {
           if (!socketToReset) return;
           socketToReset.resetAndDestroy();
@@ -1146,7 +1152,8 @@ test.concurrent("keeps serving after a client resets its TLS connection while a 
           });
           client.write(
             "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
-              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n" +
+              "Content-Length: ${body.length}\\r\\n\\r\\n${body}",
           );
         });
       `,
@@ -1217,3 +1224,130 @@ test.concurrent.each(["another stream", "its own destroyed socket, patched to lo
     expect(exitCode).toBe(0);
   },
 );
+
+describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of the %s connection", protocol => {
+  const upgradeRequest = (fields: string) =>
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+    `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${fields}\r\n`;
+
+  const RESPONSE_HEAD = 129;
+  const FRAME_HEAD = 10;
+
+  async function open(serverOptions: http.ServerOptions = {}) {
+    const server =
+      protocol === "https" ? https.createServer({ ...options, ...serverOptions }) : http.createServer(serverOptions);
+    const wss = new WebSocketServer({ noServer: true });
+    const address = { port: await listen(server), host: "127.0.0.1", allowHalfOpen: true };
+    const client = protocol === "https" ? tls.connect({ ...address, rejectUnauthorized: false }) : connect(address);
+    const switched = Promise.withResolvers<void>();
+    const firstEvent = Promise.withResolvers<string>();
+    let tail = "";
+    let received = 0;
+    client.on("error", () => {});
+    client.on("data", chunk => {
+      received += chunk.length;
+      tail = (tail + chunk.subarray(-256).toString("latin1")).slice(-256);
+      if (tail.includes("101 Switching Protocols")) switched.resolve();
+    });
+    return {
+      server,
+      client,
+      switched: switched.promise,
+      firstEvent: firstEvent.promise,
+      received: () => received,
+      upgrade(req: http.IncomingMessage, onOpen?: (ws: WsWebSocket) => void) {
+        wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+          ws.on("message", message => firstEvent.resolve("message " + message));
+          ws.on("close", code => firstEvent.resolve("close " + code));
+          onOpen?.(ws);
+        });
+      },
+      [Symbol.dispose]() {
+        client.destroy();
+        for (const ws of wss.clients) ws.terminate();
+        server.close();
+      },
+    };
+  }
+
+  test.each(["Upgrade", "Upgrade, close"])("once the response ahead has drained, with Connection: %s", async value => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.end(Buffer.alloc(16 * 1024 * 1024, "a"));
+      else if (res.socket) c.upgrade(req);
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest(`Connection: ${value}\r\n`));
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
+  test("once the response ahead has drained, after the FIN", async () => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.write(Buffer.alloc(16 * 1024 * 1024, "a"), () => res.end());
+      else if (res.socket) c.upgrade(req);
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
+    await once(c.client.end(), "close");
+    expect(await c.firstEvent).toBe("close 1006");
+  });
+
+  // TLS has a second end, the FIN behind the close_notify.
+  test.skipIf(protocol === "https")("a long message is sent after the FIN", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () =>
+      c.upgrade(req, ws => ws.send(Buffer.alloc(16 * 1024 * 1024, "m"), () => req.socket.end())),
+    );
+    await once(c.client.end(), "close");
+    expect(c.received()).toBe(RESPONSE_HEAD + FRAME_HEAD + 16 * 1024 * 1024);
+  });
+
+  test("destroySoon() after the FIN keeps what is no longer buffered", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    let sent = 0;
+    c.server.on("clientError", () =>
+      c.upgrade(req, ws => {
+        ws.send(Buffer.alloc(16 * 1024 * 1024, "m"));
+        sent = FRAME_HEAD + 16 * 1024 * 1024 - ws.bufferedAmount;
+        req.socket.destroySoon();
+      }),
+    );
+    await once(c.client.end(), "close");
+    expect(c.received()).toBeGreaterThanOrEqual(RESPONSE_HEAD + sent);
+  });
+
+  test("'clientError' for bytes behind a request that closes the connection", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade, close\r\n"));
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () => c.upgrade(req));
+    c.client.write("more");
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
+  test("'clientError' for a FIN in the middle of the next head", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () => c.upgrade(req));
+    await once(c.client.end(), "close");
+    expect(await c.firstEvent).toBe("close 1006");
+  });
+
+  test("'end' of a body that the FIN completes", async () => {
+    using c = await open({ insecureHTTPParser: true });
+    c.server.on("request", req => req.on("data", () => c.client.end()).on("end", () => c.upgrade(req)));
+    c.client.write(upgradeRequest("Transfer-Encoding: foo\r\n") + "body");
+    await once(c.client, "close");
+    expect(await c.firstEvent).toBe("close 1006");
+  });
+});

@@ -2,7 +2,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Parent, ScopeKind};
 use bun_sema::fold::{Decisions, FoldedValue};
 use bun_sema::hir::{self, BinOp, Chain, ExprId, ExprKind, StmtId, StmtKind, UnOp};
-use bun_sema::import_sites::WHERE_FILE_LIES;
+use bun_sema::import_sites::{ImportSiteKind, WHERE_FILE_LIES};
 use bun_sema::program::{CompiledModule, FileId};
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -206,6 +206,14 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(in crate::lower) fn body_form(&self) -> BodyForm {
         self.modules.commonjs.form
+    }
+
+    /// Where a direct eval may have stored into `require`, a closure of an earlier run compares its callee with what each run was given.
+    pub(in crate::lower) fn keeps_requires_of_runs(&self) -> bool {
+        let mut sites = self.compiled.analysis.import_sites.iter();
+        self.body_form() == BodyForm::Wrapped
+            && self.inputs.modules.may_be_reevaluated(self.file)
+            && sites.any(|site| matches!(site.kind, ImportSiteKind::Require(_)))
     }
 
     fn has_values_of_each_run(&self) -> bool {

@@ -61,9 +61,9 @@ pub(crate) type RequestContextStackAllocator<
 pub(crate) enum UpgradeState {
     /// Plain HTTP request, or a handshake that was answered with an HTTP response.
     None,
-    /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
-    /// context (one per `.ws()` route) and it outlives the request.
-    Pending(NonNull<WebSocketUpgradeContext>),
+    /// WebSocket handshake waiting for `server.upgrade()`. The app owns the
+    /// context and it outlives the request.
+    Pending(bun_ptr::BackRef<WebSocketUpgradeContext>),
     /// `server.upgrade()` handed the socket over to a `ServerWebSocket`.
     Upgraded,
 }

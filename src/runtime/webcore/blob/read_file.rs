@@ -8,7 +8,7 @@ use crate::node::types::PathLikeExt as _;
 #[cfg(windows)]
 use crate::server::file_response_stream::StreamFd;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step, Target};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step, Target};
 use crate::webcore::blob::store::Data;
 #[cfg(windows)]
 use crate::webcore::blob::store::File as FileStore;
@@ -21,6 +21,8 @@ use bun_core::String as BunString;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 #[cfg(windows)]
 use bun_io::IntrusiveUvFs as _;
+#[cfg(not(windows))]
+use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
@@ -218,7 +220,6 @@ impl ReadFile {
 #[cfg(not(windows))]
 impl FdOp for ReadFile {
     const INTEREST: Interest = Interest::Readable;
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     type Js = PendingReadFileCompletion;
 
     fn open(&mut self) -> Result<(JobFd, Step), Box<SystemError>> {
@@ -256,8 +257,12 @@ impl FdOp for ReadFile {
         if expected == 0 && bun_sys::is_regular_file(self.cached_mode) {
             return Ok((fd, Step::Done));
         }
-        // An empty read waits like any other.
-        if self.max_length == 0 && self.must_wait(fd.get()) {
+        // Opening a FIFO lets its writer go on, and closing it at once would break that pipe.
+        if self.max_length == 0
+            && matches!(fd, JobFd::Opened(_))
+            && bun_sys::S::ISFIFO(stat.st_mode as _)
+            && self.must_wait(fd.get())
+        {
             return Ok((fd, Step::Wait));
         }
         if !self.could_block || expected > 0 {
@@ -270,18 +275,20 @@ impl FdOp for ReadFile {
         Ok((fd, step))
     }
 
-    fn step(&mut self, fd: Fd, mut ready: bool) -> Result<Step, Box<SystemError>> {
+    fn step(&mut self, fd: Fd, ready: bool) -> Result<Step, Box<SystemError>> {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         loop {
             let max = (self.max_length as usize).saturating_sub(self.buffer.len());
             if max == 0 {
                 break;
             }
-            if !core::mem::take(&mut ready) && self.must_wait(fd) {
+            if !ready && self.must_wait(fd) {
                 return Ok(Step::Wait);
             }
             match self.read_some(fd, max, &mut stack_buffer) {
                 Ok(0) => break,
+                // It may never end.
+                Ok(_) if self.could_block => return Ok(Step::Again),
                 Ok(_) => {}
                 Err(err) if err.get_errno() != bun_sys::E::EAGAIN => {
                     self.buffer = Vec::new();
@@ -289,7 +296,10 @@ impl FdOp for ReadFile {
                     err.path = self.path_for_error();
                     return Err(err);
                 }
-                Err(_) => self.could_block = true,
+                Err(_) => {
+                    self.could_block = true;
+                    return Ok(Step::Again);
+                }
             }
         }
         if self.buffer.len() + 16_000 < self.buffer.capacity() {

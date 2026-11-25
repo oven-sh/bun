@@ -989,6 +989,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 && !ctx.runtime_options.eval.reads_configuration,
             runs_compiled_code: crate::cli::run_compiled::runs_compiled_code(),
             locks_builtins: crate::cli::run_compiled::is_checked(),
+            decimal: crate::cli::run_compiled::decimal_options(),
             ..Default::default()
         });
         if ctx.runtime_options.eval.reads_configuration {
@@ -3027,10 +3028,6 @@ pub(crate) enum Filter {
 }
 
 impl RunCommand {
-    fn unlink_staged_path(path: &[u8]) {
-        let _ = sys::unlink(&paths::Path::from(path));
-    }
-
     /// Parse `contents` once with an ImageUrlCollector, download every
     /// http(s) image URL it finds to a temp file, and populate `out_map`
     /// with url → temp-path entries. Failures are silent — an image that
@@ -3117,27 +3114,18 @@ impl RunCommand {
             path.push_fmt(format_args!("bun-md-{:x}", bun_core::fast_random()));
             path.extend_from_slice(ext);
 
-            let fd = match sys::open(
-                &path,
+            let Ok(image) = sys::Tmpfile::open(
+                Fd::cwd(),
+                path,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
                 0o600,
-            ) {
-                Ok(f) => f,
-                Err(_) => continue,
+            ) else {
+                continue;
             };
-            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
-            if !ok {
-                Self::unlink_staged_path(&path);
+            if image.file.write_all(bytes).is_err() || out_map.try_reserve(1).is_err() {
                 continue;
             }
-            // Dupe url for the map key — `collector.urls` owns the backing
-            // bytes. Check capacity first while `path` is still
-            // borrowable for `unlink_staged_path`.
-            if out_map.try_reserve(1).is_err() {
-                Self::unlink_staged_path(&path);
-                continue;
-            }
-            out_map.put_assume_capacity(url, path.as_bytes().into());
+            out_map.put_assume_capacity(url, image.keep().as_bytes().into());
         }
     }
 

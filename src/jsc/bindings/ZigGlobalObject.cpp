@@ -421,12 +421,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = runsCompiledCode;
-            // The bits of DecimalOptions in decimal_options.rs.
-            JSC::Options::useDecimal() = decimalOptions & (1 << 0);
-            JSC::Options::useDecimalStructuredClone() = decimalOptions & (1 << 1);
-            JSC::Options::useDecimalToJSON() = decimalOptions & (1 << 2);
-            JSC::Options::useDecimalOperators() = decimalOptions & (1 << 3);
-            JSC::Options::useDecimalLiterals() = decimalOptions & (1 << 4);
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -525,6 +519,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
             if (runsCompiledCode || locksBuiltins)
                 JSC::Options::useShadowRealm() = false;
+            // After the loop: DecimalOptions::of_process() in decimal_options.rs has read the variables.
+            JSC::Options::useDecimal() = decimalOptions & (1 << 0);
+            JSC::Options::useDecimalStructuredClone() = decimalOptions & (1 << 1);
+            JSC::Options::useDecimalToJSON() = decimalOptions & (1 << 2);
+            JSC::Options::useDecimalOperators() = decimalOptions & (1 << 3);
+            JSC::Options::useDecimalLiterals() = decimalOptions & (1 << 4);
             // After the loop: compiled code has no operators for Decimals, so == would answer otherwise in eval().
             if (runsCompiledCode)
                 JSC::Options::useDecimalOperators() = false;

@@ -1,7 +1,6 @@
 //! Where a client connects.
 
 use bstr::BStr;
-use bun_cares_sys::c_ares;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::SystemErrno;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -94,7 +93,7 @@ impl Address {
 
     pub(crate) fn lookup_error(&self, code: i32) -> Option<String> {
         let (Address::Unix(host) | Address::Host { host, .. }) = self;
-        let code = c_ares::Error::init_eai(code)?.code();
+        let code = bun_dns::getaddrinfo_error(code)?.code();
         let code = code.strip_prefix("DNS_").unwrap_or(code);
         Some(format!("getaddrinfo {code} {}", BStr::new(host)))
     }

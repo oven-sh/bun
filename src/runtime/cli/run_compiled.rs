@@ -4,6 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use bstr::BStr;
 use bun_bundler::bundle_v2::FileMap;
+use bun_core::decimal_options::DecimalOptions;
 use bun_core::{Global, Output, ZBox, env_var};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::aot_options::ReadListener;
@@ -886,16 +887,16 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
 }
 
 #[cfg(windows)]
-fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<File> {
-    let file = File::from_fd(bun_sys::openat(
+fn write_to_named_file(bytes: &[u8], bytes_after: &[u8]) -> Maybe<bun_sys::Tmpfile<ZBox>> {
+    let program = bun_sys::Tmpfile::open(
         Fd::cwd(),
-        path,
+        temporary_path(bun_resolver::fs::RealFS::tmpdir_path()),
         O::RDWR | O::CREAT | O::EXCL,
         0o700,
-    )?);
-    file.write_all(bytes)?;
-    file.write_all(bytes_after)?;
-    Ok(file)
+    )?;
+    program.file.write_all(bytes)?;
+    program.file.write_all(bytes_after)?;
+    Ok(program)
 }
 
 #[cfg(windows)]
@@ -971,15 +972,9 @@ fn start_second_process(
         Output::flush();
         Global::exit(run_second_process(arguments, original_cwd))
     };
-    let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let file = match write_to_named_file(&path, bytes, handover.bytes_after) {
-        Ok(file) => file,
-        Err(error) => {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &path);
-            exit_write_failed(&error)
-        }
-    };
-    let handle = file.fd().native();
+    let program = write_to_named_file(bytes, handover.bytes_after)
+        .unwrap_or_else(|error| exit_write_failed(&error));
+    let handle = program.file.fd().native();
     let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
@@ -989,8 +984,7 @@ fn start_second_process(
     );
     Output::flush();
     let exit_code = run_second_process(arguments, original_cwd);
-    drop(file);
-    let _ = bun_sys::unlinkat(Fd::cwd(), &path);
+    drop(program);
     Global::exit(exit_code)
 }
 
@@ -1205,6 +1199,11 @@ pub(crate) fn graph_flag_of_test_worker() -> Option<Vec<u8>> {
 #[inline]
 pub(crate) fn runs_compiled_code() -> bool {
     IS_FROM_DESCRIPTOR.load(Ordering::Relaxed)
+}
+
+pub(crate) fn decimal_options() -> DecimalOptions {
+    let graph = Graph::get_ref().filter(|_| runs_compiled_code());
+    graph.map_or_else(DecimalOptions::default, |it| it.runtime_options.decimal)
 }
 
 /// `--isolate=modules`: a module graph for each test file in one global object, whose properties are put back between files. What puts them back is a

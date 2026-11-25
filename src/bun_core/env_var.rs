@@ -56,12 +56,6 @@ new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 // JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
 new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
-// JavaScriptCore's options of these names: see `decimal_options`.
-new!(pub BUN_JSC_useDecimal: boolean, "BUN_JSC_useDecimal", {});
-new!(pub BUN_JSC_useDecimalStructuredClone: boolean, "BUN_JSC_useDecimalStructuredClone", {});
-new!(pub BUN_JSC_useDecimalToJSON: boolean, "BUN_JSC_useDecimalToJSON", {});
-new!(pub BUN_JSC_useDecimalOperators: boolean, "BUN_JSC_useDecimalOperators", {});
-new!(pub BUN_JSC_useDecimalLiterals: boolean, "BUN_JSC_useDecimalLiterals", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
@@ -195,9 +189,11 @@ new!(pub GITHUB_SERVER_URL: string, "GITHUB_SERVER_URL", {});
 new!(pub GITHUB_SHA: string, "GITHUB_SHA", {});
 new!(pub GITHUB_WORKSPACE: string, "GITHUB_WORKSPACE", {});
 platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE", {});
+new!(pub HOSTALIASES: string, "HOSTALIASES", {});
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
+new!(pub LOCALDOMAIN: string, "LOCALDOMAIN", {});
 // Dump mimalloc statistics at the end of the process. Note that this is not the same as
 // `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
@@ -231,6 +227,7 @@ new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
+new!(pub RES_OPTIONS: string, "RES_OPTIONS", {});
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});

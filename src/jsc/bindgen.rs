@@ -126,6 +126,15 @@ impl<'a> JsHeap<'a> {
     }
 
     #[inline]
+    pub fn create_array_of(
+        &self,
+        values: &crate::MarkedArgumentBuffer,
+        range: core::ops::Range<usize>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        JsLocal::from_js_result(values.construct_array_of_range(self.global_object(), range))
+    }
+
+    #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
             self.global_object(),

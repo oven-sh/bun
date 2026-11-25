@@ -673,6 +673,23 @@ test("a bundle is reported as if it had no source map", async () => {
   expect(compiled).toEqual(plain);
 });
 
+test("a compiled file is known by the path that it has on disk", async () => {
+  const project = {
+    "in/setup.js": "Object();\n",
+    "in/loaded.js": "Object();\n",
+    "in/unloaded.js": "Object();\n",
+    "in/ignored.js": "Object();\n",
+    "a.test.js": fourTests(
+      `import { codeCoverageForFile } from "bun:jsc"; import "./in/loaded.js"; import "./in/ignored.js";`,
+      `codeCoverageForFile(require.resolve("./in/loaded.js"));`,
+    ),
+  };
+  const bunfig = `[test]\npreload = "./in/setup.js"\ncoverageSkipTestFiles = true\ncoverageInclude = ["in", "!in/ig*"]\n`;
+  const [plain, compiled] = await Promise.all([report([], bunfig, project), report(["--aot"], bunfig, project)]);
+  expect(plain.lcov.match(/(?<=^SF:).*/gm)).toEqual([join("in", "loaded.js"), join("in", "unloaded.js")]);
+  expect(compiled).toEqual(plain);
+});
+
 test("test files that are built a few at a time add their counts up", async () => {
   const [plain, compiled] = await Promise.all([report(["--parallel=2"]), report(["--aot", "--parallel=2"])]);
   expect(compiled).toEqual(plain);

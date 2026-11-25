@@ -356,10 +356,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         } = scopes;
         let counted_places = is_counted.then(|| {
             let (path, loader) = (
-                inputs.sources.diagnostic_path(file),
+                bun_paths::to_native(inputs.sources.diagnostic_path(file)),
                 inputs.sources.loader(file),
             );
-            CountedPlaces::find(hir, &compiled.analysis.decisions, path, loader)
+            CountedPlaces::find(hir, &compiled.analysis.decisions, &path, loader)
         });
         let simplified_expressions = match shared {
             Some(shared) => Arc::clone(&shared.simplified_expressions),

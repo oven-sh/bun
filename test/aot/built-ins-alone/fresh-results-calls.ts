@@ -636,6 +636,7 @@ export const notCalled: Record<string, string> = {
   "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
+  "native:Bindgen:node_util_binding.bind.ts:diffNumbers": ofOneModule("internal/util/diff"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
   "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries": ofOneModule("node:util"),

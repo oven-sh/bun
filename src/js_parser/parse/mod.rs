@@ -635,6 +635,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
+                    kind: E::CallKind::Plain,
                     args: ExprNodeList::from_arena_slice(items),
                     ..Default::default()
                 },

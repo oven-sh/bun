@@ -59,8 +59,8 @@ declare module "bun" {
     /**
      * Creates a new Redis client
      *
-     * @param url URL to connect to, defaults to `process.env.VALKEY_URL`,
-     * `process.env.REDIS_URL`, or `"valkey://localhost:6379"`
+     * @param url URL to connect to, defaults to `process.env.REDIS_URL`,
+     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`
      * @param options Additional options
      *
      * @example
@@ -96,7 +96,8 @@ declare module "bun" {
     onclose: ((this: RedisClient, error: Error) => void) | null;
 
     /**
-     * Connect to the Redis server
+     * Connect to the Redis server, and to the database of this client's last
+     * successful `SELECT` or else of the URL
      *
      * @returns A promise that resolves when connected and on the database, or
      * rejects with the reason the connection failed
@@ -2930,7 +2931,7 @@ declare module "bun" {
      * Create a new RedisClient instance with the same configuration as the
      * current instance.
      *
-     * Opens a new connection to the Redis server.
+     * Opens a new connection to the Redis server, on the database of the URL.
      */
     duplicate(): Promise<RedisClient>;
 

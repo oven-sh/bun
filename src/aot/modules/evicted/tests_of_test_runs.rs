@@ -85,6 +85,19 @@ fn a_mocked_file_and_its_importers_are_reloadable() {
     );
 }
 
+#[test]
+fn test_file_that_mocks_is_reloadable_where_another_file_loads_it() {
+    let mocks = "import { vi } from 'bun:test';\nvi.mock('./dep.ts', () => ({}));";
+    let dep = ("dep.ts", "export const who = 1;");
+    for load in ["import './b.test.ts';", "import('./b.test.ts');"] {
+        let files = [("a.test.ts", load), ("b.test.ts", mocks), dep];
+        let reloadable = reloadable_files(&files, 2);
+        assert!(reloadable.contains(&"b.test.ts"), "{load}");
+    }
+    let files = [("a.test.ts", "export {};"), ("b.test.ts", mocks), dep];
+    assert_eq!(reloadable_files(&files, 2), ["dep.ts"]);
+}
+
 fn reloadable_commonjs_files<'a>(files: &[(&'a str, &str)], test_files: usize) -> Vec<&'a str> {
     with_graph_of_test_files(files, test_files, 0, |graph, input| {
         let is_marked = &graph.test_run().is_reloadable_commonjs;

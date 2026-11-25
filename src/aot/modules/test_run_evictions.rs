@@ -531,7 +531,7 @@ fn limit_reloadable_files(
 }
 
 /// A reloadable file is one that `bun test` may load again in the same realm: a file that a module mock names, a file
-/// other than an entry point that mocks a module, or a file that imports or requires one of those or another mocked
+/// that mocks a module and that another file loads, or a file that imports or requires one of those or another mocked
 /// module, directly or through other files.
 pub(super) fn find_reloadable_files(
     input: &BindInput<'_, '_>,
@@ -565,13 +565,20 @@ pub(super) fn find_reloadable_files(
             to_follow.push(file);
         }
     }
-    let entry_points = [&input.run.preloads[..], &input.run.test_files[..]].concat();
+    let loads = LoadsOfFiles::collect(input, scans);
+    let loads_any_file = !loads.calls_unknown_module.is_empty();
+    let mut is_loaded_below = vec![loads_any_file; files.modules.len()];
+    for &target in loads.targets.iter().flatten() {
+        is_loaded_below[target.idx()] = true;
+    }
+    let runs_once = |file: FileId| {
+        input.run.preloads.contains(&file)
+            || (input.run.test_files.contains(&file) && !is_loaded_below[file.idx()])
+    };
     for &file in files.compiled_files() {
         let sites = files.analysis(file).import_sites.iter();
         let mut kinds = sites.clone().map(|site| site.kind);
-        if kinds.any(|kind| matches!(kind, ImportSiteKind::MockModule(_)))
-            && !entry_points.contains(&file)
-        {
+        if kinds.any(|kind| matches!(kind, ImportSiteKind::MockModule(_))) && !runs_once(file) {
             to_follow.push(file);
         }
         for (site, answer) in sites.zip(&scans.of(file).sites) {

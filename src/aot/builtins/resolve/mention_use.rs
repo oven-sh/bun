@@ -339,7 +339,7 @@ impl Resolver<'_, '_> {
                     && self.input.runs_tests
                     && writes_on_first_operand(builtin)
                     && !self.is_of_loader(operand)
-                    && !self.exposes_first_operand(call, builtin) =>
+                    && !self.exposes_first_operand(call, operand, builtin) =>
             {
                 MentionUse::Inspected
             }

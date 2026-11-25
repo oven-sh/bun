@@ -1939,7 +1939,7 @@ pub struct Checker<'p, 's> {
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
-    /// `never_checked` as it was when the check of the last file ended. Kept where `Files::brings_declarations`.
+    /// `never_checked` as it was when the check of the last file ended. Kept in a compile build.
     never_checked_in_last_file: Vec<(u32, u32)>,
     /// `number_name` of each index, or `NONE` if it hasn't been requested.
     names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,

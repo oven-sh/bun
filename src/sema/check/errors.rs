@@ -491,7 +491,7 @@ impl Checker<'_, '_> {
             self.resolve_span_end(d);
         }
         let never_checked = self.never_checked.take();
-        if self.files.brings_declarations() {
+        if self.files.is_compile_build() {
             self.never_checked_in_last_file.clone_from(&never_checked);
         }
         Checked {

@@ -614,6 +614,16 @@ describe("event loop routing around macros", () => {
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("a macro can look up a name that the program is looking up", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": `export async function probe() {\n  return (await Bun.dns.lookup("localhost")).length > 0;\n}\n`,
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const value = probe();\n`,
+      "index.ts": `Bun.dns.lookup("localhost");\nconsole.log(require("./with-macro.ts").value);\n`,
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["true"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

@@ -2082,7 +2082,9 @@ impl Resolver {
             return Ok(self.ask(kind, hash, &query.name, global_this, context, send));
         }
 
-        let (kind, hash) = (QueryKind::HostNative, query.hash());
+        // The result is posted to the loop of the first lookup, and only the macro loop ticks while a macro runs.
+        let hash = query.hash() ^ self.vm().current_loop_kind() as u64;
+        let kind = QueryKind::HostNative;
         let (promise, pending) =
             PendingQuery::join_or_create(self, kind, hash, &query.name, global_this, context);
         let Some(pending) = pending else {

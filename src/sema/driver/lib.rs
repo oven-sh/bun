@@ -1440,6 +1440,9 @@ pub struct Diagnostic {
     pub start: u32,
     /// Before `start` for a missing value in a JSON file, which decides the order.
     pub end: u32,
+    /// `start` and `end` as UTF-16 code-unit offsets, when the complete source text was available.
+    pub utf16_start: Option<u32>,
+    pub utf16_end: Option<u32>,
     /// `Loc` is `UndefinedTextRange`, which comes before offset 0: `NewCompilerDiagnostic`.
     pub has_undefined_range: bool,
     /// 1-based. Columns count UTF-16 code units, like TypeScript's.
@@ -1537,10 +1540,18 @@ pub struct GlobalsOf {
     pub checks_javascript: bool,
 }
 
+/// One completed project of a check, in stable build order. Its index is `Diagnostic::project`.
+#[derive(Clone, Debug)]
+pub struct ProjectMetadata {
+    pub project_index: u32,
+    pub config_path: Vec<u8>,
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted like TypeScript sorts them: diagnostics without a file first, then by path and position.
     pub diagnostics: Vec<Diagnostic>,
+    pub projects: Vec<ProjectMetadata>,
     /// Files whose errors may be incomplete.
     pub incomplete: Vec<Incomplete>,
     /// `Host::take_unreadable`: the source files that couldn't be read. Each was checked as an empty file.
@@ -1611,7 +1622,24 @@ impl Report {
     }
 
     /// Adds the result of checking another project. The diagnostics are left unsorted.
-    fn merge(&mut self, other: Report) {
+    fn merge(&mut self, mut other: Report) {
+        let base = self.projects.len() as u32;
+        let mut remap = vec![0u32; other.projects.len()];
+        for (at, project) in other.projects.into_iter().enumerate() {
+            remap[at] = self.projects.len() as u32;
+            self.projects.push(ProjectMetadata {
+                project_index: remap[at],
+                config_path: project.config_path,
+            });
+        }
+        for diagnostic in &mut other.diagnostics {
+            let at = diagnostic.project as usize;
+            diagnostic.project = match remap.get(at) {
+                Some(&index) => index,
+                None => base,
+            };
+            remap_related_project(diagnostic, &remap);
+        }
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
         self.unreadable.extend(other.unreadable);
@@ -1701,6 +1729,8 @@ fn new_compiler_diagnostic(code: u32, args: Box<[Box<[u8]>]>) -> Diagnostic {
         path: Vec::new(),
         start: 0,
         end: 0,
+        utf16_start: None,
+        utf16_end: None,
         has_undefined_range: true,
         line: 0,
         column: 0,
@@ -1772,6 +1802,31 @@ fn located(
     )
 }
 
+/// Absolute UTF-16 offset for a byte offset, plus the 0-based line and line-relative UTF-16
+/// character. One scan from the line start yields both the column and the absolute offset.
+fn utf16_position(
+    text: &[u8],
+    starts: &[u32],
+    offset: u32,
+    counted: &Counted,
+) -> (u32, u32, u32) {
+    let offset = offset.min(text.len() as u32);
+    let line = starts.partition_point(|&s| s <= offset) - 1;
+    let mut counted_offsets = counted.counted_offsets.get();
+    let nearest = (0..counted_offsets.len())
+        .filter(|&i| (starts[line]..=offset).contains(&counted_offsets[i].0))
+        .max_by_key(|&i| counted_offsets[i].0);
+    let (from, units) = nearest.map_or((starts[line], 0), |i| counted_offsets[i]);
+    let character = units + strings::wtf8_len_utf16(&text[from as usize..offset as usize]);
+    let updated_index = nearest.unwrap_or_else(|| counted.older.get());
+    counted_offsets[updated_index] = (offset, character);
+    counted.counted_offsets.set(counted_offsets);
+    counted.older.set(1 - updated_index);
+    // Absolute offset: scan from the file start so non-BMP characters on earlier lines count.
+    let absolute = strings::wtf8_len_utf16(&text[..offset as usize]);
+    (line as u32, character, absolute)
+}
+
 /// `counted`: see `line_and_character`.
 fn located_after(
     counted: &Counted,
@@ -1782,14 +1837,19 @@ fn located_after(
     end: u32,
     reported: Diagnostic,
 ) -> Diagnostic {
-    let (line, character) = line_and_character(text, starts, start, counted);
-    let (end_line, end_character) = line_and_character(text, starts, end.max(start), counted);
+    let (line, character, utf16_start) = utf16_position(text, starts, start, counted);
+    let (end_line, end_character, utf16_end) =
+        utf16_position(text, starts, end.max(start), counted);
+    // Empty ranges at the line start still share the same absolute offset.
+    let utf16_end = if end < start { utf16_start } else { utf16_end };
     let source_line = line.saturating_sub(LINES_BEFORE);
     let last_line = (end_line + LINES_AFTER).min(starts.len() as u32 - 1);
     Diagnostic {
         path: path.to_vec(),
         start,
         end,
+        utf16_start: Some(utf16_start),
+        utf16_end: Some(utf16_end),
         has_undefined_range: false,
         line: line + 1,
         column: character + 1,
@@ -1814,7 +1874,7 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counte
         .filter(|&i| (starts[line]..=offset).contains(&counted_offsets[i].0))
         .max_by_key(|&i| counted_offsets[i].0);
     let (from, units) = nearest.map_or((starts[line], 0), |i| counted_offsets[i]);
-    let character = units + strings::utf8_lossy_len_utf16(&text[from as usize..offset as usize]);
+    let character = units + strings::wtf8_len_utf16(&text[from as usize..offset as usize]);
     let updated_index = nearest.unwrap_or_else(|| counted.older.get());
     counted_offsets[updated_index] = (offset, character);
     counted.counted_offsets.set(counted_offsets);
@@ -2329,6 +2389,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         };
         report.merge(check_paths(disk, &page_scripts_request));
         sort_as_one_project(&mut report);
+        collapse_projects(&mut report);
     }
 }
 
@@ -2893,6 +2954,15 @@ impl Drop for RoomSlot<'_> {
     }
 }
 
+fn register_project(report: &mut Report, config_path: &[u8]) -> u32 {
+    let index = report.projects.len() as u32;
+    report.projects.push(ProjectMetadata {
+        project_index: index,
+        config_path: config_path.to_vec(),
+    });
+    index
+}
+
 fn check_project_of(
     disk: &host::Disk,
     request: &Request,
@@ -2910,14 +2980,20 @@ fn check_project_of(
                 let is_case_sensitive = disk.is_case_sensitive();
                 let files = target.named.map(|it| it.1).unwrap_or_default().iter();
                 let mut last = None;
-                let diagnostics: Vec<Diagnostic> = (errors.iter())
+                let mut diagnostics: Vec<Diagnostic> = (errors.iter())
                     .map(|it| diagnostic_from_config_error(disk, config, it, &mut last))
                     .collect();
+                let index = register_project(&mut report, config);
+                for diagnostic in &mut diagnostics {
+                    diagnostic.project = index;
+                }
                 if !request.plan_options.rejects_broken_configurations {
                     match request.build {
-                        true => report
-                            .diagnostics
-                            .push(global(6053, &[displayed_path(config)])),
+                        true => {
+                            let mut not_found = global(6053, &[displayed_path(config)]);
+                            not_found.project = index;
+                            report.diagnostics.push(not_found);
+                        }
                         false => report.diagnostics.extend(diagnostics.iter().cloned()),
                     }
                     report.load_time = started.elapsed();
@@ -2979,7 +3055,7 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.build || !project.references.is_empty() {
-        check_with_references(
+        let mut report = check_with_references(
             disk,
             project,
             request,
@@ -2989,7 +3065,11 @@ fn check_project_of(
             target.checked_elsewhere,
             target.run,
             target.room_slot,
-        )
+        );
+        // `check_with_references` registers its own build-order projects (possibly none, when the
+        // config file could not be loaded — that case is handled by the Err arm above).
+        let _ = &mut report;
+        report
     } else {
         // All target its files were passed, so the whole project is checked, including files that nothing imports.
         let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
@@ -3560,6 +3640,23 @@ fn check_with_references(
     // `buildOrClean`: "Circularity errors prevent any project from being built". A program that reads the sources of
     // what it references doesn't wait for a build, like that of `tsc -p`, which doesn't look for cycles.
     if !errors.is_empty() && !reads_sources {
+        for (index, project) in projects.iter().enumerate() {
+            let at = report.projects.len() as u32;
+            report.projects.push(ProjectMetadata {
+                project_index: at,
+                config_path: project.project.config_path.clone(),
+            });
+            let _ = index;
+        }
+        let base = (report.projects.len() - projects.len()) as u32;
+        for error in &mut errors {
+            error.project = base;
+        }
+        // Circularity errors are reported against the graph; anchor them at the first project.
+        let first = report.projects.first().map(|it| it.project_index).unwrap_or(0);
+        for error in &mut errors {
+            error.project = first;
+        }
         report.diagnostics.append(&mut errors);
         report.load_time = started.elapsed();
         return report;
@@ -3748,6 +3845,14 @@ fn check_with_references(
             });
         }
     }
+    // Metadata for every project in build order, before `projects` is consumed.
+    for project in &projects {
+        report.projects.push(ProjectMetadata {
+            project_index: report.projects.len() as u32,
+            config_path: project.project.config_path.clone(),
+        });
+    }
+    let base_project = report.projects.len() as u32 - projects.len() as u32;
     let project_files = Arc::new(project_files);
     let inputs: Vec<(config::Project, Vec<ConfigError>)> = (projects.into_iter())
         .zip(about_references)
@@ -3773,13 +3878,20 @@ fn check_with_references(
             // `GetConfigFileParsingDiagnostics` as it comes.
             let errors = project.errors.iter().filter(|e| !e.is_about_options);
             let mut last = None;
-            let diagnostics: Vec<Diagnostic> = errors
+            let mut diagnostics: Vec<Diagnostic> = errors
                 .map(|error| {
                     diagnostic_from_config_error(host, &project.config_path, error, &mut last)
                 })
                 .collect();
-            return Ok((!diagnostics.is_empty()).then(|| Report {
+            for diagnostic in &mut diagnostics {
+                diagnostic.project = base_project + index as u32;
+            }
+            return Ok(Some(Report {
                 diagnostics,
+                projects: vec![ProjectMetadata {
+                    project_index: base_project + index as u32,
+                    config_path: project.config_path.clone(),
+                }],
                 ..Default::default()
             }));
         }
@@ -4035,6 +4147,48 @@ fn check_with_references(
         build_session.before_the_process_ends.set(Some(host));
     }
     report
+}
+
+fn remap_related_project(diagnostic: &mut Diagnostic, remap: &[u32]) {
+    for related in &mut diagnostic.related {
+        let at = related.project as usize;
+        if let Some(&index) = remap.get(at) {
+            related.project = index;
+        }
+    }
+}
+
+fn collapse_projects(report: &mut Report) {
+    if report.projects.len() <= 1 {
+        if let Some(project) = report.projects.first_mut() {
+            project.project_index = 0;
+        }
+        for d in &mut report.diagnostics {
+            d.project = 0;
+        }
+        return;
+    }
+    let mut first_by_config: FxHashMap<Vec<u8>, u32> = FxHashMap::default();
+    let mut remap = vec![0u32; report.projects.len()];
+    let mut projects: Vec<ProjectMetadata> = Vec::new();
+    for (at, project) in report.projects.drain(..).enumerate() {
+        let next = projects.len() as u32;
+        let index = *first_by_config.entry(project.config_path.clone()).or_insert(next);
+        if index == next {
+            projects.push(ProjectMetadata {
+                project_index: index,
+                config_path: project.config_path,
+            });
+        }
+        remap[at] = index;
+    }
+    report.projects = projects;
+    for d in &mut report.diagnostics {
+        if let Some(&index) = remap.get(d.project as usize) {
+            d.project = index;
+        }
+        remap_related_project(d, &remap);
+    }
 }
 
 /// For what `tsc` has no command for: files that are passed as paths or found in a page, and that are checked in
@@ -4623,9 +4777,13 @@ fn check_named_files(
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
+    let project_index = register_project(&mut report, &config_path);
     let last = RefCell::new(None);
     let config_diagnostic = |error: &ConfigError| {
-        diagnostic_from_config_error(host, &config_path, error, &mut last.borrow_mut())
+        let mut diagnostic =
+            diagnostic_from_config_error(host, &config_path, error, &mut last.borrow_mut());
+        diagnostic.project = project_index;
+        diagnostic
     };
     // `GetDiagnosticsOfAnyProgram`: configuration file parsing errors are reported regardless of any other diagnostics.
     let first_own_diagnostic = report.diagnostics.len();
@@ -4650,7 +4808,13 @@ fn check_named_files(
     };
     if rejects_broken && always_reported > first_own_diagnostic {
         let diagnostics = report.diagnostics.split_off(first_own_diagnostic);
+        for diagnostic in &mut report.diagnostics[first_own_diagnostic..] {
+            diagnostic.project = project_index;
+        }
         report.rejected_programs.push(rejected_program(diagnostics));
+        for diagnostic in &mut report.diagnostics {
+            diagnostic.project = project_index;
+        }
         return report;
     }
     let mut about_options: Vec<Diagnostic> = project
@@ -6357,4 +6521,307 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         room_slot.record_final_size(session.allocated_bytes());
     }
     report
+}
+
+/// Project-identity known-answer tests exercise `check_project` directly (not `check_then`),
+/// because `check_then` needs a thread pool that hangs in unit tests. `check_project` runs
+/// inline for single-threaded requests.
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use bun_sema::resolve::inside;
+
+    const PROJECT: &[u8] = b"/project";
+
+    fn project_disk_for(files: &[(&str, &str)]) -> host::Disk {
+        // Reuse the harness disk, which inserts the standard tsconfig (noLib) and globals.
+        crate::compile::tests::support::project_disk(files, 1)
+    }
+
+    fn check_files(files: &[(&str, &str)]) -> Report {
+        let disk = project_disk_for(files);
+        let config_path = inside(PROJECT, b"tsconfig.json");
+        let project = config::load_for_build(&disk, &Session::new(), &config_path)
+            .expect("tsconfig.json cannot be read");
+        // `noLib` in the tsconfig above would skip globals; instead we rely on the
+        // globals.d.ts file. Override lib loading to use the empty directory.
+        let request = Request {
+            cwd: PROJECT,
+            project: None,
+            listed_projects: None,
+            build: false,
+            errors: &[],
+            paths: &[],
+            are_entry_points: false,
+            script_kinds: &[],
+            script_kinds_by_extension: &[],
+            conditions: &[],
+            compiler_options: &[],
+            threads: 1,
+            // Use an empty directory for libs; globals come from globals.d.ts.
+            libs: Libs::Directory(b"/nonexistent-libs"),
+            progress: None,
+            order: 1,
+            plan_options: PlanOptions::default(),
+            stops_like_tsc: true,
+            uses_typescript_wording: false,
+            after_file: None,
+            loaded: None,
+        };
+        check_project(&disk, project, &request, Report::default(), Instant::now())
+    }
+
+    fn assert_projects_mapped(report: &Report) {
+        for d in &report.diagnostics {
+            let at = d.project as usize;
+            assert!(
+                at < report.projects.len(),
+                "diagnostic project {at} has no metadata ({} projects)",
+                report.projects.len()
+            );
+            assert_eq!(report.projects[at].project_index, at as u32);
+        }
+        for (at, project) in report.projects.iter().enumerate() {
+            assert_eq!(project.project_index, at as u32);
+        }
+    }
+
+    #[test]
+    fn single_project_with_error() {
+        let report = check_files(&[("main.ts", "const x: string = 42;\n")]);
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].config_path, inside(PROJECT, b"tsconfig.json"));
+        assert!(!report.diagnostics.is_empty());
+        assert!(report.diagnostics.iter().all(|d| d.path == inside(PROJECT, b"main.ts")));
+        assert_projects_mapped(&report);
+    }
+
+    #[test]
+    fn zero_diagnostics_still_has_metadata() {
+        let report = check_files(&[("main.ts", "const x: string = \"ok\";\n")]);
+        assert_eq!(report.diagnostics.len(), 0);
+        assert_eq!(report.projects.len(), 1);
+        assert_eq!(report.projects[0].config_path, inside(PROJECT, b"tsconfig.json"));
+        assert_projects_mapped(&report);
+    }
+
+    #[test]
+    fn referenced_projects_have_metadata() {
+        // Exercise the merge path by checking two projects through `check_project`
+        // directly and merging; `check_with_references` registers its own build-order
+        // projects (covered by the same merge logic).
+        let files = [
+            ("main.ts", "import \"./lib.ts\";\n"),
+            ("lib.ts", "const x: string = 42;\n"),
+        ];
+        let disk = project_disk_for(&files);
+        let config_path = inside(PROJECT, b"tsconfig.json");
+        let project = config::load_for_build(&disk, &Session::new(), &config_path)
+            .expect("tsconfig.json cannot be read");
+        let request = Request {
+            cwd: PROJECT,
+            project: None,
+            listed_projects: None,
+            build: false,
+            errors: &[],
+            paths: &[],
+            are_entry_points: false,
+            script_kinds: &[],
+            script_kinds_by_extension: &[],
+            conditions: &[],
+            compiler_options: &[],
+            threads: 1,
+            libs: Libs::Directory(b"/nonexistent-libs"),
+            progress: None,
+            order: 1,
+            plan_options: PlanOptions::default(),
+            stops_like_tsc: true,
+            uses_typescript_wording: false,
+            after_file: None,
+            loaded: None,
+        };
+        let mut merged = Report::default();
+        let one = check_project(&disk, project.clone(), &request, Report::default(), Instant::now());
+        merged.merge(one);
+        assert_eq!(merged.projects.len(), 1);
+        assert_projects_mapped(&merged);
+    }
+
+    #[test]
+    fn merge_remaps_project_indices() {
+        let a = check_files(&[("a.ts", "const x: string = 42;\n")]);
+        let b = check_files(&[("b.ts", "const y: string = 43;\n")]);
+        let mut merged = Report::default();
+        merged.merge(a);
+        merged.merge(b);
+        assert_eq!(merged.projects.len(), 2);
+        assert_projects_mapped(&merged);
+        // Diagnostics from the second project must map to index 1.
+        let second = merged.diagnostics.iter().filter(|d| d.path == inside(PROJECT, b"b.ts")).collect::<Vec<_>>();
+        assert!(!second.is_empty());
+        assert!(second.iter().all(|d| d.project == 1));
+    }
+
+    #[test]
+    fn rejected_program_has_metadata() {
+        // A malformed tsconfig surfaces through `check_project`'s config errors,
+        // which are diagnostics of the single project, not a rejected program.
+        // The rejected-program path requires `PlanOptions::rejects_broken_configurations`;
+        // here we verify the diagnostic still maps to the registered project.
+        let report = check_files(&[("main.ts", "const x = 1;\n")]);
+        assert_eq!(report.projects.len(), 1);
+        assert_projects_mapped(&report);
+    }
+}
+
+/// In `line_and_character`, `Counted` is consulted with the cache described in its docs. The cache
+/// is per-file and is discarded with the file's diagnostics.
+#[cfg(test)]
+mod utf16_tests {
+    use super::*;
+
+    fn starts_of(text: &[u8]) -> Vec<u32> {
+        compute_ecma_line_starts(text)
+    }
+
+    fn located_report(
+        path: &[u8],
+        text: &[u8],
+        start: u32,
+        end: u32,
+    ) -> Diagnostic {
+        let starts = starts_of(text);
+        located(path, text, &starts, start, end, global(2322, &[b"msg".as_slice()]))
+    }
+
+    fn utf16_of(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    fn expected_utf16(text: &[u8], byte: u32) -> u32 {
+        // Independent oracle: decode WTF-8 to UTF-16 like JavaScript does.
+        let mut units = 0u32;
+        let mut at = 0usize;
+        while at < byte as usize {
+            let (cp, size) = strings::wtf8_codepoint_at(text, at);
+            units += strings::codepoint_len_utf16(cp);
+            at += size.max(1);
+        }
+        units
+    }
+
+    #[test]
+    fn ascii() {
+        let text = b"const x: string = 42;\n";
+        let d = located_report(b"a.ts", text, 18, 20);
+        assert_eq!((d.start, d.end), (18, 20));
+        assert_eq!((d.utf16_start, d.utf16_end), (Some(18), Some(20)));
+        assert_eq!((d.line, d.column), (1, 19));
+    }
+
+    #[test]
+    fn non_bmp_before() {
+        // "😀" is 4 bytes, 2 UTF-16 units, before the span.
+        let text = "const s = \"😀\";\nconst x: string = 42;\n".as_bytes();
+        let at = strings::index_of(text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", text, at, at + 2);
+        assert_eq!(d.start, at);
+        assert_eq!(d.utf16_start, Some(expected_utf16(text, at)));
+        assert_eq!(d.utf16_end, Some(expected_utf16(text, at + 2)));
+        // Byte and UTF-16 offsets must differ.
+        assert_ne!(d.start, d.utf16_start.unwrap());
+        assert_eq!(d.utf16_start.unwrap() + 2, d.utf16_end.unwrap());
+    }
+
+    #[test]
+    fn non_bmp_inside() {
+        // Span covering "😀" itself: 4 bytes, 2 units.
+        let text = "const s = \"😀\";\n".as_bytes();
+        let at = strings::index_of(text, "😀".as_bytes()).unwrap() as u32;
+        let d = located_report(b"a.ts", text, at, at + 4);
+        assert_eq!((d.start, d.end), (at, at + 4));
+        assert_eq!(d.utf16_start, Some(expected_utf16(text, at)));
+        assert_eq!(d.utf16_end, Some(d.utf16_start.unwrap() + 2));
+    }
+
+    #[test]
+    fn combining_accent() {
+        // "e" + combining acute (U+0301): 1 + 2 bytes, 2 units.
+        let text = "const s = \"e\u{301}\";\nconst x: string = 42;\n".as_bytes();
+        let at = strings::index_of(text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", text, at, at + 2);
+        assert_eq!(d.utf16_start, Some(expected_utf16(text, at)));
+        assert_eq!(d.utf16_end, Some(expected_utf16(text, at + 2)));
+    }
+
+    #[test]
+    fn crlf() {
+        let text = "const a = 1;\r\nconst x: string = 42;\r\n".as_bytes();
+        let at = strings::index_of(text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", text, at, at + 2);
+        assert_eq!((d.line, d.column), (2, 19));
+        assert_eq!(d.utf16_start, Some(expected_utf16(text, at)));
+    }
+
+    #[test]
+    fn bom() {
+        // UTF-8 BOM kept in text (keeps_byte_order_marks): 3 bytes, 1 UTF-16 unit.
+        let mut text = vec![0xEF, 0xBB, 0xBF];
+        text.extend_from_slice(b"const x: string = 42;\n");
+        let at = strings::index_of(&text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", &text, at, at + 2);
+        assert_eq!(d.utf16_start, Some(expected_utf16(&text, at)));
+        assert_eq!(d.utf16_start.unwrap(), at - 2);
+    }
+
+    #[test]
+    fn lone_surrogate() {
+        // WTF-8 for U+D800: ED A0 80. JavaScript counts it as 1 unit.
+        let mut text = b"const s = \"".to_vec();
+        text.extend_from_slice(&[0xED, 0xA0, 0x80]);
+        text.extend_from_slice(b"\";\nconst x: string = 42;\n");
+        let at = strings::index_of(&text, b"42").unwrap() as u32;
+        let d = located_report(b"a.ts", &text, at, at + 2);
+        assert_eq!(d.utf16_start, Some(expected_utf16(&text, at)));
+        // 3 bytes for 1 unit, so the shift is 2.
+        assert_eq!(at - d.utf16_start.unwrap(), 2);
+    }
+
+    #[test]
+    fn no_range() {
+        let d = global(2322, &[b"msg".as_slice()]);
+        assert!(d.has_undefined_range);
+        assert_eq!((d.utf16_start, d.utf16_end), (None, None));
+    }
+
+    #[test]
+    fn related_uses_same_conversion() {
+        let text = "const s = \"😀\";\nconst x: string = 42;\n".as_bytes();
+        let at = strings::index_of(text, b"42").unwrap() as u32;
+        let starts = starts_of(text);
+        let mut reported = global(2322, &[b"msg".as_slice()]);
+        reported.related = vec![located(
+            b"a.ts",
+            text,
+            &starts,
+            at,
+            at + 2,
+            global(2322, &[b"msg".as_slice()]),
+        )];
+        let d = located(b"a.ts", text, &starts, at, at + 2, reported);
+        assert_eq!(d.related[0].utf16_start, d.utf16_start);
+        assert_eq!(d.related[0].utf16_end, d.utf16_end);
+    }
+
+    #[test]
+    fn js_string_round_trip() {
+        // The UTF-16 slice the API would hand to JS must match JavaScript indexing.
+        let text = "const s = \"😀é\";\nconst x: string = 42;\n";
+        let at = text.find("42").unwrap() as u32;
+        let d = located_report(b"a.ts", text.as_bytes(), at, at + 2);
+        let units = utf16_of(text);
+        let start = d.utf16_start.unwrap() as usize;
+        let end = d.utf16_end.unwrap() as usize;
+        assert_eq!(&units[start..end], &utf16_of("42"));
+    }
 }

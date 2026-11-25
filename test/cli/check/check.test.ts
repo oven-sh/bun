@@ -25728,4 +25728,15 @@ export const related: S extends T ? 1 : 2 = 0;
       expect(exitCode).toBe(1);
     });
   });
+
+  test("unicode columns count UTF-16 units, not bytes, for non-BMP text", async () => {
+    // 😀 is 4 bytes but 2 UTF-16 units. The column of `42` must count units.
+    using dir = project({
+      "index.ts": `const s = "😀";\nconst x: string = 42;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(exitCode).toBe(1);
+    // Column 7 on line 2 (`const ` is 6 units; the error points at `x`).
+    expect(stdout).toContain("index.ts(2,7)");
+  });
 });

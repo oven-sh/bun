@@ -1267,6 +1267,8 @@ fn merge_pre_and_post_emit_errors(pre: Report, mut post: Report) -> Report {
         path: Vec::new(),
         start: 0,
         end: 0,
+        utf16_start: None,
+        utf16_end: None,
         has_undefined_range: true,
         line: 0,
         column: 0,

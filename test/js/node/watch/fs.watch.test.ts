@@ -2391,6 +2391,15 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     ]).toEqual([[], []]);
   });
 
+  test("a recursive watch reports a change of the directory that gets a new file", async () => {
+    using dir = tempDir("watch-parent", { "sub/x": "" });
+    // A file created within the same clock tick would not change the mtime.
+    fs.utimesSync(path.join(String(dir), "sub"), 1, 1);
+    using watch = watchPath(String(dir), { recursive: true });
+    fs.writeFileSync(path.join(String(dir), "sub", "new.txt"), "");
+    await watch.waitForEvent("sub");
+  });
+
   test.each([
     ["written", (file: string) => fs.writeFileSync(file, "x")],
     ["deleted", (file: string) => fs.unlinkSync(file)],

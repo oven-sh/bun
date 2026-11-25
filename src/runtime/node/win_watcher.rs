@@ -87,7 +87,7 @@ impl Target {
         match self {
             // The record spells the name as the writer opened it, which can be in 8.3 form.
             Target::Directory(directory)
-                if has_short_name(&name)
+                if may_have_short_name(&name)
                     && !matches!(
                         action,
                         w::FILE_ACTION_REMOVED | w::FILE_ACTION_RENAMED_OLD_NAME
@@ -107,9 +107,9 @@ impl Target {
     }
 }
 
-fn has_short_name(path: &[u16]) -> bool {
+fn may_have_short_name(path: &[u16]) -> bool {
     path.split(|&unit| bun_paths::is_sep(unit))
-        .any(|name| name.len() <= "12345678.123".len() && name.contains(&u16::from(b'~')))
+        .any(|name| name.len() <= "12345678.123".len())
 }
 
 fn expand_short_names(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {

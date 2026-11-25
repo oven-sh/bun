@@ -208,7 +208,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
     ) -> Option<Option<(Atom, TypeId)>> {
         let mut at = self.unlisted_class_of(ty)?;
-        if self.has_instantiated_symbol_links() {
+        if !self.instantiated_symbol_links.is_empty() {
             return None;
         }
         let before = self.non_cacheable_mark();

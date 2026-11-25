@@ -5880,7 +5880,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.inheriting.is_empty()
             && self.late_binding.is_empty()
             && self.provisional.is_empty()
-            && !self.has_instantiated_symbol_links()
+            && self.instantiated_symbol_links.is_empty()
             && self.never_in_progress.is_empty()
             && !self.stack.iter().any(|q| matches!(q, Query::Shape(_)))
     }
@@ -5918,18 +5918,16 @@ impl<'p, 's> Checker<'p, 's> {
             PropSource::Symbol(sym) => {
                 let optionality = PropFlags::OPTIONAL | PropFlags::WITHOUT_OPTIONALITY;
                 adds_undefined = prop.flags & optionality == PropFlags::OPTIONAL;
-                let linked_type = match self.has_instantiated_symbol_links() {
-                    false => None,
-                    true => {
+                let linked_type = match self.instantiated_symbol_links.is_empty() {
+                    true => None,
+                    false => {
                         cold_path();
                         self.link_of_instantiated_symbol(prop, *sym, outer)
                     }
                 };
+                has_resolved_type = linked_type.is_some();
                 match linked_type {
-                    Some(resolved_type) => {
-                        has_resolved_type = true;
-                        resolved_type
-                    }
+                    Some(resolved_type) => resolved_type,
                     None => {
                         let work = self.work;
                         let target_type = self.type_of_symbol(*sym);
@@ -5941,13 +5939,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 target_type,
                             );
                         }
-                        // `target_type` may have come from a commit that was stored after the link was looked for.
-                        let linked_type = match self.has_instantiated_symbol_links() {
-                            false => None,
-                            true => self.link_of_instantiated_symbol(prop, *sym, outer),
-                        };
-                        has_resolved_type = linked_type.is_some();
-                        linked_type.unwrap_or(target_type)
+                        target_type
                     }
                 }
             }

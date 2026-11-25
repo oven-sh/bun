@@ -6586,7 +6586,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     auto formsBeside = [&](std::optional<JSC::AOT::ModuleID> mocked) {
         auto forms = JSC::AOT::importAttributeVariants(globalObject, specifier);
         auto file = mocked && forms.contains(*mocked) ? Bun::findMockedModule(specifier) : std::nullopt;
-        if (file && !forms.contains(*file) && JSC::AOT::mayBeMocked(globalObject, *file))
+        if (file && !forms.contains(*file) && JSC::AOT::mayBeMocked(globalObject, *file) && !JSC::AOT::isAwaitedByPendingImport(globalObject, *file))
             forms.append(*file);
         return forms;
     };

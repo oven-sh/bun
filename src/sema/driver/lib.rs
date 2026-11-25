@@ -964,11 +964,7 @@ pub struct PlanOptions {
     /// and JSON files that aren't. The project's own declaration files, which aren't in the default library or in
     /// `node_modules`, count as checked even with `skipLibCheck`, which still means that nothing is reported for them.
     pub after_file_only_for_checked_files: bool,
-    /// For a request that names files of a project with `references`. Such a project reads what the projects it
-    /// references emit, so each of those is checked in full, and `Request::after_file` is called for all their files.
-    /// With this, it's only called for the files of theirs that the named files reach other than through a package in
-    /// `node_modules`: what is named, what a named file imports by a relative path, and what that imports. To know
-    /// them before a referenced project is checked, the program of the named files is loaded once more, first.
+    /// In a project that is only built for another to read, `Request::after_file` is called for what `Reach` allows.
     pub after_file_only_for_reached_files: bool,
     /// Only the files of a program that are in `Request::paths` are checked, not what they import. The types of their
     /// imports are computed on demand, as in an editor.
@@ -3303,10 +3299,7 @@ struct WithOutputs<'h> {
     assumed: Option<AssumedOutputs<'h>>,
 }
 
-/// For a program that is loaded before the projects it references are built, to find the sources that it reaches in
-/// them (`Reach::Sought`). Each declaration file that one of them emits exists and is empty, whatever an earlier
-/// `tsc -b` left on disk. So an import of a source of theirs, or of what is emitted for it, brings that one file into
-/// the program.
+/// `Reach::Sought`: each declaration file that a referenced project emits exists and is empty, whatever is on disk.
 #[derive(Clone, Copy)]
 struct AssumedOutputs<'h> {
     files: &'h ProjectFiles,
@@ -3827,13 +3820,10 @@ fn check_with_references(
         .clamp(1, host.threads().max(1))
         .min(count.max(1));
     let built_now = (!reads_sources).then(|| AtomicUsize::new(0));
-    // `PlanOptions::after_file_only_for_reached_files`, by project: the files of it that the named files reach, sorted.
-    // Set before anything is built.
+    // `Reach::From` of each project. Set before anything is built.
     let reached: OnceLock<Vec<Arc<Vec<Vec<u8>>>>> = OnceLock::new();
     // `built_before`: the number of projects built so far. `is_last`: every other project is already built. Returns
     // `Err` with the projects that have to be built first, besides the ones it references.
-    // `reaching_from`: the program is only loaded, with `AssumedOutputs`, and the report only has what these files of it
-    // reach in the projects it references (`reached_in_references`).
     let load_or_build = |index: usize,
                          built_before: usize,
                          is_last: bool,
@@ -3911,8 +3901,7 @@ fn check_with_references(
         project.options.build_info_file_name = project.get_build_info_file_name();
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
-        // The files that a project it references has aren't in its program. Those that are left are its root files, so
-        // that it only loads them and what they import.
+        // `Reach::Sought`: its root files are those of `from` that no referenced project has.
         let (mut reached_at_once, mut own_of_reaching) = (Vec::new(), Vec::new());
         if let Some(from) = reaching_from {
             let options = &project.options;
@@ -4002,9 +3991,7 @@ fn check_with_references(
     let build = |index: usize, built_before: usize, is_last: bool| {
         load_or_build(index, built_before, is_last, None)
     };
-    // `PlanOptions::after_file_only_for_reached_files`. The named files are those of the one project that is reported.
-    // Its program is loaded, and then that of each project they reach into that references others, the last in build
-    // order first: only the projects after it read it, so by then all that reach into it have said where.
+    // The last in build order first: only later projects read a project, so all that reach into it have said where.
     let named_of_root = match named {
         Some((Extent::Project, files)) if !reports_references && !reads_sources => Some(files),
         _ => None,
@@ -4756,21 +4743,18 @@ fn find_files_others_cannot_see(
     unseen.map(|(file, _)| file.clone()).collect()
 }
 
-/// What `check_named_files` does for `PlanOptions::after_file_only_for_reached_files`.
+/// `PlanOptions::after_file_only_for_reached_files`: the files that `Request::after_file` is called for.
 #[derive(Clone, Copy)]
 enum Reach<'a> {
-    /// `Request::after_file` is called for every file that is checked.
+    /// Every file that is checked.
     Unlimited,
-    /// The program is loaded and not checked. The report only has the sources of referenced projects that the named
-    /// files reach (`reached_in_references`).
+    /// The program is loaded with `AssumedOutputs` and not checked. The report has `reached_in_references`.
     Sought,
-    /// `Request::after_file` is only called for these files, which are sorted, and for what they reach. The program is
-    /// that of a project that isn't reported.
+    /// In a project that isn't reported: it's only called for these files, which are sorted, and what they reach.
     From(&'a [Vec<u8>]),
 }
 
-/// The files that the files `from` reach: each file refers to the files of its `/// <reference>`s and imports, and a page
-/// represents its scripts. `scripts_elsewhere`: the scripts that aren't in the program.
+/// What the files `from` reach through `/// <reference>`s, imports and pages, whose scripts may be elsewhere.
 fn reached_from(
     host: &dyn Host,
     request: &Request,
@@ -4813,10 +4797,7 @@ fn reached_from(
     is_reached
 }
 
-/// `Reach::Sought`: the files of referenced projects that the files `named` reach, in a program that has
-/// `AssumedOutputs`. Each is a `tspath.Path`, with the index of its project in the build order. A file that is reached
-/// through a package in `node_modules` reaches nothing. A file that a referenced project emits stands for its source,
-/// and a file of a referenced project that nothing is emitted for, like a declaration file, is in the program itself.
+/// `Reach::Sought`: the files of referenced projects that `named` reach outside packages, each with its project.
 fn reached_in_references(
     host: &dyn Host,
     request: &Request,
@@ -4835,6 +4816,7 @@ fn reached_in_references(
     let mut found = Vec::new();
     for (module, _) in reached.filter(|it| !it.0.is_from_external_library) {
         let path = module.path.text;
+        // An emitted file stands for its sources. A file with no output, like a declaration file, is here itself.
         let sources = emitted_from(path).into_iter().flatten();
         for source in sources.chain([path]) {
             if let Some(project) = files.options.project_of_referenced_source(source) {

@@ -159,8 +159,7 @@ fn referenced_project_that_has_a_file_governs_it_under_references_alone() {
     });
 }
 
-/// The configuration of a project in a directory of its own, with these files, which references these projects.
-/// `circular`: each reference may close a cycle.
+/// The configuration of a project in a directory of its own. `circular`: each reference may close a cycle.
 fn project_config_of(files: &[&str], references: &[&str], circular: bool) -> String {
     let files: Vec<String> = (files.iter().chain(&["../globals.d.ts"]))
         .map(|file| format!("\"{file}\""))
@@ -179,8 +178,7 @@ fn project_config(files: &[&str], references: &[&str]) -> String {
     project_config_of(files, references, false)
 }
 
-/// The files that `Request::after_file` is called for, and the number of programs that are checked. Both are the same
-/// with one thread and with several.
+/// What `Request::after_file` is called for and how many programs are checked, the same with 1 thread and with 4.
 fn all_given_to_after_file(files: &[(&str, &str)], request: &Request) -> (Vec<String>, usize) {
     let given_with = |threads: usize| {
         let disk = project_disk(files, threads);
@@ -325,8 +323,7 @@ fn after_file_is_only_called_for_what_an_entry_point_reaches_in_a_referenced_pro
     let of = |files: &[&str], programs: usize| {
         (files.iter().map(|it| it.to_string()).collect(), programs)
     };
-    // Each project is still checked once, and in full.
-    // Nothing of `a`, which is built for `b` to read.
+    // Each project is checked once. Nothing of `a` is given, which is built for `b` to read.
     assert_eq!(given(&["b/alone.ts"]), of(&["/b/alone.ts"], 2));
     assert_eq!(given(&["b/b.ts"]), of(&["/a/used.ts", "/b/b.ts"], 2));
     // Through `b`, which `c` reaches into, and then `a`, which `b` reaches into.
@@ -372,8 +369,7 @@ fn after_file_is_not_called_for_an_unchecked_file_that_no_entry_point_reaches() 
     assert_eq!(given_of_a(true), ["/a/used.d.ts", "/a/used.ts"]);
 }
 
-/// What is called for the files of `a`, which emits into `a/dist`, when the entry point `b/b.ts` is `entry` and `b`
-/// references `a`.
+/// The files of `a`, which `b` references and which emits into `a/dist`, that are given when `b/b.ts` is `entry`.
 fn given_of_referenced_project(entry: &str) -> Vec<String> {
     let config_of_a = r#"{
         "extends": "../tsconfig.json",

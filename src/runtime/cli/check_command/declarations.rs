@@ -79,9 +79,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         conditions,
     });
 
-    // By source: its `FileId`, the text of its declaration file, and what the checker knows about it. A task of the
-    // checker can run again, and two programs can check the same file: the last time counts, for all three. A program
-    // in which the file is in a package has neither for it, and doesn't count.
+    // By source. Two programs can check one file: the last that has a declaration file or types for it counts.
     let noted: Guarded<BTreeMap<Vec<u8>, (u32, Option<Vec<u8>>, Option<ModuleTypes>)>> =
         Guarded::new(BTreeMap::new());
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
@@ -141,8 +139,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
             text,
         }));
     }
-    // In the order of their program. The `FileId` of a file of one program is also that of a file of another, and
-    // those stay in the order of their paths.
+    // In program order. A `FileId` repeats across programs, and those stay in path order.
     module_types.shared_sort_by_key(|module| module.0);
     *MODULE_TYPES.lock() = module_types.into_iter().map(|it| it.1).collect();
     *EMITTED_FILES.lock() = emitted;

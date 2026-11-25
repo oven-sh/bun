@@ -64,8 +64,7 @@ pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Lo
     );
 }
 
-/// What the checker knows about each module, by path: the `FileId` of a file of one program is also that of a file of
-/// another. A task of the checker can run again, and two programs can check the same file: the last time counts.
+/// What the checker knows about each module, by path: a `FileId` repeats across programs. The last note counts.
 #[derive(Default)]
 struct NotedModuleTypes(Guarded<BTreeMap<Box<[u8]>, (u32, ModuleTypes)>>);
 

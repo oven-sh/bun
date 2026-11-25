@@ -12,10 +12,9 @@ const {
   startLookup,
   startLookupService,
   startQuery,
-  validateStringWithoutNullBytes,
 } = require("internal/dns");
 const { isIP } = require("internal/net/isIP");
-const { validatePort, validateString } = require("internal/validators");
+const { validatePort, validateString, validateStringWithoutNullBytes } = require("internal/validators");
 
 type DNSRequest = ThisParameterType<Parameters<typeof startLookup>[2]>;
 

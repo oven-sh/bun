@@ -41,7 +41,7 @@ const {
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 const { kTimeout, getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
+const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString, validateStringWithoutNullBytes } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const {
   kArmHandshakeTimeout,
@@ -618,6 +618,8 @@ function destroyWhenAborted(err) {
   if (!this.destroyed) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
     // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
+    // Its eos() listens to 'error'.
+    this.once("error", noop);
     this.destroy($makeAbortError(undefined, { cause: err?.target?.reason }));
   }
 }
@@ -3145,7 +3147,13 @@ function createConnection(...args) {
     socket.setTimeout(optionsTimeout);
   }
 
-  return socket.connect(normalized);
+  try {
+    return socket.connect(normalized);
+  } catch (error) {
+    // The caller gets no socket to destroy. A handle that it passed is still its own.
+    if (!options.handle) socket.destroy();
+    throw error;
+  }
 }
 
 function lookupAndConnect(self, options) {
@@ -3153,7 +3161,7 @@ function lookupAndConnect(self, options) {
   const host = options.host || "localhost";
   let { port, autoSelectFamilyAttemptTimeout, autoSelectFamily } = options;
 
-  validateString(host, "options.host");
+  validateStringWithoutNullBytes(host, "options.host");
 
   if (localAddress && !isIP(localAddress)) {
     throw $ERR_INVALID_IP_ADDRESS(localAddress);

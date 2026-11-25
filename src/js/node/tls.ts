@@ -1521,7 +1521,13 @@ function connect(...args) {
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1795
   if (!options.socket) tlssock.once("connect", onConnectStart);
-  return tlssock.connect(normal);
+  try {
+    return tlssock.connect(normal);
+  } catch (error) {
+    // The caller gets no socket to destroy. A handle that it passed is still its own.
+    if (!options.handle) tlssock.destroy();
+    throw error;
+  }
 }
 
 // The engine sends the ClientHello when the listeners of 'connect' have run. An end() of theirs must not get ahead of it.

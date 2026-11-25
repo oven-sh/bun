@@ -10,6 +10,7 @@ const {
   validateOneOf,
   validatePort,
   validateString,
+  validateStringWithoutNullBytes,
   validateUint32,
 } = require("internal/validators");
 
@@ -18,7 +19,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const FunctionPrototypeBind = Function.prototype.bind;
 const NumberParseInt = Number.parseInt;
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const StringPrototypeIncludes = String.prototype.includes;
 
 const internalErrorName: (err: number) => string = $bindgen("node_util_binding.bind.ts", "internalErrorName");
 const getRuntimeDefaultResultOrderOption = $bindgen("dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption");
@@ -124,13 +124,6 @@ class DNSException extends Error {
 
   get ["constructor"]() {
     return Error;
-  }
-}
-
-function validateStringWithoutNullBytes(value: string, name: string) {
-  validateString(value, name);
-  if (StringPrototypeIncludes.$call(value, "\0")) {
-    throw $ERR_INVALID_ARG_VALUE(name, value, "must be a string without null bytes");
   }
 }
 
@@ -479,5 +472,4 @@ export default {
   startLookup,
   startLookupService,
   startQuery,
-  validateStringWithoutNullBytes,
 };

@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import {
   blackholePortSource,
   bunEnv,
@@ -18,7 +18,8 @@ import {
 } from "harness";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
+import { getEventListeners, once } from "node:events";
 import fs from "node:fs";
 import {
   type AddressInfo,
@@ -1068,6 +1069,56 @@ describe.concurrent("'timeout' is emitted with a write that does not move", () =
       for (const socket of accepted) socket.destroy();
       server.close();
     }
+  });
+});
+
+describe.each([
+  ["net", connect],
+  ["tls", tlsConnect as typeof connect],
+])("%s.connect()", (_, dial) => {
+  it("validates options.host before it calls options.lookup", () => {
+    const lookup = jest.fn();
+    for (const [host, code] of [
+      [1, "ERR_INVALID_ARG_TYPE"],
+      ["\0", "ERR_INVALID_ARG_VALUE"],
+      ["a\0b", "ERR_INVALID_ARG_VALUE"],
+    ]) {
+      for (const options of [{}, { lookup }]) {
+        expect(() => dial({ host, port: 0, ...options } as any)).toThrow(
+          expect.objectContaining({ code, message: expect.stringContaining("options.host") }),
+        );
+      }
+    }
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("destroys the socket that it does not return", async () => {
+    const { signal } = new AbortController();
+    const sockets: Socket[] = [];
+    const onSocket = ({ socket }: any) => void sockets.push(socket);
+    subscribe("net.client.socket", onSocket);
+    try {
+      expect(() => dial({ port: -1, signal })).toThrow(expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }));
+    } finally {
+      unsubscribe("net.client.socket", onSocket);
+    }
+    expect(sockets.map(socket => socket.destroyed)).toEqual([true]);
+    await once(sockets[0], "close");
+    expect(getEventListeners(signal, "abort")).toEqual([]);
+  });
+
+  it("leaves options.handle open when it throws", () => {
+    const handle = { close: jest.fn() };
+    expect(() => dial({ port: -1, handle } as any)).toThrow(expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }));
+    expect(handle.close).not.toHaveBeenCalled();
+  });
+
+  it("closes the socket when options.signal aborts, also without an 'error' listener", async () => {
+    const controller = new AbortController();
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    dial({ host: "localhost", port: 0, lookup() {}, signal: controller.signal }).on("close", resolve);
+    controller.abort();
+    expect(await promise).toBe(true);
   });
 });
 

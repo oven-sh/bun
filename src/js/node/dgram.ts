@@ -49,6 +49,7 @@ const async_id_symbol = Symbol("async_id_symbol");
 const { throwNotImplemented, ErrnoException, ExceptionWithHostPort, builtinChannel } = require("internal/shared");
 const {
   validateString,
+  validateStringWithoutNullBytes,
   validateNumber,
   validateFunction,
   validatePort,
@@ -684,6 +685,7 @@ function bufferSize(self: $Node.DgramSocket, size: number, buffer: boolean) {
 Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , callback */) {
   // bind(cb): a function first argument is the callback, not a port.
   let port = typeof port_ === "function" ? null : port_;
+  let address = port !== null && typeof port === "object" ? port.address : address_;
 
   healthCheck(this);
   const state = this[kStateSymbol];
@@ -691,6 +693,8 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
   if (state.bindState !== BIND_STATE_UNBOUND) {
     throw $ERR_SOCKET_ALREADY_BOUND();
   }
+
+  if (typeof address === "string") validateStringWithoutNullBytes(address, "address");
 
   state.bindState = BIND_STATE_BINDING;
 
@@ -741,16 +745,13 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
     return this;
   }
 
-  let address;
-  let exclusive;
+  let exclusive = false;
 
   if (port !== null && typeof port === "object") {
-    address = port.address || "";
     exclusive = !!port.exclusive;
     port = port.port;
-  } else {
-    address = typeof address_ === "function" ? "" : address_;
-    exclusive = false;
+  } else if (typeof address === "function") {
+    address = "";
   }
 
   // Defaulting address for bind to all interfaces
@@ -966,7 +967,7 @@ Socket.prototype.connect = function (this: $Node.DgramSocket, port, address, cal
     address = "";
   }
 
-  validateString(address, "address");
+  validateStringWithoutNullBytes(address, "address");
 
   const state = this[kStateSymbol];
 
@@ -1195,7 +1196,7 @@ Socket.prototype.send = function (this: $Node.DgramSocket, buffer, offset, lengt
     callback = address;
     address = undefined;
   } else if (address != null) {
-    validateString(address, "address");
+    validateStringWithoutNullBytes(address, "address");
   }
 
   healthCheck(this);

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e5dd77922cb09bf9b92d26e33e07d4a0705e68ca5d19e52bcfad106abada56d2.
+// Written against that file with the SHA-256 fa089157ebe043a5247a2c3b23b2aedcd535461dfbe5775947bb6b1f9e180107.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -1674,7 +1674,13 @@ function connect(...args: unknown[]) {
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1795
   if (!options.socket) tlssock.once("connect", onConnectStart);
-  return tlssock.connect(normal);
+  try {
+    return tlssock.connect(normal);
+  } catch (error) {
+    // The caller gets no socket to destroy. A handle that it passed is still its own.
+    if (!options.handle) tlssock.destroy();
+    throw error;
+  }
 }
 
 // The engine sends the ClientHello when the listeners of 'connect' have run. An end() of theirs must not get ahead of it.

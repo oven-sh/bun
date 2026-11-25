@@ -14,11 +14,15 @@ const {
   startLookup,
   startLookupService,
   startQuery,
-  validateStringWithoutNullBytes,
 } = require("internal/dns");
 const { isIP } = require("internal/net/isIP");
 const { kCustomPromisifyArgsSymbol } = require("internal/shared");
-const { validateFunction, validatePort, validateString } = require("internal/validators");
+const {
+  validateFunction,
+  validatePort,
+  validateString,
+  validateStringWithoutNullBytes,
+} = require("internal/validators");
 
 type Callback = (err: Error | null, result?: any, second?: any) => void;
 

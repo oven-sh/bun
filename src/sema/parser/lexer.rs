@@ -1499,10 +1499,13 @@ impl<'a> Lexer<'a> {
             &c @ (b'8' | b'9') => (1488, u32::from(c)),
             _ => return None,
         };
-        // `bun run` reports an octal escape of one or two digits before an `8`, a `9` or the end of the string.
+        // `bun run` reports an octal escape of one or two digits before an `8`, a `9` or the end of the string or of
+        // the template piece.
         let next = self.at(end);
+        let ends_here =
+            next == quote || (quote == b'`' && next == b'$' && self.at(end + 1) == b'{');
         let is_reported_by_bun_run =
-            code == 1487 && digits.len() < 3 && (matches!(next, b'8' | b'9') || next == quote);
+            code == 1487 && digits.len() < 3 && (matches!(next, b'8' | b'9') || ends_here);
         if !self.flag(code, pos, end) {
             return None;
         }
@@ -1772,14 +1775,18 @@ impl<'a> Lexer<'a> {
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
                     None if reports && self.takes_legacy_escapes_in_templates() => {
+                        is_ascii = false;
                         match self.legacy_escape(pos, b'`', &mut text) {
                             Some(end) => pos = end,
+                            None if self.recovers => {
+                                self.has_escape |= pos + 1 < src.len();
+                                pos = self.invalid_escape(pos, &mut text, reports);
+                            }
                             None => {
                                 self.buffer = text;
                                 return self.reject(Rejection::Reported);
                             }
                         }
-                        is_ascii = false;
                     }
                     // An invalid escape is an error unless the template is tagged.
                     None => {

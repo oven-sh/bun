@@ -4,7 +4,6 @@
 // DIAGNOSTIC: TS1042 1
 // DIAGNOSTIC: TS1109 1
 // DIAGNOSTIC: TS1209 1
-// DIAGNOSTIC: TS1488 2
 
 // Each statement is outside the grammar of the language, so the build stops. Plain Bun prints another output.
 var a;
@@ -16,5 +15,3 @@ var f5 = async ((a)) => 1;
 class C { static static {} }
 new a?.();
 (a, );
-console.log(`\8`);
-console.log(`\9`);

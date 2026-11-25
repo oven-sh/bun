@@ -9,7 +9,7 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
-    find_base_that_a_call_made_of_own_file, find_holder_of_require_made_for_choice,
+    find_chosen_require_base, find_base_that_a_call_made_of_own_file,
     find_module_printed_as_require, find_names_folded_by_transpiler,
     find_other_values_of_own_require, find_own_require, find_require_call,
     holds_import_meta_require, is_call_of_create_require,
@@ -596,7 +596,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && matches!(site.kind, ImportSiteKind::Require(_))
             && matches!(
                 own_require,
-                Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice(_))
+                Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice)
             )
             && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct));
         if is_maker_replaced
@@ -604,7 +604,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && matches!(site.kind, ImportSiteKind::Require(_))
             && matches!(
                 own_require,
-                Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice(_))
+                Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice)
             )
         {
             return None;
@@ -680,7 +680,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(
                 OwnRequire::Made
                     | OwnRequire::MadeForPath(_)
-                    | OwnRequire::MadeForChoice(_)
+                    | OwnRequire::MadeForChoice
                     | OwnRequire::MadeInOtherFile(_)
             )
         );
@@ -806,7 +806,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         | OwnRequire::MadeInOtherFile(_)
                         | OwnRequire::Made
                         | OwnRequire::MadeForPath(_) => test_of_value,
-                        OwnRequire::MadeForChoice(_) => CalleeTest::IsMadeIn(self.file.file),
+                        OwnRequire::MadeForChoice => CalleeTest::IsMadeIn(self.file.file),
                     }
                 }
                 CalleeKnowledge::Bound => {
@@ -855,7 +855,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             _ => None,
         };
-        let choice = find_holder_of_require_made_for_choice(hir, bound, call);
+        let choice = find_chosen_require_base(hir, bound, call);
         let question = self.find_question_on_base(call, arguments, own_require);
         if !is_behind_test && kept.is_none() && choice.is_none() && question.is_none() {
             return None;
@@ -882,7 +882,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(kept) = kept {
             self.keep_require_of_real_maker(maker, made, kept);
         }
-        if let Some((_, place)) = choice {
+        if let Some(place) = choice {
             self.keep_require_if_base_is_own_file(maker, values[place], made);
         }
         match question {
@@ -1487,7 +1487,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     None => self.builder.boolean(true),
                 }
             }
-            OwnRequire::MadeForChoice(_) => {
+            OwnRequire::MadeForChoice => {
                 let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
                 self.emit_test_of_set_of_requires(kept, receiver)
             }

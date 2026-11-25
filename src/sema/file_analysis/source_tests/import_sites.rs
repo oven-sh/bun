@@ -324,17 +324,17 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; import.meta.tag`x`; createRequire(import.meta.url)("a");"#,
-        &[],
+        &["a"],
     ),
     (
         "a.mts",
@@ -789,7 +789,7 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         r#"var m = require("module"); m.createRequire(other || __filename)("a");"#,
-        &["module"],
+        &["module", "a"],
     ),
     (
         "a.cjs",
@@ -1210,7 +1210,19 @@ const BINDINGS_OF_IMPORT_META_REQUIRE: &[(&str, &[&str])] = &[
         r#"function f(load) { load("a"); } f(import.meta.require);"#,
         &[],
     ),
-    (r#"const { require: load } = import.meta; load("a");"#, &[]),
+    (
+        r#"const { require: load } = import.meta; load("a");"#,
+        &["a"],
+    ),
+    (r#"const meta = import.meta; meta.require("a");"#, &["a"]),
+    (
+        r#"let { require: load } = import.meta; load = other; load("a");"#,
+        &[],
+    ),
+    (
+        r#"let meta = import.meta; meta = other; meta.require("a");"#,
+        &[],
+    ),
     (r#"const load = import.meta.resolve; load("a");"#, &[]),
     (r#"const load = other.require; load("a");"#, &[]),
     (

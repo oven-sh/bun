@@ -1,0 +1,10 @@
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { show } from "./show.cjs";
+const meta = import.meta;
+show("alias beside", () => createRequire(import.meta.url)("./a.cjs").name);
+show("alias is meta", () => typeof meta.url);
+import.meta.tag = strings => strings.length;
+show("tag", () => import.meta.tag`x` + " " + createRequire(import.meta.url)("./a.cjs").name);
+show("pathToFileURL of a URL", () => createRequire(pathToFileURL(import.meta.url))("./a.cjs").name);
+show("file:// before a URL", () => createRequire("file://" + import.meta.url)("./a.cjs").name);

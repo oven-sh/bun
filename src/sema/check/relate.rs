@@ -4201,9 +4201,21 @@ impl<'p, 's> Checker<'p, 's> {
             corresponds,
         } = self.undefined_stripped_target_if_needed(sources, target);
         let (mut walk, in_common) = self.begin_literal_walk(sources, target);
+        // FOR SPEED: the constituents of two unions are in one order, so those of a filtered union are met on one way through the other.
+        let mut ahead: &'p [TypeId] = match self.data(target) {
+            TypeData::Union(parts) if parts.len() >= MANY_TARGETS => parts,
+            _ => &[],
+        };
         for (i, &t) in sources.iter().enumerate().skip(in_common) {
             if self.is_literal_ahead(&mut walk, t) {
                 continue;
+            }
+            match ahead.iter().position(|&part| part == t) {
+                Some(at) => {
+                    ahead = &ahead[at + 1..];
+                    continue;
+                }
+                None => ahead = &[],
             }
             // Many unions are mappings of one another, so the members at the same index are related.
             if corresponds {

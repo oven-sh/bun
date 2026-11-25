@@ -71,6 +71,9 @@ export const libuv: Dependency = {
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
   // twice.
   //
+  // win-poll-shared-listener: polls a listening socket that other processes
+  // also hold without Exclusive, so that they do not end each other's polls.
+  //
   // win-poll-out-of-line: inlined, the 4 KB `overlappeds` of uv__poll is part of
   // uv_run's frame while the callbacks run. The kernel writes its first entries
   // alone, so the collector finds what earlier calls left in the others.
@@ -78,6 +81,7 @@ export const libuv: Dependency = {
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
+    "patches/libuv/win-poll-shared-listener.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
     "patches/libuv/win-poll-out-of-line.patch",
   ],

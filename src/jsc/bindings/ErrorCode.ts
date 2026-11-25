@@ -123,6 +123,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
+  ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
   ["ERR_INVALID_ARG_TYPE", TypeError],
   ["ERR_INVALID_ARG_VALUE", TypeError, undefined, RangeError],
@@ -359,6 +360,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_FFI_CC_DISABLED", Error],
   ["HPE_INVALID_URL", Error],
   ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
+  ["ERR_PATCH_DOES_NOT_APPLY", Error],
   ["ERR_CPU_PROFILE_TOO_MANY", Error],
 ];
 export default errors;

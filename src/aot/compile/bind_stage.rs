@@ -1000,7 +1000,8 @@ fn warn_about_unembedded_reads(
                 continue;
             }
             let from = (entry, path_of(file));
-            let below = pattern.names_folder || pattern.end.contains(&b'/');
+            let below =
+                pattern.names_folder || bun_core::strings::contains_char(&pattern.end, b'/');
             for found in provider.list_files_to_embed(to_native(&pattern.folder), below) {
                 if pattern.matches(&found)
                     && embed_unless_code(files, sources, provider, from, &found, is_query)

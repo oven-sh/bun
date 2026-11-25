@@ -83,8 +83,8 @@ pub trait System: Sized {
     /// Seconds since the Unix epoch.
     fn wall_clock(&self) -> i64;
 
-    /// Nobody else can predict it.
-    fn random(&mut self) -> u16;
+    /// Nobody else can predict it. `None` if the system has none to give.
+    fn random(&mut self) -> Option<u16>;
 
     fn connect(
         &mut self,

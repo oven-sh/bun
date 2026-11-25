@@ -109,6 +109,12 @@ impl<P: Poll> Os<P> {
             randoms: Default::default(),
         }
     }
+
+    fn renew_randoms(&mut self) -> Option<()> {
+        let mut randoms = [[0; 2]; _];
+        bun_core::util::os_entropy(randoms.as_flattened_mut())
+            .then(|| self.randoms = randoms.into_iter())
+    }
 }
 
 impl<P: Poll> System for Os<P> {
@@ -127,15 +133,11 @@ impl<P: Poll> System for Os<P> {
         bun_core::time::timestamp()
     }
 
-    fn random(&mut self) -> u16 {
-        loop {
-            if let Some(random) = self.randoms.next() {
-                return u16::from_ne_bytes(random);
-            }
-            let mut randoms = [[0; 2]; _];
-            bun_core::util::os_entropy(randoms.as_flattened_mut());
-            self.randoms = randoms.into_iter();
+    fn random(&mut self) -> Option<u16> {
+        if self.randoms.len() == 0 {
+            self.renew_randoms()?;
         }
+        self.randoms.next().map(u16::from_ne_bytes)
     }
 
     fn connect(
@@ -144,7 +146,8 @@ impl<P: Poll> System for Os<P> {
         server: SocketAddr,
         local: Option<IpAddr>,
     ) -> Option<Socket<P>> {
-        self.randoms = Default::default();
+        // First: it may take a descriptor, which it needs only once.
+        self.renew_randoms()?;
         let mut address = Address::from_ip(server.ip(), server.port());
         if let SocketAddr::V6(server) = server {
             address.set_scope_id(server.scope_id());

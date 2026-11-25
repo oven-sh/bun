@@ -534,9 +534,31 @@ static bool isCommonJSModuleUnderActualKey(Zig::GlobalObject* globalObject, cons
     return original && original == module->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().exportsPublicName());
 }
 
+// The build names what a file is under a type `file?type`. In a test run no compiled file has a query, and a file of code is no data under one.
+static bool isPathOfForm(JSGlobalObject* globalObject, const String& path)
+{
+    size_t mark = path.reverseFind('?');
+    if (mark == notFound)
+        return false;
+    String file = path.left(mark);
+    String type = path.substring(mark + 1);
+    BunString fileArgument = Bun::toString(file);
+    BunString typeArgument = Bun::toString(type);
+    bool isFormWithoutAttributes = false;
+    auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfForm(&fileArgument, &typeArgument, &isFormWithoutAttributes));
+    if (pathOfForm.isDead() || pathOfForm.transferToWTFString() != path)
+        return false;
+    if (isBunTest)
+        return true;
+    auto module = findModuleForPath(path);
+    auto loader = Bun__getDefaultLoader(globalObject, &fileArgument, nullptr);
+    bool isCode = loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX;
+    return isCode && module && AOT::isDataFile(*module);
+}
+
 static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path, AOT::LoadKind way)
 {
-    auto module = findModuleForPath(path);
+    auto module = isPathOfForm(globalObject, path) ? std::nullopt : findModuleForPath(path);
     if (!module)
         module = findDefaultForm(path);
     if (!module) {

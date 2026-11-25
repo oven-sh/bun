@@ -29,8 +29,8 @@ use crate::import_sites::{
 };
 use crate::module_format::ModuleFormat;
 use crate::resolve::{
-    CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
-    ParsedFile, TranspileSettings, basename, is_declaration_file_name,
+    CodeHost, CodeImportKind, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile,
+    HostPayload, ParsedFile, TranspileSettings, basename, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -2147,14 +2147,15 @@ fn share_modules_among_types<'r>(
         .filter(|target| target.has_shared_type)
         .map(|target| target.key.path)
         .collect();
-    // Calls alone have a module for each type: whichever runs first answers for the others at run time.
+    // Calls alone have a module of a data file for each type: whichever runs first answers for the others at run time.
     let is_call_with_written_type = |target: &CodeTarget<'_>| {
         builds_executable
             && !target.has_shared_type
             && target.has_type_of_shared_kind
             && target.has_loader_attribute
             && target.is_linked_by_bundler
-            && named_by_statements.contains(target.key.path)
+            && (named_by_statements.contains(target.key.path)
+                || !host.is_data_file(target.key.path, CodeImportKind::Import, None))
     };
     let is_shared =
         |target: &CodeTarget<'_>| target.has_shared_type || is_call_with_written_type(target);

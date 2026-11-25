@@ -80,7 +80,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     | FunctionKey::PrivateNameTest { .. }
                     | FunctionKey::ModuleRequest { .. }
                     | FunctionKey::CopiedGetter { .. }
-                    | FunctionKey::PrototypeMaker(_)) => return Some(enclosing),
+                    | FunctionKey::PrototypeMaker(_)
+                    | FunctionKey::IdleSetter { .. }) => return Some(enclosing),
                 },
                 CodeUnit::FieldInitializer(member) => bound.member_class(member)?,
             };

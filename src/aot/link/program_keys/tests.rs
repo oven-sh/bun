@@ -215,7 +215,11 @@ fn next_function_key(key: FunctionKey) -> Option<FunctionKey> {
             }
         }
         FunctionKey::CopiedGetter { .. } => FunctionKey::PrototypeMaker(SYMBOL),
-        FunctionKey::PrototypeMaker(_) => return None,
+        FunctionKey::PrototypeMaker(_) => {
+            let call = ExprId(1);
+            FunctionKey::IdleSetter { file, call }
+        }
+        FunctionKey::IdleSetter { .. } => return None,
     })
 }
 

@@ -828,7 +828,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.fragment.define_layout(layout, definition);
     }
 
-    pub(in crate::lower) fn lower_prototype_maker(&mut self, function: FunctionId) {
+    pub(in crate::lower) fn lower_empty_function(&mut self, function: FunctionId) {
         let mut lowering = FunctionLowering::begin(self, function);
         let nothing = lowering.builder.undefined();
         lowering.emit_return(nothing, None);

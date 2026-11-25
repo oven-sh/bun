@@ -2122,6 +2122,45 @@ var __export = (target, all) => {
         }
     }
 
+    const EXPORT_OF_BUN: &str = "var { defineProperty: define } = Object;
+var same = v => v;
+function store(name, value) { this[name] = same.bind(null, value); }
+var lay = (target, all) => {
+  for (var name in all)
+    define(target, name, { get: all[name], enumerable: !0, configurable: !0, set: store.bind(all, name) });
+};
+";
+
+    #[test]
+    fn export_helper_of_bun_is_followed_across_an_import() {
+        let objects = |helpers: &str, imports: &str| {
+            let helpers = format!("{EXPORT_OF_BUN}{helpers}");
+            let main = format!(
+                "{imports}\nvar names = {{}};\nlay(names, {{ a: () => 1, b: () => 2 }});\nconsole.log(names);"
+            );
+            let files = [
+                ("main.mjs", main.as_str()),
+                ("helpers.mjs", helpers.as_str()),
+                ("barrel.mjs", "export { lay } from \"./helpers.mjs\";"),
+                ("other.mjs", "console.log(1);"),
+            ];
+            count_in_module_bodies(&files, Opcode::NewObject)
+        };
+        let direct = "import { lay } from \"./helpers.mjs\";";
+        assert_eq!(objects("export { lay };", direct), 2);
+        for helpers in [
+            "export { lay, store };",
+            "export { lay, same };",
+            "export { lay }; console.log(store);",
+            "export { lay }; import \"./other.mjs\";",
+            "export { lay }; define = Reflect.defineProperty;",
+        ] {
+            assert_eq!(objects(helpers, direct), 1, "{helpers}");
+        }
+        let through_barrel = "import { lay } from \"./barrel.mjs\";";
+        assert_eq!(objects("export { lay };", through_barrel), 1);
+    }
+
     #[test]
     fn top_level_export_star_is_one_guarded_operation() {
         let main = format!("{HELPERS}__exportStar(require(\"./a.cjs\"), exports);");

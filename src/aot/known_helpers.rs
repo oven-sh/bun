@@ -16,6 +16,7 @@ use self::held_early::find_files_held_early;
 pub use self::private_state::{FilePrivateStates, StateOwner};
 pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
+use self::quiet::is_in_statement_of_file;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference,
@@ -24,8 +25,9 @@ pub use self::resolve::{
 };
 
 use crate::builtins::id::BuiltinId;
+use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use crate::ir::{InParallel, for_each_mut};
-use crate::modules::ModuleGraph;
+use crate::modules::{ImportBinding, ModuleGraph, ModuleRef};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
@@ -290,6 +292,54 @@ impl KnownHelpers {
             && hir[defined].start < hir[called].start;
         (is_ahead && values.certainty != Certainty::MayHoldOtherValues && known.relies_on_facts)
             .then_some(known)
+    }
+
+    /// A helper that a statement of `file` calls, imported straight from a file that loads nothing ahead of its body.
+    pub fn callee_imported_ahead(
+        &self,
+        files: &Files<'_>,
+        modules: &ModuleGraph,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<(FileId, &KnownFunction)> {
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let ImportBinding::Variable(variable) = modules.import_binding(file, symbol) else {
+            return None;
+        };
+        let values = self.binding(variable.file, variable.id)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(variable.file, held.definition)?;
+        let is_requested = modules.requests(file).iter().any(|request| {
+            request.target == ModuleRef::File(variable.file)
+                && request.kind == ModuleRequestKind::Import
+                && request.phase == ImportPhase::Evaluation
+        });
+        let is_ahead = is_requested
+            && modules.requests(variable.file).is_empty()
+            && is_in_statement_of_file(files.bound(file), callee);
+        let may_be_replaced = modules.is_replaceable(variable)
+            || modules.reaches_mock(file)
+            || modules.may_be_mocked(ModuleRef::File(variable.file));
+        (is_ahead && !may_be_replaced && self.holds_for_importers(variable.file, values, known))
+            .then_some((variable.file, known))
+    }
+
+    /// No code ran between the start of `home` and the definition, so no importer began ahead of it.
+    fn holds_for_importers(
+        &self,
+        home: FileId,
+        values: &BindingValues,
+        known: &KnownFunction,
+    ) -> bool {
+        let mut references = known.references.iter();
+        values.holds_from_the_start
+            && known.relies_on_facts
+            && !references.any(|reference| matches!(reference, KnownReference::Holder { .. }))
+            && self
+                .file(home)
+                .is_some_and(FileHelpers::defines_helpers_in_silence)
     }
 
     /// A helper that answers a value with a marker before it asks anything else. What it names for other values does not matter there.

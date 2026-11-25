@@ -4,6 +4,7 @@ use std::mem::take;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::File;
+use bun_sema::program::Sym;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -150,17 +151,35 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// For a function that an ES module declares, or this file does.
+    pub(crate) fn shown_name_of_function(&self, function: Sym) -> SmallVec<[u8; 24]> {
+        let Sym { file, id } = function;
+        let is_shortened = self.shown_names.short_function_names.is_some()
+            && (file != self.file || self.find_shortened_symbol(Binding::Symbol(id)).is_some());
+        if is_shortened {
+            return self.short_name_of(function);
+        }
+        let written = self.queries.files().bound(file).symbol(id).name;
+        SmallVec::from_slice(written_name_of_local(self.queries.atom_bytes(written)))
+    }
+
+    fn short_name_of(&self, function: Sym) -> SmallVec<[u8; 24]> {
+        let mut text = SmallVec::new();
+        append_number(
+            function.id.idx() * self.inputs.files.len() + function.file.idx(),
+            &mut text,
+        );
+        text
+    }
+
     pub(crate) fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
         let names = self.shown_names.short_function_names.as_ref()?;
         let symbol = self.find_shortened_symbol(binding)?;
         if let Some(&name) = names.get(&symbol) {
             return Some(name);
         }
-        let mut text = SmallVec::new();
-        append_number(
-            symbol.idx() * self.inputs.files.len() + self.file.idx(),
-            &mut text,
-        );
+        let (file, id) = (self.file, symbol);
+        let text = self.short_name_of(Sym { file, id });
         let name = self.intern_bytes(&text);
         let written = self.queries.atom_bytes(self.bound.symbol(symbol).name);
         let listed = &mut self.shown_names.written_function_names;

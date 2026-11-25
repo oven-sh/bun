@@ -1886,7 +1886,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let expressions = self.queries.expressions_by_kind(self.file);
         let mut defined: FxHashMap<ExprId, SmallVec<[Atom; 2]>> = FxHashMap::default();
         let mut defined_otherwise: FxHashSet<(ExprId, Atom)> = FxHashSet::default();
+        let mut without_names: Option<FxHashSet<SymbolId>> = None;
         for &call in expressions.of(ExprTag::Call) {
+            if let Some((object, names)) = self.find_accessors_laid_by_helper(call)
+                && let Some(literal) = self.find_literal_held_by(object)
+            {
+                let without_names = without_names.get_or_insert_with(|| {
+                    self.find_objects_better_off_without_names(expressions.of(ExprTag::Object))
+                });
+                let holder = bound.binding(hir.skip_type_assertions(object));
+                if !matches!(holder, Binding::Symbol(holder) if without_names.contains(&holder)) {
+                    defined.entry(literal).or_default().extend(names);
+                }
+                continue;
+            }
             let Some((object, name, writes_accessor)) = self.find_definition_by(call) else {
                 continue;
             };

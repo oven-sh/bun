@@ -459,7 +459,7 @@ impl FileLowering<'_, '_, '_, '_> {
         (!members.is_empty()).then_some(members)
     }
 
-    pub(super) fn is_fixed_method(&self, method: BuiltinId) -> bool {
+    pub(in crate::lower) fn is_fixed_method(&self, method: BuiltinId) -> bool {
         let replaced = self.inputs.replaced_builtins;
         let is_replaced = |place: BuiltinId| replaced.binary_search(&(place as u32)).is_ok();
         table::entry(method).mutability == Mutability::AlwaysLocked

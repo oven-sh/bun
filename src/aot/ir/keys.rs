@@ -43,6 +43,11 @@ pub enum FunctionKey {
     },
     /// Constructs what Object.create() makes below the literal that the variable holds.
     PrototypeMaker(Sym),
+    /// Stands for the setters that the call of an export helper binds. They store where nothing reads.
+    IdleSetter {
+        file: FileId,
+        call: ExprId,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -137,7 +142,8 @@ impl FunctionKey {
             | FunctionKey::AccessorSetter { file, .. }
             | FunctionKey::PrivateNameTest { file, .. }
             | FunctionKey::ModuleRequest { file, .. }
-            | FunctionKey::CopiedGetter { file, .. } => file,
+            | FunctionKey::CopiedGetter { file, .. }
+            | FunctionKey::IdleSetter { file, .. } => file,
             FunctionKey::PrototypeMaker(variable) => variable.file,
             FunctionKey::Source(function) | FunctionKey::Signature(function) => function.file,
             FunctionKey::ClassSignature(class)
@@ -294,6 +300,10 @@ mod tests {
                 file: FILE,
                 helper: FnId(1),
                 getter: FnId(2),
+            },
+            FunctionKey::IdleSetter {
+                file: FILE,
+                call: ExprId(3),
             },
         ];
         for key in keys {

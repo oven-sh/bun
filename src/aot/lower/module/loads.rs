@@ -1099,11 +1099,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let has_no_host = call::emit_call(self, starts_with, Some(letters), &[without_host]);
         let has_no_host = self.builder.to_boolean(has_no_host);
         let mut is_converted = self.create_block();
+        let may_lack_slashes = self.create_block();
         self.builder.branch(
             has_no_host,
             Edge::to(is_converted),
+            Edge::to(may_lack_slashes),
+        );
+
+        // `file:/folder/a.js` is `file:///folder/a.js`.
+        self.continue_in(may_lack_slashes);
+        let of_path = self.emit_text(b"file:/");
+        let is_of_path = call::emit_call(self, starts_with, Some(letters), &[of_path]);
+        let is_of_path = self.builder.to_boolean(is_of_path);
+        let may_have_host = self.create_block();
+        self.builder.branch(
+            is_of_path,
+            Edge::to(may_have_host),
             Edge::to(in_other_folder),
         );
+
+        self.continue_in(may_have_host);
+        let before_host = self.emit_text(b"file://");
+        let has_host = call::emit_call(self, starts_with, Some(letters), &[before_host]);
+        let has_host = self.builder.to_boolean(has_host);
+        self.builder
+            .branch(has_host, Edge::to(in_other_folder), Edge::to(is_converted));
+
         for encoded_separator in [&b"%2f"[..], b"%5c"] {
             self.continue_in(is_converted);
             let includes = self.emit_builtin_itself(BuiltinId::StringPrototypeIncludes);

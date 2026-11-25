@@ -458,7 +458,7 @@ impl SyncResultSlot {
         // `init_sync` sets no streaming signal, so the last result is the only one.
         let request = finished.expect("one result");
         debug_assert!(result.body.is_empty());
-        // SAFETY: `send_and_wait` cannot return before the lock is released.
+        // SAFETY: whoever called `send_to_slots` waits for the slot, so cannot return before the lock is released.
         let this = unsafe { &*this };
         let mut slot = this.slot.lock();
         *slot = Some((request, result.without_borrowed_body()));

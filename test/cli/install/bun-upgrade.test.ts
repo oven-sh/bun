@@ -12,7 +12,7 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
-import { readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { copyFile, link, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 import { getCanaryLabel } from "../../../.buildkite/scripts/upload-release.ts";
@@ -573,12 +573,15 @@ describe("canary", () => {
   let commit: string, size: number, crc32: string;
   beforeAll(async () => {
     commit = Bun.revision;
+    // A debug build is close to 2 GB: read in large pieces, a stream of it takes seconds.
+    const fd = openSync(standInExe, "r");
+    const chunk = Buffer.allocUnsafe(16 * 1024 * 1024);
     let crc = 0;
     size = 0;
-    for await (const chunk of Bun.file(standInExe).stream()) {
-      crc = Bun.hash.crc32(chunk, crc);
-      size += chunk.length;
+    for (let read: number; (read = readSync(fd, chunk, 0, chunk.length, null)) > 0; size += read) {
+      crc = Bun.hash.crc32(chunk.subarray(0, read), crc);
     }
+    closeSync(fd);
     crc32 = crc.toString(16).padStart(8, "0");
 
     using zips = tempDir("bun-upgrade-canary-zips", {
@@ -589,8 +592,7 @@ describe("canary", () => {
     using warn = spyOn(console, "warn").mockImplementation(() => {});
     labelWithoutExecutable = getCanaryLabel(join(String(zips), "unreadable", releaseAsset), commit);
     expect(warn).toHaveBeenCalledTimes(1);
-    // A debug build is close to 2 GB.
-  }, 60_000);
+  });
 
   // The zip of the canary release is at a compiled-in github.com URL. This proxy is in front of github.com: it notes
   // the tunnels that `bun upgrade` asks for and opens none, so a download fails after it has shown itself.
@@ -661,6 +663,7 @@ describe("canary", () => {
     ["has more in its label", () => ({ label: label + " " })],
     ["is not the canary", () => ({ label, tagName: "bun-v9.9.9" })],
     ["is not to be had", () => ({ label, status: 403 })],
+    ["is asked for too often", () => ({ label, status: 429 })],
     ["has no asset for this target", () => ({ label, assetNames: [] })],
     ["is a page of HTML", () => ({ body: "<!DOCTYPE html><html><body>Sign in to the network</body></html>" })],
     ["is empty", () => ({ body: "" })],
@@ -677,12 +680,13 @@ describe("canary", () => {
   it.concurrent.skipIf(!isCanary)(
     "downloads when the release does not come in time",
     async () => {
-      // Takes the connection and never answers. `bun upgrade` waits 5 seconds for the release.
+      // Takes the connection and never answers.
       using api = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
       using server = startReleaseServer({ tagName: "canary", label });
       expectDownload(await upgrade({ ...server.env, GITHUB_API_DOMAIN: `127.0.0.1:${api.port}` }));
       expect(server.requests).toEqual([]);
     },
+    // `bun upgrade` gives the release 5 seconds (`SILENT_LOOKUP_DEADLINE`), which is the default limit of a test.
     30_000,
   );
 

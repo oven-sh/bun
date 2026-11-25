@@ -3134,10 +3134,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if the innermost query is about the type of a variable that isn't declared in any of the expressions being checked
-    /// as arguments. Nothing about those calls is a context for its initializer, and tsgo stores its type.
+    /// as arguments, and a visible loop asks for it. Nothing about those calls is a context for its initializer, and tsgo
+    /// stores its type. Without the loop, the next check of the arguments finds the same.
     #[cold]
     #[inline(never)]
     fn is_declared_outside_of_inference(&self) -> bool {
+        // The query has no frame yet.
+        let is_visible = |loop_at| self.is_flow_loop_visible_below(self.frames.len(), loop_at);
+        if !(self.flow_loops.last()).is_some_and(|pushed| is_visible(pushed.5)) {
+            return false;
+        }
         let declared = match self.stack.last() {
             Some(&Query::Symbol(sym)) => match self.files().value_declaration(sym) {
                 Some((file, crate::bind::Decl::Var(pat))) => Some((file, pat)),
@@ -3991,7 +3997,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn height_of_nearest_resolution(&self, below: usize) -> usize {
-        debug_assert_eq!(self.stack.len(), self.frames.len());
+        debug_assert!(below <= self.frames.len());
         let mut known = self.nearest_resolutions.borrow_mut();
         if known.len() < below {
             known.resize(below, (0, 0));
@@ -4179,20 +4185,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeOfVariableOrParameterOrProperty` has returned a type that isn't `links.resolvedType`, which a request in between
-    /// has assigned. The caller gets the one type, and the next check of the expressions in progress gets the other. So they
-    /// are stored only where tsgo stores them.
+    /// has assigned. The caller gets the one type, and the next check of the expressions in progress gets the other. So while
+    /// a loop is being analyzed, they are stored only where tsgo stores them.
     #[cold]
     #[inline(never)]
     fn note_unassigned_type(&mut self) {
-        let in_flow_loop = self.is_in_flow_loop();
+        if !self.is_in_flow_loop() {
+            return;
+        }
         let is_stored = |at: usize| match self.stack[at] {
             Query::Expr(file, e) => {
                 !self.frames[at].is_quick_type
                     && self.is_checked_by_check_expression_cached(file, e)
             }
-            // `getResolvedSignature`
-            Query::Call(..) => !in_flow_loop,
-            Query::LiteralProp(..) => false,
+            // `getResolvedSignature` doesn't store it then.
+            Query::Call(..) | Query::LiteralProp(..) => false,
             _ => true,
         };
         let innermost = (0..self.stack.len()).rposition(is_stored);

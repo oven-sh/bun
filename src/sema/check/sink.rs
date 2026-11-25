@@ -12,8 +12,8 @@
 //! `QueryFrame::reported_from`. `Checker::leave` calls `settle_reported` for them:
 //! - If the result is final, they move to `Task::diagnostics`, tagged with the query.
 //! - If the result depends on a cycle, a trial or a rejected query (`drops_reported`), they're
-//!   dropped. The next evaluation reports them again. While a loop is being analyzed there's no such evaluation, and they
-//!   stay.
+//!   dropped. The next evaluation reports them again. If a loop that's being analyzed is part of the cycle there's no such
+//!   evaluation, and they stay.
 //! - If the result depends on an incomplete flow-loop type (`taint_from`), they stay and belong to
 //!   the enclosing frame.
 //!
@@ -781,8 +781,12 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
-        // While a loop is being analyzed, nothing is checked again with the same types.
-        if frame.marks.drops_reported() && self.is_in_flow_loop() {
+        // Nothing is checked again with the types that a loop has collected so far. A trial, or a cycle that doesn't go
+        // through the loop, has nothing to do with them.
+        if frame.marks.drops_reported()
+            && let Some(loop_at) = self.flow_loop_pushed_at()
+            && self.lowest_taint_since(frame.serial) <= loop_at
+        {
             return;
         }
         if frame.marks.drops_reported() {

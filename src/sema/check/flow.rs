@@ -2579,7 +2579,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`, which checks the callee uncached, and in the resolution of a
     /// `...rest`, for which it checks the initializer uncached (`CheckModeRestBindingElement`).
     pub(super) fn is_flow_loop_visible(&self, depth: usize) -> bool {
-        let mut below = self.stack.len();
+        self.is_flow_loop_visible_below(self.stack.len(), depth)
+    }
+
+    /// The same for what asks from `stack[..below]`.
+    pub(super) fn is_flow_loop_visible_below(&self, mut below: usize, depth: usize) -> bool {
         loop {
             let height = self.height_of_nearest_resolution(below);
             if height <= depth {

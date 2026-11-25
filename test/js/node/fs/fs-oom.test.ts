@@ -134,11 +134,11 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
   test("readFileSync, readFile, Bun.file, Buffer.toString and TextDecoder recover", async () => {
     using dir = tempDir("utf16-alloc-oom", {});
     const file = join(String(dir), "big-utf8.txt");
-    // Valid UTF-8 whose first character is non-ASCII ('\u00e9' = C3 A9), so the
+    // Valid UTF-8 whose first character is above Latin-1 ('\u0100' = C4 80), so the
     // decoder must build a (SIZE - 1)-code-unit UTF-16 buffer (~2x SIZE bytes).
     const payload = Buffer.alloc(SIZE, "a");
-    payload[0] = 0xc3;
-    payload[1] = 0xa9;
+    payload[0] = 0xc4;
+    payload[1] = 0x80;
     writeFileSync(file, payload);
 
     await using proc = Bun.spawn({
@@ -163,7 +163,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
           () => results.push("BUNFILE_UNEXPECTED_SUCCESS"),
           e => results.push(report(e)),
         );
-        const big = Buffer.alloc(${SIZE}, "a"); big[0] = 0xc3; big[1] = 0xa9;
+        const big = Buffer.alloc(${SIZE}, "a"); big[0] = 0xc4; big[1] = 0x80;
         const decoder = new TextDecoder();
         try { big.toString("utf8"); results.push("TOSTRING_UNEXPECTED_SUCCESS"); }
         catch (e) { results.push(report(e)); }
@@ -214,7 +214,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         "-e",
         `
         const results = [];
-        const buf = Buffer.alloc(${SIZE}, "a"); buf[0] = 0xc3; buf[1] = 0xa9;
+        const buf = Buffer.alloc(${SIZE}, "a"); buf[0] = 0xc4; buf[1] = 0x80;
         // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
         const json = Buffer.alloc(${SIZE}, "a");
         json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;

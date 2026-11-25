@@ -208,6 +208,21 @@ static JSC::JSString* tryCreateString(JSC::VM& vm, std::span<const CharacterType
     return JSC::jsString(vm, String(impl.releaseNonNull()));
 }
 
+static bool hasLeadByteAboveLatin1(std::span<const uint8_t> bytes)
+{
+    constexpr size_t chunkSize = 256;
+    while (!bytes.empty()) {
+        auto chunk = bytes.first(std::min(chunkSize, bytes.size()));
+        uint8_t highest = 0;
+        for (uint8_t byte : chunk)
+            highest = std::max(highest, byte);
+        if (highest >= 0xc4)
+            return true;
+        bytes = bytes.subspan(chunk.size());
+    }
+    return false;
+}
+
 static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes, bool replacesInvalidBytes)
 {
     constexpr size_t maxStackDecodedBytes = 256;
@@ -223,13 +238,31 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
         size_t length = decodeWithReplacement(bytes, output, hasInvalidByte);
         if (hasInvalidByte && !replacesInvalidBytes)
             return nullptr;
-        return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
+        auto decoded = std::span<const char16_t> { output }.first(length);
+        if (!WTF::charactersAreAllLatin1(decoded))
+            return tryCreateString(vm, decoded);
+        std::span<Latin1Character> narrow;
+        RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, narrow);
+        if (!impl) [[unlikely]]
+            return nullptr;
+        StringImpl::copyCharacters(narrow, decoded);
+        return JSC::jsString(vm, String(impl.releaseNonNull()));
     }
     auto* characters = reinterpret_cast<const char*>(bytes.data());
     if (!simdutf::validate_utf8(characters, bytes.size()))
         return nullptr;
+    size_t length = simdutf::utf16_length_from_utf8(characters, bytes.size());
+    if (!hasLeadByteAboveLatin1(bytes)) {
+        std::span<Latin1Character> narrow;
+        RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, narrow);
+        if (!impl) [[unlikely]]
+            return nullptr;
+        size_t written = simdutf::convert_valid_utf8_to_latin1(characters, bytes.size(), reinterpret_cast<char*>(narrow.data()));
+        RELEASE_ASSERT(written == narrow.size());
+        return JSC::jsString(vm, String(impl.releaseNonNull()));
+    }
     std::span<char16_t> units;
-    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(simdutf::utf16_length_from_utf8(characters, bytes.size()), units);
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, units);
     if (!impl) [[unlikely]]
         return nullptr;
     size_t written = simdutf::convert_valid_utf8_to_utf16le(characters, bytes.size(), units.data());

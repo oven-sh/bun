@@ -75,12 +75,13 @@ pub use crate::strings_impl::{
 // Transcoding helpers from `unicode_draft` — re-exported so downstream
 // `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.
 pub use unicode_draft::{
-    BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
+    BOM, DecodedUtf8, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
-    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
-    utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
+    decode_utf8_alloc_maybe_buffered, element_length_cp1252_into_utf16,
+    element_length_utf8_into_utf16, push_codepoint_wtf8, to_utf8_list_with_type_bun, u16_is_lead,
+    u16_is_trail, utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd,
+    wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -2299,7 +2300,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 /// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
 /// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
 ///
-/// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
+/// Re-exported from `unicode_draft` so that `decode_utf8_alloc_maybe_buffered`
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
 /// type — callers like `TextDecoder` match on `strings::ToUTF16Error` for both.
 pub use unicode_draft::ToUTF16Error;
@@ -2323,10 +2324,27 @@ pub fn to_utf16_alloc(
     fail_if_invalid: bool,
     sentinel: bool,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    let Some(_first) = first_non_ascii(bytes) else {
-        return Ok(None);
-    };
+    first_non_ascii_usize(bytes)
+        .map(|_| non_ascii_to_utf16_alloc(bytes, fail_if_invalid, sentinel))
+        .transpose()
+}
 
+/// [`to_utf16_alloc`] for text that becomes a JS string: half the size where no code point is above U+00FF.
+pub fn decode_utf8_alloc(bytes: &[u8], fail_if_invalid: bool) -> Result<DecodedUtf8, ToUTF16Error> {
+    let Some(first) = first_non_ascii_usize(bytes) else {
+        return Ok(DecodedUtf8::Ascii);
+    };
+    match unicode_draft::utf8_to_latin1(bytes, first) {
+        Some(latin1) => Ok(DecodedUtf8::Latin1(latin1)),
+        None => non_ascii_to_utf16_alloc(bytes, fail_if_invalid, false).map(DecodedUtf8::Utf16),
+    }
+}
+
+fn non_ascii_to_utf16_alloc(
+    bytes: &[u8],
+    fail_if_invalid: bool,
+    sentinel: bool,
+) -> Result<Vec<u16>, ToUTF16Error> {
     let input = WithUtf16Len::utf8(bytes);
     let out_length = input.utf16_len();
     let cap = out_length + if sentinel { 1 } else { 0 };
@@ -2345,7 +2363,7 @@ pub fn to_utf16_alloc(
         if sentinel {
             out.push(0);
         }
-        return Ok(Some(out));
+        return Ok(out);
     }
     if fail_if_invalid {
         return Err(ToUTF16Error::InvalidByteSequence);
@@ -2371,7 +2389,7 @@ pub fn to_utf16_alloc(
     if sentinel {
         out.push(0);
     }
-    Ok(Some(out))
+    Ok(out)
 }
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.

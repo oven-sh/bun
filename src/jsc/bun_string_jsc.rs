@@ -162,21 +162,22 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
     }
 }
 
-/// UTF-8 `Vec<u8>` → JS string; the allocation (or its UTF-16 transcode) is
+/// UTF-8 `Vec<u8>` → JS string; the allocation (or its transcode) is
 /// adopted by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`]
 /// and `MEMORY_ALLOCATION_FAILED` when the transcode could not allocate.
 pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsResult<JSValue> {
     if utf8.is_empty() {
         return Ok(JSValue::js_empty_string(global_object));
     }
-    match strings::to_utf16_alloc(&utf8, false, false) {
-        Ok(None) => owned_latin1_into_js(global_object, utf8),
-        Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
+    match strings::decode_utf8_alloc(&utf8, false) {
+        Ok(strings::DecodedUtf8::Ascii) => owned_latin1_into_js(global_object, utf8),
+        Ok(strings::DecodedUtf8::Latin1(latin1)) => owned_latin1_into_js(global_object, latin1),
+        Ok(strings::DecodedUtf8::Utf16(utf16)) => owned_utf16_into_js(global_object, utf16),
         Err(_) => Err(throw_utf16_transcode_failure(global_object, &utf8)),
     }
 }
 
-/// The error for a `to_utf16_alloc` of `utf8` that could not allocate its
+/// The error for a `decode_utf8_alloc` of `utf8` that could not allocate its
 /// output: `STRING_TOO_LONG` when the result could not have fit in a string
 /// anyway, `MEMORY_ALLOCATION_FAILED` otherwise.
 #[cold]
@@ -191,11 +192,20 @@ pub fn throw_utf16_transcode_failure(global_object: &JSGlobalObject, utf8: &[u8]
 /// Latin-1 (or known-ASCII) `Vec<u8>` → JS string; the allocation is adopted
 /// by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_latin1_into_js(global_object: &JSGlobalObject, latin1: Vec<u8>) -> JsResult<JSValue> {
+    try_owned_latin1_into_js(global_object, latin1)
+        .ok_or_else(|| global_object.throw_string_too_long())
+}
+
+/// As [`owned_latin1_into_js`], `None` where that throws.
+pub fn try_owned_latin1_into_js(
+    global_object: &JSGlobalObject,
+    latin1: Vec<u8>,
+) -> Option<JSValue> {
     if latin1.is_empty() {
-        return Ok(JSValue::js_empty_string(global_object));
+        return Some(JSValue::js_empty_string(global_object));
     }
     let latin1 = core::mem::ManuallyDrop::new(latin1);
-    EncodedSlice::latin1(&latin1).to_external_value(global_object)
+    EncodedSlice::latin1(&latin1).try_to_external_value(global_object)
 }
 
 /// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.

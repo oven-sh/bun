@@ -10,6 +10,9 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { promises, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -1063,3 +1066,75 @@ it.each(["utf-16le", "utf-16be"])(
   },
   30_000,
 ); // 3072 decodes + repeated Bun.gc(true) take ~4s under ASAN.
+
+describe("UTF-8 without a code point above U+00FF becomes an 8-bit string", () => {
+  const decoders = {
+    "TextDecoder": bytes => new TextDecoder().decode(bytes),
+    "Buffer#toString": bytes => Buffer.from(bytes).toString(),
+    "StringDecoder": bytes => new StringDecoder("utf8").end(bytes),
+    "Blob#text": bytes => new Blob([bytes]).text(),
+    "Response#text": bytes => new Response(bytes).text(),
+    "fs.readFileSync": (bytes, file) => readFileSync(file, "utf8"),
+    "fs.promises.readFile": (bytes, file) => promises.readFile(file, "utf8"),
+    "Bun.file#text": (bytes, file) => Bun.file(file).text(),
+  };
+  const all = String.fromCharCode(...Array.from({ length: 256 }, (_, i) => i));
+  // Past the 256 KB that readFile reads before it asks for the size.
+  const long = Buffer.alloc(300_000, "a").toString();
+  const utf8 = text => new TextEncoder().encode(text);
+  const inputs = [
+    ["é", utf8("é"), true],
+    [all, utf8(all), true],
+    [long + all, utf8(long + all), true],
+    ["ÿĀ", utf8("ÿĀ"), false],
+    ["é" + long + "—", utf8("é" + long + "—"), false],
+    ["é�", [0xc3, 0xa9, 0xc3], false],
+    ["é�a", [0xc3, 0xa9, 0xc3, 0x61], false],
+    ["é�", [0xc3, 0xa9, 0xa9], false],
+    ["��", [0xc0, 0x80], false],
+    ["��", [0xc1, 0xbf], false],
+  ];
+
+  it.each(Object.keys(decoders))("%s", async name => {
+    using dir = tempDir("utf8-to-latin1", {});
+    const file = join(String(dir), "text");
+    for (const [expected, bytes, is8Bit] of inputs) {
+      writeFileSync(file, Uint8Array.from(bytes));
+      const text = await decoders[name](Uint8Array.from(bytes), file);
+      if (is8Bit) expect(text).toBeLatin1String();
+      expect(text).toBe(expected);
+    }
+  });
+
+  // simdutf converts in blocks of 64 bytes, into a buffer without a byte to spare.
+  it("an invalid byte at any place is replaced", () => {
+    for (const unit of ["é", "aé", "aaaaaaaé"]) {
+      for (let count = 0; count * unit.length < 200; count++) {
+        for (const tail of ["", unit, unit.repeat(40)]) {
+          for (const invalid of [0xa9, 0xc1]) {
+            const bytes = Buffer.concat([utf8(unit.repeat(count)), Uint8Array.of(invalid), utf8(tail)]);
+            expect(bytes.toString()).toBe(unit.repeat(count) + "\ufffd" + tail);
+          }
+        }
+      }
+    }
+  });
+
+  it("across chunks, and behind a BOM", async () => {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    expect(decoder.decode(Uint8Array.of(0xc3), { stream: true })).toBe("");
+    const first = decoder.decode(Uint8Array.of(0xa9, 0xc3), { stream: true });
+    expect(first).toBeLatin1String();
+    expect(first).toBe("é");
+    const rest = decoder.decode(Uint8Array.of(0xa8, 0x61));
+    expect(rest).toBeLatin1String();
+    expect(rest).toBe("èa");
+    expect(() => decoder.decode(Uint8Array.of(0xc3, 0xa9, 0xc3))).toThrow(TypeError);
+
+    const withBOM = Uint8Array.of(0xef, 0xbb, 0xbf, 0xc3, 0xa9, 0x61);
+    for (const text of [new TextDecoder().decode(withBOM), await new Response(withBOM).text()]) {
+      expect(text).toBeLatin1String();
+      expect(text).toBe("éa");
+    }
+  });
+});

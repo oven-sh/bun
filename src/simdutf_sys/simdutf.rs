@@ -42,6 +42,11 @@ unsafe extern "C" {
         len: usize,
         utf16_output: *mut u16,
     ) -> SIMDUTFResult;
+    fn simdutf__convert_utf8_to_latin1_with_errors(
+        buf: *const u8,
+        len: usize,
+        latin1_output: *mut u8,
+    ) -> SIMDUTFResult;
     fn simdutf__convert_utf16le_to_utf8_with_errors(
         buf: *const u16,
         len: usize,
@@ -160,6 +165,28 @@ pub mod convert {
         use super::*;
         pub mod to {
             use super::*;
+
+            /// Appends nothing to `output` if the result is an error.
+            pub fn latin1_with_errors(
+                input: WithUtf16Len<'_>,
+                mut output: BorrowedCursor<'_, u8>,
+            ) -> SIMDUTFResult {
+                assert!(input.utf16_len <= output.capacity());
+                // SAFETY: simdutf writes at most a byte per byte that is no continuation byte, valid or
+                // not, and `utf16_len` counts each of those. On success `count` is the number it wrote.
+                unsafe {
+                    let result = simdutf__convert_utf8_to_latin1_with_errors(
+                        input.slice.as_ptr(),
+                        input.slice.len(),
+                        output.as_mut().as_mut_ptr().cast(),
+                    );
+                    if result.is_successful() {
+                        output.advance(result.count);
+                    }
+                    result
+                }
+            }
+
             pub mod utf16 {
                 use super::*;
                 pub mod with_errors {

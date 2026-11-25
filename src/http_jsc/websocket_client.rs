@@ -516,11 +516,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                 out.did_receive_bytes(data, kind as u8);
             }
             Opcode::Text => {
-                // this function encodes to UTF-16 if > 127
-                // so we don't need to worry about latin1 non-ascii code points
                 // we avoid trim since we wanna keep the utf8 validation intact
-                let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
-                    Ok(v) => v,
+                let text = match strings::decode_utf8_alloc(data, true) {
+                    Ok(strings::DecodedUtf8::Ascii) => BunString::clone_latin1(data),
+                    Ok(strings::DecodedUtf8::Latin1(latin1)) => {
+                        BunString::create_external_globally_allocated_latin1(latin1)
+                    }
+                    Ok(strings::DecodedUtf8::Utf16(utf16)) => {
+                        BunString::create_external_globally_allocated_utf16(utf16)
+                    }
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.fail(ErrorCode::InvalidUtf8);
                         return;
@@ -529,10 +533,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         self.fail(ErrorCode::FailedToAllocateMemory);
                         return;
                     }
-                };
-                let text = match utf16_bytes {
-                    Some(utf16) => BunString::create_external_globally_allocated_utf16(utf16),
-                    None => BunString::clone_latin1(data),
                 };
                 jsc::mark_binding!();
                 out.did_receive_text(text);

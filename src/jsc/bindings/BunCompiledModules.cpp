@@ -1388,14 +1388,6 @@ static std::optional<AOT::ModuleID> evaluatedProgramFile(Zig::GlobalObject* glob
     if (!reloadsFilesFromDisk())
         return std::nullopt;
     auto module = compiledModuleForPath(key);
-    if (!module || !AOT::hasRequireCacheEntry(globalObject, *module)) {
-        for (AOT::ModuleID form : AOT::importAttributeVariants(globalObject, key)) {
-            if (AOT::isDataFile(form) && AOT::moduleFilePath(form) == key && AOT::hasRequireCacheEntry(globalObject, form)) {
-                module = form;
-                break;
-            }
-        }
-    }
     // `bun test` evicts a file that imported a mock together with the mock, and reloads it when a graph reaches it.
     // A mock that was loaded since then is under the key.
     if (!module || !AOT::hasRequireCacheEntry(globalObject, *module) || (AOT::wasReleasedByLoader(globalObject, *module) && !AOT::hasActiveMock(globalObject, *module)) || AOT::hasPendingMock(globalObject, *module) || AOT::wasActiveMockEntryRemoved(globalObject, *module))
@@ -1436,8 +1428,8 @@ void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Fu
         return;
     if (reloadsFilesFromDisk()) {
         AOT::forEachRequireCacheKey(globalObject, [&](const String& path) {
-            if (auto module = evaluatedProgramFile(globalObject, path))
-                functor(AOT::isDataFile(*module) ? AOT::moduleFilePath(*module) : path);
+            if (evaluatedProgramFile(globalObject, path))
+                functor(path);
         });
     }
     AOT::forEachLibraryModuleInRequireCache(globalObject, functor);

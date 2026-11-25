@@ -312,6 +312,43 @@ export const t: T = { t: GLOBAL };
       expect(await build(String(dir), "--root", "..")).toEqual({ stderr: "", exitCode: 0, files });
     });
 
+    test.each(["../../a/dist/index", "../../a"])("gets one for a file whose output %s is imported", async specifier => {
+      const inOutDir = { ...options, outDir: "dist" };
+      using dir = tempDir("build-dts-references-output", {
+        "a/tsconfig.json": JSON.stringify({ compilerOptions: inOutDir, include: ["src"] }),
+        "a/package.json": JSON.stringify({ name: "a", main: "dist/index.js", types: "dist/index.d.ts" }),
+        "a/src/index.ts": `export interface T { t: number }\nexport const x: T = { t: 1 };\n`,
+        "a/src/unused.ts": `export const unused = 1;\n`,
+        "a/dist/index.js": `export const x = { t: 1 };\n`,
+        "a/dist/index.d.ts": `export interface T { t: number }\nexport declare const x: T;\n`,
+        "b/tsconfig.json": JSON.stringify({
+          compilerOptions: inOutDir,
+          include: ["src"],
+          references: [{ path: "../a" }],
+        }),
+        "b/src/index.ts": `import { x } from "${specifier}";\nexport const y = x;\n`,
+      });
+      const files = ["a/src/index.d.ts", "b/src/index.aot.ts", "b/src/index.d.ts", "b/src/index.js"];
+      expect(await build(String(dir), "--root", "..")).toEqual({ stderr: "", exitCode: 0, files });
+    });
+
+    test("keeps the types of a declaration file of it that an entry point imports", async () => {
+      using dir = tempDir("build-dts-references-declaration", {
+        ...projects,
+        "a/src/types.d.ts": `export interface T { t: number }\nexport declare enum Kind { One, Two }\n`,
+        "b/src/index.ts": `import { Kind, type T } from "../../a/src/types";
+export function f(kind: Kind): T {
+  return { t: kind };
+}
+`,
+      });
+      const files = ["b/src/index.aot.ts", "b/src/index.d.ts", "b/src/index.js"];
+      expect(await build(String(dir), "--root", "..")).toEqual({ stderr: "", exitCode: 0, files });
+      const typed = readFileSync(join(String(dir), "b/out/b/src/index.aot.ts"), "utf8");
+      expect(typed).toContain("interface T { t: number }");
+      expect(typed).toContain("declare enum Kind { One, Two }");
+    });
+
     test("has no place for that file outside the root directory, like any other project", async () => {
       using dir = tempDir("build-dts-references-outside", imported);
       expect(await build(String(dir))).toEqual({

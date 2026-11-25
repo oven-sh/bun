@@ -372,6 +372,45 @@ fn after_file_is_not_called_for_an_unchecked_file_that_no_entry_point_reaches() 
     assert_eq!(given_of_a(true), ["/a/used.d.ts", "/a/used.ts"]);
 }
 
+/// What is called for the files of `a`, which emits into `a/dist`, when the entry point `b/b.ts` is `entry` and `b`
+/// references `a`.
+fn given_of_referenced_project(entry: &str) -> Vec<String> {
+    let config_of_a = r#"{
+        "extends": "../tsconfig.json",
+        "compilerOptions": { "composite": true, "rootDir": ".", "outDir": "dist" },
+        "files": ["used.ts", "unused.ts", "types.d.ts", "../globals.d.ts"]
+    }"#;
+    let files = [
+        ("a/tsconfig.json", config_of_a),
+        ("a/package.json", r#"{ "types": "dist/used.d.ts" }"#),
+        ("a/used.ts", "export const used = 1;"),
+        ("a/unused.ts", "export const unused = 1;"),
+        ("a/types.d.ts", "export interface T { t: number }"),
+        ("b/tsconfig.json", &project_config(&["b.ts"], &["../a"])),
+        ("b/b.ts", entry),
+    ];
+    let paths = [project_path("b/b.ts")];
+    let mut request = entry_points(&paths, true);
+    request.plan_options.after_file_only_for_checked_files = true;
+    let given = all_given_to_after_file(&files, &request).0;
+    let of_a = given.into_iter().filter(|name| name.starts_with("/a/"));
+    of_a.filter(|name| !name.starts_with("/a/dist/")).collect()
+}
+
+#[test]
+fn a_file_is_reached_through_what_its_project_emits_for_it() {
+    for specifier in ["../a/dist/used", "../a/dist/used.js", "../a"] {
+        let entry = format!("import {{ used }} from '{specifier}'; export const b = used;");
+        assert_eq!(given_of_referenced_project(&entry), ["/a/used.ts"]);
+    }
+}
+
+#[test]
+fn a_declaration_file_of_a_referenced_project_is_reached() {
+    let entry = "import type { T } from '../a/types'; export const b: T = { t: 1 };";
+    assert_eq!(given_of_referenced_project(entry), ["/a/types.d.ts"]);
+}
+
 #[test]
 fn what_an_entry_point_reaches_does_not_depend_on_what_an_earlier_build_emitted() {
     for paths in [&["b/b.ts"], &["c/c.ts"]] {

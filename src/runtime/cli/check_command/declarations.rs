@@ -80,14 +80,17 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     });
 
     // By source: its `FileId`, the text of its declaration file, and what the checker knows about it. A task of the
-    // checker can run again, and two programs can check the same file: the last time counts, for all three.
+    // checker can run again, and two programs can check the same file: the last time counts, for all three. A program
+    // in which the file is in a package has neither for it, and doesn't count.
     let noted: Guarded<BTreeMap<Vec<u8>, (u32, Option<Vec<u8>>, Option<ModuleTypes>)>> =
         Guarded::new(BTreeMap::new());
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
         let types = module_types(checker, file);
         let text = checker.emit_declaration_file(file);
-        let source = checker.p.files.module(file).file_name().to_vec();
-        noted.lock().insert(source, (file.0, text, types));
+        if text.is_some() || types.is_some() {
+            let source = checker.p.files.module(file).file_name().to_vec();
+            noted.lock().insert(source, (file.0, text, types));
+        }
     };
     let has_configuration = tsconfig.is_some()
         || entry_paths.iter().any(|path| {

@@ -108,27 +108,19 @@ impl Descriptor {
         Ok(Descriptor { handle, flags })
     }
 
+    /// Not cached: duplicates of a synchronous handle share one lock.
     pub fn open_null_device(is_input: bool) -> Result<Descriptor, Win32Error> {
-        static HANDLES: [OnceLock<OwnedHandle>; 2] = [OnceLock::new(), OnceLock::new()];
-        let cached = &HANDLES[usize::from(is_input)];
-        let handle = match cached.get() {
-            Some(handle) => handle,
-            None => {
-                let access = if is_input {
-                    externs::GENERIC_READ
-                } else {
-                    externs::GENERIC_WRITE | externs::FILE_READ_ATTRIBUTES
-                };
-                let share = externs::FILE_SHARE_READ | externs::FILE_SHARE_WRITE;
-                let name = bun_core::wstr!("\\\\.\\NUL");
-                let handle = super::CreateFileW(name, access, share, externs::OPEN_EXISTING, 0)?;
-                cached.get_or_init(|| handle)
-            }
+        let access = if is_input {
+            externs::GENERIC_READ
+        } else {
+            externs::GENERIC_WRITE | externs::FILE_READ_ATTRIBUTES
         };
-        Ok(Descriptor {
-            handle: super::duplicate_handle_inheritable(handle.as_raw_handle())?,
-            flags: crt_descriptors::FOPEN | crt_descriptors::FDEV,
-        })
+        let share = externs::FILE_SHARE_READ | externs::FILE_SHARE_WRITE;
+        let name = bun_core::wstr!("\\\\.\\NUL");
+        let handle = super::CreateFileW(name, access, share, externs::OPEN_EXISTING, 0)?;
+        super::make_inheritable(handle.as_raw_handle())?;
+        let flags = crt_descriptors::FOPEN | crt_descriptors::FDEV;
+        Ok(Descriptor { handle, flags })
     }
 }
 

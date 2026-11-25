@@ -246,6 +246,14 @@ describe.concurrent.skipIf(!isWindows)("Windows spawn path resolution", () => {
       ]);
     });
 
+    test("receives non-ASCII words like ASCII words", async () => {
+      using dir = tempDir("spawn-batch", { "tool.cmd": "@if [%1]==[%~1] echo bare\r\n" });
+      expect([await run([`${dir}\\tool.cmd`, "e"]), await run([`${dir}\\tool.cmd`, "\u00e9\u4e16"])]).toEqual([
+        "bare",
+        "bare",
+      ]);
+    });
+
     test.each([...dirNames, "(parens)", "com,ma", "e=q", "x (86)"])(
       "is found through a PATH entry named %j",
       async dirName => {

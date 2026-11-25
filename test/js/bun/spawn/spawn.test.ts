@@ -2531,6 +2531,22 @@ describe.concurrent("file descriptors shared between parent and child", () => {
     }
   });
 
+  it.skipIf(!isWindows)("children do not share the file behind ignored stdio", async () => {
+    const script = `
+      const { GetStdHandle, SetFilePointerEx } = require("bun:ffi").dlopen("kernel32.dll", {
+        GetStdHandle: { args: ["i32"], returns: "i64" },
+        SetFilePointerEx: { args: ["i64", "i64", "ptr", "u32"], returns: "i32" },
+      }).symbols;
+      const position = new BigInt64Array(1);
+      SetFilePointerEx(GetStdHandle(-11 /* STD_OUTPUT_HANDLE */), 5n, position, 1 /* FILE_CURRENT */);
+      console.error(String(position[0]));`;
+    for (let i = 0; i < 2; i++) {
+      await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdio: ["ignore", "ignore", "pipe"] });
+      expect(await proc.stderr.text()).toBe("5\n");
+      expect(await proc.exited).toBe(0);
+    }
+  });
+
   it("extra fds keep their index when the slots in between are ignored", async () => {
     using dir = tempDir("spawn-sparse", { "4.txt": "four", "9.txt": "nine" });
     const fd4 = openSync(join(String(dir), "4.txt"), "r");

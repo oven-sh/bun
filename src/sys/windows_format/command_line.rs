@@ -81,7 +81,7 @@ pub(crate) fn is_batch_file(full_path: &[u16]) -> bool {
 
 fn can_omit_cmd_quotes(argument: &[u16]) -> bool {
     let is_unquoted = |&unit: &u16| {
-        u8::try_from(unit).is_ok_and(|byte| byte.is_ascii_alphanumeric())
+        char::from_u32(unit.into()).is_some_and(char::is_alphanumeric)
             || is_one_of(unit, b"#$*+-./:=?@\\_")
     };
     let mut segments = argument.split(|&unit| unit == u16::from(b'='));
@@ -356,6 +356,10 @@ mod tests {
         assert_eq!(
             build(r"C:\a b\x.cmd", &["k=v", "c d", "", r"e f\", "g&h"], false),
             Ok(r#" ""C:\a b\x.cmd" k=v "c d" "" "e f\\" "g&h"""#.to_owned())
+        );
+        assert_eq!(
+            build(r"C:\x.cmd", &["é", "日本", "a\u{a0}b"], false),
+            Ok(" \"\"C:\\x.cmd\" é 日本 \"a\u{a0}b\"\"".to_owned())
         );
         assert_eq!(
             build(r"\\?\C:\x.cmd", &["%b%"], false),

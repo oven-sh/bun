@@ -212,38 +212,38 @@ mod tests {
     #[test]
     fn threads_that_become_idle_join_in_the_middle_of_a_run() {
         set_up_output();
-        let threads = region_pool().max_threads();
-        if threads < 3 {
-            return;
-        }
-        let caches = ThreadCaches::default();
-        let (arrived, has_begun) = (AtomicUsize::new(0), AtomicBool::new(false));
-        let has_joined = AtomicBool::new(false);
-        let wait_until = |holds: &dyn Fn() -> bool| {
-            let began = std::time::Instant::now();
-            while !holds() {
-                assert!(began.elapsed() < std::time::Duration::from_secs(20));
-                std::thread::yield_now();
-            }
-        };
-        for_each_parallel_in_runs(&caches, threads, threads, 1, &|index| {
-            arrived.fetch_add(1, Ordering::SeqCst);
-            wait_until(&|| arrived.load(Ordering::SeqCst) == threads);
-            if index != 0 {
-                return wait_until(&|| has_begun.load(Ordering::SeqCst));
-            }
-            let starter = std::thread::current().id();
-            for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
-                if std::thread::current().id() != starter {
-                    return has_joined.store(true, Ordering::SeqCst);
-                }
-                has_begun.store(true, Ordering::SeqCst);
-                wait_until(&|| {
-                    crate::ask_idle_threads_to_join();
-                    has_joined.load(Ordering::SeqCst)
-                });
+        const THREADS: usize = 3;
+        static ALL_BUSY: Barrier = Barrier::new(THREADS);
+        static HAS_BEGUN: Barrier = Barrier::new(THREADS);
+        let pool = pool_without_spare_threads();
+        pool.limit_threads(THREADS);
+        for _ in 1..THREADS {
+            schedule_on(pool, || {
+                ALL_BUSY.wait();
+                HAS_BEGUN.wait();
             });
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        schedule_on(pool, move || {
+            ALL_BUSY.wait();
+            crate::POOL_OF_TEST.set(Some(pool));
+            let caches = ThreadCaches::default();
+            let starter = std::thread::current().id();
+            let has_joined = AtomicBool::new(false);
+            for_each_parallel_in_runs(&caches, 2, 3, 1, &|index| {
+                if std::thread::current().id() != starter {
+                    has_joined.store(true, Ordering::SeqCst);
+                } else if index == 0 {
+                    HAS_BEGUN.wait();
+                    while !has_joined.load(Ordering::SeqCst) {
+                        crate::ask_idle_threads_to_join();
+                        std::thread::yield_now();
+                    }
+                }
+            });
+            sender.send(()).unwrap();
         });
+        receiver.recv().unwrap();
     }
 
     #[cfg(panic = "unwind")]

@@ -231,6 +231,22 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "functions that read the file that a row of a list names, under a parameter",
+    counted: "rows and functions",
+    sizes: [100, 200],
+    instructionsPerItem: 8_000_000,
+    bytesPerItem: 128 * 1024,
+    write: count => {
+      const places = Array.from({ length: count + 1 }, (_, index) => index);
+      const rows = places.map(index => `  { name: "n${index}", file: path.join(__dirname, "shelf${index % 4}", "notes.txt") },\n`);
+      const readers = places.map(index => `exports.read${index} = key => {\n  const { name, file } = rows[key];\n  return fs.readFileSync(file, "utf8") + name;\n};\n`);
+      return {
+        "main.ts": `import "./helpers.cjs";\n`,
+        "helpers.cjs": `const fs = require("fs"), path = require("path");\nconst rows = [\n${rows.join("")}];\n${readers.join("")}`,
+      };
+    },
+  },
+  {
     name: "a file whose path an object holds that is spread into itself",
     counted: "assignments",
     sizes: [1_000, 4_000],

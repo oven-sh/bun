@@ -1182,12 +1182,18 @@ pub(super) fn find_caller_relative_alternatives(
     argument: ExprId,
     mention: ExprId,
     property: Option<Atom>,
+    findings_of_file: &FindingsOfFile,
 ) -> Option<Found> {
     let Binding::Symbol(parameter) = inputs.bound.binding(mention) else {
         return None;
     };
+    let folder = Folder::OfFile;
+    let of_any_caller = Follower::new(inputs, written_names, data_file_queries, false, folder);
     let folder = Folder::OfCaller;
     let mut follower = Follower::new(inputs, written_names, data_file_queries, false, folder);
+    if let Some(findings) = findings_of_file.0.borrow().get(&of_any_caller.mode()) {
+        (follower.findings.kept_as_written).clone_from(&findings.kept_as_written);
+    }
     follower.stand_in = Some(parameter);
     follower.stand_in_property = property;
     follower.keeps_known_alternatives = true;

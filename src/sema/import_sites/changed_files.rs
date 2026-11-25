@@ -1095,8 +1095,15 @@ impl<'a, 's> TextsOfFile<'a, 's> {
             return SmallVec::new();
         }
         let inputs = &self.inputs;
-        let found =
-            find_caller_relative_alternatives(inputs, names, asked, value, mention, member_read);
+        let found = find_caller_relative_alternatives(
+            inputs,
+            names,
+            asked,
+            value,
+            mention,
+            member_read,
+            &self.findings,
+        );
         let paths = found.map_or_else(SmallVec::new, |found| self.to_module_relative_paths(&found));
         let read = paths.into_iter().map(|path| CallerRelativeRead {
             function,

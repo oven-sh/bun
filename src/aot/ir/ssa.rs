@@ -8,10 +8,10 @@ use smallvec::SmallVec;
 
 use super::builder::{
     ENTRY_BLOCK, Edge, FunctionBuilder, ListInArena, LocalVariable, PendingBlock, PendingTarget,
-    Place, recycle_vector,
+    Place, TargetsByBlock, recycle_vector,
 };
 use super::generated::{BlockRole, Opcode, TerminatorKind};
-use super::ids::{BlockId, Id, TypeId, ValueId};
+use super::ids::{ABSENT_WORD, BlockId, Id, TypeId, ValueId};
 
 const MAX_SPARE_DEFINITIONS: usize = 1 << 10;
 const MAX_SPARE_OBSERVED_VALUES: usize = 1 << 10;
@@ -19,6 +19,8 @@ const MAX_SPARE_BLOCK_STATES: usize = 1 << 12;
 const MAX_SPARE_PENDING_READS: usize = 1 << 12;
 const MAX_SPARE_VARIABLES: usize = 1 << 12;
 pub(super) const MAX_SHORTCUT_DEFINITION_BLOCKS: usize = 8;
+const PARAMETER_NOT_YET_MADE: ValueId = ValueId::from_word(ABSENT_WORD - 1);
+const NO_NARROWING: u32 = 0;
 
 type Predecessors = SmallVec<[BlockId; 2]>;
 
@@ -48,9 +50,12 @@ struct BlockState {
     is_sealed: bool,
     is_loop_header: bool,
     incomplete_variables: ListInArena,
+    modified_variables: ListInArena,
+    parameter_variables: ListInArena,
     dominator: Option<DominatorLink>,
     ended_at: u32,
     defined_variables: ListInArena,
+    narrowings: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -83,7 +88,11 @@ enum Shortcut {
 #[derive(Copy, Clone)]
 enum StoreCount {
     Never,
-    Once(ValueId, BlockId),
+    Once {
+        value: ValueId,
+        block: BlockId,
+        has_narrowings: bool,
+    },
     Many,
 }
 
@@ -93,6 +102,14 @@ struct VariableState {
     definition_blocks: ListInArena,
     is_narrowed: bool,
     are_definitions_ordered: bool,
+    place_among_modified: u32,
+}
+
+/// The variables that tests above a block have narrowed: a trie over the bits of the variables, shared with the blocks above.
+#[derive(Copy, Clone)]
+enum Narrowing {
+    Of(LocalVariable, ValueId),
+    Fork { bit: u32, sides: [u32; 2] },
 }
 
 struct NarrowedName {
@@ -123,9 +140,11 @@ pub(super) struct SsaState {
     listed_variables: Vec<LocalVariable>,
     definitions: Definitions,
     pending_reads: Vec<PendingRead>,
+    headers_with_late_parameters: Vec<BlockId>,
     observed_values: FxHashSet<ValueId>,
     variables: Vec<VariableState>,
     narrowed_from: FxHashMap<ValueId, NarrowedName>,
+    narrowings: Vec<Narrowing>,
     ended_block_count: u32,
     #[cfg(test)]
     steps_through_every_join: bool,
@@ -151,6 +170,7 @@ impl SsaState {
             listed_variables: recycle_vector(self.listed_variables, MAX_SPARE_VARIABLES),
             pending_reads: recycle_vector(self.pending_reads, MAX_SPARE_PENDING_READS),
             variables: recycle_vector(self.variables, MAX_SPARE_VARIABLES),
+            narrowings: recycle_vector(self.narrowings, MAX_SPARE_VARIABLES),
             ended_block_count: 0,
             ..self
         }
@@ -197,6 +217,7 @@ impl SsaState {
             definition_blocks: ListInArena::default(),
             is_narrowed: false,
             are_definitions_ordered: false,
+            place_among_modified: 0,
         });
         variable
     }
@@ -323,6 +344,18 @@ impl SsaState {
         name.map_or(value, |name| name.origin)
     }
 
+    fn record_narrowed_name(&mut self, narrowed: ValueId, value: ValueId, block: BlockId) {
+        let tested = self.narrowed_from.get(&value);
+        let name = NarrowedName {
+            value,
+            origin: tested.map_or(value, |tested| tested.origin),
+            depth: tested.map_or(0, |tested| tested.depth) + 1,
+            block,
+            read_count: 0,
+        };
+        self.narrowed_from.insert(narrowed, name);
+    }
+
     fn find_value_behind_tests(&self, first: ValueId, second: ValueId) -> Option<ValueId> {
         let origin = self.origin_of(first);
         if origin != self.origin_of(second) {
@@ -383,12 +416,76 @@ impl SsaState {
     }
 
     fn find_dominating_store(&self, variable: LocalVariable, block: BlockId) -> Option<ValueId> {
-        let StoreCount::Once(value, definition_block) = self.variables[variable.0 as usize].stores
+        let state = &self.variables[variable.0 as usize];
+        let StoreCount::Once {
+            value,
+            block: definition_block,
+            has_narrowings,
+        } = state.stores
         else {
             return None;
         };
-        let dominator = self.states[definition_block.index()].dominator?;
-        (self.ancestor_at(block, dominator.depth) == Some(definition_block)).then_some(value)
+        if !self.dominates(definition_block, block) {
+            return None;
+        }
+        if !has_narrowings {
+            return Some(value);
+        }
+        let narrowed = self.find_narrowing(variable, block);
+        Some(narrowed.unwrap_or(value))
+    }
+
+    #[inline]
+    fn find_narrowing(&self, variable: LocalVariable, block: BlockId) -> Option<ValueId> {
+        let mut place = self.states[block.index()].narrowings;
+        while place != NO_NARROWING {
+            match self.narrowings[place as usize - 1] {
+                Narrowing::Of(other, narrowed) => return (other == variable).then_some(narrowed),
+                Narrowing::Fork { bit, sides } => place = sides[side_of(variable, bit)],
+            }
+        }
+        None
+    }
+
+    fn push_narrowing(&mut self, narrowing: Narrowing) -> u32 {
+        self.narrowings.push(narrowing);
+        self.narrowings.len() as u32
+    }
+
+    fn add_narrowing(&mut self, variable: LocalVariable, narrowed: ValueId, block: BlockId) {
+        let mut forks: SmallVec<[(u32, u32, [u32; 2]); 16]> = SmallVec::new();
+        let mut place = self.states[block.index()].narrowings;
+        let mut added = self.push_narrowing(Narrowing::Of(variable, narrowed));
+        while place != NO_NARROWING {
+            match self.narrowings[place as usize - 1] {
+                Narrowing::Of(other, _) if other == variable => break,
+                Narrowing::Of(other, _) => {
+                    let bit = (other.0 ^ variable.0).trailing_zeros();
+                    let kept = forks.partition_point(|fork| fork.1 < bit);
+                    let beside = forks.get(kept).map_or(place, |fork| fork.0);
+                    forks.truncate(kept);
+                    let mut sides = [beside; 2];
+                    sides[side_of(variable, bit)] = added;
+                    added = self.push_narrowing(Narrowing::Fork { bit, sides });
+                    break;
+                }
+                Narrowing::Fork { bit, sides } => {
+                    forks.push((place, bit, sides));
+                    place = sides[side_of(variable, bit)];
+                }
+            }
+        }
+        for &(_, bit, mut sides) in forks.iter().rev() {
+            sides[side_of(variable, bit)] = added;
+            added = self.push_narrowing(Narrowing::Fork { bit, sides });
+        }
+        self.states[block.index()].narrowings = added;
+    }
+
+    #[inline]
+    fn dominates(&self, above: BlockId, block: BlockId) -> bool {
+        let dominator = self.states[above.index()].dominator;
+        dominator.is_some_and(|link| self.ancestor_at(block, link.depth) == Some(above))
     }
 
     fn find_shortcut(&self, variable: LocalVariable, block: BlockId) -> Shortcut {
@@ -427,8 +524,11 @@ impl SsaState {
             Some((depth, _)) if depth >= current.depth => Shortcut::No,
             Some((depth, is_definition)) => match (self.ancestor_at(block, depth), is_definition) {
                 (Some(definition_block), true) => {
-                    let definition = self.definitions.get(definition_block, variable);
-                    definition.map_or(Shortcut::No, Shortcut::Value)
+                    match self.definitions.get(definition_block, variable) {
+                        Some(PARAMETER_NOT_YET_MADE) => Shortcut::To(definition_block),
+                        Some(definition) => Shortcut::Value(definition),
+                        None => Shortcut::No,
+                    }
                 }
                 (Some(join), false) => Shortcut::To(join),
                 (None, _) => Shortcut::No,
@@ -483,7 +583,15 @@ impl SsaState {
             }
         }
         let link = self.find_link_below(block, self.predecessors_of(block));
-        self.states[block.index()].dominator = Some(link);
+        self.set_dominator(block, link);
+    }
+
+    #[inline]
+    fn set_dominator(&mut self, block: BlockId, link: DominatorLink) {
+        let narrowings = self.states[link.parent.index()].narrowings;
+        let state = &mut self.states[block.index()];
+        state.dominator = Some(link);
+        state.narrowings = narrowings;
     }
 
     #[inline]
@@ -515,7 +623,7 @@ impl SsaState {
 
     fn link_below(&mut self, block: BlockId, predecessors: &[BlockId]) {
         let link = self.find_link_below(block, predecessors);
-        self.states[block.index()].dominator = Some(link);
+        self.set_dominator(block, link);
     }
 
     #[inline]
@@ -598,14 +706,21 @@ impl SsaState {
 fn for_each_edge_target(
     predecessor: &mut PendingBlock,
     targets: &mut [PendingTarget],
+    by_block: &TargetsByBlock,
     block: BlockId,
     mut visit: impl FnMut(&mut PendingTarget),
 ) {
     if let Some(terminator) = &predecessor.terminator {
-        let own = terminator.targets.start as usize..terminator.targets.end as usize;
-        for target in &mut targets[own] {
-            if target.block == block {
-                visit(target);
+        if let Some(places) = by_block.find(&terminator.targets, block) {
+            for place in places {
+                visit(&mut targets[place.1 as usize]);
+            }
+        } else {
+            let own = terminator.targets.start as usize..terminator.targets.end as usize;
+            for target in &mut targets[own] {
+                if target.block == block {
+                    visit(target);
+                }
             }
         }
     }
@@ -613,6 +728,19 @@ fn for_each_edge_target(
         && handler.block == block
     {
         visit(handler);
+    }
+}
+
+#[inline]
+fn side_of(variable: LocalVariable, bit: u32) -> usize {
+    (variable.0 >> bit & 1) as usize
+}
+
+fn lay_in_order(items: &mut [ValueId], order: &[(u32, u32)]) {
+    debug_assert_eq!(items.len(), order.len());
+    let former: SmallVec<[ValueId; 8]> = items.iter().copied().collect();
+    for (item, &(_, place)) in items.iter_mut().zip(order) {
+        *item = former[place as usize];
     }
 }
 
@@ -640,11 +768,21 @@ impl FunctionBuilder {
         self.ssa.record_definition_block(variable, block);
         let stores = &mut self.ssa.variables[variable.0 as usize].stores;
         *stores = match *stores {
-            StoreCount::Never => StoreCount::Once(value, block),
-            StoreCount::Once(_, definition_block) if definition_block == block && is_open => {
-                StoreCount::Once(value, definition_block)
-            }
-            StoreCount::Once(..) | StoreCount::Many => StoreCount::Many,
+            StoreCount::Never => StoreCount::Once {
+                value,
+                block,
+                has_narrowings: false,
+            },
+            StoreCount::Once {
+                block: definition_block,
+                has_narrowings,
+                ..
+            } if definition_block == block && is_open => StoreCount::Once {
+                value,
+                block,
+                has_narrowings,
+            },
+            StoreCount::Once { .. } | StoreCount::Many => StoreCount::Many,
         };
     }
 
@@ -656,7 +794,11 @@ impl FunctionBuilder {
         );
         let state = &mut self.ssa.variables[variable.0 as usize];
         debug_assert!(matches!(state.stores, StoreCount::Never));
-        state.stores = StoreCount::Once(value, place.block);
+        state.stores = StoreCount::Once {
+            value,
+            block: place.block,
+            has_narrowings: false,
+        };
         self.ssa.definitions.insert(place.block, variable, value);
         self.ssa.record_definition_block(variable, place.block);
     }
@@ -671,17 +813,38 @@ impl FunctionBuilder {
         narrowed: ValueId,
         value: ValueId,
     ) {
-        let tested = self.ssa.narrowed_from.get(&value);
-        let name = NarrowedName {
-            value,
-            origin: tested.map_or(value, |tested| tested.origin),
-            depth: tested.map_or(0, |tested| tested.depth) + 1,
-            block: self.current_block,
-            read_count: 0,
-        };
-        self.ssa.narrowed_from.insert(narrowed, name);
+        let block = self.current_block;
+        self.ssa.record_narrowed_name(narrowed, value, block);
         self.ssa.variables[variable.0 as usize].is_narrowed = true;
         self.write_variable(variable, narrowed);
+    }
+
+    pub fn narrow_stable_variable(
+        &mut self,
+        variable: LocalVariable,
+        narrowed: ValueId,
+        value: ValueId,
+    ) {
+        let block = self.current_block;
+        let stores = &mut self.ssa.variables[variable.0 as usize].stores;
+        let StoreCount::Once { has_narrowings, .. } = stores else {
+            return self.write_narrowed_variable(variable, narrowed, value);
+        };
+        *has_narrowings = true;
+        self.ssa.record_narrowed_name(narrowed, value, block);
+        debug_assert!(
+            self.is_open() && self.ssa.states[block.index()].dominator.is_some(),
+            "the blocks below begin with what is narrowed here"
+        );
+        self.ssa.add_narrowing(variable, narrowed, block);
+    }
+
+    pub fn is_undefined(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Undefined)
+    }
+
+    pub fn is_absent(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Absent)
     }
 
     pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
@@ -708,14 +871,6 @@ impl FunctionBuilder {
 
     pub fn is_new_closure(&self, value: ValueId) -> bool {
         matches!(self.opcode_of(value), Some(Opcode::NewClosure))
-    }
-
-    pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
-        let released = self.read_variable(variable);
-        self.write_variable(variable, assigned);
-        if self.is_open() && !self.is_undefined_or_null(released) {
-            self.release_hint(released);
-        }
     }
 
     fn must_split_before_store(&self, variable: LocalVariable) -> bool {
@@ -748,7 +903,9 @@ impl FunctionBuilder {
         self.ssa.states[block.index()].is_loop_header = true;
         for &variable in modified {
             if self.ssa.definitions.get(block, variable).is_none() {
-                self.create_incomplete_parameter(variable, block);
+                self.record_computed_definition(variable, block, PARAMETER_NOT_YET_MADE);
+                let modified_variables = &mut self.ssa.states[block.index()].modified_variables;
+                modified_variables.push(&mut self.ssa.listed_variables, variable);
             }
         }
     }
@@ -769,11 +926,83 @@ impl FunctionBuilder {
     fn complete_variables(&mut self, block: BlockId) {
         let state = &mut self.ssa.states[block.index()];
         let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
+        let modified_variables = state.modified_variables;
+        if incomplete_variables.len() > 1 && !modified_variables.is_empty() {
+            self.order_parameters_as_declared(block, incomplete_variables, modified_variables);
+        }
+        if !modified_variables.is_empty() {
+            self.ssa.states[block.index()].parameter_variables = incomplete_variables;
+        }
         for index in 0..incomplete_variables.len() {
             let variable = incomplete_variables.items(&self.ssa.listed_variables)[index];
             for predecessor in self.ssa.unique_predecessors(block) {
                 let value = self.read_variable_in(variable, predecessor);
                 self.append_argument(predecessor, block, value);
+            }
+        }
+    }
+
+    fn order_parameters_as_declared(
+        &mut self,
+        block: BlockId,
+        incomplete_variables: ListInArena,
+        modified_variables: ListInArena,
+    ) {
+        let parameters = self.blocks[block.index()].variable_parameters;
+        if parameters.len() != incomplete_variables.len() {
+            return;
+        }
+        for place in 0..modified_variables.len() {
+            let variable = modified_variables.items(&self.ssa.listed_variables)[place];
+            self.ssa.variables[variable.0 as usize].place_among_modified = place as u32;
+        }
+        let variables = incomplete_variables.items(&self.ssa.listed_variables);
+        let made = variables.iter().zip(parameters.items(&self.listed_values));
+        let mut made: SmallVec<[(u32, LocalVariable, ValueId); 8]> = made
+            .map(|(&variable, &parameter)| {
+                let place = self.ssa.variables[variable.0 as usize].place_among_modified;
+                (place, variable, parameter)
+            })
+            .collect();
+        made.sort_unstable_by_key(|entry| entry.0);
+        for (index, &(_, variable, parameter)) in made.iter().enumerate() {
+            incomplete_variables.items_mut(&mut self.ssa.listed_variables)[index] = variable;
+            parameters.items_mut(&mut self.listed_values)[index] = parameter;
+        }
+    }
+
+    pub(super) fn order_late_parameters_as_declared(&mut self) {
+        let mut headers = core::mem::take(&mut self.ssa.headers_with_late_parameters);
+        headers.sort_unstable();
+        headers.dedup();
+        for block in headers {
+            let state = &self.ssa.states[block.index()];
+            let (variables, modified_variables) =
+                (state.parameter_variables, state.modified_variables);
+            let parameters = self.blocks[block.index()].variable_parameters;
+            if parameters.len() != variables.len() || parameters.len() < 2 {
+                continue;
+            }
+            for place in 0..modified_variables.len() {
+                let variable = modified_variables.items(&self.ssa.listed_variables)[place];
+                self.ssa.variables[variable.0 as usize].place_among_modified = place as u32;
+            }
+            let variables = variables.items(&self.ssa.listed_variables).iter();
+            let places = variables
+                .map(|variable| self.ssa.variables[variable.0 as usize].place_among_modified);
+            let mut order: SmallVec<[(u32, u32); 8]> = places.zip(0..).collect();
+            if order.is_sorted() {
+                continue;
+            }
+            order.sort_unstable();
+            lay_in_order(parameters.items_mut(&mut self.listed_values), &order);
+            for predecessor in self.ssa.unique_predecessors(block) {
+                let listed_values = &mut self.listed_values;
+                let predecessor = &mut self.blocks[predecessor.index()];
+                let by_block = &self.targets_by_block;
+                for_each_edge_target(predecessor, &mut self.targets, by_block, block, |target| {
+                    lay_in_order(target.variable_arguments.items_mut(listed_values), &order);
+                });
             }
         }
     }
@@ -824,12 +1053,16 @@ impl FunctionBuilder {
     ) -> ValueId {
         let mut single_predecessor_run = 0;
         loop {
-            if let Some(definition) = self.ssa.definitions.get(block, variable) {
+            let definition = self.ssa.definitions.get(block, variable);
+            let makes_parameter = definition == Some(PARAMETER_NOT_YET_MADE);
+            if let Some(definition) = definition
+                && !makes_parameter
+            {
                 (self.ssa).record_observed_value(definition, first_value_of_read);
                 return definition;
             }
-            let should_try_shortcut =
-                self.ssa.predecessor_count(block) != 1 || single_predecessor_run % 4 == 3;
+            let should_try_shortcut = !makes_parameter
+                && (self.ssa.predecessor_count(block) != 1 || single_predecessor_run % 4 == 3);
             if should_try_shortcut {
                 match self.ssa.find_shortcut(variable, block) {
                     Shortcut::Value(definition) => {
@@ -845,7 +1078,8 @@ impl FunctionBuilder {
             }
             let state = &self.ssa.states[block.index()];
             let (is_sealed, predecessor_count) = (state.is_sealed, state.predecessors.len());
-            let is_pass_through = state.is_loop_header || (is_sealed && predecessor_count == 1);
+            let is_pass_through =
+                !makes_parameter && (state.is_loop_header || (is_sealed && predecessor_count == 1));
             let is_run_exhausted = single_predecessor_run > self.ssa.states.len();
             if is_pass_through && predecessor_count > 0 && !is_run_exhausted {
                 let pending_read = PendingRead::SinglePredecessor(block);
@@ -866,6 +1100,11 @@ impl FunctionBuilder {
             };
             let parameter = self.add_variable_parameter(variable, block);
             self.ssa.definitions.insert(block, variable, parameter);
+            if makes_parameter {
+                let variables = &mut self.ssa.states[block.index()].parameter_variables;
+                variables.push(&mut self.ssa.listed_variables, variable);
+                self.ssa.headers_with_late_parameters.push(block);
+            }
             let pending_read = PendingRead::Join(PendingJoin {
                 block,
                 parameter,
@@ -976,10 +1215,16 @@ impl FunctionBuilder {
             return false;
         }
         variable_parameters.pop(&self.listed_values);
+        let parameter_count = variable_parameters.len();
+        let variables = &mut self.ssa.states[block.index()].parameter_variables;
+        if variables.len() > parameter_count {
+            variables.pop(&self.ssa.listed_variables);
+        }
         let (ssa, listed_values) = (&mut self.ssa, &self.listed_values);
         for &predecessor in predecessors {
             let predecessor = &mut self.blocks[predecessor.index()];
-            for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+            let by_block = &self.targets_by_block;
+            for_each_edge_target(predecessor, &mut self.targets, by_block, block, |target| {
                 if let Some(argument) = target.variable_arguments.pop(listed_values) {
                     ssa.take_back_read(argument);
                 }
@@ -994,7 +1239,8 @@ impl FunctionBuilder {
     fn append_argument(&mut self, predecessor: BlockId, block: BlockId, value: ValueId) {
         let (ssa, listed_values) = (&mut self.ssa, &mut self.listed_values);
         let predecessor = &mut self.blocks[predecessor.index()];
-        for_each_edge_target(predecessor, &mut self.targets, block, |target| {
+        let by_block = &self.targets_by_block;
+        for_each_edge_target(predecessor, &mut self.targets, by_block, block, |target| {
             target.variable_arguments.push(listed_values, value);
             ssa.count_read(value);
         });

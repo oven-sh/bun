@@ -1,0 +1,22 @@
+[package]
+name = "bun_deflate"
+version.workspace = true
+edition.workspace = true
+autotests = false
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_alloc.workspace = true
+bun_highway.workspace = true
+bun_pod.workspace = true
+bun_removable_features.workspace = true
+
+[[test]]
+name = "deflate"
+path = "tests/main.rs"

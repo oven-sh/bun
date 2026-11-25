@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function bytes(view: Uint8Array, n: number): number { let sum = 0; for (let i = 0; i < view.length; i++) if (i % n) sum += view[i]!; return sum; }
+# function zeros(n: number): number { let sum = 0; for (let k = 0; k < n; k++) { sum += Math.imul(k, 2654435761) >>> 28; sum += Math.clz32(k); } return sum; }
+# function wide(view: Int32Array): number { let sum = 0; for (let i = 0; i < view.length; i++) sum += view[i]!; return sum; }
+# function small(x: number): number { return (x * 7) & 31; }
+# function called(n: number): number { let sum = 0; for (let k = 0; k < n; k++) sum += small(k); return sum; }
+# const view = new Uint8Array(40);
+# for (let i = 0; i < 40; i++) view[i] = i * 7;
+# print(bytes(view, 3), bytes(view, 4), zeros(100), wide(new Int32Array(4)), called(50));
+# -- end of source
+# A sum of small integers in a counted loop is at most the largest addend times the turns: an exact integer. What is added in the last loop may be any int32.
+# f1 = bytes, f2 = zeros, f3 = wide, f5 = called
+# RUN(BYTES): walk f1 mechanisms=all
+# BYTES-LABEL: code f1:Body
+# BYTES: Add {{*}} form=Integers
+# RUN(ZEROS): walk f2 mechanisms=all
+# ZEROS-LABEL: code f2:Body
+# ZEROS: Add {{*}} form=Integers
+# ZEROS: Add {{*}} form=Integers
+# RUN(CALLED): walk f5 mechanisms=all
+# CALLED-LABEL: code f5:Body
+# CALLED: Add {{*}} form=Integers
+# RUN(WIDE): walk f3 mechanisms=all
+# WIDE-LABEL: code f3:Body
+# WIDE: Add {{*}} form=Numbers

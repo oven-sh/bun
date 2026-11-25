@@ -2,7 +2,7 @@
 // JSON.stringify has quick cases that go by what they remember: a Structure that had no toJSON, the fields of a layout in the order of their keys, a list of properties. A quick case that succeeds says that no code had to run: under the word that checks the walk the general way writes the value again, and the two texts are held against each other.
 // Nothing here looks at a text that was written: it is enough that the writer ran. With an older memo (a Structure remembered behind an answer that held for one object only) seven of these calls stop by name.
 // A call that meets a toJSON leaves the quick cases, rightly, and is not asked again: the ten that are counted are those without one.
-// COUNTER: AnswersAskedAgain >= 10
+// COUNTER: FastPathResultsVerified >= 10
 type Entry = { name: string; toJSON?: () => string };
 function entry(name: string, custom: boolean): Entry {
   let work = 0;

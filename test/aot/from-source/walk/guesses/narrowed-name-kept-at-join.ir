@@ -1,0 +1,20 @@
+# -- source: narrowed-name-kept-at-join.ts
+# declare function print(value: unknown): void;
+# type Item = { kind: "a"; size: number } | { kind: "b"; weight: number };
+# const items: (Item | undefined)[] = [{ kind: "a", size: 1 }, undefined, { kind: "b", weight: 5 }];
+# (globalThis as unknown as { kept: unknown }).kept = items;
+# function isLarge(item: Item | undefined): boolean { return item !== undefined && item.kind === "a" && item.size > 3; }
+# function total(deep: boolean): number {
+#   let sum = 0;
+#   for (let i = 0, item = items[0]; item !== undefined; item = items[++i]) {
+#     if (deep && isLarge(item)) sum++;
+#     if (item.kind === "b") sum += item.weight;
+#     if (item.kind === "a") sum += item.size;
+#   }
+#   return sum;
+# }
+# print(total(true) + total(false));
+# -- end of source
+# Where ways meet that narrowed one value each in its own manner, the value keeps the narrowest name that all of them know.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-NOT: null|boolean|number|string|symbol|bigint|object?ContentsOfEscapedObject @JSValue, v

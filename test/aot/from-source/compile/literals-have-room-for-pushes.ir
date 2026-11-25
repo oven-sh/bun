@@ -1,0 +1,17 @@
+# An empty literal onto which four or more elements are always pushed has room for them at once. Three elements fit the default.
+# -- source: rooms.ts
+# class Item { constructor(public id: number) { } }
+# declare function report(value: number): void;
+# declare function id<T>(value: T): T;
+# const a = id(new Item(1)), b = id(new Item(2));
+# function three(): Item[] { const list: Item[] = []; list.push(a); list.push(b); list.push(a); return list; }
+# function four(): Item[] { const list: Item[] = []; list.push(a); list.push(b); list.push(a); list.push(b); return list; }
+# function nine(): Item[] { const list: Item[] = []; list.push(a); list.push(b); list.push(a); list.push(b); list.push(a); list.push(b); list.push(a); list.push(b); list.push(a); return list; }
+# function looped(count: number): Item[] { const list: Item[] = []; for (let i = 0; i < count; i++) list.push(a); return list; }
+# report(three().length + 10 * four().length + 100 * nine().length + 1000 * looped(id(6)).length + 10000 * (four()[3]!.id + nine()[8]!.id));
+# -- end of source
+# RUN: compile ArrayLiteralsAllocatedWithCapacity mechanisms=all
+# CHECK: statistic ArrayLiteralsAllocatedWithCapacity 2
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 36943
+# RUNS: exited with 0

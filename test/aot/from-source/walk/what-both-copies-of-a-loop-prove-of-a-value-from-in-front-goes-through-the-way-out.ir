@@ -1,0 +1,15 @@
+# `for (let i = 0; i <= b.length; i++) row.push(i);` with `b` proven undefined|string: the head reads b.length, so behind the loop b is a text. The loop is built twice: one copy proves it by the test in front, the other by the read in its head: two names of one value: at the join behind the loop both fell out of the state. They meet as a parameter now: the loops behind it know a text: the room of the list that the inner loop fills is asked for in front.
+# f3 = json, f1 = spread, f2 = all
+# -- source: what-both-copies-of-a-loop-prove-of-a-value-from-in-front-goes-through-the-way-out.js
+# const json = v => v;
+# const texts = json("alpha be gamma".split(" ")), others = json("alpha be gamma delta".split(" ").slice(1, 4));
+# function spread(a, b) { let row = []; for (let i = 0; i <= b.length; i++) row.push(i); for (let i = 1; i <= a.length; i++) { const next = [i]; for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); row = next; } return row[b.length]; }
+# function all(t) { let s = t & 3; for (const x of texts) { let best = 99; for (const y of others) { const d = spread(x, y); if (d < best) best = d; } s += best; } return s; }
+# let sum = 0; for (let t = 0; t < 3; t++) sum = (sum + all(t)) % 1000003; print(sum);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = RequireObjectCoercible
+# FORM: = ReserveArrayCapacity

@@ -10,9 +10,12 @@ const root = path.resolve(import.meta.dir, "..", "..", "..", "src", "js");
 
 // The bits that belong to a ReadableState or to a WritableState alone.
 const differsOnPurpose = {
-  "Flag.DefaultUTF8Encoding": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
-  "Flag.Ended": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
-  "Flag.Sync": ["internal/streams/readable.ts", "internal/streams/writable.ts"],
+  "Flag.DefaultUTF8Encoding": [
+    "ahead-of-time/internal/streams/readable.ts",
+    "ahead-of-time/internal/streams/writable.ts",
+  ],
+  "Flag.Ended": ["ahead-of-time/internal/streams/readable.ts", "ahead-of-time/internal/streams/writable.ts"],
+  "Flag.Sync": ["ahead-of-time/internal/streams/readable.ts", "ahead-of-time/internal/streams/writable.ts"],
 };
 
 function declaredConstants() {

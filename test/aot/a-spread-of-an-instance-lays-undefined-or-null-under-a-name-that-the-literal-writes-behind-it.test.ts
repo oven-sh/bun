@@ -1,6 +1,6 @@
 // `{ ...flag, state: false }`, where `flag` is an instance of a class whose `state` holds undefined: every name that the spread brings is listed by the record, so the record gains nothing, and its fields are filled at birth.
 // The plan gave `state` a slot for a boolean alone. The spread's copy runs during the birth and lays undefined there before the literal's own false comes, and the executable stopped:
-// "StoreOfOtherType .. the compiler has proven that it never happens". Each program says what plain Bun says.
+// "StoreOfOtherType .. the compiler proved that this never happens". Each program says what plain Bun says.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";

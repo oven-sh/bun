@@ -35,6 +35,7 @@
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
 //! anything a pass skips runs on the next one.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -49,14 +50,17 @@ pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
-    pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    /// No borrow spans a callback, which reaches this queue again.
+    map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
 }
 
 impl DeferredTaskQueue {
-    pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
+    pub fn post_task(&self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
+        // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
+        let map = unsafe { &mut *self.map.get() };
         // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
         // gives insert-if-absent + report-existing semantics.
-        match self.map.entry(ctx) {
+        match map.entry(ctx) {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
@@ -65,39 +69,84 @@ impl DeferredTaskQueue {
         }
     }
 
-    pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
+    pub fn unregister_task(&self, ctx: Option<NonNull<c_void>>) -> bool {
         // Order is irrelevant for this map's contract (see file doc), so
         // swap-remove is fine and O(1).
-        self.map.swap_remove(&ctx)
+        // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
+        unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&self) {
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
         let mut i: usize = 0;
-        let mut remaining = self.map.len();
-        while remaining > 0 && i < self.map.len() {
+        // SAFETY: the borrow ends before the callback below, after which `map` is borrowed anew.
+        let mut map = unsafe { &mut *self.map.get() };
+        let mut remaining = map.len();
+        while remaining > 0 && i < map.len() {
             remaining -= 1;
-            let key = self.map.keys()[i];
+            let key = map.keys()[i];
             let Some(nn) = key else {
-                self.map.swap_remove_at(i);
+                map.swap_remove_at(i);
                 continue;
             };
 
-            let task = self.map.values()[i];
+            let task = map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
             // `false` or is explicitly unregistered.
             let keep = unsafe { task(nn.as_ptr()) };
+            // SAFETY: the callback has returned; the borrow ends before the next one.
+            map = unsafe { &mut *self.map.get() };
             if !keep {
                 // `key` may already be gone (callback unregistered it) or may
                 // have moved; remove by key, not index.
-                self.map.swap_remove(&key);
-            } else if self.map.keys().get(i) == Some(&key) {
+                map.swap_remove(&key);
+            } else if map.keys().get(i) == Some(&key) {
                 i += 1;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::Cell;
+
+    #[derive(Default)]
+    struct Fixture {
+        queue: DeferredTaskQueue,
+        grow_calls: Cell<u32>,
+        calls: Box<[Cell<u32>; 32]>,
+    }
+
+    unsafe extern "C" fn count(ctx: *mut c_void) -> bool {
+        // SAFETY: posted with an element of `Fixture::calls`, which outlives `run`.
+        unsafe { &*ctx.cast::<Cell<u32>>() }.update(|n| n + 1);
+        false
+    }
+
+    unsafe extern "C" fn grow(ctx: *mut c_void) -> bool {
+        // SAFETY: posted with the `Fixture`, which outlives `run`.
+        let fixture = unsafe { &*ctx.cast::<Fixture>() };
+        fixture.grow_calls.update(|n| n + 1);
+        for calls in fixture.calls.iter() {
+            let ctx = NonNull::from(calls).cast();
+            fixture.queue.post_task(Some(ctx), count);
+        }
+        true
+    }
+
+    #[test]
+    fn a_task_that_grows_the_queue_does_not_take_the_turn_of_the_next() {
+        let fixture = Fixture::default();
+        let queue = &fixture.queue;
+        queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
+        queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
+        queue.run();
+        assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
     }
 }

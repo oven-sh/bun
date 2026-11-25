@@ -1,6 +1,6 @@
 // A function whose result is proven a number, an int32 or a boolean returns it raw. If caller and callee did not agree on the form, or the form held less than the function returns (a fraction, -0, NaN, an infinity, an integer past int32), each of these would be another value.
 // With no callee copied into its caller every call is a call, of the smallest function too.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function told(n) { report(n); report(n | 0); report(n + 0.5); report(n * 2); report(n > 2147483647); report(n === n); report(1 / n); report(typeof n); }
 function toldFlag(flag) { report(flag); report(!flag); report(flag ? 1 : 2); report(flag === true); report(flag + 1); report(typeof flag); }

@@ -1,0 +1,19 @@
+# A list written with constant values alone is one constant of the program. Its records are the function's own literals: what they hold under a name is expected of a read of that name off an element.
+# f1 = main
+# -- source: main.js
+# function main() {
+#   const points = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+#   globalThis.points = points;
+#   (0, eval)("1");
+#   let sum = 0;
+#   for (let i = 0; i < 100; i++) sum += points[i & 1].x * points[i & 1].y;
+#   print(sum);
+# }
+# main();
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: GetSlot {{*}} key="x" receivers=[L0]
+# WALK: Mul {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 700
+# ANSWERS-NEXT: exited with 0

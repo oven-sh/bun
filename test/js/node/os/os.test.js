@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunRun, compileFixture, isGlibc, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
+import { join } from "node:path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -198,6 +199,49 @@ it("networkInterfaces IPv6 loopback", () => {
     mac: expect.stringMatching(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/),
     internal: true,
     scopeid: 0,
+  });
+});
+
+// getifaddrs(3): `ifa_addr` and `ifa_netmask` "may contain a null pointer".
+// bun-musl is statically linked: LD_PRELOAD cannot load the shim.
+const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
+it.skipIf(!isGlibc || !cc)("networkInterfaces with an address that has no netmask", async () => {
+  using dir = tempDir("getifaddrs-no-netmask", {
+    "shim.c": `
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <netpacket/packet.h>
+
+static struct sockaddr_ll link = {.sll_family = AF_PACKET, .sll_halen = 6, .sll_addr = {1, 2, 3, 4, 5, 0xff}};
+static struct sockaddr_in v4 = {.sin_family = AF_INET};
+static struct sockaddr_in6 v6 = {.sin6_family = AF_INET6, .sin6_addr = {{{0xfe, 0x80, [15] = 1}}}, .sin6_scope_id = 7};
+
+#define ENTRY(next, addr) {.ifa_next = next, .ifa_name = "ppp0", .ifa_flags = IFF_UP | IFF_RUNNING, .ifa_addr = (void *)addr}
+static struct ifaddrs list[] = {ENTRY(&list[1], 0), ENTRY(&list[2], &link), ENTRY(&list[3], &v4), ENTRY(0, &v6)};
+
+int getifaddrs(struct ifaddrs **out) {
+  v4.sin_addr.s_addr = htonl(0x0a010203);
+  *out = list;
+  return 0;
+}
+
+void freeifaddrs(struct ifaddrs *list) {}
+`,
+  });
+  const shim = compileFixture(join(String(dir), "shim.c"));
+
+  const result = await bunRun(["-p", `JSON.stringify(require("os").networkInterfaces())`], {
+    LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+  });
+  expect(result).toSpawn();
+
+  const shared = { mac: "01:02:03:04:05:ff", internal: false };
+  expect(JSON.parse(result.stdout)).toEqual({
+    ppp0: [
+      { address: "10.1.2.3", cidr: "10.1.2.3/0", netmask: "0.0.0.0", family: "IPv4", ...shared },
+      { address: "fe80::1", cidr: "fe80::1/0", netmask: "::", family: "IPv6", scopeid: 7, ...shared },
+    ],
   });
 });
 

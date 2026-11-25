@@ -19,41 +19,36 @@ pub struct MySQLRequestQueue {
 }
 
 impl MySQLRequestQueue {
-    fn of(connection: &MySQLConnection) -> &Self {
-        &connection.connection.get().queue
-    }
-
     fn can_pipeline() -> bool {
         !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
             .get()
             .unwrap_or(false)
     }
 
-    pub(crate) fn advance(connection: &MySQLConnection) {
+    pub(crate) fn advance(&self, connection: &MySQLConnection) {
         loop {
-            let queue = Self::of(connection);
-            let written = queue.written.get();
-            if written > 0 && queue.requests.get()[0].is_completed() {
-                queue.requests.with_mut(|q| q.pop_front());
-                queue.written.set(written - 1);
+            let written = self.written.get();
+            if written > 0 && self.requests.get()[0].is_completed() {
+                self.requests.with_mut(|q| q.pop_front());
+                self.written.set(written - 1);
                 continue;
             }
-            let Some(request) = queue.requests.get().get(written).cloned() else {
+            let Some(request) = self.requests.get().get(written).cloned() else {
                 return;
             };
             if request.is_completed() {
-                queue.requests.with_mut(|q| q.remove(written));
+                self.requests.with_mut(|q| q.remove(written));
                 continue;
             }
             if request.can_be_followed() {
-                queue.written.set(written + 1);
+                self.written.set(written + 1);
                 continue;
             }
-            if !queue.is_waiting_to_write() || !connection.is_able_to_write() {
+            if !self.is_waiting_to_write() || !connection.is_able_to_write() {
                 return;
             }
             if let Err(err) = request.run(connection) {
-                connection.on_error(Some(&*request), err);
+                request.reject(err);
             }
         }
     }
@@ -78,12 +73,21 @@ impl MySQLRequestQueue {
         self.requests.with_mut(|q| q.push_back(request));
     }
 
-    /// The queue's `RefPtr` keeps the pointee live; `JSMySQLQuery` is a
-    /// separate heap allocation and fully interior-mutable, so a shared
-    /// `&JSMySQLQuery` via `Deref` is sound across `&mut self` on the connection.
     #[inline]
-    pub(crate) fn current(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
-        self.requests.get().front().map(RefPtr::this_ptr)
+    pub(crate) fn is_empty(&self) -> bool {
+        self.requests.get().is_empty()
+    }
+
+    pub(crate) fn is_head_in_flight(&self) -> bool {
+        self.requests
+            .get()
+            .front()
+            .is_some_and(|head| head.is_in_flight())
+    }
+
+    #[inline]
+    pub(crate) fn current(&self) -> Option<RefPtr<JSMySQLQuery>> {
+        self.requests.get().front().cloned()
     }
 
     pub(crate) fn clean(&self, reason: JSValue) {

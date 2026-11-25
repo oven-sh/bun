@@ -1,0 +1,1 @@
+import { c } from "./five.cjs"; export const four = c;

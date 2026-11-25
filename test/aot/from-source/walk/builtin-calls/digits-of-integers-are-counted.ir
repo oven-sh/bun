@@ -1,0 +1,13 @@
+# -- source: digits-of-integers-are-counted.ts
+# declare function sink(value: unknown): void;
+# function digits(turns: number) { let n = 0; for (let k = 0; k < turns; k++) n += String(k % 1000).length + (k % 100 + "").length; return n; }
+# sink(digits(100000));
+# -- end of source
+# The lengths of both strings are counted digits, and neither string is made.
+# f1 = digits
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: CallStringConstructor
+# CHECK-NOT: = Strcat
+# CHECK-NOT: = ToString
+# CHECK: = URShift

@@ -76,7 +76,6 @@ private:
     struct us_socket_t *parsingSocket = nullptr;
 
     HttpRouter<RouterData> router;
-    void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;

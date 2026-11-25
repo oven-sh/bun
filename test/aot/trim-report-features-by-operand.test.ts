@@ -42,11 +42,16 @@ describe.concurrent("the options of Bun.serve", () => {
       `const options: Record<string, unknown> = { port: 3000, ${handler} }; options.tls = { key: "a", cert: "b" }; Bun.serve(options as never);`,
     ],
     [
-      "a default export, which the host starts",
-      `export default { port: 3000, tls: { key: "a", cert: "b" }, ${handler} };`,
+      "a default export that is no literal, which the host starts",
+      `const options: Record<string, unknown> = { port: 3000, ${handler} }; options.tls = { key: "a", cert: "b" }; export default options;`,
     ],
   ])("%s: every feature stays", async (_, text) => {
     expect(await kept(text)).toEqual(expect.arrayContaining([bundler, nodeServers, laterProtocols, "TLS"]));
+  });
+  test("a literal exported by default, which the host starts, keeps what its options name", async () => {
+    const features = await kept(`export default { port: 3000, tls: { key: "a", cert: "b" }, ${handler} };`);
+    expect(features).toContain("TLS");
+    expect(features.filter(feature => [bundler, nodeServers, laterProtocols].includes(feature))).toEqual([]);
   });
 });
 

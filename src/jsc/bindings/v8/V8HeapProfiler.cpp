@@ -13,23 +13,6 @@
 
 namespace v8 {
 
-namespace shim {
-
-// Plain-C++ backing storage for v8::HeapProfiler. One instance per Isolate,
-// lazily created by Isolate::GetHeapProfiler() and reinterpret_cast'd to the
-// opaque v8::HeapProfiler* handed to callers.
-struct HeapProfilerImpl {
-    explicit HeapProfilerImpl(Isolate* isolate)
-        : m_isolate(isolate)
-    {
-    }
-
-    Isolate* m_isolate;
-    bool m_samplingActive { false };
-};
-
-} // namespace shim
-
 static inline shim::HeapProfilerImpl* toImpl(HeapProfiler* p)
 {
     return reinterpret_cast<shim::HeapProfilerImpl*>(p);
@@ -61,9 +44,7 @@ AllocationProfile* HeapProfiler::GetAllocationProfile()
 
 HeapProfiler* Isolate::GetHeapProfiler()
 {
-    if (!m_heapProfiler)
-        m_heapProfiler = new shim::HeapProfilerImpl(this);
-    return reinterpret_cast<HeapProfiler*>(m_heapProfiler);
+    return reinterpret_cast<HeapProfiler*>(&m_heapProfiler);
 }
 
 } // namespace v8

@@ -4,6 +4,7 @@ use super::*;
 use crate::compile::testing::{default_settings, with_loaded_build_and_options};
 use crate::load::ProjectId;
 use crate::load::runtime_modules::HOST_VALUE_MODULE;
+use crate::modules::bindings::list_in_order_of_stars;
 use crate::modules::testing::{describe_module, file_named, with_graph};
 use crate::modules::{
     Candidates, ModuleFailure, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules,
@@ -529,8 +530,9 @@ fn pattern_site_lists_candidates() {
 
 #[test]
 fn name_for_the_transpiler_alone_is_a_spelling_only_where_it_reads_the_name() {
-    let spellings_of = |argument: &str| {
-        let main = format!("const flag = process.argv.length; exports.it = require({argument});");
+    let spellings_under = |callee: &str, argument: &str| {
+        let start = "const flag = process.argv.length; const load = require;";
+        let main = format!("{start} exports.it = {callee}({argument});");
         let mut spellings = Vec::new();
         with_program(&[("main.cjs", main.as_str())], |program| {
             let spelled = program.only_candidates("main.cjs").iter();
@@ -539,12 +541,21 @@ fn name_for_the_transpiler_alone_is_a_spelling_only_where_it_reads_the_name() {
         spellings.sort();
         spellings
     };
+    let spellings_of = |argument: &str| spellings_under("require", argument);
     assert_eq!(spellings_of("['bun:url', 'os'][flag]"), ["os"]);
     assert_eq!(spellings_of("['node:url', 'os'][flag]"), ["node:url", "os"]);
     assert_eq!(spellings_of("{ a: 'bun:url', b: 'os' }[flag]"), ["os"]);
     assert_eq!(
         spellings_of("flag ? 'bun:os' : ['bun:url', 'path'][flag]"),
         ["bun:os", "path"]
+    );
+    assert_eq!(
+        spellings_of("false ? 'bun:os' : ['bun:os', 'path'][flag]"),
+        ["path"]
+    );
+    assert_eq!(
+        spellings_under("load", "flag ? 'bun:os' : ['bun:url', 'path'][flag]"),
+        ["path"]
     );
 }
 
@@ -663,7 +674,7 @@ fn candidates_of_each_site_are_a_range() {
         };
         let fs = HostModuleId(RuntimeModule::NodeFs.registry_id());
         let host_modules = [fs, HostModuleId(u32::MAX)];
-        let first = CodeAnswer::Computed(ComputedTargets::Modules {
+        let first = ComputedTargets::Modules {
             files: &[FileId(5), FileId(7)],
             host_modules: &host_modules,
             spellings: &[
@@ -671,18 +682,18 @@ fn candidates_of_each_site_are_a_range() {
                 (Atom(2), ComputedTarget::HostModule(HostModuleId(u32::MAX))),
                 (Atom(3), ComputedTarget::HostModule(fs)),
             ],
-        });
-        let second = CodeAnswer::Computed(ComputedTargets::Modules {
+        };
+        let second = ComputedTargets::Modules {
             files: &[FileId(5)],
             host_modules: &[],
             spellings: &[(Atom(1), ComputedTarget::File(FileId(5)))],
-        });
+        };
         assert_eq!(
-            scanner.scan_site(0, site, first),
+            scanner.scan_site(0, site, CodeAnswer::Computed(&first)),
             ScannedSite::Candidates(0..2)
         );
         assert_eq!(
-            scanner.scan_site(1, site, second),
+            scanner.scan_site(1, site, CodeAnswer::Computed(&second)),
             ScannedSite::Candidates(2..3)
         );
         let expected = [
@@ -954,11 +965,88 @@ fn external_module_names_importer_and_specifier() {
 }
 
 #[test]
+fn star_over_a_file_mentioned_above_other_stars_bears_its_place() {
+    let create_draft = |file: u32, is_star_export: bool| RequestDraft {
+        target: ModuleRef::File(FileId(file)),
+        phase: ImportPhase::Evaluation,
+        is_star_export,
+        star_place: NO_STAR_PLACE,
+    };
+    let limit = MAX_SCANNED_REQUESTS as u32;
+    for others in [0, limit, 3 * limit] {
+        let (first, second) = (others, others + 1);
+        let mut requests = RequestList::default();
+        for file in 0..others {
+            requests.add(create_draft(file, false));
+        }
+        requests.add(create_draft(second, false));
+        requests.add(create_draft(first, true));
+        requests.add(create_draft(second, true));
+        requests.add(create_draft(second, true));
+        requests.add(create_draft(first, false));
+
+        let listed = requests.drafts[others as usize..].iter();
+        let listed: Vec<(ModuleRef, bool, u32)> = listed
+            .map(|it| (it.target, it.is_star_export, it.star_place))
+            .collect();
+        let file = |file: u32| ModuleRef::File(FileId(file));
+        assert_eq!(listed, [(file(second), true, 1), (file(first), true, 0)]);
+
+        let finished: Vec<ModuleRequest> = requests.drafts[others as usize..]
+            .iter()
+            .map(|draft| ModuleRequest {
+                is_star_export: draft.is_star_export,
+                star_place: draft.star_place,
+                ..ModuleRequest::import(draft.target)
+            })
+            .collect();
+        let in_order: Vec<(ModuleRef, bool)> = list_in_order_of_stars(&finished)
+            .iter()
+            .map(|it| (it.target, it.is_star_export))
+            .collect();
+        assert_eq!(
+            in_order,
+            [
+                (file(second), false),
+                (file(first), true),
+                (file(second), true)
+            ]
+        );
+    }
+}
+
+#[test]
+fn constant_name_at_require_made_of_handed_url_has_one_answer() {
+    let main = "import { createRequire } from 'node:module';
+        function probe(url) {
+            const load = createRequire(url);
+            try { load('./gauge.json'); } catch {}
+        }
+        probe(import.meta.url);";
+    for code in ["gauge.json.cjs", "gauge.json/index.js"] {
+        with_program(
+            &[("main.mjs", main), (code, "module.exports = {};")],
+            |program| {
+                let [failure] = program.graph.failures() else {
+                    panic!("the failures are {:?}", program.graph.failures());
+                };
+                let ModuleFailureKind::Unresolved { specifier, .. } = failure.kind else {
+                    panic!("the failure is {:?}", failure.kind);
+                };
+                assert_eq!(program.text_of(specifier), "./gauge.json", "{code}");
+                assert_eq!(failure.effect(), FailureEffect::ThrowsAtSite);
+            },
+        );
+    }
+}
+
+#[test]
 fn requests_merge_past_scan_limit() {
     let create_draft = |file: u32, is_star_export: bool| RequestDraft {
         target: ModuleRef::File(FileId(file)),
         phase: ImportPhase::Evaluation,
         is_star_export,
+        star_place: NO_STAR_PLACE,
     };
     let limit = MAX_SCANNED_REQUESTS as u32;
     for count in [limit, limit + 1, 3 * limit] {

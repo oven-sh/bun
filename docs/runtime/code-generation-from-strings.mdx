@@ -89,6 +89,8 @@ These keep working at both levels:
 - `import()` of a `data:` or `blob:` URL that holds data, such as JSON, and of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
+A `vm.SyntheticModule` runs a function of the program's own, so `=strict` does not let `node:vm` stop it part-way. `module.evaluate()` with `timeout` or `breakOnSigint: true` rejects with a `TypeError` whose code is `ERR_INVALID_ARG_VALUE`, and the module does not run.
+
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).
 
 ## The inspector
@@ -171,7 +173,7 @@ A compiled executable does not read its own command line as Bun flags. `./server
 
 `bun compile --trim` does not turn the flag on. `eval` and `new Function` work in a trimmed executable as in any other.
 
-If you pass both, the flag also makes the executable smaller: Bun removes the JavaScript parser and the interpreter, since nothing can use them. See [Turn off code from strings](/compiler/size#turn-off-code-from-strings).
+If you pass both, `--trim` can remove more. See [Smaller executables](/compiler/size).
 
 ### Files on disk are not part of the program
 

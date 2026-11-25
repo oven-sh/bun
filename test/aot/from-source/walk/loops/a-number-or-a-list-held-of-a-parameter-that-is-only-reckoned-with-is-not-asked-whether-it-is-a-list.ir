@@ -1,0 +1,33 @@
+# -- source: main.js
+# const places = { a1: 5, b2: 12, c3: 19, d4: [1, 2, 3] };
+# const offsets = { n: [7, 9, 11], k: [1, 8, 13] };
+# function reaches(place, from, kind) { let hits = 0; for (let k = 0; k < offsets[kind].length; k++) { for (let s = from + offsets[kind][k]; !(s & 0x88); s += offsets[kind][k]) { if (s === place) hits++; } } return hits + (place - from > 0 ? 100 : 0); }
+# function fills(list, from, kind) { let hits = 0; for (let k = 0; k < offsets[kind].length; k++) { for (let s = from + offsets[kind][k]; !(s & 0x88); s += offsets[kind][k]) { if (s === 40) list.push(s); hits++; } } return hits + " " + list.length; }
+# const kept = { w: -1, b: -1 };
+# function keep(side, i) { kept["wb".charAt(side)] = places["abcd".charAt(i) + (i + 1)]; }
+# function at(i, turn) { keep(turn & 1, i); return reaches(kept["wb".charAt(turn & 1)], turn, "nk".charAt(turn & 1)); }
+# for (let turn = 0; turn < 3; turn++) for (let i = 0; i < 4; i++) print(at(i, turn));
+# print(at(7, 0));
+# print(at(3, 5));
+# keep(0, 3);
+# print(fills(kept["wb".charAt(0)], 0, "nk".charAt(1)));
+# print(places.d4.join());
+# print("end");
+# -- end of source
+# `reaches(places[name], from)`: the table holds numbers and one list, and it is read under a key that nobody knows, so of the parameter Link holds a number or a list. The function subtracts from it and compares it: no name and no key is read off it, it is not called and not stepped through. Nothing bears out the list, so the turns are not built for a list behind a question in front of them, which a number would fail at every call: the value is asked whether it is a number where it is used.
+# `fills(kept[side], ..)` is handed the same, and calls `push` off it, which lists alone have: there the uses bear out the list, and the question stays in front of the turns.
+# f1 = reaches, f3 = fills
+# RUN(HELD): link held functions mechanisms=all
+# HELD-LABEL: function f1
+# HELD: parameter 0 {{*}}proven=undefined|null|i32|Array
+# HELD-LABEL: function f3
+# HELD: parameter 0 {{*}}proven=undefined|null|i32|Array
+# The turns are built twice, typed and as written; no question in front of them asks the number whether it is a list.
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM-NOT: = TypeTest v0 testedType=Array
+# FORM: frequency=Rare isLoopHead=true
+# FORM-NOT: = TypeTest v0 testedType=Array
+# RUN(LIST): walk f3 mechanisms=all
+# LIST-LABEL: code f3:Body
+# LIST: = TypeTest v0 testedType=Array

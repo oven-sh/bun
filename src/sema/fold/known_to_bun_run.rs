@@ -1,6 +1,6 @@
 use super::Constant;
 use super::evaluate::Value;
-use super::folder::{Effects, Folder};
+use super::folder::{Effects, Folded, Folder};
 use super::inputs::DefineValue;
 use super::known_sets::is_prototype_of_patterns_locked;
 use crate::atom::{Atom, known};
@@ -184,7 +184,7 @@ impl<'s> Folder<'_, 's> {
         let Value::Known(value) = folded.value else {
             return false;
         };
-        if folded.effects == Effects::Unknown {
+        if self.has_unknown_effects(folded) {
             return false;
         }
         match self.evaluator.to_constant(value) {
@@ -492,8 +492,16 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn is_literal_to_bun_run(&self, e: ExprId) -> bool {
         let folded = self.folded(e);
         matches!(folded.value, Value::Known(_))
-            && folded.effects != Effects::Unknown
+            && !self.has_unknown_effects(folded)
             && self.is_folded_by_bun_run(e)
+    }
+
+    fn has_unknown_effects(&self, folded: Folded) -> bool {
+        match folded.effects {
+            Effects::Unknown => true,
+            Effects::LeftOutUnderMinifySyntax => !self.minifies_syntax(),
+            _ => false,
+        }
     }
 
     pub(super) fn tells_condition_without_effects(&self, e: ExprId) -> bool {
@@ -528,10 +536,15 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn effects_where_unused(
         &self,
         operand: ExprId,
-        is_left_out: impl FnOnce(&Self) -> bool,
+        is_left_out: impl Fn(&Self) -> bool,
     ) -> Effects {
         match self.folded(operand).effects {
-            Effects::Unknown if is_left_out(self) => Effects::LeftOutByBunRun,
+            Effects::Unknown | Effects::LeftOutUnderMinifySyntax if is_left_out(self) => {
+                Effects::LeftOutByBunRun
+            }
+            Effects::Unknown if self.holds_under_minify_syntax(is_left_out) => {
+                Effects::LeftOutUnderMinifySyntax
+            }
             effects => effects,
         }
     }

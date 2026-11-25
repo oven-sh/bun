@@ -27,6 +27,7 @@ const clone = (name: "Request" | "Response") =>
 export const Request = b.class({
   rustPath: "crate::webcore::Request",
   refCounted: true,
+  thisValue: "js_ref",
   final: false,
   overridesToJS: true,
   rustTraits: body.rustTraits,
@@ -67,7 +68,7 @@ const factory = { args: { args: b.any.variadic }, returns: b.any.returning("Resp
 export const Response = b.class({
   rustPath: "crate::webcore::Response",
   refCounted: true,
-  finalize: true,
+  thisValue: "js_ref",
   overridesToJS: true,
   rustTraits: body.rustTraits,
   estimatedSize: true,

@@ -1,7 +1,4 @@
-use super::check::codes_beside_declarations;
-use super::support::{
-    BringsBunTypes, PROJECT, check_only, project_disk, with_host, with_look_for_type_errors,
-};
+use super::support::{check_only, with_look_for_type_errors};
 
 #[test]
 fn a_script_of_the_project_declares_the_modules_that_it_names() {
@@ -41,6 +38,30 @@ fn another_file_imports_the_module_that_a_script_of_the_project_declares() {
 }
 
 #[test]
+fn a_union_that_lost_members_has_a_map_of_its_tags_only_where_tsc_makes_one() {
+    for (second, third, codes) in [("c", "\"a\" | \"b\"", &[2339][..]), ("k", "\"a\"", &[])] {
+        let text = format!(
+            "enum E {{ Zero, One }}
+type C1 = {{ kind: \"c\"; c1: number }}; type C2 = {{ kind: \"{second}\"; c2: number }}; type AB = {{ kind: {third} }};
+type D = {{ kind: \"d\" }}; type Ee = {{ kind: \"e\" }}; type N1 = {{ kind: 1; one: number }}; type NE = {{ kind: E.One; other: string }};
+type F = {{ kind: \"f\" }}; type G = {{ kind: \"g\" }}; type H = {{ kind: \"h\" }}; type I = {{ kind: \"i\" }}; type J = {{ kind: \"j\" }};
+type U = C1 | C2 | AB | D | Ee | N1 | NE | F | G | H | I | J;
+function read(x: U): number {{
+  if (x.kind === \"d\") return 0;
+  if (x.kind === \"e\") return 0;
+  if (x.kind === 1) return x.one;
+  return -1;
+}}
+export const answer = read({{ kind: 1, one: 5 }});
+"
+        );
+        with_look_for_type_errors(&[("main.ts", &text[..])], &["./main.ts"], |program| {
+            assert_eq!(check_only(program).codes(), codes, "{text}");
+        });
+    }
+}
+
+#[test]
 fn what_is_required_out_of_a_data_file_is_its_value() {
     let cases: [(&str, &[u32]); 3] = [
         (
@@ -64,94 +85,19 @@ fn what_is_required_out_of_a_data_file_is_its_value() {
     }
 }
 
-fn codes_beside_brought(of_project: &str, brought: &str, main: &str) -> Vec<u32> {
-    let folder = format!("{}/bun", BringsBunTypes::TYPE_ROOT);
-    let manifest = format!("{folder}/package.json");
-    let declarations = format!("{folder}/index.d.ts");
+#[test]
+fn the_check_of_a_build_takes_a_script_of_the_project_for_a_module() {
     let files = [
-        ("main.ts", main),
-        ("first.d.ts", of_project),
         (
-            &manifest[..],
-            "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+            "main.ts",
+            "/// <reference path=\"./declared.d.ts\" />\nclass Held {\n  own = 1;\n}\nenum Level {\n  Own = 4,\n}\nfunction show(level: Level): string {\n  return level + \" \" + Level[level];\n}\nconst all = [new Held().own, new Held().declared, show(Level.Own), show(3)];\n",
         ),
-        (&declarations[..], brought),
+        (
+            "declared.d.ts",
+            "interface Held {\n  declared?: number;\n}\ndeclare enum Level {\n  One = 1,\n  Three = 3,\n}\n",
+        ),
     ];
-    let disk = project_disk(&files, 1);
-    let mut codes = Vec::new();
-    with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
-        codes = check_only(program).codes();
+    with_look_for_type_errors(&files, &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [2339, 2345]);
     });
-    codes
-}
-
-#[test]
-fn a_member_that_the_brought_declarations_add_to_a_name_is_asked_last_and_stops_nothing() {
-    let of_project =
-        "declare function parse(text: string): number;\ninterface Meta { url: string }\n";
-    let brought = "declare namespace parse { function strictly(text: string): number; }\n\
-                   interface Meta { dirname: string }\n";
-    let main = "function own(text: string): number { return 1; }\n\
-                function wrong(text: number): number { return text; }\n\
-                function take(given: typeof parse) {}\n\
-                take(own);\n\
-                take(wrong);\n\
-                export const meta: Meta = { url: \"a\" };\n\
-                export const lacks: Meta = {};\n\
-                declare const made: { url: number };\n\
-                export const other: Meta = made;\n\
-                class Kept implements Meta { url = \"a\"; }\n\
-                class Lost implements Meta { url = 1; }\n\
-                export const all = [new Kept(), new Lost()];\n";
-    assert_eq!(
-        codes_beside_brought(of_project, brought, main),
-        [2345, 2739, 2322, 2416]
-    );
-}
-
-#[test]
-fn a_declaration_of_the_program_is_held_against_no_brought_declaration() {
-    let declared = "interface ImportMeta { dirname: string; main: boolean }\n\
-                    declare var exports: any;\n\
-                    interface Dict<T> { [key: string]: T | undefined }\n\
-                    interface Settings extends Dict<string> {}\n\
-                    interface Pair<A> { a: A }\n";
-    let main = "declare global {\n\
-                interface ImportMeta { readonly dirname: string; main?: boolean }\n\
-                var exports: { made: number };\n\
-                interface Settings { port: number }\n\
-                interface Pair<A, B> { b: B }\n\
-                }\nexport {};\n";
-    let installed = codes_beside_declarations(true, declared, main, "");
-    assert_eq!(installed, [2687, 2687, 2717, 2403, 2411, 2428]);
-    assert_eq!(codes_beside_declarations(false, declared, main, ""), [0; 0]);
-
-    let main = "declare global {\n\
-                interface ImportMeta { dirname: string; main: boolean }\n\
-                interface ImportMeta { dirname: number; readonly main: boolean }\n\
-                interface Pair<A> { c: A }\n\
-                interface Pair<A, B> { b: B }\n\
-                }\nexport {};\n";
-    let brought = codes_beside_declarations(false, declared, main, "");
-    assert_eq!(brought, [2717, 2687, 2428, 2428]);
-}
-
-#[test]
-fn a_merge_with_a_brought_declaration_that_is_refused_stops_nothing() {
-    let declared = "declare var process: { argv: string[] };\n\
-                    declare var Buffer: { size: number };\n\
-                    interface Timer { id: number }\n";
-    let main = "declare global {\n\
-                const process: { readonly argv: readonly string[] };\n\
-                enum Buffer { Small }\n\
-                type Timer = number;\n\
-                const made: number;\n\
-                const made: string;\n\
-                }\nexport {};\n";
-    let installed = codes_beside_declarations(true, declared, main, "");
-    assert_eq!(installed, [2451, 2567, 2300, 2451, 2451]);
-    assert_eq!(
-        codes_beside_declarations(false, declared, main, ""),
-        [2451, 2451]
-    );
 }

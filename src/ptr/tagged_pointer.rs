@@ -83,14 +83,10 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 //   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
 //                       tag range.
 //   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value (1024 - index).
+//                       that type's tag value.
 //
 // Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
 // the trait-bound failure.
-//
-// Tag values are assigned as `1024 - i` for index `i`. We keep the raw u15
-// and expose `tag()` as the integer (callers that need an enum can define one
-// per instantiation).
 
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
 pub trait TypeList {}
@@ -123,17 +119,6 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub fn tag(self) -> TagType {
-        self.repr.data()
-    }
-
-    /// The tag constant for `Type`.
-    #[inline]
-    pub const fn case<Type: UnionMember<Ts>>() -> TagType {
-        Type::TAG
     }
 
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type

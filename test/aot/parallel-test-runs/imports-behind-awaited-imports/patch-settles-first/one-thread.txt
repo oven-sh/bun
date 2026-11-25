@@ -1,0 +1,1 @@
+A file is read while the factory of an async mock settles.

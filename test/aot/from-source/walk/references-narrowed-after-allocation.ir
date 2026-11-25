@@ -1,0 +1,29 @@
+# -- source: main.ts
+# declare const sink: any;
+# declare const words: string[];
+# class Link {
+#   name: string | null;
+#   next: Link | null;
+#   other: Link | undefined;
+#   label: string | undefined;
+#   constructor(name: string | null, next: Link | null, other: Link | undefined, label: string | undefined) { this.name = name; this.next = next; this.other = other; this.label = label; }
+# }
+# function chain(count: number): Link | null {
+#   let last: Link | null = null;
+#   let other: Link | undefined;
+#   for (let i = 0; i < count; i++) {
+#     const made: Link = new Link(i % 5 ? words[i]! : null, last, other, i % 3 ? words[i]! : undefined);
+#     other = i % 2 ? made : undefined;
+#     last = made;
+#   }
+#   return last;
+# }
+# const last = chain(words.length);
+# sink(last === null ? "" : last.name, last === null ? "" : last.label, last?.next?.name, last?.other?.name);
+# -- end of source
+# A reference that may be null or undefined is narrowed where the new object stores it, behind the allocation: no narrow word lives across the call that may collect.
+# RUN(WALK): walk f2
+# WALK-LABEL: code f2:Body
+# WALK-NOT: = Compress
+# WALK: = NewObject {{*}}layout=L0
+# WALK-NOT: = Compress

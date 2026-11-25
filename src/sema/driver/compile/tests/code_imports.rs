@@ -144,7 +144,7 @@ import(name);
             specifier: atoms.intern(b"https://example.com/x.js"),
             kind: ExternalKind::UncompiledCode,
         };
-        let unknown = CodeAnswer::Computed(ComputedTargets::All {
+        let unknown = CodeAnswer::Computed(&ComputedTargets::All {
             cause: ComputedUnknown::NoPattern,
             host_modules: &[],
         });
@@ -189,7 +189,7 @@ fn computed_specifier_with_prefix_answers_a_set() {
         };
         assert_eq!(
             code_answers(program, "main.js"),
-            [CodeAnswer::Computed(expected)]
+            [CodeAnswer::Computed(&expected)]
         );
         assert_eq!(code_edges(program, "main.js"), [a, b]);
         assert!(program.files().is_compiled(a) && program.files().is_compiled(b));
@@ -211,7 +211,7 @@ fn computed_specifier_without_prefix_is_unknown() {
         };
         assert_eq!(
             code_answers(program, "main.js"),
-            [CodeAnswer::Computed(expected)]
+            [CodeAnswer::Computed(&expected)]
         );
         assert!(code_edges(program, "main.js").is_empty());
         assert_eq!(program.find("pages/a.js"), None);

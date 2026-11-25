@@ -40,8 +40,11 @@ extern "C" BunAOTResult* Bun__AOT__compile(
     void* programOwner,
     const JSC::AOT::Wire::CompileOptions*,
     const JSC::AOT::HostThreadPool*, // Its function is still called after this has returned, and what it is handed runs then: the pool lives as long as the process.
-    size_t (*sizeOfFunctionText)(void* owner, uint32_t module),
-    void (*copyFunctionText)(void* owner, uint32_t module, uint8_t* destination));
+    size_t (*functionSourceSize)(void* owner, uint32_t module),
+    void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination),
+    const uint8_t* (*viewFunctionSource)(void* owner, uint32_t module),
+    void (*releaseFunctionSources)(void* owner),
+    BunAOTBytes orderFile);
 extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wire::ResultSection);
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();
@@ -57,7 +60,7 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
 
 // BunCompilers.cpp
 extern "C" bool Bun__AOT__hasCompiler();
-extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport));
+extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, uint8_t form, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport));
 
 // BunAOTHostBindings.cpp, generated
 extern "C" void Bun__AOT__registerHostBindings();
@@ -69,6 +72,10 @@ extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::Admitt
 #endif
 extern "C" BunAOTBytes Bun__AOT__imageCode();
 extern "C" void Bun__AOT__setVerbose(bool isVerbose);
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char* path);
+extern "C" void Bun__AOT__finishOrderRecording();
+extern "C" bool Bun__AOT__recordsOrder();
+extern "C" bool Bun__AOT__isRecordingOrder();
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address);
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset);
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress);

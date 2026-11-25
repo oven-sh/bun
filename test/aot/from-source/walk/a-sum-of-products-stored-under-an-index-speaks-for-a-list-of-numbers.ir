@@ -1,0 +1,13 @@
+# `mixed[i] = c * a + a * b + b * c`: a sum of sums of products: every side down to the leaves is a product.
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,4.5]"), second = JSON.parse("[0.5,0.25,2,4]"), third = JSON.parse("[3,1,0.5,8]"), mixed = JSON.parse("[0,0,0,0]");
+# function run(count) { for (let i = 0; i < count; i++) { const c = first[i], a = second[i], b = third[i]; mixed[i] = c * a + a * b + b * c; } return mixed.join(); }
+# publish(run);
+# -- end of source
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP: PutContiguousIndex
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2)); print(run(4)); };
+# SHELL: 6.75,3.375,0,0
+# SHELL-NEXT: 6.75,3.375,9.75,86

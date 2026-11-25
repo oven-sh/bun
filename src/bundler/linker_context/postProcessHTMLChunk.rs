@@ -12,7 +12,7 @@ pub(crate) fn post_process_html_chunk(
     // The body has no fallible sites; the Result signature matches the other
     // `post_process_*_chunk` callees dispatched from `generate_chunk`.
     // This is where we split output into pieces
-    let c = ctx.c();
+    let c = ctx.c;
     // E0509: StringJoiner has Drop, so FRU `..Default::default()` is illegal — assign field instead.
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -30,11 +30,10 @@ pub(crate) fn post_process_html_chunk(
 
     j.ensure_newline_at_end();
 
-    // SAFETY: `worker.arena` is set by `Worker::create` and outlives the worker step.
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards);
-    // `watcher.input` is `chunk.unique_key` (`&'static`). Both outlive the joiner
+    // `watcher.input` is `chunk.unique_key` (bundle arena). Both outlive the joiner
     // stored in `chunk.intermediate_output`, which is only read while the chunk and
     // the linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
@@ -45,7 +44,7 @@ pub(crate) fn post_process_html_chunk(
     ));
 
     // Reshaped for borrowck (compute hash before assigning into chunk)
-    let isolated_hash = c.generate_isolated_hash(chunk, alloc);
+    let isolated_hash = c.generate_isolated_hash(chunk);
     chunk.isolated_hash = isolated_hash;
 
     Ok(())

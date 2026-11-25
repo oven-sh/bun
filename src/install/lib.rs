@@ -1,5 +1,8 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
+#![feature(arbitrary_self_types)]
+#![feature(core_io_borrowed_buf)]
+#![cfg_attr(windows, feature(core_io))]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them
@@ -35,26 +38,8 @@ pub(crate) mod bun_fs {
     pub(crate) use bun_resolver::fs::*;
 }
 
-/// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
-/// pre-0.13 `std.Progress`). The earlier value-type counter shim was dropped
-/// once `ProgressStrings.rs`, `hoisted_install.rs`, `runTasks.rs` etc. started
-/// touching the full surface (`supports_ansi_escape_codes`, public `root`,
-/// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
-/// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    pub(crate) use bun_core::Progress::{Node, Progress};
-}
-
-/// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
-/// hosts `Arguments::loadConfig` (MOVE_DOWN b0); this local shim only adds the
-/// legacy `Arguments` alias (= `bun_options_types::context`) that
-/// `hoisted_install` / `isolated_install` import for `Transpiler::init`
-/// plumbing. Kept as a local module so those callers don't need updating; the
-/// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
-/// the real crate spell it `::bun_bunfig`.
-pub(crate) mod bun_bunfig {
-
-    pub(crate) use bun_options_types::context as Arguments;
+    pub(crate) use bun_core::Progress::{NodeId, Progress};
 }
 
 use core::cell::Cell;
@@ -419,7 +404,7 @@ impl RunCommand {
 
     /// Under `%TEMP%`, or beside bun.exe when that is another drive, which no hard link reaches.
     #[cfg(windows)]
-    pub fn windows_node_shim_dir(buf: &mut [u16]) -> Option<usize> {
+    pub fn windows_node_shim_dir() -> Option<bun_paths::OSPath> {
         use bun_sys::windows as win;
 
         const TEMP_DIR_NAME: &str = if bun_core::env::IS_DEBUG {
@@ -440,55 +425,28 @@ impl RunCommand {
         }
 
         let image_path = win::exe_path_w().as_slice();
-        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
-        // trailing NUL) into `buf`.
-        let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
-
-        let (mut len, name) = if temp_len > 0
-            && temp_len < buf.len()
-            && drive(&buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
+        let mut temp_buf = bun_paths::w_path_buffer_pool::get();
+        let (parent, name) = if let Ok(temp_len) = win::GetTempPathW(&mut temp_buf[..])
+            && drive(&temp_buf[..temp_len]).is_some_and(|temp| Some(temp) == drive(image_path))
         {
-            // Ends with a separator.
-            (temp_len, TEMP_DIR_NAME)
+            (&temp_buf[..temp_len], TEMP_DIR_NAME)
         } else {
-            let exe_dir = bun_paths::resolve_path::dirname_w(image_path);
-            if exe_dir.is_empty() || exe_dir.len() >= buf.len() {
-                return None;
-            }
-            buf[..exe_dir.len()].copy_from_slice(exe_dir);
-            if exe_dir.ends_with(bun_core::w!("\\bun-node")) {
-                // The process is running as the `bun.exe` link (a nested `bun run`), so this is
-                // already the directory.
-                (exe_dir.len(), "")
-            } else {
-                buf[exe_dir.len()] = b'\\' as u16;
-                (exe_dir.len() + 1, BESIDE_EXE_DIR_NAME)
-            }
+            let exe_dir = bun_paths::dirname(image_path)?;
+            // In a nested `bun run` the process is the `bun.exe` link, which is in the directory.
+            let is_in_dir = bun_paths::basename(exe_dir) == bun_core::w!("bun-node");
+            (exe_dir, if is_in_dir { "" } else { BESIDE_EXE_DIR_NAME })
         };
 
-        // The callers append `\node.exe` and a NUL.
-        if len + name.len() + b"\\node.exe\0".len() > buf.len() {
-            return None;
-        }
-        for b in name.bytes() {
-            buf[len] = b as u16;
-            len += 1;
-        }
-        Some(len)
+        let mut dir = bun_paths::OSPath::from(parent);
+        dir.push(name.as_bytes());
+        Some(dir)
     }
 
     #[cfg(not(windows))]
-    fn find_shell_impl<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
-        path: &[u8],
-        cwd: &[u8],
-    ) -> Option<&'a ZStr> {
+    fn find_shell_impl(path: &[u8], cwd: &[u8]) -> Option<bun_paths::Path> {
         for shell in Self::SHELLS_TO_SEARCH {
-            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
-                let len = found.len();
-                return Some(ZStr::from_buf(buf, len));
+            if let Some(found) = bun_which::which(path, cwd, shell) {
+                return Some(found);
             }
         }
 
@@ -502,16 +460,9 @@ impl RunCommand {
             bun_core::zstr!("/usr/local/bin/zsh"),
             bun_core::zstr!("/system/bin/sh"), // Android
         ];
-        for &shell in HARDCODED_POPULAR_ONES {
-            if bun_sys::is_executable_file_path(shell) {
-                let body = shell.as_bytes();
-                buf[..body.len()].copy_from_slice(body);
-                buf[body.len()] = 0;
-                return Some(ZStr::from_buf(buf, body.len()));
-            }
-        }
-
-        None
+        let mut shells = HARDCODED_POPULAR_ONES.iter().copied();
+        let found = shells.find(|&shell| bun_sys::is_executable_file_path(shell))?;
+        Some(bun_paths::Path::from(found))
     }
 
     /// Find the "best" shell to use. Cached to only run once.
@@ -524,8 +475,8 @@ impl RunCommand {
         static ONCE: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 
         ONCE.get_or_init(|| {
-            let mut scratch = bun_paths::path_buffer_pool::get();
-            let found = Self::find_shell_impl(&mut scratch, path, cwd)?;
+            let path = lifecycle_script_runner::strip_bin_dirs(path);
+            let found = Self::find_shell_impl(&path, cwd)?;
             // Includes trailing NUL so the caller may treat it as `[:0]const u8`.
             Some(found.as_bytes_with_nul().to_vec())
         })
@@ -666,19 +617,13 @@ impl RunCommand {
             use bun_core::strings;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
-            let prefix: &[u16] = strings::w!("\\??\\");
-
-            // The front is reserved for the NT object prefix.
-            let Some(dir_len) =
-                Self::windows_node_shim_dir(&mut target_path_buffer[prefix.len()..])
-            else {
-                // Non-fatal; fall through and leave
-                // PATH unmodified. (No `RUN` scope is declared in this crate.)
+            // Non-fatal: PATH stays as it is.
+            let Some(dir) = Self::windows_node_shim_dir() else {
                 return Ok(());
             };
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-            let dir_slice_len = prefix.len() + dir_len;
+            let Ok(nt_dir) = bun_sys::nt_path(&dir, bun_sys::Tag::link) else {
+                return Ok(());
+            };
 
             let image_path = win::exe_path_w();
             // A hard link has no target to read back, so compare file identity instead.
@@ -691,26 +636,21 @@ impl RunCommand {
             .and_then(|image| image.stat())
             .ok();
 
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
-                target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `name` includes its NUL terminator, and the link path ends before it.
-                let link_len = dir_slice_len + name.len() - 1;
+            for name in [strings::w!("node.exe"), strings::w!("bun.exe")] {
+                let link_path = bun_paths::OSPath::from_parts(&[&nt_dir, name]);
                 let mut made_dir = false;
                 let mut replaced = false;
                 loop {
-                    // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
-                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
-                        != 0
-                    {
+                    let Err(err) = win::CreateHardLinkW(&link_path, image_path) else {
                         break;
-                    }
-                    match win::Win32Error::get() {
+                    };
+                    match err {
                         win::Win32Error::ALREADY_EXISTS => {
                             // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
                             let keep = image_stat.as_ref().is_none_or(|image| {
                                 bun_sys::openat_windows(
                                     bun_sys::Fd::cwd(),
-                                    &target_path_buffer[..link_len],
+                                    &link_path,
                                     bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
                                     0,
                                 )
@@ -723,30 +663,19 @@ impl RunCommand {
                             if keep || replaced {
                                 break;
                             }
-                            let _ = win::DeleteFileBun(
-                                &target_path_buffer[..link_len],
-                                win::DeleteFileOptions::default(),
-                            );
+                            let _ =
+                                win::DeleteFileBun(&link_path, win::DeleteFileOptions::default());
                             replaced = true;
                         }
                         _ if !made_dir => {
-                            target_path_buffer[dir_slice_len] = 0;
-                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
-                            // `dir_slice_len` was just set to NUL.
-                            let dir_w =
-                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
-                            let _ = bun_sys::mkdir_w(dir_w);
-                            target_path_buffer[dir_slice_len] = b'\\' as u16;
+                            let _ = bun_sys::mkdir_w(&nt_dir);
                             made_dir = true;
                         }
                         _ => {
                             bun_core::run_once! {{
                                 bun_core::warn!(
                                     "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
-                                    bun_core::fmt::fmt_os_path(
-                                        &target_path_buffer[prefix.len()..dir_slice_len],
-                                        Default::default(),
-                                    ),
+                                    bun_core::fmt::fmt_os_path(&dir, Default::default()),
                                 );
                             }}
                             return Ok(());
@@ -762,67 +691,11 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
+            strings::to_utf8_append_to_list(path, &dir);
             path.push(bun_paths::DELIMITER);
             let _ = optional_bun_path;
             Ok(())
         }
-    }
-}
-
-/// Process-lifetime arena for the install-tier `Transpiler` constructed in
-/// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
-/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
-/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
-/// `Box::leak`).
-fn install_runner_arena() -> &'static bun_alloc::Arena {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
-    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
-        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
-    ONCE.call_once(|| {
-        // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
-    });
-    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
-    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
-    // never observed concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
-}
-
-impl RunCommand {
-    /// The half of `bun_runtime`'s `RunCommand::configure_env_for_run` that needs no `DirInfo`.
-    pub(crate) fn configure_env_for_run(
-        ctx: &mut bun_options_types::context::ContextData,
-        env: Option<*mut bun_dotenv::Loader>,
-    ) -> Result<bun_transpiler::Transpiler<'static>, crate::Error> {
-        let mut this_transpiler = bun_transpiler::Transpiler::init(
-            install_runner_arena(),
-            ctx.log,
-            ctx.args.clone(),
-            env,
-        )?;
-        this_transpiler.options.env.behavior =
-            bun_options_types::schema::api::DotEnvBehavior::load_all;
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = false;
-
-        // Re-derive per-use rather than holding a long-lived `&mut` (avoids
-        // Stacked-Borrows overlap with `run_env_loader`).
-        let env_loader = this_transpiler.env_mut();
-        Self::seed_script_env(env_loader);
-
-        // Overwrite it like npm does, because an outer `bun run` in another project may have left a
-        // stale value.
-        env_loader.map.put(
-            b"npm_config_local_prefix",
-            bun_fs::FileSystem::get().top_level_dir(),
-        )?;
-
-        // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.
-        Ok(this_transpiler)
     }
 
     /// Sets the variables that both `bun run` and lifecycle scripts have in their environment.
@@ -1065,16 +938,3 @@ const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
 // 2.
-
-#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PackageManifestError {
-    PackageManifestHTTP400,
-    PackageManifestHTTP401,
-    PackageManifestHTTP402,
-    PackageManifestHTTP403,
-    PackageManifestHTTP404,
-    PackageManifestHTTP4xx,
-    PackageManifestHTTP5xx,
-}
-
-bun_core::impl_tag_error!(PackageManifestError);

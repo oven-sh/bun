@@ -16,11 +16,11 @@
 // RECORDS-NOT: variable {{*}}name="count"
 // RECORDS-NOT: variable {{*}}name="bump"
 // RECORDS: variable {{*}}name="shown"
-// RECORDS: module {{*}}flags=[{{*}}RunsAgain
+// RECORDS: module {{*}}flags=[{{*}}MayBeReevaluated
 
 // RUN(ONCE): link
 // ONCE: variable {{*}}name="count"
-// ONCE-NOT: RunsAgain
+// ONCE-NOT: MayBeReevaluated
 
 let count = 0;
 function bump() {

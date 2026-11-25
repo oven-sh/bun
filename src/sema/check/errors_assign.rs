@@ -6,7 +6,6 @@
 //!   body of an arrow function.
 //! - The message: something is missing, something is in excess, or just that the type isn't assignable.
 
-use super::aot::DiagnosticSubject;
 use super::explain::NOWHERE;
 use super::explain_relation::RelationDiagnostic;
 use super::relate::Relation;
@@ -159,8 +158,7 @@ impl Checker<'_, '_> {
             }
         }
         let head = self.exact_optional_head_message(file, target, source);
-        let from = self.reported.len();
-        let is_assignable = self.check_assignable_with_end(
+        self.check_assignable_with_end(
             file,
             source,
             left,
@@ -169,11 +167,6 @@ impl Checker<'_, '_> {
             value,
             head.unwrap_or(2322),
         );
-        if !is_assignable && self.is_target_brought(file, target) {
-            for diagnostic in self.reported.iter_mut().skip(from) {
-                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
-            }
-        }
     }
 
     /// True if `checkDestructuringAssignment` treats the assignment `e` as a target with a default, as in `[a = 1] =
@@ -1357,13 +1350,9 @@ impl Checker<'_, '_> {
         expr: Option<(FileId, ExprId)>,
         is_effective: bool,
         head_message: Option<u32>,
-        mut diagnostic_output: Option<&mut Vec<Reported>>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let is_outermost = self.begin_comparison(error_node);
-        let from = match &diagnostic_output {
-            Some(output) => output.len(),
-            None => self.reported.len(),
-        };
         let is_assignable = self.check_type_assignable_to_and_optionally_elaborate_worker(
             source,
             target,
@@ -1371,15 +1360,9 @@ impl Checker<'_, '_> {
             expr,
             is_effective,
             head_message,
-            diagnostic_output.as_deref_mut(),
+            diagnostic_output,
         );
         self.end_comparison(is_outermost);
-        if !is_assignable && expr.is_some_and(|(file, e)| self.is_expression_brought(file, e)) {
-            let reported = diagnostic_output.unwrap_or(&mut self.reported);
-            for diagnostic in reported.iter_mut().skip(from) {
-                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
-            }
-        }
         is_assignable
     }
 
@@ -1993,7 +1976,6 @@ impl Checker<'_, '_> {
             at,
             mut lines,
             related,
-            subject,
         } = diagnostic;
         if lines.is_empty() {
             return;
@@ -2002,7 +1984,6 @@ impl Checker<'_, '_> {
         let mut diagnostic = Reported::new(at, first.code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
-        diagnostic.subject = subject;
         self.add_diagnostic(diagnostic);
     }
 

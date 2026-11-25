@@ -1,4 +1,4 @@
-# the result of the step is laid into a list: somebody gets hold of it, and could tell an object that was never made from the one that the call makes. The call stands as written
+# the result of the step is laid into a list: somebody gets hold of it, so an object is made. In a loop the step is done in place and makes it itself, as the method would; the call stands where the generator is modified, and where the step leaves it to the call
 # -- source: next-written-by-hand-whose-result-somebody-gets-hold-of-is-called.ts
 # declare function sink(...values: unknown[]): void;
 # function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
@@ -8,6 +8,9 @@
 # f1 = count, f2 = drive
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
+# CHECK: = IsUnmodifiedGenerator
 # CHECK: = Call {{*}}calleeKey="next"
-# RUN(NEVER): walk f2 mechanisms=all
-# NEVER-NOT: = StepGenerator
+# CHECK: = StepGenerator
+# RUN(MADE): walk f2 mechanisms=all
+# MADE: = StepGenerator
+# MADE: = NewObject

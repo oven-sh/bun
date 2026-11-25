@@ -1,4 +1,4 @@
-// STATISTIC: MethodCallsThroughTable >= 1
+// STATISTIC: MethodCallsThroughTable = 0
 // Eight classes say that they implement one interface and have no class in common. They are made through a list of the classes, so what is made is known only as what the constructors of that interface's classes make.
 interface Shape { area(): number }
 class A implements Shape { constructor(public n: number) {} area(): number { return this.n * 1; } }

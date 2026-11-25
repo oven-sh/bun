@@ -111,7 +111,7 @@ test.skipIf(!isLinux || !cc)("readdir and Bun.Glob fail with EIO on a malformed 
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  // Each mode prints one line for node:fs and one for Bun.Glob, which use different directory walkers.
+  // Each mode prints one line for node:fs and one for Bun.Glob.
   const expected = [...damaged.map(mode => `${mode} EIO`), "intact a.txt,b.txt,c.txt"].sort();
   expect(stdout.trim().split("\n")).toEqual(expected.flatMap(line => [line, line]));
   expect(exitCode).toBe(0);

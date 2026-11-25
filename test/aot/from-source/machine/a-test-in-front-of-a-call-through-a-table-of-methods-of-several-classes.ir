@@ -23,7 +23,7 @@
 # RIGHT: 5;7;1;10;TypeError;
 # RIGHT-NEXT: went on
 # RIGHT-NEXT: exited with 0
-# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,RowSaysLess:Callee/f1/ShapesKnown
-# ASKED: what a test has let pass is not of the type that the compiler has proven of it. It is: object. This is a bug in Bun.
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Callee/f1/ShapesKnown
+# ASKED: found object in a value narrowed by a branch
 # ASKED-NOT: went on
 # ASKED: crashed with

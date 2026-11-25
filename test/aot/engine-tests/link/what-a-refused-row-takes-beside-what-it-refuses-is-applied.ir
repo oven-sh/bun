@@ -1,0 +1,107 @@
+# `Object.defineProperty({}, KEY, 5)`, KEY = { toString() { console.log("ran"); return "x"; } }: CODE OF THE PROGRAM RUNS IN FRONT OF A REFUSAL.
+# Native code converts the key, and only then finds that 5 is no descriptor and throws. Link found the third operand surely outside every row, dropped the rows whole and let the call throw:
+# nobody asked the key, its toString was not reached, and the compiled program threw another error without having run it.
+# Now, where a call falls off the end of the rows of its built-in, what each refused row takes BESIDE what it refuses is applied as the row would apply it.
+# A refused row is passed over where a row in front of it takes all that it takes: `Object.assign(T | undefined, source)` and `list.sort(closure | null)` move no table.
+# const t = (l: string, r: () => unknown) => { try { console.log(l, "gave", String(r())); } catch (e) { console.log(l, "threw", (e as Error).name); } };
+# const KEY: any = { toString() { console.log("ran"); return "x"; } };
+# t("a", () => Object.defineProperty({}, KEY, 5 as any));
+# f2 = toString
+# OPTIONS: mechanisms=all exclude=CodeOutsideImage
+# RUN: link functions
+# CHECK-NOT: function f2 unreached
+# CHECK: function f2 {{*}}result=string
+module m0 path="p1-define.ts" displayPath="p1-define.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=255
+layout L1 module=m0 position=168 fields=[{key="toString" declared={type=anything} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+data d0 root=Object{layout=L0} module=m0
+variable g0 name="KEY" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @10
+    v1 = NewClosure function=f2 @170
+    v2 = NewObject -, v1 layout=L1 fields=[0] @168
+    v3 = FinishObject v2 @168
+    PutModuleVariable v3 variable=g0 @157
+    v5 = String string="a" @222
+    v6 = NewClosure function=f3 @227
+    v7 = Call v0, -, v5, v6 calleeName="t" @220
+    v8 = Undefined @276
+    Return v8 @276
+}
+function f1 name="t" module=m0 position=10 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1() @45
+  b1() handler=b2():
+    v2 = Builtin builtin=GlobalThis @51
+    v3 = PropGet v2 key="console" [isFreeName] @51
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @51
+    v5 = PropGet v4 key="log" @51
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @51
+    v7 = String string="gave" @66
+    v8 = Builtin builtin=String @74
+    v9 = Call v1 calleeName="r" @81
+    v10 = Call v8, -, v9 calleeName="String" @74
+    v11 = Convert v10 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @74
+    v12 = Call v6, v4, v0, v7, v11 calleeKey="log" calleeName="console.log" @59
+    Jump -> next b3() @51
+  b2() role=CatchHandler:
+    v13 = CatchValue @100
+    v14 = Builtin builtin=GlobalThis @102
+    v15 = PropGet v14 key="console" [isFreeName] @102
+    v16 = Convert v15 declared={type=builtin(Console) flags=[IsExpected]} @102
+    v17 = PropGet v16 key="log" @102
+    v18 = Convert v17 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @102
+    v19 = String string="threw" @117
+    v20 = Convert v13 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]} @127
+    v21 = PropGet v20 key="name" @127
+    v22 = Call v18, v16, v0, v19, v21 calleeKey="log" calleeName="console.log" @110
+    Jump -> next b3() @102
+  b3():
+    v23 = Undefined @102
+    Return v23 @102
+}
+function f2 name="toString" module=m0 position=170 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @183
+    v1 = PropGet v0 key="console" [isFreeName] @183
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]} @183
+    v3 = PropGet v2 key="log" @183
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @183
+    v5 = String string="ran" @195
+    v6 = Call v4, v2, v5 calleeKey="log" calleeName="console.log" @191
+    v7 = String string="x" @210
+    Return v7 @210
+}
+function f3 module=m0 position=227 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Object @233
+    v1 = Builtin builtin=ObjectDefineProperty @233
+    v2 = Data data=d0 @255
+    v3 = GetModuleVariable variable=g0 @259
+    v4 = CheckInitialized v3 name="KEY" @259
+    v5 = Integer integer=5 @264
+    v6 = Call v1, v0, v2, v4, v5 calleeName="Object.defineProperty" @240
+    ReturnCall v6 @240
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

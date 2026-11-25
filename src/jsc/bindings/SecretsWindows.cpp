@@ -2,6 +2,7 @@
 
 #if OS(WINDOWS)
 
+#include "OutPtr.h"
 #include "Secrets.h"
 #include <wtf/text/WTFString.h>
 #include <wtf/NeverDestroyed.h>
@@ -99,13 +100,13 @@ static String wideCharToString(const wchar_t* wide)
 
 static String getWindowsErrorMessage(DWORD errorCode)
 {
-    wchar_t* errorBuffer = nullptr;
+    std::unique_ptr<wchar_t[], decltype([](wchar_t* buffer) { LocalFree(buffer); })> errorBuffer;
     FormatMessageW(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr,
         errorCode,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPWSTR)&errorBuffer,
+        reinterpret_cast<LPWSTR>(static_cast<LPWSTR*>(outPtr(errorBuffer))),
         0,
         nullptr);
 
@@ -113,12 +114,11 @@ static String getWindowsErrorMessage(DWORD errorCode)
     if (errorBuffer) {
         // FormatMessageW appends a trailing CRLF; strip it so the JS-level
         // error.message stays single-line (matches Darwin/Linux backends).
-        size_t len = wcslen(errorBuffer);
+        size_t len = wcslen(errorBuffer.get());
         while (len > 0 && (errorBuffer[len - 1] == L'\r' || errorBuffer[len - 1] == L'\n')) {
             errorBuffer[--len] = L'\0';
         }
-        errorMessage = wideCharToString(errorBuffer);
-        LocalFree(errorBuffer);
+        errorMessage = wideCharToString(errorBuffer.get());
     }
 
     return errorMessage;
@@ -216,8 +216,8 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
-    PCREDENTIALW cred = nullptr;
-    if (!framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, &cred)) {
+    std::unique_ptr<CREDENTIALW, decltype(framework->CredFree)> cred { nullptr, framework->CredFree };
+    if (!framework->CredReadW(targetNameWide.data(), CRED_TYPE_GENERIC, 0, outPtr(cred))) {
         DWORD errorCode = GetLastError();
         updateError(err, errorCode);
         return std::nullopt;
@@ -232,8 +232,6 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, cons
             reinterpret_cast<const uint8_t*>(cred->CredentialBlob),
             cred->CredentialBlobSize));
     }
-
-    framework->CredFree(cred);
 
     return result;
 }

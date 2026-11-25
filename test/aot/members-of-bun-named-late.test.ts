@@ -142,6 +142,8 @@ const followed = [
   "named on globalThis.Bun",
   "named by a string in brackets",
   "named on require()",
+  "named on a parameter",
+  "named on a parameter that takes globalThis.Bun",
 ];
 
 const members = Reflect.ownKeys(Bun).filter(

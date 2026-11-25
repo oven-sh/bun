@@ -212,6 +212,7 @@ impl<'a> ReachWhileLoading<'a> {
             platform: input.platform,
             used_at_start: &[],
             holds_what_unseen_code_finds: false,
+            uses_of_kept_code: None,
             can_load_code_at_run_time: false,
         };
         let mut state = self.state.lock();
@@ -220,6 +221,7 @@ impl<'a> ReachWhileLoading<'a> {
         walk.notes_imports = true;
         walk.run(in_parallel);
         let mut imports = walk.imports;
+        known.forget_files_laid_again(&|file| library.version(file));
         imports.retain(|&(importer, imported)| {
             told.insert((importer, library.version(importer), imported))
         });

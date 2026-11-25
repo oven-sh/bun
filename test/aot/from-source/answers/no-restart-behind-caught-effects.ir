@@ -1,0 +1,59 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
+# const holder = unseen(Point);
+# function change(): void { holder.prototype.sum = function () { return 1000; }; }
+# const seen = { n: 0, m: 0 };
+# let thrown = 0;
+# class Picky { v: number; constructor(v: number) { this.v = v; if (v & 1) { seen.n = seen.n + 1; throw 7; } } }
+# class Late { v: number; w: number; constructor(v: number, n: number) { this.v = v; this.w = 0; for (let k = 0; k < n; k++) { this.w = (this.w + k) | 0; thrown = (thrown + 1) | 0; } if (v & 1) throw 7; } }
+# function again(v: number, n: number): number { if (n === 0) { seen.m = seen.m + 1; if (v & 1) throw 7; return v; } return again(v, n - 1); }
+# function helped(v: number): number { try { if (v & 1) { thrown = (thrown + 1) | 0; throw 7; } return v; } catch { return -1; } }
+# function recursive(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const v = list[i] | 0; let got = 0; try { got = again(v, 2); } catch { got = -1; } const p = new Point(v, got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function helper(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const v = list[i] | 0; const got = helped(v); const p = new Point(v, got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function copied(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const v = list[i] | 0; let got = 0; try { got = new Picky(v).v; } catch { got = -1; } const p = new Point(v, got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function called(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const v = list[i] | 0; let got = 0; try { got = new Late(v, 3).w; } catch (error) { got = error === 7 ? -1 : -2; } const p = new Point(v, got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function own(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const v = list[i] | 0; let got = 0; try { if (v & 2) throw 8; if (v & 1) { thrown = (thrown + 1) | 0; throw 7; } got = v; } catch { got = -1; } const p = new Point(v, got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# const numbers: number[] = [];
+# for (let k = 0; k < 24; k++) numbers.push(k * 3);
+# print(recursive(numbers, -1), helper(numbers, -1), copied(numbers, -1), called(numbers, -1), own(numbers, -1), seen.n, seen.m, thrown);
+# print(recursive(numbers, 5), helper(numbers, 5), copied(numbers, 5), called(numbers, 5), own(numbers, 5), seen.n, seen.m, thrown);
+# -- end of source
+# Something that can be seen happens before the throw: in a callee that calls itself, in a helper that catches, in a constructor that is copied into the loop, in one that is called, and in a try of the loop, of whose two throws
+# one stands behind it. No iteration restarts behind those catches. restarts-behind-caught-throws.ir holds what may.
+# RUN(COUNT): compile IterationRestartsEmitted testing=FailSpeculations:2 mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 0
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all
+# NET: 1212 1212 1212 852 990 12 24 90
+# NET-NEXT: 19046 24000 24000 24000 24000 24 48 180
+# NET-NEXT: exited with 0
+# RUN(THIRD): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:3 mechanisms=all
+# THIRD: 1212 1212 1212 852 990 12 24 90
+# THIRD-NEXT: 19046 24000 24000 24000 24000 24 48 180
+# RUN(SEVENTH): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:7 mechanisms=all
+# SEVENTH: 1212 1212 1212 852 990 12 24 90
+# SEVENTH-NEXT: 19046 24000 24000 24000 24000 24 48 180
+# RUN(CALLED): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all-Inlining
+# CALLED: 1212 1212 1212 852 990 12 24 90
+# CALLED-NEXT: 19046 24000 24000 24000 24000 24 48 180

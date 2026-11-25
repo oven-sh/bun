@@ -32,10 +32,12 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
+    pub(crate) fn parse_type_script_decorators(
+        &mut self,
+    ) -> Result<&'a mut [ExprNodeIndex], Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
-            return Ok(bun_alloc::AstAlloc::vec());
+            return Ok(&mut []);
         }
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
@@ -64,7 +66,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        Ok(ExprNodeList::from_bump_vec(decorators))
+        Ok(decorators.into_bump_slice_mut())
     }
 
     /// Parse a standard (TC39) decorator expression following the `@` token.
@@ -167,6 +169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let args = p.parse_call_args()?;
                     expr = p.new_expr(
                         E::Call {
+                            kind: E::CallKind::of(&expr),
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,
@@ -266,6 +269,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
+                // The body becomes a function body when the namespace is lowered, and tsc keeps its prologue.
+                allow_directive_prologue: true,
                 ..ParseStatementOptions::default()
             };
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
@@ -516,6 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
+                        kind: E::CallKind::of(&target),
                         target,
                         close_paren_loc,
                         args,

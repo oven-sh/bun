@@ -96,18 +96,20 @@ fn computed_answer_lists_sorted_files_and_host_modules() {
             spelling("./plugins/y.jsx", y),
             spelling("./plugins/y.ts", y),
         ];
+        let of_files = ComputedTargets::Modules {
+            files: &plugins,
+            host_modules: &[],
+            spellings: &spellings,
+        };
+        let of_host_modules = ComputedTargets::Modules {
+            files: &[],
+            host_modules: &host_modules,
+            spellings: &[],
+        };
         let expected = [
             CodeAnswer::File(y),
-            CodeAnswer::Computed(ComputedTargets::Modules {
-                files: &plugins,
-                host_modules: &[],
-                spellings: &spellings,
-            }),
-            CodeAnswer::Computed(ComputedTargets::Modules {
-                files: &[],
-                host_modules: &host_modules,
-                spellings: &[],
-            }),
+            CodeAnswer::Computed(&of_files),
+            CodeAnswer::Computed(&of_host_modules),
         ];
         let main = file_at(files, "/main.ts");
         assert_eq!(files.code_answers(main), expected);
@@ -126,19 +128,17 @@ fn unknown_specifier_answers_with_cause_and_host_modules() {
         ])
     };
     with_program(&host, &["/main.js"], |files| {
-        let all = |cause, host_modules| {
-            CodeAnswer::Computed(ComputedTargets::All {
-                cause,
-                host_modules,
-            })
-        };
-        let expected = [
-            all(
-                ComputedUnknown::NoPattern,
-                &[HostModuleId(3), HostModuleId(5)][..],
-            ),
-            all(ComputedUnknown::PackageImports, &[]),
+        let all = [
+            ComputedTargets::All {
+                cause: ComputedUnknown::NoPattern,
+                host_modules: &[HostModuleId(3), HostModuleId(5)],
+            },
+            ComputedTargets::All {
+                cause: ComputedUnknown::PackageImports,
+                host_modules: &[],
+            },
         ];
+        let expected = all.each_ref().map(CodeAnswer::Computed);
         let main = file_at(files, "/main.js");
         assert_eq!(files.code_answers(main), expected);
         assert!(files.module(main).code_edges.is_empty());

@@ -1,0 +1,14 @@
+# -- source: main.mjs
+# const Named = B => class extends B { name() { return "n" + this.id; } };
+# class Base { constructor(id) { this.id = id; } }
+# const given = JSON.parse("0") ? class { constructor(id) { this.id = -id; } } : Base;
+# class P extends Named(given) {}
+# function run(turns) { let n = 0; for (let i = 0; i < turns; i++) n += new P(i).id; return n; }
+# print(run(4), run(0));
+# -- end of source
+# A class constructor has a structure of its own: its type and its word tell it.
+# RUN: emit f1:Body mechanisms=all
+# CHECK: JSCell_typeInfoType, ReadsImmutableHeap
+# CHECK: AOTClosure_entry, ReadsImmutableHeap
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6 0

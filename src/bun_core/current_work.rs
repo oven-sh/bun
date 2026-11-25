@@ -2,7 +2,6 @@
 //! what it is still busy with. Only its thread writes a record. Any thread reads it at any moment, a signal handler too.
 
 use core::cell::Cell;
-use core::marker::PhantomData;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64};
 use std::sync::OnceLock;
@@ -96,7 +95,7 @@ fn milliseconds_now() -> u64 {
 
 struct GivesRecordBack {
     #[cfg(unix)]
-    signal_stack: Cell<*mut core::ffi::c_void>,
+    signal_stack: core::cell::OnceCell<SignalStack>,
 }
 
 impl Drop for GivesRecordBack {
@@ -105,8 +104,26 @@ impl Drop for GivesRecordBack {
             record.set(None);
             record.is_taken.store(false, Release);
         }
-        #[cfg(unix)]
-        self.give_signal_stack_back();
+    }
+}
+
+/// A mapping for the one alternate signal stack of the thread that made it.
+#[cfg(unix)]
+struct SignalStack(core::ptr::NonNull<core::ffi::c_void>);
+
+#[cfg(unix)]
+impl Drop for SignalStack {
+    fn drop(&mut self) {
+        let none = libc::stack_t {
+            ss_sp: core::ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
+        unsafe {
+            libc::sigaltstack(&raw const none, core::ptr::null_mut());
+            libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE);
+        }
     }
 }
 
@@ -115,7 +132,7 @@ impl GivesRecordBack {
     const SIGNAL_STACK_SIZE: usize = 512 * 1024;
 
     fn ensure_signal_stack(&self) {
-        if !self.signal_stack.get().is_null() {
+        if self.signal_stack.get().is_some() {
             return;
         }
         // SAFETY: all-zero is a valid `stack_t`.
@@ -136,37 +153,20 @@ impl GivesRecordBack {
                 0,
             )
         };
-        if memory == libc::MAP_FAILED {
+        let Some(memory) = core::ptr::NonNull::new(memory)
+            .filter(|memory| memory.as_ptr() != libc::MAP_FAILED)
+            .map(SignalStack)
+        else {
             return;
-        }
+        };
         let stack = libc::stack_t {
-            ss_sp: memory,
+            ss_sp: memory.0.as_ptr(),
             ss_flags: 0,
             ss_size: Self::SIGNAL_STACK_SIZE,
         };
-        // SAFETY: the mapping lives until `give_signal_stack_back`.
-        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } != 0 {
-            // SAFETY: nobody else knows the mapping.
-            unsafe { libc::munmap(memory, Self::SIGNAL_STACK_SIZE) };
-            return;
-        }
-        self.signal_stack.set(memory);
-    }
-
-    fn give_signal_stack_back(&self) {
-        let memory = self.signal_stack.replace(core::ptr::null_mut());
-        if memory.is_null() {
-            return;
-        }
-        let none = libc::stack_t {
-            ss_sp: core::ptr::null_mut(),
-            ss_flags: libc::SS_DISABLE,
-            ss_size: 0,
-        };
-        // SAFETY: the thread takes no signal on the mapping once it has none, and nobody else knows it.
-        unsafe {
-            libc::sigaltstack(&raw const none, core::ptr::null_mut());
-            libc::munmap(memory, Self::SIGNAL_STACK_SIZE);
+        // SAFETY: `memory` is not unmapped before the thread has stopped using it.
+        if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+            let _ = self.signal_stack.set(memory);
         }
     }
 }
@@ -177,7 +177,7 @@ thread_local! {
     static AT_END_OF_THREAD: GivesRecordBack = const {
         GivesRecordBack {
             #[cfg(unix)]
-            signal_stack: Cell::new(core::ptr::null_mut()),
+            signal_stack: core::cell::OnceCell::new(),
         }
     };
     /// What the record says, for the guard that puts it back.
@@ -197,41 +197,46 @@ fn record_of_this_thread() -> Option<&'static Record> {
     free
 }
 
-pub struct WorkGuard<'a> {
-    previous: Option<(Step, *const [u8], u64)>,
-    path: PhantomData<&'a [u8]>,
+/// Only a local of [`working_on`].
+struct PutsBack(Option<(Step, *const [u8], u64)>);
+
+impl PutsBack {
+    fn enter(step: Step, path: &[u8]) -> PutsBack {
+        let started_at = milliseconds_now();
+        let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
+        ensure_build_signal_stack();
+        if let Some(record) = record_of_this_thread() {
+            record.set(Some((step, path, started_at)));
+        }
+        PutsBack(previous)
+    }
 }
 
-impl Drop for WorkGuard<'_> {
+impl Drop for PutsBack {
     fn drop(&mut self) {
-        CURRENT.set(self.previous);
+        CURRENT.set(self.0);
         if let Some(record) = record_of_this_thread() {
-            // SAFETY: the guard that was given that path is dropped after this one.
+            // SAFETY: the path is an argument of the `working_on` call around this one.
             record.set(
-                self.previous
-                    .map(|(step, path, started_at)| (step, unsafe { &*path }, started_at)),
+                (self.0).map(|(step, path, started_at)| (step, unsafe { &*path }, started_at)),
             );
         }
     }
 }
 
-/// Until the guard is dropped, the calling thread is at that step of that file. Guards are dropped in the reverse of the
-/// order they are made in.
-#[must_use]
-pub fn working_on(step: Step, path: &[u8]) -> WorkGuard<'_> {
-    let started_at = milliseconds_now();
-    let previous = CURRENT.replace(Some((step, core::ptr::from_ref(path), started_at)));
-    // A build that runs out of stack on this thread says so, and whoever says it needs a stack of its own.
+/// While `work` runs, the calling thread is at that step of that file.
+pub fn working_on<R>(step: Step, path: &[u8], work: impl FnOnce() -> R) -> R {
+    let _puts_back = PutsBack::enter(step, path);
+    work()
+}
+
+/// Gives this thread an alternate signal stack, so that a build that overflows the stack can report it. Does nothing
+/// outside a build.
+#[inline]
+pub fn ensure_build_signal_stack() {
     #[cfg(unix)]
     if STEP_OF_BUILD.load(Relaxed) != 0 {
         let _ = AT_END_OF_THREAD.try_with(GivesRecordBack::ensure_signal_stack);
-    }
-    if let Some(record) = record_of_this_thread() {
-        record.set(Some((step, path, started_at)));
-    }
-    WorkGuard {
-        previous,
-        path: PhantomData,
     }
 }
 
@@ -352,36 +357,38 @@ mod tests {
     #[test]
     fn a_thread_names_the_file_it_is_at_and_the_one_around_it_afterwards() {
         assert_eq!(said(describe_where_this_thread_stopped), "");
-        let outer = working_on(Step::Lower, b"/project/outer.ts");
-        {
-            let _inner = working_on(Step::Check, b"/project/inner.ts");
+        working_on(Step::Lower, b"/project/outer.ts", || {
+            working_on(Step::Check, b"/project/inner.ts", || {
+                assert_eq!(
+                    said(describe_where_this_thread_stopped),
+                    "Stopped while checking /project/inner.ts.\n"
+                );
+            });
             assert_eq!(
                 said(describe_where_this_thread_stopped),
-                "Stopped while checking /project/inner.ts.\n"
+                "Stopped while compiling /project/outer.ts in Lower.\n"
             );
-        }
-        assert_eq!(
-            said(describe_where_this_thread_stopped),
-            "Stopped while compiling /project/outer.ts in Lower.\n"
-        );
-        let from_elsewhere = std::thread::spawn(|| {
-            (
-                said(describe_where_this_thread_stopped),
-                said(describe_what_threads_are_compiling),
-            )
+            let from_elsewhere = std::thread::spawn(|| {
+                (
+                    said(describe_where_this_thread_stopped),
+                    said(describe_what_threads_are_compiling),
+                )
+            });
+            let (of_other_thread, of_all_threads) = from_elsewhere.join().unwrap();
+            assert_eq!(of_other_thread, "");
+            assert!(
+                of_all_threads.contains("Still compiling /project/outer.ts in Lower for 0 s.\n")
+            );
         });
-        let (of_other_thread, of_all_threads) = from_elsewhere.join().unwrap();
-        assert_eq!(of_other_thread, "");
-        assert!(of_all_threads.contains("Still compiling /project/outer.ts in Lower for 0 s.\n"));
-        drop(outer);
         assert_eq!(said(describe_where_this_thread_stopped), "");
     }
 
     #[test]
     fn a_long_path_keeps_its_end() {
         let path = [b"/long".repeat(60), b"/end.ts".to_vec()].concat();
-        let _work = working_on(Step::Load, &path);
-        let said = said(describe_where_this_thread_stopped);
+        let said = working_on(Step::Load, &path, || {
+            said(describe_where_this_thread_stopped)
+        });
         assert!(said.starts_with("Stopped while loading ...") && said.ends_with("/end.ts.\n"));
         assert!(said.len() < 260);
     }

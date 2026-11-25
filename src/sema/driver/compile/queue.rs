@@ -23,6 +23,7 @@ pub(super) fn run_queue<'s>(
         report: Report::default(),
         config_path: files.options.config_path.clone(),
         to_check,
+        with_include_problems: Vec::new(),
         threads: request.threads.get(),
         in_room: None,
         is_reached: None,
@@ -53,7 +54,7 @@ fn queue_request<'a>(request: &CompileRequest<'a, '_>) -> Request<'a> {
         threads: request.threads.get(),
         libs: request.libs,
         progress: request.progress,
-        order: 1,
+        order: request.order,
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
             task_size: TaskSize::ByCostAndThreads,

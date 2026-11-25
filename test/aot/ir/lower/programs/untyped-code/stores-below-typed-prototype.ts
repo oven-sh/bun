@@ -52,7 +52,7 @@ console.log("and deleted:", attempt(loose[7], 18));
 
 // GENERATED: makeStep entered heirOf set
 // CHECK-LABEL: function {{*}}name="makeStep"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
 // CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v3 = Convert v1 declared={type=number}
@@ -63,7 +63,7 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="entered"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: v0 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v1 = PropGet v0 key="aotOperationCount" [isFreeName, isForTypeOf]
@@ -81,7 +81,7 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-NEXT: Return v10
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="heirOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: v2 = Builtin builtin=ObjectCreate
 // CHECK-NEXT: v3 = NewObject layout=[[L_2]]
@@ -94,7 +94,7 @@ console.log("and deleted:", attempt(loose[7], 18));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="log"

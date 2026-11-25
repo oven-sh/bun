@@ -1,0 +1,17 @@
+# -- source: a-throw-in-a-for-of-over-a-list-closes-the-iterator-of-the-for-of-around-it.ts
+# declare function print(...values: unknown[]): void;
+# const counting = (n: number): any => ({ i: 0, [Symbol.iterator]() { return this; }, next() { return { done: this.i >= n, value: this.i++ }; }, return() { print("closed"); return {}; } });
+# const list = [1, 2, 3];
+# function sum(mode: number): number { let s = 0; for (const a of counting(3)) for (const b of list) { s += a * 10 + b; if (b === 2 && a === 1) { if (mode === 0) break; if (mode === 1) return s; if (mode === 2) throw s; } } return s; }
+# for (let mode = 0; mode < 4; mode++) { try { print(sum(mode)); } catch (thrown) { print("thrown", thrown); } }
+# -- end of source
+# LIBRARY: own
+# The inner loop steps a list by index alone, the outer one goes by the protocol: the chain of cleanups ends at the outer one, whose close calls return().
+# RUN: run-in-shell mechanisms=all
+# CHECK: 95
+# CHECK-NEXT: closed
+# CHECK-NEXT: 29
+# CHECK-NEXT: closed
+# CHECK-NEXT: thrown 29
+# CHECK-NEXT: 108
+# CHECK-NEXT: exited with 0

@@ -28,9 +28,9 @@ export const emitHandleIPCMessage = b.fn({
   capability: "js",
   throws: true,
   uses: {
-    target: table.handedOver,
-    message: [...table.handedOver, table.runs(table.named("cmd")), table.membersOnlyInspected],
-    handle: table.handedOver,
+    target: table.retainedByNativeCode,
+    message: [...table.retainedByNativeCode, table.runs(table.named("cmd")), table.membersOnlyInspected],
+    handle: table.retainedByNativeCode,
   },
 });
 

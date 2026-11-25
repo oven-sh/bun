@@ -1,7 +1,8 @@
 // asker.cjs runs because root.mjs imports it. While it runs it requires, by names that are made, root.mjs, the root of the graph that is being loaded, and then beside.mjs,
 // which root.mjs imports and which imports root.mjs back. The loader runs the body of root.mjs ahead of the body of beside.mjs, inside the second require.
-// Here both are found by name without a text of asker.cjs that the rest of the build goes by: every file is found (a test run; an executable that takes code from disk
-// and leaves a package out), or they are further entry points.
+// Here both are found by name without a text of asker.cjs that the rest of the build goes by: every file is found (a test run that takes code from disk; an executable
+// that takes code from disk and leaves a package out), or they are further entry points. asker.cjs is a file of the product: a ring of imports that a test enters is. Without
+// the flag a test run finds for it what an executable built from the same files finds: a-load-written-in-the-product-finds-in-a-test-run-what-it-finds-in-the-executable.test.ts.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -53,7 +54,7 @@ require("./root.mjs");
 require("bun:test").test("the order of bodies", () => { console.log("the order: " + globalThis.said.join(" ")); });
 `,
     });
-    for (const flags of [[], ["--aot"]]) {
+    for (const flags of [[], ["--aot", "--aot-allow-code-from-disk"]]) {
       const { stdout, exitCode } = await run([bunExe(), "test", ...flags, "./ring.test.cjs"], String(dir), bunEnv);
       expect({ flags, lines: stdout.split("\n").filter(line => line.startsWith("the order")), exitCode }).toEqual({
         flags,

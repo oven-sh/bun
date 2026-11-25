@@ -1,0 +1,36 @@
+# -- source: main.js
+# class Till {
+#   taxed(price) {
+#     return price + (price >> 2);
+#   }
+#   says(sum) {
+#     return "=" + sum;
+#   }
+#   adds(bill) {
+#     let all = 0;
+#     let slip = "";
+#     for (let day = 0; day < bill.days.length; day++) {
+#       let sum = 0;
+#       const prices = bill.days[day];
+#       for (let at = 0; at < prices.length; at++) {
+#         sum += this.taxed(prices[at]);
+#         if (sum > 40) slip += "!";
+#       }
+#       slip += this.says(sum);
+#       all += sum;
+#     }
+#     for (let at = 0; at < bill.tips.length; at++) all += bill.tips[at];
+#     return slip + this.says(all);
+#   }
+# }
+# const till = new Till();
+# globalThis.kept = till;
+# print(till.adds({ tips: [1, 2], days: [[8, 12], [40], []] }));
+# -- end of source
+# This is the program of the-last-walk-of-a-loop-whose-plain-walk-a-purchase-replaced-fits-its-row-when-it-is-walked-alone.ir, which reports nothing with check=ReplayFinalLoopVisits.
+# Fault injection, testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen: every loop summary that is recorded as the one that a retained visit of a loop was made under says that the loop does nothing.
+# The second walker repeats each retained visit alone under its recorded summary. It finds that the visit does more than the summary says, and it fails the build with a named internal error.
+# OPTIONS: check=ReplayFinalLoopVisits testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen
+# DIAGNOSTIC: LoopSummaryMismatch
+# RUN: walk f4 mechanisms=all
+# CHECK-NOT: code f4:Body

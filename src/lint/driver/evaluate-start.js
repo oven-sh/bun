@@ -4,6 +4,7 @@
 const { pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
 const fs = require("node:fs");
+const { writeSync } = fs;
 // A configuration asks which modules are built in, to tell them from packages. It means Node.js, where `undici` and `ws` are
 // packages. The same is in `worker/main.js`.
 {
@@ -16,6 +17,8 @@ const fs = require("node:fs");
 // `path`: as it is given, with `/` on every system: what is answered has it as a key, by which it is looked up. `argument`: what
 // some scripts take.
 const { path, marker, argument } = given;
+// src/runtime/defer_require.js. If this fails from now on, the other side runs it again without.
+if (typeof $Bun_lazy === "function") $Bun_lazy.onFirst = () => writeAll(marker);
 // A configuration sees the command line of the command, as in ESLint, Prettier and oxlint, which run it in their own process, and
 // as a plugin does here.
 for (const it of given.commandLine) process.argv.push(it);
@@ -40,5 +43,22 @@ function finish(config, stringify = JSON.stringify) {
   const isDoctor = given.commandLine.includes("--doctor");
   // Skip cache entries that aren't files. A script can put those there to stand in for a module.
   const modules = isDoctor ? Object.keys(require.cache).filter(file => fs.existsSync(file)) : undefined;
-  process.stdout.write(marker + stringify({ config, modules }), () => process.exit(0));
+  // The plugin that has loaded TypeScript is going to do so again. A stand-in has no `paths`.
+  const isLarge = file => /[\\/]typescript[\\/]lib[\\/]typescript\.js$/.test(file) && require.cache[file]?.paths;
+  const large = Object.keys(require.cache).filter(isLarge);
+  // `process.stdout` takes long to load. What the config has left in it is written after the last marker, if at all.
+  writeAll(marker + stringify({ config, modules, large }) + marker);
+  process.exit(0);
+}
+
+function writeAll(text) {
+  const bytes = Buffer.from(text);
+  for (let at = 0; at < bytes.length;) {
+    try {
+      at += writeSync(1, bytes, at);
+    } catch (error) {
+      if (error.code !== "EAGAIN") throw error;
+      Bun.sleepSync(1);
+    }
+  }
 }

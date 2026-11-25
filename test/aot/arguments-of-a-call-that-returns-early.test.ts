@@ -2,58 +2,41 @@
 // The caller then makes it only on the way that goes on. What the program prints stays the same, and so does every stack.
 import { buildBothWays } from "./build-both-ways";
 
-const logger = `// No "use strict": the functions of this file are sloppy.
-const lines = [];
-let reads = 0;
+const bells = `// No "use strict": the functions of this file are sloppy.
+const heard = [];
+let asked = 0;
 
-function createLogger(namespace) {
-  let on = false;
-  let previous = 0;
-  function log(...args) {
-    if (!log.enabled) return;
-    const self = log;
-    const now = lines.length;
-    self.diff = now - previous;
-    previous = now;
-    args[0] = String(args[0]);
-    let index = 0;
-    args[0] = args[0].replace(/%([a-z%])/g, (match, format) => {
-      if (match === "%%") return "%";
-      index++;
-      if (format === "s" || format === "d") {
-        const value = args[index];
-        args.splice(index, 1);
-        index--;
-        return String(value);
-      }
-      return match;
-    });
-    args.unshift(namespace);
-    lines.push(args.join(" "));
-    return args;
+function ropeThatIs(loose) {
+  return {
+    get loose() {
+      asked++;
+      return loose;
+    },
+  };
+}
+
+// A bell whose rope is tied gives nothing: its list of strokes is needed behind that question alone.
+function hang(tower) {
+  function ring(...strokes) {
+    if (!ring.rope.loose) return;
+    let weight = 0;
+    for (let k = 0; k < strokes.length; k++) weight += typeof strokes[k] === "number" ? strokes[k] : strokes[k].length;
+    heard.push(tower + " " + strokes.join("+") + " " + weight);
+    strokes.unshift(weight);
+    return strokes;
   }
-  Object.defineProperty(log, "enabled", {
-    enumerable: true,
-    configurable: true,
-    get() {
-      reads++;
-      return on;
-    },
-    set(value) {
-      on = value;
-    },
-  });
-  return log;
+  ring.rope = ropeThatIs(false);
+  return ring;
 }
 
 function whoIsThis(...args) {
-  if (args.length === 99) return lines;
+  if (args.length === 99) return heard;
   return typeof this + " " + args.length;
 }
 
 function thisBehindTest(flag, ...args) {
   if (!flag) return typeof this;
-  lines.push("this " + typeof this + " " + args.join("+"));
+  heard.push("this " + typeof this + " " + args.join("+"));
   return args;
 }
 
@@ -62,26 +45,25 @@ function countsArguments(first) {
   return Array.prototype.slice.call(arguments, 1).join("|");
 }
 
-const verbs = {
-  read(path) {
-    return "read " + path;
-  },
-};
-["get", "put", "post"].forEach(function (method) {
-  verbs[method] = function (path) {
-    if (method === "get" && arguments.length === 1) return this.read(path);
-    lines.push(method + " " + path + " " + Array.prototype.slice.call(arguments, 1).join("|"));
-    return this;
+// What a gate takes of a ship is added up behind the question whether there is a ship.
+const gates = { toll: 3 };
+for (const side of ["north", "south"]) {
+  gates[side] = function (ship) {
+    if (ship === undefined) return side.length + this.toll;
+    let load = this.toll;
+    for (let k = arguments.length - 1; k > 0; k--) load = load * 2 + arguments[k];
+    heard.push(side + " " + ship + " " + load);
+    return load;
   };
-});
+}
 
-module.exports = { createLogger, lines, readsSoFar: () => reads, whoIsThis, thisBehindTest, countsArguments, verbs };
+module.exports = { hang, ropeThatIs, heard, askedSoFar: () => asked, whoIsThis, thisBehindTest, countsArguments, gates };
 `;
 
-const main = `import { countsArguments, createLogger as create, lines, readsSoFar, thisBehindTest, verbs, whoIsThis } from "./logger.cjs";
+const main = `import { askedSoFar, countsArguments, gates, hang as hangOne, heard, ropeThatIs, thisBehindTest, whoIsThis } from "./bells.cjs";
 
-type Logger = { (...args: unknown[]): unknown[] | undefined; enabled: boolean; diff?: number };
-const createLogger = create as (namespace: string) => Logger;
+type Bell = { (...strokes: unknown[]): unknown[] | undefined; rope: { readonly loose: boolean } };
+const hang = hangOne as (tower: string) => Bell;
 
 const order: string[] = [];
 function note<T>(name: string, value: T): T {
@@ -89,33 +71,33 @@ function note<T>(name: string, value: T): T {
   return value;
 }
 
-// A logger that is off takes its arguments and returns. They are evaluated all the same, in front of the test.
-const log = createLogger("app");
-const other = createLogger("other");
+// A bell whose rope is tied takes its strokes and returns. They are evaluated all the same, in front of the question.
+const ring = hang("gate");
+const other = hang("hill");
 let sum = 0;
 for (let i = 0; i < 30000; i++) {
-  log("request %s %d", "GET", i);
+  ring("slow", "fast", i);
   other("x", i);
   sum += i & 3;
 }
-console.log(sum, readsSoFar(), lines.length);
-console.log(log(note("a", "%s"), note("b", 1), note("c", 2)), order.join(""));
+console.log(sum, askedSoFar(), heard.length);
+console.log(ring(note("a", "slow"), note("b", 1), note("c", 2)), order.join(""));
 
-// Switched on, every call gets a list of its own.
-log.enabled = true;
-const first = log("%s and %d %% %x", "one", 2, 3);
-const second = log("%s and %d %% %x", "one", 2, 3);
-console.log(JSON.stringify(first), first === second, Array.isArray(first), first!.length, log.diff);
-log.enabled = false;
-console.log(log("again"), lines.join(";"), log.length, log.name);
+// Untied, every call gets a list of its own.
+ring.rope = ropeThatIs(true);
+const first = ring("slow", "one", 2, 3);
+const second = ring("slow", "one", 2, 3);
+console.log(JSON.stringify(first), first === second, Array.isArray(first), first!.length);
+ring.rope = ropeThatIs(false);
+console.log(ring("again"), heard.join(";"), ring.length, ring.name);
 
-// The test may throw, and the stack names the function.
-const broken = createLogger("broken");
-Object.defineProperty(broken, "enabled", {
-  get() {
+// The question may throw, and the stack names the function.
+const broken = hang("broken");
+broken.rope = {
+  get loose(): boolean {
     throw new Error("no answer");
   },
-});
+};
 function callsBroken() {
   broken("a", "b");
 }
@@ -168,20 +150,20 @@ function twoWaysOut(a: boolean, b: boolean, ...rest: string[]) {
 console.log(twoWaysOut(true, true, "x"), twoWaysOut(false, true, "x"), twoWaysOut(false, false, "x", "y"), steps);
 
 const receiver = { name: "receiver" };
-console.log(whoIsThis.call(receiver, 1, 2), whoIsThis.call(receiver, 1), thisBehindTest.call(receiver, false, 1), JSON.stringify(thisBehindTest.call(receiver, true, 1, 2)), lines.at(-1));
+console.log(whoIsThis.call(receiver, 1, 2), whoIsThis.call(receiver, 1), thisBehindTest.call(receiver, false, 1), JSON.stringify(thisBehindTest.call(receiver, true, 1, 2)), heard.at(-1));
 const counts = countsArguments as (...args: unknown[]) => string;
 console.log(counts("get"), counts("get", 1, 2), counts("put"), counts("put", 7));
-type Verbs = Record<string, (...args: unknown[]) => unknown>;
-const names = ["get", "get", "get", "put"];
-let ones = 0;
-for (let i = 0; i < 40000; i++) if ((verbs as Verbs)[names[i % 4 === 3 && i > 39990 ? 3 : 0]!]!("x") === "read x") ones++;
-console.log(ones, (verbs as Verbs).get!("x", 1, 2) === verbs, (verbs as Verbs).post!("y") === verbs, lines.slice(-3).join(";"));
+type Gates = Record<string, (...args: unknown[]) => unknown>;
+const ships = [undefined, undefined, undefined, "ark"];
+let empty = 0;
+for (let i = 0; i < 40000; i++) if ((gates as unknown as Gates).north!(ships[i % 4 === 3 && i > 39990 ? 3 : 0]) === 8) empty++;
+console.log(empty, (gates as unknown as Gates).south!("ark", 1, 2), (gates as unknown as Gates).south!(), heard.slice(-3).join(";"));
 
 // Handed around as a value, applied, bound and spread.
-const table = [log, other, viaCall as (...args: unknown[]) => unknown];
-other.enabled = true;
+const table = [ring, other, viaCall as (...args: unknown[]) => unknown];
+other.rope = ropeThatIs(true);
 const many = Array.from({ length: 40 }, (_, i) => i);
-console.log(table.map(f => JSON.stringify(f.apply(null, ["%d", 5, 6]))).join(" "), JSON.stringify(other.bind(null, "%s")("bound", 1)), (other(...many) as unknown[]).length);
+console.log(table.map(f => JSON.stringify(f.apply(null, ["ab", 5, 6]))).join(" "), JSON.stringify(other.bind(null, "cd")("bound", 1)), (other(...many) as unknown[]).length);
 `;
 
 // What the caller knows of an argument may decide the test in front of the early return, for it or against it.
@@ -280,19 +262,19 @@ buildBothWays("arguments of a call that returns early", {
       "undefined 5 7,-1,-2,3\n",
   },
   "rest arrays and object literals are the same values wherever the callee goes on": {
-    files: { "main.ts": main, "logger.cjs": logger },
+    files: { "main.ts": main, "bells.cjs": bells },
     prints:
       "45000 60000 0\n" +
       "undefined abc\n" +
-      '["app","one and 2 % %x",3] false true 3 1\n' +
-      "undefined app one and 2 % %x 3;app one and 2 % %x 3 0 log\n" +
-      "Error: no | at get | at log | at callsBroken\n" +
+      '[12,"slow","one",2,3] false true 5\n' +
+      "undefined gate slow+one+2+3 12;gate slow+one+2+3 12 0 ring\n" +
+      "Error: no | at loose | at ring | at callsBroken\n" +
       '10048 16 {"a":5001,"b":"k"} false 1\n' +
       "6 33 1\n" +
       "a b1 xy! 2\n" +
       "object 2 object 1 object [1,2] this object 1+2\n" +
       "one 1|2  7\n" +
-      "39997 true true put x ;get x 1|2;post y \n" +
-      ' ["other","5",6] "NaN56" 41\n',
+      "39997 17 8 north ark 3;north ark 3;south ark 17\n" +
+      ' [13,"ab",5,6] "ab56" [8,"cd","bound",1] 41\n',
   },
 });

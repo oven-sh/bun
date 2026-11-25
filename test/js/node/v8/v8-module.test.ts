@@ -18,6 +18,29 @@ describe("v8.isStringOneByteRepresentation", () => {
   });
 });
 
+test("loading node:v8 does not call a replaced Function.prototype.bind", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const original = Function.prototype.bind;
+       let calls = 0;
+       Function.prototype.bind = function (...args) {
+         calls++;
+         return original.apply(this, args);
+       };
+       require("node:v8");
+       Function.prototype.bind = original;
+       console.log(calls);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
 describe("v8.GCProfiler", () => {
   test("class name", () => {
     expect(GCProfiler.name).toBe("GCProfiler");

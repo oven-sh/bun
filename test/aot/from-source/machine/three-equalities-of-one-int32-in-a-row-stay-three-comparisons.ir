@@ -1,0 +1,11 @@
+# -- source: main.ts
+# function inside(c: any): string { const kind = c | 0; if (kind === 133 || kind === 159 || kind === 150) return "yes"; return "no"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(133), inside(134));
+# -- end of source
+# f1 = inside
+# Three equalities stay as they are written.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Switch
+# CHECK: Return

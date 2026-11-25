@@ -4,11 +4,11 @@ import "./program.ts";
 written: ArrayWithInt32 [31,28,31,30] 120
 workedOut: ArrayWithInt32 [31,28,31,30] 120
 halves: ArrayWithDouble [0.5,1.5] 2
-writtenResult: ArrayWithContiguous [1,2] 3
-workedOutResult: ArrayWithContiguous [1,2] 3
+writtenResult: ArrayWithInt32 [1,2] 3
+workedOutResult: ArrayWithInt32 [1,2] 3
 constants: ArrayWithInt32 [1,2,3] 6
-nested: ArrayWithContiguous [3,4] 7
-inAnObject: ArrayWithContiguous [31,28] 59
+nested: ArrayWithInt32 [3,4] 7
+inAnObject: ArrayWithInt32 [31,28] 59
 texts: ArrayWithContiguous ["a","b"]
 mixed: ArrayWithContiguous [1,"a"]
 asAny: ArrayWithInt32 [1,2,3]

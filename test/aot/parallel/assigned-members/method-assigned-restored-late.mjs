@@ -1,0 +1,3 @@
+// method assigned, restored
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+class A { k = 4; m(n) { return n * 1000 + this.k; } } let a = new A(); function r() { let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); } return s; } show("before", r); A.prototype.m = function (n) { return n + this.k; }; show("after", r); const c = a; a = new A(); show("new", r); try { const d = Object.getOwnPropertyDescriptor(A.prototype, "m"); delete A.prototype.m; Object.defineProperty(A.prototype, "m", d); } catch (e) { console.log("threw", e.name); } show("then", r); a = c; show("first object", r);

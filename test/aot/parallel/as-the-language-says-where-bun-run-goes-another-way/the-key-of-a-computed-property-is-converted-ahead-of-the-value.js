@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` evaluates the value first: "value,key 1".
+// `bun run` evaluates the value first: "value,key 1".
 const order = [];
 const key = {
   toString() {

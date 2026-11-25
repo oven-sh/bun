@@ -1,0 +1,13 @@
+# f1 = Field
+# f2 = sow
+# -- source: main.mjs
+# function Field(size) { this.rows = new Int8Array(size); }
+# Field.prototype.sow = function (n) { let rain = 11; for (let i = 0; i < n; ++i) { const seeds = rain % 5 - 2; this.rows[0x100 | i] = seeds + 3; this.rows[0x200 | i] = seeds - i; this.rows[0x300 | i] = seeds * 2; this.rows[0x400 | i] = seeds + rain; this.rows[0x500 | i] = seeds & 6; this.rows[0x600 | i] = rain - i; this.rows[0x700 | i] = seeds - 9; this.rows[0x800 | i] = rain & 31; this.rows[0x900 | i] = seeds * 5; this.rows[0xa00 | i] = i & 15; this.rows[0xb00 | i] = seeds ^ 4; this.rows[0xc00 | i] = rain >> 2; this.rows[0xd00 | i] = seeds + 20; this.rows[0xe00 | i] = rain ^ i; this.rows[0xf00 | i] = seeds - rain; rain = (rain + i * 3 + 7) % 90; } return rain; };
+# const field = new Field(0x1000); globalThis.unseen = field;
+# print(field.sow(0x100), field.rows.reduce((sum, value) => sum + value, 0));
+# -- end of source
+# The loop has more than 100 operations. Its stores put results of operators on numbers into elements, so it is versioned: the object, the field and the array are checked before it.
+# RUN: walk f2:Body mechanisms=all
+# CHECK: testedType=Int8Array
+# CHECK: PutTypedArrayElement
+# CHECK-NEXT: BitOr

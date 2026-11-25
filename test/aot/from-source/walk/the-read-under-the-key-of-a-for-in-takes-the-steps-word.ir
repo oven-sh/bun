@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# function straight(o) { let s = 0; for (const k in o) s += o[k]; return s; }
+# function behindACall(o, between) { let s = 0; for (const k in o) { between(o, k); s += o[k]; } return s; }
+# function twice(o) { let s = 0; for (const k in o) s += o[k] * o[k]; return s; }
+# const byName = { straight, behindACall, twice }, first = JSON.parse('"straight"'), second = JSON.parse('"behindACall"'), third = JSON.parse('"twice"');
+# const make = () => JSON.parse('{"ash":1,"birch":2,"cedar":3,"date":4,"elm":5,"fir":6,"gum":7,"hazel":8}');
+# print(byName[first](make()), byName[second](make(), (o, k) => { if (k === "birch") delete o.cedar; }), byName[second](make(), (o, k) => { if (k === "birch") delete o.birch; }), byName[third](make()));
+# -- end of source
+# The step of a for-in has just asked the object for its structure and its order word, or knows from the turn before that nothing has run; it says up to which name the enumerator's names are current. The test in front of the read under
+# the key asked cell, structure and order word once more. f1 = straight: nothing stands between the step and the read: the test is handed the step's own count and holds the index of the name against it: the object is not touched.
+# f2 = behindACall: other code has run since the step: the test asks the object as before. f3 = twice: the first read may run code of a compiled object's getter: the second test asks the object.
+# RUN(STRAIGHT): walk f1:Body mechanisms=all
+# STRAIGHT: [[step]]: {{*}} = ForInStep
+# STRAIGHT: [[count]]: {{*}} = ResultAt [[step]] index=3
+# STRAIGHT: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, [[count]] traits
+# STRAIGHT: EnumeratorGetByVal
+# RUN(CALL): walk f2:Body mechanisms=all
+# CALL-NOT: IsEnumeratorCurrent {{*}}, {{*}}, {{*}}, {{*}} traits
+# CALL: EnumeratorGetByVal
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 36 33 NaN 204
+# ANSWERS-NEXT: exited with 0

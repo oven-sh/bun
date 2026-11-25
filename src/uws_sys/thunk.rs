@@ -5,21 +5,19 @@
 //! owner from the user-data, (b) re-type the opaque handle, (c) lift any
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
-//! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
+//! and `uws_handlers::*Handler` open-coded those
 //! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:
 //!
 //! * `zst::<H>()`         — conjure a ZST handler value (handlers are
 //!   monomorphised zero-sized types, so no runtime data is needed).
-//! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
@@ -86,23 +84,7 @@ pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
-/// Recover `&mut U` from a uWS user-data word, returning `None` for null.
-///
-/// # Safety
-/// When non-null, `p` must have been registered as `*mut U` and point to a
-/// live `U` with no other live `&mut`/`&` to it for the duration of the
-/// returned borrow (uWS callbacks fire single-threaded from the event loop).
-#[inline(always)]
-pub(crate) unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: per caller contract above.
-        Some(unsafe { &mut *p.cast::<U>() })
-    }
-}
-
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
+/// Re-type a raw uWS handle (`uws_res`, `H3Response`, …) as a
 /// mutable Rust reference. These are zero-sized opaque markers, so the borrow
 /// covers no Rust-owned bytes — it exists purely to hang methods off.
 ///
@@ -133,59 +115,40 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 }
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
-//
-// S005: the primitives above are `unsafe fn` because each call site must
-// re-assert the uWS callback contract. For the common, *non-re-entrant*
-// dispatch path (single-threaded event loop, handler does not call back into
-// uWS on the same socket while holding `&mut Owner`) that contract is uniform
-// and can be discharged once at the type level instead of at every call site.
-// `ExtSlot<T>` is that type-level discharge: choosing it as `Handler::Ext`
-// moves the proof obligation from every call site to the one `unsafe` inside
-// `owner_mut()`.
 
 /// Typed-safe wrapper for the `Option<NonNull<T>>` word stored in a uWS socket
-/// ext slot. The newtype is the safe-surface entry point for the
-/// `socket.ext(**T).*` pattern: choosing `type Ext = ExtSlot<T>` in a
-/// [`crate::vtable::Handler`] impl asserts the **non-re-entrancy contract** —
-/// that the handler bodies do not re-enter uWS dispatch on the same socket
-/// while a `&mut T` borrowed from this slot is live (re-entrant consumers must
-/// keep `type Ext = Option<NonNull<T>>` and pass `*mut T` onward; see
-/// `RawPtrHandler`).
+/// ext slot.
 ///
 /// Because the inner field is private and there is no public safe constructor,
 /// safe Rust cannot fabricate an `ExtSlot<T>` containing a dangling pointer;
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_mut`] sound as a *safe* fn — the one `unsafe { p.as_mut() }`
+/// its accessors sound as *safe* fns — the `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 
 impl<T> ExtSlot<T> {
-    /// Recover `&mut T` from the slot, or `None` for the calloc'd-but-not-yet-
+    /// Recover `&T` from the slot, or `None` for the calloc'd-but-not-yet-
     /// stamped window during connect/accept. Safe: see type-level docs for the
     /// invariant that discharges the `unsafe` inside.
     #[inline(always)]
-    pub fn owner_mut(&mut self) -> Option<&mut T> {
-        match self.0 {
-            // SAFETY: `ExtSlot<T>` is only ever materialised by the uws_sys
-            // trampoline layer from a live socket ext slot. The slot holds the
-            // unique heap owner; uWS dispatch is single-threaded and — per the
-            // `Handler::Ext = ExtSlot<T>` contract — non-re-entrant on this
-            // user-data, so no aliasing `&mut T` exists for `'_`.
-            Some(mut p) => Some(unsafe { p.as_mut() }),
-            None => None,
-        }
-    }
-
-    #[inline(always)]
     pub fn owner_ref(&self) -> Option<&T> {
         match self.0 {
-            // SAFETY: same liveness invariant as `owner_mut`; only `&T` is
+            // SAFETY: the slot of a live socket holds its live owner; only `&T` is
             // formed, so re-entrant dispatch cannot alias an exclusive borrow.
             Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
+    }
+
+    /// A ref of the caller's own, for an event that can release the one that the slot stands for.
+    pub fn owner(&self) -> Option<bun_ptr::RefPtr<T>>
+    where
+        T: bun_ptr::AnyRefCounted,
+    {
+        // SAFETY: as in `owner_ref`.
+        Some(unsafe { bun_ptr::RefPtr::init_ref(self.0?.as_ptr()) })
     }
 }

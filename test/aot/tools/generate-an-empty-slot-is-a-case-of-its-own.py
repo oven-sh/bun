@@ -70,7 +70,7 @@ strangers = {
   'an-object-of-a-class-below': 'new (class extends (Kind as any) { get part() { return part; } })(4)',
   'a-function': 'Object.assign(function () {}, { flags: 4 })', 'an-array': 'Object.assign([], { flags: 4, part })', 'a-number': '4', 'a-text': '"text"',
 }
-head = '''// STATISTIC: EmptySlotsTakenAsCases >= 1
+head = '''// STATISTIC: EmptySlotCasesEmitted >= 1
 %s
 const lines: string[] = [];
 function tell(line: string) { lines.push(line); }

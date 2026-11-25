@@ -1,0 +1,22 @@
+# -- source: parsed.ts
+# interface Voice { low: number; high: number; sings(count: number): string; pair?: Voice }
+# interface Wish { songs: number; hall: { name: string; seats?: Voice } }
+# class Alto implements Voice {
+#   pair: Voice | undefined = undefined;
+#   low: number;
+#   high: number;
+#   constructor(from: number) { this.low = from; this.high = from * 2 + 1; }
+#   sings(count: number): string { let text = ""; while (text.length < count) text += "la"; return text; }
+# }
+# class Tenor extends Alto { breath = 4; sings(count: number): string { return super.sings(count * this.breath); } }
+# function wishOf(text: string): Wish { const wish: Wish = JSON.parse(text); return wish; }
+# function reach(voice: Voice): number { return voice.high > voice.low ? voice.high - voice.low : 0; }
+# (globalThis as any).kept = [wishOf, reach, Alto, Tenor];
+# const choir: Voice[] = [new Alto(3), new Tenor(5), new Alto(8)];
+# let most = wishOf('{"songs":2,"hall":{"name":"north"}}').songs;
+# for (const voice of choir) most = Math.max(most, reach(voice));
+# console.log(most, choir[1].sings(1));
+# -- end of source
+# The parser makes no Voice, which requires a method, so the two classes are its members alone.
+# RUN: members
+# CHECK: L2: members [L0, L1]

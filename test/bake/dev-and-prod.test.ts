@@ -327,7 +327,7 @@ devTest("hmr handles rapid consecutive edits", {
 
     // The barrier guarantees ordering of in-flight updates but does not
     // bound how many bundles the server may still start (e.g. a queued
-    // next_bundle.reload_event, or the sentinel write's IN_MODIFY and
+    // next_bundle.has_reload_event, or the sentinel write's IN_MODIFY and
     // IN_CLOSE_WRITE landing in separate inotify reads). Keep a listener
     // active through `await using` disposal that swallows expected values
     // so only genuinely unexpected output trips the unread-messages check.

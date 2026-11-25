@@ -1,0 +1,98 @@
+# The text of the library declares with `var`, so each of its variables starts as undefined. If that counted among what a function may find there, as it did, no variable of the library would hold one function or one symbol alone.
+# A function runs once somebody has a closure of it. So it finds what the body has stored in front of the first operation that does more with the function than make the closure, or with a function that names it.
+#   var stored = 1;  function reads() { return stored }  reads();                                        g0: in front of every read
+#   function early() { return late }  early();  var late = 1;                                            g1: the function is called first
+#   function inner() { return deep }  function outer() { return inner() }  outer();  var deep = 1;       g2: and so is one that calls it
+#   print(function () { return handed });  var handed = 1;                                               g3: whoever is handed the closure may call it at once
+#   var seen = own;  var own = 1;                                                                        g4: the body itself reads it first
+#   if (more()) var sometimes = 1;  function maybe() { return sometimes }  maybe();                      g5: a way leads past the store
+#   function declared() { return hoisted }  (in a variable that the loader fills)  declared();  var hoisted = 1;    g7, g6 holds the closure
+# LIBRARY: own
+# RUN: summary f0
+# CHECK: stores-first g0 at v2, g1 at v9, g2 at v14, g3 at v20, g7 at v37
+# CHECK: uses-first f1 at v4, f2 at v7, f4 at v18, f5 at v32, f7 at v12
+# RUN(LINK): link variables mechanisms=all
+# LINK: variable g0 proven=1 writers-known written-at-construction-alone filled
+# LINK-NEXT: variable g1 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK-NEXT: variable g2 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK-NEXT: variable g3 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK-NEXT: variable g4 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK-NEXT: variable g5 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+# LINK: variable g7 proven=undefined|int[0, 2147483647] writers-known written-at-construction-alone
+
+variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="late" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g2 name="deep" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g3 name="handed" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g4 name="own" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g5 name="sometimes" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g6 name="declared" module=m0 declared={type=anything} initialization=Function function=f6
+variable g7 name="hoisted" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="node:module" displayPath="node:module" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule body=f0
+module m1 path="main.js" displayPath="main.js" body=f8
+entry module=m1
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v3 = NewClosure function=f2
+    v4 = Call v1 calleeName="reads"
+    v5 = Undefined
+    v6 = NewClosure function=f7
+    v7 = Call v3 calleeName="early"
+    v8 = Undefined
+    PutModuleVariable v0 variable=g1
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Call v6 calleeName="outer"
+    v13 = Undefined
+    PutModuleVariable v0 variable=g2
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="print" [isFreeName]
+    v17 = NewClosure function=f4
+    v18 = Call v16, -, v17 calleeName="print"
+    v19 = Undefined
+    PutModuleVariable v0 variable=g3
+    v21 = GetModuleVariable variable=g4
+    PutModuleVariable v0 variable=g4
+    v23 = PropGet v15 key="more" [isFreeName]
+    v24 = Call v23 calleeName="more"
+    v25 = Undefined
+    Branch v24 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g5
+    Jump -> next b2()
+  b2():
+    v27 = NewClosure function=f5
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Call v27 calleeName="maybe"
+    v33 = Undefined
+    v34 = GetModuleVariable variable=g6
+    v35 = Call v34 calleeName="declared"
+    v36 = Undefined
+    PutModuleVariable v0 variable=g7
+    Return v36
+}
+# REPEAT: function = 1..6 ; variable = 0 1 2 3 5 7
+function f%(function) module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g%(variable)
+    Return v0
+}
+# END REPEAT
+function f7 name="outer" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0 calleeName="inner"
+    Return v1
+}
+function f8 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m0 referrer=m1 specifier="node:module"
+    v1 = Undefined
+    Return v1
+}

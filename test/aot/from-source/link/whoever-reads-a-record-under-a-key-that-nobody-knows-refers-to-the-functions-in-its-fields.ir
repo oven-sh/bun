@@ -1,0 +1,31 @@
+# -- source: main.mjs
+# import "./company.mjs";
+# const filters = { gray(p, i) { p[i] = (p[i] + p[i + 1]) >> 1; }, invert(p, i) { p[i] = 255 - p[i]; }, sepia(p, i) { p[i] = (p[i] * 3) >> 2; } };
+# const order = JSON.parse('["gray","invert","sepia"]');
+# function turn(t) { const data = new Uint8ClampedArray(8), apply = filters[order[t % 3]]; for (let i = 0; i + 1 < data.length; i++) apply(data, i); return data[0]; }
+# console.log(turn(0), turn(1), turn(2));
+# -- source: company.mjs
+# const holder = { first: 1 };
+# holder.later = function later(hint) { return hint; };
+# holder.other = function other(hint) { return hint; };
+# globalThis.kept = [holder.later(function () {}), holder.other(1)];
+# -- end of source
+# f1 = later, f2 = other, f5 = turn, f6 = gray, f7 = invert, f8 = sepia
+# `turn` picks a function out of its own file's table under a key that nobody knows: the three functions in the table's fields meet at the callee; company.mjs's two, which lie beside
+# the fields of a record that `turn` never sees, do not. In its loop the walk tests for the three closures, which are proven of the table's fields, but whether it copies one in line asks
+# whether the unit leads to it in the graph of referrers (mayBeWalkedAtInlining()). That graph once listed only what a type names: where more functions met than a set holds the callee
+# was lost, `turn` was no referrer of its own table's functions any more, and a file that it never names had changed its code (the peer's pixels: 140,833 against 163,531 instructions a turn).
+# So whoever reads a record under a key that nobody knows refers to one group, whose members are the functions that are proven of that record's fields.
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f6 
+# CHECK: referrers f4, {{*}}functions in the fields of L1
+# CHECK-LABEL: function f7 
+# CHECK: referrers f4, {{*}}functions in the fields of L1
+# CHECK-LABEL: function f8 
+# CHECK: referrers f4, {{*}}functions in the fields of L1
+# RUN(COPY): walk f5:Body mechanisms=all
+# COPY-LABEL: code f5:Body
+# COPY: frame {{*}} callee=f6
+# COPY: frame {{*}} callee=f7
+# COPY: frame {{*}} callee=f8
+# COPY-NOT: CallDirect

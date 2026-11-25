@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
-import { createBrotliCompress } from "node:zlib";
+import { brotliCompressSync, constants, createBrotliCompress } from "node:zlib";
 
 import brotliFile from "./fetch.brotli.test.ts.br" with { type: "file" };
 import gzipFile from "./fetch.brotli.test.ts.gzip" with { type: "file" };
@@ -114,4 +114,61 @@ test("fetch brotli streaming body delivers the whole flushed chunk at once", asy
     rest += Buffer.from(value).toString();
   }
   expect(rest).toBe(secondLine);
+});
+
+describe("fetch takes the same window sizes as DecompressionStream", () => {
+  function serve(windowBits: number, largeWindow: number) {
+    const body = brotliCompressSync("hello hello hello", {
+      params: {
+        [constants.BROTLI_PARAM_QUALITY]: 5,
+        [constants.BROTLI_PARAM_LARGE_WINDOW]: largeWindow,
+        [constants.BROTLI_PARAM_LGWIN]: windowBits,
+      },
+    });
+    return Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "Content-Encoding": "br" } }) });
+  }
+  const throughStream = (raw: Response) => raw.body!.pipeThrough(new DecompressionStream("brotli")).text();
+
+  test.each([10, 24])("a window of %d bits", async windowBits => {
+    using server = serve(windowBits, 0);
+    expect(await (await fetch(server.url)).text()).toBe("hello hello hello");
+    expect(await throughStream(await fetch(server.url, { decompress: false }))).toBe("hello hello hello");
+  });
+
+  test.each([10, 25])("no large window of %d bits", async windowBits => {
+    using server = serve(windowBits, 1);
+    const response = await fetch(server.url);
+    await expect(response.text()).rejects.toMatchObject({ code: "BrotliDecompressionError" });
+    await expect(throughStream(await fetch(server.url, { decompress: false }))).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR__ERROR_FORMAT_WINDOW_BITS",
+      message: "brotli decode failed",
+      cause: { code: "ERR__ERROR_FORMAT_WINDOW_BITS", message: "_ERROR_FORMAT_WINDOW_BITS" },
+    });
+  });
+});
+
+test.each(["with the stream", "after the stream"])("fetch ignores bytes that follow the end, sent %s", async when => {
+  const stream = brotliCompressSync("hello");
+  const junk = Buffer.from("junk");
+  const { promise: firstRead, resolve } = Promise.withResolvers<void>();
+  using server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(
+        async function* () {
+          if (when === "with the stream") return yield Buffer.concat([stream, junk]);
+          yield stream;
+          await firstRead;
+          yield junk;
+        },
+        { headers: { "Content-Encoding": "br" } },
+      ),
+  });
+  let text = "";
+  for await (const chunk of (await fetch(server.url)).body!) {
+    text += Buffer.from(chunk);
+    resolve();
+  }
+  expect(text).toBe("hello");
 });

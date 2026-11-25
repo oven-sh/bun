@@ -34,12 +34,16 @@ mod scopes;
 mod tokens;
 pub(crate) mod wire;
 
-pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
+pub use ast::drop_spare_lists;
+pub use engine::{
+    Demand, Engine, HEAVY, Serve, Vm, Work, can_be_answered_ahead, has_long_answer, is_last_call,
+    is_same_for_all_files, realms_for, rules_in_message,
+};
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub(crate) use rules::has_non_json_value;
-pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
+pub use rules::{About, Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::{eslint_patch, program};

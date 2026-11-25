@@ -1,11 +1,13 @@
-mod faces;
+mod facades;
 mod helper_calls;
+mod inline_star;
 mod summary;
 #[cfg(test)]
 mod tests;
 
-use self::faces::Faces;
-pub(super) use self::faces::collect_seen_namespaces;
+use self::facades::Facades;
+pub(super) use self::facades::collect_seen_namespaces;
+use self::inline_star::{InlineStar, InlineStarInput, find_inline_stars, read_list_of_names};
 use self::summary::{ExportsSummary, StoredName, summarize_file, summarize_inner_modules};
 use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
@@ -26,7 +28,7 @@ use crate::builtins::resolve::{
     ModuleObjectOwner, ModuleObjectUse, redeclares_what_wrapper_hands_in,
 };
 use crate::ir::for_each_mut;
-use crate::known_helpers::{Helper, Quiet, Shape as HelperShape};
+use crate::known_helpers::{Helper, KnownReference, Quiet, Shape as HelperShape};
 use crate::load::SourceKind;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
@@ -34,6 +36,7 @@ use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, BindingKind, Bound, CodeUnit, CommonJsVariable,
     Decl, FnOwner, FunctionFlags, Parent, PatParent, ScopeKind, SymbolId,
 };
+use bun_sema::components::strongly_connected_components;
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
@@ -44,6 +47,8 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ThisPositions;
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_sort_by_number::SortByNumber;
+use smallvec::{SmallVec, smallvec};
 use std::cell::OnceCell;
 
 pub(super) struct CommonJsInput<'a, 'b, 's> {
@@ -92,6 +97,7 @@ pub(in crate::modules) struct ModuleEntries {
     pub is_half: bool,
     pub is_replaced_late: bool,
     pub exports_ordinary_object: bool,
+    pub exports_function: bool,
     pub marker: Option<bool>,
     pub names: Vec<NameEntry>,
 }
@@ -138,12 +144,37 @@ struct Creation {
     is_fixed: bool,
     start: u32,
     end: u32,
+    order: u32,
 }
 
 impl Creation {
     fn is_in_order(&self) -> bool {
         self.position == SitePosition::InOrder
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct Star {
+    module: ModuleRef,
+    call: ExprId,
+    required: ExprId,
+    statement: StmtId,
+    start: u32,
+    is_in_line: bool,
+    redefines_names: bool,
+    leaves_listed_names: bool,
+    copies_hidden_names: bool,
+}
+
+/// `...require("./a")` in the literal that the body stores as its exports.
+#[derive(Clone, Debug)]
+struct SpreadOfRequired {
+    module: ModuleRef,
+    required: ExprId,
+    statement: StmtId,
+    start: u32,
+    end: u32,
+    names: Vec<Atom>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -154,8 +185,32 @@ struct Alias {
     value: StoredValue,
     is_enumerable: bool,
     is_seen_unfilled: bool,
+    needs_marker: bool,
+    is_defined_in_front_of_load: bool,
+    is_fixed: bool,
+    returned: ExprId,
     start: u32,
     returned_start: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct DefinedGetter {
+    definition: ExprId,
+    returned: ExprId,
+    is_enumerable: bool,
+    needs_marker: bool,
+    is_in_front_of_load: bool,
+    is_fixed: bool,
+}
+
+/// A getter that the exports have for good before their module runs anything that others may see.
+#[derive(Copy, Clone, Debug)]
+pub(in crate::modules) struct FixedGetter {
+    name: Atom,
+    pub target: AliasTarget,
+    pub returned: ExprId,
+    /// The variable that holds the exports the getter reads, until then undefined or uninitialized.
+    pub holder: Option<SymbolId>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -181,14 +236,22 @@ struct ModuleText {
     own_accesses: Vec<OwnAccess>,
     creations: Vec<Creation>,
     aliases: Vec<Alias>,
+    fixed_getters: Vec<FixedGetter>,
     defined_values: Vec<(ExprId, Atom)>,
     marker_nodes: Vec<ExprId>,
     erased: Vec<StmtId>,
     evaluated_at_store: Option<StmtId>,
+    stars: Vec<Star>,
+    spreads: Vec<SpreadOfRequired>,
+    assignments: Vec<ExprId>,
+    names_left_by_stars: Vec<Atom>,
+    holders_in_erased_getters: Vec<ExprId>,
     names_read: Vec<Atom>,
     names_called: Vec<Atom>,
     marker: Option<bool>,
     is_marker_fixed: bool,
+    is_marker_hidden_from_loops: bool,
+    is_marker_left_to_stars: bool,
     is_marker_ignored_by_imports: bool,
     runs_in_place: bool,
     names_hidden_from_loops: Vec<Atom>,
@@ -196,6 +259,9 @@ struct ModuleText {
     uses_module_object: bool,
     is_replaced_late: bool,
     exports_ordinary_object: bool,
+    /// The body uses its exports, and ends with a function or a class in place of them.
+    exports_function: bool,
+    replaced_by: Option<ExprId>,
 }
 
 impl ModuleText {
@@ -215,6 +281,10 @@ impl ModuleText {
 
     fn alias_of(&self, name: Atom) -> Option<&Alias> {
         range_of(&self.aliases, name, |it| it.name).first()
+    }
+
+    fn fixed_getter_of(&self, name: Atom) -> Option<&FixedGetter> {
+        range_of(&self.fixed_getters, name, |it| it.name).first()
     }
 
     fn always_creates(&self, name: Atom) -> bool {
@@ -738,6 +808,49 @@ fn find_call_of_helper_with_argument(
     .then_some((user, call.args.len()))
 }
 
+// `{ ...require("./a") }`: the names are read, and what they hold is stored elsewhere.
+fn is_read_by_spread_alone(text: &Text<'_, '_>, required: ExprId) -> bool {
+    let (hir, (argument, parent)) = (text.hir, text.parent(required));
+    match parent {
+        Parent::Prop(property) => hir[property].kind == PropKind::Spread,
+        Parent::Expr(user) if user.is_some() => match hir[user].kind {
+            ExprKind::Call(call) => {
+                let callee = hir.skip_type_assertions(hir[call].callee);
+                let mut sources = hir.ids(hir[call].args).skip(1);
+                text.builtins.builtin_of_expression(callee) == Some(BuiltinId::ObjectAssign)
+                    && sources.any(|source: ExprId| source == argument)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+// `__exportStar(require("./a"), exports);`: the helper reads the names and lays getters elsewhere.
+fn is_read_only_by_star(text: &Text<'_, '_>, required: ExprId) -> bool {
+    let hir = text.hir;
+    let (_, Parent::Expr(user)) = text.parent(required) else {
+        return false;
+    };
+    let Some(user) = user.some() else {
+        return false;
+    };
+    let ExprKind::Call(call) = hir[user].kind else {
+        return false;
+    };
+    let helpers = text.bind.known_helpers;
+    let known = helpers.certain_callee(text.bind.files, text.file, hir[call].callee);
+    let is_star = known.is_some_and(|known| {
+        matches!(
+            known.shape,
+            HelperShape::ExportStarBindsNamesTheTargetLacks
+                | HelperShape::ExportStarOfKeysIfMissing
+                | HelperShape::ReExportCopiesAllButDefault
+        )
+    });
+    is_star && text.statement_of(user).is_some()
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Held {
     Object,
@@ -753,7 +866,7 @@ struct TakenObjects {
     imported: Vec<ModuleRef>,
     defaults: Vec<ModuleRef>,
     called: Vec<(ModuleRef, Atom)>,
-    names_way_to_module_objects: bool,
+    reaches_module_objects: bool,
 }
 
 impl Held {
@@ -832,6 +945,9 @@ impl TakenObjects {
         module: ModuleRef,
         holders: &mut Vec<(SymbolId, Held, ModuleRef)>,
     ) {
+        if is_read_only_by_star(text, call) || is_read_by_spread_alone(text, call) {
+            return;
+        }
         let (answer, held) = match find_call_of_helper_with_argument(text, call) {
             Some((answer, 1)) => (answer, Held::Answer),
             Some((answer, _)) => (answer, Held::AnswerPastMarker),
@@ -854,7 +970,7 @@ fn find_taken_objects(
     let mut taken = TakenObjects::default();
     let mentions = text.builtins.module_object_mentions().iter();
     let mut mentions = mentions.map(|mention| (mention.owner, mention.object_use));
-    taken.names_way_to_module_objects = mentions.any(|mention| match mention {
+    taken.reaches_module_objects = mentions.any(|mention| match mention {
         (ModuleObjectOwner::EntryPoint, _) if !commonjs_file_may_be_main => false,
         (_, ModuleObjectUse::Tested) => false,
         (ModuleObjectOwner::EntryPoint, _) => true,
@@ -862,12 +978,11 @@ fn find_taken_objects(
             object_use,
             ModuleObjectUse::Parent
                 | ModuleObjectUse::Children
-                | ModuleObjectUse::HandedOn
-                | ModuleObjectUse::HolderHandedOn
+                | ModuleObjectUse::Escaped
+                | ModuleObjectUse::HolderEscaped
         ),
     });
-    taken.names_way_to_module_objects |=
-        text.bind.runs_tests && text.builtins.reaches_module_cache();
+    taken.reaches_module_objects |= text.bind.runs_tests && text.builtins.reaches_module_cache();
     let mut holders = Vec::new();
     let mut distinct_candidates: Option<Vec<ModuleRef>> = None;
     for (site, answer) in text.analysis.import_sites.iter().zip(&scan.sites) {
@@ -957,8 +1072,19 @@ fn find_taken_objects(
             .iter()
             .take_while(move |holder| holder.0 == name)
     };
+    let stars = find_inline_stars(&InlineStarInput {
+        file: text.file,
+        atoms: text.atoms,
+        hir,
+        bound,
+        builtins: text.builtins,
+        known_helpers: text.bind.known_helpers,
+    });
     for reference in (0..hir.exprs.len() as u32).map(ExprId) {
-        if !bound.is_evaluated_ident(reference) {
+        if !bound.is_evaluated_ident(reference)
+            || stars.iter().any(|star| star.holds(hir, reference))
+            || is_read_by_spread_alone(text, reference)
+        {
             continue;
         }
         for &(_, held, module) in held_by(bound.binding(reference)) {
@@ -1039,12 +1165,64 @@ pub(crate) fn find_literal_exported_under_name(
     (mentions.count() == 1).then_some((literal, declared_at))
 }
 
+/// The literals and the required modules out of which `{ .. }` or `Object.assign({ .. }, require("./a"), ..)` makes a new object.
+pub(crate) fn find_parts_of_object(
+    hir: &hir::File<'_>,
+    builtins: &ResolvedBuiltins,
+    value: ExprId,
+) -> SmallVec<[ExprId; 4]> {
+    let value = hir.skip_type_assertions(value);
+    match hir[value].kind {
+        ExprKind::Object(_) => smallvec![value],
+        ExprKind::Call(_) => {
+            let parts = find_arguments_of_assign(hir, builtins, value);
+            let target = parts.first().map(|&target| hir[target].kind);
+            match target {
+                Some(ExprKind::Object(_)) => parts,
+                _ => SmallVec::new(),
+            }
+        }
+        _ => SmallVec::new(),
+    }
+}
+
+/// What `Object.assign(target, require("./a"), { .. })` is given, all of it literals, names and calls.
+pub(crate) fn find_arguments_of_assign(
+    hir: &hir::File<'_>,
+    builtins: &ResolvedBuiltins,
+    call: ExprId,
+) -> SmallVec<[ExprId; 4]> {
+    let ExprKind::Call(call) = hir[hir.skip_type_assertions(call)].kind else {
+        return SmallVec::new();
+    };
+    let call = hir[call];
+    let callee = hir.skip_type_assertions(call.callee);
+    let arguments = hir.ids(call.args);
+    let arguments: SmallVec<[ExprId; 4]> = arguments
+        .map(|argument: ExprId| hir.skip_type_assertions(argument))
+        .collect();
+    let is_part = |&part: &ExprId| {
+        matches!(
+            hir[part].kind,
+            ExprKind::Object(_) | ExprKind::Call(_) | ExprKind::Ident(_)
+        )
+    };
+    match call.chain == Chain::No
+        && builtins.builtin_of_expression(callee) == Some(BuiltinId::ObjectAssign)
+        && arguments.iter().skip(1).all(is_part)
+    {
+        true => arguments,
+        false => SmallVec::new(),
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Replacement {
     node: ExprId,
     position: SitePosition,
     literal: Option<ExprId>,
     declared_at: Option<StmtId>,
+    value: Option<ExprId>,
     stores_ordinary_object: bool,
 }
 
@@ -1059,7 +1237,9 @@ struct Scan<'t, 'a, 's> {
     mentions: Vec<Mention>,
     replacements: Vec<Replacement>,
     marking_calls: Vec<ExprId>,
+    inline_stars: Vec<InlineStar>,
     quiet_head: OnceCell<u32>,
+    names_by_statement: OnceCell<Vec<u32>>,
 }
 
 impl Scan<'_, '_, '_> {
@@ -1111,6 +1291,41 @@ impl Scan<'_, '_, '_> {
         Some((self.module_of_call(site)?, site))
     }
 
+    fn operand_of_import_default(&self, value: ExprId) -> Option<ExprId> {
+        let text = self.text;
+        let hir = text.hir;
+        let ExprKind::Call(call) = hir[value].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if call.chain != Chain::No || call.args.len() != 1 {
+            return None;
+        }
+        let helpers = text.bind.known_helpers;
+        let known = helpers.certain_callee(text.bind.files, text.file, call.callee)?;
+        matches!(known.shape.helper(), Helper::ImportDefault)
+            .then(|| hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 0)))
+    }
+
+    fn find_required_module_past_helper(&self, name: ExprId) -> Option<(ModuleRef, ExprId, bool)> {
+        if let Some((module, site)) = self.find_required_module(name) {
+            return Some((module, site, false));
+        }
+        let text = self.text;
+        let Binding::Symbol(symbol) = text.bound.binding(name) else {
+            return None;
+        };
+        if !text.bound.is_stable_binding(symbol) {
+            return None;
+        }
+        let answer = match text.bound.binding_initializer(text.hir, symbol) {
+            BindingInitializer::Expression(value) => text.hir.skip_type_assertions(value),
+            _ => return None,
+        };
+        let site = self.operand_of_import_default(answer)?;
+        Some((self.module_of_call(site)?, site, true))
+    }
+
     fn create(&self, name: Atom, node: ExprId, value_node: ExprId, value: StoredValue) -> Creation {
         Creation {
             name,
@@ -1123,6 +1338,7 @@ impl Scan<'_, '_, '_> {
             is_fixed: false,
             start: self.text.hir[node].pos,
             end: self.text.hir[node].end,
+            order: 0,
         }
     }
 
@@ -1175,8 +1391,12 @@ impl Scan<'_, '_, '_> {
         let Binding::Symbol(id) = text.bound.binding(returned) else {
             return None;
         };
-        let is_declared_at_top = self.body.callback.is_none()
-            && text.bound.symbol_scope(id) == text.bound.top_scope(text.hir, CodeUnit::File);
+        let unit = self
+            .body
+            .callback
+            .map_or(CodeUnit::File, CodeUnit::Function);
+        let is_declared_at_top =
+            text.bound.symbol_scope(id) == text.bound.top_scope(text.hir, unit);
         let has_variable = matches!(
             text.bound.binding_kind(id),
             BindingKind::Var
@@ -1194,12 +1414,14 @@ impl Scan<'_, '_, '_> {
         returned: ExprId,
         definition: ExprId,
         is_read_behind_body: bool,
-    ) -> Option<AliasTarget> {
+    ) -> Option<(AliasTarget, bool, Option<ExprId>)> {
         let text = self.text;
         let hir = text.hir;
         let returned = hir.skip_type_assertions(returned);
         if matches!(hir[returned].kind, ExprKind::Ident(_)) {
-            return self.find_binding_alias(returned);
+            return self
+                .find_binding_alias(returned)
+                .map(|target| (target, false, None));
         }
         let (object, key) = hir.member_key(returned)?;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[returned].kind
@@ -1208,23 +1430,37 @@ impl Scan<'_, '_, '_> {
         };
         let name = text.plain_name_of_key(key)?;
         let object = hir.skip_type_assertions(object);
+        let operand = self.operand_of_import_default(object);
+        let object = operand.unwrap_or(object);
         if chain != Chain::No || !matches!(hir[object].kind, ExprKind::Ident(_)) {
             return None;
         }
-        let (module, site) = self.find_required_module(object)?;
+        let (module, site, is_past_helper) = self.find_required_module_past_helper(object)?;
+        if operand.is_some() && is_past_helper {
+            return None;
+        }
+        let lies_in_own_body = match self.body.callback {
+            None => true,
+            Some(callback) => match text.bound.fns[callback.idx()].owner {
+                FnOwner::Expr(written) => {
+                    hir[written].pos <= hir[site].pos && hir[site].end <= hir[written].end
+                }
+                _ => false,
+            },
+        };
         let is_loaded_before = self.position_of(site) == SitePosition::InOrder
-            && (is_read_behind_body || hir[site].end <= hir[definition].pos);
-        is_loaded_before.then_some(AliasTarget::Member { module, name })
+            && ((is_read_behind_body && lies_in_own_body) || hir[site].end <= hir[definition].pos);
+        let needs_marker = operand.is_some() || is_past_helper;
+        let handed_to_helper = operand.map(|_| object);
+        is_loaded_before.then_some((
+            AliasTarget::Member { module, name },
+            needs_marker,
+            handed_to_helper,
+        ))
     }
 
-    fn add_alias(
-        &mut self,
-        name: Atom,
-        target: AliasTarget,
-        node: ExprId,
-        returned: ExprId,
-        is_enumerable: bool,
-    ) {
+    fn add_alias(&mut self, name: Atom, target: AliasTarget, getter: DefinedGetter) {
+        let (node, returned) = (getter.definition, getter.returned);
         self.found.aliases.push(Alias {
             name,
             target,
@@ -1233,8 +1469,12 @@ impl Scan<'_, '_, '_> {
                 AliasTarget::Binding(_) => self.text.classify_value(returned, 0),
                 AliasTarget::Member { .. } => StoredValue::Unknown,
             },
-            is_enumerable,
+            is_enumerable: getter.is_enumerable,
             is_seen_unfilled: false,
+            needs_marker: getter.needs_marker,
+            is_defined_in_front_of_load: getter.is_in_front_of_load,
+            is_fixed: getter.is_fixed,
+            returned,
             start: self.text.hir[node].pos,
             returned_start: self.text.hir[returned].pos,
         });
@@ -1278,13 +1518,42 @@ impl Scan<'_, '_, '_> {
                 setter: None,
             } => {
                 let returned = self.find_returned_expression(getter)?;
-                let target = self.find_alias_target(returned, call_node, false)?;
-                self.add_alias(name, target, call_node, returned, is_enumerable);
+                let behind_load = self.find_alias_target(returned, call_node, false);
+                let (target, needs_marker, handed_to_helper) = match behind_load {
+                    Some(found) => found,
+                    None => self.find_alias_target(returned, call_node, true)?,
+                };
+                let getter = DefinedGetter {
+                    definition: call_node,
+                    returned,
+                    is_enumerable,
+                    needs_marker,
+                    is_in_front_of_load: behind_load.is_none(),
+                    is_fixed: written.is_configurable != Some(true),
+                };
+                self.add_alias(name, target, getter);
+                self.found
+                    .holders_in_erased_getters
+                    .extend(handed_to_helper);
                 self.found.erased.extend(text.statement_of(call_node));
             }
             DescribedPart::Data { .. } | DescribedPart::Accessor { .. } => return None,
         }
         Some(())
+    }
+
+    fn names_written_at(&self, statement: StmtId) -> impl Iterator<Item = &StoredName> {
+        let names = &self.summary.names;
+        let by_statement = self.names_by_statement.get_or_init(|| {
+            let mut by_statement: Vec<u32> = (0..names.len() as u32).collect();
+            by_statement.sort_by_u32(|&at| names[at as usize].statement().0);
+            by_statement
+        });
+        let first =
+            by_statement.partition_point(|&at| names[at as usize].statement().0 < statement.0);
+        (by_statement[first..].iter())
+            .map(|&at| &names[at as usize])
+            .take_while(move |name| name.statement() == statement)
     }
 
     fn add_names_of_helper(
@@ -1296,34 +1565,40 @@ impl Scan<'_, '_, '_> {
         let text = self.text;
         let mut aliases = Vec::new();
         let mut marks_module = false;
-        for stored in &self.summary.names {
+        for stored in self.names_written_at(written_at) {
             match *stored {
                 StoredName::Getter {
                     name,
-                    statement,
                     getter,
                     is_enumerable,
                     ..
-                } if statement == written_at => {
+                } => {
                     let returned = self.find_returned_expression(getter)?;
-                    let target =
-                        self.find_alias_target(returned, definition, is_read_behind_body)?;
-                    aliases.push((name, target, returned, is_enumerable));
+                    let behind_load =
+                        self.find_alias_target(returned, definition, is_read_behind_body);
+                    let (target, needs_marker, handed_to_helper) = match behind_load {
+                        Some(found) => found,
+                        None => self.find_alias_target(returned, definition, true)?,
+                    };
+                    if handed_to_helper.is_some() {
+                        return None;
+                    }
+                    let is_in_front_of_load = behind_load.is_none();
+                    aliases.push((
+                        name,
+                        target,
+                        returned,
+                        is_enumerable,
+                        needs_marker,
+                        is_in_front_of_load,
+                    ));
                 }
-                StoredName::Value {
-                    name,
-                    statement,
-                    value,
-                } if statement == written_at && name == known::__esModule && value.is_none() => {
+                StoredName::Value { name, value, .. }
+                    if name == known::__esModule && value.is_none() =>
+                {
                     marks_module = true;
                 }
-                StoredName::Value { statement, .. } | StoredName::AllOf { statement, .. }
-                    if statement == written_at =>
-                {
-                    return None;
-                }
-                StoredName::Value { .. } | StoredName::Getter { .. } | StoredName::AllOf { .. } => {
-                }
+                StoredName::Value { .. } | StoredName::AllOf { .. } => return None,
             }
         }
         if (aliases.is_empty() && !marks_module)
@@ -1331,8 +1606,17 @@ impl Scan<'_, '_, '_> {
         {
             return None;
         }
-        for (name, target, returned, is_enumerable) in aliases {
-            self.add_alias(name, target, definition, returned, is_enumerable);
+        let is_fixed = self.defines_fixed_getters(definition);
+        for (name, target, returned, is_enumerable, needs_marker, is_in_front_of_load) in aliases {
+            let getter = DefinedGetter {
+                definition,
+                returned,
+                is_enumerable,
+                needs_marker,
+                is_in_front_of_load,
+                is_fixed,
+            };
+            self.add_alias(name, target, getter);
         }
         if marks_module {
             let ignored = StoredValue::IgnoresThis;
@@ -1347,6 +1631,219 @@ impl Scan<'_, '_, '_> {
         }
         self.found.erased.push(written_at);
         Some(())
+    }
+
+    fn defines_fixed_getters(&self, definition: ExprId) -> bool {
+        let hir = self.text.hir;
+        let ExprKind::Call(call) = hir[definition].kind else {
+            return false;
+        };
+        matches!(
+            (self.certain_helper)(hir[call].callee),
+            Some(
+                HelperShape::ExportDefinesGetters
+                    | HelperShape::ExportGettersOfLiteral
+                    | HelperShape::ExportGettersIfMissing
+                    | HelperShape::ExportMarksModuleAndDefinesGetters
+            )
+        )
+    }
+
+    fn find_holder_of_returned(&self, returned: ExprId) -> Option<SymbolId> {
+        let text = self.text;
+        let (object, _) = text
+            .hir
+            .member_key(text.hir.skip_type_assertions(returned))?;
+        let Binding::Symbol(holder) = text.bound.binding(text.hir.skip_type_assertions(object))
+        else {
+            return None;
+        };
+        let body = CodeUnit::Function(self.body.callback?);
+        let is_own = text.bound.symbol_scope(holder) == text.bound.top_scope(text.hir, body);
+        let is_tested = matches!(
+            text.bound.binding_kind(holder),
+            BindingKind::Var | BindingKind::Let | BindingKind::Const
+        );
+        (is_own && is_tested && !text.bound.is_visible_to_eval(holder)).then_some(holder)
+    }
+
+    /// The getters of a bundled body that stay what the body defines first: nothing replaces its exports.
+    fn find_fixed_getters(&self) -> Vec<FixedGetter> {
+        let found = &self.found;
+        if self.body.callback.is_none()
+            || !found.aliases.iter().any(|alias| alias.is_fixed)
+            || !self.replacements.is_empty()
+            || found.uses_module_object
+            || self.summary.module_object_escapes
+            || self.summary.replaced_by.is_some()
+        {
+            return Vec::new();
+        }
+        let fixed = found.aliases.iter().filter(|alias| {
+            alias.is_fixed
+                && !alias.needs_marker
+                && range_of(&found.aliases, alias.name, |it| it.name).len() == 1
+                && found.creations_of(alias.name).is_empty()
+                && self.runs_nothing_else_in_front_of(alias.start)
+        });
+        let getters = fixed.filter_map(|alias| {
+            let holder = match alias.target {
+                AliasTarget::Binding(_) => None,
+                AliasTarget::Member { .. } => Some(self.find_holder_of_returned(alias.returned)?),
+            };
+            Some(FixedGetter {
+                name: alias.name,
+                target: alias.target,
+                returned: alias.returned,
+                holder,
+            })
+        });
+        getters.collect()
+    }
+
+    fn add_star(&mut self, exports: ExprId, call_node: ExprId) -> Option<()> {
+        let text = self.text;
+        let hir = text.hir;
+        let ExprKind::Call(call) = hir[call_node].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if self.body.callback.is_some()
+            || call.chain != Chain::No
+            || !self.is_statement_in_order(call_node)
+        {
+            return None;
+        }
+        let arguments: Vec<ExprId> = hir.ids(call.args).collect();
+        let shape = (self.certain_helper)(call.callee)?;
+        let source = match (shape, &arguments[..]) {
+            (HelperShape::ExportStarBindsNamesTheTargetLacks, &[source, target])
+                if target == exports && self.star_binds_getters(call.callee) =>
+            {
+                source
+            }
+            (HelperShape::ExportStarOfKeysIfMissing, &[source, target]) if target == exports => {
+                source
+            }
+            (HelperShape::ReExportCopiesAllButDefault, &[copied, source, target])
+                if target == exports && self.is_copied_to_exports(copied) =>
+            {
+                source
+            }
+            _ => return None,
+        };
+        let required = hir.skip_type_assertions(source);
+        let module = self.module_of_call(required)?;
+        let statement = text.statement_of(call_node)?;
+        self.found.stars.push(Star {
+            module,
+            call: call_node,
+            required,
+            statement,
+            start: hir[call_node].pos,
+            is_in_line: false,
+            redefines_names: false,
+            leaves_listed_names: false,
+            copies_hidden_names: shape == HelperShape::ReExportCopiesAllButDefault,
+        });
+        Some(())
+    }
+
+    // `module.exports = __toCommonJS(index_exports)`: the summary has found every mention of the object.
+    fn is_copied_to_exports(&self, object: ExprId) -> bool {
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        let binding_of = |name: ExprId| bound.binding(hir.skip_type_assertions(name));
+        let [replacement] = self.replacements[..] else {
+            return false;
+        };
+        let ExprKind::Assign {
+            op: None, value, ..
+        } = hir[replacement.node].kind
+        else {
+            return false;
+        };
+        let ExprKind::Call(copy) = hir[hir.skip_type_assertions(value)].kind else {
+            return false;
+        };
+        let copy = hir[copy];
+        let shape = (self.certain_helper)(copy.callee);
+        shape == Some(HelperShape::ToCommonJsCopiesOntoNewMarkedObject)
+            && copy.chain == Chain::No
+            && copy.args.len() == 1
+            && matches!(binding_of(object), Binding::Symbol(_))
+            && binding_of(hir.id_at(copy.args, 0)) == binding_of(object)
+    }
+
+    fn add_inline_star(&mut self, star: InlineStar) -> bool {
+        let text = self.text;
+        let hir = text.hir;
+        if self.found.stars.iter().any(|known| known.call == star.call) {
+            return true;
+        }
+        let Some((module, site)) = self.find_required_module(star.holder_name) else {
+            return false;
+        };
+        if self.body.callback.is_some()
+            || !self.is_statement_in_order(star.call)
+            || self.position_of(site) != SitePosition::InOrder
+            || hir[site].end > star.start
+        {
+            return false;
+        }
+        if let Some(list) = star.list {
+            let Some(names) = read_list_of_names(hir, text.bound, &self.inline_stars, list) else {
+                return false;
+            };
+            self.found.names_left_by_stars.extend(names);
+        }
+        let names = (0..hir.exprs.len() as u32).map(ExprId);
+        let in_star = names.filter(|&name| {
+            matches!(hir[name].kind, ExprKind::Ident(_))
+                && star.holds(hir, name)
+                && text.bound.binding(name) == Binding::Symbol(star.holder)
+        });
+        self.found.holders_in_erased_getters.extend(in_star);
+        self.found.erased.push(star.statement);
+        self.found.stars.push(Star {
+            module,
+            call: star.call,
+            required: ExprId::NONE,
+            statement: star.statement,
+            start: star.start,
+            is_in_line: true,
+            redefines_names: star.redefines_names,
+            leaves_listed_names: star.list.is_some(),
+            copies_hidden_names: false,
+        });
+        true
+    }
+
+    fn star_binds_getters(&self, callee: ExprId) -> bool {
+        let (text, helpers) = (self.text, self.text.bind.known_helpers);
+        let binds_getters = |shape: HelperShape| {
+            matches!(
+                shape,
+                HelperShape::CreateBindingDefinesGetter
+                    | HelperShape::CreateBindingReusesDescriptor
+            )
+        };
+        let known = helpers.certain_callee(text.bind.files, text.file, callee);
+        known.is_some_and(|known| {
+            known.references.iter().all(|reference| match *reference {
+                KnownReference::Helper { symbol, .. } => {
+                    let values = helpers.binding(text.file, symbol);
+                    values.is_some_and(|values| {
+                        !values.functions.is_empty()
+                            && values.functions.iter().all(|held| {
+                                let known = helpers.function(text.file, held.definition);
+                                known.is_some_and(|it| binds_getters(it.shape))
+                            })
+                    })
+                }
+                KnownReference::Global { .. } => true,
+                KnownReference::Loaded { .. } | KnownReference::Holder { .. } => false,
+            })
+        })
     }
 
     fn add_definitions_of_helper(&mut self, call_node: ExprId) -> Option<()> {
@@ -1424,7 +1921,6 @@ impl Scan<'_, '_, '_> {
     fn add_replacement(&mut self, node: ExprId, value: Option<ExprId>, is_statement: bool) {
         let hir = self.text.hir;
         let value = value.map(|value| hir.skip_type_assertions(value));
-        let kind = value.map(|value| hir[value].kind);
         let named = value.filter(|_| is_statement);
         let named = named.and_then(|it| find_literal_exported_under_name(hir, self.text.bound, it));
         self.replacements.push(Replacement {
@@ -1432,9 +1928,13 @@ impl Scan<'_, '_, '_> {
             position: self.position_of(node),
             literal: match named {
                 Some((literal, _)) => Some(literal),
-                None => value.filter(|_| is_statement && matches!(kind, Some(ExprKind::Object(_)))),
+                None => value.filter(|&value| {
+                    let parts = || find_parts_of_object(hir, self.text.builtins, value);
+                    is_statement && !parts().is_empty()
+                }),
             },
             declared_at: named.map(|(_, declared_at)| declared_at),
+            value,
             stores_ordinary_object: value.is_some_and(|it| self.makes_ordinary_object(it, 0)),
         });
     }
@@ -1449,9 +1949,10 @@ impl Scan<'_, '_, '_> {
                 op: None, value, ..
             } => self.makes_ordinary_object(value, names_followed),
             ExprKind::Call(call) => {
-                hir[call].chain == Chain::No
+                let copies_names = hir[call].chain == Chain::No
                     && (self.certain_helper)(hir[call].callee)
-                        == Some(HelperShape::ToCommonJsCopiesOntoNewMarkedObject)
+                        == Some(HelperShape::ToCommonJsCopiesOntoNewMarkedObject);
+                copies_names || !find_parts_of_object(hir, self.text.builtins, value).is_empty()
             }
             ExprKind::Ident(_) if names_followed < MAX_NAMES_FOLLOWED => {
                 let Binding::Symbol(symbol) = bound.binding(value) else {
@@ -1470,8 +1971,60 @@ impl Scan<'_, '_, '_> {
         }
     }
 
+    fn makes_function(&self, value: ExprId, names_followed: u32) -> bool {
+        const MAX_NAMES_FOLLOWED: u32 = 8;
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Fn(_) | ExprKind::Class(_) => true,
+            ExprKind::Assign {
+                op: None, value, ..
+            } => self.makes_function(value, names_followed),
+            ExprKind::Ident(_) if names_followed < MAX_NAMES_FOLLOWED => {
+                let Binding::Symbol(symbol) = bound.binding(value) else {
+                    return false;
+                };
+                bound.is_stable_binding(symbol)
+                    && match bound.binding_initializer(hir, symbol) {
+                        BindingInitializer::Function(_) | BindingInitializer::Class(_) => true,
+                        BindingInitializer::Expression(held) => {
+                            self.makes_function(held, names_followed + 1)
+                        }
+                        _ => false,
+                    }
+            }
+            // `module.exports = exports.default`
+            ExprKind::Dot { .. } | ExprKind::Index { .. }
+                if names_followed < MAX_NAMES_FOLLOWED =>
+            {
+                let mut reads = self.accesses.iter();
+                let read = reads.find(|it| it.node == value && matches!(it.kind, AccessKind::Read));
+                let creations = read.map_or(&[][..], |read| self.found.creations_of(read.name));
+                let mut earlier = creations.iter().filter(|it| it.start < hir[value].pos);
+                match (earlier.next(), earlier.next()) {
+                    (Some(creation), None) => {
+                        creation.is_in_order()
+                            && creation.end <= hir[value].pos
+                            && creation.value_node.is_some()
+                            && self.makes_function(creation.value_node, names_followed + 1)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn look_at_object(&mut self, object: ExprId, is_module_exports: bool) {
         let text = self.text;
+        let around = self
+            .inline_stars
+            .iter()
+            .find(|star| star.holds(text.hir, object));
+        if let Some(&star) = around {
+            self.found.has_names &= !is_module_exports && self.add_inline_star(star);
+            return;
+        }
         let mention = Mention {
             node: object,
             is_module_exports,
@@ -1503,6 +2056,8 @@ impl Scan<'_, '_, '_> {
             Parent::Expr(user) => {
                 self.is_asked_as_some_object(outermost, user)
                     || self.add_definition(outermost, user).is_some()
+                    || self.add_star(outermost, user).is_some()
+                    || self.add_assignment(outermost, user)
                     || self.add_definitions_of_helper(user).is_some()
             }
             Parent::Stmt(user) => matches!(text.hir[user].kind, StmtKind::If { .. }),
@@ -1545,14 +2100,72 @@ impl Scan<'_, '_, '_> {
         }
     }
 
-    fn add_literal(&mut self, literal: ExprId) -> bool {
+    fn add_literal(&mut self, literal: ExprId, stored_at: ExprId) -> bool {
+        let parts = find_parts_of_object(self.text.hir, self.text.builtins, literal);
+        self.add_parts(&parts, stored_at)
+    }
+
+    /// `Object.assign(exports, require("./a"), { own })`
+    fn add_assignment(&mut self, exports: ExprId, call: ExprId) -> bool {
+        let (text, hir) = (self.text, self.text.hir);
+        let arguments = find_arguments_of_assign(hir, text.builtins, call);
+        let is_followed = arguments.len() > 1
+            && arguments[0] == hir.skip_type_assertions(exports)
+            && self.body.callback.is_none()
+            && !self.found.is_half
+            && self.is_statement_in_order(call)
+            && self.add_parts(&arguments[1..], call);
+        if is_followed {
+            self.found.assignments.push(call);
+        }
+        is_followed
+    }
+
+    fn add_parts(&mut self, parts: &[ExprId], stored_at: ExprId) -> bool {
         let text = self.text;
         let hir = text.hir;
-        let ExprKind::Object(properties) = hir[literal].kind else {
-            return false;
-        };
-        let mut creations = Vec::with_capacity(properties.len());
-        for property in properties.iter().map(|id| hir[id]) {
+        let stored_by = text.statement_of(stored_at);
+        let mut creations = Vec::new();
+        let mut spreads = Vec::new();
+        let literals = parts.iter().filter_map(|&part| match hir[part].kind {
+            ExprKind::Object(properties) => Some(properties),
+            _ => None,
+        });
+        for &required in parts {
+            if matches!(hir[required].kind, ExprKind::Object(_)) {
+                continue;
+            }
+            let module = self.module_spread(required);
+            let module = module.filter(|_| self.body.callback.is_none());
+            let (Some(module), Some(statement)) = (module, stored_by) else {
+                return false;
+            };
+            spreads.push(SpreadOfRequired {
+                module,
+                required,
+                statement,
+                start: hir[required].pos,
+                end: hir[required].end,
+                names: Vec::new(),
+            });
+        }
+        for property in literals.flat_map(|it| it.iter()).map(|id| hir[id]) {
+            if property.kind == PropKind::Spread && self.body.callback.is_none() {
+                let required = hir.skip_type_assertions(property.value);
+                let (Some(module), Some(statement)) = (self.module_spread(required), stored_by)
+                else {
+                    return false;
+                };
+                spreads.push(SpreadOfRequired {
+                    module,
+                    required,
+                    statement,
+                    start: property.start,
+                    end: property.end,
+                    names: Vec::new(),
+                });
+                continue;
+            }
             let PropKey::Name(name) = property.key else {
                 return false;
             };
@@ -1576,10 +2189,27 @@ impl Scan<'_, '_, '_> {
                 is_fixed: false,
                 start: property.start,
                 end: property.end,
+                order: 0,
             });
         }
         self.found.creations.extend(creations);
+        let holders = spreads.iter().map(|spread| spread.required);
+        let holders = holders.filter(|&it| matches!(hir[it].kind, ExprKind::Ident(_)));
+        self.found.holders_in_erased_getters.extend(holders);
+        self.found.spreads.extend(spreads);
         true
+    }
+
+    /// The module that is required at `operand`, or that the constant there holds.
+    fn module_spread(&self, operand: ExprId) -> Option<ModuleRef> {
+        let hir = self.text.hir;
+        if !matches!(hir[operand].kind, ExprKind::Ident(_)) {
+            return self.module_of_call(operand);
+        }
+        let (module, site) = self.find_required_module(operand)?;
+        let is_loaded_before =
+            self.position_of(site) == SitePosition::InOrder && hir[site].end <= hir[operand].pos;
+        is_loaded_before.then_some(module)
     }
 
     fn apply_replacement(&mut self) -> bool {
@@ -1598,7 +2228,7 @@ impl Scan<'_, '_, '_> {
         is_seen_alone
             && match replacement.literal {
                 Some(literal) => {
-                    let is_added = self.add_literal(literal);
+                    let is_added = self.add_literal(literal, replacement.node);
                     if is_added {
                         self.found.evaluated_at_store = replacement.declared_at;
                     }
@@ -1810,16 +2440,21 @@ impl Scan<'_, '_, '_> {
             _ => None,
         };
         let marker = written.filter(|_| written == self.summary.marker);
+        let is_left_to_stars = written == Some(false)
+            && self.summary.marker.is_none()
+            && !(found.stars.is_empty() && found.spreads.is_empty());
         let is_defined_without_store = creations.iter().any(is_marked_by_call)
-            || (written == Some(false) && self.summary.marker != Some(false));
+            || (written == Some(false) && self.summary.marker != Some(false) && !is_left_to_stars);
         if is_defined_without_store && marker != Some(true) {
             self.found.has_names = false;
             return;
         }
         let found = &mut self.found;
         found.marker = marker;
+        found.is_marker_left_to_stars = is_left_to_stars;
         if let (Some(true), [creation]) = (marker, &creations[..]) {
             found.is_marker_fixed = creation.is_fixed;
+            found.is_marker_hidden_from_loops = !creation.is_enumerable;
             found.marker_nodes.push(creation.node);
             found.erased.extend(text.statement_of(creation.node));
             found.creations.retain(|it| it.name != known::__esModule);
@@ -1873,14 +2508,25 @@ impl Scan<'_, '_, '_> {
             .aliases
             .shared_sort_by_key(|it| (it.name.0, it.start));
         self.accesses.shared_sort_by_key(|it| it.name.0);
+        self.found.fixed_getters = self.find_fixed_getters();
         let found = &self.found;
         let knows =
             |name: Atom| !found.creations_of(name).is_empty() || found.alias_of(name).is_some();
         let knows_every_name = self.summary.names.iter().all(|stored| match *stored {
             StoredName::Value { name, .. } | StoredName::Getter { name, .. } => knows(name),
-            StoredName::AllOf { .. } => false,
+            StoredName::AllOf { statement, .. } => {
+                found.stars.iter().any(|star| star.statement == statement)
+                    || found
+                        .spreads
+                        .iter()
+                        .any(|spread| spread.statement == statement)
+            }
         });
         self.found.has_names &= knows_every_name;
+        let mut aliases = self.found.aliases.iter();
+        let is_asked_behind_body = !self.found.is_half && self.accesses.is_empty();
+        self.found.has_names &=
+            is_asked_behind_body || !aliases.any(|alias| alias.is_defined_in_front_of_load);
         self.find_stores_that_fill();
         let mut replacements = self.replacements.iter();
         self.found.is_replaced_late = self.found.uses_module_object
@@ -1889,6 +2535,20 @@ impl Scan<'_, '_, '_> {
         self.found.exports_ordinary_object = !self.found.uses_module_object
             && !self.found.needs_wrapped_body
             && replacements.all(|it| it.stores_ordinary_object);
+        self.found.exports_function = !self.found.uses_module_object
+            && !self.found.needs_wrapped_body
+            && match &self.replacements[..] {
+                [only] => {
+                    let start = self.text.hir[only.node].pos;
+                    let mut mentions = self.mentions.iter();
+                    only.position == SitePosition::InOrder
+                        && mentions.any(|mention| self.text.hir[mention.node].pos < start)
+                        && only
+                            .value
+                            .is_some_and(|value| self.makes_function(value, 0))
+                }
+                _ => false,
+            };
         self.found.is_half = self.found.is_half && !self.runs_nothing_else();
         let stores_of_nothing = self.find_stores_of_nothing();
         if self.found.has_names {
@@ -1950,14 +2610,22 @@ fn begin_scan<'t, 'a, 's>(
             own_accesses: Vec::new(),
             creations: Vec::new(),
             aliases: Vec::new(),
+            fixed_getters: Vec::new(),
             defined_values: Vec::new(),
             marker_nodes: Vec::new(),
             erased: Vec::new(),
             evaluated_at_store: None,
+            stars: Vec::new(),
+            spreads: Vec::new(),
+            assignments: Vec::new(),
+            names_left_by_stars: Vec::new(),
+            holders_in_erased_getters: Vec::new(),
             names_read: Vec::new(),
             names_called: Vec::new(),
             marker: None,
             is_marker_fixed: false,
+            is_marker_hidden_from_loops: false,
+            is_marker_left_to_stars: false,
             is_marker_ignored_by_imports: false,
             runs_in_place: false,
             names_hidden_from_loops: Vec::new(),
@@ -1965,12 +2633,26 @@ fn begin_scan<'t, 'a, 's>(
             uses_module_object: summary.module_object_escapes,
             is_replaced_late: false,
             exports_ordinary_object: false,
+            exports_function: false,
+            replaced_by: summary.replaced_by,
         },
         accesses: Vec::new(),
         mentions: Vec::new(),
         replacements: Vec::new(),
         marking_calls: Vec::new(),
+        inline_stars: match callback {
+            Some(_) => Vec::new(),
+            None => find_inline_stars(&InlineStarInput {
+                file: text.file,
+                atoms: text.atoms,
+                hir: text.hir,
+                bound: text.bound,
+                builtins: text.builtins,
+                known_helpers: text.bind.known_helpers,
+            }),
+        },
         quiet_head: OnceCell::new(),
+        names_by_statement: OnceCell::new(),
     }
 }
 
@@ -2034,12 +2716,12 @@ fn scan_own_text(
     certain_helper: &dyn Fn(ExprId) -> Option<HelperShape>,
     is_half: bool,
     is_entry_point: bool,
-    runs_again: bool,
+    may_be_reevaluated: bool,
 ) -> ModuleText {
     let (hir, bound, decisions) = (text.hir, text.bound, text.decisions);
     let needs_wrapped_body = needs_wrapped_body(text);
     let mut scan = begin_scan(text, sites, summary, certain_helper, None, is_half);
-    scan.found.has_names &= !needs_wrapped_body && !is_entry_point && !runs_again;
+    scan.found.has_names &= !needs_wrapped_body && !is_entry_point && !may_be_reevaluated;
     scan.found.needs_wrapped_body = needs_wrapped_body;
     for &(name, binding) in bound.ident_bindings() {
         if decisions.is_dead_expr(name) {
@@ -2144,7 +2826,8 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         };
         let scan = scans.of(file);
         let certain_helper = |callee: ExprId| {
-            let known = bind.known_helpers.certain_callee(files, file, callee)?;
+            let own = bind.known_helpers.certain_callee(files, file, callee);
+            let known = own.or_else(|| modules.wrapped.helper_of_member(files, file, callee))?;
             Some(known.shape)
         };
         let inner_modules = modules.wrapped.of_file(file).iter();
@@ -2181,7 +2864,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
             &certain_helper,
             is_half,
             is_entry_point[file.idx()],
-            modules.runs_again(file),
+            modules.may_be_reevaluated(file),
         );
         found.push(ModuleText {
             is_marker_ignored_by_imports: interop.export_rule
@@ -2211,6 +2894,8 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
     }
     let inner_modules = &mut texts.index.inner_modules;
     inner_modules.shared_sort_unstable_by_key(|entry| entry.0);
+    texts.hold_aliases_to_markers();
+    texts.expand_stars();
     let find_open_marker_of = |module: ModuleRef| match modules.interop(module).kind {
         ModuleKind::CommonJs => {
             let text = &texts.modules[texts.index.find(module)?];
@@ -2241,13 +2926,339 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         all_taken.imported.append(&mut taken.imported);
         all_taken.defaults.append(&mut taken.defaults);
         all_taken.called.append(&mut taken.called);
-        all_taken.names_way_to_module_objects |= taken.names_way_to_module_objects;
+        all_taken.reaches_module_objects |= taken.reaches_module_objects;
     }
     texts.forget_markers_that_may_change(modules, &all_taken);
     texts
 }
 
 impl CommonJsTexts {
+    fn hold_aliases_to_markers(&mut self) {
+        for number in 0..self.modules.len() {
+            let mut past_helpers = self.modules[number]
+                .aliases
+                .iter()
+                .filter(|it| it.needs_marker);
+            let holds = past_helpers.all(|alias| match alias.target {
+                AliasTarget::Member { module, .. } => {
+                    self.index.find(module).is_some_and(|source| {
+                        let source = &self.modules[source];
+                        source.has_names
+                            && !source.is_half
+                            && !source.is_replaced_late
+                            && source.marker == Some(true)
+                            && source.is_marker_fixed
+                    })
+                }
+                AliasTarget::Binding(_) => false,
+            });
+            if holds {
+                continue;
+            }
+            let text = &mut self.modules[number];
+            text.has_names = false;
+            text.creations = Vec::new();
+            text.aliases = Vec::new();
+            text.erased = Vec::new();
+            text.evaluated_at_store = None;
+            text.defined_values = Vec::new();
+            text.marker = None;
+        }
+    }
+
+    fn expand_stars(&mut self) {
+        let takes_no_names = |text: &ModuleText| text.stars.is_empty() && text.spreads.is_empty();
+        if self.modules.iter().all(takes_no_names) {
+            return;
+        }
+        let edges_of = |text: &ModuleText| -> Vec<u32> {
+            let stars = text.stars.iter().map(|star| star.module);
+            let sources = stars.chain(text.spreads.iter().map(|spread| spread.module));
+            let sources = sources.filter_map(|module| self.index.find(module));
+            sources.map(|number| number as u32).collect()
+        };
+        let edges: Vec<Vec<u32>> = self.modules.iter().map(edges_of).collect();
+        let (_, components) = strongly_connected_components(&edges);
+        for members in components {
+            let is_cycle = match members[..] {
+                [member] => edges[member].contains(&(member as u32)),
+                _ => true,
+            };
+            for member in members {
+                if takes_no_names(&self.modules[member]) {
+                    continue;
+                }
+                let names = match is_cycle {
+                    true => None,
+                    false => self.find_names_of_stars(member),
+                };
+                let names =
+                    names.and_then(|names| Some((names, self.find_names_of_spreads(member)?)));
+                let text = &mut self.modules[member];
+                match names {
+                    Some((names, names_of_spreads)) => {
+                        text.aliases.extend(names);
+                        text.aliases.shared_sort_by_key(|it| (it.name.0, it.start));
+                        for (spread, names) in text.spreads.iter_mut().zip(names_of_spreads) {
+                            for (&(name, value), order) in names.iter().zip(0u32..) {
+                                text.creations.push(Creation {
+                                    name,
+                                    node: spread.required,
+                                    value,
+                                    value_node: ExprId::NONE,
+                                    position: SitePosition::InOrder,
+                                    is_enumerable: true,
+                                    is_read_only: false,
+                                    is_fixed: false,
+                                    start: spread.start,
+                                    end: spread.end,
+                                    order,
+                                });
+                            }
+                            spread.names = names.into_iter().map(|it| it.0).collect();
+                        }
+                        text.creations
+                            .shared_sort_by_key(|it| (it.name.0, it.start));
+                        if text.is_marker_left_to_stars && text.stars.is_empty() {
+                            text.marker = Some(false);
+                        }
+                    }
+                    None => {
+                        text.spreads = Vec::new();
+                        text.has_names = false;
+                        text.creations = Vec::new();
+                        text.aliases = Vec::new();
+                        text.erased = Vec::new();
+                        text.evaluated_at_store = None;
+                        text.defined_values = Vec::new();
+                        text.marker = None;
+                    }
+                }
+            }
+        }
+    }
+
+    fn value_stored_under(&self, mut module: ModuleRef, mut name: Atom) -> StoredValue {
+        for _ in 0..=self.modules.len() {
+            let text = self.index.find(module).map(|number| &self.modules[number]);
+            let Some(text) = text.filter(|text| text.has_names) else {
+                return StoredValue::Unknown;
+            };
+            match text.alias_of(name).map(|alias| (alias.target, alias.value)) {
+                Some((AliasTarget::Binding(_), value)) => return value,
+                Some((
+                    AliasTarget::Member {
+                        module: source,
+                        name: there,
+                    },
+                    _,
+                )) => {
+                    (module, name) = (source, there);
+                }
+                None => {
+                    let mut creations = text.creations_of(name).iter();
+                    return match creations.any(|it| it.value == StoredValue::Unknown) {
+                        true => StoredValue::Unknown,
+                        false => StoredValue::IgnoresThis,
+                    };
+                }
+            }
+        }
+        StoredValue::Unknown
+    }
+
+    fn find_names_of_spreads(&self, number: usize) -> Option<Vec<Vec<(Atom, StoredValue)>>> {
+        let text = &self.modules[number];
+        let names_of = |spread: &SpreadOfRequired| -> Option<Vec<(Atom, StoredValue)>> {
+            let source = &self.modules[self.index.find(spread.module)?];
+            let brings_no_marker = match source.marker {
+                Some(is_marked) => !is_marked || source.is_marker_hidden_from_loops,
+                None => false,
+            };
+            if !source.has_names
+                || source.is_half
+                || source.is_replaced_late
+                || !source.knows_all_names()
+                || !brings_no_marker
+            {
+                return None;
+            }
+            let hidden = &source.names_hidden_from_loops;
+            let mut names = Vec::new();
+            for entry in create_entries(source).names {
+                let is_hidden = hidden
+                    .binary_search_by_key(&entry.name.0, |it| it.0)
+                    .is_ok();
+                let mut creations = source.creations_of(entry.name).iter();
+                if entry.name == known::__esModule
+                    || entry.created_at == u32::MAX
+                    || is_hidden == entry.is_enumerable
+                    || (is_hidden && creations.any(|it| it.is_enumerable))
+                    || entry.getter.is_some_and(|getter| getter.is_seen_unfilled)
+                {
+                    return None;
+                }
+                if !entry.is_enumerable {
+                    continue;
+                }
+                // A definition of a property that is there already keeps what it does not name.
+                let mut own = text.creations_of(entry.name).iter();
+                if own.any(|it| it.is_read_only || !it.is_enumerable)
+                    || text.alias_of(entry.name).is_some()
+                {
+                    return None;
+                }
+                names.push((
+                    entry.name,
+                    self.value_stored_under(spread.module, entry.name),
+                ));
+            }
+            Some(names)
+        };
+        text.spreads.iter().map(names_of).collect()
+    }
+
+    fn find_names_of_stars(&self, number: usize) -> Option<Vec<Alias>> {
+        let text = &self.modules[number];
+        let knows_marker = text.marker.is_some() || text.is_marker_left_to_stars;
+        if !text.has_names || text.is_half || !knows_marker {
+            return None;
+        }
+        let mut stars = text.stars.clone();
+        stars.shared_sort_by_key(|star| star.start);
+        let some_star_redefines_names = stars.iter().any(|star| star.redefines_names);
+        let mut found: Vec<Alias> = Vec::new();
+        let mut taken: FxHashSet<Atom> = FxHashSet::default();
+        let own_reads = text.own_accesses.iter().filter(|it| !it.is_store_only);
+        let own_reads = own_reads.map(|it| it.name);
+        let read: FxHashSet<Atom> = text.names_read.iter().copied().chain(own_reads).collect();
+        for star in stars {
+            let source = &self.modules[self.index.find(star.module)?];
+            if !source.has_names
+                || source.is_half
+                || source.is_replaced_late
+                || !source.knows_all_names()
+            {
+                return None;
+            }
+            let brings_no_marker = match source.marker {
+                Some(is_marked) => !is_marked || source.is_marker_hidden_from_loops,
+                None => false,
+            };
+            let is_followed_unmarked =
+                brings_no_marker && !star.copies_hidden_names && !star.redefines_names;
+            if text.marker != Some(true) && !is_followed_unmarked {
+                return None;
+            }
+            let names = create_entries(source).names;
+            for (order, entry) in (0u32..).zip(names) {
+                let name = entry.name;
+                if star.leaves_listed_names && text.names_left_by_stars.contains(&name) {
+                    continue;
+                }
+                let is_marker_or_default = name == known::default || name == known::__esModule;
+                if star.copies_hidden_names && !entry.is_enumerable && !is_marker_or_default {
+                    return None;
+                }
+                let hidden = &source.names_hidden_from_loops;
+                let is_hidden = hidden.binary_search_by_key(&name.0, |it| it.0).is_ok();
+                let creations = source.creations_of(name);
+                if is_hidden == entry.is_enumerable
+                    || (is_hidden && creations.iter().any(|it| it.is_enumerable))
+                {
+                    return None;
+                }
+                let is_asked = entry.is_enumerable && !is_marker_or_default;
+                let is_laid = is_asked && taken.insert(name);
+                if is_asked && !is_laid && some_star_redefines_names {
+                    return None;
+                }
+                if !is_laid {
+                    continue;
+                }
+                if entry.created_at == u32::MAX
+                    || source.creations_of(name).iter().any(|it| it.is_read_only)
+                    || read.contains(&name)
+                {
+                    return None;
+                }
+                let own = text.creations_of(name);
+                let getter = text.alias_of(name);
+                if star.redefines_names && (!own.is_empty() || getter.is_some()) {
+                    return None;
+                }
+                if !own.is_empty() || getter.is_some() {
+                    let is_there = own
+                        .iter()
+                        .any(|it| it.is_in_order() && it.end <= star.start)
+                        || getter.is_some_and(|it| it.start < star.start);
+                    let is_late = own.iter().any(|it| !it.is_in_order())
+                        || getter.is_some_and(|it| it.start > star.start);
+                    match is_there && !is_late {
+                        true => continue,
+                        false => return None,
+                    }
+                }
+                found.push(Alias {
+                    name,
+                    target: AliasTarget::Member {
+                        module: star.module,
+                        name,
+                    },
+                    node: star.call,
+                    value: StoredValue::Unknown,
+                    is_enumerable: true,
+                    is_seen_unfilled: false,
+                    is_fixed: false,
+                    returned: ExprId::NONE,
+                    needs_marker: false,
+                    is_defined_in_front_of_load: false,
+                    start: star.start,
+                    returned_start: order,
+                });
+            }
+        }
+        Some(found)
+    }
+
+    pub(super) fn is_holder_in_erased_getter(&self, file: FileId, holder: ExprId) -> bool {
+        let number = self.index.find(ModuleRef::File(file));
+        let text = number.map(|number| &self.modules[number]);
+        text.is_some_and(|text| text.has_names && text.holders_in_erased_getters.contains(&holder))
+    }
+
+    pub(super) fn is_required_by_star(&self, file: FileId, required: ExprId) -> bool {
+        let number = self.index.find(ModuleRef::File(file));
+        let text = number.map(|number| &self.modules[number]);
+        text.is_some_and(|text| {
+            text.has_names
+                && (text
+                    .stars
+                    .iter()
+                    .any(|star| !star.is_in_line && star.required == required)
+                    || text
+                        .spreads
+                        .iter()
+                        .any(|spread| spread.required == required))
+        })
+    }
+
+    /// The modules that the literal which `module` exports spreads, where they bring it `name`.
+    pub(super) fn sources_of_spread_name(
+        &self,
+        module: ModuleRef,
+        name: Atom,
+    ) -> impl Iterator<Item = ModuleRef> + '_ {
+        let text = self.index.find(module).map(|number| &self.modules[number]);
+        let spreads = text
+            .filter(|text| text.has_names)
+            .map(|text| &text.spreads[..]);
+        let spreads = spreads.unwrap_or_default().iter();
+        spreads
+            .filter(move |it| it.names.contains(&name))
+            .map(|it| it.module)
+    }
+
     fn forget_markers_that_may_change(&mut self, modules: &ModuleSet, taken: &TakenObjects) {
         let text_of = |module: ModuleRef| Some(&self.modules[self.index.find(module)?]);
         let lacks_marker =
@@ -2263,7 +3274,26 @@ impl CommonJsTexts {
         let changed = taken.required.iter().chain(&taken.imported).copied();
         let changed = changed.chain(taken.defaults.iter().copied().filter(lacks_marker));
         let changed = changed.chain(handed_over.map(|(module, _)| module));
-        let changed: Vec<ModuleRef> = changed.collect();
+        let mut changed: Vec<ModuleRef> = changed.collect();
+        // What was stored into a module may be spread into another.
+        let mut spread_into: FxHashMap<ModuleRef, Vec<ModuleRef>> = FxHashMap::default();
+        for text in &self.modules {
+            for spread in &text.spreads {
+                spread_into
+                    .entry(spread.module)
+                    .or_default()
+                    .push(text.module());
+            }
+        }
+        if !spread_into.is_empty() {
+            let mut known: FxHashSet<ModuleRef> = changed.iter().copied().collect();
+            let mut next = 0;
+            while let Some(&source) = changed.get(next) {
+                next += 1;
+                let takers = spread_into.get(&source).into_iter().flatten();
+                changed.extend(takers.filter(|&&taker| known.insert(taker)));
+            }
+        }
         let mut is_listed = FxHashSet::default();
         for module in changed {
             for module in [module, modules.module_behind(module)] {
@@ -2279,7 +3309,7 @@ impl CommonJsTexts {
                 }
             }
         }
-        if taken.names_way_to_module_objects {
+        if taken.reaches_module_objects {
             for text in self.modules.iter_mut().filter(|text| !text.is_marker_fixed) {
                 text.marker = None;
             }
@@ -2321,7 +3351,7 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
         match names.last_mut().filter(|it| it.1.name == creation.name) {
             Some((_, entry)) => entry.created_at = entry.created_at.min(created_at),
             None => names.push((
-                (creation.start, creation.start),
+                (creation.start, creation.start + creation.order),
                 NameEntry {
                     name: creation.name,
                     getter: None,
@@ -2353,6 +3383,7 @@ fn create_entries(text: &ModuleText) -> ModuleEntries {
         is_half: text.is_half,
         is_replaced_late: text.is_replaced_late,
         exports_ordinary_object: text.exports_ordinary_object,
+        exports_function: text.exports_function,
         marker: match text.is_marker_ignored_by_imports {
             true => Some(false),
             false => text.marker,
@@ -2368,6 +3399,12 @@ enum Target {
     Nothing,
 }
 
+#[derive(Copy, Clone)]
+pub enum ForwardedName {
+    Export(ModuleRef, Atom),
+    Binding(Sym),
+}
+
 #[derive(Default)]
 pub struct CommonJsExports {
     modules: Vec<ModuleText>,
@@ -2377,13 +3414,18 @@ pub struct CommonJsExports {
     has_object: Vec<bool>,
     dependents: Vec<Vec<ModuleRef>>,
     name_sources: Vec<Vec<ModuleRef>>,
+    /// The sources whose objects the code of a module reads. A getter that returns a member reads that name alone.
+    object_sources: Vec<Vec<ModuleRef>>,
     ids: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
     names_by_id: Vec<Option<(ModuleRef, Atom)>>,
     targets: FxHashMap<(ModuleRef, Atom), Target>,
     copied_names: FxHashMap<(ModuleRef, Atom), bool>,
     stored_by_other_files: FxHashMap<(ModuleRef, Atom), bool>,
     exported_bindings: Vec<Sym>,
-    faces: Faces,
+    /// The fixed getters that members read off an object, with the getters behind them.
+    read_getters: FxHashMap<(ModuleRef, Atom), FixedGetter>,
+    holders_in_getters: Vec<(Sym, u32)>,
+    facades: Facades,
 }
 
 impl CommonJsExports {
@@ -2403,6 +3445,7 @@ impl CommonJsExports {
             has_object: vec![false; modules.len()],
             dependents: vec![Vec::new(); modules.len()],
             name_sources: vec![Vec::new(); modules.len()],
+            object_sources: vec![Vec::new(); modules.len()],
             index,
             ..CommonJsExports::default()
         };
@@ -2444,10 +3487,68 @@ impl CommonJsExports {
         exports.look_at_modules_whose_getters_read_copies();
         exports.look_at_modules_that_call_through_their_object();
         exports.look_at_modules_whose_object_importers_see(input, tables, imports);
-        let mut faces = Faces::new(input, tables, imports);
-        faces.decide(&exports);
-        exports.faces = faces;
+        let mut facades = Facades::new(input, tables, imports);
+        facades.decide(&exports);
+        exports.facades = facades;
+        exports.collect_read_getters(imports);
         exports
+    }
+
+    fn collect_read_getters(&mut self, imports: &[FileImports]) {
+        if self
+            .modules
+            .iter()
+            .all(|text| text.fixed_getters.is_empty())
+        {
+            return;
+        }
+        let find_getter = |exports: &CommonJsExports, module: ModuleRef, name: Atom| {
+            let number = exports.number_of(module)?;
+            let getter = exports.modules[number].fixed_getter_of(name)?;
+            Some((number, *getter))
+        };
+        let accessed = imports
+            .iter()
+            .flat_map(|file_imports| &file_imports.accessed);
+        let names = accessed.filter(|(_, accessed)| !accessed.is_imported);
+        let names = names.map(|&(_, accessed)| (accessed.module, accessed.name));
+        let names = names.filter(|&(module, name)| find_getter(self, module, name).is_some());
+        let mut pending: Vec<(ModuleRef, Atom)> = names.collect();
+        while let Some((module, name)) = pending.pop() {
+            let Some((number, getter)) = find_getter(self, module, name) else {
+                continue;
+            };
+            if self.read_getters.insert((module, name), getter).is_some() {
+                continue;
+            }
+            let text = &self.modules[number];
+            match getter.target {
+                AliasTarget::Binding(symbol) if !text.has_names => {
+                    self.exported_bindings.push(symbol);
+                }
+                AliasTarget::Binding(_) => {}
+                AliasTarget::Member { module, name } => pending.push((module, name)),
+            }
+            let file = text.file;
+            let holder = getter.holder.map(|id| (Sym { file, id }, number as u32));
+            self.holders_in_getters.extend(holder);
+        }
+        self.exported_bindings.sort_unstable();
+        self.exported_bindings.dedup();
+        self.holders_in_getters.shared_sort_unstable();
+        self.holders_in_getters.dedup();
+    }
+
+    pub(in crate::modules) fn read_getter(
+        &self,
+        module: ModuleRef,
+        name: Atom,
+    ) -> Option<FixedGetter> {
+        self.read_getters.get(&(module, name)).copied()
+    }
+
+    pub(in crate::modules) fn module_count(&self) -> usize {
+        self.modules.len()
     }
 
     fn add_name_source(&mut self, number: usize, taker: ModuleRef, source: ModuleRef) {
@@ -2469,9 +3570,24 @@ impl CommonJsExports {
     ) -> bool {
         let module = text.module();
         let mut is_bound = true;
+        for star in &text.stars {
+            if text.has_names {
+                self.add_name_source(number, module, star.module);
+                self.object_sources[number].push(star.module);
+            }
+        }
+        for spread in &text.spreads {
+            if text.has_names {
+                self.add_name_source(number, module, spread.module);
+                self.object_sources[number].push(spread.module);
+            }
+        }
         for alias in &text.aliases {
             if let AliasTarget::Member { module: source, .. } = alias.target {
                 self.add_name_source(number, module, source);
+                if alias.needs_marker {
+                    self.object_sources[number].push(source);
+                }
             }
             let resolved = tables.resolve_required(modules, module, alias.name);
             let target = match resolved.resolution {
@@ -2557,6 +3673,30 @@ impl CommonJsExports {
                 return true;
             }
             (module, name) = (source, name_there);
+        }
+        true
+    }
+
+    fn has_getter_for_unknown_name(&self, text: &ModuleText) -> bool {
+        let mut getters = text.aliases.iter().filter(|alias| alias.is_enumerable);
+        getters.any(|alias| self.reads_unknown_name(alias.target))
+    }
+
+    fn reads_unknown_name(&self, mut target: AliasTarget) -> bool {
+        for _ in 0..=self.modules.len() {
+            let AliasTarget::Member { module, name } = target else {
+                return false;
+            };
+            let Some(text) = self.text_of(module) else {
+                return false;
+            };
+            if !text.has_names {
+                return true;
+            }
+            let Some(alias) = text.alias_of(name) else {
+                return false;
+            };
+            target = alias.target;
         }
         true
     }
@@ -2687,16 +3827,16 @@ impl CommonJsExports {
             }
             fallen.push(module);
             pending.extend_from_slice(&self.dependents[number]);
-            pending.extend_from_slice(&self.name_sources[number]);
+            pending.extend_from_slice(&self.object_sources[number]);
         }
         if fallen.is_empty() {
             return;
         }
-        let mut faces = core::mem::take(&mut self.faces);
+        let mut facades = core::mem::take(&mut self.facades);
         for module in fallen {
-            faces.decide_behind(self, module);
+            facades.decide_behind(self, module);
         }
-        self.faces = faces;
+        self.facades = facades;
     }
 
     pub(super) fn call_through_namespace(&mut self, module: ModuleRef, name: Atom) {
@@ -2715,9 +3855,9 @@ impl CommonJsExports {
             return;
         }
         self.look_at(module);
-        let mut faces = core::mem::take(&mut self.faces);
-        faces.see_namespace(self, file);
-        self.faces = faces;
+        let mut facades = core::mem::take(&mut self.facades);
+        facades.see_namespace(self, file);
+        self.facades = facades;
     }
 
     pub fn shape(&self, module: ModuleRef) -> Shape {
@@ -2727,6 +3867,11 @@ impl CommonJsExports {
             Some(true) => Shape::Names,
             Some(false) => Shape::Value,
         }
+    }
+
+    /// The value that the body of `module` stores as its exports.
+    pub fn replacing_value(&self, module: ModuleRef) -> Option<ExprId> {
+        self.text_of(module)?.replaced_by
     }
 
     pub fn has_names(&self, module: ModuleRef) -> bool {
@@ -2743,25 +3888,35 @@ impl CommonJsExports {
             .map_or(&[], |number| &self.name_sources[number][..])
     }
 
+    pub fn object_sources(&self, module: ModuleRef) -> &[ModuleRef] {
+        self.number_of(module)
+            .map_or(&[], |number| &self.object_sources[number][..])
+    }
+
     pub fn names_bound_elsewhere(&self) -> impl Iterator<Item = (ModuleRef, Member)> + '_ {
         let names = self.modules.iter().flat_map(|text| {
             let aliases = text.aliases.iter();
             aliases.map(|alias| (text.module(), alias.name))
         });
-        names.filter_map(|(module, name)| {
-            let target = match self.copied_names.get(&(module, name)) {
+        names.flat_map(move |(module, name)| {
+            let imported = match self.copied_names.get(&(module, name)) {
                 Some(true) => self.targets[&(module, name)],
                 _ => self.imported_target(module, name),
             };
-            let member = match target {
-                Target::Name(owner, _) if owner == module => return None,
-                Target::Name(owner, owner_name) => {
-                    Member::Variable(*self.ids.get(&(owner, owner_name))?)
-                }
-                Target::Binding(symbol) => Member::Binding(symbol),
-                Target::Nothing => return None,
-            };
-            Some((module, member))
+            let read_off_object = self.targets.get(&(module, name)).copied();
+            let read_off_object = read_off_object.filter(|&target| target != imported);
+            let targets = [Some(imported), read_off_object].into_iter().flatten();
+            targets.filter_map(move |target| {
+                let member = match target {
+                    Target::Name(owner, _) if owner == module => return None,
+                    Target::Name(owner, owner_name) => {
+                        Member::Variable(*self.ids.get(&(owner, owner_name))?)
+                    }
+                    Target::Binding(symbol) => Member::Binding(symbol),
+                    Target::Nothing => return None,
+                };
+                Some((module, member))
+            })
         })
     }
 
@@ -2777,6 +3932,17 @@ impl CommonJsExports {
         match self.imported_target(module, name) {
             Target::Name(owner, owner_name) => Some((owner, owner_name)),
             Target::Binding(_) | Target::Nothing => None,
+        }
+    }
+
+    /// What `name` is where another module exports it, or where it is a variable of the module's own.
+    pub fn find_forwarded_name(&self, module: ModuleRef, name: Atom) -> Option<ForwardedName> {
+        match *self.targets.get(&(module, name))? {
+            Target::Name(owner, owner_name) if (owner, owner_name) != (module, name) => {
+                Some(ForwardedName::Export(owner, owner_name))
+            }
+            Target::Binding(symbol) => Some(ForwardedName::Binding(symbol)),
+            Target::Name(..) | Target::Nothing => None,
         }
     }
 
@@ -2889,6 +4055,44 @@ impl CommonJsExports {
         alias.is_some_and(|alias| !alias.is_enumerable)
     }
 
+    pub fn find_require_of_star(&self, file: FileId, call: ExprId) -> Option<ExprId> {
+        let number = self.number_of(ModuleRef::File(file))?;
+        let mut stars = self.modules[number].stars.iter();
+        let star = stars.find(|star| !star.is_in_line && star.call == call)?;
+        self.keeps_names(number).then_some(star.required)
+    }
+
+    /// `{ ...required }` in the literal that the body of `file` stores as its exports: the module and its names, in their order.
+    pub fn find_names_of_spread(
+        &self,
+        file: FileId,
+        required: ExprId,
+    ) -> Option<(ModuleRef, &[Atom])> {
+        let number = self.number_of(ModuleRef::File(file))?;
+        let mut spreads = self.modules[number].spreads.iter();
+        let spread = spreads.find(|spread| spread.required == required)?;
+        self.keeps_names(number)
+            .then_some((spread.module, &spread.names[..]))
+    }
+
+    /// `Object.assign(exports, ..)` whose names are kept.
+    pub fn is_assignment_to_exports(&self, file: FileId, call: ExprId) -> bool {
+        self.number_of(ModuleRef::File(file)).is_some_and(|number| {
+            self.keeps_names(number) && self.modules[number].assignments.contains(&call)
+        })
+    }
+
+    /// The modules that the literal which `module` exports spreads, where they bring it `name`.
+    pub fn sources_of_spread_name(&self, module: ModuleRef, name: Atom) -> Vec<ModuleRef> {
+        let number = self
+            .number_of(module)
+            .filter(|&number| self.keeps_names(number));
+        let spreads = number.map(|number| &self.modules[number].spreads[..]);
+        let spreads = spreads.unwrap_or_default().iter();
+        let spreads = spreads.filter(|spread| spread.names.contains(&name));
+        spreads.map(|spread| spread.module).collect()
+    }
+
     pub fn imported_member(&self, variable: SyntheticExportId) -> Member {
         match self.name_of_variable(variable) {
             Some((owner, name)) if self.is_import_bound_to_variable(owner, name) => {
@@ -2933,6 +4137,8 @@ impl CommonJsExports {
     pub fn is_exported_binding(&self, file: FileId, symbol: SymbolId) -> bool {
         let binding = Sym { file, id: symbol };
         self.exported_bindings.binary_search(&binding).is_ok()
+            || find(&self.holders_in_getters, binding)
+                .is_some_and(|number| !self.keeps_names(number as usize))
     }
 
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
@@ -2975,7 +4181,9 @@ impl CommonJsExports {
                 None if alias.is_some() => return false,
                 None => {
                     let mut creations = text.creations_of(name).iter();
-                    return creations.all(|it| it.value != StoredValue::Unknown);
+                    let mut spreads = text.spreads.iter().filter(|it| it.names.contains(&name));
+                    return creations.all(|it| it.value != StoredValue::Unknown)
+                        && spreads.all(|spread| self.ignores_this(spread.module, name));
                 }
             }
         }

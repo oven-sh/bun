@@ -1,5 +1,6 @@
 use core::cmp::Ordering;
 use core::fmt;
+use std::borrow::Cow;
 
 use bstr::BStr;
 
@@ -28,24 +29,24 @@ impl Resolution {
         dep_version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
-            return dep_version.npm().version.satisfies(
-                self.npm().version,
-                dep_version_buf,
-                resolution_buf,
-            );
+        if self.tag == Tag::Npm
+            && let dependency::Value::Npm(npm) = &dep_version.value
+        {
+            return npm
+                .version
+                .satisfies(self.npm().version, dep_version_buf, resolution_buf);
         }
 
-        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
-            return self
-                .git()
-                .eql(dep_version.git(), resolution_buf, dep_version_buf);
+        if self.tag == Tag::Git
+            && let dependency::Value::Git(git) = &dep_version.value
+        {
+            return self.git().eql(git, resolution_buf, dep_version_buf);
         }
 
-        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
-            return self
-                .github()
-                .eql(dep_version.github(), resolution_buf, dep_version_buf);
+        if self.tag == Tag::Github
+            && let dependency::Value::Github(github) = &dep_version.value
+        {
+            return self.github().eql(github, resolution_buf, dep_version_buf);
         }
 
         false
@@ -154,6 +155,11 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
+    /// `local_tarball` is as package.json spells it.
+    fn local_tarball_path<'a>(&'a self, buf: &'a [u8]) -> Cow<'a, [u8]> {
+        bun_paths::portable::from_portable_rooted(self.local_tarball().slice(buf))
+    }
+
     pub(crate) fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }
@@ -167,19 +173,20 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
 
         if let Some(link) = strings::without_prefix_if_possible_comptime(res_str, b"link:") {
-            return Ok(Self::init(TaggedValue::Symlink(string_buf.append(link)?)));
+            let link = string_buf.append(link)?;
+            return Ok(Self::init(TaggedValue::Symlink(link)));
         }
 
         if let Some(workspace) =
             strings::without_prefix_if_possible_comptime(res_str, b"workspace:")
         {
-            return Ok(Self::init(TaggedValue::Workspace(
-                string_buf.append(workspace)?,
-            )));
+            let workspace = string_buf.append(workspace)?;
+            return Ok(Self::init(TaggedValue::Workspace(workspace)));
         }
 
         if let Some(folder) = strings::without_prefix_if_possible_comptime(res_str, b"file:") {
-            return Ok(Self::init(TaggedValue::Folder(string_buf.append(folder)?)));
+            let folder = string_buf.append(folder)?;
+            return Ok(Self::init(TaggedValue::Folder(folder)));
         }
 
         match dependency::VersionTag::infer(res_str) {
@@ -298,7 +305,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 )));
             }
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(path)?,
+                string_buf.append(&bun_paths::from_portable(path))?,
             )));
         }
 
@@ -683,7 +690,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
                 writer,
                 "{}",
                 fmt_path(
-                    res.local_tarball().slice(buf),
+                    &res.local_tarball_path(buf),
                     PathFormatOptions {
                         path_sep: PathSep::Posix,
                         ..Default::default()
@@ -726,7 +733,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
         match res.tag {
             Tag::Npm => write!(writer, "{}", BStr::new(res.npm().url.slice(buf))),
             Tag::LocalTarball => fmt_path(
-                res.local_tarball().slice(buf),
+                &res.local_tarball_path(buf),
                 PathFormatOptions {
                     path_sep: PathSep::Posix,
                     ..Default::default()
@@ -764,6 +771,13 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
+    fn local_tarball(&self) -> Cow<'a, [u8]> {
+        match self.path_sep {
+            PathSep::Any => self.resolution.local_tarball().slice(self.buf).into(),
+            PathSep::Auto | PathSep::Posix => self.resolution.local_tarball_path(self.buf),
+        }
+    }
+
     /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
     /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
     /// verbatim via `write_all`.
@@ -779,7 +793,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
                 writer,
                 "{}",
                 fmt_path(
-                    res.local_tarball().slice(buf),
+                    &self.local_tarball(),
                     PathFormatOptions {
                         path_sep: self.path_sep,
                         ..Default::default()
@@ -846,7 +860,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
         match res.tag {
             Tag::Npm => res.npm().version.fmt(buf).fmt(writer),
             Tag::LocalTarball => fmt_path(
-                res.local_tarball().slice(buf),
+                &self.local_tarball(),
                 PathFormatOptions {
                     path_sep: self.path_sep,
                     ..Default::default()

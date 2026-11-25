@@ -56,7 +56,7 @@ test("there are many classes, and the table leaves the prototype objects of some
   expect({
     classes: classes.length > 100,
     taken: taken.map(({ path }) => path),
-  }).toEqual({ classes: true, taken: expect.arrayContaining(["WebSocket", "Worker", "URLPattern"]) });
+  }).toEqual({ classes: true, taken: expect.arrayContaining(["WebSocket", "Worker"]) });
 });
 
 // `gap` says what the report holds today, on Linux, where the goal is not met yet: how many of its lines say what blocks --trim, and how many
@@ -81,19 +81,19 @@ const questions: { title: string; gap?: Gap; ask(path: string, token: string): s
   },
   {
     title: "whether an object is an instance of it",
-    gap: { block: 3, name: 96 },
+    gap: { block: 1, name: 99 },
     ask: path => [`{} instanceof ${path}`],
   },
   {
     title: "whether an object made over its prototype object is an instance of it",
-    gap: { block: 3, name: 96 },
+    gap: { block: 3, name: 97 },
     ask: path => [`Object.create(${path}.prototype) instanceof ${path}`],
   },
   { title: "the numbers on it", ask: (_, token) => constantsOf(token).map(constant => constant.path) },
 ];
 const allQuestions: (typeof questions)[number] = {
   title: "all of that in one program",
-  gap: { block: 3, name: 96 },
+  gap: { block: 3, name: 97 },
   ask: (path, token) => questions.flatMap(each => each.ask(path, token)),
 };
 

@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". Under `bun run` the call throws: "ReferenceError".
+// Under `bun run` the call throws: "ReferenceError".
 function pick(which) {
   const kept = [];
   switch (which) {

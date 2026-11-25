@@ -9,6 +9,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
+use bun_js_parser::lower::defer_requires::is_in_known_package;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 
@@ -21,9 +22,8 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
-/// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
-/// stores it, in `MacroContext.javascript_object`); re-exported here.
-pub use js_ast::Macro::MacroJSCtx;
+use js_ast::Macro::MacroContext;
+pub use js_ast::Macro::{MacroJSCtx, MacroLoadStates};
 /// The default (zero) macro JS context value.
 #[inline]
 pub const fn default_macro_js_value() -> MacroJSCtx {
@@ -57,8 +57,6 @@ pub struct Transpiler<'a> {
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
-
-    pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -68,53 +66,15 @@ impl<'a> Transpiler<'a> {
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
-        // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
-        // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
         self.resolver.log = core::ptr::NonNull::new(log).expect("set_log: log is non-null");
     }
 
-    /// Replace the transpiler's arena and re-init the macro context against it.
     // TODO: remove this method. it does not make sense
     pub fn set_arena(&mut self, arena: &'a Arena) {
         self.arena = arena;
         // `crate::Linker` is the unit stub — no `.arena` field.
         // `Resolver` dropped its `arena` field (global mimalloc; see
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
-    }
-
-    /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `log`/`env` are aliased/singletons; left alone.
-    /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
-    /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
-    ///
-    /// # Safety
-    /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
-    pub unsafe fn deinit(&mut self) {
-        // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
-        // process-lifetime by default, but
-        // worker VMs run `destroy()` on thread exit and would otherwise strand
-        // one box per worker. The box only owns a `MacroMap` and an optional
-        // `bun_alloc::Arena` — no JSC handles — so freeing it from either
-        // worker section-5 teardown or main-thread `global_exit` is safe.
-        if let Some(ctx) = self.macro_context.take() {
-            ctx.deinit();
-        }
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
-        // the no-auto-drop contract above.
-        unsafe {
-            core::ptr::drop_in_place(&raw mut self.options);
-            core::ptr::drop_in_place(&raw mut self.result);
-            core::ptr::drop_in_place(&raw mut self.resolver.opts);
-            core::ptr::drop_in_place(&raw mut self.resolve_results);
-        }
     }
 
     /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
@@ -186,35 +146,17 @@ impl<'a> Transpiler<'a> {
     ///
     /// The returned value is a normal owned `Transpiler` whose `Drop` is sound
     /// — no `MaybeUninit` / `ptr::write` field-overwrite contract is needed by
-    /// callers. **Self-referential pointers are NOT yet wired** (the value may
-    /// still be moved into its final slot); call [`Self::wire_after_move`]
-    /// once the `Transpiler` is at its final address.
-    ///
-    /// # Safety
-    /// `from` must outlive the returned `Transpiler<'a>`. The two
-    /// lifetime-carrying borrows in `BundleOptions<'_>` (`framework`,
-    /// `optimize_imports`) are widened from `from`'s lifetime to `'a` via a
-    /// layout-preserving transmute. What they and `resolver.env_loader`
-    /// point to must outlive `'a`.
-    pub(crate) unsafe fn for_worker(
-        from: &Transpiler<'_>,
+    /// callers.
+    pub fn for_worker(
+        from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
     ) -> Transpiler<'a> {
-        // Deep-clone the heavy nested fields at `from`'s lifetime, then
-        // lifetime-widen to `'a`. Layout is identical (only the lifetime
-        // parameter differs), so `transmute` is a no-op reinterpretation.
-        // SAFETY: see fn doc.
-        let options: options::BundleOptions<'a> = unsafe {
-            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
-                from.options.for_worker(),
-            )
-        };
+        let mut options = from.options.for_worker();
+        options.log = log;
         let resolver_opts = resolver_bundle_options_subset(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
-        // SAFETY: see fn doc — what `env_loader` points to outlives `'a`.
-        let resolver: Resolver<'a> =
-            unsafe { Resolver::for_worker(&from.resolver, log_nn, resolver_opts) };
+        let resolver = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
 
         Transpiler {
             options,
@@ -229,24 +171,25 @@ impl<'a> Transpiler<'a> {
             elapsed: 0,
             linker: crate::linker::Linker::init(log),
             env: from.env,
-            // `MacroContext::init(transpiler)` takes the
-            // transpiler's *address*; deferred to `wire_after_move`.
-            macro_context: None,
         }
     }
 
-    /// Wire the aliases of `log` and the self-referential `macro_context`
-    /// after this `Transpiler` has reached its final address (post-move into
-    /// `WorkerData` / arena slot).
-    pub(crate) fn wire_after_move(&mut self) {
-        // `self.log` was already set inside `for_worker` via direct field
-        // init; re-thread into `options.log` / `resolver.log` /
-        // `linker.log` here so all four aliases agree.
-        let log = self.log;
-        self.options.log = log;
-        self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
-        self.linker.log = log;
-        self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
+    /// The defines of [`Self::for_worker`] point into the arena of the transpiler that has loaded them.
+    pub fn load_own_defines(&mut self) -> crate::Result<()> {
+        self.options.defines_loaded = false;
+        let env = self.env_mut();
+        self.options.load_defines(self.arena, Some(env))
+    }
+
+    /// # Safety
+    /// The contract of [`MacroContext::new`].
+    pub unsafe fn macro_context<'p>(
+        this: *mut Self,
+        macro_load_states: &'p MacroLoadStates,
+        macro_js_ctx: MacroJSCtx,
+    ) -> MacroContext<'p> {
+        // SAFETY: the caller's contract.
+        unsafe { MacroContext::new(this.cast(), macro_load_states, macro_js_ctx) }
     }
 
     /// Returns the resolver's auto-install package-manager handle. Errs when
@@ -309,7 +252,7 @@ impl<'a> Transpiler<'a> {
         // Relative entry points that were not resolved to a node_modules package are
         // interpreted as relative to the current working directory.
         if !bun_paths::is_absolute(entry_point)
-            && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
+            && bun_paths::without_leading_dot_slash(entry_point) == entry_point
         {
             let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
             assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
@@ -338,57 +281,19 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point, dot_slash) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
-
                 // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
-                    // Neither buster name below would fit `cache_bust_buf`.
-                    if Fs::FileSystem::get().top_level_dir().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                let buster_name = bun_paths::Path::resolve(&[top_level_dir, entry_point, b".."]);
+                let mut busted = self.resolver.bust_dir_cache(&buster_name);
+                // `load_as_file` caches the listing under the entry point's own spelling.
+                if bun_paths::is_absolute(entry_point) {
+                    let as_spelled = bun_paths::dirname_or_root(entry_point);
+                    busted |= self.resolver.bust_dir_cache(as_spelled);
+                    if bun_paths::has_trailing_sep(entry_point) {
+                        let directory = bun_paths::Path::resolve(&[top_level_dir, entry_point]);
+                        busted |= self.resolver.bust_dir_cache(&directory);
                     }
-                    if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if !dir.is_empty() {
-                            // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
-                                &mut cache_bust_buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
-                        }
-                    }
-
-                    // `".."` needs no platform separator rewrite.
-                    let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
-
-                    let Some(buster_name) =
-                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            bun_paths::platform::Auto,
-                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
-                    else {
-                        break 'name false;
-                    };
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
-                };
+                }
 
                 // Only re-query if we previously had something cached.
                 if busted {
@@ -526,17 +431,14 @@ impl<'a> Transpiler<'a> {
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler` mutates
-    /// `self.options` so the resolver sees the same conditions/target/public_path.
+    /// `self.options` so the resolver sees the same conditions/target.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `configure_linker*` / `run_env_loader` — used by
-// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
-// `bun_install::configure_env_for_run`, `JSBundleCompletionTask`,
-// `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
+// `configure_linker*` / `run_env_loader`
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -699,7 +601,7 @@ impl<'a> Transpiler<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 // `ParseResult` / `AlreadyBundled` / `ParseOptions` + `Transpiler::parse*`
 // — used by `ModuleLoader::transpile_source_code` (jsc_hooks.rs) and
-// `AsyncModule` / `JSTranspiler`. The body of
+// `JSTranspiler`. The body of
 // `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
 // step (virtual / client-entry / `node:` fallback) and dispatches to the
 // per-loader transpile branches.
@@ -707,7 +609,6 @@ impl<'a> Transpiler<'a> {
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
-use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
@@ -741,60 +642,21 @@ impl AlreadyBundled {
 
 /// Output of the transpiler's parse step: the parsed AST plus its source and
 /// loader metadata.
-// lifetime-free — `runtime_transpiler_cache` is a raw pointer
-// so `AsyncModule.parse_result` / `JSTranspiler`
-// can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
     pub source: bun_ast::Source<'a>,
     pub loader: options::Loader,
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
     pub empty: bool,
-    // `PendingResolution` does not yet
-    // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
-    // `bun_collections_macros` — orphan rules forbid impl-ing it here), so the
-    // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
-    // `is_pending_import` only scans `import_record_id`, so the layout
-    // difference is observable only as a SoA→AoS perf delta.
-    // Once the `MultiArrayElement` derive lands upstream in `bun_resolver`,
-    // this can switch back to `MultiArrayList<PendingResolution>`.
-    pub pending_imports: Vec<resolver::PendingResolution>,
-
-    /// SAFETY: erased — bundler stores it
-    /// and hands it back to the runtime side; never dereferenced here.
-    pub(crate) runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
 
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
     /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
     /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
-    /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
+    /// `Contents::Empty`/`Borrowed` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,
-}
-
-impl<'a> ParseResult<'a> {
-    /// `ParseResult` is value-copied (e.g.
-    /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
-    /// value). `Default` lets the Rust port `mem::take` it across that
-    /// boundary; see `AsyncModule::resume_loading_module`.
-    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
-        ParseResult {
-            source: Default::default(),
-            // `options::Loader` has no `Default`.
-            // `File` is the resolver's neutral fallback
-            // (BundleEnums.rs:353), and `Default` here exists only for
-            // `mem::take` in `AsyncModule::resume_loading_module`.
-            loader: options::Loader::File,
-            ast: bun_ast::Ast::empty_in(arena),
-            already_bundled: Default::default(),
-            empty: true,
-            pending_imports: Default::default(),
-            runtime_transpiler_cache: None,
-            source_contents_backing: Default::default(),
-        }
-    }
 }
 
 impl<'a> ParseResult<'a> {
@@ -811,18 +673,8 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            pending_imports: Default::default(),
-            runtime_transpiler_cache: None,
             source_contents_backing,
         }
-    }
-
-    pub(crate) fn is_pending_import(&self, id: u32) -> bool {
-        // AoS scan (see field comment); SoA column iteration restored
-        // when `PendingResolution: MultiArrayElement` lands.
-        self.pending_imports
-            .iter()
-            .any(|p| p.import_record_id == id)
     }
 }
 
@@ -846,7 +698,7 @@ pub struct ParseOptions<'a, 'b> {
     pub file_descriptor: Option<FD>,
 
     /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'b mut FD>,
+    pub opened_file: Option<&'b mut Option<bun_sys::File>>,
 
     pub path: bun_paths::fs::Path<'a>,
     pub loader: options::Loader,
@@ -855,6 +707,7 @@ pub struct ParseOptions<'a, 'b> {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
+    pub macro_load_states: &'a MacroLoadStates,
     pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
@@ -874,7 +727,7 @@ pub struct ParseOptions<'a, 'b> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'b mut RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'b mut dyn js_ast::TranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
@@ -883,11 +736,10 @@ pub struct ParseOptions<'a, 'b> {
 use bun_options_types::schema::api;
 
 // ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
-// `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
-// shared between `bun_js_parser` and this crate (canonical defs live in the
+// `ModuleType` and `Define` are shared with `bun_js_parser` (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
-// threads `self.options.define` / `runtime_transpiler_cache` directly.
+// threads `self.options.define` directly.
 //
 // D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
 // `js_ast::parser::options::JSX::Pragma` (both re-export
@@ -993,7 +845,7 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
-        framework: src.framework.map(|f| {
+        framework: src.framework.as_deref().map(|f| {
             // Bundler-local `bake_types::BuiltInModule` and
             // `bun_options_types::BuiltInModule` are nominally distinct (the
             // former predates the TYPE_ONLY move-down); convert variant-wise.
@@ -1043,7 +895,6 @@ pub(crate) fn resolver_bundle_options_subset(
         // the bundler configured.
         output_dir: src.output_dir.clone(),
         root_dir: src.root_dir.clone(),
-        public_path: src.public_path.clone(),
         compile: src.compile_mode.is_executable(),
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,
@@ -1052,8 +903,7 @@ pub(crate) fn resolver_bundle_options_subset(
 }
 
 impl<'a> Transpiler<'a> {
-    /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
-    /// to write `vm.transpiler`. Builds on:
+    /// Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
@@ -1066,8 +916,7 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
-        // `VirtualMachine::init` and is never null. Validate up front so the
+        // Caller contract: `log` is never null. Validate up front so the
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
@@ -1124,8 +973,8 @@ impl<'a> Transpiler<'a> {
         }
 
         // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
+        // SAFETY: caller contract — `log` is caller-owned,
+        // `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
             (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
@@ -1169,7 +1018,6 @@ impl<'a> Transpiler<'a> {
             // .thread_pool = pool,
             linker: crate::linker::Linker::init(log),
             env: env_loader,
-            macro_context: None,
         })
     }
 
@@ -1223,7 +1071,7 @@ impl<'a> Transpiler<'a> {
         const DATA_ONLY: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'p, '_>,
+        this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
@@ -1249,11 +1097,11 @@ impl<'a> Transpiler<'a> {
 
         let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
-                break 'brk virtual_source.clone();
+                break 'brk virtual_source.clone_in(arena);
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                break 'brk client_entry_point.source.clone();
+                break 'brk client_entry_point.source.clone_in(arena);
             }
 
             if !DATA_ONLY && path.namespace == b"node" {
@@ -1316,7 +1164,7 @@ impl<'a> Transpiler<'a> {
             // `RuntimeTranspilerStore`) so the source bytes land in the
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
-            let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
+            let entry = match self.resolver.caches.fs.read_file_with_allocator(
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
@@ -1337,29 +1185,32 @@ impl<'a> Transpiler<'a> {
                     return None;
                 }
             };
-            if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                *file_fd_ptr = entry.fd;
+            if let Some(opened_file) = this_parse.opened_file
+                && let Some(bun_sys::MaybeOwnedFile::Owned(file)) = entry.file
+            {
+                *opened_file = Some(file);
             }
             // The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
+            // buffer (`USE_SHARED_BUFFER`) or in `this_parse.arena` (no-op drop —
             // bulk-freed by `mi_heap_destroy` when the per-call arena is
             // recycled). Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
-            source_backing = core::mem::take(&mut entry.contents);
+            source_backing = entry.contents;
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
             // and the only consumers are the parser/printer which run before
-            // the result drops). `contents_is_recycled = true` records that
-            // the bytes are externally-owned.
+            // the result drops).
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-            match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
-            {
-                Ok(s) => break 'brk s,
-                Err(_) => return None,
+            bun_ast::Source {
+                path: bun_paths::fs::Path {
+                    namespace: b"file",
+                    ..path
+                },
+                contents: std::borrow::Cow::Borrowed(contents),
+                ..Default::default()
             }
         });
 
@@ -1408,15 +1259,6 @@ impl<'a> Transpiler<'a> {
                 jsx.parse = loader.is_jsx();
                 let _ = &this_parse.macro_remappings;
 
-                // `ParserOptions::init` is hard-typed
-                // `-> Options<'static>` and `Options<'a>` is *invariant* in
-                // `'a` (it holds `Option<&'a mut MacroContext>`), so an
-                // `Options<'static>` cannot be passed to
-                // `cache::JavaScript::parse::<'x>` alongside a non-`'static`
-                // `bump`/`source`/`define`. Construct the struct literal
-                // directly (mirroring the body of `Options::init`,
-                // ast/Parser.rs:144-180) so `'x` is inferred from the borrows
-                // below instead of pinned to `'static`.
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
@@ -1433,6 +1275,7 @@ impl<'a> Transpiler<'a> {
                     code_splitting: false,
                     package_version: b"",
                     macro_context: None,
+                    macro_remap: None,
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
@@ -1462,18 +1305,6 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
-                // `bun_ast::RuntimeTranspilerCache` is the single nominal
-                // type on both sides; thread the pointer directly.
-                // The same `RuntimeTranspilerCache` raw pointer goes to BOTH
-                // `opts.features` and the returned `ParseResult`. Derive both
-                // from a single reborrow so they share one provenance tag —
-                // re-touching the parent `&mut` after the `*mut` cast would
-                // pop the raw pointer off the borrow stack (Stacked Borrows).
-                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> = this_parse
-                    .runtime_transpiler_cache
-                    .as_deref_mut()
-                    .map(core::ptr::NonNull::from);
-                opts.features.runtime_transpiler_cache = rtc_ptr.map(core::ptr::NonNull::as_ptr);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1481,6 +1312,10 @@ impl<'a> Transpiler<'a> {
                 opts.features.code_coverage = self.options.code_coverage;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.features.lists_loads =
+                    self.options.defers_requires && this_parse.allow_commonjs;
+                opts.features.defers_requires =
+                    opts.features.lists_loads && is_in_known_package(source.path.text);
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;
@@ -1532,41 +1367,29 @@ impl<'a> Transpiler<'a> {
                     entries: this_parse.replace_exports,
                 };
 
-                if self.macro_context.is_none() {
-                    let ctx = js_ast::Macro::MacroContext::init(self);
-                    self.macro_context = Some(ctx);
-                }
-                // Thread the caller-supplied JS
-                // context into the macro runtime so macros invoked during
-                // runtime transpilation see it (instead of null). Written on
-                // `self.macro_context` before reborrowing into `opts` so the
-                // `&mut` handed to the parser already carries the value.
-                if target != crate::options_impl::Target::BunMacro {
-                    // SAFETY: `is_none()` check above guarantees `Some` here.
-                    self.macro_context.as_mut().unwrap().javascript_object =
-                        this_parse.macro_js_ctx;
-                }
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
                 let define: &'p js_ast::defines::Define;
-                // SAFETY: `self.options.define` / `self.macro_context` are owned by the
-                // long-lived `Transpiler`, and neither is dropped while a parse is in flight.
-                // Erased to `'p` so the returned `Ast<'p>` is not pinned to the `&mut self` borrow.
+                let transpiler = core::ptr::from_mut(self);
+                // SAFETY: `self` is not used again until the parser returns, and neither table is
+                // replaced while a parse is in flight. Erased to `'p` so the returned `Ast<'p>`
+                // is not pinned to the `&mut self` borrow.
                 unsafe {
-                    let define_ptr: *const js_ast::defines::Define =
-                        &raw const *self.options.define;
-                    define = &*define_ptr;
-                    opts.macro_context = self
-                        .macro_context
-                        .as_mut()
-                        .map(|m| &mut *core::ptr::from_mut(m));
+                    define = &*(*transpiler).options.define;
+                    opts.macro_remap = Some(&(*transpiler).options.macro_remap);
+                    opts.macro_context = Some(Self::macro_context(
+                        transpiler,
+                        this_parse.macro_load_states,
+                        this_parse.macro_js_ctx,
+                    ));
                 }
                 // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
-                    opts.import_meta_glob =
-                        Some(unsafe { Resolver::import_meta_glob_host(&raw mut self.resolver) });
+                    opts.import_meta_glob = Some(unsafe {
+                        Resolver::import_meta_glob_host(&raw mut (*transpiler).resolver)
+                    });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.
@@ -1575,9 +1398,14 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    source,
+                    this_parse.runtime_transpiler_cache,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -1586,19 +1414,15 @@ impl<'a> Transpiler<'a> {
                         ast: *value,
                         source: source.clone(),
                         loader,
-                        runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
-                        runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
                         already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1626,27 +1450,14 @@ impl<'a> Transpiler<'a> {
                                 {
                                     const BYTECODE_EXT: &[u8] =
                                         crate::bytecode_sidecar::EXTENSION.as_bytes();
-                                    let mut path_buf2 = bun_paths::path_buffer_pool::get();
-                                    let n = path.text.len();
-                                    let total = n + BYTECODE_EXT.len();
-                                    // `ZStr::from_buf` needs `buf[total] == 0`
-                                    // in-bounds; fall back to re-parsing the
-                                    // source instead of panicking on an
-                                    // over-long path.
-                                    if total >= path_buf2.len() {
-                                        break 'brk default_value;
-                                    }
-                                    path_buf2[..n].copy_from_slice(path.text);
-                                    path_buf2[n..][..BYTECODE_EXT.len()]
-                                        .copy_from_slice(BYTECODE_EXT);
-                                    path_buf2[total] = 0;
-                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
+                                    let mut bytecode_path = bun_paths::Path::from(path.text);
+                                    bytecode_path.extend_from_slice(BYTECODE_EXT);
                                     // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
                                     // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
-                                    match bun_sys::File::read_from(dir, zpath) {
+                                    match bun_sys::File::read_from(dir, &bytecode_path) {
                                         Ok(mut contents) => {
                                             let Some(payload_len) =
                                                 crate::bytecode_sidecar::payload_len(&contents)
@@ -1672,8 +1483,6 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        pending_imports: Default::default(),
-                        runtime_transpiler_cache: None,
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1935,7 +1744,7 @@ fn parse_data_loader<'a>(
                 if count > 0 {
                     let stmt0 = bun_ast::Stmt::alloc(
                         bun_ast::S::Local {
-                            decls: bun_ast::G::DeclList::move_from_list(decls),
+                            decls: bun_alloc::AstAlloc::vec_from_iter(decls),
                             kind: bun_ast::S::Kind::KVar,
                             ..Default::default()
                         },
@@ -1997,8 +1806,6 @@ fn parse_data_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -2037,8 +1844,6 @@ fn parse_text_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -2090,8 +1895,6 @@ fn parse_md_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        pending_imports: Default::default(),
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -2126,8 +1929,6 @@ fn parse_wasm_loader<'a>(
             source: source.clone(),
             loader,
             already_bundled: AlreadyBundled::None,
-            pending_imports: Default::default(),
-            runtime_transpiler_cache: None,
             empty: false,
             source_contents_backing: source_backing,
         });
@@ -2150,12 +1951,12 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler::print` / `print_with_source_map` — final step of
 // `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539); the
-// dispatch shim that `RuntimeTranspilerStore` / `AsyncModule` link against.
+// dispatch shim that `RuntimeTranspilerStore` links against.
 //
 // `format` is a runtime arg rather than a const generic —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
 // from this crate). All callers pass a literal anyway; the inner
-// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
+// `print_ast::<ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
 // bools, so codegen monomorphizes the printer body identically.
 // PERF: outer `match format` is one extra branch — profile if hot.
 // ══════════════════════════════════════════════════════════════════════════
@@ -2184,12 +1985,10 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
     }
 }
 
-/// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
-/// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;
 
 // PERF: this whole `print*` chain was generic over `W: WriterTrait`, but every
-// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs, AsyncModule.rs,
+// call site in the tree (jsc_hooks.rs, RuntimeTranspilerStore.rs,
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
 // `&mut BufferPrinter`. Leaving the public entry points generic forced each
 // downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
@@ -2209,7 +2008,6 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
@@ -2236,8 +2034,6 @@ impl<'a> Transpiler<'a> {
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        // `runtime_transpiler_cache` is now forwarded — js_printer holds the
-        // `NonNull<RuntimeTranspilerCache>` directly.
         // `module_info` is now forwarded — this fn's parameter is the
         // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
         // above), so the seam is gone (EsmAscii arm only).
@@ -2255,7 +2051,7 @@ impl<'a> Transpiler<'a> {
         //
         // `print_arena` is the same per-call arena that built `ast` (the one
         // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
-        // runtime per-import path that aliases the per-VM `transpiler_arena`
+        // runtime per-import path that is the VM's handle on the main heap
         // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
         // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
         // would strand its bytes in `mi_heap_main` on every print.
@@ -2267,7 +2063,6 @@ impl<'a> Transpiler<'a> {
                 symbols,
                 source,
                 source_map_context,
-                runtime_transpiler_cache,
             ),
 
             js_printer::Format::EsmAscii => {
@@ -2283,7 +2078,6 @@ impl<'a> Transpiler<'a> {
                         source,
                         source_map_context,
                         exports_kind,
-                        runtime_transpiler_cache,
                         module_info,
                     )
                 } else {
@@ -2295,7 +2089,6 @@ impl<'a> Transpiler<'a> {
                         source,
                         source_map_context,
                         exports_kind,
-                        runtime_transpiler_cache,
                         module_info,
                     )
                 }
@@ -2305,7 +2098,7 @@ impl<'a> Transpiler<'a> {
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
     // verbatim from the former `Format::Esm` match arm; `#[cold]` moves the
-    // `print_ast::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
+    // `print_ast::<false,SM>` Printer<…> tree to `.text.unlikely`.
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -2317,7 +2110,6 @@ impl<'a> Transpiler<'a> {
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2328,12 +2120,11 @@ impl<'a> Transpiler<'a> {
             minify_identifiers: self.options.minify_identifiers,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
-            runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
             ..Default::default()
         };
-        js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<false, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2360,7 +2151,6 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
@@ -2371,7 +2161,6 @@ impl<'a> Transpiler<'a> {
             source,
             source_map_context,
             exports_kind,
-            runtime_transpiler_cache,
             module_info,
         )
     }
@@ -2388,7 +2177,6 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
@@ -2411,7 +2199,6 @@ impl<'a> Transpiler<'a> {
             inline_require_and_import_errors: false,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
-            runtime_transpiler_cache,
             module_info,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
@@ -2422,7 +2209,7 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2458,13 +2245,11 @@ impl<'a> Transpiler<'a> {
             format,
             None,
             None,
-            None,
         )
     }
 
     // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
-    // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
-    // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
+    // above. Keeping it non-generic collapses the four cross-crate
     // copies of `print_expr<…>` (244 KB → ~61 KB).
     /// `print_arena` is the same per-call arena that built `result.ast` —
     /// see [`Self::print`].
@@ -2491,7 +2276,6 @@ impl<'a> Transpiler<'a> {
                 writer,
                 format,
                 Some(handler),
-                result.runtime_transpiler_cache,
                 module_info,
             );
         }
@@ -2502,24 +2286,27 @@ impl<'a> Transpiler<'a> {
             writer,
             format,
             Some(handler),
-            result.runtime_transpiler_cache,
             module_info,
         )
     }
 
     fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
-        let fs = Fs::FileSystem::get();
-        let entry = fs.abs(&[_entry]);
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let absolute = bun_resolver::resolve_keeping_sep(&[top_level_dir, _entry]);
 
         // If the absolutized path does not exist on disk, return the original
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
-        if !bun_sys::exists(entry) {
+        if !bun_sys::exists_z(&absolute) {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        let mut entry = bun_paths::Path::relative(top_level_dir, &absolute);
+        // `src/` can be `src.js`, and `js/` cannot be `js.js`.
+        if entry.len() <= 2 && entry.as_bytes() != b".." {
+            entry.copy_trailing_sep_from(&absolute);
+        }
 
-        if !strings::starts_with(entry, b"./") {
+        if !entry.starts_with(b"./") {
             // Entry point paths without a leading "./" are interpreted as package
             // paths. This happens because they go through general path resolution
             // like all other import paths so that plugins can run on them. Requiring
@@ -2532,12 +2319,9 @@ impl<'a> Transpiler<'a> {
             // a leading "./" because the path may not be a file system path. For
             // example, it may be a URL. So only insert a leading "./" when the path
             // is an exact match for an existing file.
-            let mut __entry = Vec::with_capacity(2 + entry.len());
-            __entry.extend_from_slice(b"./");
-            __entry.extend_from_slice(entry);
-            return crate::linker::dupe(&__entry);
+            entry.prepend(b"./");
         }
-        crate::linker::dupe(entry)
+        crate::linker::dupe(&entry)
     }
 
     /// Returns only the count and lets
@@ -2649,6 +2433,7 @@ impl<'a> Transpiler<'a> {
         import_path_format: options::ImportPathFormat,
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
+        let macro_load_states = MacroLoadStates::default();
         while let Some(item) = self.resolve_queue.pop_front() {
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
@@ -2659,7 +2444,7 @@ impl<'a> Transpiler<'a> {
                 &item,
                 import_path_format,
                 outstream,
-                None,
+                &macro_load_states,
             ) {
                 Ok(Some(f)) => f,
                 Ok(None) => continue,
@@ -2714,11 +2499,11 @@ impl<'a> Transpiler<'a> {
             }
             writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
             for &index in indices {
-                writeln!(
-                    &mut msg,
-                    "    from input {}",
-                    bstr::BStr::new(self.output_files[index].src_path.pretty)
-                )?;
+                let input: &[u8] = &bun_paths::Path::relative(
+                    Fs::FileSystem::get().top_level_dir(),
+                    &self.output_files[index].src_path,
+                );
+                writeln!(&mut msg, "    from input {}", bstr::BStr::new(input))?;
             }
         }
 
@@ -2745,7 +2530,7 @@ impl<'a> Transpiler<'a> {
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'a>>,
+        macro_load_states: &MacroLoadStates,
     ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
             return Ok(None);
@@ -2754,39 +2539,20 @@ impl<'a> Transpiler<'a> {
         let Some(file_path_ref) = resolve_result.path_const() else {
             return Ok(None);
         };
-        // `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
-        // downstream `linker.link`/`get_hashed_filename` and `OutputFile.src_path`
-        // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
-        // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
         let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
-        // Key the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override.
-        // Compute it here, then apply the override.
         let loader = self.options.loader(file_path_ext);
-
-        // `client_entry_point_` is always `None` from the only in-tree caller;
-        // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // text/ext when present.
-        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
-            (
-                crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name().ext),
-            )
-        } else {
-            (file_path_text, file_path_ext)
-        };
 
         let mut file_path = Fs::Path::init(file_path_text);
 
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
-        file_path.pretty = crate::linker::dupe(rel);
+        let rel = bun_paths::Path::relative(top_level_dir, file_path_text);
+        file_path.pretty = crate::linker::dupe(&rel);
 
         let mut output_file = options::OutputFile::zero_value();
-        output_file.src_path = file_path;
+        output_file.src_path = file_path_text.into();
         output_file.loader = loader;
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
@@ -2835,9 +2601,10 @@ impl<'a> Transpiler<'a> {
                     loader,
                     dirname_fd,
                     file_descriptor: None,
-                    file_fd_ptr: None,
+                    opened_file: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
+                    macro_load_states,
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,
@@ -2856,7 +2623,7 @@ impl<'a> Transpiler<'a> {
                     allow_bytecode_cache: false,
                 };
 
-                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                let Some(mut result) = self.parse(parse_opts, None) else {
                     return Ok(None);
                 };
 
@@ -2964,11 +2731,8 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
-        let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Auto,
-            false,
-        >(&self.options.root_dir, file_path_text);
-        let pathname = Fs::PathName::init(rel_to_root);
+        let rel_to_root = bun_paths::Path::relative(&self.options.root_dir, file_path_text);
+        let pathname = Fs::PathName::init(&rel_to_root);
 
         let ext: &[u8] = if loader == options::Loader::Css {
             b"css"
@@ -2978,6 +2742,9 @@ impl<'a> Transpiler<'a> {
 
         let mut template = self.entry_naming_template();
         template.placeholder.dir = pathname.dir.into();
+        if bun_paths::is_absolute(&rel_to_root) {
+            template.resolve_dir(&self.options.root_dir);
+        }
         template.placeholder.name = pathname.base.into();
         template.placeholder.ext = ext.into();
         if template.needs(options::PlaceholderField::Target) {
@@ -2992,7 +2759,7 @@ impl<'a> Transpiler<'a> {
         template
             .print(&mut dest_path, true)
             .expect("write to Vec<u8>");
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut dest_path);
+        bun_paths::to_portable_in_place::<u8>(&mut dest_path);
         dest_path.into_boxed_slice()
     }
 
@@ -3046,13 +2813,7 @@ impl<'a> Transpiler<'a> {
             opts.css_modules = Some(bun_css::CssModuleConfig::default());
         }
 
-        // SAFETY: `self.arena` is the per-transpile arena;
-        // the CSS AST it backs is dropped before this fn returns
-        // (only `result.code: Vec<u8>` escapes, which is
-        // global-heap). `'static` matches the crate-wide erasure
-        // on `StyleSheet` (see the css_parser.rs
-        // `'bump`-threading note).
-        let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
+        let alloc = self.arena;
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,

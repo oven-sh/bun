@@ -36,7 +36,7 @@ using namespace JSC;
 
 JSPerformanceObserverCallback::JSPerformanceObserverCallback(JSObject* callback, JSDOMGlobalObject* globalObject)
     : PerformanceObserverCallback(globalObject->currentScriptExecutionContext())
-    , m_data(new JSCallbackData(globalObject->vm(), callback, this))
+    , m_data(globalObject->vm(), callback, this)
 {
 }
 
@@ -45,13 +45,7 @@ JSPerformanceObserverCallback::~JSPerformanceObserverCallback()
     ScriptExecutionContext* context = scriptExecutionContext();
     // When the context is destroyed, all tasks with a reference to a callback
     // should be deleted. So if the context is 0, we are on the context thread.
-    if (!context || context->isContextThread())
-        delete m_data;
-    else
-        RELEASE_ASSERT_NOT_REACHED();
-#ifndef NDEBUG
-    m_data = nullptr;
-#endif
+    RELEASE_ASSERT(!context || context->isContextThread());
 }
 
 CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverCallback::handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer)
@@ -64,7 +58,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     Ref<JSPerformanceObserverCallback> protectedThis(*this);
 
     // The callback's realm may be a node:vm context, which has no DOM wrapper structures.
-    auto& globalObject = *defaultGlobalObject(m_data->callback()->globalObject());
+    auto& globalObject = *defaultGlobalObject(m_data.callback()->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);
@@ -76,10 +70,10 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     ASSERT(!args.hasOverflowed());
 
     NakedPtr<JSC::Exception> returnedException;
-    m_data->invokeCallback(vm, thisValue, args, JSCallbackData::CallbackType::Function, Identifier(), returnedException);
+    m_data.invokeCallback(vm, thisValue, args, JSCallbackData::CallbackType::Function, Identifier(), returnedException);
     if (returnedException) {
         UNUSED_PARAM(lexicalGlobalObject);
-        reportException(m_data->callback()->globalObject(), returnedException);
+        reportException(m_data.callback()->globalObject(), returnedException);
         return CallbackResultType::ExceptionThrown;
     }
 
@@ -88,12 +82,12 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
 
 void JSPerformanceObserverCallback::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data.visitJSFunction(visitor);
 }
 
 void JSPerformanceObserverCallback::visitJSFunction(JSC::SlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data.visitJSFunction(visitor);
 }
 
 } // namespace WebCore

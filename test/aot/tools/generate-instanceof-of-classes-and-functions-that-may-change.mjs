@@ -9,9 +9,9 @@ function write(name, text) { writeFileSync(`${folder}/${name}.mjs`, text); count
 const kinds = {
   "a-class": `class Shelf { constructor(n) { this.n = n; } }\nclass Crate { constructor(n) { this.n = n; } }`,
   "a-class-below-a-class": `class Rack { constructor(n) { this.n = n; } }\nclass Shelf extends Rack { constructor(n) { super(n); this.m = n; } }\nclass Crate extends Rack { constructor(n) { super(n); this.k = n; } }`,
-  "a-constructor-function": `function Shelf(n) { this.n = n; }\nfunction Crate(n) { this.n = n; }`,
-  "a-constructor-function-with-its-own-prototype": `function Shelf(n) { this.n = n; }\nShelf.prototype = { kind() { return "shelf"; } };\nfunction Crate(n) { this.n = n; }\nCrate.prototype = {};`,
-  "a-constructor-function-below-another": `function Rack(n) { this.n = n; }\nfunction Shelf(n) { Rack.call(this, n); this.m = n; }\nObject.setPrototypeOf(Shelf, Rack);\nShelf.prototype = Object.create(Rack.prototype);\nfunction Crate(n) { Rack.call(this, n); }\nObject.setPrototypeOf(Crate, Rack);\nCrate.prototype = Object.create(Rack.prototype);`,
+  "a-function": `function Shelf(n) { this.n = n; }\nfunction Crate(n) { this.n = n; }`,
+  "a-function-with-its-own-prototype": `function Shelf(n) { this.n = n; }\nShelf.prototype = { kind() { return "shelf"; } };\nfunction Crate(n) { this.n = n; }\nCrate.prototype = {};`,
+  "a-function-below-another": `function Rack(n) { this.n = n; }\nfunction Shelf(n) { Rack.call(this, n); this.m = n; }\nObject.setPrototypeOf(Shelf, Rack);\nShelf.prototype = Object.create(Rack.prototype);\nfunction Crate(n) { Rack.call(this, n); }\nObject.setPrototypeOf(Crate, Rack);\nCrate.prototype = Object.create(Rack.prototype);`,
 };
 const hasRack = kind => kind.includes("below");
 const sights = {
@@ -38,7 +38,7 @@ const deeds = {
 const places = {
   "in-a-loop": `function count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 1 << i; return hits; }`,
   "outside-loops": `function is(value) { return value instanceof Shelf; }\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (is(list[i])) hits += 1 << i; return hits; }`,
-  "in-a-function-called-out-of-sight": `function is(value) { return value instanceof Shelf; }\nglobalThis.asked = is;\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (globalThis.asked(list[i])) hits += 1 << i; return hits; }`,
+  "in-an-unseen-function": `function is(value) { return value instanceof Shelf; }\nglobalThis.asked = is;\nfunction count(list) { let hits = 0; for (let i = 0; i < list.length; i++) if (globalThis.asked(list[i])) hits += 1 << i; return hits; }`,
   "with-the-values-known": `function count(list) { let hits = 0; const a = new Shelf(1), b = new Crate(2); if (a instanceof Shelf) hits += 1; if (b instanceof Shelf) hits += 2; for (let i = 0; i < list.length; i++) if (list[i] instanceof Shelf) hits += 4 << i; return hits; }`,
 };
 const times = {

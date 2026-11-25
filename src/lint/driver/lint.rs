@@ -59,9 +59,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) js_plugins: &'c Host<'c>,
     /// Rules that comments turn on but that didn't run, because their plugins aren't loaded.
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
-    /// Files in which the type checker ran out of stack, so rules that need types may have missed something. Native
-    /// paths.
-    pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
+    /// Files that the type checker didn't check in full.
+    pub(crate) not_type_checked: &'c Guarded<Vec<crate::typed::NotTypeChecked>>,
     /// Programs whose config file has no `include`, with native paths. See `typed::is_out_of_proportion`.
     pub(crate) without_include: &'c Guarded<Vec<bun_sema_driver::WithoutInclude>>,
     /// Files that fixes would have left with a syntax error, each with the rules whose fixes were dropped because of
@@ -264,7 +263,7 @@ impl Context<'_, '_> {
                 Kind::Layout => FixType::Layout,
                 Kind::None => return false,
             },
-            Some(RuleId::Js(rule)) => match rule.kind {
+            Some(RuleId::Js(rule)) => match self.js_plugins.describe(rule).kind {
                 Some(Kind::Problem) => FixType::Problem,
                 Some(Kind::Suggestion) => FixType::Suggestion,
                 Some(Kind::Layout) => FixType::Layout,
@@ -351,11 +350,7 @@ impl Context<'_, '_> {
     /// Lints the text behind `result`'s messages again, this time generating oxlint's help for each message. Returns
     /// nothing if the help was generated the first time or there isn't any. See [`Context::help_on_demand`]. `only`
     /// lists the rules to run.
-    pub(crate) fn with_help(
-        &self,
-        result: &FileResult,
-        only: Option<&[&RuleId]>,
-    ) -> Vec<LintMessage> {
+    pub(crate) fn with_help(&self, result: &FileResult, only: &[&RuleId]) -> Vec<LintMessage> {
         let (Some(linted), Some(text)) = (&result.linted, &result.text) else {
             return Vec::new();
         };
@@ -367,7 +362,7 @@ impl Context<'_, '_> {
         if was_made || !has_help || linted.config.dialect.is_some() {
             return Vec::new();
         }
-        let is_requested = |id: &RuleId, _: Severity| only.is_none_or(|only| only.contains(&id));
+        let is_requested = |id: &RuleId, _: Severity| only.contains(&id);
         let how = How {
             rules: Which::WithHelp(&is_requested),
             ..How::default()

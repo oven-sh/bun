@@ -1,0 +1,15 @@
+# -- source: a-caller-keeps-its-copies-of-a-helper-whoever-else-calls-the-helper.cjs
+# const rows = []; for (let i = 0; i < 64; i++) rows.push({ id: i, name: "n" + i, age: i & 31, active: (i & 1) === 0, score: i * 1.5, city: "c" + (i & 3), zip: 10000 + i });
+# function total(rows, key) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i][key]; return s; }
+# globalThis.kept = total;
+# function both() { return total(rows, "age") + total(rows, "zip"); }
+# function other() { return total(JSON.parse('[{"age":1},{"age":2}]'), "age"); }
+# globalThis.alsoKept = [both, other];
+# console.log(both(), other());
+# -- end of source
+# f1 = total, f2 = both, f3 = other
+# Whether `both` gets its copies of the helper was asked of what is held of the HELPER's parameter, which joins what every caller in the program hands over: one caller more that hands parsed rows took the copies out of `both`,
+# whose own text had not changed. It is asked of what the call itself hands over: a written text, and a list that the caller knows to be a list.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: CallDirect

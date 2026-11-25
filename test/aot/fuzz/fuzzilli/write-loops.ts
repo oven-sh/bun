@@ -410,6 +410,175 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
         ends: [`${t} += typeof sum + " " + String(sum) + ";";`, `carried = ${later};`],
       };
     }),
+    // What an outer loop carries round is handed to a helper behind the inner loop. The helper is typed by what arrives: one kind as the loop enters, another from its second turn on.
+    ...Array.from({ length: 2 }, () => () => {
+      if (!isNested) return false;
+      const [classes, first, later, answer] = pick<[string[], string, string, string]>([
+        [[`class Mark${n} { value${any}; constructor(value${any}) { this.value = value; } }`], "undefined", `new Mark${n}(r)`, "last === undefined ? work : work + last.value"],
+        [[`class Mark${n} { value${any}; constructor(value${any}) { this.value = value; } }`], "undefined", `new Mark${n}(r)`, "last === undefined ? work : work + last.value"],
+        [[`class Small${n} { value${any}; constructor(value${any}) { this.value = value; } }`, `class Large${n} { pad${any}; value${any}; constructor(value${any}) { this.pad = 100; this.value = value; } }`], `new Small${n}(1)`, `new Large${n}(r)`, "last.value + work"],
+        [[`class Small${n} { value${any}; constructor(value${any}) { this.value = value; } }`, `class Large${n} { pad${any}; value${any}; constructor(value${any}) { this.pad = 100; this.value = value; } }`], `new Small${n}(1)`, `new Large${n}(r)`, "last.value + work"],
+        [[], "{ value: 1 }", "{ pad: 100, value: r }", "last.value + work"],
+        [[], "1", '"t" + r', "String(last).length + work"],
+      ]); // prettier-ignore
+      return {
+        outside: [
+          ...classes,
+          `function weigh${n}(last${any})${any} { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; return ${answer}; }`,
+        ],
+        front: [`let carried${any} = ${first};`],
+        body: [pick([`same += 1;`, `same += 1;`, `${a} += 1;`, `${t} += i;`])],
+        ends: [`same += weigh${n}(carried);`, `carried = ${later};`],
+      };
+    }),
+    // What everyday loops hold beside sums: an object, a list or a table that gathers, made in front of the loop or anew in each outer turn.
+    ...Array.from({ length: 3 }, () => () => {
+      const [made, grows, left] = pick<[string, string[], string]>([
+        [`{ n: 0, text: "" }`, [`acc.n += 1;`, `acc.text += i;`], `acc.n + acc.text`],
+        [`{ n: 0, text: "" }`, [`acc.n = acc.n + ${x === "x" ? "1" : x};`], `acc.n + acc.text`],
+        [`{ n: 0 }`, [`acc.n += 1;`, `if (i === 1) acc.late = i;`], `acc.n + Object.keys(acc).join()`],
+        [`new Gathers${n}()`, [`acc.add(i);`], `acc.n + acc.text`],
+        [`new Gathers${n}()`, [`acc.n += 1;`, `acc.add(i);`], `acc.n + acc.text`],
+        [`[]`, [`acc.push(i);`], `acc.join()`],
+        [`[]`, [`acc[acc.length] = i;`], `acc.join()`],
+        [`[]`, [`acc[i] = i * 2;`], `acc.length + ":" + acc.join()`],
+        [`[]`, [`acc.push(i & 1 ? i : String(i));`], `acc.map(each => typeof each).join()`],
+        [`[0, ""]`, [`acc[0] += 1;`, `acc[1] += i;`], `acc.join()`],
+        [`new Map()`, [`acc.set(i & 1, (acc.get(i & 1) ?? 0) + 1);`], `[...acc].join()`],
+        [`new Set()`, [`acc.add(i & 1 ? "odd" : i);`], `[...acc].join()`],
+      ]);
+      const fresh = isNested && chance(60);
+      const declared = `${pick(["const", "const", "let"])} acc${any} = ${made};`;
+      const told = `${t} += ${left} + ";";`;
+      return {
+        outside: made.startsWith("new Gathers")
+          ? [`class Gathers${n} { n = 0; text = ""; add(value${any}) { this.n += 1; this.text += value; } }`]
+          : [],
+        ...(fresh ? { enters: [declared], ends: [told] } : { front: [declared], behind: [told] }),
+        body: grows,
+      };
+    }),
+    // Small operations for which a compiler has forms of its own, many with a second way for the odd case: a remainder by zero, a place outside a text, a hole in a list.
+    ...Array.from({ length: 5 }, () => () => ({
+      body: Array.from({ length: pick([1, 1, 2, 3]) }, () =>
+        pick([
+          `same += i % to;`,
+          `same += i % pair.length;`,
+          `same += [5, 6, 7][i % 3];`,
+          `same += pair[i % pair.length];`,
+          `same += (i / 2) | 0;`,
+          `${a} += i / to;`,
+          `${a} += Math.min(i, to);`,
+          `${a} += Math.max(i, 2) % 3;`,
+          `same += Math.floor(i / 2);`,
+          `same += Math.abs(i - 2);`,
+          `same += Math.imul(i, 3);`,
+          `same += i ** 2;`,
+          `same += i >>> 1;`,
+          `same += (i - 2) >>> 28;`,
+          `same += Math.clz32(i);`,
+          `same += Math.trunc(i * 0.5);`,
+          `same += Math.round(i / 3);`,
+          `same += Math.sign(i - 1);`,
+          `same += Math.sqrt(i) | 0;`,
+          `same += Math.hypot(i, 2) | 0;`,
+          `same += Number.isInteger(i / 2) ? 1 : 0;`,
+          `same += "abcd".charCodeAt(i) | 0;`,
+          `same += "abcd".codePointAt(i) ?? -1;`,
+          `${t} += "abcd".at(i - 2);`,
+          `${t} += "abcd"[i];`,
+          `${t} += "abcd".charAt(i);`,
+          `${t} += String.fromCharCode(97 + (i % 26));`,
+          `same += parseInt("1" + i);`,
+          `same += Number("1" + i);`,
+          `${t} += (i * 1.5).toFixed(1);`,
+          `same += "abcabc".indexOf("c", i);`,
+          `same += "abcabc".includes("c" + i) ? 1 : 0;`,
+          `${t} += "abcdef".slice(i, i + 2);`,
+          `${t} += "abcdef".substring(i, 4);`,
+          `${t} += String(i).padStart(2, "0");`,
+          `${t} += \`<\${i}>\`;`,
+          `same += i > 1 && i < 3 ? 1 : 0;`,
+          `same += i === 1 || i === to ? 1 : 0;`,
+          `${b} ??= i;`,
+          `${b} ||= i;`,
+          `${b} &&= i;`,
+          `same += typeof ${b} === "number" ? 1 : 0;`,
+          `same += ${b} == null ? 1 : 0;`,
+          `same += [i, 2].includes(2) ? 1 : 0;`,
+          `same += [i, 2].indexOf(i);`,
+          `same += [3, 1, i].at(-1)${isTypeScript ? "!" : ""};`,
+          `same += Math.max(...[i, 2, 3]);`,
+          `same += [i, [2]].flat().length;`,
+          `same += Object.keys({ one: i, two: 2 }).length;`,
+          `same += ("one" in { one: i }) ? 1 : 0;`,
+          `same += [i] instanceof Array ? 1 : 0;`,
+          `same += Array.isArray(pair) ? pair.length : 0;`,
+          `same += Number(BigInt(i) * 2n);`,
+          `same += new Date(i).getTime();`,
+        ]),
+      ),
+    })),
+    // One turn throws, and the loop goes on or ends there.
+    () => ({
+      body: [
+        pick([
+          `try { if (i === ${when}) throw new Error("turn"); ${a} += 1; } catch (error) { ${t} += "caught" + i; }`,
+          `try { if (i === ${when}) throw new Error("turn"); ${a} += 1; } catch (error) { ${t} += "caught" + i; }`,
+          `try { if (i === ${when}) throw i; ${t} += i; } catch (thrown) { ${a} += thrown; } finally { same++; }`,
+          `try { ${t} += i; if (i === ${when}) hook(null).none; } catch (error) { ${t} += "!"; ${canContinue ? "continue" : "same++"}; }`,
+          `try { if (i === ${when}) break; ${a} += 1; } finally { ${t} += i; }`,
+        ]),
+      ],
+    }),
+    // A built-in walks a small list with a function of the turn.
+    () => ({
+      body: [
+        pick([
+          `[1, 2].forEach(each => { ${a} += each; });`,
+          `[1, 2].forEach(each => { ${a} += each; });`,
+          `${a} = [1, 2, 3].reduce((sum, each) => sum + each, ${a});`,
+          `${t} += [i, i + 1].map(each => each * 2).join();`,
+          `same += [i, 2, 3].filter(each => each > i).length;`,
+          `${t} += [3, 1, 2].sort((one, other) => one - other + 0 * i).join("");`,
+          `if ([1, 2, 3].some(each => each === i)) same++;`,
+          `${t} += Array.from({ length: 2 }, (_, at) => at + i).join();`,
+        ]),
+      ],
+    }),
+    // A loop over names inside the turn, a pattern, an iterator stepped by hand.
+    () =>
+      pick<Motif>([
+        {
+          front: [`const named${any} = { one: 1, two: 2 };`],
+          body: [`for (const key in named) ${t} += key + named[key];`, `if (i === 1) named.late = i;`],
+        },
+        {
+          front: [`const named${any} = { one: 1, two: 2 };`],
+          body: [`for (const key in named) { same += named[key]; if (i === 1) delete named.two; }`],
+        },
+        {
+          front: [`const named${any} = [5, 6];`],
+          body: [`for (const key in named) ${t} += key;`, `if (i === 1) named.push(7);`],
+        },
+        { body: [`const [first, second = i] = [i + 1, undefined]; ${a} += first + second;`] },
+        { body: [`const { length } = String(i * 5); same += length;`] },
+        {
+          body: [
+            `const { one = i, ...others } = i & 1 ? { one: 1, two: 2 } : { two: 2 }; same += one + Object.keys(others).length;`,
+          ].map(line =>
+            isTypeScript ? line.replace("= i & 1 ?", "= (i & 1 ?").replace("{ two: 2 };", "{ two: 2 }) as any;") : line,
+          ),
+        },
+        {
+          front: [`const steps = [1, 2, 3][Symbol.iterator]();`],
+          body: [`const step = steps.next(); if (!step.done) ${a} += step.value;`],
+        },
+        {
+          front: [`const steps = new Map([[1, "a"], [2, "b"]]).entries();`],
+          body: [`const step = steps.next(); if (!step.done) ${t} += step.value[1];`],
+        },
+      ]),
     // The length of an object of the program's own is an accessor that writes.
     ...Array.from(
       { length: 6 },
@@ -559,13 +728,34 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     }),
   ];
   const drawn: Motif[] = [];
-  while (drawn.length < (chance(25) ? 2 : 1)) {
+  const howMany = pick([1, 1, 1, 1, 2, 2, 2, 3]);
+  while (drawn.length < howMany) {
     const motif = pick(motifs)();
     // Two motifs that declare one name in front of the loop cannot stand together.
     const declared = (each: Motif) =>
-      (each.front ?? []).flatMap(line => /^(?:let|const|var) (\w+)/.exec(line)?.[1] ?? []);
+      [...(each.front ?? []), ...(each.enters ?? [])].flatMap(line => /^(?:let|const|var) (\w+)/.exec(line)?.[1] ?? []);
     if (motif && !drawn.some(other => declared(other).some(name => declared(motif).includes(name)))) drawn.push(motif);
   }
+  // What one motif does may stand in the turn of the OUTER loop, in front of the inner loop or behind it: whatever the compiler builds for it is then built while the outer loop is still being tried.
+  if (isNested && chance(60))
+    for (let tries = 0; tries < 12; tries++) {
+      const motif = pick(motifs)();
+      const declared = (each: Motif) =>
+        [...(each.front ?? []), ...(each.enters ?? [])].flatMap(
+          line => /^(?:let|const|var) (\w+)/.exec(line)?.[1] ?? [],
+        );
+      if (
+        !motif ||
+        motif.enters ||
+        motif.ends ||
+        motif.body.some(line => /(?<![\w$.])(?:c|x)\b|\bcontinue\b/.test(line))
+      )
+        continue;
+      if (drawn.some(other => declared(other).some(name => declared(motif).includes(name)))) continue;
+      const block = `{ const i = r; ${motif.body.join(" ")} }`;
+      drawn.push({ ...motif, body: [], ...(chance(70) ? { ends: [block] } : { enters: [block] }) });
+      break;
+    }
   const pause =
     shape === "async"
       ? pick(["await null;", "await null;", "await hook(i);"])
@@ -579,6 +769,25 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
     if (!/\b(?:break|continue|return|const|yield|await)\b/.test(body[at]))
       body[at] = `for (let j = 0; j < ${pick(["2", "3", "to", "to"])}; j++) { ${body[at]} }`;
   }
+  // A way out of the turn, the loop or the function stands in front of whatever follows it: what is built behind it is built on one of two ways only.
+  if (chance(30))
+    body.splice(
+      Math.floor(random() * (body.length + 1)),
+      0,
+      pick([
+        ...(canContinue
+          ? [
+              `if (i === ${when}) continue;`,
+              `if (i === ${when}) continue;`,
+              `if (i & 1) continue;`,
+              `if (i !== ${when}) continue;`,
+            ]
+          : []),
+        `if (i === ${when}) break;`,
+        `if (i === ${when}) return "left";`,
+        `if (i === ${when}) throw new Error("left");`,
+      ]),
+    );
   if (pause && chance(35)) body.splice(Math.floor(random() * (body.length + 1)), 0, pause);
   // A list that grows ahead of the loop which walks it to its end would never end.
   if (
@@ -591,7 +800,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
   const inPlace = (walked.again ?? "").replace(/\bround\b/g, "0");
   const namesIt = body.some(line => /(?<![\w$.])c\b/.test(line));
   const drawnOrigin = inPlace ? pick(["parameter", "parameter", "parameter", "local", "head", "head"]) : "parameter";
-  const origin = drawnOrigin === "head" && (form !== "of" || namesIt || isNested) ? "local" : drawnOrigin;
+  const origin = drawnOrigin === "head" && (form !== "of" || namesIt) ? "local" : drawnOrigin;
   const usesElement = body.some(line => /(?<![\w$.])x\b/.test(line));
   const element = usesElement ? [`  const x${walked.holds === "anything" ? any : ""} = c[i];`] : [];
   const lines = body.map(line => "  " + line);
@@ -614,7 +823,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
             : [`let i = from;`, `do {`, ...element, ...lines, `  i = (i + 1) | 0;`, `} while (i < to);`];
   const loop = isNested
     ? [
-        `for (let r = 0; r < ${pick(["3", "rows", "rows", "6"])}; r++) {`,
+        `for (let r = 0; r < ${pick(["3", "rows", "rows", "rows", "rows", "6"])}; r++) {`,
         ...pick([
           [`  ${ticks}++;`],
           [`  ${ticks}++;`, `  ${b} = r;`],
@@ -624,7 +833,7 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
         ]),
         ...(walked.leaves
           ? [`  c = ${inPlace};`]
-          : form === "of" && !walked.isIndexed && walked.again
+          : form === "of" && !walked.isIndexed && walked.again && origin !== "head"
             ? [`  c = again();`]
             : []),
         ...drawn.flatMap(motif => motif.enters ?? []).map(line => "  " + line),
@@ -702,7 +911,19 @@ export function writeSceneOfALoop(random: () => number, n: number, isTypeScript:
       ? [`${isNested ? "let" : "const"} c${walked.holds === "anything" ? any : ""} = ${inPlace};`]
       : []),
     ...["from", "to", "step"].flatMap((each, at) => (names(each) ? [`const ${each} = ${bounds[at]};`] : [])),
-    ...(names("rows") ? [`const rows = 3;`] : []),
+    // A loop of a few turns under a written bound is written out turn by turn and is no loop any more: most outer loops run to a bound that the compiler cannot know.
+    ...(names("rows")
+      ? [
+          pick([
+            `const rows = 3;`,
+            `const rows = JSON.parse("3");`,
+            `const rows = JSON.parse("3");`,
+            `const rows = Number(JSON.parse("3"));`,
+            `const rows = heard${n} >= 0 ? 3 : 4;`,
+            `const rows = 40;`,
+          ]),
+        ]
+      : []),
     ...(names("pair") ? [`const pair = [1, 2];`] : []),
     ...(names("kept") ? [`const kept${typed("(() => void)[]")} = [];`] : []),
     ...(names("again") ? [`const again = ()${any} => ${walked.again};`] : []),

@@ -1,16 +1,13 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
-use crate::shared::Data;
 
-pub struct NotificationResponse {
-    pub channel: Data,
-    pub payload: Data,
+pub struct NotificationResponse<'a> {
+    pub channel: &'a [u8],
+    pub payload: &'a [u8],
 }
 
-impl NotificationResponse {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+impl<'a> NotificationResponse<'a> {
+    pub fn decode_internal(reader: &NewReader<'a>) -> Result<Self, AnyPostgresError> {
         let mut remaining = reader.body_length()?;
         if remaining < 4 {
             return Err(AnyPostgresError::InvalidMessage);

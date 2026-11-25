@@ -2,7 +2,7 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
-const { guardCallback } = require("internal/shared");
+const { ErrnoException, guardCallback } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
@@ -10,6 +10,7 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateUint32,
   validatePort,
 } = require("internal/validators");
 
@@ -60,7 +61,12 @@ interface LookupOptions {
   backend?: string;
 }
 type LookupCallback = (err: Error | null, address?: string | LookupAddress[] | null, family?: number) => void;
-type NewNativeResolver = (options: { timeout: number; tries: number }) => NativeResolver;
+interface ResolverOptions {
+  timeout: number;
+  tries: number;
+  maxTimeout: number;
+}
+type NewNativeResolver = (options: ResolverOptions) => NativeResolver;
 
 interface DNSException extends Error {
   errno?: number;
@@ -84,6 +90,8 @@ function withTranslatedError(error: any) {
   const code: string | undefined = error?.code;
   if (code?.startsWith?.("DNS_")) {
     error.code = code.slice(4);
+    // `Bun.dns` names it "DNSException". Node's inherits "Error". `delete` throws for the sealed error of a mock.
+    Reflect.deleteProperty(error, "name");
   }
   return error;
 }
@@ -101,7 +109,7 @@ const getRuntimeDefaultResultOrderOption: () => string = $bindgen(
   "getRuntimeDefaultResultOrderOption",
 );
 
-function newResolver(options: { timeout: number; tries: number }) {
+function newResolver(options: ResolverOptions) {
   if (!newResolver.native) {
     newResolver.native = $bindgen("dns_internals.bind.ts", "newResolver") as NewNativeResolver;
   }
@@ -131,7 +139,7 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
-// ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
+// The native side rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
 function stripZoneId(host: string) {
   const pct = host.indexOf("%");
   return pct === -1 ? host : host.slice(0, pct);
@@ -246,13 +254,8 @@ function validateOrderOption(options: LookupOptions) {
   }
 }
 
-// Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
-function validateResolve(hostname: unknown, callback: ResolveCallback | undefined) {
-  if (typeof hostname !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
-  }
-
+function validateCallback(callback: ((...args: any[]) => unknown) | undefined) {
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
@@ -260,10 +263,77 @@ function validateResolve(hostname: unknown, callback: ResolveCallback | undefine
   return guardCallback(callback);
 }
 
+function validateResolve(hostname: unknown, callback: ResolveCallback | undefined) {
+  if (typeof hostname !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+  }
+
+  return validateCallback(callback);
+}
+
+function validateStringWithoutNullBytes(value: string, name: string) {
+  validateString(value, name);
+  if (value.includes("\0")) {
+    throw $ERR_INVALID_ARG_VALUE(name, value, "must be a string without null bytes");
+  }
+}
+
+const canonicalizeIP = $bindgen("answer_jsc.bind.ts", "canonicalizeIP");
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
+
+// Returns what the callback API throws and the promise API rejects with.
+function validateReverse(ip: string) {
+  validateStringWithoutNullBytes(ip, "name");
+  if (canonicalizeIP(ip) !== undefined) return;
+  const error: DNSException = new ErrnoException(UV_EINVAL, "getHostByAddr", ip);
+  if (ip) error.hostname = ip;
+  return error;
+}
+
+function reversePromise(resolver: ResolverMethods, ip: string) {
+  const error = validateReverse(ip);
+  return error ? Promise.$reject(error) : translateErrorCode(resolver.reverse(ip));
+}
+
+function deliver(promise: Promise<unknown>, callback: ResolveCallback) {
+  promise.then(
+    results => {
+      callback(null, results);
+    },
+    error => {
+      callback(withTranslatedError(error));
+    },
+  );
+}
+
+function deliverAddresses(promise: Promise<unknown[]>, callback: ResolveCallback, options?: { ttl?: boolean } | null) {
+  promise.then(
+    addresses => {
+      callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+    },
+    error => {
+      callback(withTranslatedError(error));
+    },
+  );
+}
+
+function isAddressType(rrtype: string | null) {
+  const type = rrtype?.toLowerCase();
+  return type === "a" || type === "aaaa";
+}
+
+function sortByOrder(res: LookupAddress[], order: string | undefined) {
+  if (order == "ipv4first") {
+    res.sort((a, b) => a.family - b.family);
+  } else if (order == "ipv6first") {
+    res.sort((a, b) => b.family - a.family);
+  }
+}
+
 function validateLocalAddresses(first: string, second?: string) {
-  validateString(first, "ipv4");
+  validateStringWithoutNullBytes(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second, "ipv6");
+    validateStringWithoutNullBytes(second, "ipv6");
   }
 }
 
@@ -302,7 +372,7 @@ function translateLookupOptions(options: LookupOptions | number | null | undefin
     all,
     order,
     verbatim,
-    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not c-ares.
+    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver.
     backend: "system",
   };
 }
@@ -366,12 +436,7 @@ function lookup(
   (dns.lookup(hostname, options) as Promise<LookupAddress[]>)
     .then(res => {
       throwIfEmpty(res);
-
-      if ((options as LookupOptions).order == "ipv4first") {
-        res.sort((a, b) => a.family - b.family);
-      } else if ((options as LookupOptions).order == "ipv6first") {
-        res.sort((a, b) => b.family - a.family);
-      }
+      sortByOrder(res, (options as LookupOptions).order);
 
       if ((options as LookupOptions)?.all) {
         callback!(null, res.map(mapLookupAll));
@@ -381,7 +446,7 @@ function lookup(
       }
     })
     .catch((err: DNSException) => {
-      if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      withTranslatedError(err);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
       const syscall = err.syscall;
@@ -406,11 +471,8 @@ function lookupService(
     throw $ERR_INVALID_ARG_VALUE("address", address);
   }
   validatePort(port, "port");
-  if (typeof callback !== "function") {
-    throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-  }
+  callback = validateCallback(callback);
 
-  callback = guardCallback(callback);
   (dns.lookupService(address, +port) as Promise<[hostname: string | undefined, service: string | undefined]>).then(
     results => {
       callback(null, ...results);
@@ -421,18 +483,19 @@ function lookupService(
   );
 }
 
-function validateResolverOptions(options?: { timeout?: number; tries?: number }) {
-  const { timeout = -1, tries = 4 } = { ...options };
+function validateResolverOptions(options?: Partial<ResolverOptions>) {
+  const { timeout = -1, tries = 4, maxTimeout = 0 } = { ...options };
   validateInt32(timeout, "options.timeout", -1);
   validateInt32(tries, "options.tries", 1);
-  return { timeout, tries };
+  validateUint32(maxTimeout, "options.maxTimeout");
+  return { timeout, tries, maxTimeout };
 }
 
 class Resolver {
   declare _handle: NativeResolver;
   #resolver: NativeResolver;
 
-  constructor(options?: { timeout?: number; tries?: number }) {
+  constructor(options?: Partial<ResolverOptions>) {
     this.#resolver = this._handle = newResolver(validateResolverOptions(options));
   }
 
@@ -458,24 +521,12 @@ class Resolver {
 
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    const promise = Resolver.#getResolver(this).resolve(hostname, rrtype);
+    if (isAddressType(rrtype)) {
+      deliverAddresses(promise, callback);
+    } else {
+      deliver(promise, callback);
+    }
   }
 
   resolve4(this: object | undefined, hostname: string, options?, callback?: ResolveCallback) {
@@ -485,17 +536,7 @@ class Resolver {
     }
 
     callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolve(hostname, "A")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    deliverAddresses(Resolver.#getResolver(this).resolve(hostname, "A"), callback, options);
   }
 
   resolve6(this: object | undefined, hostname: string, options?, callback?: ResolveCallback) {
@@ -505,226 +546,64 @@ class Resolver {
     }
 
     callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolve(hostname, "AAAA")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    deliverAddresses(Resolver.#getResolver(this).resolve(hostname, "AAAA"), callback, options);
   }
 
   resolveAny(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveAny(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveAny(hostname), callback);
   }
 
   resolveCname(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveCname(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveCname(hostname), callback);
   }
 
   resolveMx(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveMx(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveMx(hostname), callback);
   }
 
   resolveNaptr(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveNaptr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveNaptr(hostname), callback);
   }
 
   resolveNs(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveNs(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveNs(hostname), callback);
   }
 
   resolvePtr(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolvePtr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolvePtr(hostname), callback);
   }
 
   resolveSrv(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolveSrv(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateResolve(hostname, arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveSrv(hostname), callback);
   }
 
   resolveCaa(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
-
-    Resolver.#getResolver(this)
-      .resolveCaa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateCallback(arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveCaa(hostname), callback);
   }
 
   resolveTxt(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
-
-    Resolver.#getResolver(this)
-      .resolveTxt(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    callback = validateCallback(arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveTxt(hostname), callback);
   }
-  resolveSoa(this: object | undefined, hostname: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .resolveSoa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+  resolveSoa(this: object | undefined, hostname: string, callback: ResolveCallback) {
+    callback = validateCallback(arguments.length > 2 ? arguments[2] : callback);
+    deliver(Resolver.#getResolver(this).resolveSoa(hostname), callback);
   }
 
   reverse(this: object | undefined, ip: string, callback: ResolveCallback) {
-    if (arguments.length > 2) {
-      callback = arguments[2];
-    }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
-
-    Resolver.#getResolver(this)
-      .reverse(ip)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    const error = validateReverse(ip);
+    callback = validateCallback(arguments.length > 2 ? arguments[2] : callback);
+    if (error) throw error;
+    deliver(Resolver.#getResolver(this).reverse(ip), callback);
   }
 
   setLocalAddress(first: string, second?: string) {
@@ -762,7 +641,6 @@ const mapLookupAll = (res: LookupAddress) => {
 function throwIfEmpty(res: unknown[]) {
   if (res.length === 0) {
     const err: DNSException = new Error("No records found");
-    err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
     err.errno = 1;
@@ -774,22 +652,14 @@ Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
 const promisifyLookup = (order: string) => (res: LookupAddress[]) => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   const [{ address, family }] = res;
   return { address, family };
 };
 
 const promisifyLookupAll = (order: string) => (res: LookupAddress[]) => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   return res.map(mapLookupAll);
 };
 
@@ -886,13 +756,8 @@ const promises = {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    switch (rrtype?.toLowerCase()) {
-      case "a":
-      case "aaaa":
-        return translateErrorCode((dns.resolve(hostname, rrtype) as Promise<unknown[]>).then(promisifyResolveX(false)));
-      default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
-    }
+    const promise = dns.resolve(hostname, rrtype) as Promise<unknown[]>;
+    return translateErrorCode(isAddressType(rrtype) ? promise.then(promisifyResolveX(false)) : promise);
   },
 
   resolve4(hostname: string, options?: { ttl?: boolean }) {
@@ -936,14 +801,14 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip: string) {
-    return translateErrorCode(dns.reverse(ip));
+    return reversePromise(dns, ip);
   },
 
   Resolver: class Resolver {
     declare _handle: NativeResolver;
     #resolver: NativeResolver;
 
-    constructor(options?: { timeout?: number; tries?: number }) {
+    constructor(options?: Partial<ResolverOptions>) {
       this.#resolver = this._handle = newResolver(validateResolverOptions(options));
     }
 
@@ -965,15 +830,8 @@ const promises = {
       } else if (typeof rrtype !== "string") {
         rrtype = null;
       }
-      switch (rrtype?.toLowerCase()) {
-        case "a":
-        case "aaaa":
-          return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
-          );
-        default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype!));
-      }
+      const promise = Resolver.#getResolver(this).resolve(hostname, rrtype!);
+      return translateErrorCode(isAddressType(rrtype) ? promise.then(promisifyResolveX(false)) : promise);
     }
 
     resolve4(this: object | undefined, hostname: string, options?: { ttl?: boolean }) {
@@ -1029,7 +887,7 @@ const promises = {
     }
 
     reverse(this: object | undefined, ip: string) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return reversePromise(Resolver.#getResolver(this), ip);
     }
 
     setLocalAddress(first: string, second?: string) {

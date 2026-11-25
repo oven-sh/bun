@@ -6,6 +6,7 @@
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadRequest.h"
 #include "JSReadableStreamDefaultController.h"
@@ -32,37 +33,7 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamAsyncIteratorPrototypeFunction_next);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamAsyncIteratorPrototypeFunction_return);
 
-class JSReadableStreamAsyncIteratorPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSReadableStreamAsyncIteratorPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableStreamAsyncIteratorPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamAsyncIteratorPrototype))) JSReadableStreamAsyncIteratorPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamAsyncIteratorPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableStreamAsyncIteratorPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamAsyncIteratorPrototype, JSReadableStreamAsyncIteratorPrototype::Base);
+using JSReadableStreamAsyncIteratorPrototype = JSDOMPrototype<JSReadableStreamAsyncIterator>;
 
 // %ReadableStreamAsyncIteratorPrototype% owns only `next` and `return`;
 // @@asyncIterator comes from its [[Prototype]], %AsyncIteratorPrototype%.
@@ -71,9 +42,9 @@ static const HashTableValue JSReadableStreamAsyncIteratorPrototypeTableValues[] 
     { "return"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamAsyncIteratorPrototypeFunction_return, 1 } },
 };
 
-const ClassInfo JSReadableStreamAsyncIteratorPrototype::s_info = { "ReadableStreamAsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIteratorPrototype) };
+template<> const ClassInfo JSReadableStreamAsyncIteratorPrototype::s_info = { "ReadableStreamAsyncIterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamAsyncIteratorPrototype) };
 
-void JSReadableStreamAsyncIteratorPrototype::finishCreation(VM& vm)
+template<> void JSReadableStreamAsyncIteratorPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStreamAsyncIterator::info(), JSReadableStreamAsyncIteratorPrototypeTableValues, *this);
@@ -108,9 +79,7 @@ Structure* JSReadableStreamAsyncIterator::createStructure(VM& vm, JSGlobalObject
 
 JSObject* JSReadableStreamAsyncIterator::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSReadableStreamAsyncIteratorPrototype::createStructure(vm, &globalObject, globalObject.asyncIteratorPrototype());
-    structure->setMayBePrototype(true);
-    return JSReadableStreamAsyncIteratorPrototype::create(vm, &globalObject, structure);
+    return JSReadableStreamAsyncIteratorPrototype::create(vm, globalObject, globalObject.asyncIteratorPrototype());
 }
 
 JSObject* JSReadableStreamAsyncIterator::prototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -3,6 +3,7 @@
 // NEXT: [[undefined]] = Undefined
 // NEXT-NEXT: Jump -> next [[resumeNext]]([[undefined]])
 // NEXT: [[resumeNext]]([[sent]]{{*}}):
+// NEXT-NEXT: LoopHint
 // NEXT-NEXT: [[step]] = IteratorResume [[iterator]], [[sent]] {{*}}readsValueWhenDone
 // NEXT-NEXT: [[done]] = ResultAt [[step]]
 // NEXT-NEXT: [[value]] = ResultAt [[step]] index=1

@@ -1,0 +1,19 @@
+# f1 = setWeight
+# -- source: store-a-number-into-an-object-that-was-handed-in.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function setWeight(entry: Entry, weight: number): void {
+#   entry.weight = weight;
+# }
+# declare const input: any;
+# const first: Entry = { follower: null, weight: 0.5 };
+# const second: Entry = { follower: first, weight: 1.5 };
+# setWeight(first, +input);
+# setWeight(second, +input);
+# (globalThis as any).answer = second.follower!.weight + second.weight;
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 4, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

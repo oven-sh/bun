@@ -1,6 +1,6 @@
 # six closures over one scope and two numbers. A slot that leaves its closure unmade is four bytes wide, and so is the word of the scope: the slots are laid behind the choice of their forms, each by its width:
 # 6 x 4 for the closures, 4 for the scope, 2 x 8 for the numbers, behind 16 bytes of header: 60 bytes, a cell of 64. With each slot alone in eight bytes it was 16 + 8 x 8 = 80.
-# with typed slots withheld the numbers are boxed, eight bytes as well, and the cell has the word of the extra properties at 16: the closures follow from 24 on, four bytes each, and the cell is 80 bytes; with each slot alone in eight bytes it was 96.
+# with typed slots withheld the numbers are boxed, eight bytes as well, and the cell has the word of the extra properties at 16: the closures follow beside it from 20 on, four bytes each, and the scope behind them: a cell of 64, as with typed slots.
 # with the deferral withheld no slot has that form.
 # -- source: closures-that-a-literal-leaves-unmade-take-four-bytes-each.ts
 # declare function sink(...values: unknown[]): void;
@@ -36,12 +36,12 @@
 # CHECK-NEXT: slot 7 "y" OptionalDouble Inline
 # CHECK-NEXT: slot 8 appended Cell32 Inline
 # RUN(BOXED): plan layouts mechanisms=-TypedSlots
-# BOXED: CompiledObject size=80
-# BOXED-NEXT: slot 0 "add" DeferredClosure Inline offset=24
-# BOXED-NEXT: slot 1 "double" DeferredClosure Inline offset=28
+# BOXED: CompiledObject size=64
+# BOXED-NEXT: slot 0 "add" DeferredClosure Inline offset=20
+# BOXED-NEXT: slot 1 "double" DeferredClosure Inline offset=24
 # BOXED: slot 6 "x" JSValue Inline
 # BOXED-NEXT: slot 7 "y" JSValue Inline
-# BOXED-NEXT: slot 8 appended Cell32 Inline
+# BOXED-NEXT: slot 8 appended Cell32 Inline offset=44
 # BOXED-NEXT: extra-properties Cell32 Inline offset=16
 # RUN(WITHHELD): plan layouts mechanisms=-Deferral
 # WITHHELD-NOT: DeferredClosure

@@ -489,7 +489,7 @@ main();
 
 // GENERATED: awaitProtoThen awaitFromMap MyPromise make
 // CHECK-LABEL: function {{*}}name="awaitProtoThen"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasLiveAwait] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = Undefined
@@ -514,7 +514,7 @@ main();
 // CHECK-NEXT: Return v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaitFromMap"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasLiveAwait] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = Undefined
@@ -544,7 +544,7 @@ main();
 // CHECK-NEXT: Return v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="MyPromise"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
@@ -552,7 +552,7 @@ main();
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] captures=[{type=env [[L_9]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: env [[L_9]]):
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_9]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="K"

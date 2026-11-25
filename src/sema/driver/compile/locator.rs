@@ -12,7 +12,7 @@ pub struct Locator<'t, 's> {
 
 impl<'t, 's> Locator<'t, 's> {
     pub fn new(files: &'t Files<'s>, file: FileId) -> Locator<'t, 's> {
-        let text = &files.module(file).hir.text[..];
+        let text = &files.hir(file).text[..];
         Locator {
             files,
             file,

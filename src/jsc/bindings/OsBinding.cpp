@@ -1,4 +1,5 @@
 #include "root.h"
+#include "OwnedFd.h"
 
 #if OS(DARWIN)
 #include <mach/vm_types.h>
@@ -35,35 +36,29 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
 static uint64_t bunReadProcMeminfo(const char* what)
 {
     char buf[4096]; // Large enough to hold all of /proc/meminfo.
-    int fd;
+    int opened;
     ssize_t n = 0;
     size_t off = 0;
-    bool readError = false;
 
     do {
-        fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
-    } while (fd == -1 && errno == EINTR);
-    if (fd == -1) {
+        opened = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
+    } while (opened == -1 && errno == EINTR);
+    Bun::OwnedFd fd { opened };
+    if (!fd) {
         return 0;
     }
 
     while (off < sizeof(buf) - 1) {
         do {
-            n = read(fd, buf + off, sizeof(buf) - 1 - off);
+            n = read(fd.get(), buf + off, sizeof(buf) - 1 - off);
         } while (n == -1 && errno == EINTR);
         if (n == 0) {
             break; // EOF
         }
         if (n < 0) {
-            readError = true;
-            break;
+            return 0;
         }
         off += static_cast<size_t>(n);
-    }
-    close(fd);
-
-    if (readError) {
-        return 0;
     }
     buf[off] = '\0';
 

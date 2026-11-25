@@ -1,14 +1,17 @@
 use bun_collections::VecExt;
 use core::fmt;
-use std::io::Write as _;
+use std::borrow::Cow;
 
-use crate::cli::Command;
 use crate::cli::publish_command as Publish;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
+use crate::cli::{Command, cli_arena};
 use bun_alloc::AllocError;
 use bun_archive::tar;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::StringHashMap;
+use bun_core::ZBox;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
+use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_install::PackageManager;
 use bun_install::package_manager::LogLevel;
@@ -16,26 +19,9 @@ use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_js_printer as js_printer;
 use bun_parsers::json as JSON;
-use bun_paths::{self as path, SEP_STR};
-use bun_ptr::cow_slice::CowSlice;
-type CowString = CowSlice<u8>;
-use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
-use bun_core::ZBox;
-use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{self, normalize_buf_z_spill};
+use bun_paths::{self as path, Path, SEP_STR, without_trailing_sep};
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
-
-/// Process-lifetime arena for `Expr::as_string*` / `E::EString` data.
-fn pack_bump() -> &'static bun_alloc::Arena {
-    thread_local! {
-        static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
-    }
-    // SAFETY: the CLI thread lives as long as the process, so `BUMP` is never dropped; `Arena` is `!Sync`.
-    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
-}
+use bun_sys::{self, CloseOnDrop, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 /// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
 /// of `ctx.manager`.
@@ -142,15 +128,14 @@ impl PackCommand {
             Output::err_generic(
                 "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
                 (
-                    bstr::BStr::new(strings::without_trailing_slash(options.pack_filename)),
-                    bstr::BStr::new(strings::without_trailing_slash(options.pack_destination)),
+                    bstr::BStr::new(without_trailing_sep(options.pack_filename)),
+                    bstr::BStr::new(without_trailing_sep(options.pack_destination)),
                 ),
             );
             Global::crash();
         }
         // The path is relative to `original_cwd`, and `PackageManager::init` has changed the
         // directory since.
-        let mut abs_buf = bun_paths::path_buffer_pool::get();
         for (what, option) in [
             ("filename", &mut options.pack_filename),
             ("destination name", &mut options.pack_destination),
@@ -158,25 +143,21 @@ impl PackCommand {
             if option.is_empty() {
                 continue;
             }
-            let Some(abs) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                original_cwd,
-                &mut abs_buf,
-                &[*option],
-            ) else {
+            let spelling = bun_sys::converted_spelling(option, path::from_portable);
+            let mut abs = Path::resolve(&[original_cwd, &spelling]);
+            // `--filename out/` names a directory, so writing the tarball to it has to fail.
+            abs.copy_trailing_sep_from(option);
+            let Ok(abs) = abs.check_len() else {
                 Output::err_generic(
                     "archive {} too long: \"{}\"",
-                    (
-                        what,
-                        bstr::BStr::new(strings::without_trailing_slash(*option)),
-                    ),
+                    (what, bstr::BStr::new(without_trailing_sep(*option))),
                 );
                 Global::crash();
             };
-            *option = crate::cli::cli_dupe(abs);
+            *option = crate::cli::cli_dupe(&abs);
         }
-        drop(abs_buf);
 
-        let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+        let abs_pkg_json = manager.original_package_json_path.to_zbox();
 
         let pack_ctx = Context {
             manager,
@@ -340,7 +321,7 @@ struct WalkedDir(Dir, usize);
 impl Drop for WalkedDir {
     fn drop(&mut self) {
         if self.1 == 1 {
-            self.0.fd = Fd::INVALID;
+            self.0.fd = Fd::cwd();
         }
     }
 }
@@ -348,8 +329,8 @@ impl Drop for WalkedDir {
 fn iterate_included_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
-    includes: &[Pattern],
-    excludes: &[Pattern],
+    includes: &[Pattern<'_>],
+    excludes: &[Pattern<'_>],
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
@@ -530,10 +511,12 @@ fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
 
 /// Calls `lstat` on file systems that don't report an entry's kind (FUSE, NFS, XFS with `ftype=0`),
 /// so a symlink is still reported as a symlink.
-pub(crate) fn next_dir_entry(
-    iter: &mut DirIterator::WrappedIterator,
+pub(crate) fn next_dir_entry<'a>(
+    iter: &'a mut DirIterator::WrappedIterator,
     dir_subpath: &[u8],
-) -> Option<DirIterator::IteratorResult> {
+) -> Option<DirIterator::IteratorResult<'a>> {
+    #[cfg(not(windows))]
+    let dir = iter.dir();
     #[cfg_attr(windows, allow(unused_mut))] // The Windows iterator always knows the kind.
     let mut entry = match iter.next() {
         Ok(entry) => entry?,
@@ -542,7 +525,7 @@ pub(crate) fn next_dir_entry(
     };
     #[cfg(not(windows))]
     if entry.kind == bun_sys::FileKind::Unknown {
-        match bun_sys::lstatat(iter.dir(), entry.name.as_zstr()) {
+        match bun_sys::lstatat(dir, entry.name.as_zstr()) {
             Ok(stat) => entry.kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
             // Removed since it was listed. No walk packs an `Unknown`.
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
@@ -653,7 +636,6 @@ impl Bundle {
 /// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
 /// is in `from`'s own `node_modules`. The search does not go above `project`.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
-    let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
     let ancestors = || core::iter::successors(Some(from), |&dir| path::dirname(dir));
     let last = ancestors()
@@ -664,9 +646,7 @@ fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u
         if path::basename(dir) == b"node_modules" {
             continue;
         }
-        let parts: [&[u8]; 3] = [dir, b"node_modules", name];
-        let candidate =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        let candidate: &ZStr = &Path::join(&[dir, b"node_modules", name]);
         let Some(found) = open_dir_if_present(&Dir::cwd(), candidate) else {
             continue;
         };
@@ -802,7 +782,7 @@ fn add_bundled_dep(
     };
     let mut parse = || {
         (source.as_ref())
-            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, pack_bump()).ok())
+            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, cli_arena()).ok())
             .inspect(|json| drop_shadowed_properties(*json))
     };
     let mut json = parse();
@@ -944,7 +924,7 @@ fn add_own_package(
             }
         },
     };
-    let (published, _) = published_files(&dir, real_path, &json, pack_bump(), log_level)?;
+    let (published, _) = published_files(&dir, real_path, &json, cli_arena(), log_level)?;
     for file in published.into_paths() {
         add_file(file.as_bytes(), None)?;
     }
@@ -1031,12 +1011,12 @@ fn find_dependencies_to_bundle(
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
-    files_excludes: Option<&[Pattern]>,
+    files_excludes: Option<&[Pattern<'_>]>,
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir.2;
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
+    let mut ignores: Vec<IgnorePatterns<'_>> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
         ignores.push(IgnorePatterns {
@@ -1147,7 +1127,7 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Option<Vec<BundledDep>>
     let deps: Option<Vec<BundledDep>> = names.and_then(|names| {
         let dep = |name: &Expr| {
             Some(BundledDep {
-                name: name.as_string(pack_bump())?.into(),
+                name: name.as_string(cli_arena())?.into(),
             })
         };
         names.iter().map(dep).collect()
@@ -1176,17 +1156,12 @@ pub(crate) struct BinInfo {
 fn get_package_bins(json: &Expr) -> Vec<BinInfo> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let mut path_spill: Vec<u8> = Vec::new();
     let mut add = |value: &Expr, ty: BinType| {
-        let Some(value) = value.as_string(pack_bump()) else {
+        let Some(value) = value.as_string(cli_arena()) else {
             return;
         };
-        if let Some(subpath) = bin_subpath(value, ty, &mut path_buf, &mut path_spill) {
-            bins.push(BinInfo {
-                path: ZBox::from_bytes(subpath),
-                ty,
-            });
+        if let Some(path) = bin_subpath(value, ty) {
+            bins.push(BinInfo { path, ty });
         }
     };
 
@@ -1218,15 +1193,26 @@ pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
     })
 }
 
-pub(crate) fn bin_subpath<'a>(
-    value: &[u8],
-    ty: BinType,
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-) -> Option<&'a [u8]> {
-    let normalized = normalize_buf_z_spill::<path::platform::Posix>(buf, spill, value).as_bytes();
+/// A path in package.json starts at the package's root. `..` stops there, unless it follows a leading `/`.
+pub(crate) fn path_in_package(written: &[u8]) -> ZBox {
+    let below_root = path::from_portable(strings::trim_left(written, b"/\\"));
+    let joined = Path::join(&[b".", &below_root]);
+    let mut path = Path::from(b"/");
+    if written.starts_with(b"/") && path::climbs_out(&joined) {
+        path.extend_from_slice(without_trailing_sep(&joined));
+    } else {
+        path.push_inside(&below_root);
+    }
+    if written.ends_with(b"/") {
+        path.push_trailing_sep();
+    }
+    ZBox::from_bytes(&path.into_portable()[1..])
+}
+
+pub(crate) fn bin_subpath(value: &[u8], ty: BinType) -> Option<ZBox> {
+    let normalized: &[u8] = &path_in_package(value);
     let subpath = match ty {
-        BinType::Dir => strings::without_trailing_slash(normalized),
+        BinType::Dir => without_trailing_sep(normalized),
         BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
             return None;
         }
@@ -1236,17 +1222,12 @@ pub(crate) fn bin_subpath<'a>(
     // lockfiles.
     let never_packed =
         || strings::split(subpath, b"/").any(|name| is_unconditionally_excluded(name, 2).is_some());
-    (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
+    (!is_package_root_or_outside(subpath) && !never_packed()).then(|| ZBox::from_bytes(subpath))
 }
 
 /// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty()
-        || p == b"."
-        || path::is_absolute_loose(p)
-        || p == b".."
-        || p.starts_with(b"../")
-        || strings::contains_char(p, 0)
+    p.is_empty() || path::portable::is_absolute(p) || path::portable::climbs_out(p)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1255,16 +1236,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
     bin_path: &[u8],
 ) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
-    let bin_path = strings::without_trailing_slash(bin_path);
-    let mut spill: Vec<u8> = Vec::new();
+    let bin_path = without_trailing_sep(bin_path);
     let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
     for end in slashes.chain([bin_path.len()]) {
         // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind
         // of its target.
-        let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
-        let abs_path =
-            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
-        let stat = match bun_sys::lstat(abs_path) {
+        let stat = match bun_sys::lstat(&Path::join(&[abs_workspace_path, &bin_path[..end]])) {
             Ok(stat) => stat,
             Err(err) if is_absent(err.get_errno()) => break,
             Err(err) => fail_file(err, "stat", bin_path),
@@ -1283,12 +1260,12 @@ pub(crate) fn bin_kind_without_following_symlinks(
 /// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
-        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes(), true))
+        .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes()))
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
     bins.iter().any(|bin| match bin.ty {
-        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path, true),
+        BinType::File => strings::eql_long(bin.path.as_bytes(), maybe_bin_path),
         BinType::Dir => (maybe_bin_path.strip_prefix(bin.path.as_bytes()))
             .and_then(|remain| remain.strip_prefix(b"/"))
             .is_some_and(|name| !name.is_empty() && !strings::contains_char(name, b'/')),
@@ -1325,10 +1302,10 @@ enum Exclusion<'a> {
 type InheritedIgnore = Option<(Box<[u8]>, IgnorePatternsKind)>;
 
 fn is_excluded<'a>(
-    entry: &DirIterator::IteratorResult,
+    entry: &DirIterator::IteratorResult<'_>,
     entry_subpath: &'a ZStr,
     dir_depth: usize,
-    ignores: &'a [IgnorePatterns],
+    ignores: &'a [IgnorePatterns<'_>],
     inherited: &'a InheritedIgnore,
 ) -> Exclusion<'a> {
     let entry_name = entry.name.slice_u8();
@@ -1426,7 +1403,7 @@ fn is_excluded<'a>(
 }
 
 /// Returns true if a negated pattern could match a path below the directory `dir_rel`.
-fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
+fn negation_reaches_below(pattern: &Pattern<'_>, dir_rel: &[u8]) -> bool {
     // Without a slash it un-ignores entries of the directories that are walked, and opens none.
     if !pattern.flags.contains(PatternFlags::REL_PATH) {
         return false;
@@ -1460,7 +1437,7 @@ pub(crate) fn published_files(
         match bin.ty {
             BinType::File if kind == bun_sys::FileKind::File => {
                 pack_queue.add(PackQueueItem {
-                    path: ZBox::from_bytes(bin.path.as_bytes()),
+                    path: bin.path.to_zbox(),
                 })?;
             }
             BinType::Dir if kind == bun_sys::FileKind::Directory => {
@@ -1497,20 +1474,13 @@ pub(crate) fn published_files(
     let Some(mut files_array) = files.as_array() else {
         fail_files();
     };
-    let mut includes: Vec<Pattern> = Vec::new();
-    let mut excludes: Vec<Pattern> = Vec::new();
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let mut path_spill: Vec<u8> = Vec::new();
+    let mut includes: Vec<Pattern<'_>> = Vec::new();
+    let mut excludes: Vec<Pattern<'_>> = Vec::new();
     while let Some(files_entry) = files_array.next() {
         let Some(file_entry_str) = files_entry.as_string(bump) else {
             fail_files();
         };
-        let normalized = normalize_buf_z_spill::<path::platform::Posix>(
-            &mut path_buf,
-            &mut path_spill,
-            file_entry_str,
-        );
-        match Pattern::from_utf8(normalized.as_bytes()) {
+        match Pattern::from_utf8(&path_in_package(file_entry_str)) {
             Some(parsed) if parsed.flags.contains(PatternFlags::NEGATED) => excludes.push(parsed),
             Some(parsed) => includes.push(parsed),
             None => {}
@@ -1556,7 +1526,7 @@ pub(crate) fn package_json_entry<'a>(
                 "failed to parse package.json: {}",
                 format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
             );
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => {
@@ -1599,7 +1569,7 @@ fn apply_publish_config(
         .map_err(|_| PackError::InvalidPackageName)?;
     manager
         .options
-        .apply_publish_config(package_json, pack_bump(), package_name)?;
+        .apply_publish_config(package_json, cli_arena(), package_name)?;
     Publish::PublishCommand::refuse_provenance(manager, package_json);
     if manager.options.publish_config.access == Some(bun_install::Access::Restricted) && !is_scoped
     {
@@ -1616,7 +1586,7 @@ fn name_and_version(package_json: &Expr) -> Result<(&'static [u8], &'static [u8]
     let field =
         |name: &[u8], missing: PackError, invalid: PackError| -> Result<&'static [u8], PackError> {
             let value = (package_json.get(name).ok_or(missing)?)
-                .as_string_cloned(pack_bump())?
+                .as_string_cloned(cli_arena())?
                 .ok_or(invalid)?;
             if value.is_empty() || has_unsafe_tarball_filename_part(value) {
                 return Err(invalid);
@@ -1657,7 +1627,7 @@ pub(crate) fn pack(
     for_publish: bool,
 ) -> Result<Option<Publish::Context>, PackError> {
     let log_level = ctx.manager.options.log_level;
-    let bump = pack_bump();
+    let bump = cli_arena();
     let mut json = package_json_entry(ctx.manager, abs_package_json_path);
 
     let (mut package_name, mut package_version) = name_and_version(&json.root)?;
@@ -1667,43 +1637,27 @@ pub(crate) fn pack(
         apply_publish_config(ctx.manager, &json.root, package_name)?;
     }
 
-    let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
-        core::mem::MaybeUninit::uninit();
-
-    let (this_transpiler, _) = match RunCommand::configure_env_for_run(
+    if let Err(err) = RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
-        &mut this_transpiler,
+        &mut None,
         Some(std::ptr::from_mut(ctx.manager.env_mut())),
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
         },
     ) {
-        Ok(configured) => configured,
-        Err(err) => {
-            if matches!(err, crate::Error::Alloc(_)) {
-                return Err(PackError::OutOfMemory);
-            }
-            Output::err_generic(
-                "failed to run pack scripts due to error: {}\n",
-                format_args!("{}", err.name()),
-            );
-            Global::crash();
+        if matches!(err, crate::Error::Alloc(_)) {
+            return Err(PackError::OutOfMemory);
         }
-    };
-
-    let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
-        strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
-    );
-    /// `MaybeUninit` does not drop its contents.
-    struct DeinitTranspiler(*mut bun_bundler::Transpiler<'static>);
-    impl Drop for DeinitTranspiler {
-        fn drop(&mut self) {
-            // SAFETY: points at the initialized `this_transpiler` stack slot, which outlives the guard.
-            unsafe { (*self.0).deinit() };
-        }
+        Output::err_generic(
+            "failed to run pack scripts due to error: {}\n",
+            format_args!("{}", err.name()),
+        );
+        Global::crash();
     }
-    let _deinit_transpiler = DeinitTranspiler(this_transpiler);
+
+    let abs_workspace_path =
+        path::without_trailing_sep(path::dirname_or_root(abs_package_json_path.as_bytes()));
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.
@@ -1833,13 +1787,11 @@ pub(crate) fn pack(
             if prints_bare_filename {
                 Context::print_tarball_path(bare_filename, log_level);
             } else {
-                let mut dest_buf = bun_paths::path_buffer_pool::get();
                 let (abs_tarball_dest, _) = tarball_destination(
                     ctx.manager.options.pack_destination,
                     ctx.manager.options.pack_filename,
                     abs_workspace_path,
                     bare_filename,
-                    &mut dest_buf[..],
                 );
                 Context::print_tarball_path(
                     bstr::BStr::new(abs_tarball_dest.as_bytes()),
@@ -1883,8 +1835,7 @@ pub(crate) fn pack(
     };
 
     // `bun publish` uploads the bytes from memory. Only `bun pm pack` writes a file.
-    let mut dest_buf = bun_paths::path_buffer_pool::get();
-    let abs_tarball_dest: Option<&ZStr> = if for_publish {
+    let abs_tarball_dest: Option<Path> = if for_publish {
         None
     } else {
         let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
@@ -1892,12 +1843,12 @@ pub(crate) fn pack(
             ctx.manager.options.pack_filename,
             abs_workspace_path,
             bare_filename,
-            &mut dest_buf[..],
         );
         // create the directory if it doesn't exist
         let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
         Some(abs_tarball_dest)
     };
+    let abs_tarball_dest: Option<&ZStr> = abs_tarball_dest.as_deref();
     let is_typed_filename = !ctx.manager.options.pack_filename.is_empty();
     let tarball_file =
         abs_tarball_dest.and_then(|dest| Some((open_tarball(dest, is_typed_filename)?, dest)));
@@ -1910,11 +1861,11 @@ pub(crate) fn pack(
         packed_size += bytes.len();
         sha1.update(bytes);
         sha512.update(bytes);
-        let Some((file, dest)) = &tarball_file else {
+        let Some((fd, dest)) = &tarball_file else {
             tarball_bytes.extend_from_slice(bytes);
             return;
         };
-        if let Err(err) = file.write_all(bytes) {
+        if let Err(err) = File::borrow(fd).write_all(bytes) {
             fail_write_tarball(err, dest);
         }
     };
@@ -1934,38 +1885,32 @@ pub(crate) fn pack(
 
     {
         let mut progress = Progress::Progress::default();
-        let mut node: Option<&mut Progress::Node> = None;
-        if log_level.show_progress() {
+        let show_progress = log_level.show_progress();
+        if show_progress {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            let started = progress.start(b"", ctx.stats.total_files);
-            started.unit = Progress::Unit::Files;
-            node = Some(started);
+            progress.start(b"", ctx.stats.total_files);
+            progress.root().unit.set(Progress::Unit::Files);
         }
 
         archive_package_json(&mut ctx, &mut writer, &root_dir, &edited_package_json);
-        if let Some(node) = node.as_mut() {
-            node.complete_one();
+        if show_progress {
+            progress.complete_one(Progress::NodeId::Root);
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
             let path = item.path.as_bytes();
-            let fd: Fd = bun_sys::openat(
+            let file = bun_sys::openat(
                 Fd::from_std_dir(&root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
                 0,
             )
-            .and_then(|file| {
-                file.make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                )
-            })
+            .map(CloseOnDrop::new)
+            .and_then(|file| file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open))
             .unwrap_or_else(|err| fail_file(err, "open", path));
-            let _close_fd = CloseOnDrop::new(fd);
 
-            let stat =
-                bun_sys::sys_uv::fstat(fd).unwrap_or_else(|err| fail_file(err, "stat", path));
+            let stat = bun_sys::sys_uv::fstat(file.fd())
+                .unwrap_or_else(|err| fail_file(err, "stat", path));
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(path),
@@ -1974,7 +1919,7 @@ pub(crate) fn pack(
 
             add_archive_entry(
                 &mut ctx,
-                fd,
+                file.fd(),
                 &stat,
                 &item.path,
                 &mut read_buf,
@@ -1983,8 +1928,8 @@ pub(crate) fn pack(
                 None,
             );
 
-            if let Some(node) = node.as_mut() {
-                node.complete_one();
+            if show_progress {
+                progress.complete_one(Progress::NodeId::Root);
             }
         }
 
@@ -2007,13 +1952,13 @@ pub(crate) fn pack(
                 item.edited.as_deref(),
             );
 
-            if let Some(node) = node.as_mut() {
-                node.complete_one();
+            if show_progress {
+                progress.complete_one(Progress::NodeId::Root);
             }
         }
 
-        if let Some(node) = node {
-            node.end();
+        if show_progress {
+            progress.end();
         }
     }
 
@@ -2031,7 +1976,7 @@ pub(crate) fn pack(
     ctx.stats.packed_size = packed_size;
 
     match (tarball_file, abs_tarball_dest) {
-        (Some((file, dest)), _) => finish_tarball(file, dest, is_typed_filename),
+        (Some((_, dest)), _) => finish_tarball(dest, is_typed_filename),
         (None, Some(dest)) => write_tarball_in_place(dest, &tarball_bytes, is_typed_filename),
         (None, None) => {}
     }
@@ -2144,57 +2089,28 @@ pub(crate) fn published_version(version: &[u8]) -> Option<&[u8]> {
 }
 
 /// Returns the tarball path and the length of the directory the caller creates (0 for `--filename`).
-fn tarball_destination<'a>(
+fn tarball_destination(
     pack_destination: &[u8],
     pack_filename: &[u8],
     abs_workspace_path: &[u8],
     tarball_name: TarballNameFormatter<'_>,
-    dest_buf: &'a mut [u8],
-) -> (&'a ZStr, usize) {
+) -> (Path, usize) {
     if !pack_filename.is_empty() {
-        if pack_filename.len() + 1 > dest_buf.len() {
-            Output::err_generic(
-                "archive filename too long: \"{}\"",
-                format_args!("{}", bstr::BStr::new(pack_filename)),
-            );
-            Global::crash();
-        }
-        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        return (ZStr::from_buf(&dest_buf[..], pack_filename.len()), 0);
+        return (Path::from(pack_filename), 0);
     }
 
-    #[cold]
-    fn too_long(dir: &[u8], tarball_name: TarballNameFormatter<'_>) -> ! {
+    let mut dest = Path::resolve(&[abs_workspace_path, pack_destination]);
+    let dir_len = dest.len();
+    dest.push_fmt(format_args!("{tarball_name}"));
+    if dest.len() >= path::MAX_PATH_BYTES {
+        let dir = without_trailing_sep(&dest[..dir_len]);
         Output::err_generic(
             "archive destination name too long: \"{}/{}\"",
-            (
-                bstr::BStr::new(strings::without_trailing_slash(dir)),
-                tarball_name,
-            ),
+            (bstr::BStr::new(dir), tarball_name),
         );
         Global::crash();
     }
-    let Some(dir) = resolve_path::join_abs_string_buf_checked::<resolve_path::platform::Auto>(
-        abs_workspace_path,
-        dest_buf,
-        &[pack_destination],
-    ) else {
-        too_long(pack_destination, tarball_name);
-    };
-    let dir_len_full = dir.len();
-    let dir_len_trimmed = strings::without_trailing_slash(dir).len();
-
-    let mut cursor = std::io::Cursor::new(&mut dest_buf[dir_len_trimmed..]);
-    if write!(&mut cursor, "{}{}\x00", SEP_STR, tarball_name).is_err() {
-        too_long(&dest_buf[..dir_len_full], tarball_name);
-    }
-    let tarball_name_len = usize::try_from(cursor.position()).expect("int cast");
-
-    (
-        ZStr::from_buf(&dest_buf[..], dir_len_trimmed + tarball_name_len - 1),
-        dir_len_full,
-    )
+    (dest, dir_len)
 }
 
 pub(crate) fn fmt_tarball_filename<'a>(
@@ -2243,19 +2159,16 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
 
 /// The temporary file that `open_tarball` created. A failed pack can exit from many places, so an
 /// exit callback removes the file.
-static UNFINISHED_TARBALL: bun_core::Mutex<Option<(Fd, ZBox)>> = bun_core::Mutex::new(None);
+static UNFINISHED_TARBALL: bun_core::Mutex<Option<bun_sys::Tmpfile<Path>>> =
+    bun_core::Mutex::new(None);
 
 extern "C" fn remove_unfinished_tarball() {
-    if let Some((fd, path)) = UNFINISHED_TARBALL.lock().take() {
-        // Windows cannot delete the file while it is open.
-        fd.close();
-        let _ = bun_sys::unlink(&path);
-    }
+    *UNFINISHED_TARBALL.lock() = None;
 }
 
 /// Creates a temporary file next to the destination, which `finish_tarball` renames over it. If
 /// this returns `None`, the tarball stays in memory until `write_tarball_in_place` writes it.
-fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File> {
+fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<Fd> {
     let mode: bun_sys::Mode = match bun_sys::lstat(abs_tarball_dest) {
         Err(_) => 0o666,
         Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
@@ -2274,39 +2187,37 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File
     let mut name_buf = [0u8; 64];
     let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
         .expect("unreachable");
-    let tmp = ZBox::from_vec_with_nul(
-        [
-            path::dirname_simple(abs_tarball_dest.as_bytes()),
-            SEP_STR.as_bytes(),
-            UNFINISHED_TARBALL_PREFIX,
-            name.as_bytes_with_nul(),
-        ]
-        .concat(),
-    );
-    let file = File::openat(
+    let mut tmp = Path::from(abs_tarball_dest);
+    tmp.set_basename(UNFINISHED_TARBALL_PREFIX);
+    tmp.extend_from_slice(name);
+    let tmp = bun_sys::Tmpfile::open(
         Fd::cwd(),
-        &tmp,
+        tmp,
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
         mode,
     )
     .ok()?;
-    *UNFINISHED_TARBALL.lock() = Some((file.handle(), tmp));
+    let fd = tmp.file.fd();
+    *UNFINISHED_TARBALL.lock() = Some(tmp);
     Global::add_exit_callback(remove_unfinished_tarball);
-    Some(file)
+    Some(fd)
 }
 
-fn finish_tarball(file: File, abs_tarball_dest: &ZStr, is_typed_filename: bool) {
-    let unfinished = UNFINISHED_TARBALL.lock().take();
+fn finish_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) {
+    let Some(tmp) = UNFINISHED_TARBALL.lock().take() else {
+        return;
+    };
     // Windows cannot rename the file while it is open.
-    drop(file);
-    let Some((_, tmp)) = unfinished else { return };
+    let tmp = tmp.close();
     if bun_sys::rename(&tmp, abs_tarball_dest).is_ok() {
+        tmp.keep();
         return;
     }
     // A file that is a mount point, or another user's file in a sticky directory, cannot be
     // replaced but can still be written to.
     let tarball_bytes = File::read_from(Fd::cwd(), tmp.as_bytes());
-    let _ = bun_sys::unlink(&tmp);
+    // What follows can exit.
+    drop(tmp);
     match tarball_bytes {
         Ok(tarball_bytes) => {
             write_tarball_in_place(abs_tarball_dest, &tarball_bytes, is_typed_filename)
@@ -2669,7 +2580,7 @@ fn edit_root_package_json(
     source: &bun_ast::Source,
     indentation: bun_ast::Indentation,
 ) -> Result<Box<[u8]>, AllocError> {
-    let bump = pack_bump();
+    let bump = cli_arena();
     for_each_dependency(root, |dependency_group, dependency| {
         let (Some(name), Some(spec)) = (dependency.key.as_ref(), dependency.value.as_ref()) else {
             return;
@@ -2748,8 +2659,8 @@ fn edit_root_package_json(
 
 /// A glob pattern used to ignore or include files in the project tree.
 /// Might come from .npmignore, .gitignore, or `files` in package.json
-pub(crate) struct Pattern {
-    pub(crate) glob: glob::Prepared<CowString>,
+pub(crate) struct Pattern<'a> {
+    pub(crate) glob: glob::Prepared<Cow<'a, [u8]>>,
     pub(crate) flags: PatternFlags,
 }
 
@@ -2765,8 +2676,8 @@ bitflags::bitflags! {
     }
 }
 
-impl Pattern {
-    pub(crate) fn from_utf8(pattern: &[u8]) -> Option<Pattern> {
+impl Pattern<'_> {
+    pub(crate) fn from_utf8(pattern: &[u8]) -> Option<Pattern<'static>> {
         let mut flags = PatternFlags::empty();
         // Any number of leading `!` counts as one.
         let mut remain = strings::trim_leading_char(pattern, b'!');
@@ -2793,26 +2704,24 @@ impl Pattern {
             false => b"",
         };
         Some(Pattern {
-            glob: glob::Prepared::new(CowString::init_owned(
-                [negation, remain].concat().into_boxed_slice(),
-            )),
+            glob: glob::Prepared::new(Cow::Owned([negation, remain].concat())),
             flags,
         })
     }
 
     /// Invert a negated pattern to a positive pattern
-    pub(crate) fn as_positive(&self) -> Pattern {
+    pub(crate) fn as_positive(&self) -> Pattern<'_> {
         debug_assert!(self.flags.contains(PatternFlags::NEGATED));
         Pattern {
             // remove the leading `!`
-            glob: glob::Prepared::new(self.glob.source().borrow_subslice(1, None)),
+            glob: glob::Prepared::new(Cow::Borrowed(&self.glob.pattern()[1..])),
             flags: self.flags.difference(PatternFlags::NEGATED),
         }
     }
 }
 
-struct IgnorePatterns {
-    pub list: Box<[Pattern]>,
+struct IgnorePatterns<'a> {
+    pub list: Box<[Pattern<'a>]>,
     pub kind: IgnorePatternsKind,
     pub depth: usize,
     /// At least one of the patterns has a leading or middle slash, so a relative path is needed.
@@ -2832,7 +2741,7 @@ pub(crate) enum IgnorePatternsKind {
     PackageJson,
 }
 
-impl IgnorePatterns {
+impl IgnorePatterns<'_> {
     /// Fatal, because otherwise the tarball would include the files that were supposed to be
     /// ignored.
     fn ignore_file_fail(
@@ -2852,7 +2761,7 @@ impl IgnorePatterns {
             (
                 action,
                 <&str>::from(ignore_kind),
-                bstr::BStr::new(strings::without_trailing_slash(dir_path)),
+                bstr::BStr::new(without_trailing_sep(dir_path)),
                 SEP_STR,
                 <&str>::from(ignore_kind),
             ),
@@ -2889,7 +2798,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
+    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns<'static>> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
         for kind in [IgnorePatternsKind::Npmignore, IgnorePatternsKind::Gitignore] {
             match dir.open_file(<&str>::from(kind).as_bytes(), bun_sys::O::RDONLY, 0) {
@@ -2906,9 +2815,8 @@ impl IgnorePatterns {
         let contents = ignore_file
             .read_to_end()
             .unwrap_or_else(|err| Self::ignore_file_fail(dir, ignore_kind, "read", err));
-        let _ = ignore_file.close();
 
-        let mut patterns: Vec<Pattern> = Vec::new();
+        let mut patterns: Vec<Pattern<'_>> = Vec::new();
         let mut has_rel_path = false;
 
         for line in strings::split(strings::without_utf8_bom(&contents), b"\n") {
@@ -3064,7 +2972,6 @@ pub(crate) mod bindings {
         let tarball = match tarball_file.read_to_end() {
             Ok(b) => b,
             Err(err) => {
-                let _ = tarball_file.close();
                 return Err(heap.error(format_args!(
                     "failed to read tarball contents \"{}\": {}",
                     bstr::BStr::new(tarball_path),
@@ -3072,7 +2979,7 @@ pub(crate) mod bindings {
                 )));
             }
         };
-        let _ = tarball_file.close();
+        drop(tarball_file);
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();

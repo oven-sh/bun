@@ -10,13 +10,13 @@
 # NET: 6408
 # NET-NEXT: 6416
 # NET-NEXT: went on
-# RUN(STORAGE): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/ArrayBuffer.prototype.resize/TypedArrayStorage mechanisms=all
-# STORAGE: of built-in:ArrayBuffer.prototype.resize say that the call will not write TypedArrayStorage, and those words of operand 0 are others behind it. This is a bug in Bun.
+# RUN(STORAGE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/ArrayBuffer.prototype.resize/TypedArrayStorage mechanisms=all
+# STORAGE: of built-in:ArrayBuffer.prototype.resize say that the call does not write TypedArrayStorage, but operand 0 changed there
 # STORAGE-NOT: went on
 # STORAGE: crashed
 # STORAGE: with
-# RUN(BYTES): run-in-shell testing=CheckEffectsAtRunTime,RowSaysLess:Builtin/ArrayBuffer.prototype.resize/TypedArrayElements mechanisms=all
-# BYTES: of built-in:ArrayBuffer.prototype.resize say that the call will not write TypedArrayElements, and of operand 0 these are others behind it: the bytes
+# RUN(BYTES): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/ArrayBuffer.prototype.resize/TypedArrayElements mechanisms=all
+# BYTES: of built-in:ArrayBuffer.prototype.resize say that the call does not write TypedArrayElements, but these parts of operand 0 changed: the bytes
 # BYTES-NOT: went on
 # BYTES: crashed
 # BYTES: with

@@ -1,0 +1,23 @@
+# -- source: naming-helper-keeps-lost-functions.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + typeof box.count; }
+# function other() { return 0; }
+# function setName(named, name) { Object.defineProperty(named, "name", { value: name, enumerable: false, configurable: true }); }
+# setName(other, "another");
+# setName(globalThis.some, "some");
+# print(all(new Box(10)), other.name);
+# -- end of source
+# L0 = Box. Five functions meet and are lost. Elsewhere a helper that only defines the name of its parameter is called with a function and with a value that nobody follows. No lost function escapes by that.
+# RUN(BOX): link why-gone L0
+# BOX: why-gone L0: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell globalThis.some = function () { };
+# ANSWERS: 11,12,13,14,15,10,number another

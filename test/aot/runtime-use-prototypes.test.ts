@@ -62,6 +62,15 @@ describe.concurrent("the enumerable members of host prototypes", () => {
     ["a comparison with null", `console.log(Object.getPrototypeOf(value) == null ? "none" : "one");`],
     ["a test", `if (Object.getPrototypeOf(value)) console.log("one");`],
     ["typeof", `console.log(typeof value.__proto__);`],
+    ["a name read from the prototype of a record", `console.log(typeof Object.getPrototypeOf({ a: 1 }).later);`],
+    [
+      "two steps from what two tests left",
+      `if (typeof value === "object" && value !== null) console.log(String(Object.getPrototypeOf(Object.getPrototypeOf(value)) === null));`,
+    ],
+    [
+      "a name read from the prototype of a text or a record",
+      `console.log(typeof Object.getPrototypeOf(process.argv[3] ? "x" : {}).later);`,
+    ],
     [
       "two steps and a comparison",
       `console.log(String(Object.getPrototypeOf(Object.getPrototypeOf(value)) === null));`,
@@ -111,10 +120,12 @@ describe.concurrent("the enumerable members of host prototypes", () => {
     "Object.create",
     "Object.setPrototypeOf in the constructor of an error",
   ];
+  const assignToWhatWasCopied = ["copies of objects that are no prototypes"];
   const met = unused.filter(([what]) => !countAsUsedToday.includes(what));
   for (const together of [
-    met.filter(([what]) => !handAPrototypeOn.includes(what)),
+    met.filter(([what]) => !handAPrototypeOn.includes(what) && !assignToWhatWasCopied.includes(what)),
     met.filter(([what]) => handAPrototypeOn.includes(what)),
+    met.filter(([what]) => assignToWhatWasCopied.includes(what)),
   ])
     test(`do not count as used with ${together.map(([what]) => what).join(", ")}`, async () => {
       expect(await inOneProgram(together)).toEqual({ ...closed, retainsImage: false });
@@ -137,13 +148,10 @@ describe.concurrent("a class of the host of which the program makes no instance"
   const unknown = `declare const CustomEvent: any;\nconst value: any = new CustomEvent("x", { detail: JSON.parse(process.argv[2] ?? "{}") }).detail;\n`;
   const retainsTest = async (text: string) => retainsFeature((await of(text)).lines, "Test");
 
-  test.failing(
-    "value.items and the like, the names of getters of what expectTypeOf() answers, are no use of bun:test (not yet: bun:test is kept)",
-    async () => {
-      const names = ["items", "not", "returns", "parameters", "instance", "resolves"];
-      expect(await retainsTest(unknown + names.map(name => `console.log(value.${name});`).join("\n"))).toBe(false);
-    },
-  );
+  test("value.items and the like, the names of getters of what expectTypeOf() answers, are no use of bun:test", async () => {
+    const names = ["items", "not", "returns", "parameters", "instance", "resolves"];
+    expect(await retainsTest(unknown + names.map(name => `console.log(value.${name});`).join("\n"))).toBe(false);
+  });
 
   // Text that the build cannot read may import any built-in module by its name. That is a name known only at run time: for --trim it does not count, and the import is refused by name.
   test("text evaluated at run time keeps nothing of bun:test, which it may import by its name", async () => {

@@ -26,9 +26,14 @@ class Function;
 class ObjectTemplate;
 class GlobalInternals;
 
-class FunctionTemplate : public JSC::InternalFunction {
+class FunctionTemplate : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::InternalFunction;
+    using Base = JSC::JSDestructibleObject;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<FunctionTemplate*>(cell)->FunctionTemplate::~FunctionTemplate();
+    }
 
     static FunctionTemplate* create(JSC::VM& vm, JSC::Structure* structure, FunctionCallback callback, JSC::JSValue data);
 
@@ -81,7 +86,7 @@ private:
     WTF::Vector<TemplateAccessor> m_accessors;
 
     FunctionTemplate(JSC::VM& vm, JSC::Structure* structure, FunctionCallback callback, JSC::JSValue data)
-        : Base(vm, structure, functionCall, JSC::callHostFunctionAsConstructor)
+        : Base(vm, structure)
         , m_callback(callback)
         , m_data(vm, this, data)
     {

@@ -10,6 +10,9 @@
 // So this is the list in scripts/build/deps/highway.ts and more: the rest of SVE, and whatever is newer than AVX2.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_ALL_SVE | (HWY_AVX2 - 1))
+#ifndef __OPTIMIZE__
+#error "Unless hwy::ChosenTarget::GetIndex() is inlined, the linker may keep that of a file with other targets."
+#endif
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_png.cpp"

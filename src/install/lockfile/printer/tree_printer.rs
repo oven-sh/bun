@@ -7,8 +7,8 @@ use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
-    PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
+    PackageNameHash, Resolution, Subcommand, bin, dependency, resolution,
 };
 use bun_sys::Fd;
 
@@ -30,17 +30,17 @@ fn print_installed_workspace_section<W: Write>(
 ) -> Result<(), crate::Error> {
     let lockfile = &this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let packages_slice = lockfile.packages.slice();
+    let packages = &lockfile.packages;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
-    let names = packages_slice.items_name();
-    let pkg_metas = packages_slice.items_meta();
+    let workspace_res = &packages.items_resolution()[workspace_package_id as usize];
+    let names = packages.items_name();
+    let pkg_metas = packages.items_meta();
     debug_assert!(
         workspace_res.tag == resolution::Tag::Workspace
             || workspace_res.tag == resolution::Tag::Root
     );
-    let resolutions_list = packages_slice.items_resolutions();
+    let resolutions_list = packages.items_resolutions();
     let mut printed_section_header = false;
     let mut printed_update = false;
 
@@ -278,16 +278,17 @@ fn catalog_update_info<'a>(
     dependency: &Dependency,
     string_buf: &[u8],
 ) -> Option<&'a PackageUpdateInfo> {
-    if dependency.version.tag != DependencyVersionTag::Catalog
-        || manager.updating_packages.is_empty()
-    {
+    let dependency::Value::Catalog(catalog) = &dependency.version.value else {
+        return None;
+    };
+    if manager.updating_packages.is_empty() {
         return None;
     }
     manager
         .updating_packages
         .get(&PackageUpdateInfo::catalog_row_key(
             dependency.name.slice(string_buf),
-            dependency.version.catalog().slice(string_buf),
+            catalog.slice(string_buf),
         ))
 }
 
@@ -311,15 +312,15 @@ fn print_updated_package<W: Write>(
     enable_ansi_colors: bool,
 ) -> Result<(), crate::Error> {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages_slice = this.lockfile.packages.slice();
+    let packages = &this.lockfile.packages;
     let package_id = update_info.package_id as usize;
     let dependency =
         &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id as usize];
     let dep_name = dependency.name.slice(string_buf);
     let later = later_version_text(
         manager,
-        packages_slice.items_name()[package_id].slice(string_buf),
-        packages_slice.items_name_hash()[package_id],
+        packages.items_name()[package_id].slice(string_buf),
+        packages.items_name_hash()[package_id],
         &update_info.resolution,
     )?;
     let Some(entry) = update_info_of(manager, dependency, string_buf) else {
@@ -445,13 +446,13 @@ fn print_transitive_updates<W: Write>(
     }
     let lockfile = this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let packages_slice = lockfile.packages.slice();
-    let names = packages_slice.items_name();
-    let name_hashes = packages_slice.items_name_hash();
-    let pkg_resolutions = packages_slice.items_resolution();
+    let packages = &lockfile.packages;
+    let names = packages.items_name();
+    let name_hashes = packages.items_name_hash();
+    let pkg_resolutions = packages.items_resolution();
     let mut workspace_targets = Bitset::init_empty(pkg_resolutions.len())?;
     for &owner in update_owners {
-        for &package_id in packages_slice.items_resolutions()[owner as usize]
+        for &package_id in packages.items_resolutions()[owner as usize]
             .get(lockfile.buffers.resolutions.as_slice())
         {
             if (package_id as usize) < pkg_resolutions.len() {
@@ -520,12 +521,12 @@ fn print_installed_package<W: Write>(
     enable_ansi_colors: bool,
 ) -> Result<(), crate::Error> {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages_slice = this.lockfile.packages.slice();
-    let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
+    let packages = &this.lockfile.packages;
+    let resolution: Resolution = packages.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
     let version = bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix));
 
-    let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
+    let package_name = packages.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
@@ -622,15 +623,15 @@ pub(crate) fn print<W: Write>(
     enable_ansi_colors: bool,
 ) -> Result<(), crate::Error> {
     writer.write_str("\n")?;
-    let slice = this.lockfile.packages.slice();
-    let bins: &[Bin] = slice.items_bin();
-    let resolved: &[Resolution] = slice.items_resolution();
+    let packages = &this.lockfile.packages;
+    let bins: &[Bin] = packages.items_bin();
+    let resolved: &[Resolution] = packages.items_resolution();
     if resolved.is_empty() {
         return Ok(());
     }
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-    let resolutions_list = slice.items_resolutions();
-    let pkg_metas = slice.items_meta();
+    let resolutions_list = packages.items_resolutions();
+    let pkg_metas = packages.items_meta();
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
     if dependencies_buffer.is_empty() {
@@ -716,8 +717,8 @@ pub(crate) fn print<W: Write>(
             let mut update_owners: Vec<PackageID> = vec![workspace_package_id];
             if manager.subcommand == Subcommand::Update {
                 if let Some(targets) = manager.update_target_workspaces.as_deref() {
-                    let names = slice.items_name();
-                    let name_hashes = slice.items_name_hash();
+                    let names = packages.items_name();
+                    let name_hashes = packages.items_name_hash();
                     let members = (resolutions_list[0].begin()..resolutions_list[0].end())
                         .filter(|&dep_id| {
                             dependencies_buffer[dep_id as usize].behavior.is_workspace()

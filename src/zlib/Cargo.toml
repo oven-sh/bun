@@ -2,6 +2,7 @@
 name = "bun_zlib"
 version.workspace = true
 edition.workspace = true
+autotests = false
 
 [lib]
 path = "lib.rs"
@@ -10,8 +11,12 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
+thiserror.workspace = true
 bun_alloc.workspace = true
-bun_collections.workspace = true
 bun_core.workspace = true
-bun_zlib_sys.workspace = true
+bun_deflate.workspace = true
+bun_highway.workspace = true
+
+[[test]]
+name = "zlib"
+path = "tests/main.rs"

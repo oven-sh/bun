@@ -1,5 +1,5 @@
 // An access whose key can only be one symbol that is made once is built by the name of that symbol. Each line is a way to take two properties for one, or one for two: two symbols of one description, a symbol made in a function that is called twice or in a loop, Symbol.for, a variable that holds one of two symbols or sometimes a text, well-known symbols, and whoever lists, copies, defines, freezes or wraps the object.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const first = Symbol("same");
 const second = Symbol("same");

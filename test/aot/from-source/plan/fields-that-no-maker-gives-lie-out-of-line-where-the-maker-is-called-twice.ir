@@ -9,7 +9,6 @@
 # -- end of source
 # The program of ..-is-called-once.ir and its last block once more. The check lines are the same.
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject
 # CHECK: "isMarked" JSValue OutOfLine
 # CHECK: "never" JSValue OutOfLine

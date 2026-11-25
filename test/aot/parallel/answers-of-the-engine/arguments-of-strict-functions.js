@@ -1,6 +1,6 @@
 // `arguments` of strict functions: read by a constant and by a variable index, measured, with more and fewer arguments than parameters, written to, its length overwritten and deleted,
 // leaked to a closure, returned, handed to built-ins, frozen, given an accessor, in generators, async functions, classes, arrows and loops. A parameter and its element are two variables.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 "use strict";
 function writeParameter(a, b) { a = 10; return arguments[0] + "," + arguments[1] + "," + arguments.length; }

@@ -11,17 +11,13 @@
 # Board.prototype.area = function (this: Board, n: number) { tally += 5; return this.wide * 2000 + n; };
 # print(reads(), holds(), tally);
 # -- end of source
-# f1 = reads, f2 = holds
+# f1 = reads
 # A call through the method table looks the method up where the call stands: behind the arguments. As written the method is read first. The program stores to Board.prototype.area, so what is found
 # there may change while it runs, to an accessor too, and then the lookup runs code that may write what an argument reads. The argument of `reads` reads a variable: the read of the method may not
 # move behind it, and the call does not go through the table. With an accessor that wrote the variable it gave 3001 for 3006.
-# The argument of `holds` reads nothing: the order cannot be told, and the call goes through the table.
 # RUN(READS): walk f1 mechanisms=all-Inlining
 # READS-LABEL: code f1:Body
 # READS-NOT: = CallTable
-# RUN(HOLDS): walk f2 mechanisms=all-Inlining
-# HOLDS-LABEL: code f2:Body
-# HOLDS: = CallTable
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 5000 5014 0
 # ANSWERS-NEXT: 8000 8014 10

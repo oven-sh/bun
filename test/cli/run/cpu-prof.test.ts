@@ -3,11 +3,8 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// Every workload below is time-bounded for 100ms. On Windows JSC's
-// SamplingProfiler effectively ticks at the ~15.6ms default timer quantum, and
-// the entry module evaluates via an async fetch/link/evaluate chain — so
-// shorter windows (the previous 32/50ms) can elapse before a single sample is
-// taken, leaving "No samples collected." in --cpu-prof-md output.
+// Every workload below is time-bounded for 500ms. The sampler is a thread of its own, which on a busy machine runs a few
+// times in 100ms, or not once: "No samples collected." in --cpu-prof-md output.
 describe.concurrent("--cpu-prof", () => {
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
@@ -19,7 +16,7 @@ describe.concurrent("--cpu-prof", () => {
         }
 
         const now = performance.now();
-        while (now + 100 > performance.now()) {
+        while (now + 500 > performance.now()) {
             Bun.inspect(fibonacci(20));
         }
       `,
@@ -101,7 +98,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-name", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 100;
+          const end = Date.now() + 500;
           while (Date.now() < end) {}
         }
         loop();
@@ -163,7 +160,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 100;
+          const end = Date.now() + 500;
           while (Date.now() < end) {}
         }
         loop();
@@ -189,12 +186,29 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("a backslash in --cpu-prof-dir is part of the name", async () => {
+    using dir = tempDir("cpu-prof-dir-backslash", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "a\\b", "--cpu-prof-name", "p.cpuprofile", "-e", "1"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+    expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a\\b", "a\\b/p.cpuprofile"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `
         function myFunction() {
           let sum = 0;
-          const end = performance.now() + 100;
+          const end = performance.now() + 500;
           while (performance.now() < end) {
             for (let i = 0; i < 1000; i++) sum += i;
           }
@@ -239,7 +253,7 @@ describe.concurrent("--cpu-prof", () => {
 
         function main() {
           const now = performance.now();
-          while (now + 100 > performance.now()) {
+          while (now + 500 > performance.now()) {
             Bun.inspect(fibonacci(20));
           }
         }
@@ -288,7 +302,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-md-name", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 100;
+          const end = Date.now() + 500;
           while (Date.now() < end) {}
         }
         loop();
@@ -332,7 +346,7 @@ describe.concurrent("--cpu-prof", () => {
         }
         function main() {
           const now = performance.now();
-          while (now + 100 > performance.now()) {
+          while (now + 500 > performance.now()) {
             workA();
             workB();
           }
@@ -373,7 +387,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-md-standalone", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 100;
+          const end = Date.now() + 500;
           while (Date.now() < end) {}
         }
         loop();
@@ -407,7 +421,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-both-formats", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 100;
+          const end = Date.now() + 500;
           while (Date.now() < end) {}
         }
         loop();
@@ -453,7 +467,7 @@ describe.concurrent("--cpu-prof", () => {
       }
       test("${name}", () => {
         const now = performance.now();
-        while (now + 100 > performance.now()) Bun.inspect(${name}(20));
+        while (now + 500 > performance.now()) Bun.inspect(${name}(20));
       });`;
     const files = { "a.test.js": file("inFileA"), "b.test.js": file("inFileB") };
     const functionNames = (dir: string, profile: string) =>

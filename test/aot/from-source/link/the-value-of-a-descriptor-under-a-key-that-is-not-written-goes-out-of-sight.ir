@@ -1,0 +1,13 @@
+# The control of the-value-of-a-read-only-descriptor-lies-under-its-name-on-an-object-in-sight.ir: the key is not written: the value goes out of sight as before. L1 = what is laid.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: the-value-of-a-descriptor-under-a-key-that-is-not-written-goes-out-of-sight.js
+# function make(kind) {
+#   const made = {};
+#   Object.defineProperty(made, process.argv.length > 99 ? "x" : "inner", { value: { kind, seen: 0 }, enumerable: false });
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

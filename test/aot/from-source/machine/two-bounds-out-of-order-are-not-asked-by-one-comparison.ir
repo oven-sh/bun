@@ -1,0 +1,12 @@
+# -- source: main.ts
+# function inside(c: any): string { const whole = c | 0; if (whole >= 90 && whole <= 65) return "in"; return "out"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(64), inside(65), inside(90), inside(91));
+# -- end of source
+# f1 = inside
+# Nothing lies between 90 and 65: no distance from a lower bound is laid.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Add {{*}}, -90
+# CHECK-NOT: BelowEqual({{*}}, -25)
+# CHECK: Return

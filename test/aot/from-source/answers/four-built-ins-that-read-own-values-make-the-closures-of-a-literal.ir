@@ -25,10 +25,10 @@
 # CHECK-NEXT: exited with 0
 # RUN(WALK): walk f1:Body f2:Body f3:Body f4:Body mechanisms=all
 # WALK: closureForm=Deferred
-# WALK: = CallInline {{*}}inlineBuiltin=ObjectValues {{*}}mayWriteWhatIsSeen
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectValues {{*}}mayWriteObservableState
 # WALK: closureForm=Deferred
-# WALK: = CallInline {{*}}inlineBuiltin=ObjectEntries {{*}}mayWriteWhatIsSeen
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectEntries {{*}}mayWriteObservableState
 # WALK: closureForm=Deferred
-# WALK: = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat{{*}}mayWriteWhatIsSeen
+# WALK: = CallBuiltin {{*}}overload=CompilerHelpersOwnEntriesFlat{{*}}mayWriteObservableState
 # WALK: closureForm=Deferred
-# WALK: = CallInline {{*}}inlineBuiltin=ObjectPropertyIsEnumerable {{*}}mayWriteWhatIsSeen
+# WALK: = CallInline {{*}}inlineBuiltin=ObjectPropertyIsEnumerable {{*}}mayWriteObservableState

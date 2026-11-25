@@ -13,6 +13,10 @@ namespace Bun {
 int setSignalAction(int signalNumber, const struct sigaction* action, struct sigaction* previousAction);
 void (*setSignalHandler(int signalNumber, void (*handler)(int)))(int);
 
+void setDefaultSignalAction(int signalNumber);
+void reportOwnCrash(int signalNumber, siginfo_t*, void* context);
+bool mayReportOwnCrash(int signalNumber);
+
 } // namespace Bun
 
 #endif // !OS(WINDOWS)

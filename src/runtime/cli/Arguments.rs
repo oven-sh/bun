@@ -21,8 +21,7 @@ use bun_options_types::context::{
     Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
-use bun_paths::platform;
-use bun_paths::resolve_path;
+use bun_paths::portable::from_portable_rooted;
 use bun_removable_features::{Feature, RuntimeRequirement, is_removed};
 
 use super::startup_options::{RequirementRow, RowName};
@@ -42,11 +41,8 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 }
 
 /// Whether `bun test` takes the argument for a path. One such argument makes paths of all.
-fn reads_as_path_of_tests(argument: &[u8]) -> bool {
-    bun_paths::is_absolute(argument)
-        || argument.starts_with(b"./")
-        || argument.starts_with(b"../")
-        || (cfg!(windows) && (argument.starts_with(b".\\") || argument.starts_with(b"..\\")))
+pub(crate) fn reads_as_path_of_tests(argument: &[u8]) -> bool {
+    !bun_paths::is_package_path(argument) && !matches!(argument, b"." | b"..")
 }
 
 /// `bun test --files-from <list>`. Every line is a path, never a filter. A list
@@ -445,6 +441,7 @@ pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
+pub(crate) const INSTALL_PARAM: usize = startup_options::index_of_long(AUTO_PARAMS, b"install");
 /// These need `Feature::HotReload` besides what their rows say.
 pub(crate) const HOT_RELOAD_PARAMS: [usize; 2] = [
     startup_options::index_of_long(AUTO_PARAMS, b"watch"),
@@ -471,11 +468,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"watch-kill-signal"), Nothing),
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
-        (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
-        (
-            Long(b"aot"),
-            RuntimeRequirement::Feature(Feature::AotCompiler),
-        ),
+        (Long(b"check"), Nothing),
+        (Long(b"aot"), Nothing),
         (
             Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
@@ -718,7 +712,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
         ),
         parse_param!(
-            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
         ),
         parse_param!(
             "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
@@ -752,7 +746,14 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
+        parse_param!(
+            "--aot-order <STR>...             With --aot: lay code and data out by order file(s) that runs of an executable built by --aot-record-order wrote; comma-separated or repeated, most important first"
+        ),
+        parse_param!(
+            "--aot-record-order               With --aot: build an executable that writes an order file when it runs (BUN_AOT_ORDER_OUT)"
+        ),
         parse_param!("--aot-stored-strings <STR>"),
+        parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
@@ -1004,6 +1005,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
+    parse_param!(
+        "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
+    ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
@@ -1246,12 +1250,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.original_cwd = Some(Box::from(original_cwd));
             original_cwd
         };
-        let mut spill = Vec::new();
-        let out =
-            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
+        let out_z = bun_paths::Path::resolve(&[
+            base,
+            &bun_sys::typed_spelling(base, cwd_arg, from_portable_rooted),
+        ]);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
             Output::err(
                 err,
@@ -1274,7 +1276,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // A deleted cwd must not abort the runtime (Node boots and lets
         // `process.cwd()` throw later); fall back to the executable's dir.
         let mut temp = bun_paths::path_buffer_pool::get();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+        Box::<[u8]>::from(crate::cli::getcwd_or_exe_dir(&mut temp))
     } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
@@ -1355,6 +1357,20 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
+    // So far these are `[bundle] entryPoints`. An AOT build expands patterns, in which `\` escapes.
+    for name in &mut ctx.args.entry_points {
+        let path: Box<[u8]> = match from_portable_rooted(name) {
+            rooted if name.starts_with(b"\\") && bun_sys::exists(&rooted) => rooted.into(),
+            _ => bun_paths::from_portable(name).into(),
+        };
+        let is_pattern = compile_options::is_aot_requested(cmd, &args)
+            && bun_glob::detect_glob_syntax(name)
+            && !bun_sys::exists_z(&bun_paths::Path::join(&[&path]));
+        if !is_pattern && !name.starts_with(b"data:") {
+            *name = path;
+        }
+    }
+
     let mut opts: api::TransformOptions = ctx.args.clone();
 
     if let Some(define) = resolve_defines(args.options(b"--define"))? {
@@ -1387,12 +1403,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
-        let mut spill = Vec::new();
-        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
-            &mut spill,
-            &[ts],
-        ))
+        let cwd = ctx.args.absolute_working_dir.as_deref().unwrap();
+        let spelling = bun_sys::typed_spelling(cwd, ts, bun_paths::from_portable);
+        let mut path = bun_paths::Path::resolve(&[cwd, &spelling]);
+        path.copy_trailing_sep_from(ts);
+        path.as_bytes().into()
     });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
@@ -2222,7 +2237,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(dir) = args.option(b"--coverage-dir") {
-        ctx.test_options.coverage.reports_directory = Box::<[u8]>::from(dir);
+        ctx.test_options.coverage.reports_directory =
+            bun_sys::converted_spelling(dir, bun_paths::from_portable).into();
     }
 
     if !args.options(b"--path-ignore-patterns").is_empty() {
@@ -2509,6 +2525,16 @@ fn parse_build_command_options(
             .is_some_and(|format| format != b"esm" && format != b"cjs")
         {
             Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        if args
+            .option(b"--target")
+            .is_some_and(|target| !matches!(target, b"bun" | b"node" | b"browser"))
+        {
+            Output::err_generic(
+                "--library only supports --target=bun, --target=node and --target=browser",
+                (),
+            );
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();
@@ -3122,7 +3148,7 @@ fn parse_build_command_options(
                 );
                 Global::exit(1);
             }
-            *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
+            *slot = strings::concat(&[b"./", bun_paths::without_leading_dot_slash(value)]);
         }
     }
 

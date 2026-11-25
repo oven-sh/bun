@@ -3,6 +3,8 @@ use core::ffi::c_void;
 use bun_base64::VLQ;
 use bun_core::strings;
 use bun_removable_features::Feature;
+#[cfg(unix)]
+use bun_removable_features::trap::TRAP_OF_REMOVED_CODE;
 
 use crate::build_id::{build_id, write_hexadecimal};
 
@@ -90,13 +92,10 @@ fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
 
 #[cfg(windows)]
 fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
+    use bun_sys::windows::kernel32::{GetCurrentProcess, TerminateProcess};
     use core::sync::atomic::{AtomicBool, Ordering};
 
     static IS_DONE: AtomicBool = AtomicBool::new(false);
-    unsafe extern "system" {
-        safe fn GetCurrentProcess() -> *mut c_void;
-        safe fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
-    }
     let _ = std::thread::Builder::new().spawn(|| {
         std::thread::sleep(core::time::Duration::from_secs(u64::from(
             SECONDS_TO_DESCRIBE_FRAMES,
@@ -201,9 +200,135 @@ pub(crate) fn removed_feature_entered(pc: usize) -> Option<Feature> {
     bun_removable_features::removed_feature_at(pc)
 }
 
+#[cfg(unix)]
+pub(crate) fn is_at_trap_of_removed_code(pc: usize) -> bool {
+    if !is_in_own_segment(pc) {
+        return false;
+    }
+    let instruction = core::ptr::with_exposed_provenance::<u8>(pc);
+    // SAFETY: the processor has tried to run the instruction of this executable there.
+    let found = unsafe { core::slice::from_raw_parts(instruction, TRAP_OF_REMOVED_CODE.len()) };
+    found == TRAP_OF_REMOVED_CODE
+}
+
+#[cfg(unix)]
+pub(crate) fn is_own_stop(
+    signal: core::ffi::c_int,
+    code: core::ffi::c_int,
+    address: usize,
+    pc: usize,
+) -> bool {
+    let is_raised = !cfg!(target_os = "macos") && code > 0;
+    if signal != libc::SIGTRAP && signal != libc::SIGILL {
+        return (pc == address || is_raised) && removed_feature_entered(pc).is_some();
+    }
+    if !cfg!(target_os = "macos") && !is_raised {
+        return false;
+    }
+    let is_breakpoint = signal == libc::SIGTRAP;
+    let pc = pc.wrapping_sub(usize::from(cfg!(target_arch = "x86_64") && is_breakpoint));
+    if offset_in_code(pc).is_none() && !is_in_own_segment(pc) {
+        return false;
+    }
+    if !cfg!(target_os = "macos") {
+        return true;
+    }
+    let instruction = core::ptr::with_exposed_provenance::<[u8; 4]>(pc);
+    // SAFETY: the processor has run or tried to run the instruction there.
+    let bytes = unsafe { instruction.read_unaligned() };
+    if cfg!(target_arch = "aarch64") {
+        let word = u32::from_le_bytes(bytes);
+        return if is_breakpoint {
+            word & 0xffe0_001f == 0xd420_0000
+        } else {
+            word < 1 << 16
+        };
+    }
+    if is_breakpoint {
+        bytes[0] == 0xcc
+    } else {
+        bytes[0] == 0xd6 || bytes[..2] == [0x0f, 0x0b]
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+static OWN_SEGMENTS: std::sync::OnceLock<Box<[core::ops::Range<usize>]>> =
+    std::sync::OnceLock::new();
+
+pub fn keep_own_segments() {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    OWN_SEGMENTS.get_or_init(find_own_segments);
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn find_own_segments() -> Box<[core::ops::Range<usize>]> {
+    let Some(own) = bun_sys::elf::find_loaded_module(find_own_segments as *const () as usize)
+    else {
+        return Box::default();
+    };
+    // SAFETY: the headers of this executable are mapped as long as it runs.
+    let headers =
+        unsafe { core::slice::from_raw_parts(own.program_headers, own.program_header_count) };
+    let segments = headers
+        .iter()
+        .filter(|it| it.p_type == bun_sys::elf::PT_LOAD);
+    segments
+        .map(|segment| {
+            let start = own.base_address.wrapping_add(segment.p_vaddr as usize);
+            start..start + segment.p_memsz as usize
+        })
+        .collect()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn is_in_own_segment(address: usize) -> bool {
+    let is_in_one_of = |segments: &[core::ops::Range<usize>]| {
+        segments.iter().any(|segment| segment.contains(&address))
+    };
+    match OWN_SEGMENTS.get() {
+        Some(kept) => is_in_one_of(kept),
+        None => is_in_one_of(&find_own_segments()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_in_own_segment(address: usize) -> bool {
+    use bun_sys::macho::{
+        LC_SEGMENT_64, LoadCommandIterator, mach_header_64, offset_in_code, segment_command_64,
+    };
+
+    unsafe extern "C" {
+        #[link_name = "_mh_execute_header"]
+        safe static HEADER: mach_header_64;
+    }
+    let header = &raw const HEADER;
+    // SAFETY: the load commands follow the header in the same mapped segment.
+    let commands = unsafe {
+        core::slice::from_raw_parts(header.add(1).cast::<u8>(), HEADER.sizeofcmds as usize)
+    };
+    let Some(first) = LoadCommandIterator::new(HEADER.ncmds, commands)
+        .filter(|command| command.cmd() == LC_SEGMENT_64)
+        .filter_map(|command| command.cast::<segment_command_64>())
+        .find(|segment| segment.filesize > 0)
+    else {
+        return false;
+    };
+    let offset_in_image = address.wrapping_sub(header.addr()) as u64;
+    offset_in_code(
+        HEADER.ncmds,
+        commands,
+        first.vmaddr.wrapping_add(offset_in_image),
+    )
+    .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::removed_feature_entered;
+    #[cfg(unix)]
+    use super::{
+        TRAP_OF_REMOVED_CODE, is_at_trap_of_removed_code, is_in_own_segment, keep_own_segments,
+    };
 
     /// The engine's, as in an executable without compiled code.
     #[unsafe(no_mangle)]
@@ -217,5 +342,27 @@ mod tests {
         assert!(removed_feature_entered(0).is_none());
         assert!(removed_feature_entered(usize::MAX).is_none());
         assert!(removed_feature_entered(local_function).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_traps_of_this_executable_are_of_removed_code() {
+        let copied = TRAP_OF_REMOVED_CODE.to_vec();
+        let check = || {
+            let own_trap = TRAP_OF_REMOVED_CODE.as_ptr().addr();
+            assert!(is_in_own_segment(own_trap));
+            assert!(is_at_trap_of_removed_code(own_trap));
+
+            assert!(!is_in_own_segment(copied.as_ptr().addr()));
+            assert!(!is_at_trap_of_removed_code(copied.as_ptr().addr()));
+
+            let local_function = removed_feature_entered as *const () as usize;
+            assert!(is_in_own_segment(local_function));
+            assert!(!is_at_trap_of_removed_code(local_function));
+            assert!(!is_at_trap_of_removed_code(0));
+        };
+        check();
+        keep_own_segments();
+        check();
     }
 }

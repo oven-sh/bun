@@ -43,8 +43,7 @@ public:
 
     DECLARE_INFO;
 
-    // Must be defined for each specialization class.
-    static JSC::JSValue prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
+    static JSC::JSValue prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject) { return parentConstructor<JSClass>(vm, globalObject); }
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -62,8 +61,8 @@ private:
         initializeProperties(vm, globalObject);
     }
 
-    // Usually defined for each specialization class.
-    void initializeProperties(JSC::VM&, JSDOMGlobalObject&) {}
+    // Specialized where the constructor has required arguments or static members.
+    void initializeProperties(JSC::VM& vm, JSDOMGlobalObject& globalObject) { initializeBaseProperties(vm, 0, info()->className, JSClass::prototype(vm, globalObject)); }
 };
 
 } // namespace WebCore

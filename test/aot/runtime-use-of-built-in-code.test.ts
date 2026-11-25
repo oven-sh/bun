@@ -113,10 +113,8 @@ describe.concurrent("the built-in code that is part of every program", () => {
   ])
     test(`printing uses no member that the program does not name: ${together.map(([what]) => what).join(", ")}`, () =>
       usesNoMemberThatIsNotNamed(together.map(([, text]) => text)));
-  test.failing(
-    "printing uses no member that the program does not name: all of these in one program (not yet: beside an object with symbols as keys, a key that is computed may be any name: toTemporalInstant, toLocaleString and localeCompare count as used)",
-    () => usesNoMemberThatIsNotNamed(printed.map(([, text]) => text)),
-  );
+  test("printing uses no member that the program does not name: all of these in one program", () =>
+    usesNoMemberThatIsNotNamed(printed.map(([, text]) => text)));
 
   // TODO: the global object counts as escaped, and with it every global, as soon as one of these is required.
   const letTheGlobalObjectEscape = [
@@ -138,7 +136,6 @@ describe.concurrent("the built-in code that is part of every program", () => {
   const openTheReport = [
     ["bun:ffi", "what the module exports as a whole counts as called: CFunction, cc, dlopen and linkSymbols"],
     ["repl", "Function counts as called"],
-    ["v8", "a Worker counts as started"],
     ["vm", "a load under a name that nobody knows counts as made"],
   ];
   test("only a call opens the report: requiring the other built-in modules leaves it closed", async () => {

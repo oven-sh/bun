@@ -1,6 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_sql::postgres::postgres_protocol::{NewWriter, WriterContext};
-use bun_sql::postgres::postgres_types::{AnyPostgresError, Tag};
+use bun_sql::postgres::postgres_types::Tag;
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -73,21 +72,21 @@ pub(crate) fn to_binary(date: JSValue) -> Option<i64> {
     Some((unix_ms as i64 - POSTGRES_EPOCH_DATE) * US_PER_MS)
 }
 
-pub(crate) fn write_text<Context: WriterContext>(
+pub(crate) fn write_text(
+    out: &mut Vec<u8>,
     global_object: &JSGlobalObject,
     date: JSValue,
     tag: Tag,
-    writer: NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
+) {
     let mut buf = [0u8; 64];
     let Some(len) = date.to_iso_string(global_object, &mut buf).map(<[u8]>::len) else {
-        return writer.write(b"Invalid Date");
+        return out.extend_from_slice(b"Invalid Date");
     };
     let iso = &mut buf[..len];
     if tag.is_json() {
-        writer.write(b"\"")?;
-        writer.write(iso)?;
-        return writer.write(b"\"");
+        out.push(b'"');
+        out.extend_from_slice(iso);
+        return out.push(b'"');
     }
     // Their input functions reject the `T`.
     if matches!(tag, Tag::time | Tag::timetz) {
@@ -95,5 +94,5 @@ pub(crate) fn write_text<Context: WriterContext>(
             iso[t] = b' ';
         }
     }
-    writer.write(iso)
+    out.extend_from_slice(iso);
 }

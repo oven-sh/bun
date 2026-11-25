@@ -1,7 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="maybe"
-// CHECK: [[method]] = Call [[helper]], -, [[resource]]
+// CHECK: TypeTest [[resource]] testedType=undefined|null
+// CHECK: [[read]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[read]] testedType=function
+// CHECK: Jump -> next [[found]]({{*}})
+// CHECK-NEXT: [[found]]([[method]]):
 // CHECK: TypeTest [[method]] testedType=undefined
 // CHECK: = Call [[onFallThrough]], [[resource]]
 // CHECK: role=DisposalCleanup subject=[[resource]]

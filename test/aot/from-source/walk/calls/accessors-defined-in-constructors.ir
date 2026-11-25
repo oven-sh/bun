@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# class Box { constructor(v) { this.v = v; Object.defineProperty(this, "size", { get() { return this.v; }, set(x) { this.v = x * 2; } }); } }
+# class Base { constructor(v) { this.v = v; Object.defineProperty(this, "size", { get() { return this.v; }, enumerable: true, configurable: true }); } }
+# class Heir extends Base { twice() { return this.size * 2; } }
+# const box = new Box(1);
+# const heir = new Heir(4);
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) { sum += box.size; box.size = i & 3; } return sum; }
+# function runHeir(count) { let sum = 0; for (let i = 0; i < count; i++) { sum += heir.size + heir.twice(); } return sum; }
+# print(run(10), runHeir(10), new Base(3).size);
+# -- end of source
+# The constructor fills the field with its accessor, and nobody sees the object before: reads and stores run the halves.
+# RUN(BOX): walk f1 mechanisms=all
+# BOX-NOT: GetSlotGetter
+# BOX-NOT: PropGet
+# BOX-NOT: PropSet
+# BOX: frame {{*}} callee=f7
+# BOX: frame {{*}} callee=f8
+# RUN(HEIR): walk f2 mechanisms=all
+# HEIR-NOT: GetSlotGetter
+# HEIR: frame {{*}} callee=f9
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 25 120 3

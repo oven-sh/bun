@@ -1,23 +1,22 @@
-//! IP-address parsing shared by URL/host handling and the DNS backends.
+//! IP-address parsing and printing shared by URL/host handling and the DNS backends.
 
-#[cfg(not(windows))]
-use core::net::Ipv4Addr;
-use core::net::{IpAddr, Ipv6Addr};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// The one place this module touches C.
 #[cfg(not(windows))]
 mod sys {
     use core::ffi::{c_char, c_int, c_void};
 
+    use crate::ZStr;
+
     unsafe extern "C" {
         fn inet_aton(cp: *const c_char, addr: *mut c_void) -> c_int;
     }
 
     /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts.
-    pub(super) fn aton(src: &[u8], dst: &mut [u8; 4]) -> bool {
-        debug_assert_eq!(src.last(), Some(&0));
-        // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
-        unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
+    pub(super) fn aton(src: &ZStr, dst: &mut [u8; 4]) -> bool {
+        // SAFETY: `src` is NUL-terminated (`ZStr`); `dst` is an `in_addr`.
+        unsafe { inet_aton(src.as_ptr(), dst.as_mut_ptr().cast()) != 0 }
     }
 }
 
@@ -31,7 +30,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     parse_strict_v6(input).is_some()
 }
 
-/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL.
+/// A dotted quad or an IPv6 address and nothing else, the same on every platform: no `10`, `127.1`, `0x7f000001`, zero-padded octets or trailing `/bits`.
 #[inline(never)]
 pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
     // The longest literal is "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255", so a longer host is never scanned.
@@ -105,9 +104,10 @@ pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
             return None;
         }
         buf[..input.len()].copy_from_slice(input);
+        let input_z = crate::ZStr::nul_terminate(&mut buf, input.len());
         let mut v4 = [0u8; 4];
         // `inet_aton` stops at whitespace or a NUL and reads what comes before.
-        (sys::aton(&buf[..=input.len()], &mut v4)
+        (sys::aton(input_z, &mut v4)
             && crate::strings::index_of_any(input, b" \t\n\r\x0b\x0c\0").is_none())
         .then(|| IpAddr::V4(Ipv4Addr::from(v4)))
     }
@@ -124,4 +124,96 @@ pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
         }
     }
     host
+}
+
+/// An address as BIND's and libuv's `inet_ntop` print it. `Display` of `Ipv6Addr` differs for `::1.2.3.4`.
+#[derive(Clone, Copy)]
+pub struct IpText {
+    bytes: [u8; Self::MAX_LEN],
+    len: u8,
+}
+
+impl IpText {
+    pub const MAX_LEN: usize = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".len();
+
+    pub fn new(ip: IpAddr) -> Self {
+        let mut text = Self {
+            bytes: [0; Self::MAX_LEN],
+            len: 0,
+        };
+        match ip {
+            IpAddr::V4(ip) => text.push_v4(ip),
+            IpAddr::V6(ip) => text.push_v6(ip),
+        }
+        text
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.bytes[usize::from(self.len)] = byte;
+        self.len += 1;
+    }
+
+    fn push_v4(&mut self, ip: Ipv4Addr) {
+        for (i, octet) in ip.octets().into_iter().enumerate() {
+            if i != 0 {
+                self.push(b'.');
+            }
+            if octet >= 100 {
+                self.push(b'0' + octet / 100);
+            }
+            if octet >= 10 {
+                self.push(b'0' + octet / 10 % 10);
+            }
+            self.push(b'0' + octet % 10);
+        }
+    }
+
+    fn push_v6(&mut self, ip: Ipv6Addr) {
+        let segments = ip.segments();
+        let (mut zeros, mut run_start) = (0..0, 0);
+        for (i, &segment) in segments.iter().enumerate() {
+            if segment != 0 {
+                run_start = i + 1;
+            } else if i + 1 - run_start > zeros.len().max(1) {
+                zeros = run_start..i + 1;
+            }
+        }
+        let ends_in_v4 = zeros == (0..6) || (zeros == (0..5) && segments[5] == 0xffff);
+
+        for (i, &segment) in segments.iter().enumerate() {
+            if zeros.contains(&i) {
+                if i == zeros.start {
+                    self.push(b':');
+                }
+                continue;
+            }
+            if i != 0 {
+                self.push(b':');
+            }
+            if i == 6 && ends_in_v4 {
+                return self.push_v4(Ipv4Addr::from_bits(ip.to_bits() as u32));
+            }
+            let digits = (segment | 1).ilog2() / 4 + 1;
+            for digit in (0..digits).rev() {
+                self.push(b"0123456789abcdef"[usize::from(segment >> (digit * 4) & 15)]);
+            }
+        }
+        if zeros.end == segments.len() {
+            self.push(b':');
+        }
+    }
+}
+
+impl core::ops::Deref for IpText {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
+impl core::fmt::Display for IpText {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        bstr::BStr::new(&**self).fmt(f)
+    }
 }

@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function run(n: number) {
+#   class Meter { k = 2; read(x: number): number { return x + this.k; } }
+#   const original = Meter.prototype.read;
+#   Meter.prototype.read = function (this: Meter, x: number) { return original.call(this, x) + 1; };
+#   const meter = new Meter();
+#   let s = 0;
+#   for (let i = 0; i < n; i++) s = (s + meter.read(i & 3)) | 0;
+#   return s;
+# }
+# print(run(100));
+# -- end of source
+# LIBRARY: own
+# A statement replaces the method with a closure that captures the original. The loop takes the closure out of the guard in its preheader and the read of `call` leaves the loop with it.
+# RUN(GUARD): walk f1 mechanisms=all
+# GUARD: GetAssignedMember conditions=[{kind=MemberAssigned layout=L0 key="read"}]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 450
+# ANSWERS-NEXT: exited with 0

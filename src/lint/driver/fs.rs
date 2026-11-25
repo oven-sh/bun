@@ -1,11 +1,10 @@
 //! File system helpers.
 
 use crate::paths;
-use bun_core::ZStr;
-use bun_paths::resolve_path::z;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
+use bun_core::ZBox;
+use bun_paths::{Path, path_buffer_pool};
 use bun_sema::util::FxHashSet;
-use bun_sys::{EntryKind, Fd, File, O};
+use bun_sys::{EntryKind, Fd, File, O, Tmpfile};
 use bun_threading::Guarded;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -14,23 +13,16 @@ pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
     [error.name(), b": ", error.msg().unwrap_or(b"unknown error")].concat()
 }
 
-/// Returns `path` with a trailing NUL. A path that's too long for any system becomes the empty path, where nothing
-/// exists.
-fn null_terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
-    match path.len() < MAX_PATH_BYTES {
-        true => z(path, buffer),
-        false => ZStr::EMPTY,
-    }
-}
-
-/// Same, for the calls that go through libuv on Windows (`stat`, `lstat`, `realpath`, `rename`). libuv passes the path
+/// For the calls that go through libuv on Windows (`stat`, `lstat`, `realpath`, `rename`). libuv passes the path
 /// to the system unchanged, which limits it to 260 characters unless it's in the namespaced form that Node uses for
 /// every path.
-fn for_libuv<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
-    match cfg!(windows) && path.len() >= 240 {
-        true => null_terminated(&paths::namespaced(path), buffer),
-        false => null_terminated(path, buffer),
-    }
+fn for_libuv(path: &[u8]) -> Path {
+    let path = match cfg!(windows) && path.len() >= 240 {
+        true => Path::from(&paths::namespaced(path)),
+        false => Path::from(path),
+    };
+    // Callers take ENOENT, and not ENAMETOOLONG, to mean that nothing is there.
+    path.check_len().unwrap_or_default()
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -50,7 +42,7 @@ fn identity_if_linked(found: &bun_sys::Stat) -> Option<Identity> {
 /// Returns the kind and size of the file at `path`, following symlinks, plus [`identity_if_linked`]. Returns `None` if
 /// nothing exists there, or if it's neither a file nor a directory.
 pub(crate) fn stat(path: &[u8]) -> Option<(Kind, u64, Option<Identity>)> {
-    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::stat(&for_libuv(path)).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Kind::File,
         EntryKind::Directory => Kind::Directory,
@@ -72,7 +64,7 @@ pub(crate) enum LinkKind {
 
 /// Like [`stat`], but doesn't follow a symlink at `path`.
 pub(crate) fn lstat(path: &[u8]) -> Option<(LinkKind, u64, Option<Identity>)> {
-    let found = bun_sys::lstat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::lstat(&for_libuv(path)).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => LinkKind::File,
         EntryKind::Directory => LinkKind::Directory,
@@ -88,7 +80,7 @@ pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
 
 /// Returns what the symlink at `path` resolves to. `Ok(None)` if that's neither a file nor a directory.
 pub(crate) fn link_target_kind(path: &[u8]) -> bun_sys::Result<Option<Kind>> {
-    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))?;
+    let found = bun_sys::stat(&for_libuv(path))?;
     Ok(match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Some(Kind::File),
         EntryKind::Directory => Some(Kind::Directory),
@@ -206,7 +198,7 @@ pub(crate) fn read_start<'a>(path: &[u8], start: &'a mut [u8]) -> &'a [u8] {
 
 pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
     let mut all = Vec::new();
-    File::stdin().read_to_end_into(&mut all)?;
+    File::borrow(&Fd::stdin()).read_to_end_into(&mut all)?;
     Ok(all)
 }
 
@@ -233,7 +225,7 @@ impl Listing {
 
     /// Like [`Listing::size_of`], plus [`identity_if_linked`].
     pub(crate) fn size_and_identity_of(&self, name: &[u8]) -> Option<(u64, Option<Identity>)> {
-        let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
+        let found = bun_sys::fstatat(self.directory.fd(), &Path::from(name));
         let Ok(found) = found else {
             return Some((0, None));
         };
@@ -255,12 +247,10 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
         let name = entry.name.slice_u8();
         let kind = match entry.kind {
             // This file system doesn't report the kind along with the name.
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                    Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
-                    Err(_) => continue,
-                }
-            }
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), entry.name.as_zstr()) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
+                Err(_) => continue,
+            },
             kind => kind,
         };
         // Opening a pipe can block forever, and pipes, sockets and devices aren't files to read anyway.
@@ -285,7 +275,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
 /// Returns `path` with symlinks resolved and every name spelled as its directory stores it.
 pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer);
+    let real = bun_sys::realpath(&for_libuv(path), &mut buffer);
     Some(paths::from_native(real.ok()?))
 }
 
@@ -305,27 +295,12 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
         paths::to_native(to.to_vec()),
     );
     // On Windows, this call can also replace a file that's open for reading. Not every file system supports it.
-    bun_sys::renameat(
-        Fd::cwd(),
-        null_terminated(&from, &mut path_buffer_pool::get()),
-        Fd::cwd(),
-        null_terminated(&to, &mut path_buffer_pool::get()),
-    )
-    .or_else(|error| match cfg!(windows) {
-        true => bun_sys::rename(
-            for_libuv(&from, &mut path_buffer_pool::get()),
-            for_libuv(&to, &mut path_buffer_pool::get()),
-        ),
-        false => Err(error),
+    bun_sys::renameat(Fd::cwd(), &Path::from(&from), Fd::cwd(), &Path::from(&to)).or_else(|error| {
+        match cfg!(windows) {
+            true => bun_sys::rename(&for_libuv(&from), &for_libuv(&to)),
+            false => Err(error),
+        }
     })
-}
-
-fn remove(path: &[u8]) {
-    let path = paths::to_native(path.to_vec());
-    let _ = bun_sys::unlinkat(
-        Fd::cwd(),
-        null_terminated(&path, &mut path_buffer_pool::get()),
-    );
 }
 
 /// Returns a file's extended attributes: tags, ACL, security label. A file renamed over it doesn't inherit them. `None`
@@ -348,39 +323,39 @@ struct Before {
 fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
     let before = &old.stat;
     let directory = &real[..real.len() - paths::basename(real).len()];
-    let temporary = [directory, temporary_name().as_bytes()].concat();
+    let name = [directory, temporary_name().as_bytes(), b"\0"].concat();
     let mode = before.st_mode as bun_sys::Mode & 0o7777;
-    let Ok(file) = File::openat(
+    let Ok(temporary) = Tmpfile::open(
         Fd::cwd(),
-        &temporary,
+        ZBox::from_vec_with_nul(name),
         O::RDWR | O::CREAT | O::EXCL | O::CLOEXEC,
         mode,
     ) else {
         return Ok(false);
     };
-    let write_result = file.stat().and_then(|created| {
-        if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
+    let file = &temporary.file;
+    let created = file.stat()?;
+    if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
+        return Ok(false);
+    }
+    // The directory gives a new file its label and default ACL, normally the same ones it gave the old file.
+    #[cfg(unix)]
+    {
+        if old.attributes.is_none() || attributes(file) != old.attributes {
             return Ok(false);
         }
-        // The directory gives a new file its label and default ACL, normally the same ones it gave the old file.
-        #[cfg(unix)]
-        {
-            if old.attributes.is_none() || attributes(&file) != old.attributes {
-                return Ok(false);
-            }
-        }
-        // Restore the bits that `umask` cleared.
-        if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
-            bun_sys::fchmod(file.handle(), mode)?;
-        }
-        file.write_all(text).map(|()| true)
-    });
-    drop(file);
-    let is_replaced = matches!(write_result, Ok(true)) && rename(&temporary, real).is_ok();
-    if !is_replaced {
-        remove(&temporary);
     }
-    write_result.map(|_| is_replaced)
+    // Restore the bits that `umask` cleared.
+    if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
+        bun_sys::fchmod(file.handle(), mode)?;
+    }
+    file.write_all(text)?;
+    let temporary = temporary.close();
+    if rename(&temporary, real).is_err() {
+        return Ok(false);
+    }
+    temporary.keep();
+    Ok(true)
 }
 
 /// Writes `text` at offset 0 of `file`. On failure, returns the error and the number of bytes already written.
@@ -499,18 +474,20 @@ pub(crate) fn write_atomically(
 ) -> Result<(), Vec<u8>> {
     let resolve = || {
         let mut buffer = path_buffer_pool::get();
-        bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
+        bun_sys::realpath(&for_libuv(path), &mut buffer)
             .map(<[u8]>::to_vec)
             .map_err(|error| describe(&error))
     };
-    let mut real = resolve()?;
-    // When an open file is renamed over, NTFS moves it to a special directory. The real path points there if another
-    // thread, which reached the file by a different path, replaced it after it was opened here. Resolving again finds
-    // the new file.
-    if cfg!(windows) && escapes_repository(cwd, path, &real) {
-        real = resolve()?;
+    let mut real = resolve();
+    let escapes = |real: &Vec<u8>| escapes_repository(cwd, path, real);
+    // When an open file is renamed over, NTFS moves it to a special directory. If another thread, which reached the file
+    // by a different path, replaces it after it was opened here, the real path points there or can't be determined.
+    // Resolving again finds the new file.
+    if cfg!(windows) && real.as_ref().map_or(true, escapes) {
+        real = resolve();
     }
-    if escapes_repository(cwd, path, &real) {
+    let real = real?;
+    if escapes(&real) {
         return Err(ESCAPES_REPOSITORY.to_vec());
     }
     if !already_written.0.lock().insert(real.clone()) {
@@ -535,8 +512,8 @@ fn real_path_of_new(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
             if followed.contains(&path) {
                 return Err(fails(bun_sys::E::ELOOP));
             }
-            let (mut link, mut target) = (path_buffer_pool::get(), path_buffer_pool::get());
-            let len = bun_sys::readlink(for_libuv(&path, &mut link), &mut target[..])?;
+            let mut target = path_buffer_pool::get();
+            let len = bun_sys::readlink(&for_libuv(&path), &mut target[..])?;
             let target = paths::from_native(&target[..len]);
             followed.push(path);
             path = paths::resolve(&real_path(&parent).unwrap_or(parent), &target);
@@ -592,7 +569,7 @@ fn write_to_stream(cwd: &[u8], path: &[u8], stream: Identity, text: &[u8]) -> Re
 /// `/dev/stdout`, is written to directly.
 pub(crate) fn write_new(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     if cfg!(unix)
-        && let Ok(found) = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get()))
+        && let Ok(found) = bun_sys::stat(&for_libuv(path))
         && let Some(stream) = identity_if_stream(&found)
     {
         return write_to_stream(cwd, path, stream, text);

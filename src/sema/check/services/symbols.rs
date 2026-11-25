@@ -202,7 +202,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `symbol.name`, spelled the way TypeScript spells it.
     fn typescript_symbol_name(&self, name: Atom) -> &'c [u8] {
         let internal: &'static [u8] = match name {
-            Atom::NONE => b"",
             known::anonymous_function => b"__function",
             known::object_literal => b"__object",
             known::type_literal => b"__type",
@@ -864,10 +863,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 (Some(_), false) => TypePredicateKind::Identifier,
                 (Some(_), true) => TypePredicateKind::AssertsIdentifier,
             },
-            parameter_name: match predicate.name {
-                Atom::NONE => b"",
-                name => self.c.atoms().bytes(name),
-            },
+            parameter_name: self.c.atoms().bytes(predicate.name),
             parameter_index: predicate.param.and_then(|index| u32::try_from(index).ok()),
             ty: predicate.ty,
         })

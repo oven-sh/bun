@@ -14,9 +14,9 @@
 # Nor on where an object of a class of the engine was made and that nobody has laid a name on it: add() is any code. Nor on what has no door: what a list holds, what was thrown.
 # f1 = ownList, f3 = read, f4 = once, f5 = add, f6 = run, f10 = the arrow of slots()
 # RUN: link functions mechanisms=all
-# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+# CHECK: function f1 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 # CHECK: function f3 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
-# CHECK: function f4 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+# CHECK: function f4 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]
 # CHECK: function f5 {{*}}mayCallUnknownCode
 # CHECK: function f6 {{*}}mayCallUnknownCode
-# CHECK: function f10 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteWhatIsSeen, mayTouchMemory]
+# CHECK: function f10 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayWriteObservableState, mayTouchMemory]

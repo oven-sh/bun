@@ -421,9 +421,7 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // JSON.parse("") would throw; json::parse_utf8 returns the
-                    // shared EMPTY_OBJECT static, which a later [section] write
-                    // could then mutate. Fall through to the string path instead.
+                    // JSON.parse("") would throw; json::parse_utf8 returns an empty object.
                     if val.is_empty() {
                         break 'out;
                     }
@@ -1143,9 +1141,7 @@ mod draft {
                 bstr::BStr::new(path),
             );
         }
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = log.print(Output::error_writer());
         log.reset();
     }
 
@@ -1387,7 +1383,9 @@ mod draft {
         // We need to dupe all strings
         let out = &parser.out;
         // Relative paths in a `.npmrc` are resolved against the directory that contains it.
-        let dir = bun_core::dirname(source.path.text).unwrap_or_default();
+        let dir = bun_paths::dirname_or_root(source.path.text);
+        let resolve_path =
+            |path: &[u8]| BunInstall::resolve_path(dir, &bun_paths::from_portable(path));
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
@@ -1399,7 +1397,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"cache") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.cache_directory = Some(BunInstall::resolve_path(dir, str_));
+                install.cache_directory = Some(resolve_path(str_));
             } else if let Some(b) = query.expr.as_bool() {
                 install.disable_cache = Some(!b);
             }
@@ -1437,7 +1435,7 @@ mod draft {
 
         if let Some(query) = cafile {
             if let Some(cafile) = query.expr.as_string_cloned(bump)? {
-                install.cafile = Some(BunInstall::resolve_path(dir, cafile));
+                install.cafile = Some(resolve_path(cafile));
             }
         }
 

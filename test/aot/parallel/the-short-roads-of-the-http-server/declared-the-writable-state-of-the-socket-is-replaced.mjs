@@ -1,4 +1,4 @@
-// DECLARED: docs/compiler/compatibility.mdx, "Smaller differences". socket._writableState is replaced by a copy with a mark of 1. `bun <file>` and `bun build --compile` print
+// Differs from `bun run` by design. socket._writableState is replaced by a copy with a mark of 1. `bun <file>` and `bun build --compile` print
 // /first true false | /second false true | /third false true. The short road of write() goes by the state that the socket had: to ask at each request whether it is still that one costs 54 to 140 instructions.
 import http from "node:http";
 import net from "node:net";

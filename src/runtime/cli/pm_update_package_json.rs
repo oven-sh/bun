@@ -92,8 +92,11 @@ pub(crate) fn analyze_dependencies_and_install(
         install,
     };
 
-    let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
+    let mut fetcher = DependenciesScanner {
+        analyzer: &mut analyzer,
+        entry_points,
+    };
 
     // SAFETY: `ctx_ptr` comes from the `ctx` parameter, which is not used again.
-    BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&fetcher))
+    BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher))
 }

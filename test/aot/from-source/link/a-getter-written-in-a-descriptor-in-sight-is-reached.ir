@@ -1,0 +1,12 @@
+# The descriptor is held by a constant and stays in sight, but a getter is written in it under `enumerable`, and the run time's Object.defineProperty calls it. A getter written in a literal lies on a field that the layout lists as plain. Such a descriptor is no descriptor of values alone: it is handed over (L1 goes), and the getter (f1) is reached.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f1 cycle
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L1 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: crate.js
+# let asked = "";
+# const descriptor = { value: 5, writable: false, get enumerable() { asked += "enumerable "; return true; }, configurable: false };
+# const crate = Object.defineProperty({}, "weight", descriptor);
+# console.log(crate.weight, Object.keys(crate).length, asked);
+# -- end of source

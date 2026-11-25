@@ -8,7 +8,7 @@ const {
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
 } = require("internal/http");
-const { getLazy, kEmptyObject, once } = require("internal/shared");
+const { getLazy, kEmptyObject, once, builtinChannel } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const { kDestroyOnRead } = require("internal/net/symbols");
@@ -241,10 +241,16 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   return name;
 };
 
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
+
 function handleSocketAfterProxy(err, req) {
   if (err.code === "ERR_PROXY_TUNNEL") {
     if (err.proxyTunnelTimeout) {
       req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
+    }
+    // Node does not publish this one.
+    if (onClientRequestErrorChannel.hasSubscribers) {
+      onClientRequestErrorChannel.publish({ request: req, error: err });
     }
     req.emit("error", err);
   }

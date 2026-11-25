@@ -1,6 +1,5 @@
 use bun_ast::Expr;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string_checked;
+use bun_paths::{Path, from_portable};
 
 use super::is_inside;
 
@@ -75,11 +74,12 @@ fn is_typescript(path: &[u8]) -> bool {
 }
 
 fn find_file(directory: &[u8], written: &[u8]) -> Option<Box<[u8]>> {
-    let absolute_path = join_abs_string_checked::<Auto>(directory, &[written])?;
-    if bun_core::strings::contains_char(absolute_path, 0) {
+    let written = bun_sys::converted_spelling(written, from_portable);
+    let mut absolute_path = Path::resolve(&[directory, &written]);
+    absolute_path.copy_trailing_sep_from(&written);
+    if bun_core::strings::contains_char(&absolute_path, 0) {
         return None;
     }
-    let absolute_path = bun_core::ZBox::from_bytes(absolute_path);
     match bun_sys::exists_at_type(bun_core::Fd::cwd(), &absolute_path) {
         Ok(bun_sys::ExistsAtType::File) => Some(absolute_path.as_bytes().into()),
         Ok(bun_sys::ExistsAtType::Directory) | Err(_) => None,

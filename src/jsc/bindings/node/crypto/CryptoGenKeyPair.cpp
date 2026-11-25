@@ -1,5 +1,6 @@
 #include "CryptoGenKeyPair.h"
 #include "helpers.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "CryptoUtil.h"
 #include "BunProcess.h"
@@ -17,8 +18,12 @@ using namespace JSC;
 
 namespace Bun {
 
-void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& keyCtx)
+void KeyPairJobCtx::generate(const ncrypto::EVPKeyCtxPointer& keyCtx)
 {
+    if (!keyCtx) {
+        return;
+    }
+
     EVP_PKEY* pkey = nullptr;
     if (!EVP_PKEY_keygen(keyCtx.get(), &pkey)) {
         m_opensslError = ERR_get_error();
@@ -140,21 +145,21 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        RsaKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<RsaKeyPairJobCtx>(globalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dsa"_s) {
         std::optional<DsaKeyPairJobCtx> ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        DsaKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<DsaKeyPairJobCtx>(globalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "ec"_s) {
         std::optional<EcKeyPairJobCtx> ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        EcKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<EcKeyPairJobCtx>(globalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
     // TODO: should just get `id` here
@@ -162,14 +167,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
         std::optional<NidKeyPairJobCtx> ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        NidKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<NidKeyPairJobCtx>(globalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dh"_s) {
         std::optional<DhKeyPairJobCtx> ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        DhKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<DhKeyPairJobCtx>(globalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 
@@ -209,12 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-        if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ctx->err());
-            return {};
-        }
-        ctx->runTask(globalObject, keyCtx);
+        ctx->runTask(globalObject);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
             return {};
@@ -227,12 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         auto ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-        if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ctx->err());
-            return {};
-        }
-        ctx->runTask(globalObject, keyCtx);
+        ctx->runTask(globalObject);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
             return {};
@@ -245,12 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         auto ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-        if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ctx->err());
-            return {};
-        }
-        ctx->runTask(globalObject, keyCtx);
+        ctx->runTask(globalObject);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
             return {};
@@ -263,12 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         auto ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-        if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ctx->err());
-            return {};
-        }
-        ctx->runTask(globalObject, keyCtx);
+        ctx->runTask(globalObject);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
             return {};
@@ -281,12 +266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
         auto ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-        if (!keyCtx) {
-            throwCryptoError(globalObject, scope, ctx->err());
-            return {};
-        }
-        ctx->runTask(globalObject, keyCtx);
+        ctx->runTask(globalObject);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
             return {};

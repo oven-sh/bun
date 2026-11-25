@@ -6,9 +6,9 @@
 # console.log(new Base(true).a, new Below().a, new Below().b);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.1 "b" proven=i32 writers-known written-at-construction-alone filled
-# CHECK: field L1.0 "c" proven=i32 writers-known written-at-construction-alone filled
-# CHECK: field L1.1 "a" proven=i32 writers-known written-at-construction-alone
-# CHECK: field L1.2 "b" proven=i32 writers-known written-at-construction-alone filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# CHECK: field L1.0 "c" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# CHECK: field L1.1 "a" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
 # RUN(EMPTY): link fields mechanisms=all
 # EMPTY-NOT: "a" proven=i32 writers-known written-at-construction-alone filled

@@ -95,6 +95,23 @@ describe("an Upgrade request with a body", () => {
     }
   });
 
+  describe("ends when the connection closes before its last chunk", () => {
+    const rows: [name: string, options: Record<string, unknown>][] = [
+      ["RST", { truncate: "RST", respond: "unassigned" }],
+      ["RST over TLS", { truncate: "RST", respond: "assigned", secure: true }],
+      ["socket.end()", { truncate: "socket.end()", respond: "assigned" }],
+    ];
+    for (const [name, options] of rows) {
+      test.concurrent(name, async () => {
+        expect(await run(options)).toMatchObject({
+          events: ["req data 50", "req end", "req close", "socket end", "socket close"],
+          eofs: 1,
+          ...exited,
+        });
+      });
+    }
+  });
+
   // Only a debug build prints what uws gives to the body handler of the request.
   describe.skipIf(!isDebug)("gets nothing from uws after its last chunk", () => {
     const rows: [name: string, options: Record<string, unknown>, events: string[]][] = [

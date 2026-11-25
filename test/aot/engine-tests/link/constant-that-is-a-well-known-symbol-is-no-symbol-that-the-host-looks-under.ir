@@ -1,0 +1,29 @@
+# print({}, Symbol.hasInstance);
+# The host prints an object by the method that it finds under Symbol.for("nodejs.util.inspect.custom"). It loads what it calls that method with only where code may have the symbol.
+# A read of Symbol.hasInstance gives a symbol that is not new, but the table says which one: a constant. It is not the one that the host looks under, so nothing is loaded.
+# The twin whose row names no symbol: member-that-holds-a-symbol-which-is-not-new-may-hold-any.ir
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Builtin builtin=Symbol
+    v3 = PropGet v2 key="hasInstance"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="print" [isFreeName]
+    v6 = Call v5, -, v1, v3 calleeName="print"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -53,6 +53,8 @@ private:
 
     // May be null
     JSC::CodeBlock* m_codeBlock { nullptr };
+    // m_codeBlock's, or that of a suspended async function whose code was dropped. Null for a native or compiled frame.
+    JSC::ScriptExecutable* m_executable { nullptr };
     JSC::BytecodeIndex m_bytecodeIndex;
 
     // Lazy-initialized
@@ -66,6 +68,9 @@ private:
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
     bool m_isAOTCompiled = false;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID m_compiledModule;
+#endif
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -81,11 +86,14 @@ public:
 
     const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
     JSC::JSCell* callee() const { return m_callee; }
-    JSC::CodeBlock* codeBlock() const { return m_codeBlock; }
+    JSC::ScriptExecutable* executable() const { return m_executable; }
 
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID compiledModule() const { return m_compiledModule; }
+#endif
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -202,11 +210,13 @@ inline bool hasExternalSourceMap()
     return image && image->isObfuscated();
 }
 
-// The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
+// The file that every compiled frame of the program names in such an executable. The line and column of a frame are a position in the map.
 String externalSourceMapFileURL();
+// The same file, as a stack trace prints it.
+String externalSourceMapDisplayPath();
 
-String sourceURL(const JSC::AOT::SourcePosition&);
 String sourceURL(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
+String displayPath(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
 #endif
 
 // The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.
@@ -223,12 +233,19 @@ inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
     return false;
 }
 
+// An async function whose code was dropped while it was suspended (old age, Bun.shrink()) still knows its file and where it starts.
+JSC::FunctionExecutable* suspendedFunctionWithoutCode(const JSC::StackFrame&);
+inline bool hasSourcePosition(const JSC::StackFrame& frame) { return frame.hasLineAndColumnInfo() || suspendedFunctionWithoutCode(frame); }
+JSC::LineColumn lineAndColumn(const JSC::StackFrame&);
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);
 String sourceURL(JSC::CodeBlock* codeBlock);
 String sourceURL(JSC::CodeBlock& codeBlock);
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
+// The path that stack traces print. In an --aot executable it is relative to the build folder, so no file or module can be found by it.
+String displayPath(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir, untilEveryThreadIs } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -19,9 +19,15 @@ const fileThatTakes = (name: string, milliseconds: number, before = "") => `
     appendFileSync(process.env.TRAIL, "end ${name}\\n");
   });`;
 
+// With a sanitizer a light file takes longer to start than the heavy one sleeps.
+const waitFor = (name = "") =>
+  name &&
+  `const { readFileSync } = require("node:fs");
+    while (!readFileSync(process.env.TRAIL, "utf8").includes("start ${name}\\n")) await Bun.sleep(5);`;
+
 const startOf = (code: string) => `Bun.spawnSync([process.execPath, "-e", ${JSON.stringify(code)}]);`;
 
-type Measured = { milliseconds: number; megabytes?: number };
+type Measured = { milliseconds: number; megabytes?: number; waitsFor?: string };
 
 async function trailOf(records: { [name: string]: Measured }, words: string, ...flags: string[]) {
   const names = Object.keys(records);
@@ -30,7 +36,12 @@ async function trailOf(records: { [name: string]: Measured }, words: string, ...
       names.flatMap(name => (of(records[name]) === undefined ? [] : [[`${name}.test.js`, of(records[name])]])),
     );
   using dir = tempDir("heavy-test-files-run-apart", {
-    ...Object.fromEntries(names.map(name => [`${name}.test.js`, fileThatTakes(name, records[name].milliseconds)])),
+    ...Object.fromEntries(
+      names.map(name => [
+        `${name}.test.js`,
+        fileThatTakes(name, records[name].milliseconds, waitFor(records[name].waitsFor)),
+      ]),
+    ),
     "timings.json": JSON.stringify({
       version: 1,
       files: table(it => it.milliseconds),
@@ -85,7 +96,7 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
   const trail = await trailOf(
     {
       a: { milliseconds: 1600, megabytes: 900 },
-      heavy: { milliseconds: 1500, megabytes: 3000 },
+      heavy: { milliseconds: 1500, megabytes: 3000, waitsFor: "b" },
       b: { milliseconds: 90, megabytes: 862 },
       c: { milliseconds: 80, megabytes: 400 },
       d: { milliseconds: 70 },
@@ -104,6 +115,73 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
     "start b",
     "start a",
   ]);
+});
+
+// `untilEveryThreadIs` reads /proc.
+test.skipIf(!isLinux)("the process that replaces a worker that waited for room gets one file at a time", async () => {
+  // The first to start keeps its worker until all three have started, so the other two are the new process's.
+  const half = (name: string) => `
+    import { test } from "bun:test";
+    import { appendFileSync, readFileSync } from "node:fs";
+    test("${name}", async () => {
+      appendFileSync("started", "${name}");
+      if (readFileSync("started", "utf8").startsWith("${name}")) while (readFileSync("started").length < 3) await Bun.sleep(1);
+    }, 100_000);`;
+  using dir = tempDir("waiting-worker-is-replaced", {
+    "largest.test.js": `
+      import { test } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      test("largest", () => {
+        while (!existsSync("go")) Bun.sleepSync(1);
+        setTimeout(() => writeFileSync("reported", ""));
+      }, 100_000);`,
+    "a.test.js": half("a"),
+    "b.test.js": half("b"),
+    "c.test.js": half("c"),
+    "light.test.js": `import { test } from "bun:test"; test("pids " + process.ppid + " " + process.pid, () => {});`,
+    "timings.json": JSON.stringify({
+      version: 1,
+      files: { "largest.test.js": 5, "a.test.js": 4, "b.test.js": 3, "c.test.js": 2, "light.test.js": 1 },
+      memory: { "largest.test.js": 4500, "a.test.js": 1500, "b.test.js": 1500, "c.test.js": 1500 },
+    }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--aot", "--no-isolate", "--parallel=2", "--timings=timings.json"],
+    env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const letLargestEnd = () => writeFileSync(join(String(dir), "go"), "");
+  let stderr = "";
+  let replaced: Promise<void> | undefined;
+  for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+    stderr += chunk;
+    // The group ends when the coordinator learns that the file is done. From then on its worker waits.
+    const pids = /\(pass\) pids (\d+) (\d+)[^]*::endgroup::/.exec(stderr);
+    if (!pids) continue;
+    replaced ??= (async ([coordinator, worker]) => {
+      process.kill(coordinator, "SIGSTOP");
+      try {
+        await untilEveryThreadIs("T", coordinator);
+        process.kill(worker, "SIGKILL");
+        await untilEveryThreadIs("Z", worker);
+        letLargestEnd();
+        const deadline = performance.now() + 30_000;
+        while (!existsSync(join(String(dir), "reported"))) {
+          if (performance.now() > deadline) throw new Error("the largest file did not end");
+          await Bun.sleep(1);
+        }
+      } finally {
+        letLargestEnd();
+        process.kill(coordinator, "SIGCONT");
+      }
+    })(pids.slice(1).map(Number));
+  }
+  expect(replaced).toBeDefined();
+  await replaced;
+  expect(stderr).toContain(" 5 pass\n 0 fail\n");
+  expect(await proc.exited).toBe(0);
 });
 
 test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew", async () => {
@@ -158,4 +236,36 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   // A run that is not compiled measures nothing and keeps what the table says.
   expect((await run([bunExe(), "test", ...flags], String(dir), env)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8")).memory).toEqual(written.memory);
+});
+
+test.skipIf(!isLinux)("what the file before left behind is not taken off a file's growth", async () => {
+  // One worker is held by the first file until the last has ended, so the other two run in one worker, one behind the other.
+  // The second leaves 300 MB that nothing holds once it has ended. The third has them collected and then takes as much itself: its worker is never
+  // larger than it was when the file began.
+  using dir = tempDir("heavy-test-files-behind-one-another", {
+    "a-holds-a-worker.test.js": fileThatTakes(
+      "a-holds-a-worker",
+      1,
+      `while (!require("node:fs").readFileSync(process.env.TRAIL, "utf8").includes("end c-grows")) await Bun.sleep(20);`,
+    ),
+    // The file holds them as long as it is there.
+    "b-leaves-garbage.test.js":
+      fileThatTakes("b-leaves-garbage", 1, "held = Buffer.alloc(300 << 20, 1);") +
+      "let held; export const size = () => held?.length;",
+    "c-grows.test.js": fileThatTakes("c-grows", 1, "Bun.gc(true); globalThis.kept = Buffer.alloc(300 << 20, 1);"),
+  });
+  const trail = join(String(dir), "trail.txt");
+  const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
+  expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), { ...bunEnv, TRAIL: trail })).exitCode).toBe(0);
+  const lines = readFileSync(trail, "utf8").trim().split("\n");
+  expect(lines.filter(line => !line.endsWith("a-holds-a-worker"))).toEqual([
+    "start b-leaves-garbage",
+    "end b-leaves-garbage",
+    "start c-grows",
+    "end c-grows",
+  ]);
+  expect(lines.indexOf("start a-holds-a-worker")).toBeLessThan(lines.indexOf("start c-grows"));
+  expect(lines.at(-1)).toBe("end a-holds-a-worker");
+  const { memory } = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
+  expect(memory["c-grows.test.js"]).toBeWithin(280, 500);
 });

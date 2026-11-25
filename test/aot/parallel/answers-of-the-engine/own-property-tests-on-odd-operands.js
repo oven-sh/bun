@@ -1,5 +1,5 @@
 // Object.hasOwn refuses undefined and null before it converts its key, hasOwnProperty converts the key first. A stub or one operation stands in the place of either call only where nobody can tell: primitives, proxies with traps, keys that talk or throw, indexes and symbols answer as the functions do, in a loop and outside.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 const attempt = (way) => { try { return way(); } catch (error) { return error.name; } };
 const log = [];

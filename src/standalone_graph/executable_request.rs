@@ -187,7 +187,15 @@ pub(crate) fn append_compiled_program_record(
     append_record(builder, program, image, paths, &file_indices)
 }
 
+#[cfg(test)]
 pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphBytes> {
+    graph_bytes_with_image(request, ImagePlace::InGraph)
+}
+
+fn graph_bytes_with_image(
+    request: &GraphRequest<'_>,
+    place: ImagePlace,
+) -> crate::Result<GraphBytes> {
     to_bytes(
         request.target,
         request.module_prefix,
@@ -197,19 +205,41 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
         request.flags,
         request.runtime_options,
         request.compiled_program.as_ref(),
-        ImagePlace::InGraph,
+        place,
     )
 }
 
-pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
-    let graph = graph_bytes(request)?;
+/// The length of the graph and the graph, in slices that follow one another. The image is not copied: its slice is where the engine left it.
+pub fn with_graph_slices<R>(
+    request: &GraphRequest<'_>,
+    take: impl FnOnce(&[&[u8]]) -> R,
+) -> crate::Result<R> {
+    let graph = graph_bytes_with_image(request, ImagePlace::OutsideGraph)?;
     if graph.bytes.is_empty() {
         return Err(crate::Error::CorruptedCompiledProgram);
     }
-    let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + graph.bytes.len());
-    bytes.extend_from_slice(&(graph.bytes.len() as u64).to_le_bytes());
-    bytes.extend_from_slice(&graph.bytes);
-    Ok(bytes)
+    let length = (graph.bytes.len() as u64).to_le_bytes();
+    let program = request.compiled_program.as_ref();
+    Ok(match (graph.image, program) {
+        (Some(range), Some(program)) => {
+            let (front, others) = graph.bytes.split_at(range.offset as usize);
+            let rest = &others[range.length as usize..];
+            take(&[&length, front, &*program.image, rest])
+        }
+        _ => take(&[&length, &graph.bytes]),
+    })
+}
+
+pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
+    with_graph_slices(request, |slices| {
+        let mut bytes: Vec<u8> = Vec::with_capacity(slices.iter().map(|slice| slice.len()).sum());
+        for slice in slices {
+            bun_core::vec::append_with(&mut bytes, usize::MAX, |spare| {
+                bun_core::append_in_parallel(spare, slice);
+            });
+        }
+        bytes
+    })
 }
 
 pub fn write_executable(request: &mut ExecutableRequest<'_>) -> crate::Result<ExecutableOutcome> {

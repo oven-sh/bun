@@ -359,10 +359,20 @@ function main(): void {
 
   // 2. Package facts: the workspace's metadata, plus the std workspace's when -Zbuild-std put std units in the graph.
   //    --filter-platform keeps cargo from resolving (and downloading) crates that only other targets use.
-  const platforms = [...new Set([host, triple])].flatMap(t => ["--filter-platform", t]);
+  //    cargo probes every platform named there with the environment's rustflags, and rustc refuses an arm64 host
+  //    with an x64 `-Ctarget-cpu`. So they go in as the target's own.
+  const platforms = [
+    ...[...new Set([host, triple])].flatMap(t => ["--filter-platform", t]),
+    "--config",
+    `target.${JSON.stringify(triple)}.rustflags=${JSON.stringify(rustflags)}`,
+  ];
+  const withoutRustflags = { CARGO_ENCODED_RUSTFLAGS: undefined, RUSTFLAGS: undefined };
   const packages: Record<string, MetadataPackage> = {};
   const meta = JSON.parse(
-    run(cargo, ["metadata", "--format-version=1", "--locked", ...platforms], { inheritStderr: true }),
+    run(cargo, ["metadata", "--format-version=1", "--locked", ...platforms], {
+      env: withoutRustflags,
+      inheritStderr: true,
+    }),
   ) as {
     packages: MetadataPackage[];
     workspace_root: string;
@@ -399,7 +409,7 @@ function main(): void {
         cargo,
         ["metadata", "--format-version=1", "--locked", "--all-features", ...platforms, "--manifest-path", stdManifest],
         {
-          env: { RUSTC_BOOTSTRAP: "1" },
+          env: { ...withoutRustflags, RUSTC_BOOTSTRAP: "1" },
           inheritStderr: true,
         },
       ),

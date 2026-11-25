@@ -1,0 +1,19 @@
+# -- source: why-gone-says-that-a-kept-map-of-accessors-has-not-gone.js
+# const accessors = { first: { get() { return 1; } }, second: { get() { return 2; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer() {}
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer().first);
+# -- end of source
+# The twin of why-gone-gives-the-chain-by-which-a-kept-map-with-a-data-descriptor-went: each entry is an accessor as written, the map stays, and the print says so of the layout and of the field that keeps it.
+# RUN(LAYOUT): link why-gone L3
+# LAYOUT: why-gone L3: it has not gone
+# LAYOUT-NOT: a rule let it go
+# RUN(FIELD): link why-gone L1.field0
+# FIELD: why-gone L1.field0: it holds nothing unseen
+# RUN(NONE): link why-gone L9999 nowhere
+# NONE: why-gone L9999: no such layout
+# NONE: why-gone nowhere: no node is described so
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1

@@ -1,8 +1,6 @@
 use bun_ast::{Loader, Log};
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
-use bun_core::ZBox;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relative_platform};
+use bun_paths::Path;
 use bun_sema_driver::typed_files::javascript_path_beside;
 
 use crate::cli::check_command::{
@@ -33,8 +31,10 @@ pub(crate) fn add_typed_files(
     log: &mut Log,
     output_files: &mut Vec<OutputFile>,
 ) -> CompilerOptions {
-    let outdir = join_abs_string::<Auto>(request.working_directory, &[request.outdir]).to_vec();
-    let path_of = |file: &OutputFile| join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec();
+    let mut outdir = Path::resolve(&[request.working_directory, request.outdir]);
+    // Makes `from_native` convert the last name as a directory, like in the paths below it.
+    outdir.push_trailing_sep();
+    let path_of = |file: &OutputFile| Path::resolve(&[&outdir, &file.dest_path]).to_vec();
     let text_of = |file: &OutputFile| match &file.value {
         OutputFileValue::Buffer { bytes } => Some(bytes.to_vec()),
         OutputFileValue::Saved(_) => {
@@ -54,6 +54,10 @@ pub(crate) fn add_typed_files(
         if !is_code || !file.loader.is_javascript_like() {
             continue;
         }
+        // The type checker reads `\` as a separator.
+        if cfg!(not(windows)) && bun_core::strings::contains_char(&file.dest_path, b'\\') {
+            continue;
+        }
         let source_map = output_files.get(file.source_map_index as usize);
         let (Some(mut text), Some(source_map)) = (text_of(file), source_map.and_then(text_of))
         else {
@@ -69,7 +73,7 @@ pub(crate) fn add_typed_files(
             path: path_of(file),
             text,
             source_map,
-            entry_point: is_entry_point.then_some(file.src_path.text),
+            entry_point: is_entry_point.then_some(&*file.src_path),
         });
     }
     let javascript: Vec<WrittenJavaScript<'_>> = written
@@ -103,13 +107,14 @@ pub(crate) fn add_typed_files(
         warn_unless_package_states(&outdir, &typed_files.compiler_options, log);
     }
     for typed in typed_files.files {
-        let mut path = relative_platform::<Auto, false>(&outdir, &typed.path).to_vec();
-        platform_to_posix_in_place::<u8>(&mut path);
         output_files.push(OutputFile {
             loader: Loader::Ts,
             input_loader: Loader::Ts,
             output_kind: OutputKind::Asset,
-            dest_path: path.into_boxed_slice(),
+            dest_path: Path::relative(&outdir, &typed.path)
+                .into_portable()
+                .as_bytes()
+                .into(),
             size: typed.text.len(),
             size_without_sourcemap: typed.text.len(),
             value: OutputFileValue::Buffer {
@@ -129,8 +134,7 @@ fn without_debug_id(text: &[u8]) -> Option<&[u8]> {
 }
 
 fn drop_source_maps(outdir: &[u8], output_files: &mut Vec<OutputFile>) {
-    let path_of =
-        |file: &OutputFile| ZBox::from_bytes(join_abs_string::<Auto>(outdir, &[&file.dest_path]));
+    let path_of = |file: &OutputFile| Path::resolve(&[outdir, &file.dest_path]);
     for file in output_files.iter_mut() {
         if file.source_map_index == u32::MAX {
             continue;

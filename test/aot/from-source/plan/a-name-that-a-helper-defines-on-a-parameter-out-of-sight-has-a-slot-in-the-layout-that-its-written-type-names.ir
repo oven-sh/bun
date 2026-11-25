@@ -1,0 +1,24 @@
+# `function defineLimit(gate: Gate) { Object.defineProperty(gate, "limit", { get, set, .. }) }`, and Link knows nothing of what arrives as `gate` (unseen code alone calls the helper; in a library: a constructor whose `this` is lost).
+# The definition reached no layout: the name got no slot, or, where a written type lists it and it is stored on unknown objects, a PLAIN one, which the accessor leaves at once: the cell then says "a field lies outside its slot" for life
+# and every look at the cell fails. The parameter's written type says which layout is meant: the name is planned there in the form of the descriptor. The plan's form is an expectation, which the run time checks.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function hand(make: unknown, define: unknown): any;
+# interface Gate { limit: number | null; open: boolean; width?: number }
+# function limitGet(this: Gate) { return 7; }
+# function limitSet(this: Gate, value: number | null) { }
+# function defineLimit(gate: Gate) {
+#   Object.defineProperty(gate, "limit", { configurable: true, enumerable: true, get: limitGet, set: limitSet });
+# }
+# function Gate(): void {
+#   if (!(this instanceof Gate)) return new Gate();
+#   this.open = true;
+# }
+# function sum(gates: Gate[]) { let n = 0; for (const gate of gates) n += (gate.open ? 1 : 0) + (gate.limit ?? 0) + (gate.width ?? 100); return n; }
+# print(sum(hand(Gate, defineLimit)));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: slot {{*}}"limit" appended {{*}}accessor
+# RUN(ANSWERS): run-in-shell globalThis.hand = (Gate, defineLimit) => { const gates = [new Gate(), Gate()]; for (const gate of gates) defineLimit(gate); return gates; };
+# ANSWERS: 216
+# ANSWERS-NEXT: exited with 0

@@ -127,7 +127,7 @@ void InspectorBunFrontendDevServerAgent__notifyClientDisconnected(InspectorBunFr
     agent->clientDisconnected(devServerId, connectionId);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString* triggerFiles, size_t triggerFilesLen)
+void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendDevServerAgent* agent, int devServerId, Bun::OwnedString* triggerFiles, size_t triggerFilesLen)
 {
     // Create a JSON array for the triggerFiles
     Ref<JSON::ArrayOf<String>> files = JSON::ArrayOf<String>::create();
@@ -143,7 +143,7 @@ void InspectorBunFrontendDevServerAgent__notifyBundleComplete(InspectorBunFronte
     agent->bundleComplete(devServerId, durationMs);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString buildErrorsPayloadBase64)
+void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, Bun::OwnedString buildErrorsPayloadBase64)
 {
     agent->bundleFailed(devServerId, buildErrorsPayloadBase64.transferToWTFString());
 }

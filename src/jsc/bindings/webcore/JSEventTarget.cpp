@@ -21,8 +21,6 @@
 #include "config.h"
 #include "JSEventTarget.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSAddEventListenerOptions.h"
 #include "JSDOMBinding.h"
@@ -38,66 +36,19 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEvent.h"
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 #include "BunProcess.h"
 
 namespace WebCore {
 using namespace JSC;
 
-// Attributes
-
-static JSC_DECLARE_CUSTOM_GETTER(jsEventTargetConstructor);
-
-class JSEventTargetPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSEventTargetPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSEventTargetPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventTargetPrototype))) JSEventTargetPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventTargetPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSEventTargetPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-
-public:
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::IsImmutablePrototypeExoticObject;
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventTargetPrototype, JSEventTargetPrototype::Base);
-
+using JSEventTargetPrototype = JSDOMPrototype<JSEventTarget, JSC::IsImmutablePrototypeExoticObject>;
 using JSEventTargetDOMConstructor = JSDOMConstructor<JSEventTarget>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -124,29 +75,18 @@ JSC_ANNOTATE_HOST_FUNCTION(JSEventTargetDOMConstructorConstruct, JSEventTargetDO
 
 template<> const ClassInfo JSEventTargetDOMConstructor::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTargetDOMConstructor) };
 
-template<> JSValue JSEventTargetDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSEventTargetDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "EventTarget"_s, JSEventTarget::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSEventTargetPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsEventTargetConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSEventTargetPrototype::constructorGetter, 0 } },
     { "addEventListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventTargetPrototypeFunction_addEventListener, 2 } },
     { "removeEventListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventTargetPrototypeFunction_removeEventListener, 2 } },
     { "dispatchEvent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventTargetPrototypeFunction_dispatchEvent, 1 } },
 };
 
-const ClassInfo JSEventTargetPrototype::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTargetPrototype) };
+template<> const ClassInfo JSEventTargetPrototype::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTargetPrototype) };
 
-void JSEventTargetPrototype::finishCreation(VM& vm)
+template<> void JSEventTargetPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSEventTarget::info(), JSEventTargetPrototypeTableValues, *this);
@@ -155,50 +95,14 @@ void JSEventTargetPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSEventTarget::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTarget) };
 
-JSEventTarget::JSEventTarget(Structure* structure, JSDOMGlobalObject& globalObject, Ref<EventTarget>&& impl)
-    : JSDOMWrapper<EventTarget>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSEventTarget::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, EventTarget>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSEventTarget::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSEventTargetPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSEventTargetPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSEventTarget::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSEventTarget>(vm, globalObject);
+    return JSEventTargetPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSEventTarget::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSEventTargetDOMConstructor, DOMConstructorID::EventTarget>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSEventTarget::destroy(JSC::JSCell* cell)
-{
-    JSEventTarget* thisObject = static_cast<JSEventTarget*>(cell);
-    thisObject->JSEventTarget::~JSEventTarget();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSEventTargetPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSEventTarget::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventTarget>::ClassParameter castedThis)
@@ -245,7 +149,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_addEventListenerBody>(*lexicalGlobalObject, *callFrame, "addEventListener");
 }
 
 static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_removeEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventTarget>::ClassParameter castedThis)
@@ -294,63 +198,17 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_dispatchEventBo
 
 JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventTarget>::call<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
+    return IDLOperation<JSEventTarget>::callExposingReceiver<jsEventTargetPrototypeFunction_dispatchEventBody>(*lexicalGlobalObject, *callFrame, "dispatchEvent");
 }
 
-JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)
+bool JSEventTarget::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral* reason) const
 {
-    return WebCore::subspaceForImpl<JSEventTarget, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEventTarget, m_subspaceForEventTarget));
-}
-
-template<typename Visitor>
-void JSEventTarget::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSEventTarget);
-
-template<typename Visitor>
-void JSEventTarget::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSEventTarget::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSEventTarget::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSEventTarget::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSEventTarget>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsEventTarget = uncheckedDowncast<JSEventTarget>(handle.slot()->asCell());
-    if (jsEventTarget->wrapped().isFiringEventListeners()) {
+    if (wrapped().isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;
         return true;
     }
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
     return false;
-}
-
-void JSEventTargetOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsEventTarget = static_cast<JSEventTarget*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsEventTarget->wrapped(), jsEventTarget);
 }
 
 }

@@ -1,0 +1,23 @@
+# const load = [require][index]; let kept = 1; load(() => kept);
+# The environment of a closure is made as a literal is, and its field has no key. A field without a key spells nothing. Without the test for it the look asked the table for the key that is none, and the build died.
+# Names from run time are held back here, as under --trim: elsewhere no module is listed and no key is asked.
+# OPTIONS: exclude=CodeOutsideImage,FeaturesNamedAtRunTime
+# RUN: features
+# CHECK-NOT: by BunJsc named
+
+layout L0 kind=Environment module=m0 fields=[{declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="index" [isFreeName]
+    v4 = ElemGet v1, v3
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Call v4, -, v6 calleeName="load"
+    Return v7
+}

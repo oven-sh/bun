@@ -1,0 +1,29 @@
+# -- source: main.cjs
+# "use strict";
+# function blends(mix, red, blue) { mix[0] = red[0] * 0.75 + blue[2]; mix[2] = blue[1] - red[0]; mix[1] = red[1] + mix[0] * 0.5; return mix; }
+# function bright(mix, red) { return mix[2] * 3 + mix[0] - red[2] * mix[1]; }
+# const N = { blends: undefined, bright: undefined }; N.blends = blends; N.bright = bright; Object.defineProperty(N, "bright", { value: bright });
+# const sizes = JSON.parse("[3, 3, 3, 2]");
+# const m = new Float64Array(sizes[0]), p = new Float64Array(sizes[1]), q = new Float64Array(sizes[2]), short = new Float64Array(sizes[3]);
+# p.set([1.5, 2.5, 3.5]); q.set([0.5, 0.25, 4]);
+# function f(t, b) { p[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { N.blends(m, p, b); s += N.bright(m, p); } return s; }
+# print(f(1, q), f(2, q), f(1, short));
+# -- end of source
+# f3 = f
+# `blue[2]` off a view whose length nobody knows: the place is written and the view stands in front of the loop, yet each read asked the length in its turn and gave "a number or undefined", and each store
+# asked it again. No turn of the typed copy runs other code or lays hands on the storage of a view, so every turn would find what the first finds: the place is held below the length once, in front
+# of the typed copy, as a small range below a written bound already was. A view that is too short leaves there, for a typed copy that asks in its turns.
+# RUN(COUNT): compile TypedArrayBoundsChecksHoisted mechanisms=all
+# COUNT-NOT: statistic TypedArrayBoundsChecksHoisted 0
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
+# CHECK-NOT: @OptionalDouble = GetTypedArrayElement
+# CHECK: ({{*}}: number @Double, {{*}}) isInLoop=true isLoopHead=true:
+# CHECK: Return
+# RUN(ANSWER): run-in-shell
+# ANSWER: -1456.25 -1812.5 NaN
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: -1456.25 -1812.5 NaN
+# CHECKED-NEXT: exited with 0

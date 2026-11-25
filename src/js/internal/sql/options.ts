@@ -142,10 +142,11 @@ type PassedOver = [url: string, requireTLS: boolean];
 function urlFromEnvironment(
   adapter: Adapter | null,
   server: boolean,
-): [url: string | null, adapter: Adapter | null, requireTLS: boolean, passedOver: PassedOver | null] {
+): [url: string | null, adapter: Adapter | null, requireTLS: boolean, passedOver: PassedOver | null, whyNone?: string] {
   // also from the name of an SQLite URL that counts as not set
   let requireTLS = false;
   let passedOver: PassedOver | null = null;
+  let empty: string | undefined, unset: string | undefined;
   for (const row of ENVIRONMENT_URLS) {
     const implied = row[0];
     if (implied && (adapter ? implied !== adapter : server && implied === "sqlite")) continue;
@@ -153,7 +154,12 @@ function urlFromEnvironment(
     for (let i = 1; i < row.length; i++) {
       const name = row[i] as string;
       const url = envVar(name);
-      if (!url) continue;
+      if (!url) {
+        if (server) continue;
+        if (url === "") empty ??= name;
+        else if (i === 1) unset ??= name;
+        continue;
+      }
 
       const tls = name.startsWith("TLS_");
       const named = adapterFromScheme(schemeOf(url));
@@ -172,7 +178,7 @@ function urlFromEnvironment(
       return [url, named === "sqlite" ? named : implied, requireTLS || tls, passedOver];
     }
   }
-  return [null, null, requireTLS, passedOver];
+  return [null, null, requireTLS, passedOver, empty ? empty + " is empty" : unset && unset + " is not set"];
 }
 
 function hasServerOption(options: AnyOptions): boolean {
@@ -260,6 +266,7 @@ function resolveTarget(
   target: string | URL | null,
   requireTLS: boolean,
   passedOver: PassedOver | null,
+  whyNoTarget: string | undefined,
 ] {
   let target: string | URL | null = null;
   // An options object can have its own `href` and `protocol`. A URL inherits them as accessors.
@@ -303,11 +310,12 @@ function resolveTarget(
   // the name of its variable still counts: for the adapter, and TLS_ for the SSL mode.
   let requireTLS = false;
   let passedOver: PassedOver | null = null;
+  let whyNoTarget: string | undefined = "the URL is empty";
   if (readsEnvironment) {
     const namesServer =
       adapter !== "sqlite" && !!(target || options.hostname || options.host || options.path || options.socket);
     let url: string | null, implied: Adapter | null;
-    [url, implied, requireTLS, passedOver] = urlFromEnvironment(adapterOption, namesServer);
+    [url, implied, requireTLS, passedOver, whyNoTarget] = urlFromEnvironment(adapterOption, namesServer);
     target ||= url;
     // A URL that is in use speaks for its server itself.
     if (target) passedOver = null;
@@ -328,7 +336,7 @@ function resolveTarget(
     }
   }
 
-  return [adapter, options, target, requireTLS, passedOver];
+  return [adapter, options, target, requireTLS, passedOver, whyNoTarget];
 }
 
 function refuseRequiredChannelBinding(adapter: Adapter, channelBinding: unknown) {
@@ -572,7 +580,8 @@ function readUrlQuery(url: URL, isPostgres: boolean, parameters: Record<string, 
 const NO_QUERY: UrlQuery = { __proto__: null };
 
 function envOf(prefix: string, name: string): string | undefined {
-  return envVar(`${prefix}_${name}`) || envVar(prefix + name);
+  const value = envVar(`${prefix}_${name}`);
+  return value || (envVar(prefix + name) ?? value);
 }
 
 function isDirectory(path: string): boolean {
@@ -643,7 +652,7 @@ function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
 ): Bun.SQL.__internal.DefinedOptions {
-  const [adapter, options, target, requireTLS, passedOver] = resolveTarget(
+  const [adapter, options, target, requireTLS, passedOver, whyNoTarget] = resolveTarget(
     stringOrUrlOrOptions,
     definitelyOptionsButMaybeEmpty,
   );
@@ -693,8 +702,8 @@ function parseOptions(
   // Every field: option, deprecated alias, URL query, URL, environment, default.
   // Except the database, whose variable is above the URL.
 
-  let hostname: string =
-    options.hostname || options.host || query.hostname || urlHostname || envOf(prefix, "HOST") || "localhost";
+  const namedHost = options.hostname || options.host || query.hostname || urlHostname || envOf(prefix, "HOST");
+  let hostname: string = namedHost || "localhost";
 
   const port = Number(options.port || query.port || url?.port || envOf(prefix, "PORT") || (isPostgres ? 5432 : 3306));
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
@@ -916,11 +925,31 @@ function parseOptions(
 
   if (path) {
     ret.path = path;
+  } else if (!namedHost && target === null) {
+    let why = whyNoTarget;
+    if (namedHost === "") why = `${prefix}${envVar(prefix + "HOST") === "" ? "" : "_"}HOST is empty`;
+    if (options.hostname === "" || options.host === "") why = "the host name is empty";
+    if (options.url === "") why = "the URL is empty";
+    whyLocalhost.set(ret, why);
   }
 
   return ret;
 }
 
+/** For the options in which nothing names a server. */
+const whyLocalhost = new WeakMap<object, string | undefined>();
+
+function describeAddress(options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions): string {
+  const path = $getByIdDirect(options, "path");
+  if (path) return path;
+  const hostname = options.hostname!;
+  // A URL or credentials in the place of a host name.
+  const shown = /[@/=]|%40/.test(hostname) ? REDACTED : hostname;
+  const why = whyLocalhost.get(options);
+  return `${shown}:${options.port}${why ? ` (${why})` : ""}`;
+}
+
 export default {
   parseOptions,
+  describeAddress,
 };

@@ -1,0 +1,30 @@
+# main.cjs, the entry of a closed executable: exports.fetch = function (n) { return n }; exports.fetch(1);
+# The exports are the `default` of a CommonJS entry: with a `fetch` on them the host starts a server, and calls it.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN(LINK): link functions variables lookups mechanisms=all
+# LINK-NOT: function f1 {{*}}callers-known
+# LINK-NOT: variable g0 {{*}}writers-known
+# LINK-NOT: lookup entry-hands-host-nothing
+# RUN(FEATURES): features
+# FEATURES: by BunServe
+
+layout L0 module=m0 fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app"]}, {exportName="then"}]
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="file" module=m0 kind=CommonJsModule results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="fetch"
+    v6 = Integer integer=1
+    v7 = Call v5, v4, v6 calleeKey="fetch" calleeName="fetch"
+    Return
+}
+function f1 name="fetch" module=m0 length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

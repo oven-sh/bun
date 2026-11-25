@@ -90,49 +90,19 @@ exports.pattern = a + renamed(5);
 // CHECK-NEXT: v13 = PropGet v12 key="log"
 // CHECK-NEXT: v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
 // CHECK-NEXT: v15 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v16 = CheckInitialized v15 name="s"
-// CHECK-NEXT: v17 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v18 = CheckInitialized v17 name="g"
-// CHECK-NEXT: v19 = Integer integer=1
-// CHECK-NEXT: v20 = Call v18, -, v19 calleeName="g"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v22 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v23 = TypeTest v22 testedType=absent
-// CHECK-NEXT: Branch v23 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v24):
-// CHECK-NEXT: v25 = ModuleNamespace module=[[m_5]]
-// CHECK-NEXT: v26 = PropGet v25 key="s"
-// CHECK-NEXT: Jump -> next b3(v26)
-// CHECK-NEXT: b2(v27):
-// CHECK-NEXT: Jump -> next b3(v27)
-// CHECK-NEXT: b3(v28):
-// CHECK-NEXT: v29 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v30 = TypeTest v29 testedType=absent
-// CHECK-NEXT: Branch v30 -> taken b4(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b4(v31):
-// CHECK-NEXT: v32 = ModuleNamespace module=[[m_5]]
-// CHECK-NEXT: v33 = PropGet v32 key="g"
-// CHECK-NEXT: Jump -> next b6(v33)
-// CHECK-NEXT: b5(v34):
-// CHECK-NEXT: Jump -> next b6(v34)
-// CHECK-NEXT: b6(v35):
-// CHECK-NEXT: v36 = ModuleNamespace module=[[m_5]]
-// CHECK-NEXT: v37 = Integer integer=2
-// CHECK-NEXT: v38 = Call v35, v36, v37 calleeName="forEs.g"
-// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v40 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v41 = CheckInitialized v40 name="theDefault"
-// CHECK-NEXT: v42 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v43 = TypeTest v42 testedType=absent
-// CHECK-NEXT: Branch v43 -> taken b7(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b7(v44):
-// CHECK-NEXT: v45 = ModuleNamespace module=[[m_5]]
-// CHECK-NEXT: v46 = PropGet v45 key="default"
-// CHECK-NEXT: Jump -> next b9(v46)
-// CHECK-NEXT: b8(v47):
-// CHECK-NEXT: Jump -> next b9(v47)
-// CHECK-NEXT: b9(v48):
-// CHECK-NEXT: v49 = Call v14, v12, v16, v21, v28, v39, v41, v48 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v50 = Undefined
-// CHECK-NEXT: Return v50
+// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v17 = Integer integer=1
+// CHECK-NEXT: v18 = Call v16, -, v17 calleeName="g"
+// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v20 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v21 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v22 = ModuleNamespace module=[[m_5]]
+// CHECK-NEXT: v23 = Integer integer=2
+// CHECK-NEXT: v24 = Call v21, v22, v23 calleeName="forEs.g"
+// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v26 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v27 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v28 = Call v14, v12, v15, v19, v20, v25, v26, v27 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v29 = Undefined
+// CHECK-NEXT: Return v29
 // CHECK-NEXT: }

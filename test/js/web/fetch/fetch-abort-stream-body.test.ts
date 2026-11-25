@@ -140,6 +140,24 @@ test("aborting fetch with a ReadableStream request body does not double-cancel t
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  ["res.body", (res: Response) => res.body!.getReader().read()],
+  ["res.clone()", (res: Response) => res.clone().text()],
+])("%s fails with the error of an upload that failed just before", async (_, read) => {
+  await using server = net.createServer(socket =>
+    socket.on("error", () => {}).once("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  let upload!: ReadableStreamDefaultController;
+  const body = new ReadableStream({ start: controller => (upload = controller).enqueue(new Uint8Array(1)) });
+  const res = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, { method: "POST", body });
+  const error = new Error("upload failed");
+  upload.error(error);
+  // Microtasks only: the request is given up, and its end has not been reported yet.
+  for (let i = 0; i < 20; i++) await null;
+  expect(await read(res).catch(e => e)).toBe(error);
+});
+
 // Fetch spec "abort a fetch" step 4: if response's body is non-null and
 // readable, error the stream with the abort reason. When the body is fully
 // received before .body is touched, the stream is backed by a ByteBlobLoader

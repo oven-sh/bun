@@ -1,0 +1,10 @@
+# The options of a CustomEvent are read under four names and the detail is kept: nothing else comes with it
+# -- source: a-custom-event-with-a-detail-brings-no-other-feature.ts
+# const event = new CustomEvent("a", { detail: { count: 1 } }); process.exitCode = event.detail.count === 1 ? 0 : 1;
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by CustomEvent
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

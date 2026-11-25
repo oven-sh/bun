@@ -46,6 +46,7 @@ impl<'s> Folder<'_, 's> {
             (
                 Value::Known(_),
                 Effects::Unknown
+                | Effects::LeftOutUnderMinifySyntax
                 | Effects::LeftOutByBunRun
                 | Effects::TypeTest
                 | Effects::DeadZoneCheck

@@ -1,4 +1,5 @@
-// `bun test --aot` makes a call of import() a turn later than an executable does, once. Nothing else about it differs: a test prints what the executable of the same files prints.
+// `bun test --aot` makes a call of import() a turn later than an executable does, once. A test prints what the executable of the same files prints, with one exception:
+// as in `bun test`, a call of a file without imports settles before the source of the next call arrives (`testLines`).
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -8,7 +9,10 @@ const says = (name: string, ...imports: string[]) =>
   imports.map(imported => `import "./${imported}.mjs";\n`).join("") + `console.log("| ${name}");\n`;
 const isIn = (name: string) => `.then(() => console.log("| ${name} is in"))`;
 
-const projects: Record<string, { files: Record<string, string>; body: string[]; lines: string[] }> = {
+const projects: Record<
+  string,
+  { files: Record<string, string>; body: string[]; lines: string[]; testLines?: string[] }
+> = {
   "three calls in one job": {
     files: { "a.mjs": says("a"), "b.mjs": says("b"), "c.mjs": says("c") },
     body: [
@@ -19,6 +23,7 @@ const projects: Record<string, { files: Record<string, string>; body: string[]; 
       `]);`,
     ],
     lines: ["a", "b", "c", "a is in", "b is in", "c is in"],
+    testLines: ["a", "a is in", "b", "b is in", "c", "c is in"],
   },
   "a call a job behind another": {
     files: { "a.mjs": `console.log("| a starts");\nawait 0;\nconsole.log("| a ends");\n`, "b.mjs": says("b") },
@@ -61,7 +66,7 @@ async function linesOf(cmd: string[], cwd: string) {
     .map(line => line.slice(2));
 }
 
-test.each(Object.entries(projects))("%s", async (_, { files, body, lines }) => {
+test.each(Object.entries(projects))("%s", async (_, { files, body, lines, testLines }) => {
   using dir = tempDir("aot-delayed-imports", {
     "package.json": `{ "name": "p" }`,
     ...files,
@@ -73,5 +78,5 @@ test.each(Object.entries(projects))("%s", async (_, { files, body, lines }) => {
   expect({
     executable: await linesOf([join(cwd, "compiled.exe")], cwd),
     test: await linesOf([bunExe(), "test", "--aot"], cwd),
-  }).toEqual({ executable: lines, test: lines });
+  }).toEqual({ executable: lines, test: testLines ?? lines });
 });

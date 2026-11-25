@@ -1,0 +1,1 @@
+export { version } from "bun";

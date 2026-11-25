@@ -178,7 +178,7 @@ pub fn stop_all_for_vm_teardown() {
                     owner
                 );
                 // A listed file always has its reader as owner: `set_source`
-                // lists and records it in one step, `set_parent` keeps it current.
+                // lists and records it in one step, `set_owner` keeps it current.
                 let close = close_via_owner.expect("file listed without its reader");
                 // SAFETY: the reader unlists the file before handing it off or
                 // dropping it, and re-records itself whenever it moves.
@@ -197,32 +197,12 @@ pub fn stop_all_for_vm_teardown() {
             handle,
             e.owner
         );
-        match (e.close_via_owner, e.kind) {
+        match e.close_via_owner {
             // SAFETY: the owner recorded itself for this live handle and clears
             // or replaces the slot before it goes away (set_owner contract).
-            (Some(close), _) => unsafe { close(e.owner) },
-            // SAFETY: listed ⇒ initialised on this thread and not closing; a
-            // pipe/tty nobody adopted is a leaked Box handed to libuv here.
-            (None, Kind::Pipe) => unsafe { Pipe::close_and_destroy_unlisted(handle.cast()) },
-            // SAFETY: as above (a leaked Box<Tty> nobody adopted).
-            (None, Kind::Tty) => unsafe {
-                unsafe extern "C" fn free_tty(t: *mut uv_tty_t) {
-                    // SAFETY: heap `Box<Tty>` (stdin's static tty is never
-                    // listed); `from_uv` recovers the owning box.
-                    drop(unsafe { Box::from_raw(super::Tty::from_uv(t)) });
-                }
-                uv_close(
-                    handle,
-                    Some(mem::transmute::<
-                        unsafe extern "C" fn(*mut uv_tty_t),
-                        unsafe extern "C" fn(*mut uv_handle_t),
-                    >(free_tty)),
-                );
-            },
-            // A process handle is embedded in its owner and always adopted at
-            // spawn; an unowned one cannot be freed safely — close in place.
-            // SAFETY: listed ⇒ an initialised, not-closing handle on this loop.
-            (None, Kind::Process) => unsafe { uv_close(handle, None) },
+            Some(close) => unsafe { close(e.owner) },
+            // SAFETY: listed ⇒ initialised on this loop and not closing. Its holder frees it.
+            None => unsafe { uv_close(handle, None) },
         }
     }
 }

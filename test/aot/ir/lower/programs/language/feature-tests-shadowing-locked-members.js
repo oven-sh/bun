@@ -1,19 +1,19 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// What polyfills and transpiler run-times (core-js, regenerator-runtime, es6-shim) rest on when they load: an ordinary object that inherits from a built-in prototype takes a property under the name of one of its members by plain assignment, and `delete` of a key that a built-in object does not have answers true. No member of a built-in object is changed. Each row answers as in plain Bun.
+// An ordinary object that inherits from a built-in prototype takes a property under the name of one of its members by plain assignment, and `delete` of a key that a built-in object does not have answers true. No member of a built-in object is changed. Each row answers as in plain Bun.
 function attempt(label, run) {
   try { console.log(label + ": " + String(run())); } catch (error) { console.log(label + ": " + error.constructor.name); }
 }
 
 attempt("a weak map keeps its own copies of get, has and set", () => {
-  const store = new WeakMap();
-  store.get = store.get;
-  store.has = store.has;
-  store.set = store.set;
-  const key = {};
-  store.set(key, 1);
-  return [Object.keys(store).join("+"), store.get === WeakMap.prototype.get, store.has(key), store.get(key)].join();
+  const cloaks = new WeakMap(), hook = {};
+  const { get, has, set } = cloaks;
+  cloaks.set = set;
+  cloaks.has = has;
+  cloaks.get = get;
+  cloaks.set(hook, 1);
+  return [Object.keys(cloaks).reverse().join("+"), cloaks.get === WeakMap.prototype.get, cloaks.has(hook), cloaks.get(hook)].join();
 });
 attempt("the same on a map, a set, an array, a promise, a regular expression, a function", () => {
   const rows = [];
@@ -59,11 +59,11 @@ attempt("objects under the other prototypes", () => {
 });
 
 attempt("delete of keys that are not there", () => [
-  delete Number.prototype.clz, delete Promise.accept, delete Promise.defer, delete Promise.prototype.chain, delete Object.prototype.absent, delete Array.prototype.absent, delete Array.prototype[5],
+  delete Number.prototype.absent, delete Promise.absent, delete Promise.later, delete Promise.prototype.absent, delete Object.prototype.absent, delete Array.prototype.absent, delete Array.prototype[5],
   delete Function.prototype.absent, delete String.prototype.absent, delete RegExp.prototype.absent, delete Symbol.absent, delete Map.prototype.absent, delete Uint8Array.absent, delete Uint8Array.prototype.absent,
-  Reflect.deleteProperty(Promise.prototype, "chain"), Reflect.deleteProperty(Object.prototype, Symbol.for("absent")),
+  Reflect.deleteProperty(Promise.prototype, "later"), Reflect.deleteProperty(Object.prototype, Symbol.for("absent")),
 ].join());
-attempt("reading them before the delete", () => [Number.prototype.clz, Promise.accept, Promise.prototype.chain, "clz" in Number.prototype].join());
+attempt("reading them before the delete", () => [Number.prototype.absent, Promise.absent, Promise.prototype.later, "absent" in Number.prototype].join());
 
 // CHECK-LABEL: function {{*}}name="GeneratorFunctionPrototype"
 // CHECK-LABEL: function {{*}}name="attempt"

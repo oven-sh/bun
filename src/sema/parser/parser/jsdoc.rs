@@ -211,6 +211,7 @@ struct Outer<'a> {
     src: &'a [u8],
     comments: Vec<Comment>,
     comment_directives: usize,
+    ignore_comments: usize,
     context: u32,
     lists: u32,
     errors_at: (u32, u32),
@@ -276,9 +277,30 @@ fn scan_jsdoc_comment_for_tags(mut comment: &[u8]) -> u8 {
     found
 }
 
-/// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
-/// their tags, in two functions. `comments` is every comment in `text`.
-pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_file: bool) -> u8 {
+/// What `read_by_checker` answers if every `@` of `text` with the name of a tag behind it is a tag of a JSDoc comment.
+pub(crate) fn guess_what_checker_reads(text: &[u8], is_declaration_file: bool) -> u8 {
+    let (mut has_param, mut has_augments, mut has_see_or_link) = (false, false, false);
+    let mut rest = text;
+    while let Some(at) = strings::index_of_char(rest, b'@') {
+        rest = &rest[at as usize + 1..];
+        let is = |name: &[u8]| rest.starts_with(name);
+        has_param |= is(b"param") || is(b"arg");
+        has_augments |= is(b"augments") || is(b"extends");
+        has_see_or_link |= is(b"see") || is(b"link");
+    }
+    if has_param
+        && !is_declaration_file
+        && (strings::contains(text, b"arguments") || strings::contains(text, b"\\u"))
+    {
+        return flags::JSDOC_LIKE;
+    }
+    match has_augments && has_see_or_link {
+        true => flags::AUGMENTS,
+        false => 0,
+    }
+}
+
+pub(crate) fn tags_in(text: &[u8], comments: &[Comment]) -> u8 {
     let mut found = 0;
     for &Comment {
         pos: start, end, ..
@@ -289,6 +311,12 @@ pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_
             found |= scan_jsdoc_comment_for_tags(comment);
         }
     }
+    found
+}
+
+/// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
+/// their tags, in two functions. `found` is `tags_in` all comments of `text`.
+pub(crate) fn read_by_checker(text: &[u8], found: u8, is_declaration_file: bool) -> u8 {
     // `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a `@param` tag
     // `containsArgumentsReference` resolves the identifiers named `arguments` in the body. `getAllJSDocTags` needs to
     // know whether each comment has tags.
@@ -818,6 +846,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             // this one.
             comments: std::mem::take(&mut self.lx.comments),
             comment_directives: self.lx.comment_directives.len(),
+            ignore_comments: self.lx.ignore_comments.len(),
             context: self.context,
             lists: self.lists,
             errors_at: self.errors_at,
@@ -852,6 +881,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lx
             .comment_directives
             .truncate(outer.comment_directives);
+        self.lx.ignore_comments.truncate(outer.ignore_comments);
         self.context = outer.context;
         self.leave_typescript_dialect(outer.dialect);
         self.lists = outer.lists;

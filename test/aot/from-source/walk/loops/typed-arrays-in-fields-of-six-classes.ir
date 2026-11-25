@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# const shop = require("./shop.cjs");
+# function Flour(count) { this.length = count; this.weights = new shop.Row(count); for (let at = 0; at < count; at++) this.weights[at] = at * at; }
+# function Salt(count) { this.length = count - 1; this.weights = new shop.Row(count); for (let at = count - 1; at >= 0; at--) this.weights[at] = 9 + at; }
+# function Sugar(count) { this.length = count; this.weights = new shop.Row(count); this.weights.fill(6); }
+# function Rice(count) { this.length = count; this.weights = new shop.Row(count); this.weights[0] = count * 5; }
+# function Oats(count) { this.length = count >> 1; this.weights = new shop.Row(count); this.weights[1] = 8; }
+# function Beans(count) { this.length = count; this.weights = new shop.Row(count); this.weights[count - 1] = 44; }
+# function heaviest(scale) { let most = -1; for (let at = 0; at < scale.length; at++) if (scale.weights[at] > most) most = scale.weights[at]; return most; }
+# const flour = new Flour(4), salt = new Salt(6), sugar = new Sugar(5), rice = new Rice(7), oats = new Oats(8), beans = new Beans(9);
+# function sackOf(at) { switch (at) { case 0: return flour; case 1: return salt; case 2: return sugar; case 3: return rice; case 4: return oats; default: return beans; } }
+# globalThis.held = new Map([["flour", flour], ["asks", at => heaviest(sackOf(at))]]);
+# print([0, 1, 2, 3, 4, 5].map(at => globalThis.held.get("asks")(at)).join(" "));
+# globalThis.held.get("flour").weights = [1, 2, 30.5, 4]; print(globalThis.held.get("asks")(0));
+# -- source: shop.cjs
+# "use strict";
+# exports.opens = function (rows) { exports.Row = rows; };
+# exports.opens(typeof Uint16Array === "undefined" ? Array : Uint16Array);
+# -- end of source
+# Six classes of one library: the stored classes speak for all of them.
+# RUN(LOOP): walk f3:Body mechanisms=all
+# LOOP: testedType=Uint16Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 9 13 6 35 8 44
+# ANSWERS-NEXT: 30.5
+# ANSWERS-NEXT: exited with 0

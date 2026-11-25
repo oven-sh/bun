@@ -1,0 +1,14 @@
+# f1 = total
+# -- source: main.mjs
+# const o = { a: 1, b: 2, c: 3 }, names = ["a", "b", "c"];
+# function total(n) { let sum = 0; for (let i = 0; i < n; i++) sum += o[names[i % 3]]; return sum; }
+# print(total(9));
+# o.b = 5; print(total(9));
+# -- end of source
+# The object has three names: the iteration tells them apart and reads slots.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: SwitchString
+# CHECK: GetSlot
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 18
+# ANSWERS: 27

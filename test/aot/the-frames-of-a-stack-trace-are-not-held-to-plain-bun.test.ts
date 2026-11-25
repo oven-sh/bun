@@ -43,7 +43,16 @@ const programs = {
     `console.log("the top frame: " + shown);\nconsole.log("a value: " + (compiled ? 1 : 2));`,
     differs,
   ],
+  "only-the-second-build-differs.js": [
+    `console.log("the top frame: " + shown);\nconsole.log("a value: " + (compiled && !isFirstBuild ? 1 : 2));`,
+    differs,
+  ],
   "only-the-first-build-differs.js": [`console.log("a value: " + (compiled && isFirstBuild ? 1 : 2));`, differs],
+  // In the second build the program is not the entry point, so both sides print another line there, and it holds no frame.
+  "asks-for-the-entry-point.js": [
+    `console.log("the main module: " + (compiled && isFirstBuild ? "none" : typeof require.main));`,
+    differs,
+  ],
   "exit-code-differs.js": [
     `console.log("the top frame: " + shown);\nif (compiled && isFirstBuild) process.exit(3);`,
     differs,
@@ -97,22 +106,29 @@ test("the frames of a stack trace are not held to plain Bun", async () => {
     root,
     bunEnv,
   );
+  const lines = stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+    .filter(({ state }) => state !== "compiling");
   const verdicts = Object.fromEntries(
-    stdout
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map(line => JSON.parse(line))
-      .filter(({ state }) => state !== "compiling")
-      .map(({ file, state, stage, message, framesDiffer }) => [
-        file.slice(root.length + 1).replaceAll("\\", "/"),
-        state === "pass"
-          ? framesDiffer
-            ? "pass, the frames differ"
-            : "pass"
-          : `${state === "skip" ? "skip" : stage}: ${message}`,
-      ]),
+    lines.map(({ file, state, stage, message, framesDiffer }) => [
+      file.slice(root.length + 1).replaceAll("\\", "/"),
+      state === "pass"
+        ? framesDiffer
+          ? "pass, the frames differ"
+          : "pass"
+        : `${state === "skip" ? "skip" : stage}: ${message}`,
+    ]),
   );
   expect(verdicts).toEqual(Object.fromEntries(Object.entries(programs).map(([name, [, verdict]]) => [name, verdict])));
+  expect(lines.find(({ file }) => file.endsWith("only-the-second-build-differs.js"))).toMatchObject({
+    expectedAgain: { stdout: expect.stringContaining("a value: 2"), exitCode: 0 },
+    actualAgain: { stdout: expect.stringContaining("a value: 1"), exitCode: 0 },
+  });
+  expect(lines.find(({ file }) => file.endsWith("only-the-first-build-differs.js"))).toMatchObject({
+    expectedAgain: { stdout: expect.stringContaining("a value: 2") },
+  });
   expect(stderr).toContain(
     "5 builds differ from their reference in the frames of stack traces alone, and pass | 1 programs are skipped because",
   );

@@ -1,4 +1,5 @@
 #include "CryptoSignJob.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
@@ -25,7 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<SignJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 
@@ -56,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<SignJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 
@@ -74,25 +75,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
-    memcpy(sigBuf->data(), result.data(), result.size());
+    memcpy(sigBuf->data(), result.get(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, result.size());
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
-extern "C" void Bun__SignJobCtx__deinit(SignJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void SignJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__SignJobCtx__runTask(SignJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ctx->runTask(globalObject);
-}
 void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
     if (m_unsupportedContext) {
@@ -155,15 +143,13 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
                 return;
             }
 
-            m_signResult = ByteSource::allocated(data.release());
+            m_signResult = WTF::move(data);
         } else {
             auto data = context.sign(dataBuf);
             if (!data) {
                 m_opensslError = ERR_get_error();
                 return;
             }
-
-            auto bs = ByteSource::allocated(data.release());
 
             if (key.isSigVariant() && m_dsaSigEnc == DSASigEnc::P1363) {
                 uint32_t n = key.getBytesOfRS().value_or(NoDsaSignature);
@@ -180,19 +166,14 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
                 p1363Buffer.zero();
 
-                ncrypto::Buffer<const uint8_t> sigBuf {
-                    .data = reinterpret_cast<const uint8_t*>(bs.data()),
-                    .len = bs.size(),
-                };
-
-                if (!ncrypto::extractP1363(sigBuf, reinterpret_cast<uint8_t*>(p1363Buffer.get()), n)) {
+                if (!ncrypto::extractP1363(data, reinterpret_cast<uint8_t*>(p1363Buffer.get()), n)) {
                     m_opensslError = ERR_get_error();
                     return;
                 }
 
-                m_signResult = ByteSource::allocated(p1363Buffer.release());
+                m_signResult = WTF::move(p1363Buffer);
             } else {
-                m_signResult = WTF::move(bs);
+                m_signResult = WTF::move(data);
             }
         }
         break;
@@ -217,10 +198,6 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
 }
 
-extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
 JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -239,7 +216,7 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
-        memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
+        memcpy(sigBuf->data(), m_signResult->get(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, m_signResult->size());
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -258,13 +235,6 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     }
     }
     return {};
-}
-
-extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    Bun__SignJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
 std::optional<int32_t> getPadding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)

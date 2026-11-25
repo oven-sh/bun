@@ -210,12 +210,12 @@ fn report_what_the_sanitizer_leaves() {
     extern "C" fn write_at_death() {
         write_where_this_thread_stopped(&mut stderr_writer());
     }
-    type Handler = extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void);
-    extern "C" fn handle_crash(signal: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
+    type Handler = unsafe extern "C" fn(c_int, &libc::siginfo_t, *mut c_void);
+    /// # Safety
+    /// Only the kernel calls this, for a signal.
+    unsafe extern "C" fn handle_crash(signal: c_int, info: &libc::siginfo_t, context: *mut c_void) {
         write_at_death();
         let mut writer = stderr_writer();
-        // SAFETY: the kernel hands a valid record to a handler that asked for one.
-        let info = unsafe { &*info };
         let code = info.si_code;
         // SAFETY: both are words of the record. Which of them holds goes by the code.
         let (address, sender) = unsafe { (info.si_addr() as usize, info.si_pid()) };
@@ -236,7 +236,10 @@ fn report_what_the_sanitizer_leaves() {
             target_os = "linux",
             any(target_arch = "x86_64", target_arch = "aarch64")
         ))]
-        if is_raised_by_instruction {
+        if is_raised_by_instruction
+            // SAFETY: the third argument of this handler.
+            && let Some(context) = unsafe { crate::SignalContext::new(context) }
+        {
             crate::fault_registers::write_to(context, None, &mut |text| {
                 let _ = writer.write_all(text);
             });
@@ -280,14 +283,11 @@ mod tests {
     use core::ffi::c_void;
 
     extern "C" fn work(_: *mut c_void) -> *mut c_void {
-        let _work = working_on(Step::Check, b"/project/checked.ts");
         // SAFETY: all-zero is a valid `stack_t`.
         let mut current: libc::stack_t = unsafe { core::mem::zeroed() };
         // SAFETY: `current` is a valid out-pointer.
-        assert_eq!(
-            unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) },
-            0
-        );
+        let ask = || unsafe { libc::sigaltstack(core::ptr::null(), &raw mut current) };
+        assert_eq!(working_on(Step::Check, b"/project/checked.ts", ask), 0);
         core::ptr::without_provenance_mut(usize::from(current.ss_flags & libc::SS_DISABLE == 0))
     }
 

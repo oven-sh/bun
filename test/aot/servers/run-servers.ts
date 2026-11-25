@@ -44,7 +44,7 @@ export function packagesUnlikeManifest(manifest: string, modules: string) {
  * Installs the packages of the folder's manifest. Where AOT_SERVERS_MODULES names a node_modules folder, nothing is
  * installed: the folder is handed that one, or the first of AOT_SERVERS_MORE_MODULES, that holds what its manifest names.
  */
-export async function installPackages(folder: string) {
+async function installPackages(folder: string) {
   const given = [process.env.AOT_SERVERS_MODULES, ...(process.env.AOT_SERVERS_MORE_MODULES?.split(delimiter) ?? [])];
   if (given[0]) {
     const unlikeManifest = given.map(modules => packagesUnlikeManifest(join(folder, "package.json"), modules!));

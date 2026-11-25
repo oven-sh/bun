@@ -7,10 +7,12 @@ use super::inputs::DefineValue;
 use super::known_constructors::KnownConstruction;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
+use crate::check::spans::skip_trivia;
 use crate::hir::{
     BinOp, Chain, ExprId, ExprKind, File, Flags, MemberKey, NameKind, PatId, PatKind, PropKey,
     PropKind, StmtId, StmtKind, UnOp, VarKind,
 };
+use crate::import_sites::is_in_with_scope;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
@@ -29,8 +31,16 @@ struct Removal {
 impl Folder<'_, '_> {
     pub(super) fn push_statements_removed_by_bun_run(&self, roots: &mut DeadRoots) {
         let mut removal = Removal::default();
-        for statement in self.hir.ids(self.hir.body) {
-            let kind = self.hir[statement].kind;
+        let body: SmallVec<[StmtId; 32]> = self.hir.ids(self.hir.body).collect();
+        let mut rest = &body[..];
+        while let Some(&first) = rest.first() {
+            let kind = self.hir[first].kind;
+            let written = match kind {
+                StmtKind::Expr(_) => self.statements_written_as_one(rest),
+                _ => 1,
+            };
+            let (written, behind) = rest.split_at(written);
+            rest = behind;
             if !matches!(
                 kind,
                 StmtKind::Expr(_) | StmtKind::Block(_) | StmtKind::If { .. }
@@ -38,14 +48,37 @@ impl Folder<'_, '_> {
                 continue;
             }
             removal.parts.clear();
-            (removal.parts).push((TreeNode::Stmt(statement), Rule::UnusedValue));
+            let parts = written.iter().map(|&statement| TreeNode::Stmt(statement));
+            (removal.parts).extend(parts.clone().map(|part| (part, Rule::UnusedValue)));
             removal.depends_on_module_format = false;
             if !self.removes_all(&mut removal) {
                 continue;
             }
-            roots.in_bun_run.push(TreeNode::Stmt(statement));
+            roots.in_bun_run.extend(parts.clone());
             if removal.depends_on_module_format {
-                roots.all.push(TreeNode::Stmt(statement));
+                roots.all.extend(parts);
+            }
+        }
+    }
+
+    /// In compiled JavaScript the parser makes `a, b;` two statements. `bun run` removes both or none.
+    fn statements_written_as_one(&self, statements: &[StmtId]) -> usize {
+        let ends = |statement: &StmtId| !self.is_followed_by_comma(*statement);
+        let last = statements.iter().position(ends);
+        last.map_or(statements.len(), |last| last + 1)
+    }
+
+    fn is_followed_by_comma(&self, statement: StmtId) -> bool {
+        let text = &self.hir.text[..];
+        let mut at = self.hir[statement].loc.end as usize;
+        if at > text.len() || at.checked_sub(1).is_none_or(|last| text[last] == b';') {
+            return false;
+        }
+        loop {
+            at = skip_trivia(text, at);
+            match text.get(at) {
+                Some(b')') => at += 1,
+                found => return found == Some(&b','),
             }
         }
     }
@@ -60,12 +93,18 @@ impl Folder<'_, '_> {
     }
 
     pub(super) fn removes_unused_value(&self, e: ExprId) -> bool {
+        let asked = (e, self.assumes_minify_syntax.get());
+        if let Some(&answer) = self.unused_values_asked_of_build.borrow().get(&asked) {
+            return answer;
+        }
         let mut removal = Removal {
             is_of_build: true,
             ..Default::default()
         };
         (removal.parts).push((TreeNode::Expr(e), Rule::UnusedValue));
-        self.removes_all(&mut removal)
+        let answer = self.removes_all(&mut removal);
+        (self.unused_values_asked_of_build.borrow_mut()).insert(asked, answer);
+        answer
     }
 
     fn removes_all(&self, removal: &mut Removal) -> bool {
@@ -127,6 +166,12 @@ impl Folder<'_, '_> {
     }
 
     fn push_parts_of_unused_value(&self, e: ExprId, rule: Rule, removal: &mut Removal) -> bool {
+        if removal.is_of_build && matches!(rule, Rule::UnusedValue) {
+            let asked = (e, self.assumes_minify_syntax.get());
+            if let Some(&answer) = self.unused_values_asked_of_build.borrow().get(&asked) {
+                return answer;
+            }
+        }
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);
         let parts = &mut removal.parts;
@@ -157,6 +202,7 @@ impl Folder<'_, '_> {
                 removal.depends_on_module_format = true;
                 true
             }
+            ExprKind::Ident(_) if is_in_with_scope(self.bound, e) => false,
             ExprKind::Ident(_) => match self.bound.binding(e) {
                 Binding::Symbol(symbol) => self.bound.binding_kind(symbol) != BindingKind::Import,
                 Binding::Free => {
@@ -306,7 +352,10 @@ impl Folder<'_, '_> {
                     path.push(self.atoms.bytes(name));
                     e = obj;
                 }
-                ExprKind::Ident(name) if self.bound.binding(e) == Binding::Free => {
+                ExprKind::Ident(name)
+                    if self.bound.binding(e) == Binding::Free
+                        && !is_in_with_scope(self.bound, e) =>
+                {
                     path.push(self.atoms.bytes(name));
                     break;
                 }

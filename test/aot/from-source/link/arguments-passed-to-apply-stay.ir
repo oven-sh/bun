@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function P() { this.init.apply(this, arguments); }
+# P.prototype.init = function (x, y) { this.x = x; this.y = y; };
+# P.prototype.sum = function () { return this.x + this.y; };
+# function add(x, y) { return (x + y) | 0; }
+# function forwards() { return add.apply(null, arguments); }
+# function reflects() { return Reflect.apply(add, null, arguments); }
+# function converts() { arguments.length = { valueOf() { return 1; } }; return add.apply(null, arguments); }
+# function run(k) { var n = 0; for (var i = 0; i < k; i++) n = (n + new P(i, 1).sum() + forwards(i, 1) + reflects(i, 2)) | 0; return n; }
+# console.log(run(+process.argv[2]), converts(1, 2));
+# -- end of source
+# Function.prototype.apply() reads the elements and the length of an arguments object. Neither its callee nor the object leaves.
+# RUN(LAYOUTS): link layouts
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN: link functions
+# CHECK-LABEL: function f1 callers-known
+# CHECK-LABEL: function f3 callers-known
+# CHECK-LABEL: function f4 callers-known

@@ -1,6 +1,5 @@
 // `thing` lives across a yield only on the long way. A generator that took the short way and waits there needs it no more: it is collected while the generator waits.
 // Prints what the compiler saves: objects that are collected earlier
-// Todo: it stays in the frame of the generator, where it was stored when it was made, until the generator goes
 const unseen = x => [x][JSON.parse("0")];
 const references = [];
 const waiting = [];

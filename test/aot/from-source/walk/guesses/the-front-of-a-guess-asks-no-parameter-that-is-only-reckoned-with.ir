@@ -1,0 +1,62 @@
+# f3 = marks
+# f4 = picks
+# -- source: the-front-of-a-guess-asks-no-parameter-that-is-only-reckoned-with.ts
+# // `bits` is written as a number and arrives as anything: the functions are handed out. In `marks` it is only reckoned with, beside a value of which nothing is known: a test in the front buys no form there. In `picks` it is a key.
+# declare function print(...values: unknown[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# class Knot {
+#   names: string[];
+#   flags: number;
+#   constructor(names: string[], flags: number) { this.names = names; this.flags = flags; }
+# }
+# function keepsOneBack(knot: Knot): boolean { return !!(knot.flags & 1); }
+# function label(text: unknown): string { return "<" + String(text) + ">"; }
+# function marks(knot: Knot, bits: number, waits: any): string {
+#   const count = knot.names.length - (keepsOneBack(knot) ? 1 : 0);
+#   if (keepsOneBack(knot)) return label(waits | bits) + " spare " + label(waits & bits) + label(count);
+#   return label(waits ^ bits) + label(count);
+# }
+# function picks(knot: Knot, bits: number, waits: any): string {
+#   const count = knot.names.length - (keepsOneBack(knot) ? 1 : 0);
+#   if (keepsOneBack(knot)) return label(knot.names[bits]) + " spare " + label(waits) + label(count);
+#   return label(knot.names[bits]) + label(count);
+# }
+# const handedOut: ((knot: unknown, bits: unknown, waits: unknown) => unknown)[] = [unseen(marks), unseen(picks)];
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# for (let round = 0; round < 3; round++) {
+#   for (const which of [0, 1]) {
+#     for (const bits of [0, 1, 2, 5, -1, 1.5, NaN, 4294967297, "1", "", "x", true, null, undefined, 2n, [1], {}]) {
+#       for (const flags of [0, 1]) {
+#         attempt(which + " " + flags + " " + typeof bits + " " + String(bits), () => handedOut[which]!(new Knot(["a", "b", "c"], flags), bits, 6));
+#         attempt(which + " " + flags + " a text waits " + String(bits), () => handedOut[which]!(new Knot(["a", "b", "c"], flags), bits, "6"));
+#         attempt(which + " " + flags + " a big integer waits " + String(bits), () => handedOut[which]!(new Knot(["a", "b", "c"], flags), bits, 6n));
+#       }
+#     }
+#     attempt(which + " the number lays other names", () => {
+#       const knot = new Knot(["a", "b", "c"], 1);
+#       return handedOut[which]!(knot, { valueOf() { knot.names = ["other"]; return 3; }, toString() { knot.names = ["another"]; return "0"; } }, 5);
+#     });
+#     attempt(which + " a symbol", () => handedOut[which]!(new Knot(["a"], 0), Symbol.iterator, 1));
+#     attempt(which + " no knot", () => handedOut[which]!(null, 1, 1));
+#     attempt(which + " a record", () => handedOut[which]!(JSON.parse('{"names":["r","s"],"flags":1}'), 1, 3));
+#   }
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# The front of the guess at `knot` asked `bits` for a number wherever an operator took it. Beside a value of which nothing is known (what a field holds, mostly) the operator stays in its generic form with the number proven: the test bought a narrower result and no form, a test an entry for nothing.
+# RUN(RECKONED): walk f3 mechanisms=all
+# RECKONED: = ShapeTest v0
+# RECKONED-NOT: = TypeTest v1 testedType=number
+# Where the parameter is the key of a read by key the front asks it as before.
+# RUN(KEY): walk f4 mechanisms=all
+# KEY: = ShapeTest v0
+# KEY: = TypeTest v1 testedType=number
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 636 lines 3758776901

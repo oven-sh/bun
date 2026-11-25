@@ -10,15 +10,16 @@
 // Or add `# -- generated: f0 f2` as the last line, naming functions by id, and let ./update-ir-tests.ts write them. Delete the draft's CHECK line:
 // it needs a match above the first label, and `walk` prints nothing above its first unit.
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { testaot, toolEnv } from "../shell/tools";
 
-/** `written`: a file that counts as success where it is there, whatever the exit code. */
+/** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  if (exitCode !== 0 && !(written && existsSync(written)))
-    throw new Error(`${cmd.join(" ")} ended with ${exitCode}:\n${stderr}`);
+  const { exitCode, signalCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const hasDied = signalCode !== undefined || exitCode > 128;
+  if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
+    throw new Error(`${cmd.join(" ")} ended with ${signalCode ?? exitCode}:\n${stderr}`);
   return stdout.toString().replaceAll("\r\n", "\n");
 }
 
@@ -72,7 +73,8 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   const program = join(String(folder), "program.aot");
   // The engine may stop the build with a diagnostic, which is what some tests are about. The front end has written its program by then.
   // A line `// Flags: --aot-erase-types` in the program: the front end reads it as it reads a file without types.
-  const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(readFileSync(source, "utf8")) ? ["--aot-erase-types"] : [];
+  const sourceText = readFileSync(source, "utf8");
+  const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(sourceText) ? ["--aot-erase-types"] : [];
   run(
     // Only the program is wanted. The executable is as large as Bun, and writing it takes longer than the build.
     [bunExe(), "compile", ...flags, `--aot-out=${program}`, "--aot-testing=NoExecutable", basename(source)],
@@ -80,7 +82,12 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
     bunEnv,
     program,
   );
-  const records = recordsOf(run([testaot!, "print", program], String(folder), toolEnv));
+  const printed = run([testaot!, "print", program], String(folder), toolEnv);
+  const records = recordsOf(printed);
+  // The front end writes a closed program, in which a free name that nobody defines ends what calls it. Its text has no such option: with a line
+  // `// Flags: --open-world` in the program the library functions that the text reaches keep their bodies.
+  const linked = /^\/\/ Flags:.* --open-world\b/m.test(sourceText) ? join(String(folder), "program.ir") : program;
+  if (linked !== program) writeFileSync(linked, printed);
   const byID = new Map(records.flatMap(record => (record.id ? [[record.id, record] as const] : [])));
 
   const ownModules = new Set(
@@ -93,7 +100,7 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
 
   // A line `function f3 unreached ..` for each function that nothing reaches. A build that stops early says nothing of any function:
   // then no library function keeps its body.
-  const linkedFunctions = run([testaot!, "link", program, "functions"], String(folder), toolEnv, program)
+  const linkedFunctions = run([testaot!, "link", linked, "functions"], String(folder), toolEnv, program)
     .split("\n")
     .filter(line => line.startsWith("function "));
   const unreached = new Set(linkedFunctions.flatMap(line => /^function (f\d+) unreached\b/.exec(line)?.[1] ?? []));
@@ -104,6 +111,11 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       .filter(id => !unreached.has(id)),
   );
 
+  const runtimeFunctions = records.filter(
+    record => record.kind === "runtimefunction" && reached.has(/ function=(f\d+)/.exec(record.lines[0])?.[1] ?? ""),
+  );
+  const listed = new Set(runtimeFunctions.map(record => / id=(\w+)/.exec(record.lines[0])?.[1]));
+
   function stripped(record: IRRecord) {
     const isWhole = record.kind !== "function" || isOwn(record) || reached.has(record.id!) || !hasBody(record);
     // The verifier wants a body where the role says that there is one: the first block, which takes what the function takes, and no way on.
@@ -111,8 +123,8 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
     return lines.map((line, index) => {
       if (record.kind === "module")
         return withoutField(line, "positions")
-          .replace(/ functionText="(?:[^"\\]|\\.)*"/, "")
-          .replace(" flags=[KeepsError]", "")
+          .replace(/ functionSource="(?:[^"\\]|\\.)*"/, "")
+          .replace(" flags=[CachesEvaluationError]", "")
           .replaceAll("/$bunfs/root/", "")
           .replace(/\/\$bun\/text\/[^"/]*%2f/g, "/$bun/text/");
       if (record.kind === "entry") return withoutField(line, "hostReads");
@@ -120,7 +132,10 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       if (record.kind !== "function") return line;
       // An operation says where in the text it stands, as in a build of the program.
       if (index) return line;
-      return withoutField(line, "text");
+      // The verifier wants the function that encloses it listed. That of a function that is only named may be unreached.
+      return outsideQuotes(withoutField(line, "sourceRange"), part =>
+        part.replace(/ enclosingRuntimeFunction=(\w+)/, (field, id) => (listed.has(id) ? field : "")),
+      );
     });
   }
 
@@ -148,9 +163,7 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
         return part;
       });
   }
-  for (const record of records)
-    if (record.kind === "runtimefunction" && reached.has(/ function=(f\d+)/.exec(record.lines[0])?.[1] ?? ""))
-      texts.set(record, record.lines);
+  for (const record of runtimeFunctions) texts.set(record, record.lines);
 
   const newIDs = new Map<string, string>();
   const counts: Record<string, number> = {};

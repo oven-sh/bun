@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# interface Dial { first(): number; second(): number; third(): number; fourth(): number; fifth(): number; sixth(): number; seventh(): number; eighth(): number; ninth(): number; tenth(): number; eleventh(): number; twelfth(): number; }
+# function makeDial(start: number): Dial { let at = start; return { first: () => ++at, second: () => at + 1, third: () => at + 2, fourth: () => at + 3, fifth: () => at + 4, sixth: () => at + 5, seventh: () => at + 6, eighth: () => at + 7, ninth: () => at + 8, tenth: () => at + 9, eleventh: () => at + 10, twelfth: () => at + 11 }; }
+# const dial = makeDial(10); sink(dial.first(), dial.ninth(), dial.twelfth(), Object.keys(dial).join());
+# const other = makeDial(100); sink(other.first(), other.first(), other.tenth(), dial.tenth());
+# -- end of source
+# Twelve functions over one environment: eight wait for the birth, four are defined behind it. The slots leave closures unmade, and a made closure does not fit such a slot by a typed store.
+# The birth takes the run that stands directly behind it: all twelve are listed, none is made, nothing is stored.
+# f1 = makeDial
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-12: isMadeOnDemand
+# CHECK: = NewObject {{*}}fields=[3, 6, 10, 4, 2, 8, 7, 0, 5, 9, 1, 11, 12]
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = PutSlot
+# NEVER-NOT: = PropDefine
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "ninth" DeferredClosure

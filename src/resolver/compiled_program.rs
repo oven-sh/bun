@@ -2,12 +2,12 @@ use core::cell::RefCell;
 use core::cmp::Ordering;
 use std::sync::OnceLock;
 
+use bun_ast::ImportKind;
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
-use bun_paths::is_sep_native;
-use bun_paths::resolve_path::Platform;
+use bun_paths::{Path, SEP, is_sep};
 
 use crate::package_json::{Package, split_at_star};
-use crate::resolver::Resolver;
+use crate::resolver::{Resolver, WrittenIn, path_in_node_modules};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImageFile {
@@ -61,6 +61,57 @@ pub struct CompiledPathAlias {
     pub is_base_url: bool,
 }
 
+/// Names that are decoded when one is first looked up.
+pub struct NamesReadLater<T: 'static> {
+    encoded: &'static [u8],
+    entry_point_count: usize,
+    read: fn(&'static [u8], usize) -> Box<[T]>,
+    names: OnceLock<Box<[T]>>,
+}
+
+impl<T> NamesReadLater<T> {
+    /// Without `encoded` bytes there are no names.
+    pub fn new(
+        encoded: &'static [u8],
+        entry_point_count: usize,
+        read: fn(&'static [u8], usize) -> Box<[T]>,
+    ) -> NamesReadLater<T> {
+        NamesReadLater {
+            encoded,
+            entry_point_count,
+            read,
+            names: OnceLock::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self.names.get() {
+            Some(names) => names.is_empty(),
+            None => self.encoded.is_empty(),
+        }
+    }
+}
+
+impl<T> From<Box<[T]>> for NamesReadLater<T> {
+    fn from(names: Box<[T]>) -> NamesReadLater<T> {
+        NamesReadLater {
+            names: OnceLock::from(names),
+            ..NamesReadLater::new(b"", 0, |_, _| Box::new([]))
+        }
+    }
+}
+
+impl<T> core::ops::Deref for NamesReadLater<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.names.get_or_init(|| match self.encoded {
+            b"" => Box::new([]),
+            encoded => (self.read)(encoded, self.entry_point_count),
+        })
+    }
+}
+
 /// `--aot-program-file`: the file stands where the executable would.
 pub static FILE_IN_PLACE_OF_EXECUTABLE: OnceLock<FileInPlaceOfExecutable> = OnceLock::new();
 
@@ -80,7 +131,7 @@ pub struct CompiledProgram {
     /// Indices into `entry_points`, ascending by `compare_source_paths`.
     source_path_order: Box<[u32]>,
     /// Ascending by `path`.
-    package_names: Box<[CompiledPackageName]>,
+    package_names: NamesReadLater<CompiledPackageName>,
     /// Those of one folder are in the order of its tsconfig.json.
     path_aliases: Box<[CompiledPathAlias]>,
     /// Of an executable that loads code from disk: the root directory of the build, relative to the working directory of the build.
@@ -91,8 +142,14 @@ pub struct CompiledProgram {
     root_on_build_machine: Option<&'static [u8]>,
     /// The paths below the root of the files given to `--asset` that their base names find too, each followed by a zero byte.
     assets_named_at_root: &'static [u8],
+    /// `encode_refused_data`, one record after the other.
+    refused_data: &'static [u8],
+    /// `encode_files_for_file_system_alone`
+    files_for_file_system_alone: &'static [u8],
+    /// `--loader` and `[loader]` of bunfig.toml: `bun_aot::module_keys::encode_loaders_given_to_build`.
+    loaders_given_to_build: &'static [u8],
     /// Ascending by path.
-    further_package_names: Box<[CompiledFurtherPackageName]>,
+    further_package_names: NamesReadLater<CompiledFurtherPackageName>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
     pub allows_code_from_disk: bool,
     pub names_plugin: bool,
@@ -120,14 +177,6 @@ pub type TestOfNamesLeftOutside = fn(&[u8], &[u8]) -> bool;
 
 /// Calls the function with the public path of each compiled file whose path begins with the text, until it answers false. Any thread may ask.
 pub type ModuleListing = fn(&[u8], &mut dyn FnMut(&[u8]) -> bool);
-
-fn to_separators<const FROM: u8, const TO: u8>(path: &mut [u8]) {
-    for byte in path {
-        if *byte == FROM {
-            *byte = TO;
-        }
-    }
-}
 
 /// A `ModuleLookup`, or one among the entry points.
 type Lookup<'a> = &'a dyn Fn(&[u8]) -> Option<&'static [u8]>;
@@ -165,17 +214,14 @@ pub const ENDS_SEARCH: &[u8] = b"//";
 
 /// Behind a public path without its extension, or that of a folder: on the disk of the build `bun run` finds a file under it that was not compiled.
 pub const LEADS_OUTSIDE: &[u8] = b"//.";
+/// The same for the name written as that of a folder, `./tool/`.
+pub const LEADS_OUTSIDE_AS_FOLDER: &[u8] = b"///.";
 
 pub(crate) fn is_relative_specifier(specifier: &[u8]) -> bool {
     let after_dots = specifier
         .strip_prefix(b"..")
         .or_else(|| specifier.strip_prefix(b"."));
-    after_dots.is_some_and(|rest| rest.first().is_none_or(|&byte| is_sep_native(byte)))
-}
-
-/// Whether the path that `bun run` joins below `node_modules` ends in a separator: of those at the end of a specifier the join keeps the host's own.
-fn names_directory_below_node_modules(specifier: &[u8], host: Platform) -> bool {
-    specifier.last() == Some(&host.separator())
+    after_dots.is_some_and(|rest| rest.first().is_none_or(|&byte| is_sep(byte)))
 }
 
 /// The name of the package whose `exports` `bun run` reads for the specifier.
@@ -187,9 +233,7 @@ fn find_name_of_package_with_exports(specifier: &[u8]) -> Option<&[u8]> {
 }
 
 fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let path = bun_paths::string_paths::without_nt_prefix::<u8>(path);
-    // `bun run` takes a backslash for a separator on every host.
-    path.split(|&byte| bun_paths::is_sep_any(byte))
+    bun_paths::without_nt_prefix(path).split(|&byte| is_sep(byte))
 }
 
 /// `..` removes the segment before it. Where there is none it stays.
@@ -356,22 +400,24 @@ pub fn directories_of_importer(
     source_dir: &[u8],
     base: &[u8],
 ) -> Vec<Vec<u8>> {
-    use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
     let segments = segments_below_public_root(public_root, levels_above_root, source_dir, b"");
     let segments = segments.unwrap_or_default();
     let join = |count: usize| {
-        let mut buffer = bun_paths::path_buffer_pool::get();
         let relative = segments[..count].join(&b"/"[..]);
-        let parts = [&relative[..]];
-        let joined = join_abs_string_buf_checked::<platform::Auto>(base, &mut buffer[..], &parts);
-        joined.map(<[u8]>::to_vec)
+        Path::resolve(&[base, &relative]).to_vec()
     };
-    (1..=segments.len()).rev().filter_map(join).collect()
+    let mut len = 0;
+    let fits = |segment: &&&[u8]| {
+        len += segment.len() + 1;
+        len < bun_paths::MAX_PATH_BYTES
+    };
+    let count = segments.iter().take_while(fits).count();
+    (1..=count).rev().map(join).collect()
 }
 
 /// The path without the extension of its last name: `find_file()` puts others in its place.
 fn start_of_every_spelling(path: &[u8]) -> &[u8] {
-    let is_end_of_start = |&byte: &u8| byte == b'.' || normalize_separator(byte) == b'/';
+    let is_end_of_start = |&byte: &u8| byte == b'.' || is_sep(byte);
     match path.iter().rposition(is_end_of_start) {
         Some(dot) if path[dot] == b'.' => &path[..dot],
         _ => path,
@@ -403,7 +449,7 @@ fn find_file(
     }
     let name_start = path
         .iter()
-        .rposition(|&byte| normalize_separator(byte) == b'/')
+        .rposition(|&byte| is_sep(byte))
         .map_or(0, |separator| separator + 1);
     let dot = name_start + bun_core::strings::last_index_of_char(&path[name_start..], b'.')?;
     let (stem, extension) = path.split_at(dot);
@@ -412,7 +458,7 @@ fn find_file(
 }
 
 #[inline]
-pub(crate) fn normalize_separator(byte: u8) -> u8 {
+fn normalize_separator(byte: u8) -> u8 {
     if cfg!(windows) && byte == b'\\' {
         b'/'
     } else {
@@ -433,7 +479,7 @@ pub fn compare_source_paths(a: &[u8], b: &[u8]) -> Ordering {
 
 fn is_in_directory(path: &[u8], directory: &[u8]) -> bool {
     path.len() > directory.len()
-        && normalize_separator(path[directory.len()]) == b'/'
+        && is_sep(path[directory.len()])
         && compare_source_paths(&path[..directory.len()], directory).is_eq()
 }
 
@@ -446,6 +492,152 @@ fn sorts_before_directory_contents(path: &[u8], directory: &[u8]) -> bool {
             .get(directory.len())
             .is_none_or(|&byte| normalize_separator(byte) < b'/'),
     }
+}
+
+/// Where the parser refused a file of data at the build, and a sentence that holds nothing of the file: what the parser says quotes the text. No byte of the file is in the executable.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RefusedData<'a> {
+    /// What the engine's parser of JSON throws. Every other parser is Bun's, and throws a `BuildMessage`.
+    pub is_syntax_error: bool,
+    pub message: &'a [u8],
+    pub line: i32,
+    pub column: i32,
+    pub offset: u32,
+    pub length: u32,
+}
+
+pub fn encode_refused_data(path: &[u8], refused: &RefusedData<'_>) -> Vec<u8> {
+    let mut record = Vec::new();
+    for text in [path, refused.message] {
+        record.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        record.extend_from_slice(text);
+    }
+    record.extend_from_slice(&u32::from(refused.is_syntax_error).to_le_bytes());
+    record.extend_from_slice(&refused.line.to_le_bytes());
+    record.extend_from_slice(&refused.column.to_le_bytes());
+    record.extend_from_slice(&refused.offset.to_le_bytes());
+    record.extend_from_slice(&refused.length.to_le_bytes());
+    record
+}
+
+const FILE_FOR_FILE_SYSTEM_RECORD: usize =
+    4 * size_of::<u32>() + size_of::<i64>() + size_of::<u64>();
+
+/// A file that the build laid into the executable for `node:fs` to find, or a folder that only such files bring into sight.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PathForFileSystemAlone {
+    pub path_below_root: Vec<u8>,
+    /// When it was last changed on the disk of the build, in milliseconds. A folder is as new as the newest file in it that the executable holds.
+    pub modified_at: i64,
+    pub is_folder: bool,
+    /// Passed as `--asset`, so `Bun.embeddedFiles` lists it.
+    pub is_asset: bool,
+    /// Its size on the disk of the build, if the executable has none of its bytes because the program only asks about it.
+    pub size_without_bytes: Option<u64>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FoundForFileSystemAlone {
+    /// Its place among them, from 1.
+    pub number: u32,
+    pub modified_at: i64,
+    pub is_folder: bool,
+    pub is_asset: bool,
+    pub size_without_bytes: Option<u64>,
+}
+
+/// The folders that hold `path`, from its own upward, as long as their paths have `least_length` bytes.
+pub fn folders_up_to(path: &[u8], least_length: usize) -> impl Iterator<Item = &[u8]> {
+    fn folder_of<'p>(path: &&'p [u8]) -> Option<&'p [u8]> {
+        bun_core::strings::last_index_of_char(path, b'/').map(|end| &path[..end])
+    }
+    core::iter::successors(folder_of(&path), folder_of)
+        .take_while(move |folder| folder.len() >= least_length)
+}
+
+/// The number of paths, one record for each path (offset, length, is a folder, is an asset, modification time), then the paths.
+pub fn encode_files_for_file_system_alone(mut paths: Vec<PathForFileSystemAlone>) -> Vec<u8> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    paths.sort_unstable();
+    paths.dedup_by(|later, earlier| later.path_below_root == earlier.path_below_root);
+    let mut records = (paths.len() as u32).to_le_bytes().to_vec();
+    let mut start = 0u32;
+    for path in &paths {
+        records.extend_from_slice(&start.to_le_bytes());
+        records.extend_from_slice(&(path.path_below_root.len() as u32).to_le_bytes());
+        records.extend_from_slice(&u32::from(path.is_folder).to_le_bytes());
+        records.extend_from_slice(&u32::from(path.is_asset).to_le_bytes());
+        records.extend_from_slice(&path.modified_at.to_le_bytes());
+        let size = path.size_without_bytes.unwrap_or(u64::MAX);
+        records.extend_from_slice(&size.to_le_bytes());
+        start += path.path_below_root.len() as u32;
+    }
+    records.extend(paths.iter().flat_map(|path| &path.path_below_root));
+    records
+}
+
+fn find_for_file_system_alone(records: &[u8], path: &[u8]) -> Option<FoundForFileSystemAlone> {
+    let (count, records) = records.split_first_chunk::<4>()?;
+    let count = u32::from_le_bytes(*count) as usize;
+    let (records, paths) =
+        records.split_at_checked(count.checked_mul(FILE_FOR_FILE_SYSTEM_RECORD)?)?;
+    let read = |index: usize| -> Option<(&[u8], FoundForFileSystemAlone)> {
+        let record = records.get(index * FILE_FOR_FILE_SYSTEM_RECORD..)?;
+        let (start, record) = record.split_first_chunk::<4>()?;
+        let (length, record) = record.split_first_chunk::<4>()?;
+        let (is_folder, record) = record.split_first_chunk::<4>()?;
+        let (is_asset, record) = record.split_first_chunk::<4>()?;
+        let (modified_at, record) = record.split_first_chunk::<8>()?;
+        let (size, _) = record.split_first_chunk::<8>()?;
+        let size = u64::from_le_bytes(*size);
+        let start = u32::from_le_bytes(*start) as usize;
+        let listed = paths.get(start..start.checked_add(u32::from_le_bytes(*length) as usize)?)?;
+        let found = FoundForFileSystemAlone {
+            number: index as u32 + 1,
+            modified_at: i64::from_le_bytes(*modified_at),
+            is_folder: u32::from_le_bytes(*is_folder) != 0,
+            is_asset: u32::from_le_bytes(*is_asset) != 0,
+            size_without_bytes: (size != u64::MAX).then_some(size),
+        };
+        Some((listed, found))
+    };
+    let (mut low, mut high) = (0, count);
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let (listed, found) = read(middle)?;
+        match listed.cmp(path) {
+            core::cmp::Ordering::Less => low = middle + 1,
+            core::cmp::Ordering::Greater => high = middle,
+            core::cmp::Ordering::Equal => return Some(found),
+        }
+    }
+    None
+}
+
+fn read_refused_data<'a>(rest: &mut &'a [u8]) -> Option<(&'a [u8], RefusedData<'a>)> {
+    fn read_number(rest: &mut &[u8]) -> Option<u32> {
+        let (number, behind) = rest.split_first_chunk::<4>()?;
+        *rest = behind;
+        Some(u32::from_le_bytes(*number))
+    }
+    fn read_text<'a>(rest: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let length = read_number(rest)? as usize;
+        let (text, behind) = rest.split_at_checked(length)?;
+        *rest = behind;
+        Some(text)
+    }
+    let (path, message) = (read_text(rest)?, read_text(rest)?);
+    let refused = RefusedData {
+        is_syntax_error: read_number(rest)? != 0,
+        message,
+        line: read_number(rest)? as i32,
+        column: read_number(rest)? as i32,
+        offset: read_number(rest)?,
+        length: read_number(rest)?,
+    };
+    Some((path, refused))
 }
 
 impl CompiledProgram {
@@ -468,13 +660,16 @@ impl CompiledProgram {
             entry_points,
             preserves_source_paths,
             source_path_order,
-            package_names: Box::new([]),
+            package_names: NamesReadLater::from(Box::default()),
             path_aliases: Box::new([]),
             root_below_working_directory: None,
             root_from_executable: None,
             root_on_build_machine: None,
             assets_named_at_root: b"",
-            further_package_names: Box::new([]),
+            refused_data: b"",
+            files_for_file_system_alone: b"",
+            loaders_given_to_build: b"",
+            further_package_names: NamesReadLater::from(Box::default()),
             allows_code_from_disk: false,
             names_plugin: false,
             root_folders_spelled: b"",
@@ -488,6 +683,7 @@ impl CompiledProgram {
         }
     }
 
+    #[cfg(test)]
     pub fn with_package_names(
         mut self,
         package_names: Box<[CompiledPackageName]>,
@@ -498,7 +694,15 @@ impl CompiledProgram {
             .flat_map(|name| [name.required, name.imported])
             .flatten();
         debug_assert!(indices.all(|index| (index as usize) < self.entry_points.len()));
-        self.package_names = package_names;
+        self.package_names = package_names.into();
+        self
+    }
+
+    pub fn with_package_names_read_later(
+        mut self,
+        names: NamesReadLater<CompiledPackageName>,
+    ) -> CompiledProgram {
+        self.package_names = names;
         self
     }
 
@@ -549,9 +753,14 @@ impl CompiledProgram {
         join_public_path(public_root, self.levels_above_root, source_dir, specifier)
     }
 
+    /// The key under which an asset is mounted. `path` leads to it from the root directory.
+    pub fn join_public_asset_path(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+        self.join_public_path(public_root, public_root, path)
+    }
+
     pub fn with_further_package_names(
         mut self,
-        names: Box<[CompiledFurtherPackageName]>,
+        names: NamesReadLater<CompiledFurtherPackageName>,
     ) -> CompiledProgram {
         self.further_package_names = names;
         self
@@ -576,9 +785,64 @@ impl CompiledProgram {
         self
     }
 
-    pub fn asset_named_at_root(&self, base_name: &[u8]) -> Option<&'static [u8]> {
-        bun_core::strings::split(self.assets_named_at_root, b"\0")
-            .find(|path| !path.is_empty() && bun_paths::basename(path) == base_name)
+    pub fn with_refused_data(mut self, records: &'static [u8]) -> CompiledProgram {
+        self.refused_data = records;
+        self
+    }
+
+    pub fn with_files_for_file_system_alone(mut self, records: &'static [u8]) -> CompiledProgram {
+        self.files_for_file_system_alone = records;
+        self
+    }
+
+    /// What the build laid at `path_below_root` for `node:fs` to find, where nobody embedded it.
+    pub fn find_for_file_system_alone(
+        &self,
+        path_below_root: &[u8],
+    ) -> Option<FoundForFileSystemAlone> {
+        find_for_file_system_alone(self.files_for_file_system_alone, path_below_root)
+    }
+
+    pub fn with_loaders_given_to_build(mut self, loaders: &'static [u8]) -> CompiledProgram {
+        self.loaders_given_to_build = loaders;
+        self
+    }
+
+    pub fn loaders_given_to_build(&self) -> &'static [u8] {
+        self.loaders_given_to_build
+    }
+
+    /// `path`: that of the module that stands for the file.
+    pub fn find_refused_data(&self, path: &[u8]) -> Option<RefusedData<'static>> {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            let (of, refused) = read_refused_data(&mut rest)?;
+            if of == path {
+                return Some(refused);
+            }
+        }
+        None
+    }
+
+    pub fn holds_refused_data_starting_with(&self, start: &[u8]) -> bool {
+        let mut rest = self.refused_data;
+        while !rest.is_empty() {
+            match read_refused_data(&mut rest) {
+                Some((of, _)) if of.starts_with(start) => return true,
+                Some(_) => {}
+                None => return false,
+            }
+        }
+        false
+    }
+
+    pub fn assets_named_at_root(&self, base_name: &[u8]) -> impl Iterator<Item = &'static [u8]> {
+        self.paths_named_at_root()
+            .filter(move |path| bun_paths::basename(path) == base_name)
+    }
+
+    pub fn paths_named_at_root(&self) -> impl Iterator<Item = &'static [u8]> {
+        bun_core::strings::split(self.assets_named_at_root, b"\0").filter(|path| !path.is_empty())
     }
 
     /// Where the file that the executable knows as `path` lay on the machine that built it: what `require.resolve` answers, as with `bun build --compile`.
@@ -600,19 +864,14 @@ impl CompiledProgram {
         if !bun_paths::is_absolute(path) || is_bun_standalone_file_path(path) {
             return None;
         }
-        let below_root = [b"./", bun_paths::resolve_path::relative(root, path)].concat();
+        let below_root = [b"./", Path::relative(root, path).as_bytes()].concat();
         self.join_public_path(public_root, public_root, &below_root)
     }
 
     /// Where the root directory lies below the folder of this executable, wherever it is installed.
     pub fn root_beside_executable(&self, executable: &[u8]) -> Option<Vec<u8>> {
-        use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
         let root = self.root_from_executable?;
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        let folder = dirname::<platform::Auto>(executable);
-        let joined =
-            join_abs_string_buf_checked::<platform::Auto>(folder, &mut buffer[..], &[root])?;
-        Some(joined.to_vec())
+        Some(Path::resolve(&[executable, b"..", root]).to_vec())
     }
 
     pub fn knows_root_on_disk(&self) -> bool {
@@ -621,15 +880,8 @@ impl CompiledProgram {
 
     /// The folder on disk that stands for the root directory of the build.
     pub fn root_on_disk(&self, working_directory: &[u8]) -> Option<Vec<u8>> {
-        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let root = self.root_below_working_directory?;
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        let joined = join_abs_string_buf_checked::<platform::Auto>(
-            working_directory,
-            &mut buffer[..],
-            &[root],
-        );
-        joined.map(<[u8]>::to_vec)
+        Some(Path::resolve(&[working_directory, root]).to_vec())
     }
 
     pub fn set_module_lookup(&self, lookup: ModuleLookup) {
@@ -721,18 +973,11 @@ impl CompiledProgram {
         let Some(listing) = self.module_listing.get() else {
             return;
         };
-        if cfg!(windows) {
-            to_separators::<b'/', b'\\'>(&mut start);
-        }
+        bun_paths::to_native_in_place(&mut start);
         listing(&start, &mut |path| {
             // A file that only an attribute asks for stands under its path, a question mark and the name of the form.
             let path = bun_core::strings::split(path, b"?").next().unwrap_or(path);
-            if cfg!(windows) {
-                let mut path = path.to_vec();
-                to_separators::<b'\\', b'/'>(&mut path);
-                return each(&path);
-            }
-            each(path)
+            each(&bun_paths::to_portable(path))
         });
     }
 
@@ -810,6 +1055,56 @@ impl CompiledProgram {
         self.find_file_or_directory(&path, how, search, lookup)
     }
 
+    /// Whether `bun run` finds under `specifier` a file that the executable does not hold, where the executable would find another.
+    pub fn leads_outside(
+        &self,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> bool {
+        let how = HowNamed {
+            names_directory: Resolver::import_path_names_directory(specifier),
+            is_require,
+        };
+        !self.preserves_source_paths
+            && (self.join_public_path(public_root, source_dir, specifier))
+                .is_some_and(|path| self.is_marked_as_leading_outside(&path, how))
+    }
+
+    fn is_marked_as_leading_outside(&self, path: &[u8], how: HowNamed) -> bool {
+        let mark = match how.names_directory {
+            true => LEADS_OUTSIDE_AS_FOLDER,
+            false => LEADS_OUTSIDE,
+        };
+        !self.package_names.is_empty()
+            && self.is_hidden_name(&[path, mark].concat(), how.is_require)
+    }
+
+    /// Removes `..` steps that the next name undoes: `../app/note.txt` is `note.txt` in the root directory `app`.
+    fn cancel_root_folders<'p>(&self, parts: &[&'p [u8]]) -> Vec<&'p [u8]> {
+        let folders = split_path(self.root_folders_spelled);
+        let folders: Vec<&[u8]> = folders.collect();
+        let mut above = count_levels_above_root(parts);
+        let mut rest = &parts[above..];
+        while above > 0
+            && let Some(at) = folders.len().checked_sub(above)
+            && rest.first() == Some(&folders[at])
+        {
+            above -= 1;
+            rest = &rest[1..];
+        }
+        [&parts[..above], rest].concat()
+    }
+
+    /// `join_public_path` of a path that `node:fs` is given.
+    pub fn join_public_file_path(&self, public_root: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+        let levels = self.levels_above_root;
+        let parts = join_below_public_root(public_root, levels, public_root, path)?;
+        let parts = self.cancel_root_folders(&parts);
+        Some(spell_public_path(public_root, levels, &parts))
+    }
+
     /// The compiled module that `specifier` names by going up out of the root directory and coming back through its folders.
     pub fn resolve_module_through_root_folders(
         &self,
@@ -847,7 +1142,6 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
-        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let base = match is_relative_specifier(specifier) {
             true => source_dir,
             false => specifier,
@@ -855,13 +1149,8 @@ impl CompiledProgram {
         if !bun_paths::is_absolute(base) || is_bun_standalone_file_path(base) {
             return None;
         }
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        let file = join_abs_string_buf_checked::<platform::Auto>(
-            source_dir,
-            &mut buffer[..],
-            &[specifier],
-        )?;
-        let path = self.public_path_of_source(public_root, file)?;
+        let file = Path::resolve(&[source_dir, specifier]);
+        let path = self.public_path_of_source(public_root, &file)?;
         let how = HowNamed {
             names_directory: Resolver::import_path_names_directory(specifier),
             is_require,
@@ -912,10 +1201,7 @@ impl CompiledProgram {
         search: &ExtensionSearch<'_>,
         lookup: Lookup<'_>,
     ) -> Option<&'static [u8]> {
-        let leads_outside = !how.names_directory
-            && !self.package_names.is_empty()
-            && self.is_hidden_name(&[path, LEADS_OUTSIDE].concat(), how.is_require);
-        if leads_outside {
+        if self.is_marked_as_leading_outside(path, how) {
             return None;
         }
         if let Some(file) = find_file(path, how.names_directory, search, lookup) {
@@ -963,7 +1249,7 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
-        let source_dir = bun_paths::strings::without_trailing_slash(source_dir);
+        let source_dir = bun_paths::without_trailing_sep(source_dir);
         let applies = |alias: &&CompiledPathAlias| {
             compare_source_paths(source_dir, alias.folder).is_eq()
                 || is_in_directory(source_dir, alias.folder)
@@ -977,8 +1263,9 @@ impl CompiledProgram {
         let aliases = || self.path_aliases.iter().filter(|it| it.folder == folder);
         let paths = || aliases().filter(|alias| !alias.is_base_url);
         let find = |alias: &CompiledPathAlias, matched: &[u8]| {
+            let matched = bun_core::strings::replace_char(matched, b'\\', b'/');
             let target = match split_at_star(alias.target) {
-                Some((start, end)) => [start, matched, end].concat(),
+                Some((start, end)) => [start, &matched, end].concat(),
                 None => alias.target.to_vec(),
             };
             let how = HowNamed {
@@ -1067,8 +1354,13 @@ impl CompiledProgram {
         if let Some(found) = alias {
             return Found(found);
         }
+        let kind = match is_require {
+            true => ImportKind::Require,
+            false => ImportKind::Stmt,
+        };
+        let as_path: &[u8] = &path_in_node_modules(specifier, kind, WrittenIn::Code);
         let how = HowNamed {
-            names_directory: names_directory_below_node_modules(specifier, Platform::AUTO),
+            names_directory: as_path.ends_with(&[SEP]),
             is_require,
         };
         let package = find_name_of_package_with_exports(specifier);
@@ -1115,7 +1407,7 @@ impl CompiledProgram {
                         None => Hidden,
                     };
                 }
-                push_segments(&mut segments, split_path(specifier));
+                push_segments(&mut segments, split_path(as_path));
                 let path = spell_public_path(public_root, levels, &segments);
                 let folder = match how.names_directory {
                     true => self.find_package_name(&[&path[..], b"/"].concat(), is_require),
@@ -1179,7 +1471,7 @@ impl CompiledProgram {
             let names_directory = Resolver::import_path_names_directory(specifier);
             let Some(path) = self.join_public_path(public_root, public_root, specifier) else {
                 // `..` has left nothing of the root in a path that began there. The build wrote down what it leads to.
-                let written: Vec<u8> = specifier.iter().copied().map(normalize_separator).collect();
+                let written = bun_paths::to_portable(specifier);
                 return self.find_package_name(&written, false)?;
             };
             if let Some(found) = self.entry_point_from_working_directory(public_root, specifier) {
@@ -1273,6 +1565,20 @@ mod tests {
     use bun_sema_standalone as _;
 
     use super::*;
+
+    #[test]
+    fn folders_above_a_path_up_to_a_folder() {
+        let list = |path: &'static [u8], top: &[u8]| -> Vec<&'static [u8]> {
+            folders_up_to(path, top.len()).collect()
+        };
+        assert_eq!(list(b"data/a.json", b"data"), [&b"data"[..]]);
+        assert_eq!(
+            list(b"data/x/y/a.json", b"data"),
+            [&b"data/x/y"[..], b"data/x", b"data"]
+        );
+        assert_eq!(list(b"a/b/c.json", b"a/b"), [&b"a/b"[..]]);
+        assert!(list(b"a.json", b"").is_empty());
+    }
 
     fn program(source_path_order: [u32; 3]) -> CompiledProgram {
         let entry_points: [(u32, &[u8]); 3] =
@@ -1586,8 +1892,12 @@ mod tests {
             ] {
                 assert_eq!(resolve(ROOT, directory), Some(MODULES[6]));
             }
-            assert_eq!(resolve(ROOT, b"./plugins\\"), Some(MODULES[6]));
-            assert_eq!(resolve(ROOT, b"./plugins\\first.js"), Some(MODULES[7]));
+            let on_windows = |module| cfg!(windows).then_some(module);
+            assert_eq!(resolve(ROOT, b"./plugins\\"), on_windows(MODULES[6]));
+            assert_eq!(
+                resolve(ROOT, b"./plugins\\first.js"),
+                on_windows(MODULES[7])
+            );
             assert_eq!(resolve(ROOT, b"./typed/"), None);
             assert_eq!(resolve(ROOT, b"./typed.js/"), Some(MODULES[3]));
             assert_eq!(resolve(b"/$bunfs/root/plugins/", b"."), Some(MODULES[6]));
@@ -1685,6 +1995,8 @@ mod tests {
             assert_eq!(directories(b"/$bunfs/root/lib/deep/"), nested);
             let above = [b"/shared".to_vec(), b"/".to_vec()];
             assert_eq!(directories(b"/$bunfs/_.._/_.._/shared/"), above);
+            let too_long = [ROOT, &b"a/".repeat(bun_paths::MAX_PATH_BYTES)].concat();
+            assert!(directories(&too_long).len() < bun_paths::MAX_PATH_BYTES / 2);
         }
 
         #[test]
@@ -2026,46 +2338,13 @@ mod tests {
             }
 
             #[test]
-            fn name_with_a_backslash_is_a_path() {
-                assert_eq!(require(ROOT, b"both\\common.cjs"), Found(FILES[4]));
-                assert_eq!(require(ROOT, b"@scope\\closed/lib/inner"), Found(FILES[7]));
-            }
-
-            #[test]
-            fn directory_is_named_where_the_join_keeps_the_separator() {
-                use bun_paths::resolve_path::{join_abs_string_buf, platform};
-                let mut buffer = [0u8; 256];
-                for specifier in [
-                    &b"driver/lib"[..],
-                    b"driver/lib/",
-                    b"driver/lib\\",
-                    b"driver/lib//",
-                    b"driver/lib/\\",
-                    b"driver/lib\\/",
-                    b"driver/lib/.",
-                    b"driver/lib/./",
-                    b"driver/",
-                    b"driver\\",
-                ] {
-                    let parts = [&b"node_modules"[..], specifier];
-                    let on_windows =
-                        join_abs_string_buf::<platform::Windows>(b"C:\\app", &mut buffer, &parts)
-                            .ends_with(b"\\");
-                    assert_eq!(
-                        names_directory_below_node_modules(specifier, Platform::Windows),
-                        on_windows,
-                        "{}",
-                        String::from_utf8_lossy(specifier)
-                    );
-                    #[cfg(not(windows))]
-                    assert_eq!(
-                        names_directory_below_node_modules(specifier, Platform::Posix),
-                        join_abs_string_buf::<platform::Loose>(b"/app", &mut buffer, &parts)
-                            .ends_with(b"/"),
-                        "{}",
-                        String::from_utf8_lossy(specifier)
-                    );
-                }
+            fn name_with_a_backslash_is_a_path_on_windows() {
+                let on_windows = |file| if cfg!(windows) { Found(file) } else { Unknown };
+                assert_eq!(require(ROOT, b"both\\common.cjs"), on_windows(FILES[4]));
+                assert_eq!(
+                    require(ROOT, b"@scope\\closed/lib/inner"),
+                    on_windows(FILES[7])
+                );
             }
 
             #[test]

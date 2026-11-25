@@ -1,5 +1,5 @@
 // Drives the H2FrameParser writable path into a session.destroy() from inside
-// a write callback. Without a keepalive spanning on_native_writable's flush
+// a write callback. Without a ref held across on_native_writable's flush
 // loop, the parser is freed mid-loop and the next has_backpressure() reads a
 // poisoned HiveArray slot (ASAN use-after-poison).
 //
@@ -14,9 +14,8 @@
 //      delivers the writable event and on_native_writable drains write_buffer
 //      then flush_stream_queue, which invokes the queued callback
 //      synchronously inside the flush loop.
-//   4. Callback destroys the session and forces a full GC so the JS
-//      wrapper's +1 is released while flush()'s own keepalive is still on
-//      the stack; when flush() returns, that keepalive is the last ref.
+//   4. Callback destroys the session and forces a full GC, so the ref that
+//      on_writable took is the last one.
 
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { once } from "node:events";

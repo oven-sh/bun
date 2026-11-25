@@ -12,7 +12,7 @@ use core::cell::RefCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_boringssl_sys::{SSL, SSL_SESSION, SSL_SESSION_free, SSL_set_session};
+use bun_boringssl_sys::{OwnedSslSession, SSL, SSL_SESSION, SSL_set_session};
 use bun_core::strings;
 
 use crate::http_context::MAX_KEEPALIVE_HOSTNAME;
@@ -27,18 +27,7 @@ struct CacheEntry {
     proxy_auth_hash: u64,
     /// AF_UNIX socket path; empty for TCP.
     unix_path: Box<[u8]>,
-    /// `Option` so [`SessionCache::take`] can move ownership out.
-    session: Option<NonNull<SSL_SESSION>>,
-}
-
-impl Drop for CacheEntry {
-    fn drop(&mut self) {
-        if let Some(s) = self.session.take() {
-            // SAFETY: owns one reference from `SSL_SESSION_up_ref` in
-            // `us_ssl_new_session_cb`.
-            unsafe { SSL_SESSION_free(s.as_ptr()) };
-        }
-    }
+    session: OwnedSslSession,
 }
 
 #[derive(Default)]
@@ -53,7 +42,7 @@ impl SessionCache {
         }
     }
 
-    /// Remove and return the matching session (+1 ref). TLS 1.3 tickets are
+    /// Remove and return the matching session. TLS 1.3 tickets are
     /// single-use, so a hit consumes the entry.
     pub(crate) fn take(
         &self,
@@ -61,7 +50,7 @@ impl SessionCache {
         port: u16,
         proxy_auth_hash: u64,
         unix_path: &[u8],
-    ) -> Option<NonNull<SSL_SESSION>> {
+    ) -> Option<OwnedSslSession> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
         }
@@ -69,31 +58,28 @@ impl SessionCache {
         let idx = entries.iter().position(|e| {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
-                && strings::eql_long(&e.hostname, hostname, true)
+                && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
         })?;
-        entries.remove(idx).session.take()
+        Some(entries.remove(idx).session)
     }
 
-    /// Takes ownership of `session` (+1 ref).
     fn insert(
         &self,
         hostname: &[u8],
         port: u16,
         proxy_auth_hash: u64,
         unix_path: &[u8],
-        session: NonNull<SSL_SESSION>,
+        session: OwnedSslSession,
     ) {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
-            // SAFETY: caller transferred one reference.
-            unsafe { SSL_SESSION_free(session.as_ptr()) };
             return;
         }
         let mut entries = self.entries.borrow_mut();
         if let Some(idx) = entries.iter().position(|e| {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
-                && strings::eql_long(&e.hostname, hostname, true)
+                && strings::eql_long(&e.hostname, hostname)
                 && *e.unix_path == *unix_path
         }) {
             let _ = entries.remove(idx);
@@ -105,7 +91,7 @@ impl SessionCache {
             port,
             proxy_auth_hash,
             unix_path: Box::<[u8]>::from(unix_path),
-            session: Some(session),
+            session,
         });
     }
 }
@@ -120,30 +106,20 @@ pub(crate) struct SessionSink {
     /// Set once `checkServerIdentity` passes. TLS 1.2 delivers the session
     /// inside `SSL_do_handshake`, before `on_handshake` can verify the peer.
     armed: bool,
-    pending: Option<NonNull<SSL_SESSION>>,
-}
-
-impl Drop for SessionSink {
-    fn drop(&mut self) {
-        if let Some(p) = self.pending.take() {
-            // SAFETY: `pending` owns one reference.
-            unsafe { SSL_SESSION_free(p.as_ptr()) };
-        }
-    }
+    pending: Option<OwnedSslSession>,
 }
 
 /// `us_dispatch_new_session` for an HTTP client socket. Runs inside `SSL_read`/`SSL_do_handshake`.
 pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSION) {
-    let Some(session) = NonNull::new(session) else {
+    if session.is_null() {
         return;
-    };
+    }
     // SAFETY: `socket` is live for this call.
     let owner = unsafe { us_socket_session_sink(socket) };
     let Some(owner) = NonNull::new(owner.cast::<SessionSink>()) else {
         return;
     };
-    // SAFETY: `session` is live for this call; the sink takes its own reference.
-    unsafe { SSL_SESSION_up_ref(session.as_ptr()) };
+    let session = OwnedSslSession::retain(SSL_SESSION::opaque_ref(session));
     // SAFETY: `owner` is the Box interior installed by [`install`]. Runs on
     // the HTTP thread inside `SSL_read`/`SSL_do_handshake`; nothing else
     // holds a borrow of the sink during that call.
@@ -160,18 +136,11 @@ pub fn on_new_session(socket: &mut bun_uws::us_socket_t, session: *mut SSL_SESSI
         );
     } else {
         // SAFETY: unique access on the HTTP thread (see above).
-        let sink = unsafe { &mut *owner.as_ptr() };
-        if let Some(prev) = sink.pending.replace(session) {
-            // SAFETY: `pending` owned one reference.
-            unsafe { SSL_SESSION_free(prev.as_ptr()) };
-        }
+        unsafe { (*owner.as_ptr()).pending = Some(session) };
     }
 }
 
 extern "C" fn sink_on_free(owner: *mut c_void) {
-    if owner.is_null() {
-        return;
-    }
     // SAFETY: `owner` is the `heap::into_raw` from [`install`]; uSockets'
     // free callback fires exactly once on `SSL_free`.
     unsafe { bun_core::heap::destroy(owner.cast::<SessionSink>()) };
@@ -181,10 +150,9 @@ unsafe extern "C" {
     fn us_socket_set_session_sink(
         s: *mut bun_uws::us_socket_t,
         sink: *mut c_void,
-        on_free: Option<extern "C" fn(*mut c_void)>,
+        on_free: extern "C" fn(*mut c_void),
     );
     fn us_socket_session_sink(s: *mut bun_uws::us_socket_t) -> *mut c_void;
-    fn SSL_SESSION_up_ref(session: *mut SSL_SESSION) -> core::ffi::c_int;
 }
 
 /// Whether this TLS client should read/write the cache. Lax verification and
@@ -216,12 +184,8 @@ pub(crate) unsafe fn install(
     // SAFETY: caller contract.
     let cache = unsafe { &(*ctx).session_cache };
     if let Some(session) = cache.take(hostname, port, proxy_auth_hash, unix_path) {
-        // SAFETY: `ssl` is live and pre-handshake; `SSL_set_session` takes
-        // its own reference, so release ours after.
-        unsafe {
-            SSL_set_session(ssl, session.as_ptr());
-            SSL_SESSION_free(session.as_ptr());
-        }
+        // SAFETY: `ssl` is live and pre-handshake; it takes its own reference.
+        unsafe { SSL_set_session(ssl, session.as_ptr()) };
     }
     let sink = Box::new(SessionSink {
         ctx,
@@ -237,7 +201,7 @@ pub(crate) unsafe fn install(
         us_socket_set_session_sink(
             socket,
             bun_core::heap::into_raw(sink).cast::<c_void>(),
-            Some(sink_on_free),
+            sink_on_free,
         );
     }
 }

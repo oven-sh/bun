@@ -1,0 +1,29 @@
+# -- source: a-text-that-no-turn-of-a-loop-round-a-loop-stores-is-read-in-front-of-it.ts
+# let source = "";
+# let position = 0;
+# let line = 1;
+# function skipBlanks(): void {
+#   while (position < source.length) {
+#     const code = source.charCodeAt(position);
+#     if (code === 32 || code === 9) position++;
+#     else if (code === 10) {
+#       line++;
+#       position++;
+#     } else if (code === 35) {
+#       while (position < source.length && source.charCodeAt(position) !== 10) position++;
+#     } else break;
+#   }
+# }
+# source = "  \t# a comment\n \n# another\n  x".replace("x", String(JSON.parse("7")));
+# skipBlanks();
+# print(position + " " + line + " " + source.charCodeAt(position));
+# -- end of source
+# A tokenizer's loop over blanks holds a loop over comments. Neither runs other code, which a first walk cannot know: it is walked as what the whole function may do. Found quiet, the loop around is walked
+# again as the loop inside is: no turn stores the text, so that the text, its length and its flat form are read in front, and the position comes round in a register in both loops.
+# RUN: walk f1 mechanisms=all
+# CHECK-COUNT-2: : int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
+# RUN(BARE): walk f1 mechanisms=all
+# BARE-NOT: () isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 29 4 55
+# SHELL-NEXT: exited with 0

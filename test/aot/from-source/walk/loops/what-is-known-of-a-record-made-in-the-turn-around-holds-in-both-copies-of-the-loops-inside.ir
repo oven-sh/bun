@@ -1,0 +1,27 @@
+# -- source: what-is-known-of-a-record-made-in-the-turn-around-holds-in-both-copies-of-the-loops-inside.js
+# function sum(rows, least) {
+#   let sum = 0;
+#   for (let i = 0; i < rows.length; i++) {
+#     const box = { n: i, m: least };
+#     do { rows[i] = rows[i] + 1; } while (rows[i] < least);
+#     box.n += 5;
+#     while (rows[i] < least + 2) { rows[i] = rows[i] + 1; }
+#     sum += box.n * 100 + box.m;
+#   }
+#   return sum;
+# }
+# for (const text of ['[0,5,2]', '[0,"a",2]', '[0.5,null,2,true]', '[[1],{},0]']) {
+#   const rows = JSON.parse(text);
+#   print(sum(rows, 3), JSON.stringify(rows));
+# }
+# -- end of source
+# As its neighbor, with a record made in the turn of the loop around, written between two loops inside and read behind them. Texts, null, a fraction and objects among the rows send turns into the closed copies.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 1809 [5,6,5]
+# CHECK-NEXT: 1809 [5,"a1",5]
+# CHECK-NEXT: 2612 [5.5,5,5,5]
+# CHECK-NEXT: 1809 ["11","[object Object]1",5]
+# CHECK-NEXT: exited with 0
+# RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 5
+# COUNT: statistic LoopVersioningAttemptsFailed 0

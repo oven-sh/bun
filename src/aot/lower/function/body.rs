@@ -1,4 +1,4 @@
-use bun_sema::hir::{FnBody, FnId};
+use bun_sema::hir::{ExprId, ExprKind, FnBody, FnId};
 
 use crate::builtins::SourceDialect;
 use crate::ir::FunctionId;
@@ -25,7 +25,9 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.emit_coroutine_start();
         lowering.count_generator_body(source);
         lowering.emit_fast_path(source);
+        lowering.begin_self_tail_loop(source);
         lowering.lower_function_body(source);
+        lowering.end_self_tail_loop();
         lowering.leave_scope(top);
         lowering.finish();
     }
@@ -33,7 +35,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {
-            SourceDialect::Program => RuntimeErrorKind::LeftOutOfExecutable,
+            SourceDialect::Program => RuntimeErrorKind::OmittedFromExecutable,
             SourceDialect::Runtime => RuntimeErrorKind::FunctionNotCompiled,
         };
         let mut lowering = FunctionLowering::begin(self, function);
@@ -52,10 +54,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_empty_return();
             }
             FnBody::Expr(expression) => {
-                let value = self.lower_tail_expression(expression);
+                let value = match self.is_body_of_evaluation(source, expression) {
+                    true => self.lower_expression(expression),
+                    false => self.lower_tail_expression(expression),
+                };
                 self.emit_return(value, Some(expression));
             }
             FnBody::None => {}
         }
+    }
+
+    /// The loader writes an arrow function around the text of a direct eval. Nothing in a text is in a tail position.
+    fn is_body_of_evaluation(&self, source: FnId, body: ExprId) -> bool {
+        let hir = self.file.hir;
+        let known = &hir.known_evaluations;
+        let after = known.partition_point(|it| it.first_expression.0 <= body.0);
+        after.checked_sub(1).is_some_and(|it| {
+            let root = hir.skip_type_assertions(known[it].function);
+            known[it].is_called() && matches!(hir[root].kind, ExprKind::Fn(it) if it == source)
+        })
     }
 }

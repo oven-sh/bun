@@ -1,0 +1,1 @@
+function nested(k) { const list = [[1, 2], [3, 4], { a: 1 }, [5], [6], [7], [8], [9], [10], [11], [12], [13], [14], [15], [16], [17], [18]]; for (let i = 0; i < 2; i++) { list[k + 4 + i] = 0; list[1][0]++; list[2].a++; } return JSON.stringify(list); } console.log(nested(0)); console.log(nested(0));

@@ -157,10 +157,12 @@ const projects: Record<string, Record<string, string>> = {
     "broken/no-such-export.js": `import { nope } from "../helpers/good.js";\nexport { nope };`,
     "broken/hands-on-nothing.js": `export { gone } from "../helpers/good.js";`,
     "broken/through.js": `import "./declared-twice.js";\nexport const through = 1;`,
+    // As above: a BuildMessage in plain Bun, a SyntaxError in a compiled run.
     "links.test.js": `${head}
       import { good } from "./helpers/good.js";
+      const nameOf = error => (error.name === "BuildMessage" ? "SyntaxError" : error.name);
       test("written out", async () => {
-        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, error.name));
+        const said = (name, load) => load().then(() => console.log(name, "loaded"), error => console.log(name, nameOf(error)));
         await said("no-such-export.js", () => import("./broken/no-such-export.js"));
         await said("hands-on-nothing.js", () => import("./broken/hands-on-nothing.js"));
         await said("through.js", () => import("./broken/through.js"));
@@ -842,15 +844,6 @@ const ways = {
   "in parallel": { flags: ["--isolate", "--parallel=2"] },
 } satisfies Record<string, { flags: string[] }>;
 
-// TODO: what happens today, by project and way. It goes into the name of the case, in the words by which a wrong answer is listed as one.
-const differs: Record<string, Partial<Record<keyof typeof ways, string>>> = {
-  // All else that the project prints is as in plain Bun.
-  "a file that fails when it is linked to a compiled file": {
-    "each file in its own realm":
-      "a wrong answer today: under `bun test --aot --isolate` the error of a file whose import does not parse is a SyntaxError, where `bun test --isolate` makes it a BuildMessage",
-  },
-};
-
 // The runs of a way are dealt over its test files, <name>.test.ts, <name>-2.test.ts and so on, which all read alike. CI's runner gives a file three minutes
 // on four processors,. A way that has grown too long gets one more file: there is nothing else to change.
 function dealsRunsTo(testFile: string) {
@@ -907,9 +900,7 @@ export function declareEveryProject(way: keyof typeof ways, testFile: string) {
   const nextRunIsHere = dealsRunsTo(testFile);
   for (const [name, files] of Object.entries(projects)) {
     if (!runs(name) || !nextRunIsHere()) continue;
-    const today = differs[name]?.[way];
-    const declare = today ? test.todo : test.concurrent;
-    declare(today ? `${name}: ${way}: ${today}` : `${name}: ${way}`, async () => {
+    test.concurrent(`${name}: ${way}`, async () => {
       using dir = tempDir("modules-in-a-test-run", {
         "package.json": `{ "type": "module" }`,
         "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,

@@ -1,12 +1,12 @@
 //! Resolver output and bookkeeping types: `Result`, `MatchResult`, `LoadResult`,
-//! `PathPair`, `PendingResolution`, `DebugLogs`, and friends. These are the
+//! `PathPair`, `DebugLogs`, and friends. These are the
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
+use core::ops::{Deref, DerefMut};
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
-use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
@@ -14,7 +14,6 @@ use bun_sys::Fd as FD;
 use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
-use crate::resolver::Dependency;
 
 // NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
@@ -181,10 +180,10 @@ impl ResultFlags {
     }
 }
 
+#[expect(clippy::large_enum_variant, reason = "`Success` is the common case")]
 pub enum ResultUnion<'r> {
     Success(Result<'r>),
     Failure(crate::Error),
-    Pending(PendingResolution),
     NotFound,
 }
 
@@ -269,12 +268,12 @@ impl DebugLogs {
     // deinit → Drop (only frees `notes`)
 
     #[cold]
-    pub(crate) fn increase_indent(&mut self) {
+    fn increase_indent(&mut self) {
         self.indent.append(b" ").expect("unreachable");
     }
 
     #[cold]
-    pub(crate) fn decrease_indent(&mut self) {
+    fn decrease_indent(&mut self) {
         let new_len = self.indent.list.len() - 1;
         self.indent.list.truncate(new_len);
     }
@@ -301,6 +300,44 @@ impl DebugLogs {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", args).expect("unreachable");
         self.add_note(buf);
+    }
+}
+
+pub(crate) trait HasDebugLogs {
+    fn debug_logs(&mut self) -> Option<&mut DebugLogs>;
+}
+
+/// `&mut T`, whose debug logs are indented until this drops.
+#[must_use]
+pub(crate) struct Indented<'a, T: HasDebugLogs>(&'a mut T);
+
+impl<'a, T: HasDebugLogs> Indented<'a, T> {
+    pub(crate) fn new(target: &'a mut T) -> Self {
+        if let Some(debug) = target.debug_logs() {
+            debug.increase_indent();
+        }
+        Self(target)
+    }
+}
+
+impl<T: HasDebugLogs> Deref for Indented<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> DerefMut for Indented<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> Drop for Indented<'_, T> {
+    fn drop(&mut self) {
+        if let Some(debug) = self.0.debug_logs() {
+            debug.decrease_indent();
+        }
     }
 }
 
@@ -334,12 +371,11 @@ impl Default for MatchResult {
 /// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
 /// instead of being moved by value through every nested level. **`out` is only
 /// valid to read when the returned status is `Success`**; on `NotFound` /
-/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// `Failure` it may hold partially-written state from an earlier
 /// attempt and must be ignored.
 pub enum MatchStatus {
     NotFound,
     Success,
-    Pending(Box<PendingResolution>),
     Failure(crate::Error),
 }
 
@@ -348,35 +384,6 @@ impl MatchStatus {
     pub(crate) fn is_success(&self) -> bool {
         matches!(self, MatchStatus::Success)
     }
-}
-
-pub struct PendingResolution {
-    pub esm: crate::package_json::PackageExternal,
-    pub dependency: Dependency::Version,
-    pub root_dependency_id: Install::DependencyID,
-    pub import_record_id: u32,
-    pub string_buf: Vec<u8>,
-    pub tag: PendingResolutionTag,
-}
-
-impl Default for PendingResolution {
-    fn default() -> Self {
-        Self {
-            esm: Default::default(),
-            dependency: Default::default(),
-            root_dependency_id: Install::INVALID_PACKAGE_ID,
-            import_record_id: u32::MAX,
-            string_buf: Vec::new(),
-            tag: PendingResolutionTag::Download,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PendingResolutionTag {
-    Download,
-    Resolve,
-    Done,
 }
 
 pub struct LoadResult {

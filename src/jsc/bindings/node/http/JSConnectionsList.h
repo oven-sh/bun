@@ -56,10 +56,7 @@ public:
     JSC::JSArray* active(JSC::JSGlobalObject*);
     JSC::JSArray* expired(JSC::JSGlobalObject*, uint64_t headersDeadline, uint64_t requestDeadline);
 
-    void push(JSC::JSGlobalObject*, JSC::JSCell* parser);
-    void pop(JSC::JSGlobalObject*, JSC::JSCell* parser);
-    void pushActive(JSC::JSGlobalObject*, JSC::JSCell* parser);
-    void popActive(JSC::JSGlobalObject*, JSC::JSCell* parser);
+    NEVER_INLINE void update(JSC::JSGlobalObject*, JSC::JSCell* parser, bool isListed, bool isActive);
 };
 
 void setupConnectionsListClassStructure(JSC::LazyClassStructure::Initializer&);

@@ -1,6 +1,6 @@
 // Folding puts a number with a fraction in the place of a quotient, a product or a sum. A look at a loop has typed that operation by its row, which says between which integers the result lies.
 // The type of the number names the two integers around it, so what comes round, and what a function of Math or an operator makes of it, lies within the preview: the build does not stop.
-// Under: --aot-testing=WritesBodiesStraight: the closed ways give the same answers
+// Under: --aot-testing=ForceStraightCompilation: the closed ways give the same answers
 globalThis.report = value => { console.log(typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value)); };
 function show(value) { return Object.is(value, -0) ? "-0" : String(value); }
 function truncated(y) { let b = y, d = 7; let i = 0; while (i < (y & 3) + 1) { i++; b = Math.trunc(d / 3); } return b; }

@@ -1,4 +1,4 @@
-// compatibility.mdx, "Smaller differences". `bun run` stores into the name and runs the loop: "body body behind".
+// `bun run` stores into the name and runs the loop: "body body behind".
 function walk(list) {
   const seen = [];
   try {

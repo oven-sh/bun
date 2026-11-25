@@ -5,6 +5,7 @@
 // The three rows of helpers across an await or a yield: a helper that is only called by its name is entered itself and never made, so nothing holds what `load` alone referred to once it has run, and the
 // environment of the two variables is not made at all where the helpers are built in line. Plain Bun keeps them: the suspended function holds its scope. So does a build with --aot-testing=CheckProofsAtRunTime,
 // which makes the environment: `bump`, called again behind the await, needs `count`, and `request` lies beside it. The sums are the answers that must hold everywhere.
+// Todo under --aot-harden=proof-checks: "collected" | "kept": the three rows of helpers across an await or a yield: that build makes the environment, as said above
 import "../../../fixtures/jsc-shell-functions.ts";
 import "./program.ts";
 /* Output:

@@ -5,13 +5,14 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    Chain, ExprId, ExprKind, Flags, Member, MemberKey, NameKind, NodeData, Prop, PropKey,
+    Chain, ExprId, ExprKind, Flags, Member, MemberId, MemberKey, NameKind, NodeData, Prop, PropKey,
 };
 use bun_sema::program::Sym;
 
 use super::{FunctionLowering, parameters};
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
+use crate::ir::generated::{BlockFrequency, ECMAMode, ModuleKind};
 use crate::ir::{BlockId, FunctionKey, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 
 pub(in crate::lower) use self::key::find_function_name;
@@ -80,6 +81,31 @@ impl From<PropertyName> for GivenName {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn name_under_property(
+        &mut self,
+        property: &Prop,
+        key: PropKey,
+        name: PropertyName,
+    ) -> GivenName {
+        self.with_name_that_key_spells(GivenName::under_property(property, name), key)
+    }
+
+    pub(crate) fn name_under_member(&mut self, member: MemberId, name: PropertyName) -> GivenName {
+        let key = self.file.hir.runtime_member_key(member);
+        self.with_name_that_key_spells(GivenName::under_member(&self.file.hir[member], name), key)
+    }
+
+    fn with_name_that_key_spells(&mut self, given: GivenName, key: PropKey) -> GivenName {
+        let name_that_key_spells = match given.name {
+            PropertyName::Computed(_) => self.file.find_name_that_key_spells(key),
+            PropertyName::Constant(_) => None,
+        };
+        GivenName {
+            name_that_key_spells,
+            ..given
+        }
+    }
+
     fn resolve_access(&mut self, name: PropertyName) -> PropertyName {
         match name {
             PropertyName::Constant(key) => self.normalize_access_key(key),
@@ -89,17 +115,45 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn emit_get(&mut self, object: ValueId, name: PropertyName) -> ValueId {
         match self.resolve_access(name) {
-            PropertyName::Constant(key) => self.builder.prop_get(object, key, false, false),
+            PropertyName::Constant(key) => {
+                let (modules, reader) = (self.file.inputs.modules, self.file.file);
+                if modules.kind(reader) != ModuleKind::RuntimeSource && !modules.is_library(reader)
+                {
+                    self.file.fragment.note_read(key);
+                }
+                self.builder.prop_get(object, key, false, false)
+            }
             PropertyName::Computed(property) => self.builder.elem_get(object, property),
         }
     }
 
     pub(crate) fn emit_set(&mut self, object: ValueId, name: PropertyName, value: ValueId) {
         let mode = self.mode();
+        self.emit_set_in_mode(object, name, value, mode);
+    }
+
+    pub(crate) fn emit_set_in_mode(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        value: ValueId,
+        mode: ECMAMode,
+    ) {
+        self.emit_set_inside(object, name, value, mode, None);
+    }
+
+    pub(crate) fn emit_set_inside(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        value: ValueId,
+        mode: ECMAMode,
+        function: Option<BuiltinId>,
+    ) {
         match self.resolve_access(name) {
             PropertyName::Constant(key) => {
                 self.file.fragment.note_write(key);
-                self.builder.prop_set(object, key, mode, value, false)
+                (self.builder).prop_set(object, key, mode, value, function, false)
             }
             PropertyName::Computed(property) => {
                 self.builder.elem_set(object, property, mode, value)
@@ -151,6 +205,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         exit: Option<BlockId>,
     ) -> ValueId {
         let base = self.lower_chain_base(object, exit);
+        let base = self.claim_member_read_like_an_object(object, base);
         let kind = self.file.hir[access].kind;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = kind else {
             unreachable!("lower_member_base takes a Dot or an Index expression");
@@ -218,6 +273,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let result_on_answer = self.builder.create_variable(None);
         let join = self.create_block();
         let split = self.split_on_type(answer, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
         self.builder.switch_to(split.taken);
         let (base, property) = match base {
             Some(base) => (base, self.lower_member_key(key)),

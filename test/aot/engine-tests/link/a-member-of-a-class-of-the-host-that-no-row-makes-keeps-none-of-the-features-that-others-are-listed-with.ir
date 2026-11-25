@@ -1,0 +1,29 @@
+# const harbor = new WebSocket("ws://localhost:1"); harbor.onmessage = letter => letter.data.query("cargo")
+# No row of the table says that it makes what a build puts out, a script of the shell or a parser of frames: native code behind Bun.build, the shell and node:http2 does, and those are listed with the same features. Nobody of them may run here, so what hangs on the three prototype objects keeps nothing.
+# RUN: features
+# CHECK-NOT: by BuildArtifactPrototype
+# CHECK-NOT: by ParsedShellScriptPrototype
+# CHECK-NOT: by ShellInterpreterPrototype
+# CHECK-NOT: by H2FrameParser
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="WebSocket" [isFreeName]
+    v2 = String string="ws://localhost:1"
+    v3 = Construct v1, -, v2
+    v4 = NewClosure function=f1
+    PropSet v3, v4 key="onmessage"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="data"
+    v2 = PropGet v1 key="query"
+    v3 = String string="cargo"
+    v4 = Call v2, v1, v3 calleeKey="query"
+    Return v4
+}

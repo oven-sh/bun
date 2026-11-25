@@ -1,4 +1,4 @@
-// Under: --aot-testing=WritesBodiesStraight: the function left by a tail call there, and the error had no stack
+// Under: --aot-testing=ForceStraightCompilation: the function left by a tail call there, and the error had no stack
 // An error that a constructor of the engine makes for another new.target leaves out the frames down to the function that is new.target.
 // The function is called, not constructed, and Reflect.construct, by its name, is its last call: its frame stays while Reflect.construct constructs.
 function Old(text) {

@@ -1,0 +1,79 @@
+# f16 = word
+# -- source: a-loud-way-round-a-loop-reads-anew-what-the-quiet-turns-took-from-in-front.ts
+# // A reader over a text held in variables of a closure. A turn of `word` is quiet for a plain letter; for a code above 127 it calls `wide`, which may lay another text, another end or another place.
+# // What the quiet turns took from in front of the head must be read anew behind such a turn, and only behind such a turn.
+# function makeReader(first: string, acts: ((code: number) => void)[]) {
+#   let text = first;
+#   let at = 0;
+#   let end = first.length;
+#   function wide(code: number, depth: number): boolean {
+#     if (depth > 0) return wide(code, depth - 1);
+#     acts[code & 7](code);
+#     return (code & 8) === 0;
+#   }
+#   function older(code: number, depth: number): boolean {
+#     if (depth > 0) return older(code, depth - 1);
+#     return code < 0x300;
+#   }
+#   function isWide(code: number, level: number): boolean {
+#     return level >= 2 ? wide(code, 1) : older(code, 1);
+#   }
+#   function isPart(code: number, level: number): boolean {
+#     return code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 95 || code > 127 && isWide(code, level);
+#   }
+#   function sizeOf(code: number): number {
+#     return code >= 0x10000 ? 2 : 1;
+#   }
+#   function word(level: number): string {
+#     const start = at;
+#     let code = 0;
+#     while (at < end && isPart(code = text.charCodeAt(at), level)) at += sizeOf(code);
+#     return start + ".." + at + " of " + end + " stopped at " + code + " in " + text.length;
+#   }
+#   return {
+#     word,
+#     skip() { at++; },
+#     lay(other: string) { text = other; },
+#     cut(to: number) { end = to; },
+#     jump(to: number) { at = to; },
+#     spoil(what: unknown) { end = what as number; },
+#     where() { return at; },
+#   };
+# }
+# const said: string[] = [];
+# const plain = "abcĀdefāghiĂjklămnoĄpqrąstuĆvwxćyz0 123Ĉ456 tail_of_it";
+# for (let level = 1; level <= 3; level++) {
+#   for (let variant = 0; variant < 6; variant++) {
+#     const acts: ((code: number) => void)[] = [];
+#     const reader = makeReader(plain, acts);
+#     const longer = plain + plain.toUpperCase() + "zzzz";
+#     const rope = [plain.slice(0, 9), "qqqqqqqqqqqqqqqqqqqqqqqq", plain.slice(9)].join("") + String(variant);
+#     acts.push(
+#       () => {},
+#       () => { if (variant === 1) reader.lay(longer.replace("d", " ")); },
+#       () => { if (variant === 2) reader.cut(14); },
+#       () => { if (variant === 3) reader.jump(reader.where() + 3); },
+#       () => { if (variant === 4) reader.lay(rope + rope); },
+#       () => { if (variant === 5) reader.spoil("31"); },
+#       () => { if (variant === 5) reader.spoil(40.5); },
+#       () => { if (variant === 1) reader.lay("一丁abcĀ" + plain); },
+#     );
+#     for (let turn = 0; turn < 9; turn++) {
+#       said.push(level + " " + variant + " " + reader.word(level));
+#       reader.skip();
+#     }
+#   }
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# `isPart` is copied in line into the condition of the loop. Three of its returns are quiet; the fourth comes out of `wide` or `older`, which are called. They met behind the copy, in front of the loop's own branch, and behind that meeting nothing was known:
+# so no way round was quiet, the loop got no front of quiet turns, and `end` and `text` were read and tested in every turn and `at` was read again behind the meeting.
+# The quiet returns walk the end of the block apart from the loud ones; in the last block of the turn they stay apart as they did before. The typed build has a front (which counts as a head) and a head; the written copy has the third.
+# RUN: walk f16 mechanisms=all
+# CHECK-COUNT-3: isLoopHead=true
+# CHECK-NOT: isLoopHead=true
+# `wide` lays another text, a longer one, a rope, one of wide characters; cuts the end; moves the place; lays a text and a fraction in the place of the end. Each is seen in the very next turn.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 162 lines 1610314678

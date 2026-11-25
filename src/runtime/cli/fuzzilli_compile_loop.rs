@@ -169,7 +169,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
             path: &program_path,
             text: &File::read_from(Fd::cwd(), &program_path).unwrap_or_default(),
             graph: write_to_unnamed_file(&graph),
-            hides_function_text: std::env::args()
+            hides_function_source: std::env::args()
                 .any(|argument| argument == "--no-compile-function-source"),
             limits: &run_limits,
         }
@@ -180,7 +180,10 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
 }
 
 fn write_to_unnamed_file(bytes: &[u8]) -> Fd {
-    let created = bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable);
+    let created = bun_sys::memfd_create(
+        c"bun-compiled-program".into(),
+        bun_sys::MemfdFlags::Executable,
+    );
     let Ok(descriptor) = created else {
         stop("The file for the compiled program could not be created");
     };

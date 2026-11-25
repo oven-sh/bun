@@ -1,0 +1,17 @@
+# -- source: the-constructor-read-off-an-object-of-a-class-is-the-constructor-of-the-class.ts
+# declare function print(...values: unknown[]): void;
+# class Tree { k = 0; again(): Tree { return new (this.constructor as any)(); } }
+# class Ash extends Tree { k = 1; }
+# class Birch extends Tree { k = 20; }
+# function count(turns: number, one: Tree, other: Tree) { let sum = 0; for (let i = 0; i < turns; i++) { const from = i % 3 ? one : other; sum += from.again().k; } return sum; }
+# print(count(6, new Ash(), new Birch()), count(3, new Birch(), new Tree()));
+# -- end of source
+# f1 = count
+# Every prototype object is made with `constructor`, which holds the class object. Off an object of a class it is read like a method declared above: behind the looks at the cell and the guard of the name. Off the few classes of a row a test of the shape tells them apart, and each arm constructs its own class in place.
+# RUN(READ): walk f1 mechanisms=all
+# READ-LABEL: code f1:Body
+# READ: frame {{*}}isConstruction=true
+# READ: = ShapeTest
+# READ: = AreMembersUnchanged {{*}}key="constructor"
+# RUN: run-in-shell
+# CHECK: 44 40

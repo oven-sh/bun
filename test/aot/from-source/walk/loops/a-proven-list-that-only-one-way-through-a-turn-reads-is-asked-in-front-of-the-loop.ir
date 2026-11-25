@@ -1,0 +1,18 @@
+# -- source: a-proven-list-that-only-one-way-through-a-turn-reads-is-asked-in-front-of-the-loop.mjs
+# const hold = { v: Array.from({ length: 12 }, (_, i) => i + 0.5) };
+# function inOneArm(t) { const r = hold.v; let s = 0; for (let i = 0; i < 12; i++) { const x = (i & 3) === 3 ? 0 : r[i]; s = s + x * x; } return s + t; }
+# const seen = [inOneArm(1)];
+# hold.v[2] = "3"; seen.push(inOneArm(1));
+# hold.v.length = 6; seen.push(inOneArm(1));
+# sink(seen.join(" "));
+# -- end of source
+# A list that only one way through a turn reads does not stand in front of the loop: what is undefined there and never read would send every turn into the other copy
+# (a-list-that-only-one-way-through-a-turn-reads-is-asked-on-that-way-and-not-in-front-of-the-loop.ir). Where the value is PROVEN a list the front cannot fail by absence, only by the kind of its storage: it
+# stands in front again: `(i & 3) === 3 ? 0 : r[i]` took 45 instructions a turn against 19.
+# f1 = inOneArm
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Storage, Names]
+# CHECK: isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 375.25 378 NaN

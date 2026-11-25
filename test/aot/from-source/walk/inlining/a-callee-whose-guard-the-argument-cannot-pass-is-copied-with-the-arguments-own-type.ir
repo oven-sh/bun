@@ -1,0 +1,15 @@
+# `invert` reads and stores p[i]: the front end expects a list of numbers of p, lists do arrive, and the function has a guard that tests for one. This caller hands it a view of clamped bytes that it has made itself: the argument cannot pass
+# the guard. The callee was not copied for that reason: the call went to the guard, which fails every time, and on to the slow body. It is copied: no test is laid for p, the body is walked with the view. f2 = run.
+# RUN: walk f2 mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK: = GetTypedArrayElement
+# CHECK: = PutTypedArrayElement
+# CHECK-NOT: role=ParameterGuard
+# -- source: a-callee-whose-guard-the-argument-cannot-pass-is-copied-with-the-arguments-own-type.cjs
+# "use strict";
+# function invert(p, i) { p[i] = 255 - p[i]; p[i + 1] = 255 - p[i + 1]; }
+# function run(turns) { const bytes = new Uint8ClampedArray(64); for (let i = 0; i < turns; i++) invert(bytes, (i & 15) * 2); return bytes[2]; }
+# function lists(turns) { const list = [1, 2, 3, 4]; for (let i = 0; i < turns; i++) invert(list, i & 1); return list[0]; }
+# globalThis.kept = [invert, run, lists];
+# console.log(run(100), lists(100));
+# -- end of source

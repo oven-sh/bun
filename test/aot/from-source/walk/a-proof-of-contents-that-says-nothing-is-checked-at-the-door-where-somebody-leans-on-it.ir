@@ -1,0 +1,26 @@
+# `all[turn & 7][turn & 3]` reads what was stored under numbers on instances of a class: Link proves undefined|null|number|string and unseen objects of it: too wide for a user in the unit to lean on.
+# The walk takes no such proof at the read and lays no check there. `get` hands the value on as its result, on whose type its callers lean: the check stands at that door.
+# f1 = get
+# -- source: a-proof-of-contents-that-says-nothing-is-checked-at-the-door-where-somebody-leans-on-it.js
+# 'use strict';
+# const data = JSON.parse('[0,1,2,3,4,5,6,7]');
+# class Row { constructor() { this.length = 0; } }
+# const all = [];
+# for (const value of data) {
+#   const row = new Row();
+#   for (let i = 0; i < 8; i++) row[i] = value + i;
+#   row.length = 8;
+#   all.push(row);
+# }
+# function get(turn, depth) { if (depth > 0) return get(turn, depth - 1); return all[turn & 7][turn & 3]; }
+# function isFlag(turn) { return typeof get(turn, 2) === 'boolean'; }
+# function takes(value) { return typeof value === 'boolean'; }
+# let flags = 0;
+# for (let turn = 0; turn < 50; turn++) { if (isFlag(turn)) flags++; if (takes(all[turn & 7][turn & 1])) flags++; if (takes(all[turn & 3][turn & 5])) flags++; }
+# console.log(flags);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = ElemGet
+# CHECK-NEXT: = CheckProof {{*}}source=ResultOfCall
+# RUN(READ): walk f1 mechanisms=all
+# READ-NOT: number|string|object?UnseenCode {{*}}source=Contents

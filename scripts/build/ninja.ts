@@ -72,10 +72,9 @@ const ruleVars = {
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
-  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_fetch_prebuilt: ["name", "url", "dest", "identity", "sha256sums", "rm_paths"],
   dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** ninja's `Rule::IsReservedBinding` (src/eval_env.cc; `early_output_prefix` is oven-sh/ninja's). */

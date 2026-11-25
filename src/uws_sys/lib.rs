@@ -52,7 +52,7 @@ impl us_bun_verify_error_t {
     /// `error` of [`Self::peer_disconnected`]. Not an X509 code.
     pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
 
-    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.c.
+    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.cpp.
     pub const fn peer_disconnected() -> Self {
         Self {
             error_no: Self::PEER_DISCONNECTED,
@@ -143,34 +143,14 @@ impl create_bun_socket_error_t {
     }
 }
 
-/// WebSocket frame opcode (`uWS::OpCode`).
-///
-/// Spec is `enum(i32) { ..., _ }` — non-exhaustive, so any `i32` from C++ is a
-/// valid bit pattern. This type crosses the FFI boundary *into* Rust via
-/// `uws_websocket_message_handler`, so it must not be an exhaustive
-/// `#[repr(i32)]` enum (an out-of-range discriminant would be instant UB).
-#[repr(transparent)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct Opcode(pub i32);
+pub use bun_websocket::frame::Opcode;
 
-impl Opcode {
-    pub const Text: Opcode = Opcode(1);
-    pub const Binary: Opcode = Opcode(2);
-    pub const Ping: Opcode = Opcode(9);
-    pub const Pong: Opcode = Opcode(10);
-    // Upper-case aliases for callers that use the screaming-snake names
-    // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
-    // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
-    pub const BINARY: Opcode = Opcode(2);
-}
-
-/// `uWS::WebSocket::SendStatus`.
-#[repr(u32)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+/// From best to worst.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub enum SendStatus {
-    Backpressure = 0,
-    Success = 1,
-    Dropped = 2,
+    Success,
+    Backpressure,
+    Dropped,
 }
 
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
@@ -436,6 +416,8 @@ pub mod connecting_socket;
 pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
+mod hpack;
+mod http1;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
 #[path = "ListenSocket.rs"]
@@ -475,6 +457,7 @@ pub mod socket;
 #[cfg(socket_fault_injection)]
 pub mod fault_inject {
     use core::ffi::c_int;
+    use core::sync::atomic::{AtomicI32, Ordering};
 
     pub const RECV: c_int = 0;
     pub const SEND: c_int = 1;
@@ -496,6 +479,8 @@ pub mod fault_inject {
     pub const SESSION_BUFFER: c_int = 12;
     /// Not a syscall: one `SSL_write` call in `us_internal_ssl_writev`.
     pub const SSL_WRITE: c_int = 13;
+    /// Not a syscall: the room for a chunk in the buffer of a `ByteStream`.
+    pub const BYTE_STREAM_BUFFER: c_int = 14;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -516,8 +501,18 @@ pub mod fault_inject {
     unsafe extern "C" {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear_all();
-        pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
-        -> c_int;
+        safe static us_fault_armed: AtomicI32;
+        safe fn us_fault_hit(
+            syscall: c_int,
+            fd: c_int,
+            out: &mut isize,
+            clamp: &mut c_int,
+        ) -> c_int;
+    }
+
+    /// `US_FAULT_CHECK` for a hook that has no descriptor.
+    pub fn fails(hook: c_int) -> bool {
+        us_fault_armed.load(Ordering::Acquire) != 0 && us_fault_hit(hook, -1, &mut 0, &mut 0) != 0
     }
 }
 pub use socket::{
@@ -529,22 +524,22 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN};
+pub use loop_::{Loop, NOW_NS_UNKNOWN, ThreadLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
-pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
+pub use response::{AnyResponse, SocketAddress};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
-pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
+pub use web_socket::{AnyWebSocket, WebSocketBehavior, WebSocketUpgradeContext};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;

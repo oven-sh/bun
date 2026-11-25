@@ -35,30 +35,8 @@ namespace WebCore {
 
 template<typename ImplementationClass> struct JSDOMWrapperConverterTraits;
 
-template<typename T, typename Enable = void>
-struct JSToWrappedOverloader {
-    using ReturnType = typename JSDOMWrapperConverterTraits<T>::ToWrappedReturnType;
-    using WrapperType = typename JSDOMWrapperConverterTraits<T>::WrapperClass;
-
-    static ReturnType toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return WrapperType::toWrapped(JSC::getVM(&lexicalGlobalObject), value);
-    }
-};
-
-template<typename T>
-struct JSToWrappedOverloader<T, typename std::enable_if<JSDOMWrapperConverterTraits<T>::needsState>::type> {
-    using ReturnType = typename JSDOMWrapperConverterTraits<T>::ToWrappedReturnType;
-    using WrapperType = typename JSDOMWrapperConverterTraits<T>::WrapperClass;
-
-    static ReturnType toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return WrapperType::toWrapped(lexicalGlobalObject, value);
-    }
-};
-
 template<typename T> struct Converter<IDLInterface<T>> : DefaultConverter<IDLInterface<T>> {
-    using ReturnType = typename JSDOMWrapperConverterTraits<T>::ToWrappedReturnType;
+    using ReturnType = T*;
     using WrapperType = typename JSDOMWrapperConverterTraits<T>::WrapperClass;
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
@@ -66,7 +44,7 @@ template<typename T> struct Converter<IDLInterface<T>> : DefaultConverter<IDLInt
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        ReturnType object = JSToWrappedOverloader<T>::toWrapped(lexicalGlobalObject, value);
+        ReturnType object = WrapperType::toWrapped(vm, value);
         if (!object) [[unlikely]]
             exceptionThrower(lexicalGlobalObject, scope);
         return object;
@@ -87,18 +65,6 @@ template<typename T> struct JSConverter<IDLInterface<T>> {
     static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U&& value)
     {
         return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, std::forward<U>(value));
-    }
-};
-
-template<typename T> struct VariadicConverter<IDLInterface<T>> {
-    using Item = std::reference_wrapper<T>;
-
-    static std::optional<Item> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto* result = Converter<IDLInterface<T>>::convert(lexicalGlobalObject, value);
-        if (!result)
-            return std::nullopt;
-        return std::optional<Item> { *result };
     }
 };
 

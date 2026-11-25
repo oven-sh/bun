@@ -64,7 +64,7 @@ struct PoolStats {
 // no `T: Sync` bounds are written in this file.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-struct Sync(u32);
+struct Sync(u64);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -88,12 +88,17 @@ impl Sync {
     //   unused:   bool bit  28
     //   notified: bool bit  29
     //   state:    u2   bits 30..32
-    const IDLE_MASK: u32 = 0x3FFF;
+    //   summoned: u14  bits 32..46
+    //
+    // `idle + summoned` threads are idle in `wait()`. `schedule_all_at_once` has claimed `summoned` of them.
+    const IDLE_MASK: u64 = 0x3FFF;
     const SPAWNED_SHIFT: u32 = 14;
-    const SPAWNED_MASK: u32 = 0x3FFF << Self::SPAWNED_SHIFT;
-    const NOTIFIED_BIT: u32 = 1 << 29;
+    const SPAWNED_MASK: u64 = 0x3FFF << Self::SPAWNED_SHIFT;
+    const NOTIFIED_BIT: u64 = 1 << 29;
     const STATE_SHIFT: u32 = 30;
-    const STATE_MASK: u32 = 0b11 << Self::STATE_SHIFT;
+    const STATE_MASK: u64 = 0b11 << Self::STATE_SHIFT;
+    const SUMMONED_SHIFT: u32 = 32;
+    const SUMMONED_MASK: u64 = 0x3FFF << Self::SUMMONED_SHIFT;
 
     const fn zero() -> Self {
         Sync(0)
@@ -105,7 +110,7 @@ impl Sync {
     }
     #[inline]
     fn set_idle(&mut self, v: u16) {
-        self.0 = (self.0 & !Self::IDLE_MASK) | (v as u32 & Self::IDLE_MASK);
+        self.0 = (self.0 & !Self::IDLE_MASK) | (v as u64 & Self::IDLE_MASK);
     }
     #[inline]
     fn spawned(self) -> u16 {
@@ -113,7 +118,20 @@ impl Sync {
     }
     #[inline]
     fn set_spawned(&mut self, v: u16) {
-        self.0 = (self.0 & !Self::SPAWNED_MASK) | ((v as u32 & 0x3FFF) << Self::SPAWNED_SHIFT);
+        self.0 = (self.0 & !Self::SPAWNED_MASK) | ((v as u64 & 0x3FFF) << Self::SPAWNED_SHIFT);
+    }
+    #[inline]
+    fn summoned(self) -> u16 {
+        ((self.0 & Self::SUMMONED_MASK) >> Self::SUMMONED_SHIFT) as u16
+    }
+    #[inline]
+    fn set_summoned(&mut self, v: u16) {
+        self.0 = (self.0 & !Self::SUMMONED_MASK) | ((v as u64 & 0x3FFF) << Self::SUMMONED_SHIFT);
+    }
+    /// The idle threads, without the one that may have been signaled and isn't awake yet.
+    #[inline]
+    fn idle_and_unsignaled(self) -> usize {
+        usize::from(self.idle()).saturating_sub(usize::from(self.state() == SyncState::Signaled))
     }
     #[inline]
     fn notified(self) -> bool {
@@ -139,17 +157,17 @@ impl Sync {
     }
     #[inline]
     fn set_state(&mut self, s: SyncState) {
-        self.0 = (self.0 & !Self::STATE_MASK) | ((s as u32) << Self::STATE_SHIFT);
+        self.0 = (self.0 & !Self::STATE_MASK) | ((s as u64) << Self::STATE_SHIFT);
     }
 }
 
 /// Atomic wrapper over the packed `Sync` word.
 #[repr(transparent)]
-struct AtomicSync(AtomicU32);
+struct AtomicSync(AtomicU64);
 
 impl AtomicSync {
     const fn new(v: Sync) -> Self {
-        AtomicSync(AtomicU32::new(v.0))
+        AtomicSync(AtomicU64::new(v.0))
     }
     #[inline]
     fn load(&self, order: Ordering) -> Sync {
@@ -367,8 +385,9 @@ impl ThreadPool {
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
-        self.shutdown();
-        self.join();
+        if self.shutdown().spawned() > 0 {
+            self.join();
+        }
     }
 }
 
@@ -400,7 +419,7 @@ pub struct CountedTask {
 unsafe impl Send for CountedTask {}
 
 impl CountedTask {
-    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// `group` must count this task before it runs and outlive its completion (`WaitGroup::wait()`
     /// returning is that completion).
     pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
         Self {
@@ -437,7 +456,7 @@ unsafe impl Send for Task {}
 
 impl Default for Task {
     /// Placeholder for fields where the callback is installed later
-    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// (e.g. by [`Batch::from_owned`]). The
     /// `unreachable` callback panics if scheduled un-initialized.
     #[inline]
     fn default() -> Self {
@@ -473,7 +492,7 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 pub struct Batch {
     pub len: usize,
     pub(crate) head: Option<NonNull<Task>>,
@@ -481,31 +500,6 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        let len = self.len;
-        if len == 0 {
-            return None;
-        }
-        let task = self.head.unwrap();
-        // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
-        if !next.is_null() {
-            self.head = NonNull::new(Task::from_node(next));
-        } else {
-            if task != self.tail.unwrap() {
-                unreachable!();
-            }
-            self.tail = None;
-            self.head = None;
-        }
-
-        self.len -= 1;
-        if len == 0 {
-            self.tail = None;
-        }
-        Some(task)
-    }
-
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
@@ -541,30 +535,23 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: the by-value vs by-`&mut` branch as two impls.
-trait EachCall<Ctx, V>: core::marker::Sync {
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize);
-}
-
-struct ByValue<F>(F);
-impl<Ctx, V: Copy, F> EachCall<Ctx, V> for ByValue<F>
-where
-    F: Fn(&Ctx, V, usize) + core::marker::Sync,
-{
-    #[inline]
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
-        (self.0)(ctx, *value, i);
-    }
-}
-
-struct ByPtr<F>(F);
-impl<Ctx, V, F> EachCall<Ctx, V> for ByPtr<F>
-where
-    F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
-{
-    #[inline]
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
-        (self.0)(ctx, value, i);
+impl Batch {
+    /// Removes the first `count` tasks, and returns them.
+    fn split_off_first(&mut self, count: usize) -> Batch {
+        if count >= self.len {
+            return core::mem::take(self);
+        }
+        let mut first = Batch::default();
+        for _ in 0..count {
+            let task = self.head.expect("`len` counts it");
+            // SAFETY: a task of this batch, which isn't queued.
+            let next = unsafe { (*Task::node_of(task).as_ptr()).next };
+            self.head = NonNull::new(Task::from_node(next));
+            self.len -= 1;
+            let task: *mut Task = task.as_ptr();
+            first.push(Batch::from(task));
+        }
+        first
     }
 }
 
@@ -578,13 +565,13 @@ impl ThreadPool {
     /// `&mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check.
-    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &[V])
     where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, || {});
+        self.each_while(ctx, run_fn, values, || {});
     }
 
     /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
@@ -593,14 +580,25 @@ impl ThreadPool {
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        values: &[V],
         on_calling_thread: impl FnOnce(),
     ) where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+        self.each_impl(
+            ctx,
+            move |ctx, &mut (i, value)| run_fn(ctx, value, i),
+            values.len(),
+            values.iter().copied().enumerate().rev(),
+            on_calling_thread,
+        );
+    }
+
+    /// See `limit_threads`
+    pub fn allowed_threads(&self) -> usize {
+        self.allowed_threads.load(Ordering::Relaxed) as usize
     }
 
     /// The most threads that this pool starts.
@@ -631,87 +629,80 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, || {});
+        self.each_iter(
+            ctx,
+            move |ctx, (i, value)| run_fn(ctx, value, *i),
+            values.len(),
+            values.iter_mut().enumerate().rev(),
+        );
+    }
+
+    /// Like `each_ptr`, for values that exist only for the call. `capacity` is how many to make room for.
+    pub fn each_iter<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        capacity: usize,
+        values: impl Iterator<Item = V>,
+    ) where
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Send,
+    {
+        self.each_impl(ctx, run_fn, capacity, values, || {});
     }
 
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        capacity: usize,
+        values: impl Iterator<Item = V>,
         on_calling_thread: impl FnOnce(),
     ) where
-        F: EachCall<Ctx, V>,
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: core::marker::Send,
     {
-        if values.is_empty() {
+        struct RunnerTask<'a, Ctx, V, F> {
+            task: CountedTask,
+            shared: &'a (Ctx, F),
+            value: V,
+        }
+
+        unsafe fn call<Ctx, V, F: Fn(&Ctx, &mut V)>(task: *mut Task) {
+            // SAFETY: `task` is the field of an element of `tasks`, which `each_impl` does not
+            // touch between `schedule` and the end of `wait`.
+            let runner_task =
+                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
+            let (ctx, run_fn) = runner_task.shared;
+            run_fn(ctx, &mut runner_task.value);
+        }
+
+        let shared = (ctx, run_fn);
+        let group = WaitGroup::init();
+        let mut tasks = Vec::with_capacity(capacity);
+        tasks.extend(values.map(|value| RunnerTask {
+            task: CountedTask::new(call::<Ctx, V, F>, &group),
+            shared: &shared,
+            value,
+        }));
+        if tasks.is_empty() {
             return on_calling_thread();
         }
 
-        struct WaitContext<Ctx, V, F> {
-            ctx: Ctx,
-            values: *mut [V],
-            run_fn: F,
-        }
-
-        #[repr(C)]
-        struct RunnerTask<Ctx, V, F> {
-            task: CountedTask,
-            // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
-            // tasks finish), so this is the canonical `BackRef` invariant.
-            ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
-            i: usize,
-        }
-
-        // `run_fn` is stored in WaitContext and dispatched via the `EachCall`
-        // trait (ByValue vs ByPtr).
-        unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
-            // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
-            let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
-            let i = runner_task.i;
-            let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
-            // every task finishes); each task owns a distinct index `i`.
-            // `each_impl` holds the exclusive borrow of `values` and does not use it between `schedule` and `wait()`.
-            let value: &mut V = unsafe { &mut (*wctx.values)[i] };
-            wctx.run_fn.call(&wctx.ctx, value, i);
-        }
-
-        let wait_context = WaitContext {
-            ctx,
-            values: std::ptr::from_mut::<[V]>(values),
-            run_fn,
-        };
-
-        let group = WaitGroup::init_with_count(values.len());
-        let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
+        group.add(tasks.len());
         let mut batch = Batch::default();
-        let mut offset = values.len();
-
-        for _ in 0..values.len() {
-            offset -= 1;
-            tasks.push(RunnerTask {
-                i: offset,
-                task: CountedTask::new(call::<Ctx, V, F>, &group),
-                ctx: bun_ptr::BackRef::new(&wait_context),
-            });
-        }
-        // Push to the Vec first (no realloc: capacity reserved), then take
-        // stable addresses.
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
-        self.schedule(batch);
+        self.schedule_all_at_once(batch);
         on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
-        let Batch { len, head, tail } = *batch;
+    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool) {
         // Sanity check
         if len == 0 {
             return;
@@ -758,12 +749,124 @@ impl ThreadPool {
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(&batch, false);
+        self.schedule_impl(batch, false);
+    }
+
+    /// Like `schedule`, but the calling thread wakes or starts a thread for each task, as far as there are threads.
+    /// With `schedule` each thread that wakes up wakes the next, so the last of `n` begins `n` wake-ups late.
+    /// Only in a pool `without_spare_threads`: the tasks of the others are too short to pay for a thread each.
+    pub fn schedule_all_at_once(&self, mut batch: Batch) {
+        if batch.len < 2 || self.keeps_spare_thread_awake {
+            return self.schedule(batch);
+        }
+        let allowed = self.allowed_threads.load(Ordering::Relaxed) as usize;
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        let to_spawn = loop {
+            let without_idle_thread = batch.len.saturating_sub(sync.idle_and_unsignaled());
+            let to_spawn = (allowed.min(Sync::IDLE_MASK as usize))
+                .saturating_sub(usize::from(sync.spawned()))
+                .min(without_idle_thread)
+                .min(usize::from(bun_core::get_thread_count()));
+            if to_spawn == 0 || sync.state() == SyncState::Shutdown {
+                break 0;
+            }
+            let mut new_sync = sync;
+            new_sync.set_spawned(sync.spawned() + to_spawn as u16);
+            match (self.sync).cmpxchg_weak(sync, new_sync, Ordering::Relaxed, Ordering::Relaxed) {
+                Some(current) => sync = current,
+                None => break to_spawn,
+            }
+        };
+        let for_new_threads = batch.split_off_first(to_spawn);
+        self.schedule_for_idle_threads(&batch);
+        self.spawn_for_each(for_new_threads);
+    }
+
+    fn schedule_for_idle_threads(&self, batch: &Batch) {
+        let (Some(head), Some(tail)) = (batch.head, batch.tail) else {
+            return;
+        };
+        self.run_queue.push(&node::List {
+            head: Task::node_of(head),
+            tail: Task::node_of(tail),
+        });
+        let mut sync = self.sync.load(Ordering::Relaxed);
+        let summoned = loop {
+            let summoned = batch.len.min(sync.idle_and_unsignaled()) as u16;
+            if summoned == 0 {
+                break 0;
+            }
+            let mut new_sync = sync;
+            new_sync.set_idle(sync.idle() - summoned);
+            new_sync.set_summoned(sync.summoned() + summoned);
+            // Release: pairs with the Acquire of the thread that answers in `wait()`, which then sees the tasks.
+            match (self.sync).cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed) {
+                Some(current) => sync = current,
+                None => break summoned,
+            }
+        };
+        if summoned > 0 {
+            self.idle_event.wake(u32::from(summoned));
+        }
+        if usize::from(summoned) < batch.len {
+            self.force_spawn();
+        }
+    }
+
+    /// Starts a thread for each task, which runs that task first. `spawned` already counts these threads.
+    fn spawn_for_each(&self, mut batch: Batch) {
+        struct FirstTask(NonNull<Task>);
+        // SAFETY: as `Task`.
+        unsafe impl Send for FirstTask {}
+
+        // Linux looks harder for an idle core for a thread that wakes up than for one that is new, which can wait behind
+        // a busy one for the rest of its time slice. So the new threads sleep until all of them are there.
+        let are_all_spawned = std::sync::Arc::new(AtomicU32::new(0));
+        scopeguard::defer! {
+            are_all_spawned.store(1, Ordering::Release);
+            Futex::wake(&are_all_spawned, u32::MAX);
+        }
+        while batch.len > 0 {
+            let first = batch.split_off_first(1);
+            let task = FirstTask(first.head.expect("one task"));
+            let pool = bun_ptr::BackRef::new(self);
+            let gate = std::sync::Arc::clone(&are_all_spawned);
+            let spawned = std::thread::Builder::new()
+                .stack_size(self.stack_size as usize)
+                .spawn(move || {
+                    let task = task;
+                    while gate.load(Ordering::Acquire) == 0 {
+                        Futex::wait_forever(&gate, 0);
+                    }
+                    drop(gate);
+                    Thread::run(pool, Some(task.0))
+                });
+            if let Err(err) = spawned {
+                batch.push(first);
+                self.unregister_refused(batch.len, &err);
+                self.schedule(batch);
+                // `notified` can be from when these threads were counted, and then nobody answers it.
+                return self.notify_slow(false);
+            }
+        }
+    }
+
+    /// `spawned` counts `count` threads that the OS hasn't started.
+    #[cold]
+    fn unregister_refused(&self, count: usize, err: &std::io::Error) {
+        for _ in 0..count {
+            // SAFETY: `&self` keeps the pool live; `None` makes `unregister` return right after the decrement.
+            unsafe { Self::unregister(self, None) };
+        }
+        // The threads there are take the tasks. With none they would wait forever.
+        if !self.has_workers() && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed) {
+            exit_spawn_failed(err);
+        }
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(&batch, true);
+        self.schedule_impl(batch, true);
     }
 
     /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
@@ -879,7 +982,7 @@ impl ThreadPool {
     /// https://www.youtube.com/watch?v=ys3qcbO5KWw
     pub fn warm(&self, count: u16) {
         // Thread counts are 14-bit fields in `Sync`; truncate to 14 bits.
-        let target = count.min((self.max_threads & Sync::IDLE_MASK) as u16);
+        let target = count.min((u64::from(self.max_threads) & Sync::IDLE_MASK) as u16);
         let mut sync = self.sync.load(Ordering::Relaxed);
         while sync.spawned() < target {
             let mut new_sync = sync;
@@ -897,7 +1000,7 @@ impl ThreadPool {
             let pool = bun_ptr::BackRef::new(self);
             match std::thread::Builder::new()
                 .stack_size(stack_size)
-                .spawn(move || Thread::run(pool))
+                .spawn(move || Thread::run(pool, None))
             {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread.
@@ -973,23 +1076,12 @@ impl ThreadPool {
                             let pool = bun_ptr::BackRef::new(self);
                             match std::thread::Builder::new()
                                 .stack_size(stack_size)
-                                .spawn(move || Thread::run(pool))
+                                .spawn(move || Thread::run(pool, None))
                             {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(err) => {
-                                    // The threads there are take the task. With none it would wait forever.
-                                    if new_sync.spawned() == 1
-                                        && EXITS_WITHOUT_ANY_THREAD.load(Ordering::Relaxed)
-                                    {
-                                        exit_spawn_failed(&err);
-                                    }
-                                    // SAFETY: `&self` keeps the pool live; `None` makes
-                                    // `unregister` return right after undoing the `spawned`
-                                    // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, None) };
-                                }
+                                Err(err) => self.unregister_refused(1, &err),
                             }
                             return;
                         }
@@ -1001,7 +1093,7 @@ impl ThreadPool {
     }
 
     #[inline(never)]
-    fn wait(&self, _is_waking: bool) -> Result<bool, WaitError> {
+    fn wait(&self, _is_waking: bool) -> Result<Woken, WaitError> {
         let mut is_idle = false;
         let mut is_waking = _is_waking;
         let mut sync = self.sync.load(Ordering::Relaxed);
@@ -1014,8 +1106,20 @@ impl ThreadPool {
                 debug_assert!(sync.state() == SyncState::Waking);
             }
 
+            if is_idle && sync.summoned() > 0 {
+                let mut new_sync = sync;
+                new_sync.set_summoned(sync.summoned() - 1);
+                sync = match self.sync.cmpxchg_weak(
+                    sync,
+                    new_sync,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Some(cur) => cur,
+                    None => return Ok(Woken::Summoned),
+                };
             // Consume a notification made by notify().
-            if sync.notified() {
+            } else if sync.notified() {
                 let mut new_sync = sync;
                 new_sync.set_notified(false);
                 if is_idle {
@@ -1035,7 +1139,8 @@ impl ThreadPool {
                 ) {
                     Some(cur) => cur,
                     None => {
-                        return Ok(is_waking || (sync.state() == SyncState::Signaled));
+                        let is_waking = is_waking || (sync.state() == SyncState::Signaled);
+                        return Ok(Woken::Notified { is_waking });
                     }
                 };
             } else if !is_idle {
@@ -1067,21 +1172,27 @@ impl ThreadPool {
                 // BackRef invariant (pointee outlives holder) holds for the
                 // `&self` `drain_idle_events` calls in `Event::wait`.
                 let current = NonNull::new(Thread::current()).map(bun_ptr::BackRef::from);
-                self.idle_event.wait(current.as_deref());
+                // A thread that was woken for a notification may have answered a summons instead, and the other way round.
+                let is_wanted = || {
+                    let sync = self.sync.load(Ordering::Relaxed);
+                    sync.summoned() > 0 || sync.notified()
+                };
+                self.idle_event.wait(current.as_deref(), &is_wanted);
                 sync = self.sync.load(Ordering::Relaxed);
             }
         }
     }
 
-    /// Marks the thread pool as shutdown
+    /// Marks the thread pool as shutdown, and returns the previous `Sync`.
     #[inline(never)]
-    pub(crate) fn shutdown(&self) {
+    fn shutdown(&self) -> Sync {
         let mut sync = self.sync.load(Ordering::Relaxed);
-        while sync.state() != SyncState::Shutdown {
+        loop {
             let mut new_sync = sync;
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Shutdown);
             new_sync.set_idle(0);
+            new_sync.set_summoned(0);
 
             // Full barrier to synchronize with both wait() and notify()
             sync = match self
@@ -1092,10 +1203,10 @@ impl ThreadPool {
                 None => {
                     // Wake up any threads sleeping on the idle_event.
                     // TODO: I/O polling notification here.
-                    if sync.idle() > 0 {
+                    if sync.idle() > 0 || sync.summoned() > 0 {
                         self.idle_event.shutdown();
                     }
-                    return;
+                    return sync;
                 }
             };
         }
@@ -1131,7 +1242,7 @@ impl ThreadPool {
         let Some(thread) = maybe_thread else {
             return;
         };
-        thread.join_event.wait(None);
+        thread.join_event.wait(None, &|| false);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
@@ -1145,23 +1256,19 @@ impl ThreadPool {
         bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 
+    /// For a pool that had threads at `shutdown()`.
     fn join(&self) {
-        // Wait for the thread pool to be shutdown() then for all threads to enter a joinable state
-        let mut sync = self.sync.load(Ordering::Relaxed);
-        if !(sync.state() == SyncState::Shutdown && sync.spawned() == 0) {
-            self.join_event.wait(None);
-            sync = self.sync.load(Ordering::Relaxed);
-        }
+        // Also if `spawned` is 0 by now: the last thread uses `join_event` after its decrement.
+        self.join_event.wait(None, &|| false);
 
+        // Acquire: what each thread did to the pool before its decrement happens before the drop.
+        let sync = self.sync.load(Ordering::Acquire);
         debug_assert!(sync.state() == SyncState::Shutdown);
         debug_assert!(sync.spawned() == 0);
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call sees null and
-        // returns instead of touching freed worker stack memory.
-        let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
-        else {
+        let Some(thread) = NonNull::new(self.threads.load(Ordering::Acquire)) else {
             return;
         };
         // `thread` is a registered worker blocked in `join_event.wait()`;
@@ -1169,6 +1276,15 @@ impl ThreadPool {
         // `notify()` call.
         bun_ptr::BackRef::from(thread).join_event.notify();
     }
+}
+
+/// Why `ThreadPool::wait` returned.
+enum Woken {
+    Notified {
+        is_waking: bool,
+    },
+    /// One task of the pool's queue is for this thread, and the others have threads of their own.
+    Summoned,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1298,7 +1414,7 @@ impl Thread {
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
-    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>) {
+    fn run(thread_pool: bun_ptr::BackRef<ThreadPool>, mut first_task: Option<NonNull<Task>>) {
         // No args, no preconditions; marks this OS thread as a mimalloc
         // threadpool worker so deferred frees are processed eagerly. `safe fn`
         // (Rust 2024) discharges the link-time proof so no `unsafe` block.
@@ -1321,15 +1437,10 @@ impl Thread {
                     Err(_) => 0,
                 }
             };
-            // SAFETY: `counter_buf[len] == 0` (set just below for len>0; the literal
-            // for the fallback is NUL-terminated), and the buffer outlives the call.
-            let named: &bun_core::ZStr = unsafe {
-                if len > 0 {
-                    counter_buf[len] = 0;
-                    bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
-                } else {
-                    bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
-                }
+            let named = if len > 0 {
+                bun_core::ZStr::nul_terminate(&mut counter_buf, len)
+            } else {
+                bun_core::zstr!("Bun Pool")
             };
             // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
             // out via `needs_stack_bounds = false` so we don't pull in
@@ -1364,15 +1475,24 @@ impl Thread {
         let mut is_waking = false;
         loop {
             let wait_start = if stats { now_ns() } else { 0 };
-            is_waking = match pool.wait(is_waking) {
-                Ok(w) => w,
+            let mut own = first_task.take().map(Task::node_of);
+            let woken = match own {
+                Some(_) => Ok(Woken::Notified { is_waking: false }),
+                None => pool.wait(is_waking),
+            };
+            is_waking = match woken {
+                Ok(Woken::Notified { is_waking }) => is_waking,
+                Ok(Woken::Summoned) => {
+                    own = pool.run_queue.pop_one();
+                    false
+                }
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
-                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // pushes per-worker `drop_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
                     // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
-                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // worker thread tears down its own `Worker`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
                     self_.drain_idle_events();
@@ -1385,7 +1505,11 @@ impl Thread {
                     .fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
             }
 
-            while let Some(result) = self_.pop(pool) {
+            let not_stolen = |node| node::Stole {
+                node,
+                pushed: false,
+            };
+            while let Some(result) = own.take().map(not_stolen).or_else(|| self_.pop(pool)) {
                 if result.pushed || is_waking {
                     pool.notify(is_waking);
                 }
@@ -1524,8 +1648,10 @@ impl Event {
     ///
     /// `worker` has its idle queue drained before each sleep: `wake_all()` wakes every
     /// waiter without handing out a notification, so they all come back here.
+    ///
+    /// Also returns once `is_over` is true. Whoever makes it true calls `wake()` afterwards.
     #[inline(never)]
-    fn wait(&self, worker: Option<&Thread>) {
+    fn wait(&self, worker: Option<&Thread>, is_over: &dyn Fn() -> bool) {
         let mut acquire_with: u32 = Self::EMPTY;
         let mut word = self.state.load(Ordering::Relaxed);
         let mut is_idle: bool = false;
@@ -1584,6 +1710,9 @@ impl Event {
                     // What the tasks freed is there for the fallback sweep below to give back.
                     has_swept = false;
                 }
+                if is_over() {
+                    return;
+                }
             }
 
             // Wait on the event until a notify() or shutdown().
@@ -1625,6 +1754,8 @@ impl Event {
     /// Post a notification to the event if it doesn't have one already
     /// then wake up a waiting thread if there is one as well.
     fn notify(&self) {
+        // The waiter of a `join_event` frees it once it has the notification.
+        let state_ptr = &raw const self.state;
         let mut word = self.state.load(Ordering::Relaxed);
         loop {
             if word & Self::STATE_MASK == Self::SHUTDOWN {
@@ -1645,7 +1776,7 @@ impl Event {
         // EMPTY or NOTIFIED (a consumer that never parked took a notification and put EMPTY
         // back); the next notify() re-arms and wakes it.
         if word & Self::STATE_MASK == Self::WAITING {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 
@@ -1661,9 +1792,14 @@ impl Event {
     /// Wakes every waiter to look at its idle queue. Posts no notification: each of them
     /// goes back to waiting.
     fn wake_all(&self) {
+        self.wake(u32::MAX);
+    }
+
+    /// `wake_all` for at most `count` of the waiters that are asleep.
+    fn wake(&self, count: u32) {
         // Release: pairs with the fence in `wait`.
         self.state.fetch_add(Self::EPOCH_ONE, Ordering::Release);
-        Futex::wake(&self.state, u32::MAX);
+        Futex::wake(&self.state, count);
     }
 }
 
@@ -1799,6 +1935,17 @@ pub mod node {
                         });
                     }
                     Err(cur) => stack = cur,
+                }
+            }
+        }
+
+        /// Waits for another consumer, which holds the queue for a few hundred instructions.
+        pub(super) fn pop_one(&self) -> Option<NonNull<Node>> {
+            loop {
+                match self.try_acquire_consumer() {
+                    Ok(mut consumer) => return consumer.pop().and_then(NonNull::new),
+                    Err(ConsumerError::Empty) => return None,
+                    Err(ConsumerError::Contended) => core::hint::spin_loop(),
                 }
             }
         }

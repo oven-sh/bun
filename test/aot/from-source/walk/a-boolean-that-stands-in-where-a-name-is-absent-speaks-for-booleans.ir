@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# class Board { constructor(options) { this.options = options; } at(i) { const { span = 10, loops = false } = this.options; return i * span + (loops ? 1 : 0); } }
+# const board = new Board(JSON.parse('{"span":4,"loops":true}'));
+# function run(turns) { let s = 0; for (let i = 0; i < turns; i++) s += board.at(i & 7); return s; }
+# console.log(run(3));
+# -- end of source
+# `loops = false`: the value is what the read finds or, where it finds nothing, the constant. Nothing is known of the read, so the join was expected to be what the constant is: the typed copy of the loop
+# asked `is it false`, and an option given as true left it for the closed copy in the first turn of every call. A number that stands in already speaks for numbers; a boolean now speaks for booleans.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: TypeTest {{*}} testedType=false
+# CHECK: TypeTest {{*}} testedType=boolean

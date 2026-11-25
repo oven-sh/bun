@@ -1,0 +1,23 @@
+# A generator that is walked in its consumer has no yield that suspends: its own loop, with the turn of the consumer inside it, is a loop like any other and is built twice where that pays:
+# the kind of storage of the list is asked in front, and the typed build reads the elements in that kind. What the turn does is heard by the try of the loop: a turn that stores into lists gets no typed build.
+# f1 = total, f2 = grown, f3 = nested, f5 = the method
+# -- source: the-loop-of-a-generator-that-is-walked-in-its-consumer-is-bought-like-any-other.ts
+# declare function sink(...values: unknown[]): number;
+# class Shelf { constructor(public books: number[]) {} *[Symbol.iterator]() { for (const book of this.books) yield book; } }
+# function total(shelf: Shelf): number { let sum = 0; for (const book of shelf) sum += book; return sum; }
+# function grown(shelf: Shelf): number { let sum = 0; for (const book of shelf) { if (shelf.books.length < 9) shelf.books.push(0.5); sum += book; } return sum; }
+# function nested(shelf: Shelf): number { let sum = 0; for (const book of shelf) for (const other of shelf.books) sum += book * other; return sum; }
+# sink(total(new Shelf([1, 2, 3])), grown(new Shelf([4])), nested(new Shelf([5])));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f5
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double {{*}}isInBounds
+# CHECK: = Add
+# the turn stores into a list
+# RUN(GROWN): walk f2:Body mechanisms=all
+# GROWN-LABEL: code f2:Body
+# GROWN: frame 1 callee=f5
+# GROWN-NOT: arrayStorage=

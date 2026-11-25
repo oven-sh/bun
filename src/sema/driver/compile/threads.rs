@@ -78,8 +78,8 @@ pub fn wake_idle_region_threads() {
 mod tests {
     use super::*;
     use crate::for_each_parallel_in_runs;
-    use std::sync::Once;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Barrier, Once};
 
     fn set_up_output() {
         static OUTPUT: Once = Once::new();
@@ -123,6 +123,50 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
+    }
+
+    #[cfg(target_os = "linux")]
+    fn size_of_the_stack_of_this_thread() -> usize {
+        let probe = 0u8;
+        let here = core::hint::black_box(&raw const probe).addr();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let sizes = maps.lines().filter_map(|line| {
+            let (from, to) = line.split_whitespace().next()?.split_once('-')?;
+            let from = usize::from_str_radix(from, 16).ok()?;
+            let to = usize::from_str_radix(to, 16).ok()?;
+            (from..to).contains(&here).then_some(to - from)
+        });
+        sizes.last().unwrap()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn whoever_lowers_has_its_stack_behind_a_pool_that_a_check_made() {
+        set_up_output();
+        crate::use_dedicated_pool("Bun Check");
+        crate::use_pool_for_lowering("Bun Compile");
+        let caches = ThreadCaches::default();
+        let arrived = AtomicUsize::new(0);
+        let least = AtomicUsize::new(usize::MAX);
+        for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
+            arrived.fetch_add(1, Ordering::SeqCst);
+            let begun = std::time::Instant::now();
+            while arrived.load(Ordering::SeqCst) < 2 {
+                assert!(
+                    begun.elapsed() < std::time::Duration::from_secs(20),
+                    "no thread of the pool joined the region"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            if crate::is_pool_thread() {
+                least.fetch_min(size_of_the_stack_of_this_thread(), Ordering::SeqCst);
+            }
+        });
+        let least = least.load(Ordering::SeqCst);
+        assert!(
+            least != usize::MAX && least > crate::WORKER_STACK_SIZE as usize,
+            "{least}"
+        );
     }
 
     fn start_regions_until_a_thread_joins(on_other_thread: &(dyn Fn() + Sync)) {
@@ -229,44 +273,45 @@ mod tests {
     #[test]
     fn region_started_on_pool_thread_gets_threads_that_become_idle_later() {
         set_up_output();
-        let threads = region_pool().max_threads();
-        if threads < 3 {
-            return;
+        const THREADS: usize = 3;
+        static ALL_BUSY: Barrier = Barrier::new(THREADS);
+        static HAS_BEGUN: AtomicBool = AtomicBool::new(false);
+        let pool = pool_without_spare_threads();
+        pool.limit_threads(THREADS);
+        for _ in 1..THREADS {
+            schedule_on(pool, || {
+                ALL_BUSY.wait();
+                wait_until(
+                    || HAS_BEGUN.load(Ordering::SeqCst),
+                    "the region never began",
+                );
+            });
         }
-        let caches = ThreadCaches::default();
-        let (busy, gives_up) = (AtomicUsize::new(0), AtomicBool::new(false));
-        let (has_begun, has_joined) = (AtomicBool::new(false), AtomicBool::new(false));
-        let started = std::time::Instant::now();
-        let is_late = |seconds: u64| started.elapsed() > std::time::Duration::from_secs(seconds);
-        for_each_parallel_in_runs(&caches, threads, threads, 1, &|outer| {
-            busy.fetch_add(1, Ordering::SeqCst);
-            if outer != 0 {
-                while !has_begun.load(Ordering::SeqCst) && !gives_up.load(Ordering::SeqCst) {
-                    std::thread::yield_now();
-                }
-                return;
-            }
-            while busy.load(Ordering::SeqCst) < threads {
-                if is_late(5) {
-                    return gives_up.store(true, Ordering::SeqCst);
-                }
-                std::thread::yield_now();
-            }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        schedule_on(pool, move || {
+            ALL_BUSY.wait();
+            crate::POOL_OF_TEST.set(Some(pool));
+            let available = pool.available_threads();
+            let caches = ThreadCaches::default();
             let starter = std::thread::current().id();
-            for_each_parallel_in_runs(&caches, 2, 1 << 22, 1, &|_| {
-                if !has_begun.load(Ordering::SeqCst) {
-                    has_begun.store(true, Ordering::SeqCst);
-                }
+            let has_joined = AtomicBool::new(false);
+            for_each_parallel_in_runs(&caches, 2, 3, 1, &|index| {
                 if std::thread::current().id() != starter {
                     has_joined.store(true, Ordering::SeqCst);
-                }
-                if !has_joined.load(Ordering::SeqCst) {
-                    assert!(!is_late(25), "no thread joined the region");
-                    std::thread::yield_now();
+                } else if index == 0 {
+                    HAS_BEGUN.store(true, Ordering::SeqCst);
+                    wait_until(|| pool.available_threads() > 0, "no thread came to rest");
+                } else {
+                    wait_until(
+                        || has_joined.load(Ordering::SeqCst),
+                        "no thread joined the region",
+                    );
                 }
             });
+            sender.send((available, has_joined.into_inner())).unwrap();
         });
-        assert!(has_joined.load(Ordering::SeqCst) || gives_up.load(Ordering::SeqCst));
+        let result = receiver.recv_timeout(std::time::Duration::from_secs(60));
+        assert_eq!(result, Ok((0, true)));
     }
 
     fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {
@@ -430,6 +475,35 @@ mod tests {
     }
 
     #[test]
+    fn every_task_of_a_region_gets_a_thread() {
+        set_up_output();
+        let pool = pool_without_spare_threads();
+        for round in 0..300 {
+            let count = 1 + round % 4;
+            let barrier = std::sync::Barrier::new(count);
+            pool.each(&barrier, |it, (), _| _ = it.wait(), &mut vec![(); count]);
+        }
+    }
+
+    #[test]
+    fn regions_of_several_callers_with_more_tasks_than_threads() {
+        set_up_output();
+        let (pool, done) = (pool_without_spare_threads(), AtomicUsize::new(0));
+        pool.limit_threads(3);
+        std::thread::scope(|scope| {
+            for _ in 0..3 {
+                scope.spawn(|| {
+                    for round in 0..270 {
+                        let add = |it: &&AtomicUsize, (), _| _ = it.fetch_add(1, Ordering::Relaxed);
+                        pool.each(&done, add, &mut vec![(); round % 9]);
+                    }
+                });
+            }
+        });
+        assert_eq!(done.into_inner(), 3 * 30 * 36);
+    }
+
+    #[test]
     fn region_on_a_limited_pool_visits_each_index_once() {
         set_up_output();
         let pool = pool_without_spare_threads();
@@ -445,7 +519,7 @@ mod tests {
                 };
                 visit.fetch_add(1, Ordering::Relaxed);
             },
-            &mut vec![(); 8],
+            &[(); 8],
         );
         assert!(
             visits

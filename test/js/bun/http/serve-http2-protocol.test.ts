@@ -1253,6 +1253,85 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  test.each([4096, 65536])("peer SETTINGS_HEADER_TABLE_SIZE=%d: the encoder states the size it uses", async size => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, size) });
+    raw.headers(1, baseHeaders("/hello"));
+    const h = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(h.payload.subarray(0, 4).toString("hex")).toBe("3fe11f" + "88");
+    raw.close();
+  });
+
+  test("an interim response carries the size update when it is the next block", async () => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 100) });
+    raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+    const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+    expect(interim.payload.toString("hex")).toBe("3f45" + "08820801");
+    raw.close();
+  });
+
+  // A field counts for its name, its value and 4 bytes, like a line of an HTTP/1 head.
+  test.each([
+    [16384, 200],
+    [16385, 431],
+    [32768, 431],
+    [32769, "GOAWAY 11"],
+  ])("a header list of %d bytes → %p", async (size, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    const entry = Buffer.from([0x40, 1, 0x78, 123, ...Buffer.alloc(123, "v")]);
+    const left = size - base.reduce((sum, [name, value]) => sum + name.length + value.length + 4, 0);
+    const entries = Math.floor(left / 128) - 1;
+    const last = hpackLiteral([["y", Buffer.alloc(left - entries * 128 - 5, "v").toString()]]);
+    const block = Buffer.concat([hpackLiteral(base), entry, Buffer.alloc(entries - 1, 0xbe), last]);
+    raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, block));
+    const answer = await raw.waitFor(f => f.type === T.HEADERS || f.type === T.GOAWAY);
+    expect(answer.type === T.HEADERS ? decodeStatus(answer.payload) : `GOAWAY ${answer.payload.readUInt32BE(4)}`).toBe(
+      expected,
+    );
+    raw.close();
+  });
+
+  test.each([
+    [200, 200],
+    [201, 431],
+    [400, 431],
+    [401, "GOAWAY 11"],
+  ])("%d header fields → %p", async (count, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    const accept = Buffer.alloc(count - base.length, 0x80 | 19);
+    raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hpackLiteral(base), accept])));
+    const answer = await raw.waitFor(f => f.type === T.HEADERS || f.type === T.GOAWAY);
+    expect(answer.type === T.HEADERS ? decodeStatus(answer.payload) : `GOAWAY ${answer.payload.readUInt32BE(4)}`).toBe(
+      expected,
+    );
+    raw.close();
+  });
+
+  test.each([
+    [28, "content-length", "1"],
+    [38, "host", "elsewhere"],
+    [57, "transfer-encoding", "chunked"],
+    [8, ":status", "200"],
+    [3, ":method", "GET"],
+    [5, ":path", "/hello"],
+    [6, ":scheme", "https"],
+    [1, ":authority", "localhost"],
+  ])("a name from the static table is validated like a literal one (%d, %s)", async (index, _name, value) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const field = Buffer.from([0x40 | index, value.length, ...Buffer.from(value)]);
+    for (const [id, last] of [
+      [1, field],
+      [3, Buffer.from([0xbe])],
+    ] as const) {
+      raw.write(
+        frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, id, Buffer.concat([hpackLiteral(baseHeaders("/hello")), last])),
+      );
+      expect(await raw.rst(id)).toBe(1);
+    }
+    raw.close();
+  });
+
   test("header list over the limit → 431 on that stream, connection survives", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const big = Buffer.alloc(4000, "v").toString(); // 5 × 4 KB > the 16 KB list limit, under the 2× hard cap

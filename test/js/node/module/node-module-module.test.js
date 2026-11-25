@@ -1,9 +1,19 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, normalizeBunSnapshot, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
+import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
+
+const storesFixture = path.join(
+  import.meta.dir,
+  "..",
+  "..",
+  "bun",
+  "jsc",
+  "stores-that-end-in-a-definition-fixture.js",
+);
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
@@ -137,6 +147,22 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout + stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("module.enableCompileCache keeps a backslash in the directory name", async () => {
+    using dir = tempDir("compile-cache-backslash", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("node:module").enableCompileCache("c\\\\d").directory)`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(path.basename(stdout.trim())).toBe("c\\d");
+    expect(fs.readdirSync(String(dir))).toEqual(["c\\d"]);
     expect(exitCode).toBe(0);
   });
 
@@ -622,6 +648,10 @@ console.log("survived", require("./late.js"));`,
     expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
   });
 
+  test.skipIf(isWindows)("_nodeModulePaths() keeps a backslash in a directory name", () => {
+    expect(_nodeModulePaths("/x\\y/z")).toEqual(["/x\\y/z/node_modules", "/x\\y/node_modules", "/node_modules"]);
+  });
+
   test("_nodeModulePaths() is stable across process.chdir()", async () => {
     // process.chdir() re-seeds the resolver's cached top-level dir with a
     // trailing separator; _nodeModulePaths("") then used to emit a duplicate
@@ -1068,6 +1098,103 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  // Module.prototype.require is a data property to a script, and native code keeps the function that require() calls.
+  // Each store of the fixture ends in a definition of the value on Module.prototype, and that definition has to reach
+  // the native side. "Object.defineProperty that repeats the attributes" is what wrap() of shimmer does.
+  test("Module.prototype.require: every store that ends in a definition installs the function", async () => {
+    using dir = tempDir("module-prototype-require-stores", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const stores = require(${JSON.stringify(storesFixture)});
+        const Module = require("node:module");
+        const original = Module.prototype.require;
+        const results = {};
+        for (const [what, store] of Object.entries(stores)) {
+          const seen = [];
+          const hook = who =>
+            function (id) {
+              seen.push(who + " " + id);
+              return original.apply(this, arguments);
+            };
+          const first = hook("the first");
+          store(Module.prototype, "require", first);
+          const readBack = Module.prototype.require === first;
+          require("./dep.cjs");
+          Module.prototype.require = hook("the second");
+          require("./dep.cjs");
+          new Proxy(Module.prototype, {}).require = original;
+          require("./dep.cjs");
+          results[what] = [readBack, seen, JSON.stringify(Object.getOwnPropertyDescriptor(Module.prototype, "require"))];
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: Object.fromEntries(
+        Object.keys(storesThatEndInADefinition).map(what => [
+          what,
+          [
+            true,
+            ["the first ./dep.cjs", "the second ./dep.cjs"],
+            `{"writable":true,"enumerable":true,"configurable":true}`,
+          ],
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Object.preventExtensions() defines nothing, and Object.seal() marks a plain object like Module.prototype as a whole
+  // and defines nothing either. After each of them the property is what it was, and a store reaches the native side.
+  test.each(["preventExtensions", "seal"])(
+    "Module.prototype.require: a store after Object.%s(Module.prototype) installs the function",
+    async level => {
+      using dir = tempDir("module-prototype-require-" + level, {
+        "dep.cjs": `module.exports = "dep";`,
+        "main.cjs": `
+          const Module = require("node:module");
+          const original = Module.prototype.require;
+          const seen = [];
+          const hook = who =>
+            function (id) {
+              seen.push(who + " " + id);
+              return original.apply(this, arguments);
+            };
+          Object.${level}(Module.prototype);
+          Object.defineProperty(Module.prototype, "require", { value: hook("a definition") });
+          require("./dep.cjs");
+          new Proxy(Module.prototype, {}).require = hook("a proxy");
+          require("./dep.cjs");
+          Module.prototype.require = hook("an assignment");
+          require("./dep.cjs");
+          console.log(JSON.stringify(seen));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+        stdout: ["a definition ./dep.cjs", "a proxy ./dep.cjs", "an assignment ./dep.cjs"],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // Node's Module.prototype.require is `Module._load(id, this, false)`, so `this` is only used as the parent.
   test("Module.prototype.require accepts a `this` that isn't a module", async () => {
     using dir = tempDir("module-prototype-require-this", {
@@ -1454,6 +1581,84 @@ console.log("survived", require("./late.js"));`,
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+
+  test.concurrent.each([
+    // [distinct children, rounds over all of them]
+    [1, 1000],
+    [80, 3],
+  ])(
+    "require() of a cached module does not add a duplicate native child reference (children: %d, rounds: %d)",
+    async (count, rounds) => {
+      // Before module.children is read, the parent tracks its children in a
+      // native vector that the GC visits. A cached require() used to append to
+      // it every time, so GC cost grew with the number of require() calls.
+      // The heap snapshot lists one edge per vector entry, so count the edges
+      // between Module nodes before touching module.children.
+      const files = {
+        "parent.cjs": `
+          const count = ${count}, rounds = ${rounds};
+          for (let round = 0; round < rounds; round++) {
+            // Every second round runs backwards, so a repeat is not always the oldest entry.
+            for (let i = 0; i < count; i++) require("./child" + (round % 2 ? count - 1 - i : i) + ".cjs");
+          }
+          const snapshot = Bun.generateHeapSnapshot();
+          const moduleClass = snapshot.nodeClassNames.indexOf("Module");
+          const moduleIds = new Set();
+          for (let i = 0; i < snapshot.nodes.length; i += 4) {
+            if (snapshot.nodes[i + 2] === moduleClass) moduleIds.add(snapshot.nodes[i]);
+          }
+          let moduleEdges = 0;
+          for (let i = 0; i < snapshot.edges.length; i += 4) {
+            if (moduleIds.has(snapshot.edges[i]) && moduleIds.has(snapshot.edges[i + 1])) moduleEdges++;
+          }
+          const children = module.children.map(child => child.exports.value);
+          console.log(JSON.stringify({ moduleNodes: moduleIds.size, moduleEdges, children }));
+        `,
+      };
+      for (let i = 0; i < count; i++) files[`child${i}.cjs`] = `module.exports = { value: ${i} };`;
+      using dir = tempDir("cjs-cached-require-children", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { moduleNodes, moduleEdges, children } = JSON.parse(stdout);
+      // The snapshot must have found the parent and every child.
+      expect(moduleNodes).toBeGreaterThanOrEqual(count + 1);
+      // Each child once, in the order of its first require().
+      expect(children).toEqual(Array.from({ length: count }, (_, i) => i));
+      // The parent points at each child once. The bound leaves room for a few
+      // other edges between Module nodes, but not for one edge per call.
+      expect(moduleEdges).toBeGreaterThanOrEqual(count);
+      expect(moduleEdges).toBeLessThan(count + 10);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each([
+    [
+      "import() of a builtin whose export was replaced",
+      `require("assert").strict = 1; import("assert/strict").then(module => console.log(module.default));`,
+      "1",
+    ],
+    [
+      "require() of a builtin after Object.create was replaced",
+      `Object.create = () => undefined; console.log(typeof require("events"));`,
+      "function",
+    ],
+    [
+      "default options of a builtin after Object.create was replaced",
+      `Object.create = () => undefined; require("cluster").Worker(); const stream = require("stream");` +
+        `stream.finished(new stream.PassThrough().end().resume(), () => console.log("ok"));`,
+      "ok",
+    ],
+  ])("%s", async (_, source, stdout) => {
+    expect(await bunRun(["-e", source])).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });
 
   test("new Module().exports survives object spread", async () => {

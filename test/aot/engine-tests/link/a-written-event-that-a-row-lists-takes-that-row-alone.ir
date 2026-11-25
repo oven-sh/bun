@@ -1,0 +1,35 @@
+# process.on("SIGINT", listener);  function listener(given) { return given[Symbol.species].from("hi"); }
+# The first row of `on` lists the events at which native code hands a listener no object of its own. The text is written at the call and the row lists it: that row takes the call, and
+# the row for every other event, which hands the listener an object of any class, does not. So no Buffer comes to be, @@species finds nothing, and the function of the library behind
+# Buffer.from stays out.
+# The controls: an-event-that-no-row-lists-takes-the-row-for-every-event.ir, an-event-that-is-not-written-takes-every-row-that-may-fit.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/JSBufferConstructor.ts" displayPath="/$bun/js/builtins/JSBufferConstructor.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=JSBufferConstructorFrom function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="on"
+    v2 = String string="SIGINT"
+    v3 = NewClosure function=f1
+    v4 = Call v1, v0, v2, v3 calleeKey="on" calleeName="process.on"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="listener" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key=@@species
+    v2 = PropGet v1 key="from"
+    v3 = String string="hi"
+    v4 = Call v2, v1, v3 calleeKey="from"
+    Return v4
+}
+function f2 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=JSBufferConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

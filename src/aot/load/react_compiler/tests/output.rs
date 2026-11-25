@@ -163,6 +163,7 @@ fn function_with_captures_is_not_outlined() {
     });
 }
 
+/// Who holds the list in which the outlined function is declared, and what stands in that list.
 fn list_with_outlined_function(tree: &Tree<'_>) -> (&'static str, Vec<&'static str>) {
     let hir = tree.hir();
     let outlined = tree.function_named("%react:outlined:0:_temp");

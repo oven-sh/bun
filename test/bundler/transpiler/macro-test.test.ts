@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -16,6 +16,24 @@ import defaultMacro, {
 } from "./macro.ts" with { type: "macro" };
 
 import * as macros from "./macro.ts" with { type: "macro" };
+
+async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+  using dir = tempDir("macro-run", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds also print "[macro] call <name>" to stdout.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  return { lines, stderr, exitCode };
+}
 
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
@@ -358,6 +376,57 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("the JSON of a Blob or Response is still inlined after a later macro collects it", async () => {
+  const result = await run({
+    "m.ts": `
+      const json = (letter: string) => JSON.stringify({ text: Buffer.alloc(4096, letter).toString() });
+      export const blob = (letter: string) => new Blob([json(letter)], { type: "application/json" });
+      export const response = (letter: string) =>
+        new Response(json(letter), { headers: { "content-type": "application/json" } });
+      const kept: Blob[] = [];
+      export function collect() {
+        Bun.gc(true);
+        // These take the memory that was freed.
+        for (let i = 0; i < 64; i++) kept.push(blob("Z"));
+        return 0;
+      }
+    `,
+    "index.ts": `
+      import { blob, response, collect } from "./m.ts" with { type: "macro" };
+      const values = [blob("a"), response("b"), blob("c"), response("d"), blob("e"), response("f")];
+      collect();
+      console.log(values.map(({ text }) => text.length + [...new Set(text)].join("")).join());
+    `,
+  });
+  expect(result).toEqual({ lines: ["4096a,4096b,4096c,4096d,4096e,4096f"], stderr: "", exitCode: 0 });
+});
+
+// Both parse an empty JSON document. A Worker parses the defines again.
+test.concurrent("a macro that returns an empty JSON Blob doesn't change what an empty --define is", async () => {
+  using dir = tempDir("macro-empty-json", {
+    "m.ts": `export const empty = () => new Blob([], { type: "application/json" });`,
+    "worker.ts": `const object = EMPTY;\nobject.key = 1;\nconsole.log(object.key, object === object);`,
+    "index.ts": `
+      import { empty } from "./m.ts" with { type: "macro" };
+      console.log(JSON.stringify(empty()));
+      new Worker("./worker.ts");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--define", "EMPTY=", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLines: stdout.trim().split("\n").slice(-2), stderr, exitCode }).toEqual({
+    lastLines: ["{}", "1 true"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The classification follows the MIME essence, not the category table the runtime uses for blob types:
 // any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
 // The data URL keeps the raw content type, parameters included.
@@ -428,24 +497,6 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
 // the entry file's macros, or a module require()d so it transpiles on the main thread.
 describe("event loop routing around macros", () => {
-  async function run(files: Record<string, string>, env: Record<string, string> = {}) {
-    using dir = tempDir("macro-loops", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds also print "[macro] call <name>" to stdout.
-    const lines = stdout
-      .trim()
-      .split("\n")
-      .filter(line => !line.startsWith("[macro]"));
-    return { lines, stderr, exitCode };
-  }
-
   const unawaited: [name: string, macroSource: string][] = [
     [
       "an fs.promises call inside the macro",
@@ -706,6 +757,115 @@ describe("--no-macros", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
     expect(out).toContain("INLINED_RESULT");
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
+  });
+});
+
+describe("macros in data: URL modules", () => {
+  const macroSource = `
+    import { writeFileSync } from "node:fs";
+    export function f() {
+      writeFileSync("MACRO_RAN", "macro executed");
+      return "INLINED_RESULT";
+    }
+  `;
+  const callerSource = (dir: string) =>
+    `import { f } from ${JSON.stringify(path.join(dir, "macro.ts"))} with { type: "macro" }; console.log(f(), f\`\`);`;
+  const toDataUrl = (code: string) => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+
+  describe.each([
+    ["direct import", (dir: string) => toDataUrl(callerSource(dir))],
+    ["nested data: URL", (dir: string) => toDataUrl(`import ${JSON.stringify(toDataUrl(callerSource(dir)))};`)],
+  ])("%s", (_, getSpecifier) => {
+    test.concurrent.each([
+      ["bun build", ["build", "./entry.ts", "--outdir", "dist"]],
+      ["bun run", ["run", "./entry.ts"]],
+    ])("%s errors", async (_, args) => {
+      using dir = tempDir("macro-data-url", { "macro.ts": macroSource });
+      await Bun.write(path.join(String(dir), "entry.ts"), `import ${JSON.stringify(getSpecifier(String(dir)))};\n`);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.split('error: Macros cannot be run from a "data:" URL module.').length - 1).toBe(2);
+      expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
+describe("macros in dependency paths", () => {
+  const isCaseInsensitive = existsSync(import.meta.path.toUpperCase());
+  const macroFiles = (folder: string) => ({
+    [`${folder}/caller.js`]: `import { f } from "./macro.js" with { type: "macro" };\nexport const value = f();\n`,
+    [`${folder}/macro.js`]: `import { writeFileSync } from "node:fs";\nexport function f() {\n  writeFileSync("MACRO_RAN", "");\n  return "INLINED";\n}\n`,
+  });
+  async function runBuild(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--target=browser", "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, ran: existsSync(path.join(dir, "MACRO_RAN")) };
+  }
+  const refused = {
+    stderr: expect.stringContaining("macros cannot be run from node_modules"),
+    exitCode: 1,
+    ran: false,
+  };
+  const allowed = { stderr: "", exitCode: 0, ran: true };
+
+  test.concurrent.each([
+    "Node_Modules/dep",
+    "NODE_MODULES/@scope/dep",
+    "cache/dep@1.0.0@@@1",
+    "cache/@scope/dep@1.0.0@@@1/lib",
+    "cache/dep@1.0.0@@registry.example.com@@@1",
+    "cache/dep@1.0.0@@@1_patch_hash=0123456789abcdef",
+    "cache/@G@0123456789abcdef0123456789abcdef01234567",
+    "cache/@GH@owner-dep-0123456@@@1",
+    "cache/@T@0123456789abcdef@@@1",
+  ])("errors in %s", async folder => {
+    using dir = tempDir("macro-dependency", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `try { require("../../${folder}/caller.js") } catch {}\n`,
+      ...macroFiles(folder),
+    });
+    expect(await runBuild(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.skipIf(!isCaseInsensitive)("errors for a path with different case", async () => {
+    using dir = tempDir("macro-dependency-case", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "../../Node_Modules/dep/caller.js";\n`,
+      ...macroFiles("node_modules/dep"),
+    });
+    expect(await runBuild(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.each(["src", "node_modules_old", "my-node_modules/x", "a@@b"])("allowed in %s", async folder => {
+    using dir = tempDir("macro-project", { "entry.js": `import "./${folder}/caller.js";\n`, ...macroFiles(folder) });
+    expect(await runBuild(String(dir))).toEqual(allowed);
+  });
+
+  test.concurrent("allowed in linked packages", async () => {
+    using dir = tempDir("macro-linked", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "linked";\n`,
+      ...macroFiles("packages/linked"),
+      "packages/linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0", main: "caller.js" }),
+    });
+    symlinkSync(path.join(String(dir), "packages/linked"), path.join(String(dir), "node_modules/linked"), "junction");
+    expect(await runBuild(String(dir))).toEqual(allowed);
   });
 });
 

@@ -521,6 +521,26 @@ struct StrippedTarget<'p> {
     corresponds: bool,
 }
 
+/// A union with fewer members is searched for each type on its own. See `Checker::contains_type`.
+const MANY_TARGETS: usize = 512;
+
+/// One pass over the constituents of a large union, beside those of another. Both are in `CompareTypes` order.
+#[derive(Default)]
+struct LiteralWalk<'p> {
+    ahead: &'p [TypeId],
+    only_literals: bool,
+}
+
+/// How many types `a` and `b` have in common from the start.
+fn common_prefix_len(a: &[TypeId], b: &[TypeId]) -> usize {
+    const BLOCK: usize = 32;
+    let (blocks_of_a, blocks_of_b) = (a.as_chunks::<BLOCK>().0, b.as_chunks::<BLOCK>().0);
+    let equal = blocks_of_a.iter().zip(blocks_of_b);
+    let from = BLOCK * equal.take_while(|(a, b)| a == b).count();
+    let rest = a[from..].iter().zip(&b[from..]);
+    from + rest.take_while(|(a, b)| a == b).count()
+}
+
 // Type kind predicates for callers that already have the `TypeData`.
 
 /// `Checker::is_object_type`
@@ -936,6 +956,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     fn is_empty_resolved_type_as(&mut self, ty: TypeId, data: &TypeData) -> bool {
+        if self.class_members_by_name.is_on
+            && let Some(is_empty) = self.is_empty_unlisted_class(ty)
+        {
+            return is_empty;
+        }
         !matches!(data, TypeData::Synth(shape) if Self::is_any_function_shape(shape))
             && (self.members(ty)).is_some_and(|m| Self::lists_nothing(m.whole_shape()))
     }
@@ -944,8 +969,16 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_empty_object_type(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Union(parts) => {
-                !self.has_only_unrelated_classes(ty)
-                    && parts.iter().any(|&p| self.is_empty_object_type(p))
+                let is_large = parts.len() >= unions::MANY_MEMBERS;
+                if is_large && let Some(&is_empty) = self.unions_with_empty_member.get(&ty) {
+                    return is_empty;
+                }
+                let is_empty = !self.has_only_unrelated_classes(ty)
+                    && parts.iter().any(|&p| self.is_empty_object_type(p));
+                if is_large && self.unresolved_members.is_empty() {
+                    self.unions_with_empty_member.insert(ty, is_empty);
+                }
+                is_empty
             }
             TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_empty_object_type(p)),
             _ if ty == TypeId::OBJECT => true,
@@ -2930,6 +2963,20 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeParameterModifiers`: the modifiers that any declaration of `sym` has on its type
     /// parameter `param`.
     pub(super) fn type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
+        let known = self
+            .modifiers_of_type_parameters
+            .borrow()
+            .get(&(sym, param))
+            .copied();
+        known.unwrap_or_else(|| {
+            let modifiers = self.find_type_param_modifiers(sym, param);
+            let mut known = self.modifiers_of_type_parameters.borrow_mut();
+            known.insert((sym, param), modifiers);
+            modifiers
+        })
+    }
+
+    fn find_type_param_modifiers(&self, sym: Sym, param: TypeId) -> Flags {
         let TypeData::TypeParam(of, id, ..) = *self.data(param) else {
             return Flags::empty();
         };
@@ -3687,7 +3734,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && let Some(owner) = self.bound(file).prop_owner[p.idx()].some()
                             && matches!(self.hir(file)[owner].kind, ExprKind::Jsx(_))
                         {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
                         }
@@ -3699,7 +3746,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // `prop.ValueDeclaration`
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
                             matches!(prop_node.key, PropKey::Name(_))
@@ -3759,10 +3806,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isTypeSubsetOf(globalObjectType, target)`
-    pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
-        self.parts(target)
-            .iter()
-            .any(|&p| self.is_reference_to_global(p, known::Object, 0))
+    pub(super) fn contains_global_object_type(&mut self, target: TypeId) -> bool {
+        let is_large = self.has_many_members(target);
+        if is_large && let Some(&has_object) = self.unions_with_global_object.get(&target) {
+            return has_object;
+        }
+        let mut parts = self.parts(target).iter();
+        let has_object = parts.any(|&p| self.is_reference_to_global(p, known::Object, 0));
+        if is_large {
+            self.unions_with_global_object.insert(target, has_object);
+        }
+        has_object
     }
 
     /// `getTypeOfPropertyInType`
@@ -4078,7 +4132,11 @@ impl<'p, 's> Checker<'p, 's> {
             count,
             corresponds,
         } = self.undefined_stripped_target_if_needed(sources, target);
-        for (i, &t) in sources.iter().enumerate() {
+        let (mut walk, in_common) = self.begin_literal_walk(sources, target);
+        for (i, &t) in sources.iter().enumerate().skip(in_common) {
+            if self.is_literal_ahead(&mut walk, t) {
+                continue;
+            }
             // Many unions are mappings of one another, so the members at the same index are related.
             if corresponds {
                 let at = i % count;
@@ -4100,6 +4158,45 @@ impl<'p, 's> Checker<'p, 's> {
             result &= related;
         }
         result
+    }
+
+    /// The walk over the constituents of `target`, and how many of `sources` it begins with, which the walk is already past.
+    fn begin_literal_walk(&self, sources: &[TypeId], target: TypeId) -> (LiteralWalk<'p>, usize) {
+        let targets: &'p [TypeId] = match self.data(target) {
+            TypeData::Union(parts) if parts.len() >= MANY_TARGETS => parts,
+            _ => return (LiteralWalk::default(), 0),
+        };
+        let only_literals = self.types().member_flags(target) & !tf::LITERAL == 0;
+        let in_common = match only_literals {
+            true => common_prefix_len(sources, targets),
+            false => 0,
+        };
+        let walk = LiteralWalk {
+            ahead: &targets[in_common..],
+            only_literals,
+        };
+        (walk, in_common)
+    }
+
+    /// True if `t` is a literal that `walk` has ahead of it. The walk moves behind `t`, or to where it would be.
+    #[inline]
+    fn is_literal_ahead(&self, walk: &mut LiteralWalk<'p>, t: TypeId) -> bool {
+        let Some((&first, rest)) = walk.ahead.split_first() else {
+            return false;
+        };
+        if walk.only_literals && first == t {
+            walk.ahead = rest;
+            return true;
+        }
+        if self.flags(t) & tf::LITERAL == 0 {
+            return false;
+        }
+        let (is_found, passed) = match self.binary_search_types(walk.ahead, t) {
+            Ok(at) => (true, at + 1),
+            Err(at) => (false, at),
+        };
+        walk.ahead = &walk.ahead[passed..];
+        is_found
     }
 
     /// `getUndefinedStrippedTargetIfNeeded`: `undefined`, which optionality adds, would break the

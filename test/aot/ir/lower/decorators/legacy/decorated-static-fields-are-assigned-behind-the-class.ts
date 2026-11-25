@@ -4,8 +4,7 @@
 // CHECK: = CallDirect
 // CHECK: PutModuleVariable {{*}}variable=[[outer]] @
 // CHECK: PropSet [[class]], {{*}}key="b"
-// CHECK: [[this]] = Undefined
-// CHECK: [[arrow]] = NewClosure [[this]] function=
+// CHECK: [[arrow]] = NewClosure function=
 // CHECK: PropSet [[class]], [[arrow]] key="c"
 // CHECK: = Builtin builtin=CompilerHelpersDecorateProperty
 // CHECK-LABEL: function {{*}}kind=Initializer
@@ -15,6 +14,8 @@
 // CHECK: Return
 // CHECK-LABEL: function {{*}}kind=Arrow
 // CHECK: = GetModuleVariable variable=[[outer]] @
+// CHECK: [[this]] = Undefined
+// CHECK: = NewArray {{*}}, [[this]]
 
 declare const d: any;
 declare function f(): number;

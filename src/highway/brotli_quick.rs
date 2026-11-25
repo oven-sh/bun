@@ -2,6 +2,7 @@
 
 use core::ops::Range;
 use std::collections::TryReserveError;
+use std::sync::Once;
 
 unsafe extern "C" {
     fn highway_brotli_quick_index(
@@ -59,7 +60,7 @@ pub const MAX_META_BLOCK_SIZE: usize = 1 << 24;
 pub const WORD_ROW_BITS: u32 = 10;
 const TRANSFORMS: u8 = 121;
 pub const MAX_WORD_ADDRESS: usize = (TRANSFORMS as usize) << 11;
-const WORD_COUNT: usize = 13504;
+pub const WORD_COUNT: usize = 13504;
 const DICTIONARY_SIZE: usize = 122_784;
 
 #[repr(C, align(32))]
@@ -75,6 +76,28 @@ pub struct Words {
     /// The length in the low five bits, and above it the index.
     pub packed: [u16; WORD_COUNT + 16],
     pub omit_last: [u8; 16],
+}
+
+impl Words {
+    const NONE: Self = Self {
+        first_four: [[0; _]; _],
+        buckets: [[0; _]; _],
+        next_four: [0; _],
+        transforms: [[[0; _]; _]; _],
+        packed: [0; _],
+        omit_last: [0; _],
+    };
+
+    /// As the first caller `fill`s them, from zeros.
+    pub fn shared(fill: fn(&mut Self)) -> &'static Self {
+        static IS_FILLED: Once = Once::new();
+        static mut WORDS: Words = Words::NONE;
+        let words = &raw mut WORDS;
+        // SAFETY: nothing refers to them yet.
+        IS_FILLED.call_once(|| fill(unsafe { &mut *words }));
+        // SAFETY: nothing changes them any more.
+        unsafe { &*words }
+    }
 }
 
 pub struct Format {
@@ -577,14 +600,7 @@ mod tests {
         highway_brotli_quick_write(In, In, Out, Out, usize, Out, usize) -> usize;
     }
 
-    static WORDS: Words = Words {
-        first_four: [[0; _]; _],
-        buckets: [[0; _]; _],
-        next_four: [0; _],
-        transforms: [[[0; _]; _]; _],
-        packed: [0; _],
-        omit_last: [0; _],
-    };
+    static WORDS: Words = Words::NONE;
     static FORMAT: Format = Format::new(&WORDS, &[0; _], &[[[0; _]; _]; _]);
     const SETTINGS: Settings = Settings {
         table_bits: [8; 3],

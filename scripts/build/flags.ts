@@ -2024,8 +2024,7 @@ export const fileOverrides: FileOverride[] = [
   {
     file: "src/jsc/bindings/highway_brotli_quick.cpp",
     extraFlags: ["-O2"],
-    when: c => c.debug,
-    desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
+    desc: "Same as highway_json.cpp below in debug builds. Otherwise as fast as -O3, and smaller.",
   },
   {
     file: "src/jsc/bindings/highway_brotli_quick.cpp",

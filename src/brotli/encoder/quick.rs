@@ -1,28 +1,27 @@
 //! Qualities 2 to 9 look up one candidate after the end of each match, and choose among the matches that overlap.
 
+use std::sync::LazyLock;
+
 use bun_highway::brotli_quick::{
     self, Compressor, Format, Input, MAX_META_BLOCK_SIZE, MAX_WORD_ADDRESS, MIN_BEFORE,
-    PADDING_AFTER, PADDING_BEFORE, Ready, Settings, UNKNOWN_DISTANCES, looks_binary,
+    PADDING_AFTER, PADDING_BEFORE, Ready, Settings, UNKNOWN_DISTANCES, Words, looks_binary,
 };
 
 use super::Operation;
 use super::bit_stream::{MetaBlockKind, write_empty_last, write_header, write_uncompressed};
 use super::bit_writer::BitWriter;
 use super::params::Params;
-use super::quick_words::WORDS;
+use super::quick_words;
 use crate::context::{ContextLut, ContextMode};
 use crate::dictionary;
 use crate::format::{DistanceParams, INITIAL_DISTANCES};
 use crate::memory::{self, AllocError, Result};
 
-static FORMAT: Format = Format::new(
-    &WORDS,
-    &dictionary::WORDS,
-    &[
-        ContextLut::tables(ContextMode::Utf8),
-        ContextLut::tables(ContextMode::Signed),
-    ],
-);
+static FORMAT: LazyLock<Format> = LazyLock::new(|| {
+    let contexts = [ContextMode::Utf8, ContextMode::Signed].map(ContextLut::tables);
+    let words = Words::shared(quick_words::fill);
+    Format::new(words, &dictionary::WORDS, &contexts)
+});
 
 /// A meta-block of up to this size is stored as is.
 const MAX_ALWAYS_STORED: usize = 2;

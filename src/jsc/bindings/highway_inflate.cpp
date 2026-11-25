@@ -432,7 +432,7 @@ static uint32_t InflateBuild(const InflateLitlens* litlen_lists, const InflateDi
     BUN_STEPS(BUN_REFILL_AND_STEP, BUN_STEP, "0", row, a, b, c, d, e, f) \
     BUN_STEPS(BUN_STEP, BUN_REFILL_AND_STEP, "1", row, f, a, b, c, d, e)
 
-__attribute__((no_sanitize("address"))) static void InflateLookUp(const uint32_t* entries, uint32_t root_bits, InflateLanes* lanes, uint32_t* to, size_t rows)
+__attribute__((no_sanitize("address", "safe-stack"))) static void InflateLookUp(const uint32_t* entries, uint32_t root_bits, InflateLanes* lanes, uint32_t* to, size_t rows)
 {
     // The inputs, and where `to` ends. One in front, so that the operand has an offset to add to.
     const void* locals[kLanes + 2];

@@ -481,12 +481,12 @@ unsafe fn run_special(
 }
 
 /// SAFETY: the same, but nothing has been copied, and nothing has to follow.
-unsafe fn run_exactly(it: &Sequence, tape: *mut u8, literals: *const u8, out: *mut u8) -> bool {
+unsafe fn run_exactly(it: &Sequence, tape: *mut u8, literals: *const u8, at: *mut u8) -> bool {
     let (mut period, mut left) = (it.offset as usize, it.match_len as usize);
     // SAFETY: as the caller promises. The match starts on the tape.
     unsafe {
-        out.copy_from_nonoverlapping(literals, it.literal_len as usize);
-        let mut to = out.add(it.literal_len as usize);
+        at.copy_from_nonoverlapping(literals, it.literal_len as usize);
+        let mut to = at.add(it.literal_len as usize);
         if period.wrapping_sub(1) >= to.addr() - tape.addr() {
             return false;
         }

@@ -327,7 +327,6 @@ pub(super) struct Clusters {
     added: Vec<Lanes<i32>>,
     /// For each pair of clusters.
     gains: Vec<i32>,
-    borders: Vec<u32>,
     pub(super) of_item: Vec<u32>,
     pub(super) count: usize,
 }
@@ -448,7 +447,7 @@ impl Clusters {
         &mut self,
         cluster: usize,
         others: usize,
-        change: i32,
+        borders: &[i32],
         room: &mut [Entry; COMMAND_SYMBOLS],
     ) {
         let members = self.members(cluster, room);
@@ -459,7 +458,7 @@ impl Clusters {
         );
         for (other, added) in self.added.as_flattened()[..others].iter().enumerate() {
             if other != cluster && self.groups[other / LANES].sums.used[other % LANES] != 0 {
-                let gain = cost - added + self.borders[cluster * count + other] as i32 * change;
+                let gain = cost - added + borders[cluster * count + other];
                 self.gains[cluster * count + other] = gain;
                 self.gains[other * count + cluster] = gain;
             }
@@ -470,17 +469,18 @@ impl Clusters {
     fn merge(&mut self, change: i32) -> Result<usize> {
         let count = self.count;
         self.gains = memory::filled(i32::MIN, count * count)?;
-        self.borders = memory::zeroed(count * count)?;
+        // What the changes between two clusters cost.
+        let mut borders: Vec<i32> = memory::zeroed(count * count)?;
         let mut previous = None;
         for &cluster in self.of_item.iter().filter(|&&cluster| cluster != NONE) {
             if let Some(previous) = previous.replace(cluster as usize) {
-                self.borders[previous * count + cluster as usize] += 1;
-                self.borders[cluster as usize * count + previous] += 1;
+                borders[previous * count + cluster as usize] += change;
+                borders[cluster as usize * count + previous] += change;
             }
         }
         let room = &mut [Entry::default(); _];
         for cluster in 1..count {
-            self.set_gains(cluster, cluster, change, room);
+            self.set_gains(cluster, cluster, &borders, room);
         }
         let mut left = count;
         loop {
@@ -504,15 +504,15 @@ impl Clusters {
                 };
             }
             for other in 0..count {
-                self.borders[kept * count + other] += self.borders[gone * count + other];
-                self.borders[other * count + kept] = self.borders[kept * count + other];
+                borders[kept * count + other] += borders[gone * count + other];
+                borders[other * count + kept] = borders[kept * count + other];
                 self.gains[gone * count + other] = i32::MIN;
                 self.gains[other * count + gone] = i32::MIN;
             }
             while self.groups[(left - 1) / LANES].sums.used[(left - 1) % LANES] == 0 {
                 left -= 1;
             }
-            self.set_gains(kept, left, change, room);
+            self.set_gains(kept, left, &borders, room);
         }
     }
 

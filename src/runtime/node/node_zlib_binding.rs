@@ -668,24 +668,22 @@ struct PendingWriteAll<T: CompressionStreamImpl> {
     stream: Box<Stream<T::Context>>,
     input: PinnedBytes,
     max: usize,
-    out: Vec<u8>,
-    result: Option<Result<usize, Error>>,
+    /// The output and `avail_in`.
+    result: Option<Result<(Vec<u8>, usize), Error>>,
 }
 
 impl<T: CompressionStreamImpl> PendingWriteAll<T> {
     fn work(&mut self, max: usize) {
         let mut out = Vec::new();
-        self.result = self
-            .stream
-            .context
-            .do_all_work(&self.input, &mut out, max.min(self.max));
-        if let Some(Ok(_)) = self.result {
-            if out.len() < out.capacity() / 2 && self.out.try_reserve_exact(out.len()).is_ok() {
-                self.out.extend_from_slice(&out);
-            } else {
-                self.out = out;
+        let result = (self.stream.context).do_all_work(&self.input, &mut out, max.min(self.max));
+        self.result = result.map(|result| {
+            let (avail_in, mut exact) = (result?, Vec::new());
+            if out.len() < out.capacity() / 2 && exact.try_reserve_exact(out.len()).is_ok() {
+                exact.extend_from_slice(&out);
+                out = exact;
             }
-        }
+            Ok((out, avail_in))
+        });
     }
 }
 
@@ -710,8 +708,8 @@ impl<T: CompressionStreamImpl> JobContext for PendingWriteAll<T> {
         this.stream().set(Some(write.stream));
 
         let arguments = match write.result {
-            Some(Ok(avail_in)) => [
-                JSValue::create_buffer(global, write.out)?,
+            Some(Ok((out, avail_in))) => [
+                JSValue::create_buffer(global, out)?,
                 JSValue::js_number((input_len - avail_in) as f64),
             ],
             None => [JSValue::UNDEFINED; 2],
@@ -1113,7 +1111,6 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
             stream: ScopeGuard::into_inner(stream),
             input,
             max,
-            out: Vec::new(),
             result: None,
         };
         if quick_len.is_some_and(|len| write.input.len() <= len)

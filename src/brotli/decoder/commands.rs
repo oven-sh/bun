@@ -553,10 +553,11 @@ fn begin<'i>(reader: &BitReader<'i>, remaining: [u32; 3]) -> Progress<'i> {
 /// Of the insert and of the copy.
 #[inline(always)]
 fn lengths_of(command: &machine::Command, bits: u64) -> [u32; 2] {
-    let ([insert, extra_bits], end) = (FORMAT.insert(command.insert_code()), command.insert_end());
+    let [insert, extra_bits] = FORMAT.insert(command.insert_code());
+    let middle = command.insert_end();
     [
-        insert + bits_in(bits, end - extra_bits, end),
-        command.min_copy() + bits_in(bits, end, command.total_length()),
+        insert + bits_in(bits, middle - extra_bits, middle),
+        command.min_copy() + bits_in(bits, middle, command.total_length()),
     ]
 }
 

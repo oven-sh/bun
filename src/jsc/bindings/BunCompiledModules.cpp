@@ -1043,9 +1043,14 @@ static void requireCompiledModuleInto(Zig::GlobalObject* globalObject, JSCommonJ
             target->compiledModuleLoadedInto = module.index();
             AOT::willRequireFromUncompiledCode(globalObject, module, requirer);
             JSValue filename = isBunTest && AOT::evaluatedBy(globalObject, module) == AOT::LoadedBy::Nobody ? requirer->filename() : JSValue();
-            if (filename && filename.isString())
-                globalObject->onLoadPlugins.requirersOfCompiledFiles.add(key->value(globalObject), asString(filename)->value(globalObject));
             RETURN_IF_EXCEPTION(scope, void());
+            if (filename && filename.isString()) {
+                String required = key->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                String requiredBy = asString(filename)->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                globalObject->onLoadPlugins.requirersOfCompiledFiles.add(required, requiredBy);
+            }
         }
         isAdopted = tryAdoptModuleObject(globalObject, target, module, key);
         RETURN_IF_EXCEPTION(scope, void());

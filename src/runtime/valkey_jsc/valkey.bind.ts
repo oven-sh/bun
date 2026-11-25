@@ -25,7 +25,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   decr: [["key"], 1],
   decrby: [["key", "decrement"], 2],
   del: [["...args"], 1],
-  dump: [["key", "options"], 0],
+  dump: [["key"], 0],
   echo: [["message", "options"], 1],
   eval: [["...args"], 2],
   evalsha: [["...args"], 2],

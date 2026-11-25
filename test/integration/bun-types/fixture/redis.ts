@@ -359,6 +359,9 @@ expectType(redis.scan((await redis.scan(0, bytes))[0], "COUNT", 5, bytes)).is<Pr
 expectType(redis.xrange("k", "-", "+", bytes)).is<Promise<[Bytes, Bytes[]][]>>();
 expectType(redis.eval("", 0, "a", bytes)).is<Promise<any>>();
 expectType(redis.send("GET", ["k"], bytes)).is<Promise<any>>();
+expectType(redis.pubsub("CHANNELS", bytes)).is<Promise<any>>();
+expectType(redis.pubsub("NUMSUB", "a", buf)).is<Promise<any>>();
+expectType(redis.dump("k")).is<Promise<Bytes | null>>();
 // A buffer has a `buffer` too, and `any` is still an argument of the command.
 expectType(redis.mget("k", buf)).is<Promise<(string | null)[]>>();
 expectType(redis.mget("k", anything)).is<Promise<(string | null)[]>>();
@@ -389,6 +392,14 @@ redis.get("k", anything ? bytes : undefined);
 redis.mget(bytes, "k");
 // @ts-expect-error - no stored data in the reply
 redis.incr("k", bytes);
+// @ts-expect-error - nor here
+redis.object("ENCODING", "k", bytes);
+// @ts-expect-error - nor here
+redis.xgroup("DESTROY", "k", "g", bytes);
+// @ts-expect-error - nor here
+redis.debug("OBJECT", "k", bytes);
+// @ts-expect-error - always bytes
+redis.dump("k", bytes);
 // @ts-expect-error - the result type does not choose the option
 const notBytes: Promise<Bytes | null> = redis.get("k");
 // @ts-expect-error - nor here

@@ -3292,14 +3292,13 @@ declare module "bun" {
      * @param key The key to dump
      * @returns Promise that resolves with the serialized value, or null if the
      * key doesn't exist
+     *
+     * @example
+     * ```ts
+     * await redis.send("RESTORE", ["copy", 0, (await redis.dump("key"))!]);
+     * ```
      */
-    dump(key: RedisClient.KeyLike): Promise<string | null>;
-    /** With {@link RedisClient.ReplyOptions}. */
-    dump<B extends boolean | undefined>(
-      key: RedisClient.KeyLike,
-      options: RedisClient.ReplyOptions<B>,
-    ): Promise<RedisClient.Data<B> | null>;
-    dump(key: RedisClient.KeyLike): Promise<string | null>;
+    dump(key: RedisClient.KeyLike): Promise<Buffer<ArrayBuffer> | null>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in seconds
@@ -3421,12 +3420,23 @@ declare module "bun" {
     publish(channel: string, message: RedisClient.KeyLike | ArrayBufferLike | number): Promise<number>;
 
     /**
+     * Inspect the state of the Pub/Sub system
+     * @param subcommand CHANNELS, NUMPAT, NUMSUB, SHARDCHANNELS, SHARDNUMSUB
+     * @param args Subcommand arguments
+     * @returns Promise that resolves with the subcommand's result
+     */
+    pubsub(
+      subcommand: string,
+      ...args: RedisClient.KeyLike[] | [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
+
+    /**
      * Subscribe to a Redis channel.
      *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
-     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
-     * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
+     * {@link ping `.ping()`}, {@link pubsub `.pubsub()`}, {@link subscribe `.subscribe()`},
+     * and {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
      *
      * @param channel The channel to subscribe to.
      * @param listener The listener to call when a message is received on the
@@ -4499,9 +4509,7 @@ declare module "bun" {
      * @param args Subcommand and its arguments
      * @returns Promise that resolves with the subcommand's result
      */
-    debug(
-      ...args: (string | number)[] | [...args: (string | number)[], options: RedisClient.ReplyOptions]
-    ): Promise<any>;
+    debug(...args: (string | number)[]): Promise<any>;
 
     /**
      * Get details about all Redis commands or specific commands
@@ -4529,10 +4537,7 @@ declare module "bun" {
      * await redis.object("ENCODING", "mykey"); // "embstr"
      * ```
      */
-    object(
-      subcommand: string,
-      ...args: RedisClient.KeyLike[] | [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions]
-    ): Promise<any>;
+    object(subcommand: string, ...args: RedisClient.KeyLike[]): Promise<any>;
 
     /**
      * Sort the elements in a list, set or sorted set
@@ -4840,12 +4845,7 @@ declare module "bun" {
      * await redis.xgroup("DESTROY", "mystream", "mygroup");
      * ```
      */
-    xgroup(
-      subcommand: string,
-      ...args:
-        | (RedisClient.KeyLike | number)[]
-        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
-    ): Promise<any>;
+    xgroup(subcommand: string, ...args: (RedisClient.KeyLike | number)[]): Promise<any>;
 
     /**
      * Set the last entry ID of a stream

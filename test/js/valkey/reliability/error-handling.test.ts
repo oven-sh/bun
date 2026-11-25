@@ -526,6 +526,7 @@ describe("Valkey: Command Arguments", () => {
     { call: ["mget", "a", new String("b")], sends: ["MGET", "a", "b"], resolves: "v" },
     { call: ["mget", "a", new DataView(new Uint8Array([98]).buffer)], sends: ["MGET", "a", "b"], resolves: "v" },
     { call: ["getBuffer", "k", { buffer: false }], sends: ["GET", "k"], resolves: v },
+    { call: ["dump", "k", { buffer: false }], sends: ["DUMP", "k"], resolves: v },
     { call: ["spop", "k", bytes], sends: ["SPOP", "k"], resolves: v },
     { call: ["spop", "k", undefined, bytes], sends: ["SPOP", "k"], resolves: v },
     { call: ["srandmember", "k", 2, bytes], sends: ["SRANDMEMBER", "k", "2"], resolves: v },
@@ -563,6 +564,9 @@ describe("Valkey: Command Arguments", () => {
     { call: ["eval", "", 0, { id: 1 }], throws: "Expected additional arguments to be a string or buffer for 'eval'." },
     { call: ["rpush", "k", "a", bytes], throws: "Expected additional arguments to be a string or buffer for 'rpush'." },
     { call: ["flushall", bytes], throws: "Expected additional arguments to be a string or buffer for 'flushall'." },
+    { call: ["object", "ENCODING", "k", bytes], throws: "to be a string or buffer for 'object'." },
+    { call: ["xgroup", "DESTROY", "k", "g", bytes], throws: "to be a string or buffer for 'xgroup'." },
+    { call: ["debug", "OBJECT", "k", bytes], throws: "to be a string or buffer for 'debug'." },
     { call: ["sadd", "k", "a", bytes], throws: "Expected member to be a string or buffer for 'sadd'." },
     { call: ["spop", "k", bytes, 5], throws: "Expected count to be a number or string for 'spop'." },
     { call: ["set", "k", bytes], throws: "Expected value to be a string or buffer or number for 'set'." },
@@ -586,8 +590,8 @@ describe("Valkey: Command Arguments", () => {
     using server = await connect(undefined, "$1\r\nv\r\n");
     const taken = ["send"];
     for (const [method, { value }] of Object.entries(Object.getOwnPropertyDescriptors(RedisClient.prototype))) {
-      if (typeof value !== "function" || /^(constructor|close|connect|duplicate|getBuffer|\w*subscribe)$/.test(method))
-        continue;
+      if (typeof value !== "function" || /^(constructor|close|connect|duplicate|\w*subscribe)$/.test(method)) continue;
+      if (method === "getBuffer" || method === "dump") continue;
       for (let count = 0; count < 4 && taken.at(-1) !== method; count++) {
         const reply = await (async () => run(server.client, [method, ...Array(count).fill("1"), bytes]))().catch(
           e => e,
@@ -625,6 +629,16 @@ describe("Valkey: Command Arguments", () => {
     expect(await Promise.all<unknown>(queued)).toEqual(["QUEUED", "QUEUED", Buffer.from("QUEUED"), "QUEUED"]);
     const [a, b, c, d] = await client.send("EXEC", []);
     expect([a, b, c, d.code, d.reply]).toEqual(["v", v, v, "ERR_ENCODING_INVALID_ENCODED_DATA", [[ff, 1]]]);
+  });
+
+  test.each([
+    ["bytes", "$1\r\n\xff\r\n", ff],
+    ["null", "_\r\n", null],
+    ["a status", "+QUEUED\r\n", "QUEUED"],
+  ])("dump() gives %s", async (_name, reply, expected) => {
+    using server = await connect(undefined, reply);
+    expect(Bun.inspect(await server.client.dump("k"))).toBe(Bun.inspect(expected));
+    expect(server.lastReceived()).toEqual(["DUMP", "k"]);
   });
 
   test("{ buffer: true } holds for its own reply only", async () => {
@@ -777,6 +791,13 @@ describe("Valkey: Command Arguments", () => {
     await server.client.subscribe("ch", () => {});
     expect(await run(server.client, ["pubsub", "NUMPAT"])).toBe(1);
     expect(server.lastReceived()).toEqual(["PUBSUB", "NUMPAT"]);
+  });
+
+  test("pubsub() takes { buffer } in subscriber mode", async () => {
+    using server = await connect(undefined, "*1\r\n$1\r\n\xff\r\n");
+    await server.client.subscribe("ch", () => {});
+    expect(await server.client.pubsub("CHANNELS", { buffer: true })).toEqual([ff]);
+    expect(server.lastReceived()).toEqual(["PUBSUB", "CHANNELS"]);
   });
 
   test("arguments convert in order and stop at the first that is refused", async () => {

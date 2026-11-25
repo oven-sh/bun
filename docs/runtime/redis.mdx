@@ -180,7 +180,7 @@ const poppedTag = await redis.spop("tags");
 
 ### Binary Data
 
-Bun decodes replies as UTF-8. To get `Buffer`s, pass `{ buffer: true }` as the last argument of `send()` or of a method that reads stored data. In a transaction, `true` holds for the result in the reply to `EXEC`, and on `EXEC` for all results.
+Bun decodes replies as UTF-8. To get `Buffer`s, pass `{ buffer: true }` as the last argument of `send()` or of a method that reads stored data. In a transaction, `true` holds for the result in the reply to `EXEC`, and on `EXEC` for all results. `getBuffer()` and `dump()` need no option.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));

@@ -127,8 +127,12 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(await redis.zrange(zset, 0, -1, "WITHSCORES", bytes)).toEqual([[value, 1]]);
     expect(await redis.xrange(stream, "-", "+", bytes)).toEqual([[Buffer.from(id), [Buffer.from("f"), value]]]);
 
-    expect(await redis.send("RESTORE", [copy, 0, (await redis.dump(hash, bytes))!], bytes)).toBe("OK");
+    expect(await redis.send("RESTORE", [copy, 0, (await redis.dump(hash))!], bytes)).toBe("OK");
     expect(await redis.hget(copy, "f", bytes)).toEqual(value);
+
+    await redis.send("MULTI", []);
+    expect<unknown>(await redis.dump(string)).toBe("QUEUED");
+    expect(await redis.send("EXEC", [])).toEqual([await redis.send("DUMP", [string], bytes)]);
 
     await redis.send("MULTI", []);
     expect(await redis.get(string)).toBe("QUEUED");

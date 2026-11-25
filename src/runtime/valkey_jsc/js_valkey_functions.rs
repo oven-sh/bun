@@ -945,7 +945,7 @@ impl JSValkeyClient {
         setrange, "setrange", "SETRANGE", NotSubscriber,
         key: "key", offset: "offset", value: "value"
     );
-    cmd!(dump, "dump", "DUMP" -> ByOption, NotSubscriber, key: "key");
+    cmd!(dump, "dump", "DUMP" -> Binary, NotSubscriber, key: "key");
     cmd!(expireat, "expireat", "EXPIREAT", NotSubscriber, key: "key", timestamp: "timestamp");
     cmd!(expiretime, "expiretime", "EXPIRETIME", NotSubscriber, key: "key");
     cmd!(getdel, "getdel", "GETDEL" -> ByOption, NotSubscriber, key: "key");
@@ -1082,7 +1082,7 @@ impl JSValkeyClient {
     cmd_key_varargs!(zrevrank, "zrevrank", "ZREVRANK", "key", NotSubscriber);
     cmd_strings_varargs!(psubscribe, "psubscribe", "PSUBSCRIBE", DontCare);
     cmd_strings_varargs!(punsubscribe, "punsubscribe", "PUNSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB", DontCare);
+    cmd_strings_varargs!(pubsub, "pubsub", "PUBSUB" -> ByOption, DontCare);
     cmd_strings_varargs!(copy, "copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, "unlink", "UNLINK", "key", NotSubscriber);
     cmd_key_varargs!(touch, "touch", "TOUCH", "key", NotSubscriber);
@@ -1127,11 +1127,11 @@ impl JSValkeyClient {
     cmd!(lastsave, "lastsave", "LASTSAVE", NotSubscriber);
     cmd_strings_varargs!(js_client, "client", "CLIENT" -> ByOption, DontCare);
     cmd_strings_varargs!(config, "config", "CONFIG" -> ByOption, NotSubscriber);
-    cmd_strings_varargs!(debug, "debug", "DEBUG" -> ByOption, NotSubscriber);
+    cmd_strings_varargs!(debug, "debug", "DEBUG", NotSubscriber);
     cmd_strings_varargs!(command, "command", "COMMAND" -> ByOption, NotSubscriber);
 
     // Generic key commands
-    cmd_strings_varargs!(object, "object", "OBJECT" -> ByOption, NotSubscriber);
+    cmd_strings_varargs!(object, "object", "OBJECT", NotSubscriber);
     cmd_strings_varargs!(sort, "sort", "SORT" -> ByOption, NotSubscriber);
     cmd!(wait, "wait", "WAIT", NotSubscriber, numreplicas: "numreplicas", timeout: "timeout");
     cmd_strings_varargs!(lcs, "lcs", "LCS" -> ByOption, NotSubscriber);
@@ -1150,7 +1150,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xautoclaim, "xautoclaim", "XAUTOCLAIM" -> PageByOption, NotSubscriber);
     cmd_strings_varargs!(xpending, "xpending", "XPENDING" -> ByOption, NotSubscriber);
     cmd_strings_varargs!(xinfo, "xinfo", "XINFO" -> ByOption, NotSubscriber);
-    cmd_strings_varargs!(xgroup, "xgroup", "XGROUP" -> ByOption, NotSubscriber);
+    cmd_strings_varargs!(xgroup, "xgroup", "XGROUP", NotSubscriber);
     cmd_strings_varargs!(xsetid, "xsetid", "XSETID", NotSubscriber);
 
     pub(crate) fn publish(

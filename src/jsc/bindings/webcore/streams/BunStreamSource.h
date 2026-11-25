@@ -79,6 +79,8 @@ public:
     size_t m_chunkSize { 0 };
     // #hasResized — the one-shot chunk-size adaptation already happened.
     bool m_hasResized : 1 { false };
+    // No pull has brought enough to need a slab of m_chunkSize yet.
+    bool m_usesFirstSlab : 1 { false };
     // #closed
     bool m_closed : 1 { false };
     // Body.textStream(): each pulled byte span is UTF-8-decoded before enqueue.

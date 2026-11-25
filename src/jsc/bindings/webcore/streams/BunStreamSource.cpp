@@ -167,6 +167,8 @@ using Bindgen::Generated::JSBytesInternalReadableStreamSource;
 using Bindgen::Generated::JSFileInternalReadableStreamSource;
 using WebCore::JSBunStandaloneTextSink;
 
+// What a byte stream pulls into until a chunk needs more: one TLS record. An event stream rarely does.
+static constexpr size_t nativeSourceFirstSlabSize = 16 * 1024;
 static constexpr size_t nativeSourceMinChunkSize = 64 * 1024;
 static constexpr size_t nativeSourceDefaultChunkSize = 256 * 1024;
 static constexpr size_t nativeSourceMaxChunkSize = 2 * 1024 * 1024;
@@ -323,13 +325,14 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
 }
 
 extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
+extern "C" void Bun__ByteStream__setNextPullLimit(void* source, size_t limit);
 
 // A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
 {
     if (auto* blob = dynamicDowncast<JSBlobInternalReadableStreamSource>(adapter->handle()))
         return std::min(adapter->m_chunkSize, std::max<size_t>(Bun__ByteBlobLoader__remaining(blob->wrapped()), 1));
-    return adapter->m_chunkSize;
+    return adapter->m_usesFirstSlab ? nativeSourceFirstSlabSize : adapter->m_chunkSize;
 }
 
 // The pending slab is only ever handed to JS whole, so it is reused as long as it is still big enough; the
@@ -350,13 +353,17 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* g
 }
 
 // Decodes one pull result. Returns the value to store as the pending view (a view or undefined).
-static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed)
+static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller, JSValue result, JSC::JSUint8Array* view, bool isClosed, bool isDrained = false)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (result.isNumber()) {
         double written = result.asNumber();
+        // The first slab stands in for one of m_chunkSize, which this would not have filled.
+        const bool isFirstSlab = adapter->m_usesFirstSlab;
+        if (written >= nativeSourceFirstSlabSize)
+            adapter->m_usesFirstSlab = false;
         if (!isClosed)
-            nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0, view ? view->length() : adapter->m_chunkSize);
+            nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0, view && !isFirstSlab ? view->length() : adapter->m_chunkSize);
         if (adapter->m_textMode) {
             if (written > 0 && view) {
                 size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
@@ -374,7 +381,7 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
-            if (count < view->length()) {
+            if (count < view->length() || isFirstSlab) {
                 // A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the
                 // whole slab is reused for the next pull: no subarray views, and the slab is never adopted
                 // into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab.
@@ -400,8 +407,12 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         return jsUndefined();
     }
     if (auto* chunk = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
-        if (!isClosed && chunk->byteLength() >= adapter->m_chunkSize)
-            nativeAdjustChunkSize(adapter, chunk->byteLength(), chunk->byteLength());
+        const bool outgrewFirstSlab = adapter->m_usesFirstSlab && !isDrained;
+        const bool isFull = chunk->byteLength() >= adapter->m_chunkSize;
+        if (outgrewFirstSlab)
+            adapter->m_usesFirstSlab = false;
+        if (!isClosed && (isFull || outgrewFirstSlab))
+            nativeAdjustChunkSize(adapter, chunk->byteLength(), isFull ? chunk->byteLength() : adapter->m_chunkSize);
         if (chunk->byteLength() > 0) {
             if (adapter->m_textMode) {
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, chunk->span(), /* flush */ false);
@@ -415,6 +426,9 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
             scheduleNativeSourceCallClose(globalObject, adapter);
             return jsUndefined();
         }
+        // As after a slab that was handed over: what is left comes by pulls, a slab at a time.
+        if (outgrewFirstSlab && isFull && !adapter->m_textMode)
+            return jsUndefined();
         return view ? JSValue(view) : jsUndefined();
     }
     Bun::ERR::INVALID_STATE(scope, globalObject, "Internal error: invalid result from pull. This is a bug in Bun. Please report it."_s);
@@ -479,6 +493,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     adapter->setHandle(vm, handle);
     adapter->m_textMode = stream->m_nativeTextMode;
     adapter->m_chunkSize = std::max(static_cast<size_t>(chunkSize), autoAllocateChunkSize);
+    adapter->m_usesFirstSlab = adapter->m_chunkSize > nativeSourceFirstSlabSize && dynamicDowncast<JSBytesInternalReadableStreamSource>(handle);
     auto* closer = JSC::constructEmptyArray(globalObject, nullptr, 1);
     RETURN_IF_EXCEPTION(scope, );
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
@@ -547,7 +562,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
         if (isTruthy) {
             bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed);
+            JSValue newView = nativeDecodePullResult(vm, globalObject, adapter, controller, drained, uncheckedDowncast<JSC::JSUint8Array>(pendingObject), isClosed, /* isDrained */ true);
             RETURN_IF_EXCEPTION(scope, nullptr);
             nativeStorePendingView(vm, adapter, newView);
             return nullptr;
@@ -556,6 +571,9 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
 
     auto* view = nativeGetInternalBuffer(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (adapter->m_usesFirstSlab)
+        Bun__ByteStream__setNextPullLimit(uncheckedDowncast<JSBytesInternalReadableStreamSource>(handle)->wrapped(), adapter->m_chunkSize);
 
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(view);

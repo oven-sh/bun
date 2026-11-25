@@ -79,7 +79,7 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
     await using proc = Bun.spawn({ cmd: [bunExe(), "test.js"], cwd: deepPath, env: bunEnv, stderr: "inherit" });
     outcome = await proc.stdout.text();
   } catch (e: any) {
-    outcome = e.syscall;
+    outcome = e.code;
   }
-  expect(["hello\n", "uv_spawn"]).toContain(outcome);
+  expect(["hello\n", "ENOENT"]).toContain(outcome);
 });

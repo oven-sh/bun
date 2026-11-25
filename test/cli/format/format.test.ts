@@ -954,6 +954,67 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  // After `as` or `<`, `const` is the first word of a type like any other, so `|`, `&`, `extends`, `[]`, `!` and `.`
+  // after it continue the type. Prettier 3.9.9 prints each of these as `bun fmt` does with its `typescript` parser.
+  // With `babel-ts` it prints `(a as const) | "b"`, a bitwise OR, for a cast to a union, and rejects most of the others.
+  describe("a type that continues after `as const`", () => {
+    const rows = [
+      ["let a = 'NEW' as const | 'X';", 'let a = "NEW" as const | "X";'],
+      ["let b = x as const & y;", "let b = x as const & y;"],
+      ["let c = x as const\n  | y\n  | z;", "let c = x as const | y | z;"],
+      ["let d = <const | 'X'>'NEW';", 'let d = <const | "X">"NEW";'],
+      ["let e = x as const extends string ? 1 : 2;", "let e = x as const extends string ? 1 : 2;"],
+      ["let f = [x] as const[];", "let f = [x] as const[];"],
+      ["let g = x as const!;", "let g = x as const!;"],
+      ["let h = x as const.b;", "let h = x as const.b;"],
+      // Where no type continues, the operator is one of expressions.
+      ["let i = (x as const) | y;", "let i = (x as const) | y;"],
+      ["let j = x as const || y;", "let j = (x as const) || y;"],
+      ["let k = x as const ? 1 : 2;", "let k = (x as const) ? 1 : 2;"],
+      ["let l = x as const satisfies T;", "let l = x as const satisfies T;"],
+      ["let m = x as const\n[y].length;", "let m = x as const;\n[y].length;"],
+    ];
+    const text = rows.map(([written]) => `${written}\n`).join("");
+    const printed = rows.map(([, printed]) => `${printed}\n`).join("");
+
+    test.each([[[]], [["--parser=babel-ts"]], [["--flavor=oxfmt"]]])("stays a type with %j", async flags => {
+      const result = await formatChecked({ "a.ts": text }, [...flags, "a.ts"], { reads: ["a.ts"] });
+      expect({ ...result.files, stderr: result.stderr }).toEqual({ "a.ts": printed, stderr: "" });
+      expect(result.exitCode).toBe(0);
+      expect(await different({ "a.ts": printed }, [...flags, "a.ts"])).toEqual([]);
+    });
+
+    test("in Svelte and Vue", async () => {
+      const files = {
+        "a.svelte": `<script lang="ts">\n  let a = x as const | "X";\n</script>\n\n<p>{x as const | "X"}</p>\n`,
+        "b.vue": `<script setup lang="ts">\nlet a = x as const | "X";\n</script>\n\n<template>\n  <p :a="x as const | 'X'">{{ x as const | "X" }}</p>\n</template>\n`,
+      };
+      expect(await different(files, ["--svelte"])).toEqual([]);
+    });
+
+    test("and the formatted file runs like the one that was written", async () => {
+      const run = async (code: string) => {
+        using dir = tempDir("bun-format-run", { "a.ts": code });
+        await using proc = spawn({ cmd: [bunExe(), "a.ts"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const written = "let value = 'NEW' as const | 'X';\nconsole.log(value);\n";
+      const result = await format({ "a.ts": written }, [], { reads: ["a.ts"] });
+      expect(result.files).toEqual({ "a.ts": 'let value = "NEW" as const | "X";\nconsole.log(value);\n' });
+      const expected = { stdout: "NEW\n", stderr: "", exitCode: 0 };
+      expect([await run(written), await run(result.files["a.ts"]!)]).toEqual([expected, expected]);
+    });
+
+    // As TypeScript and Prettier's `typescript` parser read them: `const?` and `const<` start something of types.
+    test.each(["x as const ? +a : b", "x as const << 2", "x as const < y"])("%s is a syntax error", async code => {
+      const result = await format({ "a.ts": `let a = ${code};\n` }, [], { reads: ["a.ts"] });
+      expect(result.stderr).toMatch(syntaxErrorIn("a.ts"));
+      expect(result.files).toEqual({ "a.ts": `let a = ${code};\n` });
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   test("keeps two comments before an arrow function's `=>` on the same line", async () => {
     // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
     const files = {

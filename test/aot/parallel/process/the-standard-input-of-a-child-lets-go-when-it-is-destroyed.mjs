@@ -1,4 +1,4 @@
-// A child that drops the listeners of process.stdin and destroys it ends while its writer is still open, on a pipe and on a terminal.
+// A child that drops the listeners of process.stdin and destroys it ends while its writer is still open, on a pipe and, but for Windows, on a terminal.
 // The child is this program again. It is handed a word.
 if (process.argv.length > 2) {
   const stdin = process.stdin;
@@ -33,32 +33,36 @@ if (process.argv.length > 2) {
   console.log("pipe:", JSON.stringify(text), await onPipe.exited);
   onPipe.stdin.end();
 
-  // The terminal repeats the line that is typed, and makes "\r\n" of the end of each line.
-  // It also shows what the child writes to stderr, so the child is not asked to say there how it was built.
-  const { BUN_AOT_VERBOSE: _, ...env } = process.env;
-  const closed = Promise.withResolvers();
-  const ofTerminal = new TextDecoder();
-  let seen = "";
-  const onTerminal = Bun.spawn(again, {
-    env,
-    terminal: {
-      data(terminal, bytes) {
-        const ready = seen.includes("ready");
-        seen += ofTerminal.decode(bytes, { stream: true });
-        if (!ready && seen.includes("ready")) terminal.write("one\n");
-        if (seen.includes("close")) closed.resolve();
+  // A terminal of Windows shows more than what the child writes, the path of the program among it.
+  if (process.platform !== "win32") {
+    // The terminal repeats the line that is typed, and makes "\r\n" of the end of each line.
+    // It also shows what the child writes to stderr, so the child is not asked to say there how it was built.
+    const { BUN_AOT_VERBOSE: _, ...env } = process.env;
+    const closed = Promise.withResolvers();
+    const ofTerminal = new TextDecoder();
+    let seen = "";
+    const onTerminal = Bun.spawn(again, {
+      env,
+      terminal: {
+        data(terminal, bytes) {
+          const ready = seen.includes("ready\r\n");
+          seen += ofTerminal.decode(bytes, { stream: true });
+          // The line is typed behind the whole line of the child, and the last line of the child is awaited whole: the bytes come in any pieces.
+          if (!ready && seen.includes("ready\r\n")) terminal.write("one\n");
+          if (/close \w+\r\n/.test(seen)) closed.resolve();
+        },
+        exit() {
+          closed.resolve();
+        },
       },
-      exit() {
-        closed.resolve();
-      },
-    },
-  });
-  patience = setTimeout(() => {
-    seen += late;
-    onTerminal.kill();
-  }, 30_000);
-  await closed.promise;
-  clearTimeout(patience);
-  console.log("terminal:", JSON.stringify(seen.replaceAll("\r", "")), await onTerminal.exited);
-  onTerminal.terminal.close();
+    });
+    patience = setTimeout(() => {
+      seen += late;
+      onTerminal.kill();
+    }, 30_000);
+    await closed.promise;
+    clearTimeout(patience);
+    console.log("terminal:", JSON.stringify(seen.replaceAll("\r", "")), await onTerminal.exited);
+    onTerminal.terminal.close();
+  }
 }

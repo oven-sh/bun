@@ -533,7 +533,8 @@ describe("destroy()", () => {
   // pipe, as in `cmd | bun`.
   type Kind = "pipe" | "shell pipe" | "tty" | "file";
   const kinds: Kind[] = ["pipe", "file", "tty", ...(isPosix ? ["shell pipe" as const] : [])];
-  type Io = { feed: (data: string) => void; end: () => void; proc: Bun.Subprocess };
+  // gate() tells the child that what was fed before it is written.
+  type Io = { feed: (data: string) => void; end: () => void; gate: () => void; proc: Bun.Subprocess };
   // When the child prints the marker, the parent runs the action. The steps run in order.
   type Step = [marker: string, action: (io: Io) => void];
   type Report = { events: string[]; destroyed: boolean; fd0: boolean; exitCode: number | null; signalCode: unknown };
@@ -566,6 +567,11 @@ describe("destroy()", () => {
           process.exit(1);
         }, 1500).unref();
       }
+      // Calls back when the parent has written its input: a child that is gone before that proves nothing about the input.
+      function fed(callback) {
+        if (require("node:fs").existsSync(process.env.STDIN_GATE)) callback();
+        else setImmediate(fed, callback);
+      }
       ${body}
     `;
   }
@@ -588,20 +594,38 @@ describe("destroy()", () => {
     };
     const decoder = new TextDecoder();
     let output = "";
+    using dir = tempDir("stdin-destroy", { "input.txt": "hello\n" });
+    const gate = join(String(dir), "gate");
+    const env = { ...bunEnv, STDIN_GATE: gate };
+    const openGate = () => {
+      try {
+        writeFileSync(gate, "");
+      } catch (err) {
+        // The directory is gone when the child ended before the step.
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+    };
 
     if (kind === "tty") {
       const reported = Promise.withResolvers<void>();
       await using proc = Bun.spawn({
         cmd: [exe, "-e", script],
-        env: bunEnv,
+        env,
         terminal: {
           // Wide enough that ConPTY does not wrap the RESULT line.
           cols: 200,
           rows: 24,
           data(terminal, chunk) {
             output += decoder.decode(chunk, { stream: true });
+            const write = (data: string) => {
+              try {
+                terminal.write(data);
+              } catch (err) {
+                ignoreEpipe(err);
+              }
+            };
             // Ctrl-D at the start of a line is EOF on a POSIX terminal.
-            advance(output, { feed: data => void terminal.write(data), end: () => void terminal.write("\x04"), proc });
+            advance(output, { feed: write, end: () => write("\x04"), gate: openGate, proc });
             if (/RESULT \{[^}]*\}/.test(Bun.stripANSI(output))) reported.resolve();
           },
           exit() {
@@ -615,7 +639,6 @@ describe("destroy()", () => {
       return report(Bun.stripANSI(output).replace(/[\r\n]/g, ""), "", proc.exitCode, proc.signalCode);
     }
 
-    using dir = tempDir("stdin-destroy", { "input.txt": "hello\n" });
     // The shell waits for cat, and cat waits for the parent to close its end.
     const cmd =
       kind === "shell pipe"
@@ -626,7 +649,7 @@ describe("destroy()", () => {
       stdin: kind === "file" ? Bun.file(join(String(dir), "input.txt")) : "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      env: bunEnv,
+      env,
     });
     const sink = kind === "file" ? undefined : (proc.stdin as Bun.FileSink);
     let ended = false;
@@ -647,6 +670,10 @@ describe("destroy()", () => {
         } catch (err) {
           ignoreEpipe(err);
         }
+      },
+      gate() {
+        // Behind the flush of what feed() wrote.
+        Promise.resolve(sink?.flush()).catch(ignoreEpipe).finally(openGate);
       },
       proc,
     };
@@ -809,11 +836,11 @@ describe("destroy()", () => {
          events.push("first " + (await ask(1)));
          await new Promise(resolve => setImmediate(resolve));
          ask(2).then(line => events.push("second " + line));
-         done();
+         fed(done);
        })();`,
       [
         ["READY1", io => io.feed("one\n")],
-        ["READY2", io => io.feed("two\n")],
+        ["READY2", io => (io.feed("two\n"), io.gate())],
       ],
       ["first one"],
     ],
@@ -831,9 +858,9 @@ describe("destroy()", () => {
          stdin.pipe(new Writable({ write(chunk, encoding, callback) { events.push("piped"); callback(); } }));
          require("node:readline").createInterface({ input: stdin }).on("line", () => events.push("line"));
          console.log("READY");
-         done();
+         fed(done);
        });`,
-      [["READY", io => io.feed("hello\n")]],
+      [["READY", io => (io.feed("hello\n"), io.gate())]],
       [],
     ],
     [
@@ -842,9 +869,9 @@ describe("destroy()", () => {
       `stdin.pause();
        setImmediate(() => {
          stdin.destroy();
-         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); done(); });
+         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); fed(done); });
        });`,
-      [["READY", io => io.feed("hello")]],
+      [["READY", io => (io.feed("hello"), io.gate())]],
       [],
     ],
     [
@@ -852,9 +879,9 @@ describe("destroy()", () => {
       ["pipe"],
       `setImmediate(() => {
          stdin.destroy();
-         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); done(); });
+         setImmediate(() => { stdin.on("data", onData); stdin.resume(); console.log("READY"); fed(done); });
        });`,
-      [["READY", io => io.feed("hello")]],
+      [["READY", io => (io.feed("hello"), io.gate())]],
       [],
     ],
   ];

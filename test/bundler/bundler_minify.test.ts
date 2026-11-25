@@ -2942,7 +2942,7 @@ test("minify.identifiers: generated programs run the same with shared and with o
   ];
   const minified = async (env: Record<string, string>) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "minify-names-programs.ts"), ...seeds.map(String)],
+      cmd: [bunExe(), join(import.meta.dir, "minify-names-programs-fixture.ts"), ...seeds.map(String)],
       env: { ...bunEnv, ...env },
       stderr: "pipe",
     });

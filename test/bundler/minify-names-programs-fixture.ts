@@ -5,9 +5,9 @@
 // program every time. Most seeds give a program that declares a name twice,
 // which is a syntax error.
 //
-// Run as a script, this prints the programs of the given seeds with minified
-// names, as JSON: `bun minify-names-programs.ts <seeds>`.
-export function generateProgram(seed: number): string {
+// `bun minify-names-programs-fixture.ts <seeds>` prints the programs of the
+// seeds with minified names, as JSON.
+function generateProgram(seed: number): string {
   let s = (seed * 2654435761) >>> 0 || 1;
   const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
   const pick = <T>(a: T[]): T => a[Math.floor(rnd() * a.length)];
@@ -139,7 +139,5 @@ export function generateProgram(seed: number): string {
   return `(function(){\n${body}\n${names};\nfor (var i_ = 0; i_ < fns.length && i_ < 60; i_++) { try { log(show(call(fns[i_]))) } catch { log("E") } }\n})();\n`;
 }
 
-if (import.meta.main) {
-  const minifier = new Bun.Transpiler({ loader: "js", target: "browser", minify: { identifiers: true } } as any);
-  console.log(JSON.stringify(process.argv.slice(2).map(seed => minifier.transformSync(generateProgram(Number(seed))))));
-}
+const minifier = new Bun.Transpiler({ loader: "js", target: "browser", minify: { identifiers: true } } as any);
+console.log(JSON.stringify(process.argv.slice(2).map(seed => minifier.transformSync(generateProgram(Number(seed))))));

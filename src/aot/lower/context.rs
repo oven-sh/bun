@@ -152,6 +152,7 @@ pub struct LoweringInputs<'a> {
     pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
     pub reads_source_paths: bool,
     pub may_have_plugins: bool,
+    pub may_replace_evaluators: bool,
     pub replaced_builtins: &'a [u32],
     pub fixed_builtins: &'a FixedBuiltins,
     pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
@@ -313,8 +314,8 @@ fn analyze_scopes_of_file(
     let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
     analyze_scopes(&ScopeInput {
         file,
-        hir: &module.hir,
-        bound: &module.bound,
+        hir: files.hir(file),
+        bound: files.bound(file),
         compiled: module.compiled.expect("only compiled files are lowered"),
         modules: inputs.modules,
         builtins: file_inputs.builtins,

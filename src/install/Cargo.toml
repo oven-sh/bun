@@ -8,7 +8,7 @@ path = "lib.rs"
 
 [features]
 # Never enabled for this crate. Declared so the `cfg(feature = "shim_standalone")`
-# gates inside `windows-shim/{bun_shim_impl,BinLinkingShim}.rs` (which this
+# gates inside `windows-shim/*.rs` (which this
 # crate compiles as `mod`s) pass `unexpected_cfgs`. The feature is *set* only
 # when those files are compiled by the separate `bun_shim_impl` crate.
 shim_standalone = []
@@ -46,7 +46,7 @@ bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
 bun_archive.workspace = true
-bun_libdeflate_sys.workspace = true
+bun_deflate.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
 bun_patch.workspace = true

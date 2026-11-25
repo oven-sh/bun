@@ -1,23 +1,23 @@
 // Stores that create a name over a default on the prototype, in loops, until something stops them.
 var log = [], effects = 0;
 function make(change) {
-  function Node(key) { this.key = key; }
-  Node.prototype.left = null; Node.prototype.right = null; Node.prototype.size = 0;
-  function link(node, other, n) { for (var i = 0; i < n; i++) { var next = new Node(i); next.left = node; next.right = other.left; other.right = next; next.size += i; if (next.left && next.left.right) next.left.right = next.right; node = next; } return node; }
-  function walk(node) { var sum = 0, steps = 0; while (node && steps++ < 200) { sum = (sum * 31 + node.key + (node.size | 0)) | 0; if (!node.left) break; if (node.left.key < node.key && node.left.left) { var t = node.left; node.left = t.right; t.right = node; node = t; } else node = node.left; } return sum + " " + steps; }
-  var a = new Node(-1), b = new Node(-2);
+  function Hut(number) { this.number = number; }
+  Hut.prototype.east = null; Hut.prototype.west = null; Hut.prototype.beds = 0;
+  function link(hut, other, n) { for (var i = 0; i < n; i++) { var next = new Hut(i); next.west = other.east; next.east = hut; other.west = next; if (next.east && next.east.west) next.east.west = next.west; next.beds += i; hut = next; } return hut; }
+  function walk(hut) { var sum = 0, steps = 0; while (hut && steps++ < 200) { sum = (sum * 31 + (hut.beds | 0) - hut.number) | 0; var beside = hut.east; if (!beside) break; if (beside.number > 3 && beside.west) { hut.east = beside.west; beside.west = null; } hut = beside; } return steps + " " + sum; }
+  var a = new Hut(-1), b = new Hut(-2);
   log.push(walk(link(a, b, 30)));
-  change(Node, a, b);
-  for (var turn = 0; turn < 3; turn++) { var c = new Node(turn), d = new Node(turn + 1); log.push(walk(link(c, d, 20)), Object.keys(c).join(), Object.keys(d).join(), String(c.left), String(d.size)); }
+  change(Hut, a, b);
+  for (var turn = 0; turn < 3; turn++) { var c = new Hut(turn), d = new Hut(turn + 1); log.push(walk(link(c, d, 20)), Object.keys(c).join(), Object.keys(d).join(), String(c.east), String(d.beds)); }
 }
 make(function () {});
-make(function (Node) { Object.defineProperty(Node.prototype, "left", { value: null, writable: false, configurable: true }); });
-make(function (Node) { Object.defineProperty(Node.prototype, "size", { get: function () { effects++; return 3; }, set: function (v) { effects += v; }, configurable: true }); });
-make(function (Node) { Object.freeze(Node.prototype); });
-make(function (Node) { Object.defineProperties(Node.prototype, { right: { value: undefined, writable: false, enumerable: true } }); });
-make(function (Node) { Object.setPrototypeOf(Node.prototype, { get left() { effects++; return null; } }); });
-make(function (Node) { Reflect.defineProperty(Node.prototype, "left", { value: null, configurable: true }); delete Node.prototype.left; });
-make(function (Node, a, b) { Object.freeze(a); Object.preventExtensions(b); delete Node.prototype.right; Node.prototype.right = 0; });
+make(function (Hut) { Object.defineProperty(Hut.prototype, "east", { value: null, writable: false, configurable: true }); });
+make(function (Hut) { Object.defineProperty(Hut.prototype, "beds", { get: function () { effects++; return 3; }, set: function (v) { effects += v; }, configurable: true }); });
+make(function (Hut) { Object.freeze(Hut.prototype); });
+make(function (Hut) { Object.defineProperties(Hut.prototype, { west: { value: undefined, writable: false, enumerable: true } }); });
+make(function (Hut) { Object.setPrototypeOf(Hut.prototype, { get east() { effects++; return null; } }); });
+make(function (Hut) { Reflect.defineProperty(Hut.prototype, "east", { value: null, configurable: true }); delete Hut.prototype.east; });
+make(function (Hut, a, b) { Object.freeze(a); Object.preventExtensions(b); delete Hut.prototype.west; Hut.prototype.west = 0; });
 // One shape, orders of fields that differ by their count alone.
 function Pair(key) { this.key = key; }
 Pair.prototype.first = undefined; Pair.prototype.second = undefined; Pair.prototype.third = undefined;

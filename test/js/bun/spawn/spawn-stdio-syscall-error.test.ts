@@ -9,6 +9,7 @@
 // with write(2), so only bun's side of the pair is affected.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -390,7 +391,10 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
+    "cron-remove.mjs": `console.log(await Bun.cron.remove("t").catch(e => e.message));`,
+    "bin/crontab": `#!/bin/sh\n${WRITER_CMD[2]}\n`,
   });
+  chmodSync(join(String(dir), "bin/crontab"), 0o755);
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
     cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl"],
@@ -580,6 +584,15 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  test.concurrent.each(["1", "3"])("Bun.cron: rejects when read %s of `crontab -l` fails", async at => {
+    const PATH = `${join(String(dir), "bin")}:${bunEnv.PATH}`;
+    expect(await runWithFault("cron-remove.mjs", { SPAWN_FAULT_RECV_AT: at, PATH })).toEqual({
+      parsed: "Failed to read process output: EIO",
+      stderr: "",
+      exitCode: 0,
     });
   });
 

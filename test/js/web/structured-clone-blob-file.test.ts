@@ -464,7 +464,7 @@ describe("structuredClone with Blob and File", () => {
       // A crafted Blob wire image whose File store path contains an interior
       // NUL must be rejected as a JS error at deserialize time; it must never
       // reach the syscall layer where the C-string view would truncate (and
-      // debug builds abort in ZStr::as_cstr). Build the image by round-tripping
+      // debug builds abort in `c_path`). Build the image by round-tripping
       // a real file-backed blob and overwriting the path bytes, so the outer
       // serializer framing and the Blob record layout stay whatever the current
       // build emits.

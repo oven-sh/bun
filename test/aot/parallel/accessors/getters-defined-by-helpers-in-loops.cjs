@@ -14,9 +14,9 @@ define(point, "length", function () { return this.x * 2; });
 define(point, "area", function () { return this.x * this.x; });
 const named = { base: 5 };
 for (const name of ["a", "b", "c"]) Object.defineProperty(named, name, { configurable: true, enumerable: true, get() { reads++; return this.base + name.length + extra; } });
-function react(object, key, value) { Object.defineProperty(object, key, { configurable: true, enumerable: true, get() { return value; }, set(next) { value = next; } }); }
-function observe(object) { const keys = Object.keys(object); for (let i = 0; i < keys.length; i++) react(object, keys[i], object[keys[i]]); return object; }
-const state = observe({ left: 1, right: 2.5 });
+function kept(record, name, held) { Object.defineProperty(record, name, { set(given) { held = given; }, get() { return held; }, enumerable: true, configurable: true }); }
+function watched(record) { for (const [name, held] of Object.entries(record)) kept(record, name, held); return record; }
+const state = watched({ left: 1, right: 2.5 });
 function ofLib(turns) { let n = 0; for (let k = 0; k < turns; k++) n += lib.add(k & 7, 1) + lib.twice(k & 3); return n; }
 function ofPoint(turns) { let n = 0; for (let k = 0; k < turns; k++) n += point.length + point.area; return n; }
 function ofNamed(turns) { let n = 0; for (let k = 0; k < turns; k++) n += named.a + named.b + named.c; return n; }

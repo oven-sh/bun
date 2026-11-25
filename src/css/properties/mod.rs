@@ -2,11 +2,6 @@
 
 #![warn(unused_must_use)]
 
-// `properties_generated.rs` carries the 249-variant `Property` /
-// `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
-// `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
-// re-exposed below via `pub mod $name`.
-
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`.
 //
@@ -126,7 +121,6 @@ pub mod outline;
 pub mod overflow;
 pub mod position;
 pub mod prefix_handler;
-pub mod shape;
 pub mod size;
 pub mod text;
 pub mod transform;
@@ -137,13 +131,12 @@ pub mod css_modules;
 
 pub mod custom;
 
-pub mod properties_generated;
-mod properties_impl;
+mod property_table;
 
 // ─── Re-exports ────────────────────────────────────────────────────────────
 
 pub use self::custom::CustomPropertyName;
-pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
+pub use self::property_table::{Property, PropertyId, PropertyIdTag};
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
 // The `DefineEnumProperty` derive emits `EnumProperty` +
@@ -163,7 +156,7 @@ pub enum CSSWideKeyword {
 }
 
 // ─── generic::{Parse,ToCss,ParseWithOptions} leaf-type registrations ───────
-// `Property::parse` / `Property::value_to_css` (properties_generated.rs)
+// `Property::parse` / `Property::value_to_css` (property_table.rs)
 // dispatch through `css::generic::{parse_with_options,to_css}`, which require
 // every payload type to implement the protocol traits in `crate::generics`.
 // Each leaf already has inherent `parse` / `to_css` (hand-written or via
@@ -291,7 +284,7 @@ mod generic_registrations {
         // ui
         ui::ColorScheme,
         // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
-        properties_generated::PropertyId<'bump>,
+        PropertyId<'bump>,
     );
 
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The

@@ -1,4 +1,4 @@
-// An untyped package and a program of it (semaphores): a queue of workers with priorities, pausing, draining, retries; a mutex, a semaphore and a barrier beside it
+// An untyped package and a program of it (semaphores): orders that cooks take by their rank, with breaks, quiet hours and second tries; a semaphore and a barrier beside it
 const lib = require("./index.js");
 function say() {
   console.log(Array.prototype.join.call(arguments, " "));

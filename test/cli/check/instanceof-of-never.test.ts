@@ -23,7 +23,7 @@ const inside = (parameter: string, guard: string, statement: string) =>
   `export function run(c: boolean, a: ${parameter}) {\n  if (${guard}) {\n    ${statement}\n  }\n}\n`;
 
 // The answers are those of tsc 6.0.3 and of TypeScript 7.0.2.
-test.each([
+test.concurrent.each([
   ["the condition of a loop", "string", 'typeof a === "number"', "do { if (c) { } } while (a instanceof Date);", []],
   ["the body of a loop", "string", 'typeof a === "number"', "while (c) { if (c) { } if (a instanceof Date) { } }", []],
   ["an object", "{ x: 1 }", 'typeof a === "number"', "do { if (c) { } } while (a instanceof Date);", []],

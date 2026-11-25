@@ -160,12 +160,11 @@ impl Format {
 }
 
 /// [`Context::with_help`](crate::lint::Context::with_help)
-pub(crate) type WithHelp<'m> =
-    &'m (dyn Fn(&FileResult, Option<&[&RuleId]>) -> Vec<LintMessage> + Sync);
+pub(crate) type WithHelp<'m> = &'m (dyn Fn(&FileResult, &[&RuleId]) -> Vec<LintMessage> + Sync);
 
 /// ESLint's `ResultsMeta`, plus whatever else a format needs.
 pub(crate) struct Meta<'m> {
-    /// Set if the messages don't have their help text yet.
+    /// Set if the messages don't have their help text yet. Never with `shows_all`.
     pub(crate) help: Option<WithHelp<'m>>,
     pub(crate) cwd: &'m [u8],
     pub(crate) color: bool,

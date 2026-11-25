@@ -30,6 +30,7 @@ use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
@@ -336,6 +337,7 @@ pub(super) struct Plan {
     externals_imported_as_namespace: Vec<ModuleRef>,
     externals_named_by_mocks: Vec<ModuleRef>,
     absent_modules: Vec<ModuleRef>,
+    test_files_that_ask_loader: Vec<FileId>,
     may_be_mocked: Vec<bool>,
     is_named_by_mock: Vec<bool>,
     is_any_module_named_by_mock: bool,
@@ -398,6 +400,7 @@ impl Plan {
             externals_imported_as_namespace: Vec::new(),
             externals_named_by_mocks: Vec::new(),
             absent_modules: Vec::new(),
+            test_files_that_ask_loader: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
             is_named_by_mock: vec![false; order.numbers.len()],
             is_any_module_named_by_mock: false,
@@ -492,6 +495,10 @@ impl Plan {
 
     pub(super) fn set_absent_modules(&mut self, modules: Vec<ModuleRef>) {
         self.absent_modules = modules;
+    }
+
+    pub(super) fn set_test_files_that_ask_loader(&mut self, files: Vec<FileId>) {
+        self.test_files_that_ask_loader = files;
     }
 
     pub(super) fn set_names_of_mocks(&mut self, mocked: &MockedModules) {
@@ -690,11 +697,16 @@ impl ModuleGraph {
     fn finish_site(&self, site: StoredSite) -> Site {
         let shows_mark = self.shape(site.target) == Shape::EsModule
             && self.plan.has(&self.plan.is_namespace_seen, site.target);
+        let is_child_of_referrer = match (site.target, site.referrer) {
+            (ModuleRef::Inner { .. }, _) => false,
+            (_, ModuleRef::Inner { file, .. }) => self.keeps_module_object(ModuleRef::File(file)),
+            (_, referrer) => self.keeps_module_object(referrer),
+        };
         Site::Evaluate {
             target: site.target,
             is_bare: site.is_bare,
             records: shows_mark
-                || self.keeps_module_object(site.referrer)
+                || is_child_of_referrer
                 || self.keeps_module_object(site.target)
                 || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
                 || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
@@ -1181,6 +1193,14 @@ impl ModuleGraph {
     /// Whether no file or package provides the requested module, and mocks name it.
     pub fn is_absent_module(&self, module: ModuleRef) -> bool {
         self.plan.absent_modules.contains(&module)
+    }
+
+    pub fn is_found_by_loader_for_test_file(&self, module: ModuleRef, importer: FileId) -> bool {
+        matches!(module, ModuleRef::External { importer: asks, .. } if asks == importer)
+            && (self.plan.test_files_that_ask_loader)
+                .binary_search(&importer)
+                .is_ok()
+            && self.external_kind(module) != Some(ExternalKind::HostValue)
     }
 
     pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {

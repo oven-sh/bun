@@ -1875,7 +1875,7 @@ impl Unused<'_, '_> {
     }
 
     fn starts_with_underscore(&self, name: Atom) -> bool {
-        name.is_some() && self.atoms.bytes(name).first() == Some(&b'_')
+        self.atoms.bytes(name).first() == Some(&b'_')
     }
 
     // `reportUnused` drops the diagnostics for a node that has `NodeFlagsThisNodeOrAnySubNodesHasError`. The parser

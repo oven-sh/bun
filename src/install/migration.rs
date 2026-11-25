@@ -105,10 +105,7 @@ pub(crate) fn push_workspace_dependency(
         name_hash,
         behavior: Behavior::WORKSPACE,
         version: dependency::Version {
-            tag: dependency::VersionTag::Workspace,
-            value: dependency::Value {
-                workspace: sbuf!(this).append(path)?,
-            },
+            value: dependency::Value::Workspace(sbuf!(this).append(path)?),
             ..Default::default()
         },
     };
@@ -274,7 +271,7 @@ fn finish_migration(
     if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
         && let crate::GetJsonResult::Entry(root) = manager
             .workspace_package_json_cache
-            .get_with_path(log, path.slice(), Default::default())
+            .get_with_path(log, &path, Default::default())
     {
         bun_core::handle_oom(crate::lockfile_real::package::append_patched_dependencies(
             lockfile,
@@ -580,7 +577,7 @@ pub(crate) fn warn_unlocked_dependencies(
             !dep.behavior.is_peer()
                 && !dep.behavior.is_optional()
                 && !dep.behavior.is_workspace()
-                && dep.version.tag != dependency::Tag::Workspace
+                && dep.version.tag() != dependency::Tag::Workspace
                 && lockfile.workspace_paths.get(&dep.name_hash).is_none()
         })
     };

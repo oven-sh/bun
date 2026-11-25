@@ -135,9 +135,8 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
         return;
     auto* request = new InterruptRequest { this, callback, data };
     JSC__JSGlobalObject__queueMicrotaskCallback(m_globalObject, request, [](void* ptr) {
-        auto* req = static_cast<InterruptRequest*>(ptr);
+        std::unique_ptr<InterruptRequest> req { static_cast<InterruptRequest*>(ptr) };
         req->callback(req->isolate, req->data);
-        delete req;
     });
 }
 

@@ -57,8 +57,10 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
+// `node_quic_shim.c` asserts these, and the `SSL_EARLY_DATA_*` and `X509_V_FLAG_*` values below, against BoringSSL's
+// headers.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
-const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 2;
+const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 3;
 
 fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
@@ -321,7 +323,7 @@ const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
 const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
 /// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
 /// trust set does not shadow the valid certificate for the same issuer that the peer sends.
-const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
+const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x40000000;
 
 /// SAFETY: `ctx` is not shared yet.
 unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
@@ -522,9 +524,9 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
 unsafe extern "C" {
     /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
     safe fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
-    /// openssl.c: the signature algorithms every other TLS context of Bun accepts from a peer.
+    /// openssl.cpp: the signature algorithms every other TLS context of Bun accepts from a peer.
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
-    /// openssl.c: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
+    /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
 }
 

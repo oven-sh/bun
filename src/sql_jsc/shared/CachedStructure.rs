@@ -51,13 +51,13 @@ impl CachedStructure {
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
-    /// the shared body of `{Postgres,MySQL}SQLStatement::structure()`.
+    /// the shared body of `Columns::build_structure()` and `MySQLStatement::structure()`.
     ///
     /// Builds an `ExternColumnIdentifier` array on the stack when the
     /// non-duplicate count fits in `JSObject::max_inline_capacity()` (then
     /// bakes it into a JSC `Structure`), otherwise heap-allocates and stores
     /// the boxed slice on `self.fields`. Duplicates are skipped. Callers must
-    /// have already run their `check_for_duplicate_fields()` pass so that
+    /// have already run `dedupe_columns()` so that
     /// `ColumnIdentifier::Duplicate` tags are present.
     ///
     /// `columns` is iterated twice (count + build), hence the `Clone` bound;

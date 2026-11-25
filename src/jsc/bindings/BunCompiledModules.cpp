@@ -187,7 +187,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier, const BunString* typeAttribute);
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__compiledProgramNamesPlugin();
-extern "C" JSC::AOT::PluginResolveResult Bun__AOT__resolveWithPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, BunString* resolvedWithoutPlugins);
+extern "C" JSC::AOT::PluginResolveResult Bun__AOT__resolveWithPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer, Bun::OwnedString* resolvedWithoutPlugins);
 extern "C" BunString Bun__AOT__resolveWithoutPlugins(JSC::JSGlobalObject*, const BunString* name, const BunString* importer);
 extern "C" bool Bun__compiledProgramHoldsFileAsItIs(const BunString*);
 extern "C" bool Bun__compiledProgramDataFileIsPrintedAsJavaScript(JSC::JSGlobalObject*, const BunString*);
@@ -305,7 +305,7 @@ void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral w
 // A module from `build.module()`, or an onResolve filter that matches. A mock is in the same table but is no function.
 static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
 {
-    auto* modules = global->onLoadPlugins.virtualModules;
+    auto* modules = global->onLoadPlugins.virtualModules.get();
     auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
     return given && given->isCallable();
 }
@@ -315,7 +315,7 @@ static bool hasResolvePlugins(JSGlobalObject* globalObject)
     auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     if (!global->onResolvePlugins.isEmpty())
         return true;
-    auto* modules = global->onLoadPlugins.virtualModules;
+    auto* modules = global->onLoadPlugins.virtualModules.get();
     if (!modules)
         return false;
     for (auto& given : modules->values()) {
@@ -429,9 +429,9 @@ static String resolveWithoutPlugins(JSGlobalObject* globalObject, const String& 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
     BunString nameArgument = Bun::toString(name);
     BunString importerArgument = Bun::toString(importer);
-    BunString found = Bun__AOT__resolveWithoutPlugins(globalObject, &nameArgument, &importerArgument);
+    auto found = OwnedString::adopt(Bun__AOT__resolveWithoutPlugins(globalObject, &nameArgument, &importerArgument));
     (void)scope.tryClearException();
-    return found.isDead() ? String() : found.transferToWTFString();
+    return found.transferToWTFString();
 }
 
 static AOT::PluginResolveResult resolveWithPlugins(JSGlobalObject* globalObject, const String& name, const String& importer, String& resolvedWithoutPlugins)
@@ -442,7 +442,7 @@ static AOT::PluginResolveResult resolveWithPlugins(JSGlobalObject* globalObject,
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
         BunString nameArgument = Bun::toString(name);
         BunString importerArgument = Bun::toString(importer);
-        BunString found = { BunStringTag::Dead };
+        OwnedString found;
         {
             SetForScope engineAsks(threadPluginResolutions().engineAsks, true);
             SetForScope importStatement(global->onResolvePlugins.isResolvingImportStatement, true);
@@ -500,7 +500,7 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
     if (!hasCompiledModules() || Bun__compiledProgramRunsInPlace())
         return std::nullopt;
     BunString pathArgument = Bun::toString(path);
-    BunString pathOfForm = Bun__AOT__pathOfDefaultForm(&pathArgument);
+    auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfDefaultForm(&pathArgument));
     if (pathOfForm.isDead())
         return std::nullopt;
     return findModuleForPath(pathOfForm.transferToWTFString());
@@ -609,7 +609,7 @@ static std::optional<AOT::ModuleID> findFormOfModule(JSGlobalObject* globalObjec
     BunString pathArgument = Bun::toString(path);
     BunString typeArgument = Bun::toString(type);
     bool isFormWithoutAttributes = false;
-    BunString pathOfForm = Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes);
+    auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes));
     if (pathOfForm.isDead())
         return std::nullopt;
     std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfForm.transferToWTFString());
@@ -735,12 +735,12 @@ static std::optional<AOT::ModuleID> evaluatedOriginalKeyModule(Zig::GlobalObject
     if (!isBunTest || !key.endsWith("?actual"_s))
         return std::nullopt;
     auto module = findModuleForPath(key.left(key.length() - "?actual"_s.length()));
-    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
+    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && !hasMockOverFileOfPreload(globalObject, key.left(key.length() - "?actual"_s.length())) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
         return std::nullopt;
     return module;
 }
 
-JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
+JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, const String& importer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -774,6 +774,10 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     if (scope.exception()) [[unlikely]]
         return rejected();
+    if (isBunTest) {
+        auto importing = importer.isEmpty() ? std::nullopt : findModuleForPath(importer);
+        AOT::noteImporterOfFetch(globalObject, *module, importing && !AOT::isEvicted(globalObject, *importing) ? *importing : AOT::ModuleID());
+    }
     // Another fetch in flight may request the module once it is mocked.
     bool isAlone = globalObject->onLoadPlugins.waitingMockFetches.isEmpty() && !AOT::hasBatchedFetches(globalObject);
     // A require() cannot wait.
@@ -861,7 +865,7 @@ static bool isReadAsCodeByRequire(Zig::GlobalObject* globalObject, AOT::ModuleID
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject* globalObject, const String& key)
 {
     auto module = findModuleForPath(key);
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules.get();
     if (!module || (virtualModules && virtualModules->contains(key)) || rejectsRequester(globalObject, *module, AOT::LoadKind::Require))
         return {};
     return AOT::requireModule(globalObject, *module);
@@ -1185,7 +1189,7 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
     if (module && ranDuringWaitingMock(globalObject, *module))
         RELEASE_AND_RETURN(scope, AOT::didDeletePendingMockEntry(globalObject, *module));
     // Under a mock the original has its own key and outlives the entry. If the end of the mock moved it back under this key, it goes with the entry.
-    auto* mocks = globalObject->onLoadPlugins.virtualModules;
+    auto* mocks = globalObject->onLoadPlugins.virtualModules.get();
     if (module && AOT::isEvicted(globalObject, *module) && AOT::wasOriginalRestoredToOwnKey(globalObject, *module) && !(mocks && mocks->contains(key)))
         AOT::clearRetainedOriginalExports(globalObject, *module);
     evictFromProgram(globalObject, key, [](JSGlobalObject* realm, AOT::ModuleID module) {
@@ -1426,7 +1430,7 @@ void forEachEvaluatedCompiledFile(Zig::GlobalObject* globalObject, const WTF::Fu
 static void willSetNodeBuiltinCacheEntry(Zig::GlobalObject* globalObject, const String& name)
 {
     BunString nameArgument = Bun::toString(name);
-    BunString path = Bun__AOT__nodeModuleNamedWithoutPrefix(&nameArgument);
+    auto path = OwnedString::adopt(Bun__AOT__nodeModuleNamedWithoutPrefix(&nameArgument));
     if (path.isDead())
         return;
     if (auto module = findModuleForPath(path.transferToWTFString()))
@@ -1701,25 +1705,6 @@ static void pushObservableChild(JSGlobalObject* realm, JSObject* parent, JSObjec
     call(realm, function, getCallData(function), jsUndefined(), arguments);
 }
 
-static void createChildrenArray(JSGlobalObject* realm, JSCommonJSModule* parent)
-{
-    auto& vm = getVM(realm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBuffer children;
-    for (WriteBarrier<Unknown> child : parent->m_children) {
-        bool isListed = false;
-        for (size_t index = 0; index < children.size(); ++index)
-            isListed |= children.at(index) == child.get();
-        if (!isListed)
-            children.append(child.get());
-    }
-    JSArray* list = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), children);
-    RETURN_IF_EXCEPTION(scope, void());
-    parent->m_childrenValue.set(vm, parent, list);
-    WTF::Locker locker { parent->cellLock() };
-    parent->m_children.clear();
-}
-
 bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* parent)
 {
     auto compiled = compiledModuleOfRequirer(parent);
@@ -1729,16 +1714,14 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool areShown = AOT::forEachNewChild(parent->globalObject(), *compiled, [&](JSObject* child) {
         if (!parent->m_childrenValue && !child->inherits<JSCommonJSModule>()) {
-            createChildrenArray(realm, parent);
+            parent->createChildrenArray(realm);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (parent->m_childrenValue) {
             pushObservableChild(realm, parent, child);
             return;
         }
-        WTF::Locker locker { parent->cellLock() };
-        parent->m_children.append(WriteBarrier<Unknown>());
-        parent->m_children.last().set(vm, parent, child);
+        parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(child));
     });
     RETURN_IF_EXCEPTION(scope, false);
     return areShown;
@@ -1760,16 +1743,13 @@ static void appendModuleChildren(JSGlobalObject* realm, JSObject* module, JSObje
     bool hasLeftCompiledModule = parent->compiledModule == JSCommonJSModule::noCompiledModule;
     // m_children only has module objects. Stand-ins go into the array itself.
     if (!parent->m_childrenValue && childOrNull && hasLeftCompiledModule && !childOrNull->inherits<JSCommonJSModule>()) {
-        createChildrenArray(realm, parent);
+        parent->createChildrenArray(realm);
         RETURN_IF_EXCEPTION(scope, void());
     }
     // The array is created when it is first read: from the compiled module or, if the object was detached, from m_children.
     if (!parent->m_childrenValue) {
-        if (childOrNull && hasLeftCompiledModule) {
-            WTF::Locker locker { parent->cellLock() };
-            parent->m_children.append(WriteBarrier<Unknown>());
-            parent->m_children.last().set(vm, parent, childOrNull);
-        }
+        if (childOrNull && hasLeftCompiledModule)
+            parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(childOrNull));
         return;
     }
     scope.release();
@@ -1808,8 +1788,7 @@ static void didDiscardModuleEvaluation(JSGlobalObject* realm, JSObject* object, 
 String pathInExecutable(const String& path)
 {
     BunString pathArgument = Bun::toString(path);
-    BunString known = Bun__AOT__pathInExecutable(&pathArgument);
-    return known.isDead() ? String() : known.transferToWTFString();
+    return Bun__AOT__pathInExecutable(&pathArgument).transferToWTFString();
 }
 
 JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)
@@ -2343,6 +2322,13 @@ static bool isSpy(JSGlobalObject* globalObject, const String& mocked)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool isRequiringMock(JSGlobalObject* globalObject, const String& mocked)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return isRequiringModuleMock(defaultGlobalObject(globalObject), mocked);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool hasSynchronousFactory(JSGlobalObject* globalObject, const String& mocked, bool isOriginalSynchronous)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2432,6 +2418,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &wasFetchedByTestFile,
     &hasSynchronousFactory,
     &isSpy,
+    &isRequiringMock,
     &sourceAfterRelease,
     &hasPendingPatch,
     &evictOriginal,
@@ -2439,7 +2426,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2761,7 +2748,7 @@ const AOT::ModuleHost compiledModuleHost {};
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
-JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }

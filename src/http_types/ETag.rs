@@ -179,17 +179,36 @@ pub fn if_none_match(
 // ═══════════════════════════════════════════════════════════════════════
 // Headers — moved from bun_http.
 //
-// Core struct + tier-safe methods only. The following stay in `bun_http`
-// (T5) as they pull in higher-tier or sibling deps that http_types (T3)
-// must not name:
-//   - `Options` / `from()`       — FetchHeaders + Blob (T6, vtabled in bun_http)
-//   - `from_pico_http_headers()` — bun_picohttp (kept beside its only caller)
+// Core struct + tier-safe methods only.
 // ═══════════════════════════════════════════════════════════════════════
 
 /// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
 /// (T0, already a dep). Re-exported so `HeaderEntry`'s field type and
 /// `bun_http::headers::api::StringPointer` keep resolving.
 pub use bun_core::StringPointer;
+
+#[derive(Copy, Clone)]
+pub struct Header<'a> {
+    name: &'a [u8],
+    value: &'a [u8],
+}
+
+impl<'a> Header<'a> {
+    #[inline]
+    pub const fn new(name: &'a [u8], value: &'a [u8]) -> Self {
+        Self { name, value }
+    }
+
+    #[inline]
+    pub const fn name(&self) -> &'a [u8] {
+        self.name
+    }
+
+    #[inline]
+    pub const fn value(&self) -> &'a [u8] {
+        self.value
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -230,8 +249,29 @@ impl Clone for Headers {
 }
 
 impl Headers {
+    /// Never regrows `buf`: S3 zeroes it, and would miss an earlier allocation.
+    pub fn copy_of<'a>(list: impl Iterator<Item = Header<'a>> + Clone) -> Headers {
+        let (count, len) = list.clone().fold((0, 0), |(count, len), header| {
+            (count + 1, len + header.name.len() + header.value.len())
+        });
+        let mut headers = Headers::default();
+        bun_core::handle_oom(headers.entries.ensure_total_capacity(count));
+        headers.buf.reserve_exact(len);
+        for header in list {
+            headers.append(header.name, header.value);
+        }
+        headers
+    }
+
     pub fn memory_cost(&self) -> usize {
         self.buf.len() + self.entries.memory_cost()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Header<'_>> + Clone {
+        let names = self.entries.items_name().iter();
+        names
+            .zip(self.entries.items_value())
+            .map(|(&name, &value)| Header::new(self.as_str(name), self.as_str(value)))
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
@@ -286,11 +326,10 @@ impl Headers {
     }
 
     pub fn as_str(&self, ptr: StringPointer) -> &[u8] {
-        if (ptr.offset + ptr.length) as usize <= self.buf.len() {
-            &self.buf[ptr.offset as usize..][..ptr.length as usize]
-        } else {
-            b""
-        }
+        let start = ptr.offset as usize;
+        self.buf
+            .get(start..start + ptr.length as usize)
+            .unwrap_or_default()
     }
 }
 

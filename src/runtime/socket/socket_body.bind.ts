@@ -26,6 +26,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
     rustPath: ssl ? "crate::socket::TLSSocket" : "crate::socket::TCPSocket",
     refCounted: true,
     finalize: true,
+    thisValue: "this_value",
     memoryCost: true,
     /** `handlers` is shared with the listener and its other sockets. `duplex*` serve a `TLSSocket` over a `Duplex`. */
     internalFields: [
@@ -189,7 +190,7 @@ export const duplexUpgradeContextLiveCount = b.fn({
   rustPath: testing("duplex_upgrade_context_live_count"),
 });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
-/** `socket`, `close` and `shutdown` have no hook in bsd.c: a rule for one would never fire. */
+/** `socket`, `close` and `shutdown` have no hook in bsd.cpp: a rule for one would never fire. */
 export const SocketFaultSyscall = b.enumeration([
   "recv",
   "send",
@@ -202,6 +203,7 @@ export const SocketFaultSyscall = b.enumeration([
   "poll_start",
   "session_buffer",
   "ssl_write",
+  "byte_stream_buffer",
 ]);
 export const SocketFaultAction = b.enumeration(["errno", "short", "zero", "excess", "none"]);
 export const SocketFaultErrnoName = b.enumeration([

@@ -41,10 +41,10 @@ impl DevServer {
                     )
                     .get()
                         as usize];
-                    let mut buf = paths::path_buffer_pool::get();
+                    let mut buf = paths::Path::new();
                     let s = bun_string_jsc::create_utf8_for_js(
                         global,
-                        relative_path(&self.graphs.root, &mut *buf, name),
+                        relative_path(&self.graphs.root, &mut buf, name),
                     )?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -67,10 +67,10 @@ impl DevServer {
                     let arr = JSValue::create_empty_array(global, n)?;
                     route = self.router.route_ptr(route_index);
                     {
-                        let mut buf = paths::path_buffer_pool::get();
+                        let mut buf = paths::Path::new();
                         let route_name = relative_path(
                             &self.graphs.root,
-                            &mut *buf,
+                            &mut buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
                                 route.file_page.unwrap(),
                             )
@@ -85,10 +85,10 @@ impl DevServer {
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
-                            let mut buf = paths::path_buffer_pool::get();
+                            let mut buf = paths::Path::new();
                             let layout_name = relative_path(
                                 &self.graphs.root,
-                                &mut *buf,
+                                &mut buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get()
                                     as usize],
                             );
@@ -115,13 +115,10 @@ impl DevServer {
                     let generation: u32 = client_script_generation;
                     // Fixed 8-char native-endian byte hex per u32; `on_js_request`
                     // slices exactly 16 chars and decodes via `parse_hex_to_u64`.
-                    let mut hex = [0u8; 16];
-                    bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
-                    bun_core::fmt::bytes_to_hex_lower(&generation.to_ne_bytes(), &mut hex[8..]);
-                    // SAFETY: `bytes_to_hex_lower` writes ASCII [0-9a-f] only.
-                    let hex_str = unsafe { ::core::str::from_utf8_unchecked(&hex) };
                     let js = BunString::create_format(format_args!(
-                        "{CLIENT_PREFIX}/route-{hex_str}.js",
+                        "{CLIENT_PREFIX}/route-{}{}.js",
+                        bun_core::fmt::hex_lower(&bundle_index.to_ne_bytes()),
+                        bun_core::fmt::hex_lower(&generation.to_ne_bytes()),
                     ))
                     .into_js(global)?;
                     framework_bundle.cached_client_bundle_url =
@@ -213,8 +210,8 @@ impl DevServer {
         let route_bundle = &mut self.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
 
-        let blob: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.data.html().cached_response {
-            Some(blob) => blob.this_ptr(),
+        let blob = match &route_bundle.data.html().cached_response {
+            Some(blob) => blob.clone(),
             None => {
                 let payload = Self::generate_html_payload(
                     &self.graph_safety_lock,
@@ -232,12 +229,11 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let blob = response.this_ptr();
-                route_bundle.data.html_mut().cached_response = Some(response);
-                blob
+                route_bundle.data.html_mut().cached_response = Some(response.clone());
+                response
             }
         };
-        StaticRoute::on_with_method(blob, method, resp);
+        blob.on_with_method(method, resp);
     }
 }
 
@@ -372,10 +368,13 @@ impl DevServer {
         w.extend_from_slice(b": [ [");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
-            if import.source_index.is_valid() {
-                if !loaders[import.source_index.get() as usize].is_javascript_like() {
+            let module_id = if import.source_index.is_valid() {
+                let import_index = import.source_index.get() as usize;
+                if !loaders[import_index].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
+                // The record can still hold the specifier as written.
+                input_file_sources[import_index].path.pretty
             } else {
                 // Find the in-graph import.
                 let Some(file) = self.graphs.client.bundled_files.get(import.path.text) else {
@@ -384,15 +383,15 @@ impl DevServer {
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
                     continue;
                 }
-            }
+                import.path.pretty
+            };
             if !any {
                 any = true;
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
             bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                import.path.pretty,
-                w,
+                module_id, w,
             )?;
             w.extend_from_slice(b", 0,\n");
         }
@@ -434,11 +433,11 @@ impl DevServer {
                 })),
             });
             // `script_requests` keeps `deferred` alive until the response removes this handler.
-            resp.on_aborted_this(
-                |deferred: bun_ptr::ThisPtr<DeferredScriptRequest>, _: AnyResponse| {
+            resp.on_aborted_ref(
+                |deferred: bun_ptr::RefPtr<DeferredScriptRequest>, _: AnyResponse| {
                     deferred.response.set(None)
                 },
-                deferred.this_ptr(),
+                &deferred,
             );
             current_bundle.script_requests.push(deferred);
             return;
@@ -457,8 +456,8 @@ impl DevServer {
             return;
         }
         let source_map_id = route_bundle.source_map_id();
-        let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.client_bundle {
-            Some(client_bundle) => client_bundle.this_ptr(),
+        let client_bundle = match &route_bundle.client_bundle {
+            Some(client_bundle) => client_bundle.clone(),
             None => {
                 let root = match &route_bundle.data {
                     route_bundle::Data::Framework(fw) => {
@@ -479,13 +478,13 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let client_bundle = bundle.this_ptr();
-                self.route_bundles[bundle_index.get() as usize].client_bundle = Some(bundle);
-                client_bundle
+                self.route_bundles[bundle_index.get() as usize].client_bundle =
+                    Some(bundle.clone());
+                bundle
             }
         };
         self.source_maps.add_weak_ref(source_map_id);
-        StaticRoute::on_with_method(client_bundle, method, resp);
+        client_bundle.on_with_method(method, resp);
     }
 }
 

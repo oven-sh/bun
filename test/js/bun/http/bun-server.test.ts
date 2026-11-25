@@ -3765,7 +3765,7 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
 
   // with_async_context_if_needed wraps each handler in a fresh AsyncContextFrame
   // that is NOT a property of the user's options arg. Stored as a raw JSValue in
-  // heap-boxed ServerConfig, it must stay rooted across init→listen→ptr_to_js→
+  // heap-boxed ServerConfig, it must stay rooted across init→listen→wrap→
   // slot-set (which includes vm.perform_gc()).
   test("handlers wrapped via AsyncLocalStorage survive Bun.serve init under collectContinuously", async () => {
     await using proc = Bun.spawn({
@@ -3789,7 +3789,7 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         const r = await fetch(server.url, { keepalive: false });
         const body = await r.text();
         server.stop(true);
-        // The handler's ALS context wrapper survived init→ptr_to_js (would crash
+        // The handler's ALS context wrapper survived init→wrap (would crash
         // under collectContinuously if the AsyncContextFrame were collected).
         console.log(JSON.stringify({ body, ok: body === "1" }));
       `,

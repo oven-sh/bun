@@ -5,54 +5,38 @@ use crate::jsc::{
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
 
-use bun_sql::postgres::TLSStatus;
-use bun_sql::postgres::postgres_protocol as protocol;
+use bun_sql::postgres::frontend::{self, Length};
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
-use bun_sql::postgres::protocol::WriterContext;
-use bun_sql::shared::SSLMode;
 
 use crate::jsc::js_error_to_postgres;
-use crate::postgres::PostgresSQLConnection;
-use crate::postgres::PostgresSQLQuery;
-use crate::postgres::PostgresSQLStatement;
-use crate::postgres::Signature;
-use crate::postgres::postgres_sql_connection::PendingNotification;
 use crate::postgres::types::{date, tag_jsc};
+use crate::postgres::{PostgresSQLConnection, PostgresSQLStatement};
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// The set of backend message tags `PostgresSQLConnection.on()` dispatches over. Defined here
-/// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a dispatch tag with no wire encoding.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-pub enum MessageType {
-    DataRow,
-    CopyData,
-    ParameterStatus,
-    ReadyForQuery,
-    CommandComplete,
-    BindComplete,
-    ParseComplete,
-    ParameterDescription,
-    RowDescription,
-    Authentication,
-    NoData,
-    BackendKeyData,
-    ErrorResponse,
-    PortalSuspended,
-    CloseComplete,
-    CopyInResponse,
-    NoticeResponse,
-    EmptyQueryResponse,
-    CopyOutResponse,
-    CopyDone,
-    CopyBothResponse,
+/// `None` is NULL, which fits every type.
+pub(crate) fn declared_types(
+    global: &JSGlobalObject,
+    values: JSValue,
+) -> JsResult<Vec<Option<Int4>>> {
+    let mut iter = JSArrayIterator::init(values, global)?;
+    // Parse takes `u16::MAX` parameters and refuses a longer list.
+    let mut declared = Vec::with_capacity((iter.len as usize).min(u16::MAX as usize));
+    while let Some(value) = iter.next()? {
+        declared.push(if value.is_empty_or_undefined_or_null() {
+            None
+        } else {
+            Some(Int4::from(tag_jsc::from_js(global, value)?.0))
+        });
+    }
+    Ok(declared)
 }
 
 /// A value past the described parameters goes as text: the server reports the count (08P01).
-fn parameter_tag(parameter_types: &[Int4], index: usize) -> types::Tag {
-    parameter_types
+fn parameter_tag(statement: &PostgresSQLStatement, index: usize) -> types::Tag {
+    statement
+        .parameter_types()
         .get(index)
         .map_or(types::Tag::text, |&oid| types::Tag::from_oid(oid))
 }
@@ -80,21 +64,20 @@ pub(crate) fn needs_parameter_types(global: &JSGlobalObject, values: JSValue) ->
     Ok(false)
 }
 
-/// Replaces each value by the text that `write_bind` sends for it, unless it can encode the value
+/// Replaces each value by the text that `bind_and_execute` sends for it, unless it can encode the value
 /// itself without running JS. Once per request: it would take that text for a string.
 /// `true`: it replaced one, so user code may have run.
 pub(crate) fn stage_parameters(
     global: &JSGlobalObject,
     values: JSValue,
-    parameter_types: &[Int4],
-    prepared: bool,
+    statement: &PostgresSQLStatement,
 ) -> JsResult<bool> {
     let mut iter = JSArrayIterator::init(values, global)?;
     let mut index: u32 = 0;
     let mut replaced = false;
     while let Some(value) = iter.next()? {
-        let tag = parameter_tag(parameter_types, index as usize);
-        if let Some(text) = parameter_text(global, value, tag, index, prepared)? {
+        let tag = parameter_tag(statement, index as usize);
+        if let Some(text) = parameter_text(global, value, tag, index, statement.is_named())? {
             values.put_index(global, index, text)?;
             replaced = true;
         }
@@ -178,326 +161,112 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
     Ok(literal)
 }
 
-/// Runs no JS once `stage_parameters` has seen `values_array`.
-fn write_bind<Context: WriterContext>(
-    name: &[u8],
+/// An accessor of `values` still runs user code, and so does the `toString()` of bytes that a retry sends as text.
+pub(crate) fn bind_and_execute(
+    connection: &PostgresSQLConnection,
     global: &JSGlobalObject,
-    values_array: JSValue,
-    parameter_fields: &[Int4],
-    result_fields: &[protocol::FieldDescription],
+    statement: &PostgresSQLStatement,
+    values: JSValue,
     formats: types::ResultFormats,
-    writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
-    let len =
-        u16::try_from(parameter_fields.len()).map_err(|_| AnyPostgresError::TooManyParameters)?;
-
-    writer.write(b"B")?;
-    let length = writer.length()?;
-
-    // The unnamed portal.
-    writer.string(b"")?;
-    writer.string(name)?;
-
-    writer.short(len)?;
-    let format_codes = writer.format_codes(len)?;
-
-    // The number of parameter values that follow (possibly zero). This
-    // must match the number of parameters needed by the query.
-    writer.short(len)?;
-
+    let len = statement.parameter_types().len();
+    let name = &statement.name;
     bun_core::scoped_log!(Postgres, "Bind: {} ({} args)", bun_fmt::quote(name), len);
-    let mut iter = JSArrayIterator::init(values_array, global).map_err(js_error_to_postgres)?;
+
+    let (length, format_codes) = connection.encode_more(|out| {
+        let length = frontend::begin(out, b'B');
+        // The unnamed portal.
+        out.push(0);
+        out.extend_from_slice(name);
+        out.push(0);
+
+        frontend::count(out, len)?;
+        let format_codes = out.len();
+        out.resize(format_codes + len * 2, 0);
+        frontend::count(out, len)?;
+        Ok((length, format_codes))
+    })?;
+
+    let mut iter = JSArrayIterator::init(values, global).map_err(js_error_to_postgres)?;
     let mut i: usize = 0;
     while let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-        let tag = parameter_tag(parameter_fields, i);
-        if value.is_empty_or_undefined_or_null() {
-            bun_core::scoped_log!(Postgres, "  -> NULL");
-            //  As a special case, -1 indicates a
-            // NULL parameter value. No value bytes follow in the NULL case.
-            writer.int4((-1i32) as u32)?;
-            i += 1;
-            continue;
-        }
-        bun_core::scoped_log!(Postgres, "  -> {}", tag.tag_name().unwrap_or("(unknown)"));
-
-        let l = writer.length()?;
-        if write_binary_parameter(global, tag, value, writer)? {
-            format_codes.set_binary(i)?;
-        } else if value.is_date() {
-            date::write_text(global, value, tag, writer)?;
-        } else {
+        // User code can have read another ParameterDescription since `len`.
+        let tag = match i < len {
+            true => parameter_tag(statement, i),
+            false => types::Tag::text,
+        };
+        let awaits_text = connection.encode_more(|out| {
+            if value.is_empty_or_undefined_or_null() {
+                out.extend_from_slice(&(-1i32).to_be_bytes());
+                return Ok(None);
+            }
+            let value_length = Length::reserve(out);
+            if write_binary_parameter(out, global, tag, value) {
+                out[format_codes + i * 2 + 1] = 1;
+            } else if value.is_date() {
+                date::write_text(out, global, value, tag);
+            } else {
+                return Ok(Some(value_length));
+            }
+            value_length.end_value(out).map(|()| None)
+        })?;
+        if let Some(value_length) = awaits_text {
             let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
-            writer.write(str.to_utf8().slice())?;
+            connection.encode_more(|out| {
+                out.extend_from_slice(str.to_utf8().slice());
+                value_length.end_value(out)
+            })?;
         }
-        l.write_excluding_self()?;
-
         i += 1;
     }
 
-    if result_fields
-        .iter()
-        .any(|field| field.type_tag().is_binary_in(formats))
-    {
-        writer.short(result_fields.len())?;
-        for field in result_fields {
-            writer.short(field.type_tag().format_code(formats))?;
+    connection.encode_more(|out| {
+        let fields = &statement.columns.get().fields;
+        if fields
+            .iter()
+            .any(|field| field.type_tag().is_binary_in(formats))
+        {
+            frontend::count(out, fields.len())?;
+            for field in fields {
+                out.extend_from_slice(&field.type_tag().format_code(formats).to_be_bytes());
+            }
+        } else {
+            out.extend_from_slice(&[0, 0]);
         }
-    } else {
-        writer.short(0)?;
-    }
 
-    length.write()?;
-    Ok(())
+        length.end_message(out)?;
+        out.extend_from_slice(&frontend::EXECUTE_AND_SYNC);
+        Ok(())
+    })
 }
 
-fn write_binary_parameter<Context: WriterContext>(
+fn write_binary_parameter(
+    out: &mut Vec<u8>,
     global: &JSGlobalObject,
     tag: types::Tag,
     value: JSValue,
-    writer: protocol::NewWriter<Context>,
-) -> Result<bool, AnyPostgresError> {
+) -> bool {
     match tag {
-        types::Tag::bool if value.is_boolean() => writer.write(&[value.as_boolean() as u8])?,
-        types::Tag::int4 if value.is_int32() => writer.int4(value.as_int32() as u32)?,
-        types::Tag::float8 if value.is_number() => writer.f64(value.as_number())?,
+        types::Tag::bool if value.is_boolean() => out.push(value.as_boolean() as u8),
+        types::Tag::int4 if value.is_int32() => {
+            out.extend_from_slice(&value.as_int32().to_be_bytes())
+        }
+        types::Tag::float8 if value.is_number() => {
+            out.extend_from_slice(&value.as_number().to_be_bytes())
+        }
         types::Tag::bytea => {
             let Some(buffer) = value.as_array_buffer(global) else {
-                return Ok(false);
+                return false;
             };
-            writer.write(buffer.byte_slice())?;
+            out.extend_from_slice(buffer.byte_slice());
         }
         types::Tag::timestamp | types::Tag::timestamptz if value.is_date() => {
             let Some(microseconds) = date::to_binary(value) else {
-                return Ok(false);
+                return false;
             };
-            writer.int8(microseconds)?;
+            out.extend_from_slice(&microseconds.to_be_bytes());
         }
-        _ => return Ok(false),
+        _ => return false,
     }
-    Ok(true)
+    true
 }
-
-fn write_parse<Context: WriterContext>(
-    query: &[u8],
-    signature: &Signature,
-    mut writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
-    protocol::Parse {
-        name: &signature.prepared_statement_name,
-        params: &signature.fields,
-        query,
-    }
-    .write_internal(&mut writer)
-}
-
-fn write_describe<Context: WriterContext>(
-    signature: &Signature,
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    let name = &signature.prepared_statement_name;
-    bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
-    protocol::Describe {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-    }
-    .write_internal(writer)
-}
-
-pub(crate) fn parse_and_describe<Context: WriterContext>(
-    query: &[u8],
-    signature: &Signature,
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    write_parse(query, signature, writer)?;
-    write_describe(signature, writer)?;
-    writer.write(&protocol::SYNC)
-}
-
-pub(crate) fn bind_and_execute<Context: WriterContext>(
-    global: &JSGlobalObject,
-    statement: &PostgresSQLStatement,
-    values: JSValue,
-    formats: types::ResultFormats,
-    mut writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    let name = &statement.signature.prepared_statement_name;
-    write_bind(
-        name,
-        global,
-        values,
-        statement.parameter_types(),
-        &statement.fields,
-        formats,
-        writer,
-    )?;
-    protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-        ..Default::default()
-    }
-    .write_internal(&mut writer)?;
-    writer.write(&protocol::SYNC)
-}
-
-/// An unnamed statement needs its Parse in the batch of its Bind: PgBouncer in transaction mode
-/// may give the next batch to another backend.
-pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
-    global: &JSGlobalObject,
-    query: &[u8],
-    statement: &PostgresSQLStatement,
-    values: JSValue,
-    formats: types::ResultFormats,
-    include_describe: bool,
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    write_parse(query, &statement.signature, writer)?;
-    if include_describe {
-        write_describe(&statement.signature, writer)?;
-    }
-    bind_and_execute(global, statement, values, formats, writer)
-}
-
-pub(crate) fn write_close_statement<Context: WriterContext>(
-    name: &[u8],
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    writer.write(b"C")?;
-    let length = writer.length()?;
-    writer.write(b"S")?;
-    writer.string(name)?;
-    length.write()
-}
-
-pub(crate) fn write_copy_fail<Context: WriterContext>(
-    message: &[u8],
-    writer: protocol::NewWriter<Context>,
-) -> Result<(), AnyPostgresError> {
-    writer.write(b"f")?;
-    let length = writer.length()?;
-    writer.string(message)?;
-    length.write()
-}
-
-fn on_ssl_request_reply(
-    connection: &PostgresSQLConnection,
-    c: u8,
-    sent: u8,
-) -> Result<(), AnyPostgresError> {
-    match c {
-        b'S' => {
-            debug_assert!(sent == 8);
-            connection.tls_status.set(TLSStatus::SslOk);
-            connection.setup_tls();
-            Ok(())
-        }
-        b'N' => {
-            connection.tls_status.set(TLSStatus::None);
-            bun_core::scoped_log!(Postgres, "Server does not support SSL");
-            if matches!(
-                connection.ssl_mode,
-                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull
-            ) {
-                connection.fail(
-                    b"Server does not support SSL",
-                    AnyPostgresError::TLSNotAvailable,
-                );
-                return Ok(());
-            }
-            // Nothing the server sent before our StartupMessage is a reply to it.
-            connection.start();
-            Ok(())
-        }
-        _ => Err(AnyPostgresError::UnexpectedMessage),
-    }
-}
-
-/// Stops after a notification: a listener can run the event loop, which reuses the receive buffer.
-pub(crate) fn on_data(
-    connection: &PostgresSQLConnection,
-    reader: &protocol::NewReader<'_>,
-) -> Result<Option<PendingNotification>, AnyPostgresError> {
-    use MessageType as M;
-    loop {
-        // A handler can `fail()` and user code can close: the rest of the read is dropped.
-        if connection.status.get().is_closed() {
-            return Ok(None);
-        }
-        reader.mark_message_start();
-        let c = reader.int::<u8>()?;
-        bun_core::scoped_log!(Postgres, "read: {}", c as char);
-
-        // The SSLRequest reply is a bare Byte1('S'|'N') with no Int32 length;
-        // it is the only unframed backend byte and must be handled before the
-        // frame peek below.
-        if let TLSStatus::MessageSent(n) = connection.tls_status.get() {
-            return on_ssl_request_reply(connection, c, n).map(|()| None);
-        }
-
-        // Every other backend message is Byte1(type) Int32(length) body[length-4].
-        // Peek the length here (each handler reads it again) so the handler's
-        // net consumption can be checked against it: a handler that leaves the
-        // cursor anywhere but the next message's type byte has either scanned a
-        // string past the frame or returned with tail bytes still in it, and
-        // the stream is unrecoverable (libpq: "message contents do not agree
-        // with length in message").
-        let (before, length) = reader.peek_length()?;
-        let after = before - length;
-        // The column transform can run the event loop; rows must wait for it.
-        connection.defer_reads.set(after != 0 || c == b'T');
-
-        match c {
-            b'D' => connection.on(M::DataRow, reader)?,
-            b'd' => connection.on(M::CopyData, reader)?,
-            b'S' => connection.on(M::ParameterStatus, reader)?,
-            b'Z' => connection.on(M::ReadyForQuery, reader)?,
-            b'C' => connection.on(M::CommandComplete, reader)?,
-            b'2' => connection.on(M::BindComplete, reader)?,
-            b'1' => connection.on(M::ParseComplete, reader)?,
-            b't' => connection.on(M::ParameterDescription, reader)?,
-            b'T' => connection.on(M::RowDescription, reader)?,
-            b'R' => connection.on(M::Authentication, reader)?,
-            b'n' => connection.on(M::NoData, reader)?,
-            b'K' => connection.on(M::BackendKeyData, reader)?,
-            b'E' => connection.on(M::ErrorResponse, reader)?,
-            b's' => connection.on(M::PortalSuspended, reader)?,
-            b'3' => connection.on(M::CloseComplete, reader)?,
-            b'G' => connection.on(M::CopyInResponse, reader)?,
-            b'N' => connection.on(M::NoticeResponse, reader)?,
-            b'I' => connection.on(M::EmptyQueryResponse, reader)?,
-            b'H' => connection.on(M::CopyOutResponse, reader)?,
-            b'c' => connection.on(M::CopyDone, reader)?,
-            b'W' => connection.on(M::CopyBothResponse, reader)?,
-            b'A' => {
-                let notification = protocol::NotificationResponse::decode_internal(reader)?;
-                if reader.peek().len() == after
-                    && let Some(pending) = connection.prepare_notification(&notification)?
-                {
-                    reader.mark_message_start();
-                    return Ok(Some(pending));
-                }
-            }
-
-            _ => {
-                bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                reader.skip_message()?;
-            }
-        }
-
-        if connection.status.get().is_closed() {
-            return Ok(None);
-        }
-        if reader.peek().len() != after {
-            bun_core::scoped_log!(
-                Postgres,
-                "message contents do not agree with length ({}): '{}' left {} of {}",
-                length,
-                c as char,
-                reader.peek().len(),
-                after,
-            );
-            return Err(AnyPostgresError::InvalidMessage);
-        }
-    }
-}
-
-/// Each entry holds a ref on its query.
-pub(crate) type Queue = std::collections::VecDeque<bun_ptr::RefPtr<PostgresSQLQuery>>;

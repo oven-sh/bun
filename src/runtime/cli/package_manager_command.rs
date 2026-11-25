@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use std::io::Write as _;
 
 use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
@@ -9,10 +8,11 @@ use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, 
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    node_can_import_from, package_json_write_back, package_manager_options::LogLevel,
+    setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
-use bun_paths::{self as Path, AutoAbsPath};
+use bun_paths::Path;
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
@@ -41,22 +41,18 @@ struct NodeModulesFolder {
 /// `bun pm ls` lists what's on disk. The lockfile also has optional dependencies that were never
 /// installed, and pruned entries.
 struct InstalledFilter {
-    path: AutoAbsPath,
-    top_len: usize,
+    top_level_dir: &'static [u8],
     store: BunStore,
 }
 
 impl InstalledFilter {
     /// `None` when there is no `node_modules`.
     fn init() -> Option<Self> {
-        let mut path = AutoAbsPath::init_top_level_dir();
-        let top_len = path.len();
-        let _ = path.append(b"node_modules");
-        let store = BunStore::init();
-        bun_sys::exists(path.slice()).then(|| Self {
-            path,
-            top_len,
-            store,
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let node_modules = Path::from_parts(&[top_level_dir, b"node_modules"]);
+        bun_sys::exists_z(&node_modules).then(|| Self {
+            top_level_dir,
+            store: BunStore::init(),
         })
     }
 
@@ -83,11 +79,9 @@ impl InstalledFilter {
             // A pruned checkout (`turbo prune`, a Docker layer) is missing some of the lockfile's
             // workspaces.
             ResolutionTag::Workspace => {
-                // `join` resolves a `..` in the workspace's path, which `append` does not. Windows
-                // treats a `..` that is left in an absolute path as a literal name.
-                let mut member = AutoAbsPath::init_top_level_dir();
-                let _ = member.join(&[resolution.workspace().slice(buf)]);
-                return bun_sys::exists(member.slice());
+                // Resolve `..`: Windows treats one that is left in an absolute path as a literal name.
+                let workspace = resolution.workspace().slice(buf);
+                return bun_sys::exists_z(&Path::resolve(&[self.top_level_dir, workspace]));
             }
             _ => {}
         }
@@ -95,14 +89,11 @@ impl InstalledFilter {
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
             .name
             .slice(buf);
-        self.path.set_length(self.top_len);
-        let _ = self.path.append(dir);
-        let _ = self.path.append(alias);
-        bun_sys::exists(self.path.slice())
+        bun_sys::exists_z(&Path::from_parts(&[self.top_level_dir, dir, alias]))
             || (or_in_store
                 && self
                     .store
-                    .lookup(&mut self.path, self.top_len, name, resolution, buf)
+                    .lookup(self.top_level_dir, name, resolution, buf)
                     .is_some())
     }
 }
@@ -215,10 +206,9 @@ impl PackageManagerCommand {
                 },
                 Err(_) => path,
             };
-            if !matches!(
-                Path::resolve_path::is_parent_or_equal(dir, real),
-                Path::resolve_path::ParentEqual::Unrelated
-            ) {
+            // Older versions read `\` as `/`, and installed there.
+            let [dir, real] = [dir, real].map(|path| strings::replace_char(path, b'\\', b'/'));
+            if bun_paths::is_parent_or_equal(&dir, &real) != bun_paths::ParentEqual::Unrelated {
                 return Some(what);
             }
         }
@@ -339,10 +329,8 @@ impl PackageManagerCommand {
             PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
-            let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
-                Fs::FileSystem::get().top_level_dir(),
-                pm.options.bin_path.as_bytes(),
-            );
+            let output_path: &[u8] =
+                &Path::resolve(&[Fs::FileSystem::get().top_level_dir(), pm.options.bin_path]);
             bun_core::prettyln!("{}", bstr::BStr::new(output_path));
             if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
                 bun_core::prettyln!("\n");
@@ -352,11 +340,11 @@ impl PackageManagerCommand {
                 && Output::enable_ansi_colors_stderr()
                 && let Some(path) = env_var::PATH.get()
             {
-                let bin_dir = strings::without_trailing_slash(output_path);
+                let bin_dir = bun_paths::without_trailing_sep(output_path);
                 let in_path = path
                     .split(|b| *b == bun_paths::DELIMITER)
                     .filter(|s| !s.is_empty())
-                    .map(strings::without_trailing_slash)
+                    .map(bun_paths::without_trailing_sep)
                     .any(|entry| {
                         if cfg!(windows) {
                             strings::eql_case_insensitive_ascii(entry, bin_dir, true)
@@ -454,7 +442,8 @@ impl PackageManagerCommand {
                 let (rm_path, has_global_store) =
                     found.unwrap_or((cache_dir.path.as_slice(), false));
                 let bun_install = process_env.get(b"BUN_INSTALL").map(|path| {
-                    bun_options_types::schema::api::BunInstall::resolve_path(b"", path)
+                    let path = bun_paths::portable::from_portable_rooted(path);
+                    bun_options_types::schema::api::BunInstall::resolve_path(b"", &path)
                 });
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));
@@ -509,6 +498,36 @@ impl PackageManagerCommand {
                         break 'bunx;
                     }
                     let tmp = Fs::RealFS::platform_temp_dir();
+                    let bunx_root_name = crate::cli::bunx_command::cache_root_name();
+                    let cache = (protected.is_none() && !cache_dir.is_cwd_fallback)
+                        .then_some(cache_dir.path.as_slice());
+                    for dir in cache.into_iter().chain([tmp]) {
+                        if node_can_import_from(dir) {
+                            continue;
+                        }
+                        let base = crate::cli::bunx_command::cache_base(dir);
+                        let root = Path::from_parts(&[&base, &bunx_root_name]);
+                        if bun_sys::lstat(&root).is_err() {
+                            continue;
+                        }
+                        let packages = crate::cli::bunx_command::count_cached_packages(&base);
+                        if dry_run {
+                            bun_core::prettyln!(
+                                "<r><d>dry run:<r> would delete {}",
+                                bun_fmt::escape_control_chars(&root),
+                            );
+                        } else if let Err(err) = Dir::cwd().delete_tree(&root) {
+                            Output::err(
+                                err,
+                                "Could not delete {s}",
+                                (bstr::BStr::new(root.as_bytes()),),
+                            );
+                            had_err = true;
+                            continue;
+                        }
+                        deleted += packages;
+                    }
+
                     let tmp_dir = match Dir::open(tmp) {
                         Ok(d) => d,
                         Err(err) => {
@@ -524,7 +543,6 @@ impl PackageManagerCommand {
                     let mut iter = bun_sys::iterate_dir(tmp_dir.fd());
 
                     // `.bunx-<uid>` for all packages, or (Windows, older versions) `bunx-<uid>-<package>`.
-                    let bunx_root_name = crate::cli::bunx_command::cache_root_name();
                     let prefix = [&bunx_root_name[1..], &b"-"[..]].concat();
                     loop {
                         let entry = match iter.next() {
@@ -550,10 +568,8 @@ impl PackageManagerCommand {
                             };
                             if dry_run {
                                 bun_core::prettyln!(
-                                    "<r><d>dry run:<r> would delete {}{}{}",
-                                    bstr::BStr::new(strings::without_trailing_slash(tmp)),
-                                    bun_paths::SEP_STR,
-                                    bun_fmt::escape_control_chars(name),
+                                    "<r><d>dry run:<r> would delete {}",
+                                    bun_fmt::escape_control_chars(&Path::from_parts(&[tmp, name])),
                                 );
                             } else if let Err(err) = tmp_dir.delete_tree(name) {
                                 Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
@@ -576,7 +592,7 @@ impl PackageManagerCommand {
             }
 
             let mut dir = bun_paths::path_buffer_pool::get();
-            let fd = get_cache_directory(pm);
+            let fd = get_cache_directory(pm).handle.fd();
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),
@@ -612,9 +628,7 @@ impl PackageManagerCommand {
             if global && matches!(load_lockfile, LoadResult::NotFound) {
                 Output::println(format_args!(
                     "{} node_modules{}",
-                    bstr::BStr::new(strings::without_trailing_slash(
-                        Fs::FileSystem::get().top_level_dir()
-                    )),
+                    bstr::BStr::new(Fs::FileSystem::get().top_level_dir_without_trailing_slash()),
                     if all { "" } else { " (0 installed)" },
                 ));
                 Global::exit(0);
@@ -658,7 +672,7 @@ impl PackageManagerCommand {
                 let name = lockfile.buffers.dependencies[dep_id as usize]
                     .name
                     .slice(lockfile.buffers.string_bytes.as_slice());
-                (!trusted_only || is_trusted(lockfile, dep_id))
+                (!trusted_only || is_trusted(pm, dep_id))
                     && (names.is_empty() || names.contains(&name))
             };
 
@@ -907,16 +921,11 @@ fn print_node_modules_folder_structure(
         let package_name = lockfile.buffers.dependencies[dependency_id as usize]
             .name
             .slice(string_bytes);
-        let mut possible_path: Vec<u8> = Vec::new();
-        write!(
-            &mut possible_path,
-            "{}{}{}{}node_modules",
-            bstr::BStr::new(&directory.relative_path),
-            bun_paths::SEP_STR,
-            bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
-        )
-        .expect("unreachable");
+        // `@scope/name` keeps its `/` in the path of a tree.
+        let mut possible_path = Path::from(&directory.relative_path);
+        possible_path.push_trailing_sep();
+        possible_path.extend_from_slice(package_name);
+        possible_path.push(b"node_modules");
 
         if index + 1 == sorted_len {
             more_packages[depth] = false;
@@ -928,7 +937,7 @@ fn print_node_modules_folder_structure(
         let mut found_node_modules = false;
         while dir_index < directories.len() {
             // A node_modules is removed from the list before it is printed.
-            if strings::eql_long(&possible_path, &directories[dir_index].relative_path, true) {
+            if strings::eql_long(&possible_path, &directories[dir_index].relative_path) {
                 found_node_modules = true;
                 let next = directories.remove(dir_index);
 
@@ -1013,10 +1022,12 @@ fn print_selected_dependencies_flat(
 }
 
 /// `InstalledFilter` kept `dep_id`, so it resolves to a package of `lockfile`. The same holds for `print_flat_list`.
-fn is_trusted(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+fn is_trusted(pm: &PackageManager, dep_id: DependencyID) -> bool {
+    let lockfile: &Lockfile = &pm.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let package_id = lockfile.buffers.resolutions[dep_id as usize] as usize;
     lockfile.has_trusted_dependency(
+        &pm.options,
         lockfile.buffers.dependencies[dep_id as usize]
             .name
             .slice(buf),

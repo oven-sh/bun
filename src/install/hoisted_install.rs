@@ -2,9 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
-use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
@@ -69,7 +67,7 @@ fn run_tasks_until_done(
         let pending_task_count = manager.pending_task_count();
         if pending_task_count > 0
             && PackageManager::verbose_install()
-            && PackageManager::has_enough_time_passed_between_waiting_messages()
+            && manager.has_enough_time_passed_between_waiting_messages()
         {
             bun_core::pretty_errorln!(
                 "<d>[PackageManager]<r> waiting for {} tasks\n",
@@ -286,8 +284,10 @@ pub(crate) fn install_hoisted_packages(
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
                 let trees = this.lockfile.buffers.trees.as_slice();
                 let completed_trees = Bitset::init_empty(trees.len())?;
-                let tree_ids_to_trees_the_id_depends_on =
-                    DynamicBitSetList::init_empty(trees.len(), trees.len())?;
+                let mut tree_ids_to_trees_the_id_depends_on = DynamicBitSetList::init_empty(
+                    trees.len(),
+                    u32::try_from(trees.len()).expect("int cast"),
+                )?;
 
                 {
                     // For each tree id, traverse through it's parents and mark all visited tree
@@ -295,16 +295,19 @@ pub(crate) fn install_hoisted_packages(
                     let mut deps = Bitset::init_empty(trees.len())?;
                     for _curr in trees {
                         let mut curr = *_curr;
-                        tree_ids_to_trees_the_id_depends_on.set(curr.id as usize, curr.id as usize);
+                        tree_ids_to_trees_the_id_depends_on
+                            .at_mut(curr.id)
+                            .set(curr.id as usize);
 
                         while curr.parent != tree::Tree::INVALID_ID {
                             deps.set(curr.id as usize);
                             tree_ids_to_trees_the_id_depends_on
-                                .set_union(curr.parent as usize, &deps.unmanaged);
+                                .at_mut(curr.parent)
+                                .set_union(&deps);
                             curr = trees[curr.parent as usize];
                         }
 
-                        deps.unmanaged.set_all(false);
+                        deps.set_all(false);
                     }
                 }
 
@@ -343,9 +346,8 @@ pub(crate) fn install_hoisted_packages(
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
-                        .to_vec(),
-                    tree_id: 0,
+                    tree_id: tree::INVALID_ID,
+                    path: Vec::new(),
                 },
                 skip_verify_installed_version_number,
                 skip_delete,
@@ -375,9 +377,8 @@ pub(crate) fn install_hoisted_packages(
                 },
                 trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
-                destination_dir_subpath_buf: bun_paths::PathBuffer::ZEROED,
+                destination_dir_subpath: bun_paths::Path::new(),
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
-                current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
@@ -397,24 +398,14 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        installer.node_modules.path.push(SEP);
-
-        let top_level_len =
-            strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1;
-
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {
                 link_deferred(mgr_ptr, &mut installer, log_level)?;
             }
 
-            installer.node_modules.path.truncate(top_level_len);
-            installer
-                .node_modules
-                .path
-                .extend_from_slice(node_modules.relative_path.as_bytes());
+            installer.node_modules.set_path(node_modules.relative_path);
             installer.node_modules.tree_id = node_modules.tree_id;
             let mut remaining: &[DependencyID] = node_modules.dependencies;
-            installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
             installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 

@@ -7,7 +7,7 @@ use bun_core::fmt::quote;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
-    JsClass as _, JsResult,
+    JsClass as _, JsResult, WrapperGuard,
 };
 
 use super::bun_test::{self, BunTest, ScopeChain, ScopeId};
@@ -123,11 +123,6 @@ fn settle(global: &JSGlobalObject, promise: Option<JSValue>, value: Result<JSVal
 }
 
 impl TestFixtures {
-    fn of<'a>(value: JSValue) -> Option<&'a TestFixtures> {
-        // SAFETY: the wrapper owns the payload, and every caller keeps `value` alive while it uses the borrow.
-        TestFixtures::from_js(value).map(|this| unsafe { &*this })
-    }
-
     /// Drops state left by an earlier file, since several files can share a helper module's fixtures.
     #[optimize(size)]
     fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
@@ -171,7 +166,7 @@ impl TestFixtures {
     }
 
     pub(crate) fn has_scope_beyond_test(value: JSValue) -> bool {
-        Self::of(value).is_some_and(|this| this.definitions.get().iter().any(|definition| definition.scope != Scope::Test))
+        Self::from_js(&value).is_some_and(|this| this.definitions.get().iter().any(|definition| definition.scope != Scope::Test))
     }
 
     /// `test.override()` mutates `parent` for the active scope only, or for every file in a preload or when no file is `collecting`.
@@ -186,7 +181,8 @@ impl TestFixtures {
     ) -> JsResult<JSValue> {
         let active_scope = collecting.map(|buntest| buntest.collection.active_scope.get());
         let is_top_level = active_scope.is_none_or(|scope| scope == ScopeId::ROOT);
-        let parent_fixtures = Self::of(parent);
+        let parent_fixtures = Self::from_js(&parent);
+        let parent_fixtures = parent_fixtures.as_deref();
         if let Some(parent_fixtures) = parent_fixtures {
             parent_fixtures.enter_file(parent, global)?;
         }
@@ -461,7 +457,7 @@ impl TestFixtures {
         parameter: &ContextParameter,
         timeout: u32,
     ) -> JsResult<Next> {
-        let Some(this) = Self::of(this_value) else {
+        let Some(this) = Self::from_js(&this_value) else {
             return Ok(Next::Ready);
         };
         this.enter_file(this_value, global)?;
@@ -486,7 +482,7 @@ impl TestFixtures {
             }
             ContextParameter::TextLeftOut => return Err(global.throw(format_args!("{TEXT_LEFT_OUT}"))),
         };
-        let test_context = TestContext::from_js(context);
+        let test_context = TestContext::from_js(&context);
         let definitions = this.definitions.get();
         let registrations = this.registrations_in(scopes);
         for index in Self::order(global, definitions, &registrations, names, test_context.is_none())? {
@@ -496,9 +492,9 @@ impl TestFixtures {
                 let started = this.scoped.get().iter().position(|&started| started == index);
                 let active_fixture = match (started, js::scoped_get_cached(this_value)) {
                     (Some(position), Some(cells)) => cells.get_index(global, position as u32)?,
-                    _ => Self::start_scoped(this, this_value, global, index, timeout)?,
+                    _ => Self::start_scoped(&this, this_value, global, index, timeout)?,
                 };
-                match ActiveFixture::of(active_fixture).map(|active_fixture| active_fixture.state.get()) {
+                match ActiveFixture::from_js(&active_fixture).map(|active_fixture| active_fixture.state.get()) {
                     Some(State::Ready) => {
                         context.put_may_be_index(global, &name, active::value_get_cached(active_fixture).unwrap_or(JSValue::UNDEFINED))?;
                         continue;
@@ -518,8 +514,7 @@ impl TestFixtures {
                     }
                 }
             }
-            // SAFETY: the wrapper owns the payload, and the caller keeps `context` alive.
-            let Some(test_context) = test_context.map(|test_context| unsafe { &*test_context }) else {
+            let Some(test_context) = &test_context else {
                 return Err(global.throw(format_args!(
                     "The test-scoped fixture {} cannot be used in beforeAll(), afterAll() or aroundAll(). Give it {{ scope: \"file\" }}, or use beforeEach(), afterEach() or aroundEach()",
                     quote(&fixture.name),
@@ -560,7 +555,7 @@ impl TestFixtures {
         cells.push(global, active_fixture)?;
         self.scoped.with_mut(|scoped| scoped.push(index));
         if self.definitions.get()[index].kind == Kind::Value
-            && let Some(active_fixture_payload) = ActiveFixture::of(active_fixture)
+            && let Some(active_fixture_payload) = ActiveFixture::from_js(&active_fixture)
         {
             active::value_set_cached(active_fixture, global, Self::value_of(this_value, global, index)?);
             active_fixture_payload.state.set(State::Ready);
@@ -578,7 +573,7 @@ impl TestFixtures {
             let fixture = &self.definitions.get()[index];
             let active_fixture = cells.get_index(global, position as u32)?;
             if fixture.scope >= scope
-                && ActiveFixture::of(active_fixture).is_some_and(|active_fixture| active_fixture.state.get() == State::Ready)
+                && ActiveFixture::from_js(&active_fixture).is_some_and(|active_fixture| active_fixture.state.get() == State::Ready)
             {
                 context.put_may_be_index(
                     global,
@@ -591,7 +586,7 @@ impl TestFixtures {
     }
 
     pub(crate) fn suite_hook_context(this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match Self::of(this_value) {
+        match Self::from_js(&this_value) {
             Some(this) => {
                 this.enter_file(this_value, global)?;
                 this.scoped_context(this_value, global, Scope::File)
@@ -610,35 +605,32 @@ impl ActiveFixture {
         this_value
     }
 
-    fn of<'a>(value: JSValue) -> Option<&'a ActiveFixture> {
-        // SAFETY: as `TestFixtures::of`.
-        ActiveFixture::from_js(value).map(|this| unsafe { &*this })
+    fn cast<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<WrapperGuard<'a, ActiveFixture>> {
+        this_value.as_class_ref::<Self>().ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a fixture")))
     }
 
-    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<(&'a ActiveFixture, &'a Definition)> {
-        match Self::of(this_value.to_js()) {
-            Some(this) => Ok((this, Self::definition_of(this_value.to_js(), global, this)?)),
+    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<(WrapperGuard<'a, ActiveFixture>, Kind)> {
+        let this = Self::cast(global, this_value)?;
+        let kind = this.with_definition(this_value.to_js(), global, |definition| Ok(definition.kind))?;
+        Ok((this, kind))
+    }
+
+    /// Don't read the definition after a call into JS, since `test.override()` replaces `definitions`.
+    fn with_definition<R>(&self, this_value: JSValue, global: &JSGlobalObject, f: impl FnOnce(&Definition) -> JsResult<R>) -> JsResult<R> {
+        let fixtures = active::fixtures_get_cached(this_value);
+        let fixtures = fixtures.as_ref().and_then(TestFixtures::from_js);
+        match fixtures.as_ref().and_then(|fixtures| fixtures.definitions.get().get(self.definition)) {
+            Some(definition) => f(definition),
             None => Err(global.throw_type_error(format_args!("Expected this to be a fixture"))),
         }
-    }
-
-    /// Don't hold the result across a call into JS, since `test.override()` replaces `definitions`.
-    fn definition_of<'a>(this_value: JSValue, global: &JSGlobalObject, this: &ActiveFixture) -> JsResult<&'a Definition> {
-        active::fixtures_get_cached(this_value)
-            .and_then(TestFixtures::of)
-            .and_then(|fixtures| fixtures.definitions.get().get(this.definition))
-            .ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a fixture")))
     }
 
     #[optimize(size)]
     fn provide(&self, this_value: JSValue, global: &JSGlobalObject, definition: &Definition, value: JSValue) -> JsResult<()> {
         let tear_down = bound(global, this_value, "tearDown", generated::Bun__ActiveFixture__tearDown)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-        let is_deferred = match TestContext::from_js(context) {
-            // SAFETY: the wrapper owns the payload, and the slot keeps the wrapper alive.
-            Some(test_context) if definition.scope == Scope::Test => unsafe {
-                (*test_context).defer_fixture(context, tear_down, self.timeout)
-            },
+        let is_deferred = match TestContext::from_js(&context) {
+            Some(test_context) if definition.scope == Scope::Test => test_context.defer_fixture(context, tear_down, self.timeout),
             _ => {
                 self.generation == Jest::file_generation()
                     && bun_test::clone_active_strong().is_some_and(|buntest| buntest.defer_to_file_end(tear_down, self.timeout))
@@ -650,10 +642,9 @@ impl ActiveFixture {
         if !is_deferred {
             self.tear_down(this_value, global, definition.kind)?;
         } else if definition.scope == Scope::Test
-            && let Some(test_context) = TestContext::from_js(context)
+            && let Some(test_context) = TestContext::from_js(&context)
         {
-            // SAFETY: as above.
-            unsafe { (*test_context).add_fixture(self.definition) };
+            test_context.add_fixture(self.definition);
             context.put_may_be_index(global, &BunString::clone_utf8(&definition.name), value)?;
         }
         Ok(())
@@ -672,9 +663,8 @@ impl ActiveFixture {
     #[optimize(size)]
     fn tear_down(&self, this_value: JSValue, global: &JSGlobalObject, kind: Kind) -> JsResult<JSValue> {
         self.state.set(State::TornDown);
-        if let Some(test_context) = active::context_get_cached(this_value).and_then(TestContext::from_js) {
-            // SAFETY: the wrapper owns the payload, and the slot keeps the wrapper alive.
-            unsafe { &*test_context }.remove_fixture(self.definition);
+        if let Some(test_context) = active::context_get_cached(this_value).as_ref().and_then(TestContext::from_js) {
+            test_context.remove_fixture(self.definition);
         }
         if kind == Kind::Builder {
             return match active::cleanup_get_cached(this_value) {
@@ -718,25 +708,26 @@ impl ActiveFixture {
         if self.state.get() != State::SettingUp {
             return Ok(());
         }
-        let definition = Self::definition_of(this_value, global, self)?;
-        if definition.kind == Kind::Builder {
-            return self.provide(this_value, global, definition, returned);
-        }
-        let error = global.create_error_instance(format_args!("Fixture {} returned without calling use()", quote(&definition.name)));
-        self.fail(this_value, global, error)
+        self.with_definition(this_value, global, |definition| {
+            if definition.kind == Kind::Builder {
+                return self.provide(this_value, global, definition, returned);
+            }
+            let error = global.create_error_instance(format_args!("Fixture {} returned without calling use()", quote(&definition.name)));
+            self.fail(this_value, global, error)
+        })
     }
 }
 
 #[optimize(size)]
 pub(crate) fn set_up(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
+    let (this, kind) = ActiveFixture::of_call(global, this_value)?;
     let this_value = this_value.to_js();
     // A concurrent test may have started it already.
     if this.state.get() == State::NotStarted {
         this.state.set(State::SettingUp);
         active::ready_set_cached(this_value, global, JSPromise::create(global).to_js());
-        if let Err(err) = this.start(this_value, global, definition.kind) {
+        if let Err(err) = this.start(this_value, global, kind) {
             this.fail(this_value, global, global.take_exception(err))?;
         }
     }
@@ -764,27 +755,31 @@ pub(crate) fn on_rejected(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, reason:
 #[optimize(size)]
 pub(crate) fn use_fixture(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
+    let this = ActiveFixture::cast(global, this_value)?;
     let this_value = this_value.to_js();
-    if this.state.get() != State::SettingUp {
-        return Err(global.throw(format_args!("use() of fixture {} was called more than once", quote(&definition.name))));
-    }
-    let release = JSPromise::create(global).to_js();
-    active::release_set_cached(this_value, global, release);
-    this.provide(this_value, global, definition, value.to_js())?;
-    Ok(release)
+    this.with_definition(this_value, global, |definition| {
+        if this.state.get() != State::SettingUp {
+            return Err(global.throw(format_args!("use() of fixture {} was called more than once", quote(&definition.name))));
+        }
+        let release = JSPromise::create(global).to_js();
+        active::release_set_cached(this_value, global, release);
+        this.provide(this_value, global, definition, value.to_js())?;
+        Ok(release)
+    })
 }
 
 #[optimize(size)]
 pub(crate) fn on_cleanup(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, cleanup: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
-    let (_, definition) = ActiveFixture::of_call(global, this_value)?;
+    let (this, _) = ActiveFixture::of_call(global, this_value)?;
     let (this_value, cleanup) = (this_value.to_js(), cleanup.to_js());
     if !cleanup.is_callable() {
         return Err(global.throw_invalid_argument_type_value("cleanup", "function", cleanup));
     }
     if active::cleanup_get_cached(this_value).is_some() {
-        return Err(global.throw(format_args!("onCleanup() of fixture {} was called more than once", quote(&definition.name))));
+        return this.with_definition(this_value, global, |definition| {
+            Err(global.throw(format_args!("onCleanup() of fixture {} was called more than once", quote(&definition.name))))
+        });
     }
     active::cleanup_set_cached(this_value, global, cleanup);
     Ok(())
@@ -793,6 +788,6 @@ pub(crate) fn on_cleanup(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, cleanup:
 #[optimize(size)]
 pub(crate) fn tear_down(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
-    let (this, definition) = ActiveFixture::of_call(global, this_value)?;
-    this.tear_down(this_value.to_js(), global, definition.kind)
+    let (this, kind) = ActiveFixture::of_call(global, this_value)?;
+    this.tear_down(this_value.to_js(), global, kind)
 }

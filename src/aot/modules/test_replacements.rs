@@ -151,6 +151,12 @@ impl FileBinder<'_, '_> {
             self.imports.namespaces_spied_on_whole.push(module);
             return;
         }
+        if let StandsFor::ImportedNamespace(module) = spied_on {
+            let found = self.context.modules.module_behind(module);
+            if found != module && self.context.modules.find_commonjs_file(found).is_some() {
+                self.imports.namespaces_spied_on_whole.push(found);
+            }
+        }
         let resolved = match spied_on {
             StandsFor::ImportedNamespace(module) => {
                 self.resolve_name(self.context.modules.module_behind(module), name)

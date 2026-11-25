@@ -189,9 +189,11 @@ new!(pub GITHUB_SERVER_URL: string, "GITHUB_SERVER_URL", {});
 new!(pub GITHUB_SHA: string, "GITHUB_SHA", {});
 new!(pub GITHUB_WORKSPACE: string, "GITHUB_WORKSPACE", {});
 platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE", {});
+new!(pub HOSTALIASES: string, "HOSTALIASES", {});
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
+new!(pub LOCALDOMAIN: string, "LOCALDOMAIN", {});
 // Dump mimalloc statistics at the end of the process. Note that this is not the same as
 // `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
@@ -225,6 +227,7 @@ new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 platform_specific_new!(pub PWD: string, posix = "PWD", windows = None, {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
+new!(pub RES_OPTIONS: string, "RES_OPTIONS", {});
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
@@ -276,6 +279,8 @@ pub mod feature_flag {
 
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE, "BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT, "BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});

@@ -40,8 +40,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
 #ifdef LIBUS_USE_EPOLL
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
@@ -373,16 +371,18 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 /* Write side dead without our own shutdown() (peer reset /
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
+                struct us_socket_t *s = (struct us_socket_t *) poll;
                 if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
-                    ((struct us_socket_t *) poll)->flags.is_paused &&
-                    !(((struct us_socket_t *) poll)->hangup_closes_unsent && ((struct us_socket_t *) poll)->flags.last_write_failed)) {
-                    /* fflags==0 with reads paused is AF_UNIX's graceful peer
-                     * close (TCP only gets SS_CANTSENDMORE from RST, which
-                     * carries the error): the receive buffer survives, so
-                     * defer like epoll's EPOLLHUP - resume() delivers the
-                     * tail + end instead of an error close discarding it.
-                     * Not when a hangup_closes_unsent socket has bytes unsent. */
-                    eof = 1;
+                    !(s->flags.last_write_failed && (s->hangup_closes_unsent || !s->flags.is_paused))) {
+                    /* No socket error. With the read side down too this is an AF_UNIX
+                     * peer's close, epoll's EPOLLHUP: the unread tail, then end. Alone
+                     * it says nothing about reads, and the read filter reports their end.
+                     * A stuck write keeps the error path, which reads before it closes.
+                     * A paused socket is exempt from that unless hangup_closes_unsent.
+                     * One parked in the low-priority queue reads its tail when it leaves. */
+                    if (s->read_eof || (eof && s->flags.low_prio_state != 1)) {
+                        eof = LIBUS_POLL_HANGUP;
+                    }
                 } else {
                     error = 1;
                 }

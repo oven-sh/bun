@@ -1,17 +1,16 @@
-# f1 = make, f2 = Sign
+# f1 = fly, f2 = Kite
 # -- source: a-store-into-another-object-between-the-stores-of-a-birth-takes-nothing-from-the-guard.ts
 # declare function sink(...values: unknown[]): void;
-# const other: { label: string } = { label: "" };
-# class Sign {
-#     declare name: string; declare list?: object[]; declare id: number; declare parent?: Sign; declare members?: object; declare exports?: object; declare twin?: Sign;
-#     declare only?: boolean; declare used?: number; declare place?: number; declare links?: object; declare more?: object;
-#     constructor(name: string, label: string) {
-#         this.name = name; other.label = label; this.list = undefined; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined;
-#         this.twin = undefined; this.only = undefined; this.used = undefined; this.place = undefined; this.links = undefined; this.more = undefined;
+# const sky: { last: string } = { last: "" };
+# class Kite {
+#     declare line: string; declare long: number; declare knots: number; declare tail?: Kite; declare torn: boolean; declare wind: number; declare color: string; declare bows: boolean; declare child?: string;
+#     constructor(line: string, child: string) {
+#         this.line = line; sky.last = child; this.long = 40; this.knots = 3; this.tail = undefined; this.torn = false;
+#         this.wind = -1; this.color = "red"; this.bows = true; this.child = undefined;
 #     }
 # }
-# function make(name: any, label: any) { return new Sign(name, label); }
-# sink(make);
+# function fly(line: any, child: any) { return new Kite(line, child); }
+# sink(fly);
 # -- end of source
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f2:ParameterGuard

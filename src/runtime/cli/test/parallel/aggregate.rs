@@ -24,28 +24,26 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
 
 fn replay_into(junit: &mut JunitReporter, coord: &Coordinator, files: &[FileTestRecords]) {
     for (idx, file) in files.iter().enumerate() {
-        let rel = junit_file_name(coord.files[idx].as_bytes());
-        junit.file_start_unix_ms = if file.started_unix_ms != 0 {
-            file.started_unix_ms
-        } else {
-            bun_core::time::milli_timestamp()
-        };
+        let rel = junit_file_name(coord.schedule.path(idx));
+        junit.file_start_unix_ms = file
+            .started_unix_ms
+            .unwrap_or_else(bun_core::time::milli_timestamp);
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
                 junit.record_test_case(&test).expect("oom");
             }
         }
-        if let Some((name, message)) = &file.unfinished {
+        if let Some((name, message)) = file.unfinished {
             let unfinished = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
-                name,
+                name: name.as_bytes(),
                 status: TestResult::Fail,
                 assertions: 0,
                 elapsed_ns: 0,
                 line_number: 0,
                 failure: Some(TestFailure {
-                    message: message.to_vec(),
+                    message: message.into(),
                     ..Default::default()
                 }),
                 earlier_failures: Vec::new(),

@@ -545,7 +545,7 @@ pub fn install_with_manager(
                         reresolve_owned_rows(manager, &pinned_rows, |dependency| {
                             all_name_hashes.binary_search(&dependency.name_hash).is_ok()
                                 || (catalogs_changed
-                                    && dependency.version.tag == DependencyVersionTag::Catalog)
+                                    && dependency.version.tag() == DependencyVersionTag::Catalog)
                                 || catalog_overridden
                                     .binary_search(&dependency.name_hash)
                                     .is_ok()
@@ -1138,7 +1138,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         let pending_tasks = this.pending_task_count();
 
         if PackageManager::verbose_install() && pending_tasks > 0 {
-            if PackageManager::has_enough_time_passed_between_waiting_messages() {
+            if this.has_enough_time_passed_between_waiting_messages() {
                 bun_core::pretty_errorln!(
                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                     pending_tasks,
@@ -1984,9 +1984,10 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
         debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
         for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-            if dep.version.tag != DependencyVersionTag::Npm
-                && dep.version.tag != DependencyVersionTag::DistTag
-            {
+            if !matches!(
+                dep.version.tag(),
+                DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+            ) {
                 continue;
             }
             if package_id == invalid_package_id {
@@ -1995,7 +1996,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 
             let name = dep.name.slice(&lockfile.buffers.string_bytes);
             let entry_ptr = if register_rows {
-                if dep.version.tag == DependencyVersionTag::DistTag && !update_to_latest {
+                if dep.version.tag() == DependencyVersionTag::DistTag && !update_to_latest {
                     continue;
                 }
                 let entry = updating_packages.get_or_put(name).unwrap_or_oom();
@@ -2207,7 +2208,7 @@ fn resolve_pending_tasks(
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!(
             "Resolved, downloaded and extracted [{}]",
-            manager.total_tasks,
+            manager.total_tasks.get(),
         );
         Output::flush();
     }

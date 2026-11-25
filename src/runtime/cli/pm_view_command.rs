@@ -161,7 +161,7 @@ pub(crate) fn view(
     }
 
     let parsed_manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_cache_key(),
         &mut log,
         response_buf.list.as_slice(),
         name,

@@ -2,69 +2,69 @@
 const lines = [];
 const tell = (...values) => lines.push(values.map(String).join(" "));
 
-function clamp(value, low, high) {
-  if (value === undefined) value = 0;
-  return value < low ? low : value > high ? high : value;
+function poured(value, room) {
+  const asked = value ?? 1;
+  if (asked > room) return room;
+  return asked - (asked % 0.25);
 }
-function Color(red) {
-  this._red = red;
-  this.x = 0;
+function Jar(level) {
+  this._level = level;
+  this.place = 0;
 }
-Object.defineProperty(Color.prototype, "red", {
-  enumerable: false,
+Object.defineProperty(Jar.prototype, "level", {
+  get: function () {
+    return this._level;
+  },
   configurable: true,
   set: function (value) {
-    this._red = clamp(value, 0, 3);
-  },
-  get: function () {
-    return this._red;
+    this._level = poured(value, 3);
   },
 });
-Object.defineProperty(Color.prototype, "label", {
+Object.defineProperty(Jar.prototype, "label", {
   get() {
-    return typeof this + ":" + this._red;
+    return typeof this + ":" + this._level;
   },
 });
-Color.prototype.move = function (by) {
-  this.x = clamp(this.x + by, -10, 10);
-  return this.x;
+Jar.prototype.slide = function (by) {
+  this.place = poured(this.place - by * 2, 10);
+  return this.place;
 };
-function Shade(red) {
-  Color.call(this, red);
+function Jug(level) {
+  Jar.call(this, level);
 }
-Shade.prototype = Object.create(Color.prototype);
-Shade.prototype.constructor = Shade;
+Jug.prototype = Object.create(Jar.prototype);
+Jug.prototype.constructor = Jug;
 
 const run = count => {
-  const color = new Color(1);
-  const shade = new Shade(2);
+  const jar = new Jar(1);
+  const jug = new Jug(2);
   let sum = 0;
   for (let i = 0; i < count; i++) {
-    color.red = i * 0.25;
-    shade.red = i & 1 ? i : -0.5;
-    sum += color.red + shade.red + color.move(i & 1 ? 0.5 : -0.25);
+    jar.level = i * 0.25;
+    jug.level = i & 1 ? i : -0.5;
+    sum += jar.level + jug.level + jar.slide(i & 1 ? 0.5 : -0.25);
   }
   return sum;
 };
-tell(run(10), run(200), new Color(5).label, new Shade("s").label);
+tell(run(10), run(200), new Jar(5).label, new Jug("s").label);
 
-const color = new Color(2);
-color.red = "late";
-tell(color.red, color._red);
-color.red = { valueOf: () => 2.5 };
-tell(typeof color.red, color.red + 0);
+const jar = new Jar(2);
+jar.level = "late";
+tell(jar.level, jar._level);
+jar.level = { valueOf: () => 2.5 };
+tell(typeof jar.level, jar.level + 0);
 try {
-  color.label = 1;
+  jar.label = 1;
 } catch (error) {
   tell(error.constructor.name);
 }
 
-const { get, set } = Object.getOwnPropertyDescriptor(Color.prototype, "red");
-tell(get.call({ _red: "other" }), get.name, set.length, typeof get.prototype, new get() instanceof get);
+const { get, set } = Object.getOwnPropertyDescriptor(Jar.prototype, "level");
+tell(get.call({ _level: "other" }), get.name, set.length, typeof get.prototype, new get() instanceof get);
 const bare = {};
 set.call(bare, 9);
 set.call(bare, 2, 7);
-tell(Object.keys(bare).join(), bare._red, run(10));
+tell(Object.keys(bare).join(), bare._level, run(10));
 try {
   set(1);
 } catch (error) {
@@ -72,38 +72,38 @@ try {
 }
 
 const seen = [];
-const watched = new Proxy(new Color(1), {
+const watched = new Proxy(new Jar(1), {
   get(target, key, receiver) {
     seen.push(String(key));
     return Reflect.get(target, key, receiver);
   },
 });
-watched.red = 2;
-tell(watched.red, seen.join(), Reflect.get(Color.prototype, "red", { _red: -0 }) === 0, Reflect.set(Color.prototype, "red", 8, bare), bare._red);
+watched.level = 2;
+tell(watched.level, seen.join(), Reflect.get(Jar.prototype, "level", { _level: -0 }) === 0, Reflect.set(Jar.prototype, "level", 8, bare), bare._level);
 
-const below = Object.create(color);
-below.red = 1;
-tell(Object.keys(below).join(), below.red, color._red);
-for (const key of ["red", "label", "x"]) tell(key, text(color[key]), key in color, Object.hasOwn(color, key));
+const below = Object.create(jar);
+below.level = 1;
+tell(Object.keys(below).join(), below.level, jar._level);
+for (const key of ["level", "label", "place"]) tell(key, text(jar[key]), key in jar, Object.hasOwn(jar, key));
 function text(value) {
   return typeof value === "object" ? "object" : value;
 }
-tell(JSON.stringify(new Color(1)), JSON.stringify(Object.assign(new Color(1), { red: 7 })));
+tell(JSON.stringify(new Jar(1)), JSON.stringify(Object.assign(new Jar(1), { level: 7 })));
 
-Object.defineProperty(Shade.prototype, "red", {
-  get: () => "shade",
+Object.defineProperty(Jug.prototype, "level", {
+  get: () => "jug",
   set(value) {
-    super.red = value;
+    super.level = value;
     this.kept = value;
   },
 });
-const shade = new Shade(1);
-shade.red = 1.5;
-tell(shade.red, shade._red, shade.kept);
+const jug = new Jug(1);
+jug.level = 1.5;
+tell(jug.level, jug._level, jug.kept);
 
-Object.defineProperty(Color.prototype, "red", { get: undefined, set: undefined });
-tell(color.red, new Color(4).red, shade.red);
-delete Color.prototype.red;
-color.red = 12;
-tell(color.red, Object.keys(color).join());
+Object.defineProperty(Jar.prototype, "level", { get: undefined, set: undefined });
+tell(jar.level, new Jar(4).level, jug.level);
+delete Jar.prototype.level;
+jar.level = 12;
+tell(jar.level, Object.keys(jar).join());
 console.log(lines.join("\n"));

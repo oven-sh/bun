@@ -31,25 +31,12 @@ template<> EventListenerOptions convertDictionary<EventListenerOptions>(JSGlobal
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     EventListenerOptions result;
-    JSValue captureValue;
-    if (isNullOrUndefined)
-        captureValue = jsUndefined();
-    else {
-        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
-    if (!captureValue.isUndefined()) {
-        result.capture = convert<IDLBoolean>(lexicalGlobalObject, captureValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.capture = false;
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    convertDictionaryMember<IDLBoolean>(lexicalGlobalObject, *object, Identifier::fromString(vm, "capture"_s), result.capture);
+    RETURN_IF_EXCEPTION(throwScope, {});
     return result;
 }
 

@@ -15,33 +15,19 @@ pub struct PacketReader<'a> {
 }
 
 impl<'a> PacketReader<'a> {
-    pub fn new(buffer: &'a [u8], offset: &'a Cell<usize>, message_start: &'a Cell<usize>) -> Self {
+    pub(crate) fn new(payload: &'a [u8], offset: &'a Cell<usize>) -> Self {
         Self {
             wrapped: StackReader {
-                buffer,
+                buffer: payload,
                 offset,
-                message_start,
+                // Nothing here reads it: the one message starts where the buffer does.
+                message_start: offset,
             },
         }
     }
 
-    pub fn mark_message_start(self) {
-        self.wrapped.mark_message_start();
-    }
-
-    pub fn set_offset_from_start(self, offset: usize) {
-        self.wrapped.set_offset_from_start(offset);
-    }
-
     pub fn peek(&self) -> &'a [u8] {
         self.wrapped.peek()
-    }
-
-    pub fn ensure_capacity(self, count: usize) -> Result<(), AnyMySQLError> {
-        if !self.wrapped.ensure_capacity(count) {
-            return Err(AnyMySQLError::ShortRead);
-        }
-        Ok(())
     }
 
     pub fn read(self, count: usize) -> Result<&'a [u8], AnyMySQLError> {

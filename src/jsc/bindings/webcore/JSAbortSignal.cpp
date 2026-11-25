@@ -22,8 +22,6 @@
 #include "JSAbortSignal.h"
 
 #include "EventNames.h"
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSAbortSignal.h"
 #include "JSDOMAttribute.h"
@@ -39,19 +37,11 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 #include "ErrorCode.h"
 
 namespace WebCore {
@@ -66,44 +56,12 @@ static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted);
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsAbortSignalConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsAbortSignal_aborted);
 static JSC_DECLARE_CUSTOM_GETTER(jsAbortSignal_reason);
 static JSC_DECLARE_CUSTOM_GETTER(jsAbortSignal_onabort);
 static JSC_DECLARE_CUSTOM_SETTER(setJSAbortSignal_onabort);
 
-class JSAbortSignalPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSAbortSignalPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSAbortSignalPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSAbortSignalPrototype))) JSAbortSignalPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAbortSignalPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSAbortSignalPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAbortSignalPrototype, JSAbortSignalPrototype::Base);
-
+using JSAbortSignalPrototype = JSDOMPrototype<JSAbortSignal>;
 using JSAbortSignalDOMConstructor = JSDOMConstructorNotConstructable<JSAbortSignal>;
 
 /* Hash table for constructor */
@@ -116,11 +74,6 @@ static const HashTableValue JSAbortSignalConstructorTableValues[] = {
 
 template<> const ClassInfo JSAbortSignalDOMConstructor::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalDOMConstructor) };
 
-template<> JSValue JSAbortSignalDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return JSEventTarget::getConstructor(vm, &globalObject);
-}
-
 template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 0, "AbortSignal"_s, JSAbortSignal::prototype(vm, globalObject));
@@ -130,16 +83,16 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
 /* Hash table for prototype */
 
 static const HashTableValue JSAbortSignalPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortSignalConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSAbortSignalPrototype::constructorGetter, 0 } },
     { "aborted"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortSignal_aborted, 0 } },
     { "reason"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortSignal_reason, 0 } },
     { "onabort"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortSignal_onabort, setJSAbortSignal_onabort } },
     { "throwIfAborted"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAbortSignalPrototypeFunction_throwIfAborted, 0 } },
 };
 
-const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalPrototype) };
+template<> const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalPrototype) };
 
-void JSAbortSignalPrototype::finishCreation(VM& vm)
+template<> void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
@@ -148,47 +101,14 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSAbortSignal::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignal) };
 
-JSAbortSignal::JSAbortSignal(Structure* structure, JSDOMGlobalObject& globalObject, Ref<AbortSignal>&& impl)
-    : JSEventTarget(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSAbortSignal::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-Ref<AbortSignal> JSAbortSignal::protectedWrapped() const
-{
-    return wrapped();
-}
-
 JSObject* JSAbortSignal::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSAbortSignalPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
-    structure->setMayBePrototype(true);
-    return JSAbortSignalPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSAbortSignal::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSAbortSignal>(vm, globalObject);
+    return JSAbortSignalPrototype::create(vm, globalObject, JSEventTarget::prototype(vm, globalObject));
 }
 
 JSValue JSAbortSignal::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSAbortSignalDOMConstructor, DOMConstructorID::AbortSignal>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsAbortSignalConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSAbortSignalPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSAbortSignal::getConstructor(vm, prototype->globalObject()));
 }
 
 static inline JSValue jsAbortSignal_abortedGetter(JSGlobalObject& lexicalGlobalObject, JSAbortSignal& thisObject)
@@ -343,97 +263,6 @@ size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
-}
-
-JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortSignal, m_subspaceForAbortSignal));
-}
-
-template<typename Visitor>
-void JSAbortSignal::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSAbortSignal);
-
-template<typename Visitor>
-void JSAbortSignal::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSAbortSignal);
-
-void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSAbortSignal>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsAbortSignal = static_cast<JSAbortSignal*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, jsAbortSignal->protectedWrapped().ptr(), jsAbortSignal);
-    return FinalizeResult::KeepImpl;
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7AbortSignal@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11AbortSignalE[];
-}
-#endif
-#endif
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
-{
-
-    if constexpr (std::is_polymorphic_v<AbortSignal>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7AbortSignal@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11AbortSignalE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // AbortSignal has subclasses. If AbortSignal has subclasses that get passed
-        // to toJS() we currently require AbortSignal you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
-    return createWrapper<AbortSignal>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortSignal& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-AbortSignal* JSAbortSignal::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSAbortSignal>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

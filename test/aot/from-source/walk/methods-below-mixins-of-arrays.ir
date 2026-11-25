@@ -1,8 +1,8 @@
 # -- source: main.cjs
-# function mixin(S) { return class Mixed extends S { total() { var t = 0; for (var i = 0; i < this.rows; i++) t += this.get(i, 1); return t; } }; }
-# class M extends mixin(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2]; this.rows = r; } get(i, j) { return this[i][j]; } }
-# var m = new M(4);
-# print(m.total());
+# function hilly(Ground) { return class Hill extends Ground { ridge() { var high = 0; for (var i = this.rows - 1; i >= 0; i--) { var here = this.spot(i, 1); if (here > high) high = here + 1; } return high; } }; }
+# class Land extends hilly(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2]; this.rows = r; } spot(i, k) { return this[i][k]; } }
+# var land = new Land(4);
+# print(land.ridge());
 # -- end of source
 # The structure of an instance tells a class below a mixin that is evaluated over Array, as it tells a class that extends Array.
 # RUN: walk f3 mechanisms=all
@@ -13,8 +13,8 @@
 # METHOD: HasStructureOfClass {{*}}layout=L1
 # METHOD: GetPropertyOfHeir
 # RUN(ANSWER): run-in-shell
-# ANSWER: 3
+# ANSWER: 2.5
 # ANSWER-NEXT: exited with 0
 # RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
-# CHECKED: 3
+# CHECKED: 2.5
 # CHECKED-NEXT: exited with 0

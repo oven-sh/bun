@@ -81,3 +81,11 @@ show("let once = nothing; return [...z];", () => { let once = nothing; return [.
 show("let once = holder.a; return [...z];", () => { let once = holder.a; return [...z]; });
 show("pass(...id(nothing));", () => { pass(...id(nothing)); });
 show("let once = pass(nothing); new F(...z);", () => { let once = pass(nothing); new F(...z); });
+show("let once = pass(nothing); return [...once];", () => { let once = pass(nothing); return [...once]; });
+show("return [...pass(nothing)];", () => { return [...pass(nothing)]; });
+show("return [...nothing];", () => { return [...nothing]; });
+show("return [1, ...nothing];", () => { return [1, ...nothing]; });
+show("let once = nothing; return [...once];", () => { let once = nothing; return [...once]; });
+show("let once = holder.a; return [...once];", () => { let once = holder.a; return [...once]; });
+show("pass(...pass(nothing));", () => { pass(...pass(nothing)); });
+show("let once = pass(nothing); new F(...once);", () => { let once = pass(nothing); new F(...once); });

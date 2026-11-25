@@ -8,7 +8,7 @@ import net, { isIP } from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import { constants, inflateRawSync } from "node:zlib";
-import { closePayload, OP, RawClient } from "../../web/websocket/raw-peer";
+import { closePayload, encodeFrame, OP, RawClient } from "../../web/websocket/raw-peer";
 
 const strings = [
   {
@@ -3943,4 +3943,184 @@ describe.concurrent.each([
     client.socket.end(client.frame(OP.close, closePayload(4001)));
     await client.closed;
   });
+});
+
+describe("a message that arrives while a handler runs the event loop", () => {
+  const frame = (opcode: number, payload: string, fin = true) => encodeFrame(opcode, payload, { mask: true, fin });
+  it.each([
+    ["a message in one read", frame(OP.text, "first"), 0],
+    ["a message with its head in two reads", frame(OP.text, "first"), 3],
+    ["a message with its payload in two reads", frame(OP.text, "first"), 8],
+    ["a message in two frames", Buffer.concat([frame(OP.text, "fi", false), frame(OP.continuation, "rst")]), 8],
+    ["a Pong with its payload in two reads", frame(OP.pong, "first"), 8],
+  ])("is delivered under that of %s", async (_, bytes, firstRead) => {
+    const seen: string[] = [];
+    const second = Promise.withResolvers<void>();
+    function handler(ws: ServerWebSocket, message: string | Buffer) {
+      seen.push(String(message));
+      if (seen.length > 1) return second.resolve();
+      client.text("second");
+      // It runs the event loop until an async setup() settles.
+      Bun.build({
+        entrypoints: ["/a.js"],
+        files: { "/a.js": "" },
+        plugins: [{ name: "wait", setup: () => second.promise }],
+      });
+      ws.send("returned");
+    }
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: {
+        message: handler,
+        pong: handler,
+        close(_, code, reason) {
+          seen.push(`close ${code} ${reason}`);
+          second.resolve();
+        },
+      },
+    });
+    using client = await RawClient.upgrade(server.port!);
+    client.write(Buffer.concat([frame(OP.ping, ""), bytes.subarray(0, firstRead)]));
+    expect(await client.next()).toBe("pong");
+    client.write(bytes.subarray(firstRead));
+    expect(await client.next()).toBe('text "returned"');
+    expect(await client.roundTrip()).toEqual([]);
+    expect(seen).toEqual(["first", "second"]);
+  });
+
+  it.each([
+    ["a message does not overtake", frame(OP.text, "third"), ["first", "close 1006"]],
+    ["a Ping leaves alone", frame(OP.ping, ""), ["first", "ping", "second"]],
+    [
+      "a message behind a Ping does not overtake",
+      Buffer.concat([frame(OP.ping, ""), frame(OP.binary, "")]),
+      ["first", "ping", "close 1006"],
+    ],
+  ])("%s the frames that were read before it", async (_, bytes, expected) => {
+    const seen: string[] = [];
+    const arrived = Promise.withResolvers<void>();
+    const returned = Promise.withResolvers<void>();
+    function see(event: string) {
+      seen.push(event);
+      arrived.resolve();
+    }
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: {
+        message(_, message) {
+          if (seen.push(String(message)) > 1) return arrived.resolve();
+          // Or the client would read the answer.
+          client.socket.pause();
+          client.write(bytes);
+          Bun.build({
+            entrypoints: ["/a.js"],
+            files: { "/a.js": "" },
+            plugins: [{ name: "wait", setup: () => arrived.promise }],
+          });
+          setImmediate(returned.resolve);
+        },
+        ping: () => see("ping"),
+        close: (_, code) => see(`close ${code}`),
+      },
+    });
+    using client = await RawClient.upgrade(server.port!);
+    client.write(Buffer.concat([frame(OP.text, "first"), frame(OP.text, "second")]));
+    await returned.promise;
+    expect(seen).toEqual(expected);
+  });
+});
+
+describe.skipIf(!isASAN)("a handler closes a socket, then runs the event loop", () => {
+  it.concurrent.each([
+    ["close, under server.stop(true)", "close(ws) { for (const other of all) other.terminate(); runLoop(); }"],
+    ["open", "open(ws) { ws.terminate(); runLoop(); }"],
+    ["ws.cork()", "message(ws) { setImmediate(() => ws.cork(() => { ws.terminate(); runLoop(); })); }"],
+  ])("%s", async (_, handler) => {
+    const script = `
+      const all = [];
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const runLoop = () =>
+        Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup: () => fetch(server.url + "x").catch(() => {}) }] });
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req, server) {
+          await tick();
+          return server.upgrade(req) ? undefined : new Response();
+        },
+        websocket: { open(ws) { all.push(ws); }, message(ws) { setImmediate(() => server.stop(true)); }, ${handler} },
+      });
+      const clients = [0, 1].map(() => new WebSocket(server.url.href.replace("http", "ws")));
+      const on = name => Promise.all(clients.map(client => new Promise(resolve => client.addEventListener(name, resolve))));
+      const closed = on("close");
+      on("open").then(() => clients.forEach(client => client.send("go")));
+      await closed;
+      await server.stop(true);
+      console.log("closed");
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+  });
+});
+
+it("a subscriber does not get what was published to a socket that was reset before it was sent", async () => {
+  const closed = Promise.withResolvers<void>();
+  let published = 0;
+  using server = serve<string>({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: (req, server) => void server.upgrade(req, { data: new URL(req.url).pathname }),
+    websocket: {
+      open: ws => void ws.subscribe(ws.data),
+      message(ws) {
+        published = server.publish("/private", "secret");
+        // A message waits under a 16-bit index.
+        const byte = new Uint8Array(1);
+        for (let i = 1; i < 65535; i++) server.publish("/busy", byte);
+        ws.send("done");
+      },
+      close: () => closed.resolve(),
+    },
+  });
+  using busy = await RawClient.upgrade(server.port!, { path: "/busy" });
+  using leaving = await RawClient.upgrade(server.port!, { path: "/private" });
+  using subscriber = await RawClient.upgrade(server.port!, { path: "/public" });
+  busy.socket.pause();
+  busy.text("go");
+  leaving.reset();
+  await closed.promise;
+  expect(published).toBe(6);
+  server.publish("/public", "one");
+  server.publish("/public", "two");
+  expect(await subscriber.nextFrames(2)).toEqual(['text "one"', 'text "two"']);
+});
+
+it("a long message does not overtake the short ones that were published before it", async () => {
+  using server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: (req, server) => void server.upgrade(req),
+    websocket: { open: ws => void ws.subscribe("topic"), message() {} },
+  });
+  using client = await RawClient.upgrade(server.port!);
+  for (const message of ["a", "b", Buffer.alloc(20000, "c").toString(), "d"]) server.publish("topic", message);
+  expect(await client.nextFrames(4)).toEqual(['text "a"', 'text "b"', "text 20000 bytes", 'text "d"']);
+});
+
+it("an open socket has the limits of the last reload()", async () => {
+  const options = (maxPayloadLength: number) => ({
+    fetch: (req: Request, server: Server<undefined>) => void server.upgrade(req),
+    websocket: { maxPayloadLength, message() {} },
+  });
+  using server = serve({ port: 0, hostname: "127.0.0.1", ...options(1) });
+  using client = await RawClient.upgrade(server.port!);
+  server.reload(options(2));
+  client.text("ab");
+  expect(await client.roundTrip()).toEqual([]);
+  client.text("abc");
+  expect(await client.next()).toBe('close 1009 "Received too big message"');
 });

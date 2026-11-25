@@ -98,7 +98,7 @@
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
-/* 32 byte padding of receive buffer ends */
+/* Without it mimalloc commits a page of 4 MiB for a receive buffer (MI_LARGE_MAX_OBJ_SIZE) */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
@@ -427,8 +427,8 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
  * connections keep the previous context alive through their own SSL refs. */
 void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
-/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
- * returns 0 with a static *err_reason tag on failure. */
+/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees,
+ * whatever the result); returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
@@ -727,6 +727,8 @@ void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
+/* Call before another process gets a duplicate of the listening socket. */
+void us_listen_socket_set_shared(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
  * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector
  * in C++) is a UAF once a listener is closed and freed in loop_post. */

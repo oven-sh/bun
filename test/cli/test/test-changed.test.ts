@@ -1,6 +1,16 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isASAN,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  untilEveryThreadIs,
+} from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -165,6 +175,23 @@ describe.concurrent("bun test --changed", () => {
     });
     initRepo(String(dir));
     appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual(["one.test.ts", "two.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file imported under two import attributes selects all importers", async () => {
+    // data.json is two modules in the graph: one per loader.
+    using dir = tempDir("test-changed-two-attributes", {
+      "package.json": JSON.stringify({ name: "two-attributes", type: "module" }),
+      "data.json": `{"v":1}\n`,
+      "one.test.ts": `import { test, expect } from "bun:test";\nimport data from "./data.json";\ntest("one", () => expect(data.v).toBe(1));\n`,
+      "two.test.ts": `import { test, expect } from "bun:test";\nimport text from "./data.json" with { type: "text" };\ntest("two", () => expect(text).toContain("v"));\n`,
+      "three.test.ts": `import { test, expect } from "bun:test";\ntest("three", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "data.json"), "\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual(["one.test.ts", "two.test.ts"]);
@@ -569,6 +596,40 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  test.skipIf(!isLinux)("editing many test files at once reruns all of them", async () => {
+    const names = Array.from({ length: 12 }, (_, i) => `many-${i}.test.ts`);
+    using dir = tempDir("test-changed-watch-many", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      ...Object.fromEntries(names.map(name => [name, `import { test } from "bun:test";\ntest("t", () => {});\n`])),
+    });
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      killSignal: "SIGKILL",
+    });
+    const lines = forEachLine(proc.stderr);
+    async function nextSummary() {
+      while (true) {
+        const { value, done } = await lines.next();
+        if (done || value.startsWith("Ran ")) return value?.replace(/ \[.*/, "");
+      }
+    }
+    expect(await nextSummary()).toBe("Ran 0 tests across 0 files.");
+
+    // Stopped, so that the watcher gets them in one batch.
+    proc.kill("SIGSTOP");
+    await untilEveryThreadIs("T", proc.pid);
+    for (const name of names) appendFileSync(join(String(dir), name), "// touched\n");
+    proc.kill("SIGCONT");
+    expect(await nextSummary()).toBe("Ran 12 tests across 12 files.");
+  });
 
   test("trigger file path handed to restarted runs has a 128-bit random hex suffix", async () => {
     using dir = tempDir("test-changed-watch-trigger-name", {

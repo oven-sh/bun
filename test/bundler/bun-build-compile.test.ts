@@ -12,6 +12,7 @@ import {
   isPosix,
   isWindows,
   tempDir,
+  unprivilegedSpawnOptions,
 } from "harness";
 import {
   chmodSync,
@@ -63,6 +64,118 @@ describe("Bun.build compile", () => {
     // Verify that we do write it to the outdir.
     expect(result.outputs[0].path.replaceAll("\\", "/")).toStartWith(outdir.replaceAll("\\", "/"));
     expect(exists).toBe(true);
+  });
+
+  test.concurrent.skipIf(isWindows)("a name with a backslash finds the embedded file before the disk", async () => {
+    using dir = tempDir("build-compile-backslash", {
+      "index.js": `
+        const name = process.argv[2];
+        require(name);
+        new Worker(name);`,
+      "a/b.js": `console.log("a/b");`,
+      "c\\d/e.js": `console.log("c\\\\d/e");`,
+      "away/a\\b.js": `console.log("from the working directory");`,
+    });
+    const outfile = join(String(dir), "app");
+    const entrypoints = ["index.js", "a/b.js", "c\\d/e.js"].map(name => join(String(dir), name));
+    await Bun.build({ entrypoints, compile: { outfile } });
+
+    for (const [name, found] of [
+      ["./a\\b.js", "a/b"],
+      ["./c\\d/e.js", "c\\d/e"],
+    ]) {
+      const cwd = join(String(dir), "away");
+      await using proc = Bun.spawn({ cmd: [outfile, name], cwd, env: bunEnv, stderr: "inherit" });
+      expect(await proc.stdout.text()).toBe(`${found}\n${found}\n`);
+      expect(await proc.exited).toBe(0);
+    }
+  });
+
+  test.concurrent.each([
+    ["..", {}, "app/src/out/dist"],
+    // On POSIX the name is that of the directory, which `/` does not have.
+    ...(isWindows ? [["/index.js", { "/index.js": "" }, "app/src/out/dist/index"] as const] : []),
+  ])("names the executable of the entry point %s without an outfile", async (entry, files, expected) => {
+    using dir = tempDir("build-compile-default-name", { "app/index.js": "", "app/src/out": {} });
+    const options = { entrypoints: [entry], files, outdir: "out/dist", compile: true };
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-p", `(await Bun.build(${JSON.stringify(options)})).outputs[0].path`],
+      cwd: join(String(dir), "app", "src"),
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(join(String(dir), expected) + (isWindows ? ".exe\n" : "\n"));
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["whole", (tgz: Uint8Array) => tgz, "InvalidElfFile", ["not an executable"]],
+    ["cut short", (tgz: Uint8Array) => tgz.subarray(0, -1), "appears to be corrupted", []],
+    ["damaged", (tgz: Uint8Array) => tgz.fill(0, -8), "appears to be corrupted", []],
+  ])("the download of another platform's executable is %s", async (_, spoil, message, cached) => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(spoil(Bun.gzipSync(tar))) });
+    using dir = tempDir("build-compile-download", { "app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_COMPILE_TARGET_TARBALL_URL: server.url.href,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(message);
+    const files = readdirSync(join(String(dir), "cache"));
+    expect(files.map(name => readFileSync(join(String(dir), "cache", name), "utf8"))).toEqual(cached);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("the download goes to the cache that `bun install` uses", async () => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.gzipSync(tar)) });
+    using dir = tempDir("build-compile-cache-backslash", { "app/app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: join(String(dir), "app"),
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: "..\\cache", BUN_COMPILE_TARGET_TARBALL_URL: server.url.href },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await proc.exited).toBe(1);
+    expect(readdirSync(join(String(dir), "cache"))).toHaveLength(1);
+  });
+
+  test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
+    using dir = tempDir("build-compile-closed-stdio", {
+      "build.js": `
+        import { closeSync, writeFileSync } from "node:fs";
+        const options = { entrypoints: ["/virtual/app.js"], files: { "/virtual/app.js": "process.exit(7)" } };
+        // Opens what the bundler keeps open, so that it doesn't take the numbers.
+        await Bun.build(options);
+        for (const fd of [0, 1, 2]) closeSync(fd);
+        await Bun.build({ ...options, compile: { outfile: "app" } });
+        let result;
+        try {
+          result = Bun.spawnSync({ cmd: ["./app"], stdio: ["ignore", "ignore", "ignore"] }).exitCode;
+        } catch (error) {
+          result = error.code;
+        }
+        writeFileSync("result", String(result));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    const exitCode = await proc.exited;
+    expect(readFileSync(join(String(dir), "result"), "utf8")).toBe("7");
+    expect(exitCode).toBe(0);
   });
 
   // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
@@ -536,7 +649,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
       // A name is a wyhash (seed 0) of bytes that say what is written, which for these two can be written down by hand.
       // A change to them changes what every order file recorded so far calls every function: if that is what a change
-      // means to do, it changes the order file's version line ("v2") too.
+      // means to do, it changes the order file's version line ("v3") too.
       test("the bytes a name is a hash of", () => {
         const u64 = (value: number) => [...new Uint8Array(new BigUint64Array([BigInt(value)]).buffer)];
         const f64 = (value: number) => [...new Uint8Array(new Float64Array([value]).buffer)];
@@ -886,7 +999,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const { order, plain } = shared;
           // Nothing but the five kinds of lines: a recording says so, in a line of another kind, when something the run
           // decoded could not be named.
-          expect(order.split("\n").filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
+          expect(order.split("\n").filter(line => !/^(v3|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
           expect(plain).toEqual({
             stdout: "APPAPP 2a4a6 AA/a+/3-a 2b4b6 BB/b+/3-b 2c4c6 CC/c+/3-c\n",
             cacheHits: expect.any(Number),
@@ -894,7 +1007,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           });
           // The entry point's chunk, the shared one, and a, b, c.
           expect(plain.cacheHits).toBe(5);
-          expect(order).toStartWith("v2\n");
+          expect(order).toStartWith("v3\n");
           for (const kind of ["F", "S", "M", "N", "K"])
             expect(order).toMatch(new RegExp(`^${kind} [0-9a-f]{16}$`, "m"));
           expect(hasLinkedPayload(exe("plain"))).toBe(false);
@@ -1138,7 +1251,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const lines = (await Bun.file(join(workerCwd, out)).text()).split("\n");
           const of = (kind: string) =>
             new Set(lines.filter(line => line.startsWith(kind + " ")).map(line => line.slice(2)));
-          const other = lines.filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line));
+          const other = lines.filter(line => !/^(v3|[FSMNK] [0-9a-f]{16}|)$/.test(line));
           return {
             stdout,
             exitCode,
@@ -1316,13 +1429,13 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           ).toThrow("compile.jitPolicy");
         }
         // Lines that are not hints (unknown kinds, bad or reserved hashes) are skipped: nothing is left, so nothing changes.
-        await Bun.write(join(cwd(), "junk.order"), "v2\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
+        await Bun.write(join(cwd(), "junk.order"), "v3\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
         // Nor is a file of another version, whose names are names of something else, or one that is no order file.
-        await Bun.write(join(cwd(), "older.order"), shared.order.replace(/^v2\n/, "v1\n"));
+        await Bun.write(join(cwd(), "older.order"), shared.order.replace(/^v3\n/, "v1\n"));
         await Bun.write(join(cwd(), "utf16.order"), Buffer.from("\ufeff" + shared.order, "utf16le"));
         await Bun.write(
           join(cwd(), "not-recorded.order"),
-          "v2\n# not recorded: none of the program's code has names\n",
+          "v3\n# not recorded: none of the program's code has names\n",
         );
         await Bun.write(join(cwd(), "not-one.order"), "F 0123456789abcdef\n");
         // The two builds that succeed, at the same time.
@@ -1547,7 +1660,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             .filter(file => file.startsWith("pid-"))
             .sort();
           expect(written).toEqual([`pid-${proc.pid}.digest`, `pid-${proc.pid}.order`]);
-          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v2\n")).toBe(true);
+          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v3\n")).toBe(true);
         },
         60_000,
       );
@@ -1556,7 +1669,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       test("an order file of another program", async () => {
         const { plain, orderedStderr } = shared;
         const hashes = Array.from({ length: 64 }, (_, i) => `F ${(i + 1).toString(16).padStart(16, "0")}`).join("\n");
-        await Bun.write(join(cwd(), "other-program.order"), `v2\n${hashes}\n`);
+        await Bun.write(join(cwd(), "other-program.order"), `v3\n${hashes}\n`);
         const other = await compile(exe("other-program"), ["--bytecode-order=other-program.order"]);
         expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
         expect(other.exitCode).toBe(0);
@@ -1672,7 +1785,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
               proc.terminal?.close();
               expect(proc.signalCode).toBe(signal);
               const lines = (await Bun.file(out).text()).split("\n");
-              expect(lines[0]).toBe("v2");
+              expect(lines[0]).toBe("v3");
               expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
               expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
             },
@@ -2121,6 +2234,29 @@ export function inOther() {
     expect(appStdout).toBe("default outfile\n");
     expect(appStderr).toBe("");
     expect(appExitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/14020. Only macOS clones the executable, mode included.
+  test.skipIf(!isMacOS)("compile from a read-only executable leaves no temporary file", async () => {
+    using dir = tempDir("build-compile-read-only", { "cwd/app.js": `console.log("read-only");` });
+    const cwd = join(String(dir), "cwd");
+    const readOnly = join(String(dir), "bun");
+    cpSync(bunExe(), readOnly, { dereference: true });
+    chmodSync(readOnly, 0o555);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--compile-executable-path=${readOnly}`, "app.js"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(readdirSync(cwd).sort()).toEqual(["app", "app.js"]);
+    expect(exitCode).toBe(0);
   });
 
   test("compile with embedded resources uses correct module prefix", async () => {

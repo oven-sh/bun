@@ -249,10 +249,6 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         globalObject, JSC::MarkedArgumentBuffer());
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT(
-        result && result.isCell() && dynamicDowncast<JSObject>(result),
-        "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().legacyCStringPointer());
     return result;
 }
 
@@ -518,10 +514,9 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source, sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
-    result->ref();
     *bytes = result->span().data();
     *size = result->size();
-    *handle = result.get();
+    *handle = result.leakRef();
     return true;
 }
 

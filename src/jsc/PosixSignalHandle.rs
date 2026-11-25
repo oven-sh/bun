@@ -157,7 +157,7 @@ fn send_unseen_signals_again() {
 
 /// JS listener count for the configured watch kill signal, mirrored here so
 /// the watcher thread can decide between the immediate execve reload and the
-/// event-loop reload that runs those handlers first (see `Task::enqueue`).
+/// event-loop reload that runs those handlers first (see `HotReloader::reload`).
 static WATCH_KILL_SIGNAL_LISTENERS: AtomicU32 = AtomicU32::new(0);
 
 /// JS listener count for SIGINT, mirrored for the async-signal-safe fast exit

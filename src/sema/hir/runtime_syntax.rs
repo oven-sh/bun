@@ -1,8 +1,8 @@
 use super::{
-    ClassId, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
-    MemberId, MemberKind, ModifierId, ModifierKind, ModuleName, NameKind, ParamId, PatKind,
-    PatPropId, Prop, PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId,
-    has_body, is_nested_namespace,
+    ClassId, Expr, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
+    MemberId, MemberKind, ModifierId, ModifierKind, ModuleId, ModuleName, NameKind, ParamId,
+    PatKind, PatPropId, Prop, PropId, PropKey, PropKind, Span, Stmt, StmtId, StmtKind, Storage,
+    VarDeclId, has_body, is_nested_namespace,
 };
 use crate::atom::{Atom, known};
 use bun_core::strings;
@@ -77,6 +77,12 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    pub fn is_strict_namespace(&self, declaration: ModuleId) -> bool {
+        self.modules.get(declaration.idx()).is_some_and(|it| {
+            (self.directives(it.body)).any(|directive| directive.1 == known::use_strict)
+        })
+    }
+
     pub fn is_erased_statement(&self, stmt: StmtId) -> bool {
         let Some(statement) = self.stmts.get(stmt.idx()) else {
             return false;
@@ -120,25 +126,29 @@ impl<S: Storage> FileIn<S> {
             })
     }
 
-    pub fn value_read_as_directive(&self, written: ExprId) -> Option<Atom> {
-        let text = self.skip_type_assertions(written);
-        match self.exprs.get(text.idx())?.kind {
-            ExprKind::String(value)
-                if !self.expr_flags(text).contains(ExprFlags::TEMPLATE_LITERAL) =>
-            {
-                Some(value)
-            }
-            _ => None,
-        }
-    }
-
     fn is_dropped_directive(&self, statement: StmtId) -> bool {
-        let Some(StmtKind::Expr(written)) = self.stmts.get(statement.idx()).map(|it| it.kind)
+        let Some(&Stmt {
+            kind: StmtKind::Expr(written) | StmtKind::Directive { expr: written, .. },
+            start,
+            ..
+        }) = self.stmts.get(statement.idx())
         else {
             return false;
         };
-        let value = self.value_read_as_directive(written);
-        matches!(value, Some(known::use_strict | known::use_asm))
+        let text = self.skip_type_assertions(written);
+        let not_directive = ExprFlags::PARENTHESIZED | ExprFlags::TEMPLATE_LITERAL;
+        match self.exprs.get(text.idx()) {
+            Some(&Expr {
+                kind: ExprKind::String(value),
+                pos,
+                end,
+            }) if pos == start && !self.expr_flags(text).intersects(not_directive) => {
+                // With an escape it has the value of a directive, but is another text.
+                let is_as_long_as_written = end - pos == b"'use strict'".len() as u32;
+                value == known::use_asm || (value == known::use_strict && !is_as_long_as_written)
+            }
+            _ => false,
+        }
     }
 
     fn is_kept_in_namespace(&self, statement: StmtId) -> bool {

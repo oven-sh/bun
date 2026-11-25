@@ -18,7 +18,7 @@ use bun_install::{
     PackageID, PackageManager, ResolutionTag,
 };
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::AutoAbsPath;
+use bun_paths::Path;
 
 use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
@@ -73,12 +73,12 @@ impl Blocked {
     /// The same check as in the installers: the scripts of the project and its workspaces always
     /// run, and every other package needs trust.
     fn scripts_at(
-        log: &mut bun_ast::Log,
-        lockfile: &Lockfile,
+        pm: &PackageManager,
         dep_id: DependencyID,
         package_id: PackageID,
-        folder: &mut AutoAbsPath,
+        folder: &[u8],
     ) -> crate::Result<Option<ScriptsList>> {
+        let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let packages = &lockfile.packages;
         let package_id = package_id as usize;
@@ -91,6 +91,7 @@ impl Blocked {
             resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || lockfile.has_trusted_dependency(
+            &pm.options,
             alias,
             packages.items_name()[package_id].slice(buf),
             resolution,
@@ -100,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, folder, alias, resolution, true) {
+        match scripts.get_list(pm.log_mut(), folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -110,9 +111,9 @@ impl Blocked {
     fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
         // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
         // look for each package where it resolves from.
-        let mut store = AutoAbsPath::init_top_level_dir();
-        let _ = store.append(b"node_modules/.bun");
-        if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
+        let mut store = Path::from_top_level_dir();
+        store.push(b"node_modules/.bun");
+        if linker == NodeLinker::Isolated && bun_sys::exists_z(&store) {
             return Self::find_in_store(pm);
         }
         // The tree saved in the lockfile also has the dependencies that packages bundle, and no
@@ -121,20 +122,15 @@ impl Blocked {
     }
 
     fn find_in_store(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
-        let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut path = AutoAbsPath::init_top_level_dir();
-        let top_level_len = path.len();
+        let mut top_level_dir = Path::from_top_level_dir();
 
         let mut link_buf = bun_paths::path_buffer_pool::get();
         for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
-            path.set_length(top_level_len);
-            let _ = path.append(folder.entry_dir.as_slice());
-            let entry_dir_len = path.len();
-            let _ = path.append(b"node_modules");
+            let entry_dir = top_level_dir.push_scoped(&folder.entry_dir);
             let is_link = lockfile.packages.items_resolution()[folder.pkg_id as usize].tag
                 == ResolutionTag::Symlink;
             let name = if is_link {
@@ -142,13 +138,11 @@ impl Blocked {
             } else {
                 lockfile.packages.items_name()[folder.pkg_id as usize]
             };
-            let _ = path.append(name.slice(buf));
-            let Some(scripts_list) =
-                Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
+            let path = Path::from_parts(&[&entry_dir, b"node_modules", name.slice(buf)]);
+            let Some(scripts_list) = Self::scripts_at(pm, folder.dep_id, folder.pkg_id, &path)?
             else {
                 continue;
             };
-            path.set_length(entry_dir_len);
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
@@ -156,7 +150,7 @@ impl Blocked {
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
-                    && bun_sys::readlink(path.slice_z(), &mut link_buf[..]).is_ok(),
+                    && bun_sys::readlink(&entry_dir, &mut link_buf[..]).is_ok(),
                 action: Action::Skip,
             });
         }
@@ -164,24 +158,20 @@ impl Blocked {
     }
 
     fn find_in_tree(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
-        let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut blocked: Vec<Blocked> = Vec::new();
-        let mut path = AutoAbsPath::init_top_level_dir();
-        let top_level_len = path.len();
+        let mut top_level_dir = Path::from_top_level_dir();
 
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(node_modules) = tree_iterator.next(None) {
-            path.set_length(top_level_len);
-            let _ = path.append(node_modules.relative_path.as_bytes());
-            if !bun_sys::exists(path.slice()) {
+            let mut path = top_level_dir.push_scoped(node_modules.relative_path);
+            if !bun_sys::exists_z(&path) {
                 continue;
             }
-            let node_modules_len = path.len();
 
             for &dep_id in node_modules.dependencies {
                 let package_id = resolutions[dep_id as usize];
@@ -190,15 +180,9 @@ impl Blocked {
                 {
                     continue;
                 }
-                path.set_length(node_modules_len);
-                let _ = path.append(
-                    lockfile.buffers.dependencies.as_slice()[dep_id as usize]
-                        .name
-                        .slice(buf),
-                );
-                if let Some(scripts_list) =
-                    Self::scripts_at(log, lockfile, dep_id, package_id, &mut path)?
-                {
+                let alias = &lockfile.buffers.dependencies.as_slice()[dep_id as usize].name;
+                let folder = path.push_scoped(alias.slice(buf));
+                if let Some(scripts_list) = Self::scripts_at(pm, dep_id, package_id, &folder)? {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
@@ -466,7 +450,7 @@ impl TrustCommand {
         let named = |name: &[u8]| {
             packages_to_trust
                 .iter()
-                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name, true))
+                .any(|package_name_from_cli| strings::eql_long(package_name_from_cli, name))
         };
         for info in &mut blocked {
             let (alias, trusted_name) = info.names(lockfile);
@@ -544,7 +528,7 @@ impl TrustCommand {
                     >= max_concurrent
                 {
                     if log_level.is_verbose()
-                        && PackageManager::has_enough_time_passed_between_waiting_messages()
+                        && pm.has_enough_time_passed_between_waiting_messages()
                     {
                         bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",

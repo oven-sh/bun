@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
 use bun_core::ZStr;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, UnwrapOrOom as _};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, Path, to_portable_in_place};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{
@@ -105,7 +105,7 @@ impl Tree {
         }
         (deps.get(self.dependency_id as usize)).is_some_and(|dep| {
             dep.behavior.is_workspace()
-                && dep.version.tag == crate::dependency::VersionTag::Workspace
+                && dep.version.tag() == crate::dependency::VersionTag::Workspace
         }) && !(trees[self.parent as usize].dependencies)
             .get(hoisted_dependencies)
             .contains(&self.dependency_id)
@@ -194,7 +194,7 @@ pub enum IteratorPathStyle {
 
 pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
     pub(crate) tree_id: Id,
-    pub(crate) path_buf: PathBuffer,
+    path: Path,
 
     trees: &'a [Tree],
     hoisted_dependencies: &'a [DependencyID],
@@ -241,19 +241,15 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         dependencies: &'a [Dependency],
         string_bytes: &'a [u8],
     ) -> Self {
-        let mut iter = Self {
+        Self {
             tree_id: 0,
             trees,
             hoisted_dependencies,
             dependencies,
             string_bytes,
-            path_buf: PathBuffer::ZEROED,
+            path: Path::new(),
             depth_stack: depth_buf_uninit(),
-        };
-        if PATH_STYLE == IteratorPathStyle::NodeModules {
-            iter.path_buf[0..b"node_modules".len()].copy_from_slice(b"node_modules");
         }
-        iter
     }
 
     pub(crate) fn reset(&mut self) {
@@ -295,7 +291,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             self.dependencies,
             self.string_bytes,
             current_tree_id,
-            &mut self.path_buf,
+            &mut self.path,
             &mut self.depth_stack,
         );
 
@@ -317,7 +313,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     dependencies: &[Dependency],
     string_buf: &[u8],
     tree_id: Id,
-    path_buf: &'b mut PathBuffer,
+    path: &'b mut Path,
     depth_buf: &mut DepthBuf,
 ) -> (&'b ZStr, usize) {
     let mut depth: usize = 0;
@@ -325,19 +321,11 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     let tree = trees[tree_id as usize];
 
     let mut parent_id = tree.id;
-    let mut path_written: usize = match PATH_STYLE {
-        IteratorPathStyle::NodeModules => {
-            // The buffer is reused. An unlinked workspace package's path overwrites this prefix.
-            path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-            b"node_modules".len()
-        }
-        IteratorPathStyle::PkgPath => 0,
-    };
 
-    let path_too_long = || -> ! {
-        Output::err_generic("Lockfile is malformed (dependency path is too long)", ());
-        bun_core::Global::crash();
-    };
+    path.clear();
+    if PATH_STYLE == IteratorPathStyle::NodeModules {
+        path.set(b"node_modules");
+    }
 
     if tree.id > 0 {
         let buf = string_buf;
@@ -345,8 +333,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
             if ids.len() == ids.capacity() {
-                path_buf[path_written] = 0;
-                return (ZStr::from_buf(path_buf, path_written), 0);
+                return (path, 0);
             }
             ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
@@ -354,20 +341,10 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
         depth = ids.len();
         for (i, &id) in ids.filled().iter().rev().enumerate() {
-            if PATH_STYLE == IteratorPathStyle::PkgPath {
-                if i != 0 {
-                    if path_written + 1 >= MAX_PATH_BYTES {
-                        path_too_long();
-                    }
-                    path_buf[path_written] = b'/';
-                    path_written += 1;
-                }
-            } else {
-                if path_written + 1 >= MAX_PATH_BYTES {
-                    path_too_long();
-                }
-                path_buf[path_written] = SEP;
-                path_written += 1;
+            if PATH_STYLE == IteratorPathStyle::NodeModules {
+                path.push_trailing_sep();
+            } else if i != 0 {
+                path.extend_from_slice(b"/");
             }
 
             let mut name = trees[id as usize].folder_name(dependencies, buf);
@@ -376,14 +353,13 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // first component. The path starts at the package's own folder, or `./` in bun.lock.
             if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
                 if PATH_STYLE == IteratorPathStyle::PkgPath {
-                    path_buf[..2].copy_from_slice(b"./");
-                    path_written = 2;
+                    path.set(b"./");
                 } else {
                     let member = &dependencies[trees[id as usize].dependency_id as usize];
-                    name = bun_core::strings::without_trailing_slash(
-                        member.version.workspace().slice(buf),
-                    );
-                    path_written = 0;
+                    let crate::dependency::Value::Workspace(folder) = &member.version.value else {
+                        unreachable!("checked by `is_unlinked_member`");
+                    };
+                    name = folder.slice(buf);
                     // A workspace can be outside the project, e.g. `../shared`.
                     is_workspace_path = true;
                 }
@@ -395,28 +371,25 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 );
                 bun_core::Global::crash();
             }
-            let name_end = match path_written.checked_add(name.len()) {
-                Some(end) if end < MAX_PATH_BYTES => end,
-                _ => path_too_long(),
-            };
-            path_buf[path_written..name_end].copy_from_slice(name);
-            path_written = name_end;
-
+            if is_workspace_path {
+                path.clear();
+                path.push(name);
+                // Keeps the `/` that it has in the lockfile.
+                to_portable_in_place(path.as_mut_slice());
+            } else {
+                path.extend_from_slice(name);
+            }
             if PATH_STYLE == IteratorPathStyle::NodeModules {
-                if path_written + b"/node_modules".len() >= MAX_PATH_BYTES {
-                    path_too_long();
-                }
-                path_buf[path_written] = SEP;
-                path_buf[path_written + 1..path_written + 1 + b"node_modules".len()]
-                    .copy_from_slice(b"node_modules");
-                path_written += b"/node_modules".len();
+                path.push(b"node_modules");
+            }
+            if path.len() >= MAX_PATH_BYTES {
+                Output::err_generic("Lockfile is malformed (dependency path is too long)", ());
+                bun_core::Global::crash();
             }
         }
     }
-    path_buf[path_written] = 0;
-    let rel = ZStr::from_buf(path_buf, path_written);
 
-    (rel, depth)
+    (path, depth)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -596,7 +569,7 @@ impl PeerProbes {
         }
 
         let is_probed = |peer: &Dependency| {
-            peer.behavior.is_peer() && peer.version.tag == crate::dependency::VersionTag::Npm
+            peer.behavior.is_peer() && peer.version.tag() == crate::dependency::VersionTag::Npm
         };
         let with_peers = self.1.get_or_insert_with(|| {
             let lists = lockfile.packages.items_resolutions();
@@ -1861,13 +1834,14 @@ impl Tree {
                 let range = (builder.lockfile().catalogs).resolve_range(builder.buf(), dependency);
                 let resolution: &Resolution =
                     &builder.lockfile().packages.items_resolution()[res_id as usize];
-                range.tag == crate::dependency::VersionTag::Npm
-                    && resolution.tag == crate::resolution::Tag::Npm
-                    && (range.npm().version).satisfies(
-                        resolution.npm().version,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                range.try_npm().is_some_and(|range| {
+                    resolution.tag == crate::resolution::Tag::Npm
+                        && (range.version).satisfies(
+                            resolution.npm().version,
+                            builder.buf(),
+                            builder.buf(),
+                        )
+                })
             };
             // Every platform installs such a dependency, unless an option like `--omit` skips it.
             let is_always_linked =
@@ -1878,12 +1852,8 @@ impl Tree {
                 // registry version. Their hoisted linker linked the workspace.
                 if METHOD == BuilderMethod::Filter
                     && dep.behavior.is_workspace()
-                    && dependency.version.tag == crate::dependency::VersionTag::DistTag
-                    && (dependency.version.dist_tag().name).eql(
-                        dependency.name,
-                        builder.buf(),
-                        builder.buf(),
-                    )
+                    && let crate::dependency::Value::DistTag(dist_tag) = &dependency.version.value
+                    && (dist_tag.name).eql(dependency.name, builder.buf(), builder.buf())
                 {
                     return HoistDependencyResult::Hoisted; // 1
                 }

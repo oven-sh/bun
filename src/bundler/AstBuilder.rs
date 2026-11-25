@@ -515,6 +515,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             top_level_await_keyword: Range::NONE,
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
+            directives: bun_ast::StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             url_for_css: b"",
             tla_check: Default::default(),

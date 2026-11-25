@@ -12,7 +12,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
-use bun_io::BufferedReader;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 use bun_paths as path;
 
 use crate::Command;
@@ -24,7 +24,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
+    self as spawn, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -82,8 +82,8 @@ impl Shared {
     }
 }
 
-/// Parent of a reader: prints what a script writes to stdout or to stderr, line by line.
-pub(crate) struct ScriptOutput<'a> {
+/// Prints what a script writes to stdout or to stderr, line by line.
+struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     is_stderr: bool,
@@ -128,18 +128,7 @@ impl ScriptOutput<'_> {
     }
 }
 
-bun_io::impl_buffered_reader_parent! {
-    MultiRunPipeReader for ScriptOutput<'a>;
-    feature = Tools;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*this).shared.event_loop.loop_);
-    event_loop      = |this| (*this).shared.event_loop.as_event_loop_ctx();
-}
-
-struct PipeReader<'a> {
+pub(crate) struct PipeReader<'a> {
     reader: BufferedReader,
     output: ScriptOutput<'a>,
 }
@@ -147,7 +136,7 @@ struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(shared: &'a Shared, config: &'a ScriptConfig, is_stderr: bool) -> Self {
         Self {
-            reader: BufferedReader::init::<ScriptOutput>(),
+            reader: BufferedReader::init(),
             output: ScriptOutput {
                 shared,
                 config,
@@ -157,18 +146,24 @@ impl<'a> PipeReader<'a> {
         }
     }
 
+    pub(crate) fn read(&mut self, event: Option<IoEvent>) {
+        let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the script.
+        let _ = self.reader.read_chunks(event_loop, event, |chunk, _| {
+            let _ = self.output.read_chunk(&chunk);
+            true
+        });
+    }
+
     /// After the exit: a leftover child may hold the pipe open, so its EOF may never come.
     fn drain_and_close(&mut self) {
-        let reader = &mut self.reader;
         // Windows has no synchronous drain.
         #[cfg(unix)]
-        if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-            reader.set_parent((&raw mut self.output).cast());
-            // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
-            unsafe { BufferedReader::read(reader) };
+        if !self.reader.is_done() && self.reader.get_fd() != bun_sys::Fd::INVALID {
+            self.read(None);
         }
-        if !reader.is_done() {
-            reader.deinit();
+        if !self.reader.is_done() {
+            self.reader.deinit();
         }
     }
 }
@@ -224,7 +219,9 @@ impl<'a> ProcessHandle<'a> {
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(self.shared.event_loop));
 
         for pipe in [&mut self.stdout_reader, &mut self.stderr_reader] {
-            pipe.reader.set_parent((&raw mut pipe.output).cast());
+            let owner = Owner::new(PollTag::MultiRunPipeReader, std::ptr::from_mut(pipe).cast());
+            // SAFETY: `owner` points to the value that holds this reader, whose slot in `State.handles` does not move.
+            unsafe { pipe.reader.set_owner(owner) };
         }
 
         #[cfg(windows)]
@@ -242,20 +239,14 @@ impl<'a> ProcessHandle<'a> {
         }
 
         #[cfg(unix)]
-        {
-            if let Some(stdout_fd) = stdout_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader
-                    .reader
-                    .start(stdout_fd, true)
-                    .map_err(Error::from)?;
-            }
-            if let Some(stderr_fd) = stderr_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader
-                    .reader
-                    .start(stderr_fd, true)
-                    .map_err(Error::from)?;
+        for (pipe, file) in [
+            (&self.stdout_reader, stdout_pipe),
+            (&self.stderr_reader, stderr_pipe),
+        ] {
+            if let Some(file) = file {
+                let _ = bun_sys::set_nonblocking(file.fd());
+                let event_loop = self.shared.event_loop.as_event_loop_ctx();
+                let _ = pipe.reader.start(event_loop, file.into(), true)?;
             }
         }
         #[cfg(not(unix))]
@@ -277,23 +268,16 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // Not a borrow of the slot, which the exit handler borrows again.
-        let process = self.process.as_ref().unwrap().process.this_ptr();
+        let process = &self.process.as_ref().unwrap().process;
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
-                }
-            }
+        let mut rusage = bun_core::ffi::zeroed();
+        if let Some(exit) = process.watch_or_exit(&mut rusage) {
+            exit.dispatch(&rusage);
         }
 
         Ok(())
@@ -669,8 +653,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         // If it looks like a file path, prefix with bun executable
         let is_file = !raw_name.is_empty()
             && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
+                || bun_paths::is_sep(raw_name[0])
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");

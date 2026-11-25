@@ -7,26 +7,20 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_picohttp as picohttp;
 use bun_uws::quic;
 
 use super::ClientSession;
-use crate::HttpClient;
 use crate::h3_client as h3;
+use crate::{Headers, InFlightRequest};
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
     pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
-    // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
-    pub(crate) client: Option<NonNull<HttpClient<'static>>>,
+    pub(crate) client: Option<InFlightRequest>,
     // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
     pub(crate) qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) decoded_headers: Headers,
     pub(crate) body_buffer: Vec<u8>,
     pub(crate) status_code: u16,
 
@@ -44,12 +38,12 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> Stream {
+    pub(crate) fn new(session: &mut ClientSession, client: InFlightRequest) -> Stream {
         Stream {
             session: bun_ptr::BackRef::new_mut(session),
-            client: Some(client.as_erased_ptr()),
+            client: Some(client),
             qstream: None,
-            decoded_headers: Vec::new(),
+            decoded_headers: Headers::default(),
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,

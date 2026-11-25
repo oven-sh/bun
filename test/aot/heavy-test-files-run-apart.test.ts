@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, tempDir, untilEveryThreadIs } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -115,6 +115,73 @@ test("as long as a heavy file is left, the others get what fits beside it", asyn
     "start b",
     "start a",
   ]);
+});
+
+// `untilEveryThreadIs` reads /proc.
+test.skipIf(!isLinux)("the process that replaces a worker that waited for room gets one file at a time", async () => {
+  // The first to start keeps its worker until all three have started, so the other two are the new process's.
+  const half = (name: string) => `
+    import { test } from "bun:test";
+    import { appendFileSync, readFileSync } from "node:fs";
+    test("${name}", async () => {
+      appendFileSync("started", "${name}");
+      if (readFileSync("started", "utf8").startsWith("${name}")) while (readFileSync("started").length < 3) await Bun.sleep(1);
+    }, 100_000);`;
+  using dir = tempDir("waiting-worker-is-replaced", {
+    "largest.test.js": `
+      import { test } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      test("largest", () => {
+        while (!existsSync("go")) Bun.sleepSync(1);
+        setTimeout(() => writeFileSync("reported", ""));
+      }, 100_000);`,
+    "a.test.js": half("a"),
+    "b.test.js": half("b"),
+    "c.test.js": half("c"),
+    "light.test.js": `import { test } from "bun:test"; test("pids " + process.ppid + " " + process.pid, () => {});`,
+    "timings.json": JSON.stringify({
+      version: 1,
+      files: { "largest.test.js": 5, "a.test.js": 4, "b.test.js": 3, "c.test.js": 2, "light.test.js": 1 },
+      memory: { "largest.test.js": 4500, "a.test.js": 1500, "b.test.js": 1500, "c.test.js": 1500 },
+    }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--aot", "--no-isolate", "--parallel=2", "--timings=timings.json"],
+    env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const letLargestEnd = () => writeFileSync(join(String(dir), "go"), "");
+  let stderr = "";
+  let replaced: Promise<void> | undefined;
+  for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
+    stderr += chunk;
+    // The group ends when the coordinator learns that the file is done. From then on its worker waits.
+    const pids = /\(pass\) pids (\d+) (\d+)[^]*::endgroup::/.exec(stderr);
+    if (!pids) continue;
+    replaced ??= (async ([coordinator, worker]) => {
+      process.kill(coordinator, "SIGSTOP");
+      try {
+        await untilEveryThreadIs("T", coordinator);
+        process.kill(worker, "SIGKILL");
+        await untilEveryThreadIs("Z", worker);
+        letLargestEnd();
+        const deadline = performance.now() + 30_000;
+        while (!existsSync(join(String(dir), "reported"))) {
+          if (performance.now() > deadline) throw new Error("the largest file did not end");
+          await Bun.sleep(1);
+        }
+      } finally {
+        letLargestEnd();
+        process.kill(coordinator, "SIGCONT");
+      }
+    })(pids.slice(1).map(Number));
+  }
+  expect(replaced).toBeDefined();
+  await replaced;
+  expect(stderr).toContain(" 5 pass\n 0 fail\n");
+  expect(await proc.exited).toBe(0);
 });
 
 test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew", async () => {

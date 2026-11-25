@@ -512,14 +512,14 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
     ignore_bom: bool,
     out_utf8_fast_path: &mut MaybeUninit<bool>,
     out_encoding: &mut MaybeUninit<EncodingLabel>,
-) -> *mut TextDecoder {
+) -> Option<Box<TextDecoder>> {
     out_utf8_fast_path.write(false);
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
         let converted = match bun_core::String::from_js(label, global) {
             Ok(s) => s,
-            Err(_) => return core::ptr::null_mut(),
+            Err(_) => return None,
         };
         let str = converted.to_utf8();
         match EncodingLabel::which(str.slice()) {
@@ -534,16 +534,16 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
                         ),
                     )
                     .throw();
-                return core::ptr::null_mut();
+                return None;
             }
         }
     };
     out_encoding.write(encoding);
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         out_utf8_fast_path.write(true);
-        return core::ptr::null_mut();
+        return None;
     }
-    bun_core::heap::into_raw(Box::new(TextDecoder {
+    Some(Box::new(TextDecoder {
         fatal,
         ignore_bom,
         encoding,

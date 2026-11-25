@@ -18,31 +18,29 @@
 //! `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
+use core::ffi::CStr;
 use core::mem::MaybeUninit;
 
-use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
+use rustix::fd::{IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
-use crate::{Fd, Mode};
+use crate::{Fd, IoVec, IoVecMut, Mode};
 use bun_core::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Glue: rustix ↔ bun_sys primitive types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Reinterpret a raw posix fd as a `BorrowedFd` for the duration of a single
-/// rustix call. SAFETY: `fd` must be a valid open descriptor (and ≠ -1; that
-/// value is `BorrowedFd`'s niche) for the duration of the call. Caller-owned;
-/// rustix never closes a `BorrowedFd`.
-///
-/// The lifetime is unbounded (chosen by inference at each call site) rather
-/// than `'static` — every use in this module is a single-expression borrow,
-/// so inference picks a local lifetime and the wrapper cannot accidentally
-/// outlive the real fd.
-#[inline(always)]
-unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
-    // SAFETY: forwarded — see fn doc.
-    unsafe { BorrowedFd::borrow_raw(fd) }
+/// Not `CStr::from_ptr`: rustix's functions for Android are not `#[inline]`, so only LTO could drop its `strlen`.
+#[inline]
+fn c_path(path: &ZStr) -> &CStr {
+    debug_assert!(
+        !bun_core::strings::contains_char(path, 0),
+        "interior NUL would truncate the C view",
+    );
+    // SAFETY: it ends with a NUL. Only debug builds check that it has no other, as a `CStr` must not.
+    // The result only goes to rustix, which reads nothing of it but the pointer.
+    unsafe { CStr::from_bytes_with_nul_unchecked(path.as_bytes_with_nul()) }
 }
 
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
@@ -88,7 +86,7 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
+    retry(|| rustix::fs::openat(dir, c_path(path), oflags, mode)).map(own_fd)
 }
 
 /// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
@@ -122,7 +120,7 @@ pub(crate) fn openat2(
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
+    retry(|| rustix::fs::openat2(dir, c_path(path), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]
@@ -187,20 +185,19 @@ pub(crate) fn fstat(fd: Fd) -> Result<libc::stat, i32> {
 
 #[inline]
 pub(crate) fn stat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::stat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::stat(c_path(path))).map(stat_to_libc)
 }
 
 #[inline]
 pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::lstat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::lstat(c_path(path))).map(stat_to_libc)
 }
 
 #[inline]
-pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
-    // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
-    let dir = unsafe { bfd(dir) };
+pub(crate) fn fstatat(dir: Fd, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
+    let dir = dir.as_borrowed_fd();
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
-    retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
+    retry(|| rustix::fs::statat(dir, c_path(path), at)).map(stat_to_libc)
 }
 
 /// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
@@ -215,7 +212,7 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
     // libc backend (Android, where bionic's `faccessat` is already flag-less).
     let access = rustix::fs::Access::from_bits_retain(mode as _);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
+    retry(|| rustix::fs::accessat(dir, c_path(path), access, rustix::fs::AtFlags::empty()))
 }
 
 /// Map rustix's kernel `struct stat` → `libc::stat`.
@@ -280,10 +277,7 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 // vectored I/O
 //
 // `readv`/`preadv` cannot route through rustix's typed `io::readv` because
-// that API requires `&mut [IoSliceMut]`, and our callers (lib.rs:3211/3258)
-// hand us `vecs.as_ptr()` derived from a *shared* `&[PlatformIoVec]` —
-// fabricating a `&mut` slice from that pointer is UB under Stacked/Tree
-// Borrows regardless of whether rustix actually writes to the iovec array.
+// that API requires `&mut [IoSliceMut]`, whose buffers must not overlap.
 // Instead pass the raw pointer straight to the kernel via `libc::syscall`.
 // `syscall(2)` is a thin
 // register-shuffle (no PLT entry per call, no pthread cancellation point);
@@ -308,89 +302,44 @@ fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
     }
 }
 
-/// Raw `readv(2)`. `vecs` is `*const libc::iovec` (the public `PlatformIoVec`
-/// alias). The kernel reads the iovec array and writes through each
-/// `iov_base`; the array itself is never mutated.
+/// Raw `readv(2)`.
 #[inline]
-pub(crate) unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
-        // `iov_base` are writable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long) }
-    })
+pub(crate) fn readv(fd: Fd, vecs: &[IoVecMut<'_>]) -> Result<usize, i32> {
+    let (raw, n) = (IoVecMut::as_raw(vecs), vecs.len());
+    // SAFETY: `n` buffers, which may be written.
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_readv, fd.native(), raw, n) })
 }
 
 /// Raw `writev(2)`.
 #[inline]
-pub(crate) unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // Same shape as `readv` above: hand the raw `(iovec*, n)` pair straight to
-    // the kernel rather than fabricating a `&[IoSlice]` just to satisfy
-    // rustix's typed wrapper. The caller already owns a `&[PlatformIoVec]`;
-    // round-tripping through a reconstructed borrowed slice buys nothing.
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
-        // `iov_base` are readable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_writev, fd.native(), vecs, n as libc::c_long) }
-    })
+pub(crate) fn writev(fd: Fd, vecs: &[IoVec<'_>]) -> Result<usize, i32> {
+    let (raw, n) = (IoVec::as_raw(vecs), vecs.len());
+    // SAFETY: `n` buffers, which may be read.
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_writev, fd.native(), raw, n) })
+}
+
+/// As in glibc's `LO_HI_LONG`. On LP64 the kernel's `pos_from_hilo` shifts it out.
+#[inline(always)]
+fn high_half(off: i64) -> libc::c_long {
+    ((off as u64) >> 32) as libc::c_long
 }
 
 /// Raw `preadv(2)`.
 #[inline]
-pub(crate) unsafe fn preadv(
-    fd: Fd,
-    vecs: *const libc::iovec,
-    n: usize,
-    off: i64,
-) -> Result<usize, i32> {
-    // The kernel `preadv` ABI splits the offset into (lo, hi) longs on every
-    // arch; on LP64 the kernel's `pos_from_hilo` shifts `hi` out entirely, so
-    // `lo` carries the full 64-bit offset. Mirror glibc's `LO_HI_LONG` for
-    // documentation fidelity.
-    let lo = off as libc::c_long;
-    let hi = ((off as u64) >> 32) as libc::c_long;
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
-        // `iov_base` are writable for `iov_len` bytes.
-        unsafe {
-            libc::syscall(
-                libc::SYS_preadv,
-                fd.native(),
-                vecs,
-                n as libc::c_long,
-                lo,
-                hi,
-            )
-        }
-    })
+pub(crate) fn preadv(fd: Fd, vecs: &[IoVecMut<'_>], off: i64) -> Result<usize, i32> {
+    let (raw, n) = (IoVecMut::as_raw(vecs), vecs.len());
+    let hi = high_half(off);
+    // SAFETY: `n` buffers, which may be written.
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_preadv, fd.native(), raw, n, off, hi) })
 }
 
 /// Raw `pwritev(2)`.
 #[inline]
-pub(crate) unsafe fn pwritev(
-    fd: Fd,
-    vecs: *const libc::iovec,
-    n: usize,
-    off: i64,
-) -> Result<usize, i32> {
-    // Mirror `preadv`: split offset per the kernel `pwritev` ABI and pass the
-    // raw `(iovec*, n)` straight through instead of reconstructing a borrowed
-    // `&[IoSlice]` for rustix's typed wrapper.
-    let lo = off as libc::c_long;
-    let hi = ((off as u64) >> 32) as libc::c_long;
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
-        // `iov_base` are readable for `iov_len` bytes.
-        unsafe {
-            libc::syscall(
-                libc::SYS_pwritev,
-                fd.native(),
-                vecs,
-                n as libc::c_long,
-                lo,
-                hi,
-            )
-        }
-    })
+pub(crate) fn pwritev(fd: Fd, vecs: &[IoVec<'_>], off: i64) -> Result<usize, i32> {
+    let (raw, n) = (IoVec::as_raw(vecs), vecs.len());
+    let hi = high_half(off);
+    // SAFETY: `n` buffers, which may be read.
+    sys_retry(|| unsafe { libc::syscall(libc::SYS_pwritev, fd.native(), raw, n, off, hi) })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -526,16 +475,16 @@ pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 /// (matches the existing `WrappedIterator` parser which decodes the raw
 /// `linux_dirent64` records itself).
 #[inline]
-pub(crate) unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
+pub(crate) fn getdents64(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> isize {
     // rustix only exposes `RawDir` (which owns the parse loop). We need the
     // raw byte fill to keep the existing record parser, so issue the syscall
     // via `libc::syscall(SYS_getdents64, ..)`. This is a thin trampoline (no
     // errno-on-return mangling beyond the standard `-1`/errno convention).
     // PERF: switch to `rustix::fs::RawDir` once `WrappedIterator` is
     // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
-    // SAFETY: raw `getdents64(2)`; caller guarantees `buf[..len]` is writable;
-    // kernel validates `fd`.
-    unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }
+    let (fd, ptr) = (libc::c_long::from(fd.native()), buf.as_mut_ptr());
+    // SAFETY: `buf` is writable for `buf.len()` bytes; the kernel validates `fd`.
+    unsafe { libc::syscall(libc::SYS_getdents64, fd, ptr, buf.len()) as isize }
 }
 
 #[inline(always)]

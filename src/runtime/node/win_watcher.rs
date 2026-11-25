@@ -7,6 +7,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::scoped::ScopedFlag as _;
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_jsc::JsCell;
@@ -36,6 +37,8 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 
 /// A VM's watchers, by `recursive` and path.
 pub(crate) type PathWatchers = [JsCell<StringArrayHashMap<uv::Owned<PathWatcher>>>; 2];
+
+pub(crate) type Handle = *mut PathWatcher;
 
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 #[repr(C)]
@@ -117,25 +120,10 @@ impl PathWatcher {
         let timestamp = unsafe { (*me.handle.loop_).time };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
-            me.emit_in_progress.set(true);
-
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
-                    continue;
-                }
-                on_path_update_fn(
-                    Some(ctx),
-                    Event::Error {
-                        err: err.clone(),
-                        close: true,
-                    },
-                    false,
-                );
-                on_update_end_fn(Some(ctx));
-            }
-
-            me.emit_in_progress.set(false);
+            me.emit_unsuppressed(|| Event::Error {
+                err: err.clone(),
+                close: true,
+            });
             Self::maybe_deinit(this);
             return;
         }
@@ -150,16 +138,7 @@ impl PathWatcher {
             // ReadDirectoryChangesW overflowed and changes were lost (always
             // UV_CHANGE), or libuv could not convert the name to UTF-8.
             // Forward `(event, null)` to every handler like node, unsuppressed.
-            me.emit_in_progress.set(true);
-            let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
-                    continue;
-                }
-                on_path_update_fn(Some(ctx), Event::NoFilename(event_type), false);
-                on_update_end_fn(Some(ctx));
-            }
-            me.emit_in_progress.set(false);
+            me.emit_unsuppressed(|| Event::NoFilename(event_type));
             Self::maybe_deinit(this);
             return;
         }
@@ -170,6 +149,18 @@ impl PathWatcher {
         let hash = me.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !me.handle.is_dir();
         Self::emit(this, path.as_bytes(), hash, timestamp, is_file, event_type);
+    }
+
+    fn emit_unsuppressed(&self, event: impl Fn() -> Event) {
+        let _emitting = self.emit_in_progress.raise_for_scope();
+        let keys = self.handlers.get().keys().to_vec();
+        for ctx in keys {
+            if !self.handlers.get().contains_key(&ctx) {
+                continue;
+            }
+            on_path_update_fn(Some(ctx), event(), false);
+            on_update_end_fn(Some(ctx));
+        }
     }
 
     fn emit(
@@ -184,7 +175,7 @@ impl PathWatcher {
             // SAFETY: `this` is the live heap pointer from `init`; the borrow ends
             // before `maybe_deinit` may free it.
             let me = unsafe { &*this };
-            me.emit_in_progress.set(true);
+            let _emitting = me.emit_in_progress.raise_for_scope();
             #[cfg(debug_assertions)]
             let mut debug_count: usize = 0;
 
@@ -226,8 +217,6 @@ impl PathWatcher {
                 timestamp,
                 debug_count,
             );
-
-            me.emit_in_progress.set(false);
         }
         Self::maybe_deinit(this);
     }
@@ -304,10 +293,8 @@ impl PathWatcher {
         sys::Result::Ok(this)
     }
 
-    /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
-    /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
-    /// caller in `node_fs_watcher.rs` is platform-agnostic.
-    pub(crate) fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+    /// JS-thread entry point from `FSWatcher.detach()`.
+    pub(crate) fn detach(this: Handle, handler: *mut c_void) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
@@ -340,7 +327,7 @@ pub(crate) fn watch(
     path: &ZStr,
     recursive: bool,
     ctx: *mut c_void,
-) -> sys::Result<*mut PathWatcher> {
+) -> sys::Result<Handle> {
     let watcher = PathWatcher::init(vm, path, recursive)?;
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe { &*watcher }.handlers.with_mut(|h| {

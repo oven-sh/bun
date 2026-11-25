@@ -3,7 +3,6 @@
 #include "TestEnvironment.h"
 
 #include "BunClientData.h"
-#include "ConsoleObject.h"
 #include "InternalModuleRegistry.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
@@ -37,7 +36,6 @@ static Zig::GlobalObject* lastingRealm(JSC::VM& vm)
         auto identifier = WebCore::ScriptExecutionContext::generateIdentifier();
         auto& methodTable = vm.hasCompiledCode() ? methodTableOfProgram(identifier) : Zig::GlobalObject::globalObjectMethodTable();
         auto* realm = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm), identifier, &methodTable);
-        realm->setConsole(static_cast<Bun::ConsoleObject&>(*defaultGlobalObject(vm)->consoleClient()).m_client);
 #if ENABLE(AOT)
         if (vm.hasCompiledCode())
             JSC::AOT::acceptForeignBinaryData(realm);

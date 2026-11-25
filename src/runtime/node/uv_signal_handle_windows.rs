@@ -28,16 +28,8 @@ extern "C" fn Bun__UVSignalHandle__init(
     signal.into_raw()
 }
 
-// C++ declaration (`BunProcess.cpp:1177`):
-//   extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
-// The caller discards the return, but the Rust side must still match the
-// signature — a `void`-vs-pointer return is an ABI mismatch (different
-// register usage on Win64). Return null (handle is being torn down).
 #[unsafe(no_mangle)]
-extern "C" fn Bun__UVSignalHandle__close(
-    signal: *mut libuv::uv_signal_t,
-) -> *mut libuv::uv_signal_t {
+extern "C" fn Bun__UVSignalHandle__close(signal: *mut libuv::uv_signal_t) {
     // SAFETY: `signal` is a live handle previously returned by Bun__UVSignalHandle__init.
     drop(unsafe { libuv::Owned::from_raw(signal) });
-    core::ptr::null_mut()
 }

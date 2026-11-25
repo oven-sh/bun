@@ -54,6 +54,7 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
 // `code` / `message` are borrowed slices valid only for the duration of the
 // callback invocation (callers parse them out of an XML response body). Field
 // ownership is *not* `'static` — modeled with an explicit `<'a>`.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct S3Error<'a> {
     pub code: &'a [u8],
     pub message: &'a [u8],

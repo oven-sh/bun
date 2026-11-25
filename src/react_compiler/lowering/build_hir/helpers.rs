@@ -1458,6 +1458,7 @@ fn lower_optional_call_expression_impl(
                     value: InstructionValue::CallExpression {
                         callee: callee.clone(),
                         args,
+                        bun_kind: call.kind,
                         loc,
                     },
                     loc,

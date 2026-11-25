@@ -312,7 +312,6 @@ pub struct ResolvedBuiltins {
     mentioned: Box<[BuiltinId]>,
     source_evaluator_escapes: bool,
     may_call_unnamed_evaluator: bool,
-    #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
     loads_unknown_modules: bool,
@@ -582,7 +581,6 @@ impl ResolvedBuiltins {
         })
     }
 
-    #[cfg(test)]
     pub fn exposed(&self) -> &[BuiltinId] {
         &self.exposed
     }

@@ -169,6 +169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let args = p.parse_call_args()?;
                     expr = p.new_expr(
                         E::Call {
+                            kind: E::CallKind::of(&expr),
                             target: expr,
                             args: args.list,
                             close_paren_loc: args.loc,
@@ -268,6 +269,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
+                // The body becomes a function body when the namespace is lowered, and tsc keeps its prologue.
+                allow_directive_prologue: true,
                 ..ParseStatementOptions::default()
             };
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
@@ -518,6 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
+                        kind: E::CallKind::of(&target),
                         target,
                         close_paren_loc,
                         args,

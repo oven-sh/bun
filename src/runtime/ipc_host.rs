@@ -10,7 +10,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_ptr::RefPtr;
+use bun_ptr::Attached;
 
 use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
@@ -160,16 +160,14 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = Listener::from_js(handle) {
+        if let Some(listener) = Listener::from_js(&handle) {
             log!("got listener");
-            // SAFETY: from_js returned a non-null `*mut Listener`; the JS
-            // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
+            match listener.listener.get() {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    let fd = bun_opaque::opaque_deref_mut(socket_uws.as_ptr())
-                        .get_socket()
-                        .get_fd();
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),
@@ -184,9 +182,8 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
-            // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(&handle) {
+            let fd = socket.socket.get().fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()
@@ -275,10 +272,11 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
         // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, pause_target)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
@@ -389,7 +387,7 @@ unsafe extern "C" {
 
 /// Child-side IPC channel: the send queue for the inherited channel fd.
 pub(crate) struct IPCInstance {
-    pub data: RefPtr<SendQueue>,
+    pub data: Attached<SendQueue>,
 }
 
 /// One channel per JS thread; a `Worker`'s VM records no `PendingIpc`, so its thread's stays `None`.
@@ -486,7 +484,6 @@ pub(crate) fn get_ipc_instance(
             data.as_ptr(),
             true,
         ) else {
-            data.detach();
             bun_core::warn!("Unable to start IPC socket");
             return None;
         };
@@ -511,7 +508,6 @@ pub(crate) fn get_ipc_instance(
         // allocation's root raw pointer.
         // SAFETY: `send_queue` is the live SendQueue owned by `data`.
         if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            data.detach();
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }

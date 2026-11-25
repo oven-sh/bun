@@ -39,12 +39,12 @@ void JSPerformanceObserver::visitAdditionalChildrenInGCThread(Visitor& visitor)
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSPerformanceObserver);
 
-bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason)
+bool JSPerformanceObserver::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral* reason) const
 {
     if (reason) [[unlikely]]
         *reason = "Registered PerformanceObserver callback"_s;
 
-    return uncheckedDowncast<JSPerformanceObserver>(handle.slot()->asCell())->wrapped().isRegistered();
+    return wrapped().isRegistered();
 }
 
 }

@@ -1704,6 +1704,29 @@ describe("the BoringSSL error queue", () => {
       { code: "ERR_OUT_OF_RANGE" },
     ],
     [
+      "cloning a public key BoringSSL cannot encode",
+      () => structuredClone(crypto.generateKeyPairSync("dh", { group: "modp5" }).publicKey),
+      { name: "DataCloneError" },
+    ],
+    [
+      "cloning a private key BoringSSL cannot encode",
+      () => new MessageChannel().port1.postMessage(crypto.generateKeyPairSync("dh", { group: "modp5" }).privateKey),
+      { name: "DataCloneError" },
+    ],
+    [
+      "exporting a key BoringSSL cannot encode",
+      () => crypto.generateKeyPairSync("dh", { group: "modp5" }).publicKey.export({ type: "spki", format: "der" }),
+      { code: "ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM" },
+    ],
+    [
+      "toCryptoKey of a key BoringSSL cannot encode",
+      () =>
+        crypto
+          .generateKeyPairSync("dh", { group: "modp5" })
+          .publicKey.toCryptoKey({ name: "ECDH", namedCurve: "P-256" }, true, []),
+      { name: "OperationError" },
+    ],
+    [
       "getCipherInfo with an impossible key length",
       () => crypto.getCipherInfo("aes-128-gcm", { keyLength: 5 }),
       { returns: undefined },

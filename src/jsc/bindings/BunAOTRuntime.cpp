@@ -258,7 +258,7 @@ extern "C" BunAOTBytes Bun__AOT__imageCode()
 }
 
 extern "C" void Bun__AOT__recordRefusedChange(const BunString* refusal, const BunString* sourceURL, unsigned line, unsigned column);
-extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame*, JSC::JSGlobalObject*, BunString* outSourceURL, unsigned* outLine, unsigned* outColumn);
+extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame*, JSC::JSGlobalObject*, Bun::OwnedString* outSourceURL, unsigned* outLine, unsigned* outColumn);
 
 static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String& refusal)
 {
@@ -267,25 +267,21 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
     bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s) && !refusal.startsWith("Ran more often "_s);
     if (!callFrame && namesPlace)
         return;
-    BunString sourceURL = Bun::BunStringEmpty;
+    Bun::OwnedString sourceURL;
     unsigned line = 0;
     unsigned column = 0;
     if (namesPlace)
         Bun__CallFrame__getCallerSrcLoc(callFrame, globalObject, &sourceURL, &line, &column);
-    BunString text = Bun::toStringRef(refusal);
-    Bun__AOT__recordRefusedChange(&text, &sourceURL, line, column);
-    text.deref();
-    sourceURL.deref();
+    BunString text = Bun::toString(refusal);
+    Bun__AOT__recordRefusedChange(&text, &sourceURL.get(), line, column);
 }
 
 extern "C" void Bun__AOT__recordMissingExport(const BunString* name, const BunString* exporter, const BunString* importer);
 
 static void recordMissingExport(const String& name, const String& exporter, const String& importer)
 {
-    BunString texts[] = { Bun::toStringRef(name), Bun::toStringRef(exporter), Bun::toStringRef(importer) };
+    BunString texts[] = { Bun::toString(name), Bun::toString(exporter), Bun::toString(importer) };
     Bun__AOT__recordMissingExport(&texts[0], &texts[1], &texts[2]);
-    for (BunString& text : texts)
-        text.deref();
 }
 
 static bool listsRefusedChanges;

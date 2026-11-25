@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef, HasJsRef as _};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -60,6 +60,12 @@ impl HeadersRef {
     pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
         // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
         unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
+    }
+
+    #[inline]
+    pub(crate) fn create_from_headers(headers: &bun_http::Headers) -> Self {
+        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
+        unsafe { Self::adopt(FetchHeaders::create_from_headers(headers)) }
     }
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
@@ -161,28 +167,15 @@ impl BodyAbortListener {
 
 use crate::generated_bindgen::response::js_Response as js;
 
-#[inline]
-pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
-    js::from_js(value).map(|p| p.as_ptr())
-}
-
-/// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
-#[inline]
-pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
-    from_js(value)
-        .and_then(core::ptr::NonNull::new)
-        .map(bun_ptr::ParentRef::from)
-}
-
 impl bun_jsc::JsClass for Response {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        from_js(value)
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Response::to_js(RefPtr::new(self), global)
+        RefPtr::new(self).to_js(global)
     }
 }
 
@@ -207,7 +200,7 @@ pub(crate) struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -234,9 +227,9 @@ impl Default for Response {
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
@@ -444,15 +437,21 @@ impl Response {
     }
 
     /// The wrapper adopts the ref.
-    pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        this.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.as_ptr(), global_object);
-        this.js_ref.set(JsRef::init_weak(js_value));
+    pub(crate) fn to_js(self: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        self.wrap(global_object).to_js()
+    }
+
+    /// As `to_js`, for code that goes on to use the struct.
+    pub(crate) fn wrap(
+        self: RefPtr<Self>,
+        global_object: &JSGlobalObject,
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        self.calculate_estimated_byte_size();
+        let this = js::wrap(self, global_object);
+        this.set_js_ref_weak();
 
         this.check_body_stream_ref(global_object);
-        // The wrapper has held this ref since `js::to_js`.
-        let _ = this.into_raw();
-        js_value
+        this
     }
 
     #[inline]
@@ -752,7 +751,7 @@ impl Response {
         self.throw_if_body_unusable(global_this)?;
         let cloned = self.clone(&cx)?;
 
-        let js_wrapper = Response::to_js(cloned, global_this);
+        let js_wrapper = cloned.to_js(global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }
@@ -771,10 +770,6 @@ impl Response {
 
     pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<RefPtr<Response>> {
         Ok(RefPtr::new(self.clone_value(cx)?))
-    }
-
-    pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
@@ -823,7 +818,7 @@ impl Response {
             &StringView::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
@@ -849,7 +844,7 @@ impl Response {
             &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     #[inline(always)]
@@ -939,7 +934,7 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
@@ -953,7 +948,7 @@ impl Response {
             ..Default::default()
         });
 
-        Response::to_js(response, global_this)
+        response.to_js(global_this)
     }
 
     pub(crate) fn constructor<'a>(
@@ -963,10 +958,9 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        this.check_body_stream_ref(cx.global());
+        this_value.set_js_ref_weak();
+        Self::wrapped_by(this_value).check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -976,9 +970,6 @@ impl Response {
         init: JSValue,
     ) -> JsResult<RefPtr<Response>> {
         if body.is_object() {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); only `&self` accessors (`is_s3`, `store`)
-            // are touched on this path.
             if let Some(blob) = body.as_class_ref::<Blob>() {
                 if blob.is_s3() {
                     if !init.is_undefined_or_null() {
@@ -1106,7 +1097,7 @@ impl Response {
         }
         let init = Init::from_parts(global_this, parts)?;
         let response = Self::from_body_and_init(global_this, body, init)?;
-        Ok(Response::to_js(response, global_this))
+        Ok(response.to_js(global_this))
     }
 }
 
@@ -1218,7 +1209,7 @@ impl Init {
     }
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
+        // `JSValue::as_class_ref::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
         if let Some(orig) = FetchHeaders::cast(headers) {
             // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
             let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
@@ -1272,11 +1263,6 @@ impl Init {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if let Some(req) = response_init.as_direct::<Request>() {
-                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
-                // JS wrapper cell; the wrapper is rooted by `response_init` for
-                // the duration of this call, so no GC can finalize it here.
-                // Everything touched is `&self`.
-                let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
                 }
@@ -1286,9 +1272,6 @@ impl Init {
             }
 
             if let Some(resp) = response_init.as_direct::<Response>() {
-                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
-                // JS wrapper cell; rooted by `response_init` for this call.
-                let resp = unsafe { &*resp };
                 return Ok(Some(resp.init.get().clone(global_this)?));
             }
         }

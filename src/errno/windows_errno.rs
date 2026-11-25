@@ -365,7 +365,7 @@ pub use bun_core::S as s;
 
 /// `GetLastError()` as `E`: `SUCCESS` when no code is recorded, else
 /// `Win32ErrorExt::to_e`. For the error of a call known to have failed use
-/// `bun_sys::Error::from_win32` / `bun_sys::windows::last_system_errno`.
+/// `bun_sys::Error::from_win32`.
 #[inline]
 pub fn last_error() -> E {
     match Win32Error::get() {
@@ -844,6 +844,7 @@ pub mod windows {
             NTSTATUS::DELETE_PENDING => E::BUSY,
             NTSTATUS::SHARING_VIOLATION => E::BUSY,
             NTSTATUS::OBJECT_NAME_INVALID => E::INVAL,
+            NTSTATUS::NAME_TOO_LONG => E::NAMETOOLONG,
             NTSTATUS::CANNOT_DELETE => E::PERM,
             // Any other error status: ask ntdll for the equivalent Win32 error
             // and run it through the same libuv-derived table Node.js uses.

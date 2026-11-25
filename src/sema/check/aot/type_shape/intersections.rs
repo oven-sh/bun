@@ -99,7 +99,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node),
                 ..
-            } => self.c.p.aot_symbols().is_int32_tag(file, node),
+            } => self.c.p.aot_symbols.is_int32_tag(file, node),
             _ => false,
         }
     }

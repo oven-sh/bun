@@ -59,6 +59,8 @@ pub enum SocketKind {
     //    the thunk reads `group->ext` as the templated `HttpContext<SSL>*`.
     UwsHttp,
     UwsHttpTls,
+
+    // ── The WebSockets of a server (WebSocket.rs) ─────────────────────────
     UwsWs,
     UwsWsTls,
 }
@@ -103,7 +105,7 @@ impl SocketKind {
 // `#[repr(u8)]` already refuses to compile with >256 variants, so the
 // invariant is enforced by the type system; no explicit assert needed.
 
-/// The four kinds whose handlers live in C++ are also referenced from C++
+/// The kinds whose handlers live in C++ are also referenced from C++
 /// (`packages/bun-uws/src/SocketKinds.h`). Export their ordinals so the C++
 /// side links against the Rust source of truth instead of mirroring literals
 /// that silently rot if this enum is reordered.
@@ -113,11 +115,7 @@ static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
 static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
-#[unsafe(no_mangle)]
-static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
-#[unsafe(no_mangle)]
-static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
-/// Referenced from `openssl.c` so the new-session callback's per-SSL marker is
+/// Referenced from `openssl.cpp` so the new-session callback's per-SSL marker is
 /// only set for the sockets that actually surface the `'session'` event.
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;

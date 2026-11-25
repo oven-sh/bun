@@ -627,7 +627,6 @@ export const tablesReadByNobody: readonly string[] = [
   "JSCookiePrototypeTableValues", // webcore/JSCookie.cpp
   "JSDatabaseSyncPrototypeTableValues", // sqlite/NodeSqlite.cpp
   "JSDirentPrototypeTableValues", // NodeDirent.cpp
-  "JSHTTPParserPrototypeTableValues", // node/http/JSHTTPParserPrototype.cpp
   "JSHashPrototypeTableValues", // node/crypto/JSHash.cpp
   "JSHmacPrototypeTableValues", // node/crypto/JSHmac.cpp
   "JSMIMEParamsPrototypeTableValues", // webcore/JSMIMEParams.cpp

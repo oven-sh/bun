@@ -7,11 +7,11 @@ use std::sync::Arc;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, ZStr, handle_oom, strings};
+use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::SEP;
-use bun_paths::path_options::AssumeOk as _;
+use bun_paths::Path;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
+use bun_threading::wait_group::Pending;
 use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::installer::Installer;
@@ -198,35 +198,25 @@ impl Plan {
 /// workspace's path with `/` and `join` adds the platform's separator.
 fn native_path(path: &[u8]) -> impl core::fmt::Display + '_ {
     use bun_core::fmt::{EscapeControlChars, PathFormatOptions, PathSep, fmt_path};
-    // On other platforms `\` is an ordinary character in a file name, so it is not converted.
-    let path_sep = if cfg!(windows) {
-        PathSep::Windows
-    } else {
-        PathSep::Any
-    };
     EscapeControlChars(fmt_path(
         path,
         PathFormatOptions {
-            path_sep,
+            path_sep: PathSep::Auto,
             ..Default::default()
         },
     ))
 }
 
+/// `@scope/name` keeps its `/`, as in the paths of the lockfile's trees, which these are compared with.
 fn join(dir: &[u8], name: &[u8]) -> Box<[u8]> {
-    let mut out = Vec::with_capacity(dir.len() + 1 + name.len());
-    out.extend_from_slice(dir);
-    out.push(SEP);
-    out.extend_from_slice(name);
-    out.into_boxed_slice()
+    let mut path = Path::from(dir);
+    path.push_trailing_sep();
+    path.extend_from_slice(name);
+    path.as_bytes().into()
 }
 
 fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
-    let mut out = Vec::with_capacity(scope.len() + 1 + name.len());
-    out.extend_from_slice(scope);
-    out.push(b'/');
-    out.extend_from_slice(name);
-    out.into_boxed_slice()
+    strings::concat(&[scope, b"/", name])
 }
 
 // Store folders are named `name@version[+peers]`, scoped as `@scope+name@version` (Store.rs fmt_store_key).
@@ -241,13 +231,6 @@ fn split_store_key(key: &[u8]) -> (Box<[u8]>, Option<Box<[u8]>>) {
         _ => name.into(),
     };
     (alias, Some(version.into()))
-}
-
-fn zname(name: &[u8]) -> Vec<u8> {
-    let mut z = Vec::with_capacity(name.len() + 1);
-    z.extend_from_slice(name);
-    z.push(0);
-    z
 }
 
 pub(crate) fn sort_names(names: &mut Vec<Box<[u8]>>) {
@@ -1747,7 +1730,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         workspace_filters,
         tree::Layout::Older,
     ) {
-        remove_from_older_places(manager, &places, cache);
+        remove_from_older_places(manager, &places, cache.handle.fd());
         restore_tree(&mut manager.lockfile, saved);
     }
 }
@@ -1769,7 +1752,7 @@ fn tarball_may_contain(
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
-            crate::package_manager::cached_npm_package_folder_name_print(
+            crate::package_manager::cached_npm_package_folder_name(
                 manager,
                 &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
@@ -1785,8 +1768,8 @@ fn tarball_may_contain(
     };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(entry.as_bytes(), b"node_modules"), alias));
-    sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
+    let folder = ZBox::from_bytes(join(&join(entry.as_bytes(), b"node_modules"), alias));
+    sys::directory_exists_at(cache, &folder).unwrap_or(true)
 }
 
 /// The path of a tree's `node_modules`, relative to the project root.
@@ -1915,9 +1898,7 @@ fn links_package(
             )
         }
     };
-    let stat = |dir: &Dir, path: &[u8]| {
-        sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(path))).ok()
-    };
+    let stat = |dir: &Dir, path: &[u8]| sys::fstatat(dir.fd(), &ZBox::from_bytes(path)).ok();
     let (Some(link), Some(target)) = (stat(entry.dir, entry.name), stat(&Dir::cwd(), &target))
     else {
         return false;
@@ -2090,7 +2071,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
         return None;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let path = strings::without_trailing_slash(res.workspace().slice(buf));
+    let path = bun_paths::without_trailing_sep(res.workspace().slice(buf));
     if path.is_empty() || lockfile.is_member_outside(pkg_id) {
         return None;
     }
@@ -2100,7 +2081,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
 /// Anything that removes entries from the store or from a `node_modules` must open the folder with
 /// this function. It never follows a symlink, and adds it to `linked_folders` instead.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
-    let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
+    let st = sys::lstat(&ZBox::from_bytes(folder)).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
         EntryKind::Directory => Dir::cwd()
             .open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
@@ -2151,18 +2132,12 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
-        &self,
-        path: &mut bun_paths::Path<u8, KIND, SEP>,
-    ) -> bool {
-        let below = match path.slice().strip_prefix(&*self.abs_path) {
-            Some([]) => Vec::new(),
-            Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
-            _ => return false,
+    pub(crate) fn resolve(&self, path: &mut Path) -> bool {
+        let Some(below) = bun_paths::strip_prefix(path, &self.abs_path) else {
+            return false;
         };
         if !self.real_path.is_empty() {
-            *path = bun_paths::Path::from(&*self.real_path).assume_ok();
-            path.append(&below).assume_ok();
+            *path = Path::from_parts(&[&self.real_path, below]);
         }
         true
     }
@@ -2215,7 +2190,7 @@ fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
 
 #[cfg(not(windows))]
 fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
-    match sys::lstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(name))) {
+    match sys::lstatat(dir.fd(), &ZBox::from_bytes(name)) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -2228,12 +2203,7 @@ fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     let Ok(dir_path) = dir.get_fd_path(&mut dir_buf) else {
         return EntryKind::Unknown;
     };
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
-        &mut path_buf[..],
-        &[&*dir_path, name],
-    );
-    match sys::lstat(path) {
+    match sys::lstat(&bun_paths::Path::join(&[&*dir_path, name])) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -2368,7 +2338,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
             };
             let protected =
                 reachable::packages_from(lockfile, resolutions, &unselected, false, full);
-            wanted.unmanaged.set_union(&protected.unmanaged);
+            wanted.set_union(&protected);
         }
     }
     wanted
@@ -2628,10 +2598,10 @@ fn plan_store_entry_leftovers(store: &Dir, entry: &[u8], plan: &mut Plan) {
 }
 
 fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
-    let z = zname(name);
+    let z = ZBox::from_bytes(name);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let len = sys::readlinkat(dir.fd(), ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
-    let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
+    let len = sys::readlinkat(dir.fd(), &z, buf.as_mut_slice()).ok()?;
+    let mut components = bun_paths::components(&buf.as_slice()[..len]);
     while let Some(component) = components.next() {
         if component == b".bun" {
             return components
@@ -2644,8 +2614,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
-    let z = zname(name);
-    let z = ZStr::from_slice_with_nul(&z);
+    let z = &ZBox::from_bytes(name);
     let result = sys::unlinkat(dir.fd(), z);
     #[cfg(windows)]
     let result = result.or_else(|_| sys::rmdirat(dir.fd(), z));
@@ -2675,12 +2644,10 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
 /// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
 pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-    let mut buf = bun_paths::path_buffer_pool::get();
     while real_len < path.len() {
         let rest = &path[real_len + 1..];
         real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
-        let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
-        remove_planted_link(&Dir::cwd(), component)?;
+        remove_planted_link(&Dir::cwd(), &Path::from(&path[..real_len]))?;
     }
     Ok(())
 }
@@ -2731,13 +2698,13 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {
-    let z = zname(name);
-    let _ = sys::rmdirat(dir.fd(), ZStr::from_slice_with_nul(&z));
+    let z = ZBox::from_bytes(name);
+    let _ = sys::rmdirat(dir.fd(), &z);
 }
 
 fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
-    let z = zname(name);
-    match sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
+    let z = ZBox::from_bytes(name);
+    match sys::fstatat(dir.fd(), &z) {
         Ok(_) => false,
         Err(err) => matches!(err.get_errno(), E::ENOENT | E::ENOTDIR),
     }
@@ -2837,23 +2804,11 @@ pub(crate) fn prune_bins(node_modules: &Dir) -> bool {
 /// `node_modules`. The package's folder comes after the last `node_modules` component of `path`,
 /// because it can be in a store entry.
 fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
-    let (mut package, mut at) = (0, 0);
-    while let Some(end) = strings::index_of_any_pos(path, b"/\\", at) {
-        if &path[at..end] == b"node_modules" {
-            package = end + 1;
-        }
-        at = end + 1;
-    }
-    let Some(mut end) = strings::index_of_any_pos(path, b"/\\", package) else {
-        return false;
-    };
-    if path[package] == b'@' {
-        let Some(name) = strings::index_of_any_pos(path, b"/\\", end + 1) else {
-            return false;
-        };
-        end = name;
-    }
-    !is_dangling(node_modules, &path[..end])
+    let mut folders: Vec<&[u8]> = (bun_paths::ancestors(path).skip(1))
+        .take_while(|folder| bun_paths::basename(folder) != b"node_modules")
+        .collect();
+    folders.pop_if(|outermost| bun_paths::basename(outermost).starts_with(b"@"));
+    (folders.last()).is_some_and(|package| !is_dangling(node_modules, package))
 }
 
 /// The folder also has files that Bun didn't create, so only links into `global_node_modules` are
@@ -2879,8 +2834,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
             continue;
         }
         if let Some((bin_path, global_node_modules)) = global {
-            let dest = zname(&join(bin_path, name));
-            let dest = ZStr::from_slice_with_nul(&dest);
+            let dest = &ZBox::from_bytes(join(bin_path, name));
             match sys::readlink(dest, link.as_mut_slice()) {
                 Ok(len)
                     if crate::bin_real::Linker::link_leads_into(
@@ -3130,7 +3084,7 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         .map(|(index, _)| store_entry::Id::from(index as u32))
         .map(|entry_id| (entry_id, store.ids(entry_id).dep_id));
     let other_names = (store.hidden_hoist_keys.iter()).map(|key| (key.entry_id, key.dep_id));
-    let mut package: Vec<u8> = Vec::new();
+    let mut package = Path::new();
     for (entry_id, dep_id) in own_names.chain(other_names) {
         let pkg_id = store.ids(entry_id).pkg_id as usize;
         let name = deps[dep_id as usize].name.slice(buf);
@@ -3138,17 +3092,13 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
             continue;
         }
         package.clear();
-        write!(
-            package,
-            "{}/node_modules/{}",
-            store_entry::fmt_store_path(entry_id, store, lockfile),
-            BStr::new(lockfile.packages.items_name()[pkg_id].slice(buf))
-        )
-        .expect("Vec<u8> write is infallible");
+        let store_path = store_entry::fmt_store_path(entry_id, store, lockfile);
+        write!(package, "{store_path}/node_modules");
+        package.push(lockfile.packages.items_name()[pkg_id].slice(buf));
         // An entry's folder name depends on its peers, which depend on the options of the install
         // that created it, so this run's name for the entry may not exist on disk.
         if !is_dangling(&store_dir, &package) {
-            Installer::link_hidden_name(store, lockfile, entry_id, name, false);
+            let _ = Installer::link_hidden_name(store, lockfile, entry_id, name, false);
         }
     }
 }
@@ -3166,14 +3116,13 @@ impl OldModules {
     /// Deletes it on another thread. Anything that can't be deleted stays until the next `bun
     /// prune`.
     pub(crate) fn remove(&self) -> OldModulesRemoval {
-        let done = Arc::new(WaitGroup::init_with_count(1));
+        let done = Arc::new(WaitGroup::init());
         handle_oom(WorkPool::go(
-            (self.0.clone(), Arc::clone(&done)),
-            |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
+            (self.0.clone(), Pending::new(Arc::clone(&done))),
+            |(name, _pending): (Box<[u8]>, Pending<Arc<WaitGroup>>)| {
                 if let Ok(node_modules) = Dir::open(ROOT_DIR) {
                     let _ = node_modules.delete_tree(&name);
                 }
-                done.finish();
             },
         ));
         OldModulesRemoval(done)

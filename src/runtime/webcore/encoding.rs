@@ -175,15 +175,11 @@ unsafe extern "C" fn Bun__encoding__constructFromLatin1(
 ) -> JSValue {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
-    // Ownership of the allocation transfers to JSC: `create_buffer` registers the
-    // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
-    // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
-    // would be a use-after-free + double-free).
-    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
+    let bytes = dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input),
         Encoding::Latin1 | Encoding::Buffer => unreachable!(),
-    }, |E| construct_from_u8::<E>(input)));
-    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
+    }, |E| construct_from_u8::<E>(input));
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, bytes))
 }
 
 /// # Safety
@@ -197,15 +193,11 @@ unsafe extern "C" fn Bun__encoding__constructFromUTF16(
 ) -> JSValue {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
-    // Ownership of the allocation transfers to JSC: `create_buffer` registers the
-    // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
-    // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
-    // would be a use-after-free + double-free).
-    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
+    let bytes = dispatch_encoding!(encoding_from_u8(encoding), {
         Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input),
         Encoding::Buffer => unreachable!(),
-    }, |E| construct_from_u16::<E>(input)));
-    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
+    }, |E| construct_from_u16::<E>(input));
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, bytes))
 }
 
 /// `Buffer.from(string, encoding)` at compile time, for a constant string.
@@ -810,7 +802,6 @@ fn construct_from_hex<Char: strings::HexChar>(input: &[Char]) -> Vec<u8> {
     // SAFETY: the returned spare bytes are write-only until committed.
     let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
     let wrote = strings::decode_hex_to_bytes_truncate(&mut dest[..outlen], input);
-    // `create_buffer` frees nothing for an empty slice, so an empty result must not own memory.
     if wrote == 0 {
         return Vec::new();
     }

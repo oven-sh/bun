@@ -1,6 +1,7 @@
 use core::marker::PhantomData;
 
-use crate::{JSGlobalObject, JSValue, Strong};
+use crate::bindgen::JsWrapper;
+use crate::{JSGlobalObject, JSValue, JsCell, Strong, WrapperGuard};
 
 /// Holds a reference to a JSValue with lifecycle management.
 ///
@@ -15,43 +16,30 @@ use crate::{JSGlobalObject, JSValue, Strong};
 ///
 /// ```ignore
 /// struct MyNativeObject {
-///     this_value: JsRef, // = JsRef::empty()
+///     this_value: JsCell<JsRef>, // `thisValue: "this_value"` in the `.bind.ts` file
 ///     connection: SomeConnection,
 /// }
 ///
 /// impl MyNativeObject {
-///     pub fn init(global: &JSGlobalObject) -> Box<MyNativeObject> {
-///         let this = MyNativeObject::new(Default::default());
-///         let this_value = this.to_js(global);
+///     pub fn init(this_value: JsWrapper<'_, Self>, global: &JSGlobalObject) {
 ///         // Start with strong ref - object has pending work (initialization)
-///         this.this_value = JsRef::init_strong(this_value, global);
-///         this
+///         this_value.set_js_ref_strong(global);
 ///     }
 ///
-///     fn update_reference_type(&mut self) {
+///     fn update_reference_type(&self, global: &JSGlobalObject) {
 ///         if self.connection.is_active() {
 ///             // Keep object alive while connection is active
-///             if self.this_value.is_not_empty() && matches!(self.this_value, JsRef::Weak(_)) {
-///                 self.this_value.upgrade(global);
-///             }
+///             self.this_value.with_mut(|r| if r.is_not_empty() { r.upgrade(global) });
 ///         } else {
 ///             // Allow GC when connection is idle
-///             if self.this_value.is_not_empty() && matches!(self.this_value, JsRef::Strong(_)) {
-///                 self.this_value.downgrade();
-///             }
+///             self.this_value.with_mut(|r| r.downgrade());
 ///         }
 ///     }
 ///
-///     pub fn on_message(&mut self) {
+///     pub fn on_message(&self) {
 ///         // Safely retrieve the JSValue if still alive
 ///         let Some(this_value) = self.this_value.try_get() else { return };
 ///         // Use this_value...
-///     }
-///
-///     pub fn finalize(&mut self) {
-///         // Called when JS object is being garbage collected
-///         self.this_value.finalize();
-///         self.cleanup();
 ///     }
 /// }
 /// ```
@@ -65,18 +53,17 @@ use crate::{JSGlobalObject, JSValue, Strong};
 /// - **Strong**: Holds a [`Strong`] reference that prevents garbage collection.
 ///   The JavaScript object will stay alive as long as this reference exists, and a
 ///   `Strong` always holds a value, so this state is never empty (`try_get()` is `Some`).
-///   Released by dropping/overwriting the `JsRef`, or by `finalize()`.
+///   Released by dropping/overwriting the `JsRef`.
 ///
-/// - **Finalized**: The reference has been finalized (object was GC'd or explicitly cleaned up).
+/// - **Finalized**: The object was collected.
 ///   Indicates the JSValue is no longer valid. `try_get()` returns `None`.
 ///
 /// # Key Methods
 ///
-/// - `init_weak()` / `init_strong()`: Create a new JsRef in weak or strong mode
+/// - `set_js_ref_weak()` / `set_js_ref_strong()`, on the object: the only ways to fill a JsRef
 /// - `try_get()`: Safely retrieve the JSValue if still alive (returns `None` if finalized or empty)
 /// - `upgrade()`: Convert weak → strong to prevent GC
 /// - `downgrade()`: Convert strong → weak to allow GC (keeps the JSValue if still alive)
-/// - `finalize()`: Mark as finalized and release resources (typically called from GC finalizer)
 ///
 /// # When to Use Strong vs Weak
 ///
@@ -91,13 +78,15 @@ use crate::{JSGlobalObject, JSValue, Strong};
 /// - You want to allow natural garbage collection
 ///
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
-/// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
+/// See ServerWebSocket, UDPSocket and MySQLConnection for examples.
 ///
 /// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
 /// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
 /// and must be dropped on the JS thread.
 pub enum JsRef {
+    #[non_exhaustive]
     Weak(JSValue),
+    #[non_exhaustive]
     Strong(Strong),
     Finalized,
 }
@@ -108,16 +97,6 @@ pub enum JsRef {
 const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {
-    pub fn init_weak(value: JSValue) -> Self {
-        debug_assert!(!value.is_empty_or_undefined_or_null());
-        JsRef::Weak(value)
-    }
-
-    pub fn init_strong(value: JSValue, global: &JSGlobalObject) -> Self {
-        debug_assert!(!value.is_empty_or_undefined_or_null());
-        JsRef::Strong(Strong::create(value, global))
-    }
-
     pub fn empty() -> Self {
         JsRef::Weak(JSValue::UNDEFINED)
     }
@@ -144,22 +123,7 @@ impl JsRef {
         self.try_get().unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn set_weak(&mut self, value: JSValue) {
-        debug_assert!(!value.is_empty_or_undefined_or_null());
-        match self {
-            JsRef::Weak(_) => {}
-            JsRef::Strong(_) => {
-                // `Strong`'s `Drop` releases the block slot when `*self` is
-                // overwritten below, so no explicit deinit is needed.
-            }
-            JsRef::Finalized => {
-                return;
-            }
-        }
-        *self = JsRef::Weak(value);
-    }
-
-    pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
+    fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {
         debug_assert!(!value.is_empty_or_undefined_or_null());
         if let JsRef::Strong(strong) = self {
             strong.set(global, value);
@@ -224,29 +188,36 @@ impl JsRef {
     pub fn is_strong(&self) -> bool {
         matches!(self, JsRef::Strong(_))
     }
+}
 
-    pub fn finalize(&mut self) {
-        // Overwriting `*self` drops the prior variant (releasing the `Strong`
-        // block slot via its `Drop`), so no explicit deinit step is needed.
-        // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
-        *self = JsRef::Finalized;
+/// Generated for a class with `thisValue`. SAFETY: the object's finalizer calls `finalize_js_ref`.
+pub unsafe trait HasJsRef: Sized {
+    fn js_ref(&self) -> &JsCell<JsRef>;
+    fn wrapped_by(object: JsWrapper<'_, Self>) -> &Self;
+
+    #[doc(hidden)]
+    fn finalize_js_ref(&self) {
+        self.js_ref().set(JsRef::Finalized);
+    }
+}
+
+impl<T: HasJsRef> WrapperGuard<'_, T> {
+    pub fn set_js_ref_weak(&self) {
+        T::js_ref(self).set(JsRef::Weak(self.to_js()));
     }
 
-    pub fn update(&mut self, global: &JSGlobalObject, value: JSValue) {
-        match self {
-            JsRef::Weak(weak) => {
-                debug_assert!(!value.is_empty_or_undefined_or_null());
-                *weak = value;
-            }
-            JsRef::Strong(strong) => {
-                if strong.get() != value {
-                    strong.set(global, value);
-                }
-            }
-            JsRef::Finalized => {
-                debug_assert!(false);
-            }
-        }
+    pub fn set_js_ref_strong(&self, global: &JSGlobalObject) {
+        T::js_ref(self).with_mut(|js_ref| js_ref.set_strong(self.to_js(), global));
+    }
+}
+
+impl<'a, T: HasJsRef + 'a> JsWrapper<'a, T> {
+    pub fn set_js_ref_weak(self) {
+        T::wrapped_by(self).js_ref().set(JsRef::Weak(self.to_js()));
+    }
+
+    pub fn set_js_ref_strong(self, global: &JSGlobalObject) {
+        (T::wrapped_by(self).js_ref()).with_mut(|js_ref| js_ref.set_strong(self.to_js(), global));
     }
 }
 

@@ -25,7 +25,7 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
-use bun_event_loop::ConcurrentTask::{Task, task_tag};
+use bun_event_loop::ConcurrentTask::task_tag;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -66,8 +66,8 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     }
 }
 
-fn pressure_task(lvl: i32) -> Task {
-    Task::init(lvl as usize as *mut MemoryPressureTask)
+fn pressure_task(lvl: i32) -> *mut MemoryPressureTask {
+    lvl as usize as *mut MemoryPressureTask
 }
 
 #[cfg(not(windows))]
@@ -85,13 +85,10 @@ fn slot(vm: &VirtualMachine) -> &WatcherSlot {
 
 #[cfg(not(windows))]
 mod posix {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use core::ptr::NonNull;
-
     use bun_io::OwnedFilePoll;
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
+    use bun_io::posix_event_loop::{Flags, Owner, PollTag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -223,14 +220,10 @@ mod posix {
         }
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
-            let ctx = global.bun_vm().loop_ctx();
-            let owner = Owner::new(
-                poll_tag::MEMORY_PRESSURE,
-                NonNull::<()>::dangling().as_ptr(),
-            );
-            let mut poll = OwnedFilePoll::new(ctx, fd, owner);
-            poll.register(ctx.loop_(), Flags::MemoryPressure, false)
-                .ok()?;
+            let owner = Owner::new(PollTag::MemoryPressure, core::ptr::null_mut());
+            // SAFETY: this tag has no pointee.
+            let poll = unsafe { OwnedFilePoll::new(global.bun_vm().loop_ctx(), fd, owner) };
+            poll.register(Flags::MemoryPressure, false).ok()?;
             Some(MemoryPressureWatcher {
                 poll: Some(poll),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -261,7 +254,7 @@ mod posix {
         slot(global.bun_vm()).set(None);
     }
 
-    /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
+    /// `__bun_run_io` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
     pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
         let vm = VirtualMachine::get();
@@ -301,7 +294,7 @@ mod posix {
             let _ = fflags;
             super::level::CRITICAL
         };
-        vm.enqueue_task(super::pressure_task(lvl));
+        vm.enqueue_task(bun_event_loop::Task::init(super::pressure_task(lvl)));
     }
 }
 
@@ -312,9 +305,7 @@ mod posix {
 #[cfg(windows)]
 mod windows {
     use core::ffi::c_void;
-    use core::ptr;
 
-    use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
     use std::os::windows::io::{AsRawHandle as _, HandleOrNull, OwnedHandle};
 
@@ -332,12 +323,6 @@ mod windows {
 
     unsafe extern "system" {
         safe fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
-        fn CreateEventW(
-            attrs: *mut c_void,
-            manual_reset: BOOL,
-            initial: BOOL,
-            name: *const u16,
-        ) -> HANDLE;
         /// A bad handle yields `FALSE`.
         safe fn SetEvent(h: HANDLE) -> BOOL;
         /// A bad handle yields `WAIT_FAILED`.
@@ -368,7 +353,7 @@ mod windows {
             if rc != WAIT_OBJECT_0 + 1 {
                 break;
             }
-            let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
+            let task = super::pressure_task(super::level::CRITICAL);
             if let bun_jsc::vm_handle::Posted::Refused(_) =
                 vm.post(bun_jsc::LoopKind::Regular, task)
             {
@@ -393,10 +378,7 @@ mod windows {
         else {
             return;
         };
-        // SAFETY: FFI; manual-reset, initially non-signalled, unnamed. A new handle, or null.
-        let Ok(shutdown) = OwnedHandle::try_from(unsafe {
-            HandleOrNull::from_raw_handle(CreateEventW(ptr::null_mut(), 1, 0, ptr::null()))
-        }) else {
+        let Ok(shutdown) = bun_sys::windows::CreateEventW() else {
             return;
         };
 

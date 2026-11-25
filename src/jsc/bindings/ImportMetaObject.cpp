@@ -359,48 +359,34 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return {};
                 }
 
-                JSC::EncodedJSValue result = {};
-                WTF::Vector<BunString> paths;
+                WTF::Vector<Bun::OwnedString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
-                    if (scope.exception()) [[unlikely]]
-                        goto cleanup;
-                    if (!path.isString()) {
-                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
-                        goto cleanup;
-                    }
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!path.isString())
+                        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
                     WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) [[unlikely]]
-                        goto cleanup;
-                    BunString pathRef = Bun::toStringRef(pathStr);
-                    if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
-                        pathRef.deref();
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!Bun::tryAppendWithinLimit(paths, Bun::toStringRef(WTF::move(pathStr)))) [[unlikely]] {
                         throwOutOfMemoryError(globalObject, scope);
-                        goto cleanup;
+                        return {};
                     }
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
-                if (scope.exception()) [[unlikely]]
-                    goto cleanup;
+                auto result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
+                RETURN_IF_EXCEPTION(scope, {});
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
-                    result = {};
-                    goto cleanup;
+                    return {};
                 }
 
                 if (!isRequireDotResolve) {
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
-                    if (scope.exception()) [[unlikely]]
-                        result = {};
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
 
-            cleanup:
-                for (auto& path : paths) {
-                    path.deref();
-                }
-                RELEASE_AND_RETURN(scope, result);
+                return result;
             } else {
                 Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, userPathList);
                 scope.release();
@@ -450,8 +436,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
-extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
-extern "C" void Bun__importMetaResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
+extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, Bun::OwnedString* query);
+extern "C" void Bun__importMetaResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, Bun::OwnedString* query);
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -520,7 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto a = Bun::toString(specifier);
     auto b = Bun::toString(fromWTFString);
     ErrorableString result;
-    BunString query = BunStringEmpty;
+    Bun::OwnedString query;
 
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)

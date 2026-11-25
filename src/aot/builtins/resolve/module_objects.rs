@@ -439,16 +439,18 @@ impl Resolver<'_, '_> {
     fn stores_method_that_may_read_receiver(&self, member: ExprId, holder: BuiltinId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let stored_to = self.outermost_assertion_of(member);
-        let is_process = holder == BuiltinId::Process;
+        let asks_every_function = matches!(holder, BuiltinId::Process | BuiltinId::ModuleRequire);
         let Parent::Expr(store) = bound.parent_of_expr(stored_to) else {
-            return is_process;
+            return asks_every_function;
         };
         match hir[store].kind {
-            ExprKind::Assign { target, value, .. } if target == stored_to => match is_process {
-                true => self.may_read_this(value),
-                false => self.is_function_reading_this(value),
-            },
-            _ => is_process,
+            ExprKind::Assign { target, value, .. } if target == stored_to => {
+                match asks_every_function {
+                    true => self.may_read_this(value),
+                    false => self.is_function_reading_this(value),
+                }
+            }
+            _ => asks_every_function,
         }
     }
 

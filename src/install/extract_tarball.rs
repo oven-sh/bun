@@ -2,19 +2,19 @@ use core::cell::RefCell;
 use core::fmt;
 
 use bun_core::fmt::s;
+use bun_core::strings;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
-use bun_paths::strings;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{Path, PathBuffer};
 use bun_semver::Version;
-use bun_sys::{self as sys, Dir, Fd};
+use bun_sys as sys;
 
 use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
-use bun_install::npm::{self as Npm};
+use bun_install::npm::{self as Npm, registry::FolderCacheKey};
 use bun_install::package_manager_real::PackageManager;
-use bun_install::package_manager_real::directories;
+use bun_install::package_manager_real::directories::{self, TemporaryDirectory};
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
 use bun_resolver::fs::FileSystem;
 
@@ -24,12 +24,7 @@ type Error = crate::Error;
 pub struct ExtractTarball {
     pub(crate) name: StringOrTinyString,
     pub(crate) resolution: Resolution,
-    /// Borrowed view of `PackageManager`'s cache directory fd; the manager
-    /// owns and closes it, so this stays a non-owning raw `Fd`.
-    pub(crate) cache_dir: Fd,
-    /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
-    /// story as `cache_dir`).
-    pub(crate) temp_dir: Fd,
+    pub(crate) temp_dir: &'static TemporaryDirectory,
     pub(crate) dependency_id: DependencyID,
     /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
@@ -43,9 +38,9 @@ pub struct ExtractTarball {
     /// copied out because extract workers must not read lockfile buffers. When
     /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
     /// it); empty on a fresh resolve, which uses the archive's root dir name.
-    pub(crate) github_resolved: StringOrTinyString,
-    /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) github_resolved: &'static [u8],
+    /// For an npm resolution. `None` is the default registry.
+    pub(crate) registry: Option<FolderCacheKey>,
 }
 
 impl ExtractTarball {
@@ -165,7 +160,6 @@ pub fn build_url_with_printer<R, E>(
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,
-    json_path_buf: PathBuffer,
 }
 
 thread_local! {
@@ -174,7 +168,6 @@ thread_local! {
     static TL_BUFS: RefCell<Box<TlBufs>> = RefCell::new(Box::new(TlBufs {
         final_path_buf: PathBuffer::ZEROED,
         folder_name_buf: PathBuffer::ZEROED,
-        json_path_buf: PathBuffer::ZEROED,
     }));
 }
 
@@ -250,7 +243,7 @@ impl ExtractTarball {
     ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
-        let tmpdir = Dir::borrow(&self.temp_dir);
+        let tmpdir = &self.temp_dir.handle;
         // UTF-8 on every platform; the Windows tmpdir path is converted to
         // wide at the `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = bun_paths::path_buffer_pool::get();
@@ -278,7 +271,7 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
-        let staging = StagedEntry::new(self.temp_dir, tmpname);
+        let staging = StagedEntry::new(tmpdir.fd(), tmpname);
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -314,7 +307,7 @@ impl ExtractTarball {
 
             // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
-            // Small tarballs still try libdeflate first for speed; the gzip
+            // Small tarballs still try `bun_deflate` first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
             let mut decompressed_in_memory = false;
             if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
@@ -329,25 +322,15 @@ impl ExtractTarball {
                     } else {
                         let _ = zlib_pool.ensure_unused_capacity(isize as usize);
                     }
-                    if zlib_pool.list.capacity() > 16 {
-                        use bun_libdeflate_sys::libdeflate;
-                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
-                            zlib_pool.list.clear();
-                            let result = decompressor.decompress_to_vec(
-                                tgz_bytes,
-                                &mut zlib_pool.list,
-                                libdeflate::Encoding::Gzip,
-                            );
-                            // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to `extract_to_dir`, which also counts the layers.
-                            if result.status == libdeflate::Status::Success
-                                && result.read == tgz_bytes.len()
-                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
-                            {
-                                decompressed_in_memory = true;
-                            }
-                        }
-                    }
+                    zlib_pool.list.clear();
+                    let output = bun_deflate::Output::Vec {
+                        limit: zlib_pool.list.capacity(),
+                        vec: &mut zlib_pool.list,
+                    };
+                    // `gunzip` reads one member. More members, or more layers, are left to `extract_to_dir`.
+                    decompressed_in_memory = bun_deflate::gunzip(tgz_bytes, output)
+                        .is_ok_and(|result| result.read == tgz_bytes.len())
+                        && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list);
                 }
             }
 
@@ -408,12 +391,8 @@ impl ExtractTarball {
                         },
                     )?;
 
-                    let lockfile_tag = self.github_resolved.slice();
-                    if !lockfile_tag.is_empty() {
-                        resolved = FileSystem::get()
-                            .dirname_store()
-                            .append(lockfile_tag)
-                            .expect("unreachable");
+                    if !self.github_resolved.is_empty() {
+                        resolved = self.github_resolved;
                     }
 
                     // This tag is used to know which version of the package was
@@ -423,7 +402,7 @@ impl ExtractTarball {
                         // Create/truncate `.bun-tag`, then write the resolved tag.
                         if sys::File::openat(
                             extract_destination.fd(),
-                            ZStr::from_static(b".bun-tag\0"),
+                            bun_core::zstr!(".bun-tag"),
                             sys::O::WRONLY
                                 | sys::O::CREAT
                                 | sys::O::TRUNC
@@ -435,7 +414,7 @@ impl ExtractTarball {
                         {
                             let _ = sys::unlinkat(
                                 extract_destination.fd(),
-                                ZStr::from_static(b".bun-tag\0"),
+                                bun_core::zstr!(".bun-tag"),
                             );
                         }
                     }
@@ -506,9 +485,8 @@ impl ExtractTarball {
         resolved: &[u8],
         integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
-        let package_manager = self.package_manager.get();
-
         let tmpname = staging.name();
+        let tmpdir = self.temp_dir.handle.fd();
         TL_BUFS.with_borrow_mut(|bufs| {
             // The entire body lives inside the thread_local borrow closure.
             let folder_name_z: &ZStr = match self.resolution.tag {
@@ -525,10 +503,10 @@ impl ExtractTarball {
                         return Err(crate::Error::InstallFailed);
                     }
                     directories::cached_npm_package_folder_name_print(
-                        package_manager,
                         &mut bufs.folder_name_buf,
                         name,
                         self.resolution.npm().version,
+                        self.registry,
                         None,
                     )
                 }
@@ -562,12 +540,9 @@ impl ExtractTarball {
                     };
                     // Records which bytes a copy in node_modules came from. See
                     // `PackageInstall::verify`.
-                    let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[tmpname.as_bytes(), b".bun-tag"],
-                    );
+                    let tag_path = &Path::from_parts(&[tmpname, b".bun-tag"]);
                     if sys::File::openat(
-                        self.temp_dir,
+                        tmpdir,
                         tag_path,
                         sys::O::WRONLY
                             | sys::O::CREAT
@@ -578,7 +553,7 @@ impl ExtractTarball {
                     .and_then(|f| f.write_all(tag.sri(&mut [0; Integrity::MAX_SRI_LEN])))
                     .is_err()
                     {
-                        let _ = sys::unlinkat(self.temp_dir, tag_path);
+                        let _ = sys::unlinkat(tmpdir, tag_path);
                     }
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
@@ -592,7 +567,7 @@ impl ExtractTarball {
                 _ => unreachable!(),
             };
             let folder_name = folder_name_z.as_bytes();
-            let cache_dir = Dir::borrow(&self.cache_dir);
+            let cache_dir = &self.temp_dir.cache.handle;
 
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
@@ -615,14 +590,7 @@ impl ExtractTarball {
             };
             let mut json_buf: Option<Vec<u8>> = None;
             if needs_json {
-                match sys::File::read_from(
-                    self.temp_dir,
-                    path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[tmpname.as_bytes(), b"package.json"],
-                    )
-                    .as_bytes(),
-                ) {
+                match sys::File::read_from(tmpdir, &Path::from_parts(&[tmpname, b"package.json"])) {
                     Ok(buf) => json_buf = Some(buf),
                     // allow git dependencies without package.json
                     Err(err)
@@ -670,9 +638,9 @@ impl ExtractTarball {
             }
 
             // Now that we've extracted the archive, we rename.
-            let final_dir = match staging.publish_and_open(self.cache_dir, folder_name_z, &|_| {
+            let final_dir = match staging.publish_and_open(cache_dir.fd(), folder_name_z, &|_| {
                 directories::is_package_in_cache_at(
-                    self.cache_dir,
+                    cache_dir.fd(),
                     folder_name_z,
                     self.resolution.tag,
                 )
@@ -722,11 +690,7 @@ impl ExtractTarball {
                 });
             }
             let json_path: &[u8] = if needs_json {
-                path::resolve_path::join_z_buf::<path::platform::Auto>(
-                    &mut bufs.json_path_buf.0,
-                    &[final_path.as_bytes(), b"package.json"],
-                )
-                .as_bytes()
+                &Path::from_parts(&[final_path, b"package.json"])
             } else {
                 b""
             };
@@ -736,9 +700,8 @@ impl ExtractTarball {
                 && bun_install::dependency::is_safe_install_folder_name(name)
             {
                 cache_publish::create_index_link(
-                    self.cache_dir,
-                    // only set once, should be fine to read not on main thread
-                    package_manager.cache_directory_path.as_bytes(),
+                    cache_dir.fd(),
+                    self.temp_dir.cache.path.as_bytes(),
                     name,
                     match self.resolution.tag {
                         ResolutionTag::Github => &folder_name[b"@GH@".len()..],

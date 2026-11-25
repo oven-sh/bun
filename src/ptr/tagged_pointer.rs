@@ -83,12 +83,10 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 //   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
 //                       tag range.
 //   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value (1024 - index).
+//                       that type's tag value.
 //
 // Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
 // the trait-bound failure.
-//
-// Tag values are assigned as `1024 - i` for index `i`.
 
 /// Implemented for the tuple of types passed to `TaggedPtrUnion<(...)>`.
 pub trait TypeList {}

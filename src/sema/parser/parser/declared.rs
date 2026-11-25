@@ -431,7 +431,8 @@ impl Declared {
     /// Adds `name` to the set `names`, which is identified by an id that no scope has. Only valid at the end of the
     /// file. A name that would share its slot with another is skipped.
     fn add_to(&mut self, names: u32, name: Atom) {
-        if name.0 <= self.mask
+        if name.is_some()
+            && name.0 <= self.mask
             && let Some(entry) = self.table.get_mut(name.0 as usize)
         {
             *entry = stamp_of(names, 0);

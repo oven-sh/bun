@@ -640,9 +640,9 @@ impl ResolutionGraph<'_> {
             ) if has_stars
                 && export_name != known::default
                 && name != known::default
-                && self.commonjs.may_end_without(target, name) =>
+                && self.may_end_without(target, name) =>
             {
-                let named = captured_resolution(self.modules, target, name);
+                let named = self.resolution_named_ahead_of_stars(target, name);
                 let key = (importer, export_name);
                 self.statements_ahead_of_stars.push((key, named));
                 Resolution::LiveName {
@@ -676,6 +676,37 @@ impl ResolutionGraph<'_> {
             }
         };
         self.starts[node as usize].binding = binding;
+    }
+
+    /// The stars that `name` of `target` comes by, where only stars may bring it and no mock does.
+    fn dynamic_targets_behind(&self, target: ModuleRef, name: Atom) -> Option<DynamicStarTargets> {
+        let table = &self.nodes.tables[find_table(self.files, target)?];
+        let ModuleRef::File(file) = target else {
+            return None;
+        };
+        let has_name = self.nodes.index.contains_key(&(file, name));
+        (!has_name && !table.may_be_mocked && !table.stars_lead_to_mocked_file)
+            .then_some(table.dynamic_targets)
+    }
+
+    fn may_end_without(&self, target: ModuleRef, name: Atom) -> bool {
+        self.commonjs.may_end_without(target, name)
+            || match self.dynamic_targets_behind(target, name) {
+                Some(DynamicStarTargets::One(module)) => {
+                    self.commonjs.may_end_without(module, name)
+                }
+                Some(DynamicStarTargets::Many) => true,
+                Some(DynamicStarTargets::Empty) | None => false,
+            }
+    }
+
+    fn resolution_named_ahead_of_stars(&self, target: ModuleRef, name: Atom) -> Resolution {
+        match (target, self.dynamic_targets_behind(target, name)) {
+            (ModuleRef::File(file), Some(targets)) => {
+                targets.for_name_exported_again(self.modules, file, name)
+            }
+            _ => captured_resolution(self.modules, target, name),
+        }
     }
 
     fn is_resolved_by_mocks(&self, target: ModuleRef, name: Atom) -> bool {

@@ -1,5 +1,5 @@
 #![feature(inherent_associated_types)]
-#![feature(adt_const_params, allocator_api, thread_local)]
+#![feature(adt_const_params, thread_local)]
 #![cfg_attr(any(test, feature = "test_support"), feature(linkage))]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
@@ -93,7 +93,26 @@ pub use bun_js_printer::MangledProps;
 pub use options_impl::PathTemplate;
 
 pub use HTMLImportManifest::html_import_manifest;
-pub use bun_core::cheap_prefix_normalizer;
+
+/// The two halves of `prefix` + `suffix`, without a doubled separator or a `./` between them.
+pub(crate) fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
+    if prefix.is_empty() {
+        let suffix = bun_paths::without_leading_dot_slash(suffix);
+        return [
+            if suffix.starts_with(b"../") {
+                b""
+            } else {
+                b"./"
+            },
+            suffix,
+        ];
+    }
+    if bun_paths::has_trailing_sep(prefix) && bun_paths::has_leading_sep(suffix) {
+        return [prefix, &suffix[1..]];
+    }
+    [prefix, bun_paths::without_leading_dot_slash(suffix)]
+}
+
 pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
@@ -363,12 +382,6 @@ pub mod options {
 
     pub use crate::bake_types::Framework;
 }
-
-/// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
-/// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
-/// `RuntimeTranspilerCacheExt`.
-pub use cache::RuntimeTranspilerCacheExt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from

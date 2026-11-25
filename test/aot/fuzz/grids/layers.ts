@@ -26,7 +26,7 @@ test.skipIf(!python)("measure/layers.py charges every sample to the layer that o
       [10, "server-aot", "JSC::JSRopeString::resolveRope"],
       [5, "server-aot", "operationAOTJSONAppendString"],
       [5, "server-aot", "llint_predecoded_get_by_id_inline"],
-      [5, "server-aot", "icu_75::SimpleDateFormat::subFormat"],
+      [5, "server-aot", "<bun_icu::i18n::smpdtfmt::SimpleDateFormat>::sub_format"],
       [5, "server-aot", "JSC::MarkedBlock::Handle::sweep"],
       [5, "server-aot", "JSC::SlotVisitor::drain"],
       [5, "server-aot", "mi_malloc"],

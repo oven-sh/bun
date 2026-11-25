@@ -22,12 +22,13 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    TransposeState, UsedAs, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -254,6 +255,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
+    /// Only with `Features::lists_loads`
+    pub(crate) while_loading: crate::lower::defer_requires::WhileLoading,
+    pub(crate) has_deferred_requires: bool,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
@@ -534,12 +538,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
-    pub(crate) call_target: js_ast::ExprData,
-    pub(crate) template_tag: js_ast::ExprData,
-    pub(crate) delete_target: js_ast::ExprData,
+    /// The target of the call that was entered last, if it is a binary expression.
+    pub(crate) called_binary: Option<js_ast::StoreRef<E::Binary>>,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
     /// Visiting an export that `replace_exports` deletes. Its uses are not counted (the code is
     /// dead), but recorded in `used_by_deleted_exports`.
@@ -1715,6 +1717,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 self.import_records_for_current_part
                     .push(import_record_index);
+                if self.options.features.lists_loads && self.while_loading.functions_around == 0 {
+                    self.while_loading.requires.push(import_record_index);
+                }
 
                 self.new_expr(
                     E::RequireString {
@@ -2101,8 +2106,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// See `Symbol::import_used_as_value`.
-    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
-        if !opts.is_property_access_target() && !self.is_control_flow_dead {
+    fn note_import_use(&mut self, ref_: Ref, used_as: UsedAs) {
+        if !used_as.is_object() && !self.is_control_flow_dead {
             self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
         }
     }
@@ -2157,7 +2162,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         ident: E::Identifier,
         original_name: Option<&'a [u8]>,
-        opts: IdentifierOpts,
+        used_as: UsedAs,
+        was_originally_identifier: bool,
     ) -> Expr {
         let ref_ = ident.ref_;
 
@@ -2171,7 +2177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if self.options.bundle
-            && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
+            && used_as.is_assigned_or_deleted()
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
@@ -2187,7 +2193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias
-        if opts.assign_target() == js_ast::AssignTarget::None && !opts.is_delete_target() {
+        if !used_as.is_assigned_or_deleted() {
             // copy the alias out so the &self.symbols borrow is released
             // before the &mut self calls below.
             let ns_alias_opt = self.symbols[ref_.inner_index() as usize]
@@ -2245,16 +2251,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                self.note_import_use(ref_, opts);
+                self.note_import_use(ref_, used_as);
                 return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
-            self.note_import_use(ref_, opts);
+            self.note_import_use(ref_, used_as);
             return self.new_expr(
-                E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
+                E::ImportIdentifier::new(ref_, was_originally_identifier),
                 loc,
             );
         }
@@ -3178,7 +3184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
                         if let Some(done) = self.substitute_single_use_symbol_in_child(
-                            tag,
+                            &mut tag.expr,
                             expr,
                             r#ref,
                             replacement,
@@ -3428,6 +3434,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(bun_ast::Loc::EMPTY);
             return;
+        }
+
+        // The directive of a function also makes strict what its parameters hold, such as a function in a decorator.
+        if scope.kind == js_ast::scope::Kind::FunctionArgs
+            && scope.strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            for child in scope.children.slice_mut() {
+                child.recursive_set_strict_mode(js_ast::StrictModeKind::ExplicitStrictMode);
+            }
         }
 
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
@@ -4781,6 +4796,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // TODO:
     pub(crate) fn check_for_non_bmp_code_point(&mut self, _: bun_ast::Loc, _: &[u8]) {}
 
+    /// A bundle keeps the "use strict" of the code, and one such error would make the whole bundle unparsable.
+    pub(crate) fn mark_feature_under_kept_directive(
+        &mut self,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+    ) {
+        if self.options.bundle
+            && self.current_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode
+        {
+            // It adds to the log, and nothing in it fails.
+            let _ = self.mark_strict_mode_feature(feature, r, detail);
+        }
+    }
+
     pub(crate) fn mark_strict_mode_feature(
         &mut self,
         feature: StrictModeFeature,
@@ -4788,6 +4818,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         detail: &[u8],
     ) -> Result<(), crate::Error> {
         let text: &'a [u8] = match feature {
+            StrictModeFeature::DeleteBareName => b"Delete of a bare identifier",
+            StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
@@ -4821,6 +4853,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::StrictModeKind::ImplicitStrictModeClass => {
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
+                }
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by a \"use strict\" directive";
                 }
                 _ => {}
             }
@@ -5364,9 +5399,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new()
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(parts.len() > 1),
+            if parts.len() > 1 {
+                UsedAs::Object
+            } else {
+                UsedAs::Value
+            },
+            true,
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -5409,12 +5447,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value,
                 part,
                 loc,
-                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
+                if i + 1 < parts.len() {
+                    UsedAs::Object
+                } else {
+                    UsedAs::Value
+                },
             ) {
                 value = rewrote;
             } else {
                 let is_import_property_use =
-                    self.record_import_property_use(&value, part, IdentifierOpts::default());
+                    self.record_import_property_use(&value, part, UsedAs::Value);
                 value = self.new_expr(
                     E::Dot {
                         target: value,
@@ -5812,18 +5854,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Records an assignment to `exports.name`, or a call of it.
-    pub(crate) fn note_commonjs_export_use(
-        &mut self,
-        name: &[u8],
-        ref_: Ref,
-        opts: IdentifierOpts,
-    ) {
-        if opts.assign_target() != js_ast::AssignTarget::None
+    pub(crate) fn note_commonjs_export_use(&mut self, name: &[u8], ref_: Ref, used_as: UsedAs) {
+        if used_as.is_assigned()
             && let Some(export) = self.commonjs_named_exports.get_mut(name)
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
+        if used_as.is_callee() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -5950,7 +5987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies
-    // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
+    // the full union. The only caller (`visit_expr_as`) already holds `&mut Expr`.
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
@@ -6500,7 +6537,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_can_be_removed_if_unused(true)
                 .with_call_can_be_unwrapped_if_unused(true),
             None,
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            UsedAs::Value,
+            true,
         )
     }
 
@@ -6546,7 +6584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         target: &Expr,
         name: &[u8],
-        opts: IdentifierOpts,
+        used_as: UsedAs,
     ) -> bool {
         let base = match target.data {
             js_ast::ExprData::EImportIdentifier(id) => id.ref_,
@@ -6563,11 +6601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => return false,
         };
-        if !self.options.bundle
-            || self.is_control_flow_dead
-            || opts.assign_target() != js_ast::AssignTarget::None
-            || opts.is_delete_target()
-        {
+        if !self.options.bundle || self.is_control_flow_dead || used_as.is_assigned_or_deleted() {
             return false;
         }
         // Same node visited again (const inlining); already counted.
@@ -6589,7 +6623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
+        inner_use.is_call_target |= used_as.is_callee();
         true
     }
 
@@ -7068,8 +7102,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn value_for_define(
         &mut self,
         loc: bun_ast::Loc,
-        assign_target: js_ast::AssignTarget,
-        is_delete_target: bool,
+        used_as: UsedAs,
         define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
@@ -7084,15 +7117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let original_name = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                return self.handle_identifier(
-                    loc,
-                    id,
-                    Some(original_name),
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_was_originally_identifier(true),
-                );
+                return self.handle_identifier(loc, id, Some(original_name), used_as, true);
             }
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
@@ -7452,7 +7477,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(mut cf) = constructor_function {
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
-                        // statements coming from class body inserted after super call or beginning of constructor.
+                        // statements coming from class body inserted after super call or beginning of constructor,
+                        // where a directive prologue still comes first.
                         let mut super_index: Option<usize> = None;
                         for (index, item) in old_stmts.iter().enumerate() {
                             if !matches!(item.data, js_ast::StmtData::SExpr(se) if matches!(se.value.data, js_ast::ExprData::ECall(c) if matches!(c.target.data, js_ast::ExprData::ESuper(_))))
@@ -7463,7 +7489,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             break;
                         }
 
-                        let i = super_index.map(|j| j + 1).unwrap_or(0);
+                        let i = super_index
+                            .map(|j| j + 1)
+                            .unwrap_or_else(|| crate::visit::leading_directive_count(old_stmts));
                         let mut constructor_stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_stmts.len() + instance_members.len(),
                             self.arena,
@@ -7830,7 +7858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
-                    self.note_import_use(ref_, IdentifierOpts::new());
+                    self.note_import_use(ref_, UsedAs::Value);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -8452,6 +8480,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// Like react-refresh's Babel plugin: a function, or a call such as `memo()` or `forwardRef()` whose first
+    /// argument is a function, a component or such a call.
+    pub(crate) fn makes_react_component(&self, value: Expr) -> bool {
+        let mut value = value;
+        let mut is_argument = false;
+        loop {
+            match value.data {
+                js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => return true,
+                js_ast::ExprData::EIdentifier(js_ast::E::Identifier { ref_, .. })
+                | js_ast::ExprData::EImportIdentifier(js_ast::E::ImportIdentifier {
+                    ref_, ..
+                }) if is_argument => {
+                    let name = self.symbols[ref_.inner_index() as usize]
+                        .original_name
+                        .slice();
+                    return ReactRefresh::is_componentish_name(name);
+                }
+                js_ast::ExprData::ECall(call)
+                    if matches!(
+                        call.target.data,
+                        js_ast::ExprData::EIdentifier(_)
+                            | js_ast::ExprData::EImportIdentifier(_)
+                            | js_ast::ExprData::EDot(_)
+                    ) =>
+                {
+                    let Some(first) = call.args.slice().first() else {
+                        return false;
+                    };
+                    value = *first;
+                    is_argument = true;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(crate) fn handle_react_refresh_register(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -8567,18 +8631,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
-            // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain
-            // walk run without raw-pointer `unsafe` and without borrowing
-            // `self`.
+            // `var _s = $RefreshSig$()` goes in the statement list around this
+            // function, so the name lives where a `var` there hoists to.
             let mut scope = self.current_scope_ref();
-            loop {
-                if scope.kind == js_ast::scope::Kind::FunctionBody
-                    || scope.kind == js_ast::scope::Kind::Block
-                    || scope.kind == js_ast::scope::Kind::Entry
-                {
-                    break;
-                }
+            while scope.kind != js_ast::scope::Kind::FunctionBody {
                 let Some(p) = scope.parent else { break };
+                scope = p;
+            }
+            // Out of this function: its body, then its arguments.
+            for _ in 0..2 {
+                if let Some(p) = scope.parent {
+                    scope = p;
+                }
+            }
+            while (!scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs)
+                && let Some(p) = scope.parent
+            {
                 scope = p;
             }
 
@@ -8589,9 +8657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // TODO: fix the renamer bug. this bug theoretically affects all
-            // usages of temp refs, but i cannot find another example of it
-            // breaking (like with `using`)
+            // The file's top level is renamed from `Part::declared_symbols`.
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,
@@ -8664,15 +8730,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         debug_assert!(self.options.features.react_fast_refresh);
 
-        // We need to prepend `_s();` as a statement.
+        // We need to prepend `_s();` as a statement, after the directive prologue.
+        let at = crate::visit::leading_directive_count(stmts.as_slice());
         if stmts.len() == stmts.capacity() {
             // If the ArrayList does not have enough capacity, it is
             // re-allocated entirely to fit. Only one slot of new capacity
             // is used since we know this statement list is not going to be
             // appended to afterwards; This function is a post-visit handler.
             let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.arena);
+            new_stmts.extend_from_slice(&stmts[..at]);
             new_stmts.push(Stmt::empty()); // placeholder, overwritten below
-            new_stmts.extend_from_slice(stmts.as_slice());
+            new_stmts.extend_from_slice(&stmts[at..]);
             *stmts = new_stmts;
         } else {
             // The array has enough capacity, so there is no possibility of
@@ -8680,7 +8748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // by one, and increase the length using `addOneAssumeCapacity`
             stmts.push(Stmt::empty());
             let len = stmts.len();
-            stmts.copy_within(0..len - 1, 1);
+            stmts.copy_within(at..len - 1, at + 1);
         }
 
         let loc = bun_ast::Loc::EMPTY;
@@ -8698,7 +8766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        stmts[0] = prepended_stmt;
+        stmts[at] = prepended_stmt;
     }
 
     pub(crate) fn get_react_refresh_hook_signal_decl(&mut self, signal_cb_ref: Ref) -> Stmt {
@@ -8806,6 +8874,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        // The module's directive prologue, which `_parse` took off the top-level statements.
+        mut directives: &'a [Stmt],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -8970,6 +9040,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if self.options.features.lists_loads && !self.options.features.remove_cjs_module_wrapper {
+            let is_wrapped = wrap_mode == WrapMode::BunCommonjs;
+            let depth = match is_wrapped && self.options.features.defers_requires {
+                true => self.defer_requires(parts),
+                false => 0,
+            };
+            let comment = self.comment_on_loads(depth + u32::from(is_wrapped));
+            parts.push(js_ast::Part {
+                stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[comment])),
+                ..Default::default()
+            });
+        }
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -9038,32 +9121,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
 
-            let mut total_stmts_count: usize = 0;
+            // The prologue of the file is the prologue of the wrapper function.
+            let mut total_stmts_count: usize = directives.len();
             for part in parts.iter() {
                 total_stmts_count += part.stmts.len();
             }
-
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
-
-            total_stmts_count += usize::from(preserve_strict_mode);
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
-                    remaining_stmts = &mut remaining_stmts[1..];
-                }
+                remaining_stmts[..directives.len()].copy_from_slice(directives);
+                remaining_stmts = &mut remaining_stmts[directives.len()..];
+                directives = &[];
 
                 for part in parts.iter() {
                     let src = part.stmts.slice();
@@ -9109,7 +9179,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.repl_mode {
             // `apply_repl_transforms` is declared in ast::repl_transforms as an
             // `impl P` mixin.
-            self.apply_repl_transforms(parts, arena)?;
+            if self.apply_repl_transforms(parts, arena, directives)? {
+                directives = &[];
+            }
         }
 
         let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
@@ -9205,7 +9277,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
 
-        let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -9272,11 +9343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_symbols_to_parts,
             char_freq,
             scope_uses,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives: bun_ast::StoreSlice::new(directives),
             nested_scope_slot_counts,
 
             require_ref,
@@ -9299,6 +9366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),
+            has_deferred_requires: self.has_deferred_requires,
 
             symbols,
             parts: parts_list,
@@ -9549,9 +9617,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
 
-            call_target: null_expr_data(),
-            template_tag: null_expr_data(),
-            delete_target: null_expr_data(),
+            called_binary: None,
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,
@@ -9589,6 +9655,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
+            while_loading: Default::default(),
+            has_deferred_requires: false,
             fn_only_data_visit: FnOnlyDataVisit::default(),
             allocated_names: BumpVec::new_in(arena),
             latest_arrow_arg_loc: bun_ast::Loc::EMPTY,
@@ -9670,7 +9738,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],
-            module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             in_deleted_export: false,
             used_by_deleted_exports: Default::default(),

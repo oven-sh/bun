@@ -1,6 +1,6 @@
 //! Payload order file for `bun build --compile --bytecode` (`--bytecode-order`): what a previous run of the
 //! application read out of its bytecode payload, written by that run under `BUN_BYTECODE_ORDER_OUT`. Text, one item
-//! per line after a `v2` line: `F`/`S`/`M`/`N`/`K <16 hex digits>` = a function decoded to be run, a string read, a
+//! per line after a `v3` line: `F`/`S`/`M`/`N`/`K <16 hex digits>` = a function decoded to be run, a string read, a
 //! module evaluated, a module that was in the executable and not evaluated, a function that was written in the
 //! executable's code and not run (whether or not the executable had bytecode for it); `F` and `S` lines are in
 //! first-use order. Code is named here, not by JavaScriptCore (`CodeNames`): the build that lays a payload out and
@@ -57,7 +57,7 @@ const _: () = assert!(
 
 /// An order file's first line. Its names are the walker's (`FunctionIdentities`) of the Bun that built the executable
 /// that recorded it: a change to what a name is a hash of changes this, and older files are told to be recorded again.
-pub const VERSION: &str = "v2";
+pub const VERSION: &str = "v3";
 
 /// `BUN_BYTECODE_ORDER_NAMES_OUT`, where `bun:internal-for-testing` is: a debug build, or the tests' environment.
 pub fn names_out() -> Option<&'static [u8]> {

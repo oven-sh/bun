@@ -1,0 +1,36 @@
+//! The tables of ICU4C: putil.cpp
+
+/// Seconds west of UTC, daylight time (0: never, 1: in June, 2: in December), the two abbreviations, and the ID.
+#[rustfmt::skip]
+pub(crate) const OFFSET_ZONE_MAPPINGS: [(i32, i32, &str, &str, &str); 59] = [
+    (-45900, 2, "CHAST", "CHADT", "Pacific/Chatham"), (-43200, 1, "PETT", "PETST", "Asia/Kamchatka"),
+    (-43200, 2, "NZST", "NZDT", "Pacific/Auckland"), (-43200, 1, "ANAT", "ANAST", "Asia/Anadyr"),
+    (-39600, 1, "MAGT", "MAGST", "Asia/Magadan"), (-37800, 2, "LHST", "LHST", "Australia/Lord_Howe"),
+    (-36000, 2, "EST", "EST", "Australia/Sydney"), (-36000, 1, "SAKT", "SAKST", "Asia/Sakhalin"),
+    (-36000, 1, "VLAT", "VLAST", "Asia/Vladivostok"), (-34200, 2, "CST", "CST", "Australia/South"),
+    (-32400, 1, "YAKT", "YAKST", "Asia/Yakutsk"), (-32400, 1, "CHOT", "CHOST", "Asia/Choibalsan"),
+    (-31500, 2, "CWST", "CWST", "Australia/Eucla"), (-28800, 1, "IRKT", "IRKST", "Asia/Irkutsk"),
+    (-28800, 1, "ULAT", "ULAST", "Asia/Ulaanbaatar"), (-28800, 2, "WST", "WST", "Australia/West"),
+    (-25200, 1, "HOVT", "HOVST", "Asia/Hovd"), (-25200, 1, "KRAT", "KRAST", "Asia/Krasnoyarsk"),
+    (-21600, 1, "NOVT", "NOVST", "Asia/Novosibirsk"), (-21600, 1, "OMST", "OMSST", "Asia/Omsk"),
+    (-18000, 1, "YEKT", "YEKST", "Asia/Yekaterinburg"), (-14400, 1, "SAMT", "SAMST", "Europe/Samara"),
+    (-14400, 1, "AMT", "AMST", "Asia/Yerevan"), (-14400, 1, "AZT", "AZST", "Asia/Baku"),
+    (-10800, 1, "AST", "ADT", "Asia/Baghdad"), (-10800, 1, "MSK", "MSD", "Europe/Moscow"),
+    (-10800, 1, "VOLT", "VOLST", "Europe/Volgograd"), (-7200, 0, "EET", "CEST", "Africa/Tripoli"),
+    (-7200, 1, "EET", "EEST", "Europe/Athens"), (-7200, 1, "IST", "IDT", "Asia/Jerusalem"),
+    (-3600, 0, "CET", "WEST", "Africa/Algiers"), (-3600, 2, "WAT", "WAST", "Africa/Windhoek"),
+    (0, 1, "GMT", "IST", "Europe/Dublin"), (0, 1, "GMT", "BST", "Europe/London"),
+    (0, 0, "WET", "WEST", "Africa/Casablanca"), (0, 0, "WET", "WET", "Africa/El_Aaiun"),
+    (3600, 1, "AZOT", "AZOST", "Atlantic/Azores"), (3600, 1, "EGT", "EGST", "America/Scoresbysund"),
+    (10800, 1, "PMST", "PMDT", "America/Miquelon"), (10800, 2, "UYT", "UYST", "America/Montevideo"),
+    (10800, 1, "WGT", "WGST", "America/Godthab"), (10800, 2, "BRT", "BRST", "Brazil/East"),
+    (12600, 1, "NST", "NDT", "America/St_Johns"), (14400, 1, "AST", "ADT", "Canada/Atlantic"),
+    (14400, 2, "AMT", "AMST", "America/Cuiaba"), (14400, 2, "CLT", "CLST", "Chile/Continental"),
+    (14400, 2, "FKT", "FKST", "Atlantic/Stanley"), (14400, 2, "PYT", "PYST", "America/Asuncion"),
+    (18000, 1, "CST", "CDT", "America/Havana"), (18000, 1, "EST", "EDT", "US/Eastern"),
+    (21600, 2, "EAST", "EASST", "Chile/EasterIsland"), (21600, 0, "CST", "MDT", "Canada/Saskatchewan"),
+    (21600, 0, "CST", "CDT", "America/Guatemala"), (21600, 1, "CST", "CDT", "US/Central"),
+    (25200, 1, "MST", "MDT", "US/Mountain"), (28800, 0, "PST", "PST", "Pacific/Pitcairn"),
+    (28800, 1, "PST", "PDT", "US/Pacific"), (32400, 1, "AKST", "AKDT", "US/Alaska"),
+    (36000, 1, "HAST", "HADT", "US/Aleutian"),
+];

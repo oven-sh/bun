@@ -1,6 +1,5 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_paths::resolve_path::{platform_to_posix_in_place, relative};
-use bun_paths::{MAX_PATH_BYTES, is_absolute};
+use bun_paths::{Path, is_absolute, to_portable_in_place};
 
 pub(super) struct PathPrinter {
     working_directory: Vec<u8>,
@@ -18,11 +17,8 @@ impl PathPrinter {
 
     pub(super) fn write_path(&self, out: &mut Vec<u8>, path: &[u8]) {
         let start = out.len();
-        let can_relativize = is_absolute(&self.working_directory)
-            && is_absolute(path)
-            && 2 * self.working_directory.len() + path.len() < MAX_PATH_BYTES;
-        if can_relativize {
-            out.extend_from_slice(relative(&self.working_directory, path));
+        if is_absolute(&self.working_directory) && is_absolute(path) {
+            out.extend_from_slice(&Path::relative(&self.working_directory, path));
         }
         if out.len() == start {
             out.extend_from_slice(path);
@@ -32,7 +28,7 @@ impl PathPrinter {
     pub(super) fn posix_path(&self, path: &[u8]) -> Vec<u8> {
         let mut shown = Vec::new();
         self.write_path(&mut shown, path);
-        platform_to_posix_in_place(&mut shown[..]);
+        to_portable_in_place(&mut shown[..]);
         shown
     }
 }
@@ -205,11 +201,11 @@ mod tests {
     }
 
     #[test]
-    fn oversized_path_is_unchanged() {
+    fn oversized_path_is_relative() {
         let printer = PathPrinter::in_directory(native("/p"));
         let mut path = native("/p/");
-        path.resize(MAX_PATH_BYTES, b'a');
-        assert_eq!(written(|out| printer.write_path(out, &path)), path);
+        path.resize(bun_paths::MAX_PATH_BYTES, b'a');
+        assert_eq!(written(|out| printer.write_path(out, &path)), path[3..]);
     }
 
     #[test]

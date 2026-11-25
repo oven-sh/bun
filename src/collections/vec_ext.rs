@@ -19,6 +19,13 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
+/// Empties `list` and returns its allocation, for `U` = `T` with another lifetime. std collects this in place.
+pub fn recycle_vec<T, U>(mut list: Vec<T>) -> Vec<U> {
+    const { assert!(size_of::<T>() == size_of::<U>() && align_of::<T>() == align_of::<U>()) };
+    list.clear();
+    list.into_iter().map(|_| unreachable!()).collect()
+}
+
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;
@@ -361,5 +368,21 @@ impl OffsetByteList {
     pub fn clear_and_free(&mut self) {
         // Drop on the taken value frees `byte_list`; nothing is reused.
         drop(core::mem::take(self));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recycle_vec_keeps_the_allocation() {
+        let bytes = [1u8, 2];
+        let mut list: Vec<&[u8]> = Vec::with_capacity(8);
+        list.push(&bytes);
+        let before = (list.as_ptr().addr(), list.capacity());
+        let list: Vec<&'static [u8]> = recycle_vec(list);
+        assert!(list.is_empty());
+        assert_eq!((list.as_ptr().addr(), list.capacity()), before);
     }
 }

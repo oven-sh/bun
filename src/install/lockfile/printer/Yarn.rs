@@ -68,8 +68,10 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
         let version = &dependencies_buffer[dependency_id as usize].version;
         // Only the package.json parser gives the root's dependency on a workspace a literal, which
         // is the workspace's path.
-        if version.literal.is_empty() && version.tag == dependency::Tag::Workspace {
-            return version.workspace().slice(string_buf);
+        if version.literal.is_empty()
+            && let dependency::Value::Workspace(workspace) = &version.value
+        {
+            return workspace.slice(string_buf);
         }
         version.literal.slice(string_buf)
     };
@@ -84,7 +86,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
     };
     for i in 1..package_count {
         index_sort::sort_indices(&mut requested[starts[i]..starts[i + 1]], &mut |a, b| {
-            let tag_of = |id: DependencyID| dependencies_buffer[id as usize].version.tag;
+            let tag_of = |id: DependencyID| dependencies_buffer[id as usize].version.tag();
             strings::order(requested_name(a), requested_name(b))
                 .then_with(|| tag_of(a).cmp(tag_of(b)))
                 .then_with(|| strings::order(requested_as(a), requested_as(b)))

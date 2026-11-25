@@ -946,7 +946,7 @@ pub struct ShadowedBuiltinPlugin<'c> {
 /// [`schema::validate_js`].
 fn oxlint_js_options_error(rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
     let start: &[u8] = b"Failed to setup JS plugin options:\nError: ";
-    let takes_none = match &rule.schema {
+    let takes_none = match &rule.about().schema {
         js_plugin::Schema::None => true,
         js_plugin::Schema::Json(Json::Array(items)) => items.is_empty(),
         _ => false,

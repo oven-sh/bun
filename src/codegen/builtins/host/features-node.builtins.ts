@@ -110,6 +110,7 @@ export default b.declarations(
 
   extendAll(
     ["HttpParser"],
+    "%HTTPParser%",
     "node:_http_common",
     "node:_http_client",
     "node:_http_server",
@@ -217,6 +218,7 @@ export default b.declarations(
       "Bindgen",
       "node_util_binding.bind.ts",
       "assertEncodingValid",
+      "diffNumbers",
       "ecanceledErrorCode",
       "enobufsErrorCode",
       "etimedoutErrorCode",

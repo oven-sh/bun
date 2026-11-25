@@ -28,6 +28,7 @@
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 
 using namespace JSC;
@@ -260,8 +261,7 @@ WTF::String formatStackTrace(
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                OwnedZigStackFrames remappedFrames(1);
-                ZigStackFrame& remappedFrame = remappedFrames[0];
+                ZigStackFrame remappedFrame;
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
@@ -273,7 +273,7 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
+                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -318,7 +318,7 @@ WTF::String formatStackTrace(
     // Pass 1: collect (line, col, source_url) for frames that should be
     // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
-    OwnedZigStackFrames remappedFrames(framesCount);
+    WTF::Vector<ZigStackFrame, 8> remappedFrames(framesCount);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
     sourceURLs.grow(framesCount);
@@ -341,7 +341,7 @@ WTF::String formatStackTrace(
         remappedFrame.position.byte_position = -1;
         originalLineColumns[i] = {};
 
-        if (!frame.hasLineAndColumnInfo()) continue;
+        if (!Zig::hasSourcePosition(frame)) continue;
 
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) [[unlikely]] {
@@ -358,7 +358,7 @@ WTF::String formatStackTrace(
         }
 #endif
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        originalLineColumns[i] = Zig::lineAndColumn(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -383,7 +383,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        remappedFrames.remap(getBunVM());
+        Bun__remapStackFramePositions(getBunVM(), remappedFrames.begin(), remappedFrames.size());
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -399,8 +399,9 @@ WTF::String formatStackTrace(
         OrdinalNumber displayLine = {};
         OrdinalNumber displayColumn = {};
         WTF::String sourceURLForFrame = sourceURLs[i];
+        bool hasPosition = Zig::hasSourcePosition(frame);
 
-        if (frame.hasLineAndColumnInfo()) {
+        if (hasPosition) {
             originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
             originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
             displayLine = originalLine;
@@ -459,7 +460,7 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (frame.hasLineAndColumnInfo()) {
+            if (hasPosition) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
                 sb.append(':');
@@ -523,7 +524,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     // We need to sourcemap it if it's a GlobalObject.
 
     const int n = stackTrace.size();
-    OwnedZigStackFrames remappedFrames(n);
+    WTF::Vector<ZigStackFrame, 8> remappedFrames(n);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<bool, 8> didRemap;
     sourceURLs.grow(n);
@@ -546,7 +547,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         // global object.
         JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
 
-        if (stackFrame.hasLineAndColumnInfo()) {
+        if (Zig::hasSourcePosition(stackFrame)) {
             auto* callee = stackFrame.callee();
             // https://github.com/oven-sh/bun/issues/17698
             if (callee) {
@@ -574,7 +575,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        remappedFrames.remap(globalObject->bunVM());
+        Bun__remapStackFramePositions(globalObject->bunVM(), remappedFrames.begin(), remappedFrames.size());
     }
 
     for (int i = 0; i < n; i++) {
@@ -617,10 +618,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -628,10 +627,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -699,13 +696,12 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-    OwnedZigStackFrames frames(1);
-    ZigStackFrame& frame = frames[0];
+    ZigStackFrame frame;
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
-    frames.remap(Bun::vm(vm));
+    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
 
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();

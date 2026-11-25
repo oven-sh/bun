@@ -144,34 +144,6 @@ impl uv_buf_t {
             base: input.as_ptr().cast_mut(),
         }
     }
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        // `from_raw_parts` requires non-null, aligned even for len==0.
-        // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
-        // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
-        if self.len == 0 || self.base.is_null() {
-            return &[];
-        }
-        // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
-        unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
-    }
-    /// Mutable view of the buffer.
-    ///
-    /// SAFETY: caller asserts that `(base, len)` came from a writeable
-    /// allocation and that no other `&mut`/`&` to that storage is live for the
-    /// returned slice's lifetime. Takes `&mut self` so borrowck rejects the
-    /// obvious double-call aliasing footgun at the type level; this does *not*
-    /// by itself make the call safe (the pointee may still be aliased
-    /// elsewhere).
-    #[inline]
-    pub unsafe fn slice_mut(&mut self) -> &mut [u8] {
-        // See `slice()`: guard `(null, 0)` — `from_raw_parts_mut` requires a
-        // non-null pointer even for zero-length slices.
-        if self.len == 0 || self.base.is_null() {
-            return &mut [];
-        }
-        unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1474,14 +1446,6 @@ impl Tty {
     }
 }
 
-impl uv_tty_t {
-    #[inline]
-    pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
-        // SAFETY: tty was `init`ed.
-        unsafe { uv_tty_set_mode(self, mode as uv_tty_mode_t) }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_poll_t`.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1696,6 +1660,12 @@ impl Process {
         // SAFETY: process was spawned.
         unsafe { uv_process_kill(self, signum) }
     }
+}
+
+/// `TerminateProcess` from any thread. 0 is this process.
+pub fn terminate(pid: uv_pid_t) -> ReturnCode {
+    // SAFETY: integers only. Only `SIGQUIT` enters DbgHelp, which is for one thread at a time.
+    unsafe { uv_kill(pid, 9) }
 }
 
 #[repr(C)]
@@ -2053,24 +2023,13 @@ pub struct uv_cpu_info_t {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union addr_union {
-    pub address4: sockaddr_in,
-    pub address6: sockaddr_in6,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union netmask_union {
-    pub netmask4: sockaddr_in,
-    pub netmask6: sockaddr_in6,
-}
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub struct uv_interface_address_t {
     pub name: *mut c_char,
     pub phys_addr: [u8; 6],
     pub is_internal: c_int,
-    pub address: addr_union,
-    pub netmask: netmask_union,
+    /// A union of `sockaddr_in` and `sockaddr_in6` in C, which zeroes the record before it fills it.
+    pub address: [u8; size_of::<sockaddr_in6>()],
+    pub netmask: [u8; size_of::<sockaddr_in6>()],
 }
 #[repr(C)]
 pub struct uv_utsname_t {
@@ -2818,7 +2777,7 @@ unsafe extern "C" {
     pub fn uv_timer_get_due_in(handle: *const Timer) -> u64;
 
     /// Winsock is initialized on first use inside libuv; anything that calls
-    /// ws2_32 directly (or through c-ares/uSockets) must call this first.
+    /// ws2_32 directly (or through uSockets) must call this first.
     /// Thread-safe and idempotent (uv_once).
     pub safe fn uv__winsock_ensure();
 
@@ -2840,6 +2799,7 @@ unsafe extern "C" {
         options: *const uv_process_options_t,
     ) -> ReturnCode;
     pub fn uv_process_kill(handle: *mut Process, signum: c_int) -> ReturnCode;
+    fn uv_kill(pid: uv_pid_t, signum: c_int) -> ReturnCode;
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;

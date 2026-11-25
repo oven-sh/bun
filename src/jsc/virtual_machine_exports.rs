@@ -63,11 +63,7 @@ fn absolute_directory(directory: &BunString) -> Box<[u8]> {
     } else {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         match bun_sys::getcwd_z(&mut cwd_buf) {
-            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
-                cwd.as_bytes(),
-                &directory,
-            ])
-            .to_vec(),
+            Ok(cwd) => bun_paths::Path::join(&[cwd, &directory]).to_vec(),
             Err(_) => directory,
         }
     };
@@ -106,21 +102,6 @@ pub fn vm_queue_task(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask)
 pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
     this.event_loop().enqueue_task_after_yield(Task::init(task));
-}
-
-/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
-/// debugger and signal threads, work no script initiated), so it lands on the
-/// regular loop: see [`crate::VmHandle::post_cpp_task`].
-// HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
-pub fn vm_handle_queue_task_concurrently(
-    r: *const crate::vm_handle::Shared,
-    task: *mut crate::cpp_task::CppTask,
-) {
-    crate::mark_binding!();
-    // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
-    // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

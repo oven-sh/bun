@@ -37,6 +37,7 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
+#include "EventLoopKeepAlive.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include "ScriptExecutionContext.h"
@@ -78,8 +79,8 @@ public:
     // Called on this channel's context thread with one message.
     void dispatchMessage(Ref<SerializedScriptValue>&&);
 
-    void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsRef() { m_keepAlive.setActive(!isClosed()); }
+    void jsUnref() { m_keepAlive.setActive(false); }
 
 private:
     friend class BunBroadcastChannelRegistry;
@@ -96,7 +97,7 @@ private:
     // ActiveDOMObject.
     void contextDestroyed() final;
     bool virtualHasPendingActivity() const final;
-    void stop() final;
+    void stop() final { close(); }
 
     // State is a single atomic so the GC-thread hasPendingActivity() check
     // never takes a lock.
@@ -110,7 +111,7 @@ private:
 
     std::atomic<uint64_t> m_state { 0 };
 
-    bool m_hasRef { false };
+    Bun::EventLoopKeepAlive m_keepAlive;
 };
 
 } // namespace WebCore

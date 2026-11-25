@@ -15,12 +15,13 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::Headers;
 use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
-use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
+use crate::internal_state::TransportEnd;
 
 /// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
 ///
@@ -215,8 +216,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     }
     let n = s.header_count();
 
-    stream.decoded_headers.clear();
-    stream.decoded_headers.reserve(n as usize);
+    let mut headers = Headers::default();
+    let field_len = |h: &quic::Header| h.name_bytes().len() + h.value_bytes().len();
+    headers
+        .buf
+        .reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
+    bun_core::handle_oom(headers.entries.ensure_total_capacity(n as usize));
     let mut status: u16 = 0;
     let mut i: c_uint = 0;
     while i < n {
@@ -239,9 +244,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, trim_response_value(value)));
+        headers.append(name, trim_response_value(value));
         i += 1;
     }
     if status == 0 {
@@ -258,7 +261,8 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         return;
     }
     stream.status_code = status;
-    session.deliver(stream, false);
+    stream.decoded_headers = headers;
+    session.deliver(stream, None);
 }
 
 extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
@@ -267,17 +271,15 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
-    stream.session_mut().deliver(stream, fin != 0);
+    let end = (fin != 0).then_some(TransportEnd::Clean);
+    stream.session_mut().deliver(stream, end);
 
     let Some(stream) = stream_of(s) else { return };
     if fin != 0 || stream.read_paused {
         return;
     }
-    let Some(client) = stream.client else { return };
-    if super::client_session::client_mut(client)
-        .signals
-        .is_receive_paused()
-    {
+    let Some(client) = &stream.client else { return };
+    if client.holds_off_receiving() {
         stream.read_paused = true;
         s.want_read(false);
     }
@@ -317,5 +319,8 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    stream.session_mut().deliver(stream, true);
+    // A FIN that was read detached the stream in `on_stream_data`.
+    stream
+        .session_mut()
+        .deliver(stream, Some(TransportEnd::Failed));
 }

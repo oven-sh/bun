@@ -109,6 +109,7 @@ pub(super) fn scope_boundary(hir: &File<'_>, kind: ScopeKind) -> (Option<CodeUni
         ScopeKind::Fn(f) => (Some(CodeUnit::Function(f)), Some(hir[f].is_strict)),
         ScopeKind::FieldInitializer(m) => (Some(CodeUnit::FieldInitializer(m)), None),
         ScopeKind::Class(_) => (None, Some(true)),
+        ScopeKind::Module(m) if hir.is_strict_namespace(m) => (None, Some(true)),
         _ => (None, None),
     }
 }

@@ -8,6 +8,9 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
+use std::sync::Arc;
+
+use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
@@ -58,7 +61,7 @@ pub mod task_tag {
     }
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
-        BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
+        BakePendingReloadEvent,   // bake::dev_server::PendingReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
@@ -78,6 +81,7 @@ pub mod task_tag {
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
+        FetchTaskletTrace,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
@@ -86,15 +90,11 @@ pub mod task_tag {
         HandledPromise,
         HotReloadTask,
         HTMLRewriterBackgroundPull,
-        WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
-        NativeBrotli,
-        NativeZlib,
-        NativeZstd,
         Open,
         PosixSignalTask,
         MemoryPressureTask,
@@ -107,7 +107,7 @@ pub mod task_tag {
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
         S3RefusedRequest,
-        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
+        S3UploadWriterCollected,  // NetworkSink (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         HTTPServerDeinit,
@@ -134,11 +134,12 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
-        UvDnsPollFree,            // a closed c-ares uv_poll_t (windows)
+        ThreadSafeFunctionRefRequest,
+        UvDnsPollFree,            // a closed uv_poll_t of a DNS socket (windows)
         UvHandleClose,            // an addon's uv_close (posix)
         UvLoopDispatch,           // an addon's uv_async_send (posix)
+        UvWorkDone,               // work that an addon thread queued (posix)
         ValkeyDeferredClose,
-        ValkeyDeferredFailure,
         WindowsNamedPipeContext,
         Write,
         Writev,
@@ -233,6 +234,70 @@ pub trait BoxedTask: 'static {
     fn context(&self) -> ContextId;
 }
 
+/// As [`BoxedTask`], for a reference that the queued [`Task`] owns. `Self` names the task.
+pub trait RefTask: 'static {
+    const TAG: TaskTag;
+    type Ref: TaskRef;
+    /// As [`Taskable::release_unrun`]. An empty body drops the reference.
+    fn release_unrun(this: Self::Ref);
+    fn context(this: &Self::Ref) -> ContextId;
+}
+
+/// A counted reference, which waits in [`Task::ptr`].
+pub trait TaskRef {
+    fn into_raw(self) -> *mut ();
+    /// # Safety
+    /// `ptr` came from `into_raw`, and is not used afterwards.
+    unsafe fn from_raw(ptr: *mut ()) -> Self;
+}
+
+impl<T> TaskRef for Arc<T> {
+    fn into_raw(self) -> *mut () {
+        Arc::into_raw(self).cast_mut().cast()
+    }
+    unsafe fn from_raw(ptr: *mut ()) -> Self {
+        // SAFETY: fn contract.
+        unsafe { Arc::from_raw(ptr.cast()) }
+    }
+}
+
+impl<T: AnyRefCounted> TaskRef for RefPtr<T> {
+    fn into_raw(self) -> *mut () {
+        RefPtr::into_raw(self).cast()
+    }
+    unsafe fn from_raw(ptr: *mut ()) -> Self {
+        // SAFETY: fn contract.
+        unsafe { RefPtr::from_raw(ptr.cast()) }
+    }
+}
+
+/// What holds a task until a queue that can refuse it has taken it.
+pub trait IntoTask {
+    const TAG: TaskTag;
+    fn into_task(self) -> Task;
+}
+
+impl<T: Taskable> IntoTask for *mut T {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::init(self)
+    }
+}
+
+impl<T: BoxedTask> IntoTask for Box<T> {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::from_boxed(self)
+    }
+}
+
+impl<T: RefTask<Ref = Self>> IntoTask for Arc<T> {
+    const TAG: TaskTag = T::TAG;
+    fn into_task(self) -> Task {
+        Task::from_ref::<T>(self)
+    }
+}
+
 impl TaskTag {
     /// A bundle asks its plugins to resolve or load something.
     #[inline]
@@ -294,6 +359,19 @@ impl Task {
         debug_assert!(self.tag == T::TAG);
         // SAFETY: fn contract.
         unsafe { bun_core::heap::take(self.ptr.cast()) }
+    }
+
+    pub fn from_ref<T: RefTask>(task: T::Ref) -> Task {
+        let context = T::context(&task);
+        Task::new(T::TAG, task.into_raw(), context)
+    }
+
+    /// # Safety
+    /// `self` came from `from_ref::<T>`, and no bitwise copy of it is used.
+    pub unsafe fn into_ref<T: RefTask>(self) -> T::Ref {
+        debug_assert!(self.tag == T::TAG);
+        // SAFETY: fn contract.
+        unsafe { T::Ref::from_raw(self.ptr) }
     }
 }
 

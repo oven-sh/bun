@@ -1,6 +1,6 @@
 //! Routing styles: how file names map to route patterns (Next.js pages and app router).
 
-use bun_paths::strings;
+use bun_core::strings;
 
 use bun_alloc::{Arena, ArenaVec};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -168,7 +168,7 @@ impl Style {
             return Ok(None);
         }
 
-        let dirname = paths::resolve_path::dirname::<paths::platform::Posix>(without_ext);
+        let dirname = paths::dirname_or_root(without_ext);
         if dirname.len() <= 1 {
             return Ok(Some(ParsedPattern { kind, parts: &[] }));
         }

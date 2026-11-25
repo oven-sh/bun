@@ -2,8 +2,6 @@ use std::borrow::Cow;
 use std::mem::take;
 
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
     BindOptions, Binding, BindingInitializer, Bound, Decl, Parent, RuntimeBindOptions,
@@ -14,7 +12,7 @@ use bun_sema::hir::{BinOp, ExportSpecId, ExprId, ExprKind, File, FileKind, Flags
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode, TextsOfFile};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::resolve::{
-    FinishedFile, JsxSettings, TransformRequest, TranspileSettings, TreeChange,
+    FinishedFile, JsxSettings, TransformRequest, TranspileSettings, TreeChange, parent_directory,
 };
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
@@ -379,10 +377,7 @@ struct Tree<'a, 's> {
 
 impl<'a, 's> Tree<'a, 's> {
     fn text_of(&self, text: Atom) -> &'a [u8] {
-        match text.is_none() {
-            true => &b""[..],
-            false => self.atoms.bytes(text),
-        }
+        self.atoms.bytes(text)
     }
 
     fn is_dead(&self, expression: ExprId) -> bool {
@@ -771,7 +766,7 @@ impl<'a, 's> TextReader<'a, 's> {
             analysis: request.analysis,
             atoms: request.atoms,
             builtins,
-            folder: Some(dirname::<Posix>(request.path)),
+            folder: Some(parent_directory(request.path)),
         };
         TextReader::of_tree(tree, fold, file)
     }

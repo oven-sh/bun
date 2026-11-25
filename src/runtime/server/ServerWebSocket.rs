@@ -4,9 +4,10 @@ use bun_core::Utf8Bytes;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
+use bun_uws::AnyWebSocket;
+use bun_uws_sys::web_socket::WebSocketHandler;
 use bun_uws_sys::{Opcode, SendStatus};
+use bun_websocket::frame::MAX_CONTROL_PAYLOAD;
 
 use crate::generated_bindgen::server::js_ServerWebSocket as js;
 use crate::server::WebSocketServerHandler;
@@ -33,19 +34,18 @@ use crate::generated_bindgen::server::BinaryType;
 pub(crate) struct ServerWebSocket {
     // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
     signal: Cell<Option<PendingAbortSignal>>,
 }
 
 // We pack the per-socket data into this struct below:
-// ssl:1, closed:1, ws_package:1, binary_type:4, packed_websocket_ptr:57
+// unused:1, closed:1, ws_package:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Flags(u64);
 
 impl Flags {
-    const SSL_BIT: u64 = 1 << 0;
     const CLOSED_BIT: u64 = 1 << 1;
     const WS_PACKAGE_BIT: u64 = 1 << 2;
     const BINARY_TYPE_SHIFT: u32 = 3;
@@ -53,18 +53,6 @@ impl Flags {
     const PTR_SHIFT: u32 = 7;
     const PTR_MASK: u64 = (1u64 << 57) - 1;
 
-    #[inline]
-    pub(crate) fn ssl(self) -> bool {
-        self.0 & Self::SSL_BIT != 0
-    }
-    #[inline]
-    pub(crate) fn set_ssl(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::SSL_BIT;
-        } else {
-            self.0 &= !Self::SSL_BIT;
-        }
-    }
     #[inline]
     pub(crate) fn closed(self) -> bool {
         self.0 & Self::CLOSED_BIT != 0
@@ -115,26 +103,19 @@ impl Flags {
     #[inline]
     fn websocket(self) -> AnyWebSocket {
         // Ensure those other bits are zeroed out
-        let ptr = self.packed_websocket_ptr() as usize as *mut uws::RawWebSocket;
-        if self.ssl() {
-            // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
-            AnyWebSocket::Ssl(ptr)
-        } else {
-            // SAFETY: same as above
-            AnyWebSocket::Tcp(ptr)
-        }
+        let ptr = self.packed_websocket_ptr() as usize as *mut bun_uws::us_socket_t;
+        // SAFETY: `attach` set it. Callers check `closed`, which the close handler sets.
+        unsafe { AnyWebSocket::from_us_socket(ptr) }
     }
 }
 
-/// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
-const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
 /// RFC 6455 §5.5.1: a Close frame's payload is a 2-byte code followed by the reason.
-const MAX_CLOSE_REASON: usize = MAX_CONTROL_FRAME_PAYLOAD - 2;
+const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 
 fn throw_control_frame_too_large(global: &JSGlobalObject, len: usize) -> JsError {
     let err = global.create_range_error_instance(format_args!(
         "The data size must not be greater than {} bytes. Received {} bytes.",
-        MAX_CONTROL_FRAME_PAYLOAD, len,
+        MAX_CONTROL_PAYLOAD, len,
     ));
     global.throw_value(err)
 }
@@ -179,10 +160,9 @@ pub(super) enum Accept {
 /// A converted message argument. Keeps the JS value that owns the bytes alive.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
-    Bytes {
-        bytes: &'a [u8],
-        _owner: jsc::EnsureStillAlive,
-    },
+    /// One whose bytes are in memory.
+    Blob(jsc::WrapperGuard<'a, Blob>),
+    Empty,
     Text(jsc::JSStringView<'a>),
 }
 
@@ -191,7 +171,7 @@ impl Payload<'_> {
     pub(super) fn opcode(&self) -> Opcode {
         match self {
             Payload::Text(_) => Opcode::Text,
-            Payload::Buffer(_) | Payload::Bytes { .. } => Opcode::Binary,
+            Payload::Buffer(_) | Payload::Blob(_) | Payload::Empty => Opcode::Binary,
         }
     }
 
@@ -199,7 +179,8 @@ impl Payload<'_> {
     pub(super) fn bytes(&self) -> Utf8Bytes<'_> {
         match self {
             Payload::Buffer(buffer) => Utf8Bytes::Borrowed(buffer.slice()),
-            Payload::Bytes { bytes, .. } => Utf8Bytes::Borrowed(bytes),
+            Payload::Blob(blob) => Utf8Bytes::Borrowed(blob.shared_view()),
+            Payload::Empty => Utf8Bytes::EMPTY,
             Payload::Text(view) => view.to_utf8(),
         }
     }
@@ -208,20 +189,16 @@ impl Payload<'_> {
 /// Converting an argument can run user JS that closes the socket or stops the
 /// server, so every method converts all of its arguments before it reads native state.
 #[inline]
-pub(super) fn payload_from_js<'a>(
+pub(super) fn payload_from_js<'a, 'b: 'a>(
     global_this: &'a JSGlobalObject,
     fn_name: &'static str,
-    value: JSValue,
+    message: JsLocal<'b>,
     accept: Accept,
 ) -> JsResult<Payload<'a>> {
+    let value = message.to_js();
     if value.is_undefined_or_null() {
         match accept {
-            Accept::Control => {
-                return Ok(Payload::Bytes {
-                    bytes: &[],
-                    _owner: jsc::EnsureStillAlive(value),
-                });
-            }
+            Accept::Control => return Ok(Payload::Empty),
             Accept::Any => {
                 return Err(
                     global_this.throw(format_args!("{fn_name} requires a non-empty message"))
@@ -234,16 +211,13 @@ pub(super) fn payload_from_js<'a>(
         if let Some(buffer) = value.as_array_buffer(global_this) {
             return Ok(Payload::Buffer(buffer));
         }
-        if let Some(blob) = value.as_class_ref::<Blob>() {
-            let Some(bytes) = blob.in_memory_view() else {
+        if let Some(blob) = message.as_class_ref::<Blob>() {
+            if blob.needs_to_read_file() || blob.is_s3() {
                 return Err(global_this.throw(format_args!(
                     "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
                 )));
-            };
-            return Ok(Payload::Bytes {
-                bytes,
-                _owner: jsc::EnsureStillAlive(value),
-            });
+            }
+            return Ok(Payload::Blob(blob));
         }
     }
     let expected = match accept {
@@ -355,7 +329,7 @@ impl ServerWebSocket {
     fn send_message(
         &self,
         global_this: &JSGlobalObject,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -386,7 +360,7 @@ impl ServerWebSocket {
     pub(crate) fn send_frame(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         opcode: Opcode,
         fin: bool,
         compress: bool,
@@ -409,7 +383,7 @@ impl ServerWebSocket {
     fn send_control(
         &self,
         global_this: &JSGlobalObject,
-        data: JSValue,
+        data: JsLocal<'_>,
         fn_name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
@@ -418,7 +392,7 @@ impl ServerWebSocket {
         }
         let payload = payload_from_js(global_this, fn_name, data, Accept::Control)?;
         let bytes = payload.bytes();
-        if bytes.len() > MAX_CONTROL_FRAME_PAYLOAD {
+        if bytes.len() > MAX_CONTROL_PAYLOAD {
             return Err(throw_control_frame_too_large(global_this, bytes.len()));
         }
 
@@ -439,7 +413,7 @@ impl ServerWebSocket {
         &self,
         global_this: &JSGlobalObject,
         topic_value: JSValue,
-        message_value: JSValue,
+        message_value: JsLocal<'_>,
         compress_value: JSValue,
         fn_name: &'static str,
         accept: Accept,
@@ -468,14 +442,7 @@ impl ServerWebSocket {
             self.websocket()
                 .publish(topic.slice(), bytes.slice(), payload.opcode(), compress)
         } else {
-            AnyWebSocket::publish_with_options(
-                handler.flags.contains(HandlerFlags::SSL),
-                app,
-                topic.slice(),
-                bytes.slice(),
-                payload.opcode(),
-                compress,
-            )
+            app.publish(topic.slice(), bytes.slice(), payload.opcode(), compress)
         };
         Ok(send_status_to_js(status, bytes.len(), fn_name))
     }
@@ -516,12 +483,7 @@ impl ServerWebSocket {
         }
         .into_js_wrapper(global_object);
         let js_value = this_value.to_js();
-        let this = this_value.payload_ptr().as_ptr();
-        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
-        let this_ref = unsafe { &*this };
-        this_ref
-            .this_value
-            .set(JsRef::init_strong(js_value, global_object));
+        this_value.set_js_ref_strong(global_object);
         js::data_set_cached(js_value, global_object, data_value);
         // Both callers bail out when `handler.server.is_none()`,
         // so this is normally `Some`; keep the `and_then` as
@@ -532,7 +494,7 @@ impl ServerWebSocket {
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(js_value, global_object, server_js);
         }
-        this
+        this_value.payload_ptr().as_ptr()
     }
 
     /// `init` for a `ws` package socket. `handler` holds the package's callbacks, which are
@@ -569,9 +531,8 @@ impl ServerWebSocket {
     /// Stores the uWS socket pointer and increments the server's open WebSocket count.
     fn attach(&self, ws: AnyWebSocket) {
         self.update_flags(|f| {
-            f.set_packed_websocket_ptr(ws.raw() as usize as u64);
+            f.set_packed_websocket_ptr(ws.us_socket() as usize as u64);
             f.set_closed(false);
-            f.set_ssl(matches!(ws, AnyWebSocket::Ssl(_)));
         });
         // Live-socket accounting lives on the server (`Cell`), reached
         // through the type-erased backref so the shared `&Handler` suffices.
@@ -652,7 +613,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
-            opcode.0,
+            opcode as u8,
             bstr::BStr::new(message)
         );
         let on_message_handler = self.handler().on_message;
@@ -903,15 +864,6 @@ impl ServerWebSocket {
         Ok(())
     }
 
-    pub(crate) fn behavior<ServerType, const SSL: bool>(
-        opts: &WebSocketBehavior,
-    ) -> WebSocketBehavior
-    where
-        ServerType: WebSocketUpgradeServer<SSL>,
-    {
-        Wrap::<ServerType, Self, SSL>::apply(opts)
-    }
-
     pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
         Err(heap.error(format_args!("Cannot construct ServerWebSocket")))
     }
@@ -926,7 +878,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publish",
             Accept::Any,
@@ -943,7 +895,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishText",
             Accept::Text,
@@ -960,7 +912,7 @@ impl ServerWebSocket {
         self.publish_message(
             cx.global(),
             topic.to_js(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "publishBinary",
             Accept::Binary,
@@ -995,13 +947,7 @@ impl ServerWebSocket {
         data: JsLocal<'_>,
         compress: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        self.send_message(
-            cx.global(),
-            data.to_js(),
-            compress.to_js(),
-            "send",
-            Accept::Any,
-        )
+        self.send_message(cx.global(), data, compress.to_js(), "send", Accept::Any)
     }
 
     pub(crate) fn send_text(
@@ -1012,7 +958,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendText",
             Accept::Text,
@@ -1027,7 +973,7 @@ impl ServerWebSocket {
     ) -> JsResult<JSValue> {
         self.send_message(
             cx.global(),
-            data.to_js(),
+            data,
             compress.to_js(),
             "sendBinary",
             Accept::Binary,
@@ -1035,11 +981,11 @@ impl ServerWebSocket {
     }
 
     pub(crate) fn ping(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "ping", Opcode::Ping)
+        self.send_control(cx.global(), data, "ping", Opcode::Ping)
     }
 
     pub(crate) fn pong(&self, cx: &mut JsScope<'_>, data: JsLocal<'_>) -> JsResult<JSValue> {
-        self.send_control(cx.global(), data.to_js(), "pong", Opcode::Pong)
+        self.send_control(cx.global(), data, "pong", Opcode::Pong)
     }
 
     pub(crate) fn get_ready_state(&self) -> i32 {
@@ -1182,13 +1128,11 @@ impl ServerWebSocket {
             return JSValue::create_empty_array(global_this, 0);
         }
 
-        // Get the JSValue directly from C++
-        Ok(
-            crate::socket::uws_jsc::any_web_socket_get_topics_as_js_array(
-                self.websocket(),
-                global_this,
-            ),
-        )
+        self.websocket().subscriptions(|topics| {
+            JSValue::create_array_from_iter(global_this, topics, |topic| {
+                bun_string_jsc::create_utf8_for_js(global_this, topic)
+            })
+        })
     }
 
     pub(crate) fn pause(&self) {
@@ -1215,7 +1159,9 @@ impl ServerWebSocket {
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
-        let address_bytes = self.websocket().get_remote_address(&mut buf);
+        let Some(address_bytes) = self.websocket().get_remote_address(&mut buf) else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // `format_ip` strips trailing `:port` and `[..]`. Use `SocketAddr{V4,V6}` so
         // `format_ip`'s strip logic sees the expected `addr:port` / `[addr]:port`
         // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,
@@ -1298,20 +1244,6 @@ impl WebSocketHandler for ServerWebSocket {
 pub(crate) struct WsPackageSocket(ServerWebSocket);
 
 impl WsPackageSocket {
-    pub(crate) fn behavior<const SSL: bool>(
-        max_payload_length: u32,
-        auto_pong: bool,
-        skip_utf8_validation: bool,
-        compression: bool,
-    ) -> WebSocketBehavior {
-        Wrap::<(), Self, SSL>::ws_package(
-            max_payload_length,
-            auto_pong,
-            skip_utf8_validation,
-            compression,
-        )
-    }
-
     /// Anything `callback` throws becomes an uncaught exception.
     fn call<const N: usize>(
         &self,
@@ -1352,7 +1284,7 @@ impl WsPackageSocket {
     }
 
     /// `code` is the peer's close code (1005 for an empty Close frame), 1006 if the connection
-    /// ended without a Close frame, or a negated `uWS::WebSocketFailureKind` with details in
+    /// ended without a Close frame, or a negated `Failure::for_ws_package` with details in
     /// `message`.
     fn on_close(&self, code: i32, message: &[u8]) -> JsResult<()> {
         let socket = &self.0;
@@ -1481,7 +1413,5 @@ fn call_corked(
     this_value: JSValue,
     args: &[JSValue],
 ) -> JsResult<JSValue> {
-    let mut result = Ok(JSValue::ZERO);
-    ws.cork(|| result = callback.call(global_object, this_value, args));
-    result
+    ws.cork(|| callback.call(global_object, this_value, args))
 }

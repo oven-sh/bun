@@ -9,7 +9,7 @@ use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigi
 use bun_sema::hir::FileKind;
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{
-    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingNoTrees, Sym,
+    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingWithoutKeeping, Sym,
 };
 use bun_sema::resolve::{CodeHost, Host, is_relative, join};
 
@@ -389,7 +389,7 @@ impl ProgramOrigins<'_, '_> {
         mut diagnostics: Vec<Diagnostic>,
         keeps_dependency_errors: bool,
     ) -> Vec<BuildDiagnostic> {
-        let _reading = ReadingNoTrees::begin();
+        let _reading = ReadingWithoutKeeping::begin();
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
             if self.is_in_known_evaluation(&diagnostic) {

@@ -179,7 +179,7 @@ extern "C" BunString Bun__idnaToASCII(const BunString* domain)
     auto ascii = icuToASCII(domain->toWTFString(), IDNAMode::Default);
     if (ascii.isNull())
         return { BunStringTag::Dead };
-    return Bun::toStringRef(ascii);
+    return Bun::toStringRef(ascii).leak();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

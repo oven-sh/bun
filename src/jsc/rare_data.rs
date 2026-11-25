@@ -15,8 +15,6 @@ use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
-use bun_io::{self as Async};
-use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_ptr::RefPtr;
 use bun_sys::{self as syscall, Fd, Mode, Stdio};
@@ -150,15 +148,11 @@ impl EntropyCache {
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
 
-// Safe fn-pointer type: `ctx` is an opaque round-trip pointer the registrant
-// supplied alongside `func`; the caller (`execute`) never dereferences it, only
-// forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
-// cast/deref locally, so invoking the pointer carries no caller-side precondition.
-pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
+pub(crate) type CleanupHookFunction = unsafe extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
-    pub ctx: *mut c_void,
+    pub(crate) ctx: *mut c_void,
     pub(crate) func: CleanupHookFunction,
     // Conceptually a borrow of the JSGlobalObject (JSC_BORROW per
     // LIFETIMES.tsv); a raw ptr avoids threading a lifetime param through
@@ -198,7 +192,8 @@ pub struct RareData {
     /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
     pub(crate) cleanup_hooks_after_teardown_wait: JsCell<Vec<CleanupHook>>,
 
-    pub(crate) file_polls: OnceCell<Box<JsCell<FilePollStore>>>,
+    #[cfg(not(windows))]
+    pub(crate) file_polls: OnceCell<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -230,8 +225,6 @@ pub struct RareData {
     compression_scratch: JsCell<Option<Vec<u8>>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
     websocket_inflate_scratch: JsCell<Option<Vec<u8>>>,
-    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
-    libdeflate_decompressor: OnceCell<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -254,7 +247,8 @@ pub struct RareData {
     pub path_buf: JsCell<PathBuf>,
 }
 
-pub(crate) type FilePollStore = Async::file_poll::Store;
+#[cfg(not(windows))]
+pub(crate) type FilePollStore = bun_io::file_poll::Store;
 
 impl Default for RareData {
     fn default() -> Self {
@@ -264,6 +258,7 @@ impl Default for RareData {
             hot_map: OnceCell::new(),
             cleanup_hooks: JsCell::new(Vec::new()),
             cleanup_hooks_after_teardown_wait: JsCell::new(Vec::new()),
+            #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
@@ -274,7 +269,6 @@ impl Default for RareData {
             h2_padded_frame_buffer: JsCell::new(None),
             compression_scratch: JsCell::new(None),
             websocket_inflate_scratch: JsCell::new(None),
-            libdeflate_decompressor: OnceCell::new(),
             s3_default_client: JsCell::new(Strong::empty()),
             node_quic_callbacks: JsCell::new(Strong::empty()),
             default_csrf_secret: OnceCell::new(),
@@ -620,10 +614,10 @@ impl RareData {
         self.hot_map.get_or_init(HotMap::init)
     }
 
-    pub(crate) fn file_polls_ptr(&self) -> *mut FilePollStore {
+    #[cfg(not(windows))]
+    pub(crate) fn file_polls(&self) -> &FilePollStore {
         self.file_polls
-            .get_or_init(|| Box::new(JsCell::new(FilePollStore::init())))
-            .as_ptr()
+            .get_or_init(|| Box::new(FilePollStore::init()))
     }
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
@@ -689,16 +683,6 @@ impl RareData {
         }
     }
 
-    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
-    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::Decompressor> {
-        let cell = &self.libdeflate_decompressor;
-        if cell.get().is_none() {
-            let _ = cell.set(libdeflate::OwnedDecompressor::new()?);
-        }
-        cell.get().map(|decompressor| &**decompressor)
-    }
-
     pub fn default_csrf_secret(&self) -> &[u8] {
         self.default_csrf_secret.get_or_init(|| {
             let mut secret = [0u8; 16];
@@ -728,7 +712,9 @@ impl RareData {
         self.default_client_ssl_ctx.set(None);
     }
 
-    pub fn push_cleanup_hook(
+    /// # Safety
+    /// `func` takes `ctx`, once, when the VM exits.
+    pub unsafe fn push_cleanup_hook(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
@@ -738,7 +724,9 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    pub fn push_cleanup_hook_after_teardown_wait(
+    /// # Safety
+    /// As [`Self::push_cleanup_hook`].
+    pub unsafe fn push_cleanup_hook_after_teardown_wait(
         &self,
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
@@ -748,11 +736,6 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    /// The loop a first `spawn_sync_event_loop` call made.
-    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
-        self.spawn_sync_event_loop_.get().map(|el| &**el)
-    }
-
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(&self, vm: &VirtualMachine) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.get().is_none() {
@@ -760,7 +743,7 @@ impl RareData {
             let el = unsafe { SpawnSyncEventLoop::init(vm) }?;
             let _ = self.spawn_sync_event_loop_.set(el);
         }
-        self.existing_spawn_sync_event_loop()
+        self.spawn_sync_event_loop_.get().map(|el| &**el)
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

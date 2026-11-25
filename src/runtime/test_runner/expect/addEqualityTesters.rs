@@ -10,9 +10,7 @@ impl Expect {
     /// The first call in a new test file drops the testers that the previous file registered itself.
     pub(crate) fn equality_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = ExpectMatcherUtils::from_js(&utils_value) else { return Ok(None) };
 
         let file = Jest::file_generation();
         let same_file = utils.testers_file.replace(file) == file;
@@ -70,9 +68,7 @@ impl Expect {
         }
 
         let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
-        // SAFETY: `utils_value` is on the stack and owns the payload.
-        let utils = unsafe { &*utils };
+        let Some(utils) = ExpectMatcherUtils::from_js(&utils_value) else { return Ok(()) };
 
         // Build a new array, because script may still hold the old one through `this.customTesters`.
         let all = JSValue::create_empty_array(global, 0)?;

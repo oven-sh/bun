@@ -1,116 +1,139 @@
-use core::ffi::c_void;
-
-use bun_sys::Fd;
 #[cfg(not(windows))]
-use bun_sys::FdExt;
+use core::cell::Cell;
 
-#[cfg(target_os = "macos")]
-use crate::FilePollFlag;
-use crate::{EventLoopHandle, FilePollRef, OwnedFilePoll, Owner};
+#[cfg(not(windows))]
+use bun_ptr::{CellExt as _, OptionCellExt as _};
+#[cfg(not(windows))]
+use bun_sys::{self as sys, Fd, MaybeOwnedFile};
 
-/// Dropping it releases the poll. The fd stays open.
-pub enum PollOrFd {
+#[cfg(not(windows))]
+use crate::posix_event_loop::OneShotFlag;
+#[cfg(not(windows))]
+use crate::{EventLoopHandle, FilePoll, FilePollFlag, OwnedFilePoll, Owner};
+
+/// An fd, and its poll once it is waited on.
+#[cfg(not(windows))]
+pub(crate) struct PipeHandle {
+    /// `INVALID` when closed.
+    file: Cell<MaybeOwnedFile>,
     /// Forced: the kernel keeps a fired poll for as long as the file is open.
-    Poll(OwnedFilePoll<true>),
-    Fd(Fd),
-    Closed,
+    poll: Cell<Option<OwnedFilePoll<true>>>,
+    owner: Cell<Owner>,
 }
 
-impl PollOrFd {
-    pub(crate) fn tag_name(&self) -> &'static str {
-        match self {
-            PollOrFd::Poll(_) => "poll",
-            PollOrFd::Fd(_) => "fd",
-            PollOrFd::Closed => "closed",
+#[cfg(not(windows))]
+impl PipeHandle {
+    pub(crate) const fn closed() -> Self {
+        Self {
+            file: Cell::new(MaybeOwnedFile::INVALID),
+            poll: Cell::new(None),
+            owner: Cell::new(Owner::NULL),
         }
     }
 
-    pub(crate) fn set_owner(&mut self, owner: Owner) {
-        if let PollOrFd::Poll(poll) = self {
-            poll.owner = owner;
-        }
+    /// `None` without a poll. The cell is empty while `f` runs.
+    pub(crate) fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
+        self.poll.with_taken(|poll| poll.as_deref().map(f))
+    }
+
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
+    /// is dropped or has another owner.
+    pub(crate) unsafe fn set_owner(&self, owner: Owner) {
+        self.owner.set(owner);
+        // SAFETY: caller contract. The poll leaves `self` by `take_from` alone, which replaces its owner.
+        self.with_poll(|poll| unsafe { poll.set_owner(owner) });
+    }
+
+    pub(crate) fn owner(&self) -> Owner {
+        self.owner.get()
     }
 
     pub(crate) fn get_fd(&self) -> Fd {
-        match self {
-            PollOrFd::Closed => Fd::INVALID,
-            PollOrFd::Fd(fd) => *fd,
-            PollOrFd::Poll(poll) => poll.fd,
-        }
+        self.file.with_taken(|file| file.fd())
     }
 
-    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
-        match self {
-            PollOrFd::Poll(poll) => Some(poll.poll_ref()),
-            _ => None,
-        }
+    pub(crate) fn owns_file(&self) -> bool {
+        self.file.with_taken(|file| file.is_owned())
     }
 
-    pub(crate) fn set_poll(&mut self, ev: EventLoopHandle, fd: Fd, owner: Owner) {
-        *self = PollOrFd::Poll(OwnedFilePoll::new(ev, fd, owner));
+    pub(crate) fn is_closed(&self) -> bool {
+        self.get_fd() == Fd::INVALID
     }
 
-    pub(crate) fn close_impl<F>(
-        &mut self,
-        ctx: Option<*mut c_void>,
-        on_close_fn: Option<F>,
-        close_fd: bool,
-    ) where
-        F: FnOnce(*mut c_void),
-    {
-        let fd = self.get_fd();
-        #[cfg(target_os = "macos")]
-        let mut close_async = true;
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
+    pub(crate) fn has_poll(&self) -> bool {
+        self.poll.is_some()
+    }
+
+    pub(crate) fn is_watching(&self) -> bool {
+        self.with_poll(FilePoll::is_watching) == Some(true)
+    }
+
+    /// Does nothing without a poll.
+    pub(crate) fn set_poll_flag(&self, flag: FilePollFlag) {
+        self.with_poll(|poll| poll.set_flag(flag));
+    }
+
+    pub(crate) fn set_file(&self, file: MaybeOwnedFile) {
+        self.close();
+        self.file.set(file);
+    }
+
+    /// Releases the poll.
+    pub(crate) fn take_file(&self) -> MaybeOwnedFile {
+        self.poll.set(None);
+        self.file.take()
+    }
+
+    pub(crate) fn add_poll(&self, ev: EventLoopHandle) {
+        // SAFETY: `set_owner`'s contract. Nothing is dispatched to `Owner::NULL`.
+        let poll = unsafe { OwnedFilePoll::new(ev, self.get_fd(), self.owner.get()) };
+        self.poll.set(Some(poll));
+    }
+
+    /// Leaves `other` closed. Both keep their owner.
+    pub(crate) fn take_from(&self, other: &PipeHandle) {
+        self.set_file(other.file.take());
+        self.poll.set(other.poll.take());
+        // SAFETY: `set_owner`'s contract.
+        self.with_poll(|poll| unsafe { poll.set_owner(self.owner.get()) });
+    }
+
+    /// Asks for one event. Does nothing without a poll.
+    pub(crate) fn register(&self, flag: FilePollFlag) -> sys::Result<()> {
+        self.with_poll(|poll| poll.register_with(flag, OneShotFlag::Dispatch))
+            .unwrap_or(Ok(()))
+    }
+
+    /// `false` if it was closed already.
+    pub(crate) fn close(&self) -> bool {
+        #[cfg(not(target_os = "macos"))]
         let close_async = true;
+        // kqueue misses the EOF of a non-blocking FIFO whose write end closes on another thread just before the read end is re-armed.
         #[cfg(target_os = "macos")]
-        if let PollOrFd::Poll(poll) = self {
-            // workaround kqueue bug.
-            // 1) non-blocking FIFO
-            // 2) open for writing only = fd 2, nonblock
-            // 3) open for reading only = fd 3, nonblock
-            // 4) write(3, "something") = 9
-            // 5) read(2, buf, 9) = 9
-            // 6) read(2, buf, 9) = -1 (EAGAIN)
-            // 7) ON ANOTHER THREAD: close(3) = 0,
-            // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
-            // 9) ??? No more events for fd 2
-            close_async = !(poll.flags.contains(FilePollFlag::PollWritable)
-                && poll.flags.contains(FilePollFlag::Nonblocking));
+        let close_async = self.with_poll(|poll| {
+            poll.has_flag(FilePollFlag::PollWritable) && poll.has_flag(FilePollFlag::Nonblocking)
+        }) != Some(true);
+        match self.take_file() {
+            MaybeOwnedFile::Owned(file) if close_async => crate::closer::Closer::close(file, ()),
+            MaybeOwnedFile::Owned(file) => drop(file),
+            MaybeOwnedFile::Borrowed(fd) => return fd != Fd::INVALID,
         }
-        *self = PollOrFd::Closed;
-
-        if fd != Fd::INVALID {
-            // TODO: We should make this call compatible using bun.FD
-            #[cfg(windows)]
-            {
-                if close_fd {
-                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                if close_async && close_fd {
-                    crate::closer::Closer::close(fd, ());
-                } else {
-                    if close_fd {
-                        let _ = fd.close_allowing_bad_file_descriptor(None);
-                    }
-                }
-            }
-            if let Some(f) = on_close_fn {
-                // SAFETY: caller guarantees ctx is Some and properly aligned
-                // for the callback's expected pointee type.
-                f(ctx.expect("ctx must be Some when on_close_fn is provided"));
-            }
-        }
+        true
     }
 
-    pub(crate) fn close<F>(&mut self, ctx: Option<*mut c_void>, on_close_fn: Option<F>)
-    where
-        F: FnOnce(*mut c_void),
-    {
-        self.close_impl(ctx, on_close_fn, true);
+    /// A borrowed fd keeps its poll, to be used again.
+    pub(crate) fn close_if_owned(&self) {
+        if self.owns_file() {
+            self.close();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for PipeHandle {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -133,7 +156,7 @@ pub enum ReadState {
 
 /// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
 pub enum Chunk<'a> {
-    /// The loop's shared scratch: gone once `on_read_chunk` returns. Copy what you keep.
+    /// The loop's shared scratch: gone once the closure returns. Copy what you keep.
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),

@@ -1,9 +1,9 @@
-use super::{FileId, Files, Module};
+use super::{FileId, Files, Module, ModuleTrees, ModuleWithTrees};
 use crate::check::aot::BuiltinTypeSymbols;
 use crate::hir::ListBlock;
 use crate::session::ArenaBox;
 use bun_threading::Guarded;
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64, A
 const WORDS: usize = 4;
 type Bit = (usize, u64);
 const OUTSIDER: Bit = (0, 0);
-const NO_TREES: Bit = (1, 0);
+const KEEPS_NOTHING: Bit = (1, 0);
 
 const HERE: u8 = 0;
 const LEAVING: u8 = 1;
@@ -24,8 +24,8 @@ const READ_WITHOUT_REFERENCE: u32 = 1 << 31;
 const NO_CELL: u32 = u32::MAX;
 
 pub struct ModuleCell<'s> {
-    pub(super) module: UnsafeCell<ArenaBox<'s, Module<'s>>>,
-    unwatched: AtomicPtr<Module<'s>>,
+    pub(super) module: ArenaBox<'s, ModuleWithTrees<'s>>,
+    unwatched: AtomicPtr<ModuleTrees<'s>>,
     is_ripe: AtomicBool,
     state: AtomicU8,
     awaits_commit: AtomicBool,
@@ -36,7 +36,7 @@ pub struct ModuleCell<'s> {
     settling: Guarded<()>,
 }
 
-// SAFETY: a module is only mutated through `&mut Files`, by `Files::free_tree`, or here while nothing reads it.
+// SAFETY: trees are only mutated through `&mut Files`, by its `unsafe` methods, or here while nothing reads them.
 unsafe impl Sync for ModuleCell<'_> {}
 
 #[thread_local]
@@ -108,29 +108,22 @@ impl<'s> std::ops::Deref for ModuleCell<'s> {
     type Target = Module<'s>;
     #[inline(always)]
     fn deref(&self) -> &Module<'s> {
-        let module = self.unwatched.load(Relaxed);
-        if module.is_null() {
-            return self.read_watched();
-        }
-        // SAFETY: see above.
-        unsafe { &*module }
+        &self.module
     }
 }
 
 impl<'s> std::ops::DerefMut for ModuleCell<'s> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Module<'s> {
-        debug_assert_ne!(*self.state.get_mut(), GONE);
-        self.module.get_mut()
+        &mut self.module
     }
 }
 
 impl<'s> ModuleCell<'s> {
-    pub(super) fn new(module: ArenaBox<'s, Module<'s>>) -> ModuleCell<'s> {
-        let mut module = module;
+    pub(super) fn new(module: ArenaBox<'s, ModuleWithTrees<'s>>) -> ModuleCell<'s> {
         ModuleCell {
-            unwatched: AtomicPtr::new(&raw mut *module),
-            module: UnsafeCell::new(module),
+            unwatched: AtomicPtr::new(module.trees.get()),
+            module,
             is_ripe: AtomicBool::new(false),
             state: AtomicU8::new(HERE),
             awaits_commit: AtomicBool::new(false),
@@ -140,6 +133,21 @@ impl<'s> ModuleCell<'s> {
             readers: [const { AtomicU64::new(0) }; WORDS],
             settling: Guarded::new(()),
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn trees(&self) -> &ModuleTrees<'s> {
+        let trees = self.unwatched.load(Relaxed);
+        if trees.is_null() {
+            return self.read_watched();
+        }
+        // SAFETY: it points into `module`. `let_go` writes only while it is null, the `unsafe` methods of `Files` only while nothing reads.
+        unsafe { &*trees }
+    }
+
+    pub(super) fn trees_mut(&mut self) -> &mut ModuleTrees<'s> {
+        debug_assert_ne!(*self.state.get_mut(), GONE);
+        self.module.trees.get_mut()
     }
 
     fn erased(&self) -> *const ModuleCell<'static> {
@@ -171,23 +179,20 @@ impl<'s> ModuleCell<'s> {
     }
 
     fn end_watch(&self) {
-        // SAFETY: the box is never replaced.
-        let module: &Module<'s> = unsafe { &*self.module.get() };
-        self.unwatched
-            .store(std::ptr::from_ref(module).cast_mut(), SeqCst);
+        self.unwatched.store(self.module.trees.get(), SeqCst);
     }
 
     #[cold]
     #[inline(never)]
-    extern "rust-cold" fn read_watched(&self) -> &Module<'s> {
+    extern "rust-cold" fn read_watched(&self) -> &ModuleTrees<'s> {
         self.begin_reading();
-        // SAFETY: as in `deref`.
-        unsafe { &*self.module.get() }
+        // SAFETY: as in `trees`.
+        unsafe { &*self.module.trees.get() }
     }
 
     fn begin_reading(&self) {
         let (word, bit) = TASK.get();
-        if (word, bit) == NO_TREES {
+        if (word, bit) == KEEPS_NOTHING {
             return;
         }
         if (word, bit) == OUTSIDER {
@@ -213,11 +218,9 @@ impl<'s> ModuleCell<'s> {
     #[cold]
     #[inline(never)]
     fn stop_reader_of_freed_trees(&self) -> ! {
-        // SAFETY: the path stays when the trees go.
-        let module: &Module<'s> = unsafe { &*self.module.get() };
         panic!(
             "the trees of {} are read after they were freed",
-            bstr::BStr::new(module.file_name())
+            bstr::BStr::new(self.file_name())
         );
     }
 
@@ -251,8 +254,8 @@ impl<'s> ModuleCell<'s> {
             return;
         }
         // SAFETY: no task has a reference, and one that wants one from now on waits for the lock.
-        let module = unsafe { &mut **self.module.get() };
-        let mut blocks = module.list_blocks();
+        let trees = unsafe { &mut *self.module.trees.get() };
+        let mut blocks = trees.list_blocks();
         if blocks.iter_mut().all(|block| block.bytes().is_empty()) {
             self.state.store(KEPT, SeqCst);
             self.end_watch();
@@ -263,26 +266,27 @@ impl<'s> ModuleCell<'s> {
                 block.bytes().fill(0xA5);
             }
         }
-        if module.hir.owns_its_lists() {
+        if trees.hir.owns_its_lists() {
             // SAFETY: as above, and no other program shares the cells of a file that owns its lists.
-            unsafe { module.hir.clear_caches() };
+            unsafe { trees.hir.clear_caches() };
         }
-        module.hir.free_long_lists();
-        module.bound.free_long_lists();
+        trees.hir.free_long_lists();
+        trees.bound.free_long_lists();
         self.state.store(GONE, SeqCst);
-    }
-}
-
-impl<'s> Module<'s> {
-    fn list_blocks(&mut self) -> [&mut ListBlock<'s>; 2] {
-        [&mut self.hir.lazy.block, &mut self.bound.block]
     }
 
     fn is_read_without_reference(&self) -> bool {
         self.is_read_by_every_task
             || !self.is_closed
-            || !self.bound.export_stars.is_empty()
-            || BuiltinTypeSymbols::can_list_declarations_of(&self.hir)
+            // Not `facts.has_export_stars`, which stays set after `free_tree`.
+            || !self.trees().bound.export_stars.is_empty()
+            || BuiltinTypeSymbols::can_list_declarations_of(&self.trees().hir)
+    }
+}
+
+impl<'s> ModuleTrees<'s> {
+    fn list_blocks(&mut self) -> [&mut ListBlock<'s>; 2] {
+        [&mut self.hir.lazy.block, &mut self.bound.block]
     }
 }
 
@@ -337,7 +341,6 @@ fn number_components(starts: &[u32], targets: &[u32]) -> (Vec<u32>, usize) {
 
 impl Files<'_> {
     fn for_each_file_referred_to(&self, file: usize, each: &mut dyn FnMut(u32)) {
-        let _reading = ReadingNoTrees::begin();
         let module: &Module<'_> = &self.modules[file];
         let targets = module.edges.iter().chain(module.imports.values());
         for target in targets.chain(module.code_edges) {
@@ -419,6 +422,8 @@ impl Files<'_> {
         if !cell.stop_awaiting_commit() {
             return;
         }
+        // The task can `repin` before it calls `free_tree`, so it holds the trees as a reader until it ends.
+        cell.begin_reading();
         let first = cell.component.load(Relaxed);
         if !self.modules[first as usize].decrement_awaited() {
             return;
@@ -485,15 +490,17 @@ impl Files<'_> {
     }
 }
 
-pub struct ReadingNoTrees(Bit);
+/// Reads what is left of trees, whether or not they are gone, and is no reader that `let_go` waits for.
+pub struct ReadingWithoutKeeping(Bit);
 
-impl ReadingNoTrees {
-    pub fn begin() -> ReadingNoTrees {
-        ReadingNoTrees(TASK.replace(NO_TREES))
+impl ReadingWithoutKeeping {
+    /// Call only while no task runs.
+    pub fn begin() -> ReadingWithoutKeeping {
+        ReadingWithoutKeeping(TASK.replace(KEEPS_NOTHING))
     }
 }
 
-impl Drop for ReadingNoTrees {
+impl Drop for ReadingWithoutKeeping {
     fn drop(&mut self) {
         TASK.set(self.0);
     }

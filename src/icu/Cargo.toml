@@ -1,0 +1,29 @@
+[package]
+name = "bun_icu"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+doctest = false
+
+[lints]
+workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_icu_macros.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true
+bun_wyhash.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides.
+bun_sema_standalone = { path = "../sema/standalone" }
+
+[[test]]
+name = "capi"
+path = "tests/capi/main.rs"

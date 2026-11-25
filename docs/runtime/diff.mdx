@@ -1,0 +1,181 @@
+---
+title: Diff
+description: Compare text and arrays, and create, parse and apply unified diffs with Bun.diff
+---
+
+`Bun.diff` compares text and arrays. It also creates, parses and applies patches in the unified diff format.
+
+```ts
+import { diff } from "bun";
+
+const patch = diff.createPatch("a\nb\n", "a\nc\n", { oldFileName: "file.txt" });
+// --- file.txt
+// +++ file.txt
+// @@ -1,2 +1,2 @@
+//  a
+// -b
+// +c
+
+diff.applyPatch("a\nb\n", patch); // "a\nc\n"
+```
+
+## Compare
+
+| Function                       | A token is                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `diff.lines(oldText, newText)` | a line, with its `\n` or `\r\n`                                                            |
+| `diff.words(oldText, newText)` | a word of letters, digits and `_`, a run of spaces, a line ending, or any other code point |
+| `diff.chars(oldText, newText)` | a code point                                                                               |
+| `diff.arrays(oldArr, newArr)`  | an element, compared with `===`                                                            |
+
+In scripts without spaces between words, like Chinese, Japanese and Thai, `words` makes each code point a token. So it does for letters above U+FFFF. Hangul next to other letters starts a new word.
+
+Each function returns a list of changes. A change is a run of tokens, and `count` is the number of tokens in it.
+
+```ts
+Bun.diff.words("the quick fox", "the slow fox");
+// [
+//   { value: "the ", added: false, removed: false, count: 2 },
+//   { value: "quick", added: false, removed: true, count: 1 },
+//   { value: "slow", added: true, removed: false, count: 1 },
+//   { value: " fox", added: false, removed: false, count: 2 },
+// ]
+
+Bun.diff.arrays([1, 2, 3], [1, 3, 4]);
+// [
+//   { value: [1], added: false, removed: false, count: 1 },
+//   { value: [2], added: false, removed: true, count: 1 },
+//   { value: [3], added: false, removed: false, count: 1 },
+//   { value: [4], added: true, removed: false, count: 1 },
+// ]
+```
+
+### `maxEditLength`
+
+Pass `maxEditLength` to skip inputs that have little in common. The function returns `undefined` when the diff adds and removes more tokens than that. `hunks` and `createPatch` take the same option.
+
+```ts
+Bun.diff.chars("abc", "xyz", { maxEditLength: 5 }); // undefined
+```
+
+### Ignore differences
+
+| Option             | Functions                                         | Effect                                        |
+| ------------------ | ------------------------------------------------- | --------------------------------------------- |
+| `ignoreCase`       | `lines`, `words`, `chars`, `hunks`, `createPatch` | Tokens match if they are equal in lower case  |
+| `ignoreWhitespace` | `lines`, `hunks`, `createPatch`                   | Lines match if they are equal after `trim()`  |
+| `stripTrailingCr`  | `lines`, `hunks`, `createPatch`                   | Replaces `\r\n` with `\n` in both texts first |
+
+Unchanged tokens come from the new text, so a patch made with these options may not apply to the old text.
+
+```ts
+Bun.diff.lines("a\n", "  A\n", { ignoreCase: true, ignoreWhitespace: true });
+// [{ value: "  A\n", added: false, removed: false, count: 1 }]
+```
+
+### Large inputs
+
+Bun looks for the shortest diff and limits the work it spends on the search. The limit is a number of steps, so the same inputs give the same result on every machine.
+
+Tokens that appear in only one input don't count toward the limit. Inputs stay within it when one of these is true:
+
+- Each input has up to about 70,000 tokens.
+- The diff has up to about 8,000 additions plus 8,000 removals. Text that repeats itself reaches the limit sooner.
+- Few tokens repeat, as with a long list of unique lines in a different order.
+
+Past the limit, Bun returns a diff that is correct but can be longer than the shortest one, and `maxEditLength` applies to that diff.
+
+## Create a patch
+
+`diff.createPatch` returns a unified diff. It returns `""` when the texts are equal.
+
+```ts
+Bun.diff.createPatch(oldText, newText, {
+  oldFileName: "a/file.txt", // defaults to newFileName
+  newFileName: "b/file.txt", // defaults to oldFileName
+  oldHeader: "2024-01-01", // text after the old name
+  newHeader: "2024-01-02", // text after the new name
+  context: 3, // unchanged lines around each change. Default: 3. Infinity for the whole file
+});
+```
+
+Without a file name, the patch starts at the first `@@` line. Bun quotes names that contain special characters the way Git does.
+
+`diff.hunks` returns the same information as objects.
+
+```ts
+Bun.diff.hunks("a\nb\nc\n", "a\nx\nc\n", { context: 1 });
+// [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: [" a", "-b", "+x", " c"] }]
+```
+
+## Parse a patch
+
+`diff.parsePatch` reads the output of `diff -u`, `git diff`, `git format-patch`, `svn diff` and `hg diff`. It returns one entry for each file and throws a `SyntaxError` for a malformed hunk or file header.
+
+```ts
+for (const file of Bun.diff.parsePatch(await Bun.$`git diff`.text())) {
+  console.log(file.newFileName, file.hunks.length);
+}
+```
+
+File names come from the patch as they are. Check them before you use them as paths.
+
+Entries from `git diff` have `isGit: true`. They also have `isRename`, `isCopy`, `isCreate`, `isDelete`, `isBinary`, `oldMode` and `newMode` when the patch says so.
+
+## Apply a patch
+
+`diff.applyPatch` takes a unified diff for one file, an entry from `parsePatch`, or an array of hunks. It returns the patched text. If it can't apply every hunk, it throws and says why.
+
+```ts
+try {
+  await Bun.write(path, Bun.diff.applyPatch(source, patch));
+} catch (error) {
+  console.error(error.message); // Hunk 2 does not apply: expected "  return a;" at line 14, found "  return b;"
+}
+```
+
+| Error                              | When                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| `code: "ERR_PATCH_DOES_NOT_APPLY"` | A hunk does not match the source, or the source already has its changes   |
+| `SyntaxError`                      | The text is not a unified diff, is cut short, or has wrong counts in `@@` |
+| `code: "ERR_INVALID_ARG_VALUE"`    | The patch changes several files, or a binary file                         |
+
+`applyPatch` never ignores a difference in content: the lines that a hunk keeps and removes have to match exactly. It accepts what happens to a patch or a source on the way:
+
+- **Moved lines.** If a hunk doesn't match at `oldStart`, Bun uses the nearest line where it does, after the previous hunk. This search has a limit on its number of steps. If the last hunk has unchanged lines before its changes and none after them, Bun tries the end of the source first.
+- **Line endings.** If the source only has `\r\n` and the patch only has `\n`, or the reverse, Bun converts the patch first. A patch made with `context: 0` that adds the other line ending is converted too.
+- **Text around the patch**, like a Markdown fence or an email, unless a line right after a hunk starts with a space, `+` or `-`.
+- **A trimmed patch.** The last line ending can be missing, and with it up to three empty unchanged lines. So can the space that starts an empty unchanged line.
+
+Bun refuses a hunk that has context and adds lines when the source has its result at `oldStart`. A hunk that only removes lines, or was made with `context: 0`, can apply twice.
+
+A hunk that adds or removes a line marked `\ No newline at end of file` has to reach the end of the source.
+
+`git apply` is stricter about line endings, trimmed patches and hunks with little context. It skips more kinds of text around a patch.
+
+## Migrate from the `diff` package
+
+Changes, hunks and parsed patches have the same shape as in [`diff`](https://github.com/kpdecker/jsdiff) 9. When several shortest diffs exist, Bun picks the same one, up to the [limit for large inputs](#large-inputs).
+
+| `diff`                                                    | `Bun.diff`                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------- |
+| `diffLines(a, b)`                                         | `lines(a, b)`                                                       |
+| `diffWordsWithSpace(a, b)`                                | `words(a, b)`                                                       |
+| `diffChars(a, b)`                                         | `chars(a, b)`                                                       |
+| `diffArrays(a, b)`                                        | `arrays(a, b)`                                                      |
+| `structuredPatch(oldName, newName, a, b).hunks`           | `hunks(a, b)`                                                       |
+| `createPatch(name, a, b)`                                 | `createPatch(a, b, { oldFileName: name })`                          |
+| `createTwoFilesPatch(oldName, newName, a, b)`             | `createPatch(a, b, { oldFileName: oldName, newFileName: newName })` |
+| `parsePatch(patch)`                                       | `parsePatch(patch)`                                                 |
+| `applyPatch(source, patch)`, `applyPatch(source, parsed)` | `applyPatch(source, patch)`, `applyPatch(source, parsed)`           |
+
+Differences:
+
+- `words` keeps words whole in all scripts that have spaces between words. `diffWordsWithSpace` only does so for Latin letters.
+- The default `context` is 3, not 4, and a range of one line is `@@ -1 +1 @@`, as in `git diff`.
+- `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts. It writes a tab after a file name with a space, as Git does.
+- `applyPatch` throws instead of returning `false`. It also throws for text that is not a patch, a binary patch, a hunk that adds lines and whose result is already at `oldStart`, and a hunk that only fits before the previous hunk or puts a line without a newline before the end. As `git apply` does, it tries the end of the source first for a hunk that was made there, and appends an insertion that is past the end.
+- `parsePatch` returns `[]` for text without a patch. It throws for a malformed or missing `@@` line and for a patch that ends before its last hunk does (unless it was trimmed), accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
+- `parsePatch` skips `--- text` and `+++ text` lines in the text before the header of a file, unless they form a pair or follow an `Index:` line. It returns no entry for a line of `=` that no header or hunk follows.
+- `parsePatch` and `applyPatch` accept a patch whose line endings were converted to `\r\n`. The lines of a hunk keep the `\r`. If the patch was trimmed, its last line gets it back. File names do not.
+- The only options are the ones on this page. Bun throws for `timeout`, `callback`, `comparator`, `oneChangePerToken`, `intlSegmenter`, `newlineIsToken`, `ignoreNewlineAtEof`, `headerOptions`, `fuzzFactor` and `compareLine` unless they are falsy, for `ignoreCase` in `arrays`, and for `autoConvertLineEndings: false`. In place of `timeout`, use [`maxEditLength`](#maxeditlength).

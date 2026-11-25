@@ -1,8 +1,6 @@
 #include "config.h"
 #include "JSCookie.h"
 
-#include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
@@ -17,13 +15,9 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
+#include "JSDOMPrototype.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
 #include <JavaScriptCore/DateInstance.h>
 #include "HTTPParsers.h"
 namespace WebCore {
@@ -243,40 +237,8 @@ static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_partitioned);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_partitioned);
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_isExpired);
-static JSC_DECLARE_CUSTOM_GETTER(jsCookieConstructor);
 
-class JSCookiePrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSCookiePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSCookiePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCookiePrototype))) JSCookiePrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCookiePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSCookiePrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCookiePrototype, JSCookiePrototype::Base);
+using JSCookiePrototype = JSDOMPrototype<JSCookie>;
 
 JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSCookie* castedThis)
 {
@@ -400,7 +362,7 @@ template<> void JSCookieDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 }
 
 static const HashTableValue JSCookiePrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSCookiePrototype::constructorGetter, 0 } },
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_name, 0 } },
     { "value"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_value, jsCookiePrototypeSetter_value } },
     { "domain"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_domain, jsCookiePrototypeSetter_domain } },
@@ -417,9 +379,9 @@ static const HashTableValue JSCookiePrototypeTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_serialize, 0 } },
 };
 
-const ClassInfo JSCookiePrototype::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookiePrototype) };
+template<> const ClassInfo JSCookiePrototype::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookiePrototype) };
 
-void JSCookiePrototype::finishCreation(VM& vm)
+template<> void JSCookiePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSCookie::info(), JSCookiePrototypeTableValues, *this);
@@ -428,50 +390,14 @@ void JSCookiePrototype::finishCreation(VM& vm)
 
 const ClassInfo JSCookie::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookie) };
 
-JSCookie::JSCookie(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Cookie>&& impl)
-    : JSDOMWrapper<Cookie>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSCookie::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    m_expires.setMayBeNull(vm, this, nullptr);
-}
-
 JSObject* JSCookie::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSCookiePrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSCookiePrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSCookie::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSCookie>(vm, globalObject);
+    return JSCookiePrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSCookie::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCookieDOMConstructor, DOMConstructorID::Cookie>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSCookie::destroy(JSC::JSCell* cell)
-{
-    JSCookie* thisObject = static_cast<JSCookie*>(cell);
-    thisObject->JSCookie::~JSCookie();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsCookieConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSCookiePrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSCookie::getConstructor(vm, prototype->globalObject()));
 }
 
 // Instance methods
@@ -881,18 +807,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_isExpired, (JSGlobalObject * 
     return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_isExpiredBody>(*lexicalGlobalObject, *callFrame, "isExpired");
 }
 
-GCClient::IsoSubspace* JSCookie::subspaceForImpl(VM& vm)
-{
-    return WebCore::subspaceForImpl<JSCookie, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCookie, m_subspaceForCookie));
-}
-
-void JSCookie::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSCookie>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    Base::analyzeHeap(cell, analyzer);
-}
-
 DEFINE_VISIT_CHILDREN(JSCookie);
 
 template<typename Visitor>
@@ -903,23 +817,6 @@ void JSCookie::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_expires);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)
-{
-    return createWrapper<Cookie>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-Cookie* JSCookie::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSCookie>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 size_t JSCookie::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

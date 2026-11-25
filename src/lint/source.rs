@@ -591,6 +591,7 @@ impl<'a> File<'a> {
             (0..)
                 .map(Atom)
                 .take_while(is_own)
+                .filter(|atom| atom.is_some())
                 .map(|atom| self.name(atom))
         })
     }

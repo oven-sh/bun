@@ -105,7 +105,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
         dev.publish(
             HmrTopic::TestingWatchSynchronization,
             &[MessageId::TestingWatchSynchronization.char(), 0],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     } else {
         dev.publish(
@@ -114,7 +114,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
                 MessageId::TestingWatchSynchronization.char(),
                 if had_sent_hmr_event { 4 } else { 3 },
             ],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     }
 
@@ -159,6 +159,69 @@ pub(super) fn finalize_bundle(
     let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
     finalize_bundle_cleanup(dev, had_sent_hmr_event);
     finalized
+}
+
+/// Evaluates the server chunk: an object of the functions of its modules. None of them runs.
+fn load_server_chunk(dev: &mut DevServer) -> crate::Result<jsc::JsResult<JSValue>> {
+    let graph = &mut dev.graphs.server;
+    let source_map_json = if !graph.current_chunk_source_maps.is_empty() {
+        let mut source_map_entry = source_map_store::Entry::default();
+        graph.take_source_map(&mut source_map_entry)?;
+        Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
+    } else {
+        None
+    };
+    let server_bundle =
+        graph.take_js_bundle_server(&incremental_graph::TakeJSBundleOptionsServer {
+            kind: ChunkKind::HmrChunk,
+        })?;
+    Ok(match source_map_json {
+        Some(json) => {
+            // This memory will be owned by the `DevServerSourceProvider` in C++
+            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
+            server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+                dev.global(),
+                BunString::clone_utf8(&server_bundle),
+                json.as_ptr(),
+                json.len(),
+            )
+        }
+        None => server_hmr_ffi::bake_load_server_hmr_patch(
+            dev.global(),
+            BunString::clone_latin1(&server_bundle),
+        ),
+    })
+}
+
+/// Takes the modules that JavaScriptCore refuses out of the server chunk, and marks their files stale. Returns whether
+/// any module is left.
+fn leave_out_refused_modules(dev: &mut DevServer) -> bool {
+    let global = dev.global();
+    let codes = ::core::mem::take(&mut dev.graphs.server.current_chunk_code);
+    let source_maps = ::core::mem::take(&mut dev.graphs.server.current_chunk_source_maps);
+    dev.graphs.server.current_chunk_len = 0;
+    let mut any_refused = false;
+    for (code, source_map) in codes.into_iter().zip(source_maps) {
+        let alone = [b"({".as_slice(), &code, b"})"].concat();
+        match server_hmr_ffi::bake_load_server_hmr_patch(global, BunString::clone_utf8(&alone)) {
+            Ok(_) => {
+                let graph = &mut dev.graphs.server;
+                graph.current_chunk_len += code.len();
+                graph.current_chunk_code.push(code);
+                graph.current_chunk_source_maps.push(source_map);
+            }
+            Err(err) => {
+                let exception = global.take_exception(err);
+                // The error of the chunk was the first one's.
+                if ::core::mem::replace(&mut any_refused, true) {
+                    dev.vm().print_error_like_object_to_console(exception);
+                }
+                let index = source_map.file_index.get() as usize;
+                dev.graphs.server.stale_files.set(index);
+            }
+        }
+    }
+    !dev.graphs.server.current_chunk_code.is_empty()
 }
 
 /// Drops `result` before `finalize_bundle_cleanup` frees what it borrows.
@@ -206,7 +269,7 @@ fn finalize_bundle_inner(
     {
         scb_bitset.set(*source_index as usize);
         scb_bitset.set(*ref_index as usize);
-        if (*ssr_index as usize) < scb_bitset.capacity() {
+        if (*ssr_index as usize) < scb_bitset.bit_length() {
             scb_bitset.set(*ssr_index as usize);
         }
     }
@@ -307,7 +370,7 @@ fn finalize_bundle_inner(
                 // Copied out of the per-bundle AST heap: stack traces are remapped after the bundle ends.
                 escaped_source: quoted_contents
                     .as_ref()
-                    .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                    .map(|v| v.to_vec().into_boxed_slice()),
             }),
         };
         match targets[part_range.source_index.get() as usize].bake_graph() {
@@ -587,91 +650,52 @@ fn finalize_bundle_inner(
 
     // Load all new chunks into the server runtime.
     if !dev.frontend_only && dev.graphs.server.current_chunk_len > 0 {
-        // Generate a script_id for server bundles
-
-        // Get the source map if available and render to JSON
-        let source_map_json = if !dev.graphs.server.current_chunk_source_maps.is_empty() {
-            // Create a temporary source map entry to render
-            let mut source_map_entry = source_map_store::Entry::default();
-
-            // Fill the source map entry
-            dev.graphs.server.take_source_map(&mut source_map_entry)?;
-
-            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
-        } else {
-            None
-        };
-
-        let server_bundle = dev.graphs.server.take_js_bundle_server(
-            &incremental_graph::TakeJSBundleOptionsServer {
-                kind: ChunkKind::HmrChunk,
-            },
-        )?;
-
-        let global = dev.global();
-        let server_modules = if let Some(json) = source_map_json {
-            // This memory will be owned by the `DevServerSourceProvider` in C++
-            let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
-
-            match server_hmr_ffi::bake_load_server_hmr_patch_with_source_map(
+        'load: {
+            let global = dev.global();
+            let server_modules = match load_server_chunk(dev)? {
+                Ok(modules) => modules,
+                Err(err) => {
+                    // JavaScriptCore can refuse text that Bun's parser takes, such as `/(/`. The error is printed,
+                    // the module stays as it was, and the others of the chunk are loaded without it.
+                    dev.vm()
+                        .print_error_like_object_to_console(global.take_exception(err));
+                    if !leave_out_refused_modules(dev) {
+                        break 'load;
+                    }
+                    match load_server_chunk(dev)? {
+                        Ok(modules) => modules,
+                        Err(err) => {
+                            dev.vm()
+                                .print_error_like_object_to_console(global.take_exception(err));
+                            break 'load;
+                        }
+                    }
+                }
+            };
+            let errors = match dev.server_register_update_callback.get().unwrap().call(
                 global,
-                BunString::clone_utf8(&server_bundle),
-                json.as_ptr(),
-                json.len(),
+                global.to_js_value(),
+                &[
+                    server_modules,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.graphs.incremental_result.client_components_added,
+                    )?,
+                    dev.make_array_for_server_components_patch(
+                        global,
+                        &dev.graphs.incremental_result.client_components_removed,
+                    )?,
+                ],
             ) {
                 Ok(v) => v,
                 Err(err) => {
                     dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
+                    break 'load;
                 }
-            }
-        } else {
-            match server_hmr_ffi::bake_load_server_hmr_patch(
-                global,
-                BunString::clone_latin1(&server_bundle),
-            ) {
-                Ok(v) => v,
-                Err(err) => {
-                    dev.vm()
-                        .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: `panic!()` would unwind through the
-                    // `extern "C"` boundary above (`nounwind` UB), so abort.
-                    bun_core::Output::panic(format_args!(
-                        "Error thrown while evaluating server code. This is always a bug in the bundler."
-                    ));
-                }
-            }
-        };
-        let errors = match dev.server_register_update_callback.get().unwrap().call(
-            global,
-            global.to_js_value(),
-            &[
-                server_modules,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.graphs.incremental_result.client_components_added,
-                )?,
-                dev.make_array_for_server_components_patch(
-                    global,
-                    &dev.graphs.incremental_result.client_components_removed,
-                )?,
-            ],
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                dev.vm()
-                    .print_error_like_object_to_console(global.take_exception(err));
-                panic!(
-                    "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
-                );
-            }
-        };
-        let _ = errors; // TODO:
+            };
+            let _ = errors; // TODO:
+        }
     }
 
     let mut route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
@@ -997,7 +1021,7 @@ fn finalize_bundle_inner(
             w_int!(i32, 0);
         }
 
-        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
+        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::Binary);
         *had_sent_hmr_event = true;
     }
 
@@ -1073,12 +1097,12 @@ fn finalize_bundle_inner(
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
         {
-            let mut buf = paths::path_buffer_pool::get();
+            let mut buf = paths::Path::new();
 
             // Compute a file name to display
             let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
-                    Some(dev.relative_path(&mut *buf, {
+                    Some(dev.relative_path(&mut buf, {
                         use bun_bundler::Graph::InputFileColumns as _;
                         bv2.graph.input_files.items_source()
                             [bv2.graph.entry_points[0].get() as usize]
@@ -1099,7 +1123,7 @@ fn finalize_bundle_inner(
                     // / `dev.router` / `dev.graphs` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
+                            Some(dev.relative_path(&mut buf, &html.html_bundle.bundle.path))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
@@ -1111,7 +1135,7 @@ fn finalize_bundle_inner(
                                 from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
                             let abs_path = &dev.graphs.server.bundled_files.keys()
                                 [server_index.get() as usize];
-                            break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
+                            break 'file_name Some(dev.relative_path(&mut buf, abs_path));
                         }
                     };
                 }
@@ -1193,8 +1217,8 @@ impl DevServer {
         let arr = jsc::JSArray::create_empty(global, items.len())?;
         let names = self.graphs.server.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
-            let mut buf = paths::path_buffer_pool::get();
-            let s = self.relative_path(&mut *buf, &names[item.get() as usize]);
+            let mut buf = paths::Path::new();
+            let s = self.relative_path(&mut buf, &names[item.get() as usize]);
             arr.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),

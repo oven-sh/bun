@@ -656,7 +656,7 @@ export function resolveLlvmToolchain(
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
   }
 
-  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  // nasm: BoringSSL win-x64; compile.ts:nasm() asserts at the use site.
   const nasm = findTool({
     names: ["nasm"],
     required: false,
@@ -790,9 +790,9 @@ export function probeRustToolchain(os: OS): {
   // ensured. Without it the proxy, running in the repo root, applies
   // rust-toolchain.toml in full: besides selecting the channel it installs
   // every entry of its `components` and `targets` lists that is missing
-  // (rustfmt, clippy, miri and the std of 11 targets — ~2.4 GB),
+  // (rustfmt, clippy, miri and the std of 12 targets — ~2.5 GB),
   // with its output piped into nowhere here. The build itself installs what
-  // it needs (rust-src above, the target's std in the rust_build_cross rule),
+  // it needs (rust-src above: it compiles std from source),
   // and the toml still applies to anyone running cargo directly. Generous
   // timeout: without rustup there is no pre-flight and this proxy invocation
   // may still be the one that auto-installs the channel.

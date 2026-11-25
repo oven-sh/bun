@@ -8,6 +8,7 @@ use crate::context::Severity;
 use crate::js_plugin;
 use crate::linter::registry::{Deprecated, Missing, Registry, parse_rule_id};
 use crate::linter::resolved::{find_formatting_rule, find_js_rule, needs_resolver};
+use crate::linter::write_json;
 use crate::options::Json;
 use crate::paths::{self, package_of};
 use crate::rule::{Frameworks, Kind, Plugin, minor_of};
@@ -977,6 +978,25 @@ impl Config {
     }
 }
 
+/// The script that runs the config file doesn't load rules that it takes to be of no use. The command line can turn them
+/// on. A realm then describes the plugin at `location`.
+fn forget_description_without<'n>(location: &mut Json, mut names: impl Iterator<Item = &'n [u8]>) {
+    let described = location.get(b"described").and_then(Json::as_str);
+    let lacks = |name: &[u8]| {
+        let mut entry = b"{\"name\":".to_vec();
+        write_json(&mut entry, &Json::String(name.to_vec()));
+        entry.extend_from_slice(b",\"isLazy\":true}");
+        described.is_some_and(|it| bun_core::strings::contains(it, &entry))
+    };
+    if names.any(lacks)
+        && let Json::Object(entries) = location
+    {
+        for it in entries.iter_mut().filter(|it| it.0 == b"described") {
+            it.1 = Json::Null;
+        }
+    }
+}
+
 impl Reader<'_> {
     /// ESLint's `Cannot redefine plugin`, for a plugin that the config registers as `prefix` and a [`NamedPlugin`] with
     /// that name. `location` is where the config's plugin is, or `null` if no module exports it. The config may have
@@ -1035,6 +1055,11 @@ impl Reader<'_> {
         &mut self,
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
+        let settings = || self.objects.iter().flat_map(|it| &it.rules);
+        let runs_in_js = |id: &[u8]| self.native_rule(id).is_none_or(|it| it.meta.hands_back);
+        let in_js: Vec<Box<[u8]>> = (settings().filter(|it| runs_in_js(&it.id)))
+            .map(|it| it.id.clone())
+            .collect();
         for (location_index, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
             // A `NamedPlugin`.
             if self
@@ -1044,6 +1069,9 @@ impl Reader<'_> {
                 continue;
             }
             let mut unknown = self.unknown_rules.iter();
+            let names = in_js.iter().map(|it| parse_rule_id(it));
+            let names = names.filter(|it| it.0 == &prefix[..]).map(|it| it.1);
+            forget_description_without(location, names);
             // A `--rulesdir` rule has no prefix, so it can have the same name as a built-in rule.
             if prefix.is_empty()
                 || unknown.any(|id| parse_rule_id(id).0 == &prefix[..])

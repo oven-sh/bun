@@ -8,6 +8,7 @@ use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
+use crate::bun_fs::FileSystem;
 use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
@@ -18,11 +19,11 @@ use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
+use super::{INBOX, THREAD_POOL, directories, enqueue};
 use super::{
     ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
     TaskCallbackList,
 };
-use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
@@ -34,7 +35,7 @@ use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::Do;
 use crate::isolated_install::store as Store;
 
 macro_rules! add_error_or_warning_pretty {
@@ -101,7 +102,7 @@ impl Caller<'_, '_> {
 
 /// The cleanup that runs however `run_tasks` exits.
 struct FinishPass<'a> {
-    manager: *mut PackageManager,
+    manager: &'a mut PackageManager,
     counts_tasks: bool,
     log_level: Options::LogLevel,
     has_updated_this_run: &'a Cell<bool>,
@@ -109,27 +110,26 @@ struct FinishPass<'a> {
 
 impl Drop for FinishPass<'_> {
     fn drop(&mut self) {
-        // SAFETY: drops after every body borrow of `manager` has ended
-        // (scope exit or `?` unwind); the pointer retains provenance because
-        // the body only ever accessed that allocation through reborrows of it.
-        let manager = unsafe { &mut *self.manager };
+        let manager = &mut *self.manager;
         manager.drain_dependency_list();
 
         if self.log_level.show_progress() {
             manager.start_progress_bar_if_none();
 
             if self.counts_tasks {
-                let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
+                let completed_items =
+                    (manager.total_tasks.get() - manager.pending_task_count()) as usize;
                 let node = manager.progress.node(manager.downloads_node());
                 if completed_items != node.completed_items.get() || self.has_updated_this_run.get()
                 {
                     node.completed_items.set(completed_items);
-                    node.estimated_total_items.set(manager.total_tasks as usize);
+                    node.estimated_total_items
+                        .set(manager.total_tasks.get() as usize);
                 }
             }
             // The progress bar shows the node that was activated last, so the downloads node is
             // only activated once there is something to download.
-            if manager.total_tasks > 0 {
+            if manager.total_tasks.get() > 0 {
                 manager.progress.activate(manager.downloads_node());
             }
             manager.progress.maybe_refresh();
@@ -137,32 +137,31 @@ impl Drop for FinishPass<'_> {
     }
 }
 
-struct ReturnResolveTask {
-    manager: *mut PackageManager,
+struct ReturnResolveTask<'a> {
+    manager: &'a mut PackageManager,
     task: *mut Task::Task,
 }
 
-impl Drop for ReturnResolveTask {
+impl Drop for ReturnResolveTask<'_> {
     fn drop(&mut self) {
-        // SAFETY: `manager` is the provenance root for every body access
-        // to the manager; `task` is the sole live handle to this pool slot.
-        unsafe { (*self.manager).preallocated_resolve_tasks.put(self.task) };
+        // SAFETY: `task` is the sole live handle to this pool slot.
+        unsafe { self.manager.preallocated_resolve_tasks.put(self.task) };
     }
 }
 
 /// Null if the resolve task doesn't own a network task.
-struct ReturnNetworkTask {
-    manager: *mut PackageManager,
+struct ReturnNetworkTask<'a> {
+    manager: &'a mut PackageManager,
     task: *mut NetworkTask,
 }
 
-impl Drop for ReturnNetworkTask {
+impl Drop for ReturnNetworkTask<'_> {
     fn drop(&mut self) {
         if self.task.is_null() {
             return;
         }
         // SAFETY: see `ReturnResolveTask`.
-        unsafe { (*self.manager).preallocated_network_tasks.put(self.task) };
+        unsafe { self.manager.preallocated_network_tasks.put(self.task) };
     }
 }
 
@@ -213,25 +212,13 @@ pub(crate) fn run_tasks(
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
-    // The guards hold `manager` as a raw pointer: the loop body holds `&mut` to it.
-    //
-    // Stacked Borrows: the raw pointers must remain the provenance root for all
-    // body accesses, otherwise the first direct use of the `&mut` fn params
-    // would pop the raw tags and the guard derefs become UB. We therefore
-    // shadow the params with reborrows *through* the raw pointers — every body
-    // use of `manager` below is a child of `manager_ptr`, so the
-    // pointers stay valid until the guards fire.
-    let manager_ptr: *mut PackageManager = manager;
-    // SAFETY: `manager_ptr` was just derived from the unique `&mut` fn param;
-    // reborrowing here yields the sole live `&mut` for the body. Dropped
-    // before the guards reborrow the same pointer.
-    let manager = unsafe { &mut *manager_ptr };
-    let _finish_pass = FinishPass {
-        manager: manager_ptr,
+    let finish_pass = FinishPass {
+        manager,
         counts_tasks: !caller.is_linker() && !matches!(caller, Caller::BlockedImport),
         log_level,
         has_updated_this_run: &has_updated_this_run,
     };
+    let manager = &mut *finish_pass.manager;
 
     const DOWNLOAD: &str = ProgressStrings::DOWNLOAD_EMOJI;
     const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
@@ -241,28 +228,21 @@ pub(crate) fn run_tasks(
             manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
         }
     };
-    let return_network_task = |task: *mut NetworkTask| {
-        drop(ReturnNetworkTask {
-            manager: manager_ptr,
-            task,
-        })
+    let return_network_task = |manager: &mut PackageManager, task: *mut NetworkTask| {
+        drop(ReturnNetworkTask { manager, task })
     };
 
-    let patch_tasks_batch = manager.patch_task_queue.pop_batch();
+    let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();
     loop {
         let ptask_ptr = patch_tasks_iter.next();
         if ptask_ptr.is_null() {
             break;
         }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` is the `Box` that `enqueue_patch_task` /
-        // `enqueue_patch_task_pre` handed to the fifo via `heap::into_raw`;
-        // reclaim ownership exactly once here so the `Box` drops at end of
-        // iteration on every path.
+        // SAFETY: the `Box` that `PatchTask::run` pushed; `next` read its link before returning it.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         debug_assert!(manager.pending_task_count() > 0);
-        manager.decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
@@ -270,11 +250,9 @@ pub(crate) fn run_tasks(
                     if apply.task_id.is_none() {
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // The hoisted loop runs tasks in the middle of a tree.
-                            let prev_node_modules = core::mem::take(&mut installer.node_modules);
-                            let prev_tree_id = installer.current_tree_id;
+                            let mut installer = installer.leave_tree();
                             installer.node_modules.path = core::mem::take(&mut ctx.path);
                             installer.node_modules.tree_id = ctx.tree_id;
-                            installer.current_tree_id = ctx.tree_id;
                             let pkg_id = apply.pkg_id;
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
@@ -291,8 +269,6 @@ pub(crate) fn run_tasks(
                                 needs_verify,
                                 is_pending_package_install,
                             );
-                            installer.node_modules = prev_node_modules;
-                            installer.current_tree_id = prev_tree_id;
                         }
                     }
                 }
@@ -366,8 +342,6 @@ pub(crate) fn run_tasks(
             let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
                 .expect("a queued entry has a scripts list")
                 .clone();
-            // `installer.manager == manager`, so this is called through the reborrow of
-            // `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
                 list_val,
                 optional,
@@ -387,7 +361,7 @@ pub(crate) fn run_tasks(
         }
     }
 
-    let network_tasks_batch = manager.async_network_task_queue.pop_batch();
+    let network_tasks_batch = INBOX.network_tasks.pop_batch();
     let mut network_tasks_iter = network_tasks_batch.iterator();
     loop {
         let task_ptr = network_tasks_iter.next();
@@ -397,7 +371,7 @@ pub(crate) fn run_tasks(
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         debug_assert!(manager.pending_task_count() > 0);
-        manager.decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -406,6 +380,7 @@ pub(crate) fn run_tasks(
                 loaded_manifest,
                 name: stored_name,
                 is_extended_manifest,
+                registry,
             } => {
                 let name = stored_name.slice();
                 let is_extended_manifest = *is_extended_manifest;
@@ -493,7 +468,7 @@ pub(crate) fn run_tasks(
                         fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
 
-                    return_network_task(task_ptr);
+                    return_network_task(manager, task_ptr);
                     continue;
                 };
 
@@ -515,7 +490,7 @@ pub(crate) fn run_tasks(
                     {
                         manager.mark_network_task_failed(task.task_id);
                         if !manager.task_queue.contains_key(&task.task_id) {
-                            return_network_task(task_ptr);
+                            return_network_task(manager, task_ptr);
                             continue;
                         }
                     }
@@ -563,7 +538,7 @@ pub(crate) fn run_tasks(
                         fail_update_requests(manager, task.task_id, name, None, is_unanswered);
                     }
 
-                    return_network_task(task_ptr);
+                    return_network_task(manager, task_ptr);
                     continue;
                 }
 
@@ -601,18 +576,7 @@ pub(crate) fn run_tasks(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
                         manager.look_ahead.arrived.push(task.task_id);
 
-                        if manager.options.enable.contains(Enable::MANIFEST_CACHE)
-                            && let Ok(temp_dir) = directories::try_get_temporary_directory(manager)
-                        {
-                            // reshaped for borrowck — compute the
-                            // `&mut`-taking directory accessors first so the
-                            // shared `scope_for_package_name` / `manifests`
-                            // borrows below do not overlap them. `save_async`
-                            // only needs `&PackageManifest`, so reborrow the
-                            // freshly-inserted entry immutably alongside the
-                            // scope (both `&manager`, no conflict).
-                            let tmp_fd = temp_dir.handle.fd;
-                            let cache_fd = directories::get_cache_directory(manager);
+                        if let Some(temp_dir) = manager.manifest_cache_temporary_directory() {
                             npm::package_manifest::Serializer::save_async(
                                 manager
                                     .manifests
@@ -620,9 +584,8 @@ pub(crate) fn run_tasks(
                                     .get(&name_hash)
                                     .unwrap()
                                     .manifest(),
-                                manager.scope_for_package_name(name),
-                                tmp_fd,
-                                cache_fd,
+                                *registry,
+                                temp_dir,
                             );
                         }
 
@@ -635,7 +598,7 @@ pub(crate) fn run_tasks(
                             process_dependency_list(manager, &dependency_list, install_peer)?;
                         }
 
-                        return_network_task(task_ptr);
+                        return_network_task(manager, task_ptr);
                         continue;
                     }
                 }
@@ -654,18 +617,7 @@ pub(crate) fn run_tasks(
                 };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
-            NetworkTaskCallback::Extract(extract) => {
-                // reshaped for borrowck — `extract` borrows
-                // `task.callback`; the body also calls `&mut self` methods on
-                // `task` (`reset_streaming_for_retry`,
-                // `discard_unused_streaming_state`) which only touch disjoint
-                // fields. Detach via raw pointer so those calls don't overlap.
-                let extract_ptr: *mut ExtractTarball = extract;
-                // SAFETY: `extract` lives in `task.callback`, which outlives
-                // this match arm; the methods called on `task` below never
-                // touch `task.callback` (see `NetworkTask::reset_streaming_*`
-                // / `discard_unused_streaming_state`).
-                let extract = unsafe { &mut *extract_ptr };
+            NetworkTaskCallback::Extract(_) => {
                 // A committed stream publishes its result through the extract
                 // Task, except when the connection failed mid-body:
                 // `TarballStream::finish()` then un-commits and sends the
@@ -692,6 +644,7 @@ pub(crate) fn run_tasks(
                         task.reset_streaming_for_retry();
 
                         if manager.options.log_level.is_verbose() {
+                            let extract = task.tarball();
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -720,6 +673,7 @@ pub(crate) fn run_tasks(
                 // buffers are freed. The buffered `enqueueExtractNPMPackage`
                 // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
+                let extract = task.tarball();
 
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
@@ -835,15 +789,14 @@ pub(crate) fn run_tasks(
 
                 name_progress(manager, extract.name.slice(), EXTRACT);
 
-                // reshaped for borrowck — split nested `&mut manager`.
-                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
+                let queued = enqueue::enqueue_extract_npm_package(manager, task_ptr);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             _ => unreachable!(),
         }
     }
 
-    let resolve_tasks_batch = manager.resolve_tasks.pop_batch();
+    let resolve_tasks_batch = INBOX.resolve_tasks.pop_batch();
     let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
     loop {
         let task_ptr = resolve_tasks_iter.next();
@@ -851,21 +804,14 @@ pub(crate) fn run_tasks(
             break;
         }
         debug_assert!(manager.pending_task_count() > 0);
-        // raw-ptr capture — borrowck would reject overlapping `&mut`
-        // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
-        // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        // The per-iteration guards hold the function-scope provenance
-        // root (`manager_ptr`) — the body shadow `manager` is a reborrow of
-        // that same root (see the `FinishPass` setup), so dereffing the root in a
-        // guard is valid both before *and* after every body use of the shadow
-        // under Stacked Borrows.
-        let _return_task = ReturnResolveTask {
-            manager: manager_ptr,
+        let task_guard = ReturnResolveTask {
+            manager,
             task: task_ptr,
         };
-        manager.decrement_pending_tasks();
+        let manager = &mut *task_guard.manager;
+        INBOX.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
@@ -883,11 +829,13 @@ pub(crate) fn run_tasks(
                 name,
                 network,
                 manifest,
+                ..
             } => {
-                let _return_network_task = ReturnNetworkTask {
-                    manager: manager_ptr,
+                let network_task_guard = ReturnNetworkTask {
+                    manager,
                     task: &raw mut **network,
                 };
+                let manager = &mut *network_task_guard.manager;
                 let Some(manifest) = manifest.take() else {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
@@ -951,13 +899,14 @@ pub(crate) fn run_tasks(
                 source,
                 data,
             } => {
-                let _return_network_task = ReturnNetworkTask {
-                    manager: manager_ptr,
+                let network_task_guard = ReturnNetworkTask {
+                    manager,
                     task: match source {
                         Task::TarballSource::Network(network) => &raw mut **network,
                         Task::TarballSource::Local { .. } => core::ptr::null_mut(),
                     },
                 };
+                let manager = &mut *network_task_guard.manager;
 
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
@@ -995,7 +944,7 @@ pub(crate) fn run_tasks(
 
                     // Resolve phase: drain the
                     // `task_queue` entry too so a later install-phase
-                    // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
+                    // `enqueue_download` doesn't wedge on `found_existing`.
                     let _ = manager.task_queue.remove(&task.id);
 
                     continue;
@@ -1134,30 +1083,22 @@ pub(crate) fn run_tasks(
                         };
                         let res = manager.lockfile.packages.items_resolution()[package_id as usize];
                         let git = *res.git();
-                        // SAFETY: `string_bytes` lives as long as `manager.lockfile`
-                        // and is not reallocated while resolve tasks are draining.
-                        let string_buf = unsafe {
-                            bun_ptr::detach_lifetime(
-                                manager.lockfile.buffers.string_bytes.as_slice(),
-                            )
-                        };
-                        let dep_name = dep_name_handle.slice(string_buf);
-                        let repo = git.repo.slice(string_buf);
-                        let resolved = git.resolved.slice(string_buf);
-
-                        let checkout_id = Task::Id::for_git_checkout(repo, resolved);
+                        let checkout_id = Task::Id::for_git_checkout(
+                            manager.lockfile.str(&git.repo),
+                            manager.lockfile.str(&git.resolved),
+                        );
 
                         if manager.has_created_network_task(checkout_id, is_required) {
                             continue;
                         }
 
-                        // reshaped for borrowck — split nested `&mut manager`.
+                        let resolved = stored_string(manager.lockfile.str(&git.resolved));
                         let queued = enqueue::enqueue_git_checkout(
                             manager,
                             checkout_id,
                             repo_fd,
                             dep_id,
-                            dep_name,
+                            dep_name_handle,
                             &res,
                             resolved,
                             None,
@@ -1182,7 +1123,7 @@ pub(crate) fn run_tasks(
             } => {
                 let name = commit.name.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
-                manager.total_tasks -= 1;
+                manager.total_tasks.update(|total| total - 1);
 
                 if task.status == Task::Status::Fail {
                     let is_required = manager.is_network_task_required(task.id);
@@ -1345,20 +1286,15 @@ impl core::fmt::Display for DownloadFailure<'_> {
 impl PackageManager {
     #[inline]
     pub(crate) fn pending_task_count(&self) -> u32 {
-        self.pending_tasks.load(Ordering::Acquire) + self.retry_queue.len() as u32
+        INBOX.pending_tasks.load(Ordering::Acquire) + self.retry_queue.len() as u32
     }
 
     #[inline]
-    pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
-        self.total_tasks += count;
+    pub(crate) fn increment_pending_tasks(&self, count: u32) {
+        self.total_tasks.update(|total| total + count);
         // Relaxed is enough, because starting a task has no side effects that other threads depend
         // on.
-        let _ = self.pending_tasks.fetch_add(count, Ordering::Relaxed);
-    }
-
-    #[inline]
-    pub(crate) fn decrement_pending_tasks(&mut self) {
-        let _ = self.pending_tasks.fetch_sub(1, Ordering::Release);
+        let _ = INBOX.pending_tasks.fetch_add(count, Ordering::Relaxed);
     }
 }
 
@@ -1380,51 +1316,28 @@ pub fn flush_network_queue(this: &mut PackageManager) {
     }
 }
 
-pub fn flush_patch_task_queue(this: &mut PackageManager) {
-    while let Some(patch_task) = this.patch_task_fifo.read_item() {
-        // SAFETY: fifo stores live `*mut PatchTask` pushed by
-        // `enqueue_patch_task`; exclusive ownership transferred here.
-        let pt = unsafe { &mut *patch_task };
-        pt.schedule(if matches!(pt.callback, PatchTaskCallback::Apply(_)) {
-            &mut this.patch_apply_batch
-        } else {
-            &mut this.patch_calc_hash_batch
-        });
-    }
-}
-
 pub fn flush_dependency_queue(this: &mut PackageManager) {
-    let mut last_count = this.total_tasks;
+    let mut last_count = this.total_tasks.get();
     loop {
         flush_network_queue(this);
         enqueue::advance(this);
         flush_network_queue(this);
-        flush_patch_task_queue(this);
+        this.task_batch.push(core::mem::take(&mut this.patch_batch));
 
-        if this.total_tasks == last_count {
+        if this.total_tasks.get() == last_count {
             break;
         }
-        last_count = this.total_tasks;
+        last_count = this.total_tasks.get();
     }
 }
 
 pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     let count = manager.task_batch.len
         + manager.network_resolve_batch.len()
-        + manager.network_tarball_batch.len()
-        + manager.patch_apply_batch.len
-        + manager.patch_calc_hash_batch.len;
+        + manager.network_tarball_batch.len();
 
     manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_apply_batch));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
-    manager
-        .thread_pool
-        .schedule(core::mem::take(&mut manager.task_batch));
+    THREAD_POOL.schedule(core::mem::take(&mut manager.task_batch));
     let manifests = manager.network_resolve_batch.drain(..);
     http::HTTPThread::schedule(manifests.chain(manager.network_tarball_batch.drain(..)));
     // Git tasks were counted as pending when they were queued.
@@ -1533,7 +1446,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
     if !bun_paths::is_absolute(tree) {
         return false;
     }
-    let [tree, dir] = [tree, dir].map(strings::without_trailing_slash);
+    let [tree, dir] = [tree, dir].map(bun_paths::without_trailing_sep);
     if tree == dir {
         return true;
     }
@@ -1550,7 +1463,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
 }
 
 fn is_bunx_install() -> bool {
-    is_bunx_tree(crate::bun_fs::FileSystem::get().top_level_dir())
+    is_bunx_tree(FileSystem::get().top_level_dir())
 }
 
 /// The error that a command returns when a request failed before it linked or saved anything.
@@ -1676,15 +1589,14 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
-    url: &[u8],
+    github_url: Option<&[u8]>,
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
-        let name = this.lockfile.str_detached(&package.name);
-        enqueue::offline_miss(this, task_id, "", name, is_required);
+        enqueue::offline_miss(this, task_id, "", package.name, is_required);
         return Err(ForTarballError::Offline);
     }
     if this.has_created_network_task(task_id, is_required) {
@@ -1696,13 +1608,8 @@ pub fn generate_network_task_for_tarball<'a>(
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
     // tail.
-    // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
-    // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
-    // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
-    // so the task's drop never closes them.
-    let cache_dir = directories::get_cache_directory(this);
     let temp_dir = match directories::try_get_temporary_directory(this) {
-        Ok(temp_dir) => temp_dir.handle.fd(),
+        Ok(temp_dir) => temp_dir,
         Err(why) => {
             this.exit_or_log(&why);
             this.mark_network_task_failed(task_id);
@@ -1712,10 +1619,6 @@ pub fn generate_network_task_for_tarball<'a>(
             return Err(ForTarballError::AlreadyFailed);
         }
     };
-    // Backref address only — stored, not dereffed in this function. The tag is
-    // immediately popped by the next `this` use; that's fine for a stored
-    // back-pointer.
-    let this_backref: *mut PackageManager = this;
 
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
@@ -1727,11 +1630,16 @@ pub fn generate_network_task_for_tarball<'a>(
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(this)) };
     // SAFETY: `write_init` populated every field.
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);
+    let url = match (github_url, package.resolution.tag) {
+        (Some(url), _) => url,
+        (None, bun_install::ResolutionTag::Npm) => this.lockfile.str(&package.resolution.npm().url),
+        (None, _) => this.lockfile.str(package.resolution.remote_tarball()),
+    };
     let (scope, authorization) = match package.resolution.tag {
         bun_install::ResolutionTag::Npm => (
             this.scope_for_package_name(pkg_name),
@@ -1750,15 +1658,9 @@ pub fn generate_network_task_for_tarball<'a>(
     };
 
     let extract_tarball = ExtractTarball {
-        // BACKREF — `this_backref` is non-null (just derived from `&mut *this`)
-        // and the PackageManager outlives every ExtractTarball it enqueues.
-        // Safe `From<NonNull>` construction.
-        package_manager: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this_backref).expect("derived from &mut, non-null"),
-        ),
+        registry: directories::folder_cache_key(this, scope),
         name: stored_string(pkg_name),
         resolution: package.resolution,
-        cache_dir,
         temp_dir,
         dependency_id,
         skip_verify: false,
@@ -1767,10 +1669,12 @@ pub fn generate_network_task_for_tarball<'a>(
         stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
         url: stored_string(url),
         // Copied here: extract workers must not read lockfile buffers.
-        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
-            stored_string(this.lockfile.str(&package.resolution.github().resolved))
+        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github
+            && let resolved @ [_, ..] = this.lockfile.str(&package.resolution.github().resolved)
+        {
+            bun_core::handle_oom(FileSystem::get().dirname_store().append(resolved))
         } else {
-            strings::StringOrTinyString::EMPTY
+            b""
         },
     };
 
@@ -1785,28 +1689,12 @@ pub fn generate_network_task_for_tarball<'a>(
         // main thread: `preallocated_resolve_tasks` is not thread-safe,
         // and the streaming extractor needs a stable `Task` pointer so
         // it can push the result onto `resolve_tasks` when it finishes.
-        //
-        // Borrowck/SB: `create_extract_task_for_streaming` / `TarballStream::init`
-        // need `&mut PackageManager` while `net_ptr` points into
-        // `this.preallocated_network_tasks`. The pool slot is disjoint from
-        // every other `this` field these calls touch (resolve-task pool,
-        // allocator, options) and the network-task pool is never reallocated
-        // or `put()` here, so we reborrow `*net_ptr` per-statement alongside
-        // `this`. Phase B: have `get_network_task` return a pool index so this
-        // intrusive-pointer pattern goes away.
-        // SAFETY: see disjointness note above.
-        let tarball_ref = unsafe {
-            let NetworkTaskCallback::Extract(t) = &(*net_ptr).callback else {
-                unreachable!()
-            };
-            t
-        };
-        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        let extract_task = enqueue::create_extract_task_for_streaming(this, net_ptr);
         // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
         // (see `write_init` above).
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr, this));
+            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));
         }
     }
 

@@ -11,7 +11,9 @@ use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{
+    CharFreq, ExportsKind, Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, TlaCheck,
+};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -23,7 +25,7 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 28 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 29 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
@@ -39,6 +41,8 @@ pub struct BundledAst<'arena> {
     pub(crate) import_records: import_record::List<'arena>,
 
     pub(crate) hashbang: StoreStr,
+    /// See `Ast::directives`.
+    pub(crate) directives: StoreSlice<Stmt>,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) parts: part::List<'arena>,
@@ -86,6 +90,7 @@ bun_collections::multi_array_columns! {
         module_type: ModuleType,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
+        directives: StoreSlice<Stmt>,
         export_default_alias_of_import: Ref,
         parts: part::List<'arena>,
         url_for_css: &'arena [u8],
@@ -124,7 +129,6 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
         // _padding: u6 fills the rest
@@ -143,6 +147,7 @@ impl<'arena> BundledAst<'arena> {
             module_type: ModuleType::Unknown,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
+            directives: StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             parts: part::List::new_in(arena),
             url_for_css: b"",
@@ -192,10 +197,6 @@ impl<'arena> BundledAst<'arena> {
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
         );
-        flags.set(
-            Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directive.is_some_and(|d| d == b"use strict"),
-        );
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,
@@ -208,6 +209,7 @@ impl<'arena> BundledAst<'arena> {
             import_records: ast.import_records,
 
             hashbang: ast.hashbang,
+            directives: ast.directives,
             export_default_alias_of_import: ast.export_default_alias_of_import,
             parts: ast.parts,
             url_for_css: b"",

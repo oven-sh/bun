@@ -2,7 +2,7 @@
 //!
 //! The HTTP thread hands each body chunk to `on_chunk`, which appends to a
 //! small pending buffer and (if not already running) schedules
-//! `drain_task` on `PackageManager.thread_pool`. The drain task feeds
+//! `drain_task` on `THREAD_POOL`. The drain task feeds
 //! whatever is available to a `bun_tar::Decoder`, writing files as their
 //! data arrives, until the decoder has consumed everything that is
 //! buffered. At that point the drain task returns and the worker is
@@ -19,27 +19,23 @@ use bun_collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, env_var, fmt as bun_fmt};
-use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
+#[cfg(windows)]
+use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
-use bun_sys::{self, Dir, Fd, File, FileKind, Mode, O};
+use bun_sys::{self, Fd, File, FileKind, Mode, O};
 use bun_threading::{Guarded, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
 use crate::cache_publish::UnfinishedEntry;
 use crate::integrity::{self, Integrity};
-use crate::package_manager_real::PackageManager;
+use crate::package_manager_real::{INBOX, PackageManager, THREAD_POOL};
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
 
-// `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. This struct is heap-allocated,
-// crosses threads via `drain_task`, and self-destroys in `finish()`, so a
-// borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
-// `finish` borrows the task's fields through a raw copy of it
-// would be aliased UB; raw pointers avoid forming aliased references.
+// Crosses threads via `drain_task` and frees itself in `finish()`, so it cannot borrow its tasks.
 pub struct TarballStream {
     incoming: Guarded<Incoming>,
 
@@ -71,7 +67,6 @@ pub struct TarballStream {
     drain_task: thread_pool::Task,
 
     network_task: *mut NetworkTask,
-    package_manager: *mut PackageManager,
 }
 
 /// What the HTTP thread hands to the drain task.
@@ -155,7 +150,6 @@ impl TarballStream {
     pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
-        manager: *mut PackageManager,
     ) -> Box<TarballStream> {
         // Caller guarantees `extract_task` is live for the lifetime of this
         // stream (it is published back to the main thread only in `finish()`).
@@ -178,16 +172,7 @@ impl TarballStream {
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
-        let lockfile_github_tag = tarball.github_resolved.slice();
-        let resolved_github_dirname: &'static [u8] =
-            if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
-                FileSystem::get()
-                    .dirname_store()
-                    .append(lockfile_github_tag)
-                    .expect("unreachable")
-            } else {
-                b""
-            };
+        let resolved_github_dirname = tarball.github_resolved;
         let want_first_dirname =
             tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
@@ -228,7 +213,6 @@ impl TarballStream {
                 callback: drain_callback,
             },
             network_task,
-            package_manager: manager,
         })
     }
 
@@ -280,21 +264,16 @@ impl TarballStream {
     /// (false -> true) with `incoming` locked, so no worker is inside `drain()`.
     /// Never forms `&mut TarballStream`.
     unsafe fn schedule_drain(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this` is live; `package_manager`
-        // outlives this stream (it owns the thread pool that runs us). Field
+        // SAFETY: see fn-level # Safety — `this` is live. Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
         unsafe {
-            // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
+            // `&raw mut` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
             // via `offset_of!`, which is OOB for a
             // pointer whose provenance is limited to the `drain_task` field
             // bytes. See ThreadPool.rs:442 for the same pattern.
-            (*(*this).package_manager)
-                .thread_pool
-                .schedule(thread_pool::Batch::from(core::ptr::addr_of_mut!(
-                    (*this).drain_task
-                )));
+            THREAD_POOL.schedule(thread_pool::Batch::from(&raw mut (*this).drain_task));
         }
     }
 
@@ -538,13 +517,11 @@ impl Extraction {
             };
         let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
-        self.staging = Some(UnfinishedEntry::new(tarball.temp_dir, tmpname.as_bytes()));
+        let tmpdir = &tarball.temp_dir.handle;
+        self.staging = Some(UnfinishedEntry::new(tmpdir.fd(), tmpname.as_bytes()));
 
-        let dest = bun_sys::make_path::make_open_path(
-            Dir::borrow(&tarball.temp_dir),
-            tmpname.as_bytes(),
-            Default::default(),
-        )?;
+        let dest =
+            bun_sys::make_path::make_open_path(tmpdir, tmpname.as_bytes(), Default::default())?;
         self.dest = Some(File::from_fd(dest.into_raw()));
         Ok(())
     }
@@ -605,64 +582,25 @@ impl Extraction {
         // Strip the leading `package/` (or `<repo>-<sha>/` for GitHub) and
         // normalise. Same transformation as Archiver.extractToDir so both
         // paths produce identical on-disk layouts.
-        let mut tokenizer = pathname[..]
-            .split(|c| *c == ('/' as OSPathChar))
-            .filter(|s| !s.is_empty());
-        if tokenizer.next().is_none() {
+        let Some(rest) = bun_archive::skip_path_components(pathname, 1) else {
             return Ok(());
-        }
-        // tokenizeScalar.rest() — need byte offset of remainder, not just
-        // iterator. `split().filter()` loses that, so use a manual
-        // index-of-first-'/' + skip-leading-'/' instead. The result is fed
-        // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
-        // NUL-terminated slice) so there is no need to reconstruct an
-        // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(pathname);
-
-        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
-        let normalized = if self.npm_mode {
-            bun_archive::normalize_npm_entry_path(entry, &mut norm_buf[..])?
-        } else {
-            (rest.len() < norm_buf.len()).then(|| {
-                resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
-            })
         };
-        let Some(normalized) = normalized else {
+        let destination = if self.npm_mode {
+            bun_archive::npm_entry_destination(entry)?
+        } else {
+            bun_archive::unrooted_entry_destination(rest)
+        };
+        let Some(path) = destination else {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
                 bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
             return Ok(());
         };
-        let norm_len = normalized.len();
-        norm_buf[norm_len] = 0;
-        let path = &mut norm_buf[..norm_len];
-        if path.is_empty() || (path.len() == 1 && path[0] == ('.' as OSPathChar)) {
+        if path.is_empty() {
             return Ok(());
         }
-        // `normalize_buf_t` collapses interior `..` but leaves a leading `..`
-        // on a relative input. Reject those so `openat(dest_fd, ...)` can
-        // never escape the temp extraction root. `Archiver.extractToDir`
-        // sees the same normalised path; this check is belt-and-braces on
-        // top of the integrity gate.
-        if path.len() >= 2
-            && path[0] == ('.' as OSPathChar)
-            && path[1] == ('.' as OSPathChar)
-            && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
-        {
-            return Ok(());
-        }
-        #[cfg(windows)]
-        {
-            if self.npm_mode {
-                apply_windows_npm_path_escapes(path);
-            }
-            if bun_archive::starts_elsewhere_on_windows(path) {
-                return Ok(());
-            }
-        }
-
-        let path: OSPathZ = OSPathSliceZ::from_buf(&norm_buf[..], norm_len);
+        let path: OSPathZ = &path;
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.as_ref().unwrap().fd();
 
@@ -694,7 +632,7 @@ impl TarballStream {
     /// `&mut self`) so no Rust reference dangles across the drop of the
     /// `Box` in `network_task.tarball_stream`.
     unsafe fn finish(this: *mut Self) {
-        // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
+        // SAFETY: see fn-level # Safety — `this`/`task`/`network`
         // are live raw pointers; this fn is the sole owner. After
         // `tarball_stream.take()` is dropped nothing touches `this`.
         unsafe {
@@ -703,7 +641,6 @@ impl TarballStream {
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
             let task: *mut Task = (*this).extraction.extract_task.as_mut_ptr();
             let network: *mut NetworkTask = (*this).network_task;
-            let manager: *mut PackageManager = (*this).package_manager;
 
             (*this).extraction.out = None;
 
@@ -747,10 +684,8 @@ impl TarballStream {
                 (*network).response.fail = Some(err);
                 (*network).streaming_committed = false;
                 drop((*network).tarball_stream.take());
-                (*manager)
-                    .async_network_task_queue
-                    .push(core::ptr::NonNull::new_unchecked(network));
-                PackageManager::wake_raw(manager);
+                (INBOX.network_tasks).push(core::ptr::NonNull::new_unchecked(network));
+                INBOX.wake();
                 return;
             }
 
@@ -771,14 +706,8 @@ impl TarballStream {
             // Publish last: once the task is on `resolve_tasks` the main
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
-            // SAFETY: manager/task outlive this stream by construction; manager
-            // is `*mut` and shared across
-            // threads, so we mutate via raw-ptr deref without forming a
-            // long-lived `&mut PackageManager`.
-            (*manager)
-                .resolve_tasks
-                .push(core::ptr::NonNull::new_unchecked(task));
-            PackageManager::wake_raw(manager);
+            (INBOX.resolve_tasks).push(core::ptr::NonNull::new_unchecked(task));
+            INBOX.wake();
         } // unsafe
     }
 
@@ -937,10 +866,10 @@ fn open_output_file(
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
-                    let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
+                    let Some(dir) = bun_paths::dirname(path_slice) else {
                         return Err(e.to_zig_err().into());
                     };
-                    let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
+                    let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
                         .map_err(|e| e.to_zig_err().into());
                 }
@@ -970,7 +899,7 @@ fn open_output_file(
 fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
     #[cfg(windows)]
     {
-        let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
+        let _ = bun_sys::make_path::make_path(Dir::borrow(&dest_fd), &path[..]);
         let _ = (entry, path_slice);
     }
     #[cfg(not(windows))]
@@ -993,43 +922,6 @@ fn make_directory(entry: &tar::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[
             },
         }
     }
-}
-
-#[cfg(windows)]
-fn apply_windows_npm_path_escapes(path: &mut [OSPathChar]) {
-    // Same transformation as Archiver.extractToDir: encode characters
-    // Windows rejects in filenames into the 0xf000 private-use range so
-    // the extraction round-trips with node-tar.
-    for ch in path.iter_mut() {
-        match *ch {
-            c if c == ('|' as OSPathChar)
-                || c == ('<' as OSPathChar)
-                || c == ('>' as OSPathChar)
-                || c == ('?' as OSPathChar)
-                || c == (':' as OSPathChar) =>
-            {
-                *ch += 0xf000;
-            }
-            _ => {}
-        }
-    }
-}
-
-// Skips any leading `/` delimiters, then returns everything after the first
-// path component, so for `"package/index.js"` the result is `"index.js"`
-// (no leading `/`).
-fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
-    let mut i = 0;
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] != ('/' as OSPathChar) {
-        i += 1;
-    }
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
-        i += 1;
-    }
-    &s[i..]
 }
 
 use crate::package_manager_task::{Job, Status as TaskStatus, Task};

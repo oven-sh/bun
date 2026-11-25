@@ -12,6 +12,7 @@
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
+use std::sync::Arc;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
@@ -24,7 +25,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{LogJsc as _, StringJsc as _};
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths as paths;
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
@@ -36,12 +37,12 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::server::{PendingRequest, Served};
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::EventLoopTimerTag;
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_watcher::{OwnedWatcher, Watcher};
 
 pub(super) use self::assets::Assets;
 pub(super) use self::error_report_request::ErrorReportRequest;
@@ -82,7 +83,6 @@ mod router_glue;
 mod server_hmr_ffi;
 mod trace;
 mod watch;
-mod watcher_atomics;
 
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
@@ -95,8 +95,7 @@ use ensure_route::{
 };
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
-use hmr_socket::hmr_socket_behavior;
-pub(crate) use hot_reload_event::HotReloadEvent;
+pub(crate) use hot_reload_event::{HotReloadEvent, PendingReloadEvent};
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
     is_allowed_dev_origin, on_outdated_js_corked, origin_forbidden,
@@ -105,7 +104,6 @@ pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
-pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
@@ -197,14 +195,14 @@ impl GraphTraceState {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.server_bits.unmanaged.set_all(false);
-        self.client_bits.unmanaged.set_all(false);
+        self.server_bits.set_all(false);
+        self.client_bits.set_all(false);
         self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
         let b = self.bits(side);
-        if b.unmanaged.bit_length < new_size {
+        if b.bit_length() < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())
@@ -432,9 +430,8 @@ pub(crate) struct CurrentBundle {
 pub(crate) struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
     pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
-    /// If a reload event exists and should be drained. The information
-    /// for this watch event is in one of the `watch_events`
-    pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
+    /// `DevServer.pending_reload_event` is to be drained.
+    pub(crate) has_reload_event: bool,
     /// The list of requests that are blocked on this bundle.
     pub(crate) requests: deferred_request::List,
 }
@@ -461,8 +458,6 @@ pub(crate) struct DevServer {
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
-    /// How the file-watcher thread submits hot-reload events to the VM.
-    pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -505,20 +500,11 @@ pub(crate) struct DevServer {
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    // Note: the watcher thread owns this allocation at shutdown (it frees it
-    // in `thread_main` once `running` flips false). Auto-dropping a
-    // `Box<Watcher>` here would free the heap block while the watcher thread
-    // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
-    // `*mut Watcher` into it (and on Windows the kernel still has a pending
-    // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
-    // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
-    // `Watcher::shutdown` instead.
-    pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
+    pub(crate) bun_watcher: OwnedWatcher,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    /// Heap-owned via `heap::alloc_nn` so a still-queued
-    /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
-    /// `next_event` check in `Drop`.
-    pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
+    pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
+    /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.
+    pub(crate) spare_reload_event: HotReloadEvent,
     pub(crate) testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but

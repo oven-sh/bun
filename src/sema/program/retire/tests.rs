@@ -151,10 +151,7 @@ impl Program<'_, '_> {
     }
 
     fn has_statements(&self, path: &str) -> bool {
-        !self.files.modules[self.file(path).idx()]
-            .hir
-            .stmts
-            .is_empty()
+        !self.files.hir(self.file(path)).stmts.is_empty()
     }
 }
 
@@ -165,7 +162,7 @@ fn with_program(test: impl FnOnce(&Program<'_, '_>)) {
 fn note_export_star(files: &mut Files<'_>, path: &str) {
     let file = files.by_path.get(path.as_bytes()).expect("it is loaded");
     let arena = files.arena;
-    let bound = &mut files.modules[file.idx()].bound;
+    let bound = &mut files.modules[file.idx()].trees_mut().bound;
     bound.export_stars = few_in(vec![(bound.file_symbol, StmtId(0))], arena);
 }
 
@@ -293,7 +290,6 @@ fn keeping_trees_that_are_gone_panics() {
 #[test]
 fn what_stays_of_a_file_is_read_when_its_trees_are_gone() {
     with_trees_of_first_gone(|program| {
-        let _reading = ReadingNoTrees::begin();
         let first = &program.files.modules[program.file("/first.ts").idx()];
         assert_eq!(first.file_name(), b"/first.ts");
     });
@@ -358,6 +354,25 @@ fn trees_go_while_a_task_that_outlasts_the_others_runs() {
         drop(long_task);
         program.files.watch_no_more();
         assert_eq!(AWAITED_COMMITS.load(SeqCst), 0);
+    });
+}
+
+#[test]
+fn trees_stay_until_the_task_that_committed_them_ends() {
+    with_program(|program| {
+        program.let_trees_go_behind(&["/main.ts", "/first.ts", "/rest.ts"]);
+        let long_task = ReadingTask::begin();
+        // The watch of `first.ts` begins with the commit of its importer.
+        program.files.note_commit(program.file("/first.ts"));
+        program.files.note_commit(program.file("/main.ts"));
+        drop(ReadingTask::begin());
+        // SAFETY: it has read nothing.
+        unsafe { ReadingTask::repin() };
+        drop(ReadingTask::begin());
+        assert_eq!(program.states_of(["/main.ts", "/first.ts"]), [HERE, HERE]);
+
+        drop(long_task);
+        assert_eq!(program.states_of(["/main.ts", "/first.ts"]), [GONE, GONE]);
     });
 }
 

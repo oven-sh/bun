@@ -6,8 +6,8 @@
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
 use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use crate::Headers;
 use crate::h2_frame_parser as wire;
-use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
@@ -158,19 +158,7 @@ fn dispatch_frame(
                     ST_MAX_CONCURRENT_STREAMS => {
                         session.remote_max_concurrent_streams = uvalue;
                     }
-                    ST_HEADER_TABLE_SIZE => {
-                        // RFC 9113 §4.3.1 / RFC 7541 §4.2: encoder MUST
-                        // acknowledge a reduced limit with a Dynamic Table
-                        // Size Update at the start of the next header
-                        // block. Track the minimum seen so a reduce-then-
-                        // raise between two blocks still signals the dip.
-                        session.pending_hpack_enc_capacity = Some(
-                            session
-                                .pending_hpack_enc_capacity
-                                .unwrap_or(uvalue)
-                                .min(uvalue),
-                        );
-                    }
+                    ST_HEADER_TABLE_SIZE => session.encoder.set_max_table_size(uvalue),
                     ST_INITIAL_WINDOW_SIZE => {
                         // RFC 9113 §6.5.2 / §6.9.2: values above 2^31-1, or
                         // a delta that pushes any open stream's window past
@@ -560,20 +548,19 @@ fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
-    let mut offset: usize = 0;
-    while offset < session.orphan_header_block.len() {
-        // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
-        let result = match session.hpack.decode(&session.orphan_header_block[offset..]) {
-            Ok(r) => r,
+    let mut scratch = Vec::new();
+    let block = session.orphan_header_block.drain(..);
+    let mut fields = session.decoder.decode(block.as_slice(), &mut scratch);
+    loop {
+        match fields.next() {
+            Ok(Some(_)) => {}
+            Ok(None) => break,
             Err(_) => {
                 session.fatal_error = Some(crate::Error::HTTP2CompressionError);
-                session.orphan_header_block.clear();
-                return;
+                break;
             }
-        };
-        offset += result.next;
+        }
     }
-    session.orphan_header_block.clear();
 }
 
 /// HPACK-decode the buffered header block at parse time. Runs for every
@@ -581,12 +568,10 @@ pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
 pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
-    // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
-    let mut bounds: Vec<[u32; 3]> = Vec::new();
-    let start_len = stream.decoded_bytes.len();
+    let mut headers = Headers::default();
     // The size cap counts a value before the trim, so whitespace is not free.
-    let mut untrimmed_len = start_len;
+    let mut untrimmed_len = 0;
     let mut seen_regular = false;
     let mut seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -595,10 +580,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     // applied once decoding completes.
     let mut malformed = false;
 
-    let mut offset: usize = 0;
-    while offset < stream.header_block.len() {
-        let result = match session.hpack.decode(&stream.header_block[offset..]) {
-            Ok(r) => r,
+    let mut scratch = Vec::new();
+    let block = stream.header_block.drain(..);
+    let mut fields = session.decoder.decode(block.as_slice(), &mut scratch);
+    loop {
+        let result = match fields.next() {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
             Err(_) => {
                 // The decoder has already committed earlier fields from this
                 // block to the connection-level dynamic table; the table is
@@ -606,12 +594,10 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
                 // a decoding error MUST be treated as a connection error of
                 // type COMPRESSION_ERROR.
                 session.fatal_error = Some(crate::Error::HTTP2CompressionError);
-                stream.header_block.clear();
                 return;
             }
         };
-        offset += result.next;
-        if !result.name.is_empty() && result.name[0] == b':' {
+        if result.name.starts_with(b":") {
             // §8.3.2: only `:status` is defined for responses, MUST appear
             // before any regular field, and MUST NOT repeat. §8.1: not
             // allowed in trailers.
@@ -645,26 +631,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         untrimmed_len += result.name.len() + result.value.len();
         if untrimmed_len > LOCAL_MAX_HEADER_LIST_SIZE as usize {
             session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
-            stream.header_block.clear();
             return;
         }
-        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream.decoded_bytes.extend_from_slice(result.name);
-        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
-        stream
-            .decoded_bytes
-            .extend_from_slice(trim_response_value(result.value));
-        bounds.push([
-            name_start,
-            value_start,
-            u32::try_from(stream.decoded_bytes.len()).expect("int cast"),
-        ]);
+        headers.append(result.name, trim_response_value(result.value));
     }
-
-    stream.header_block.clear();
+    drop(block);
 
     if malformed {
-        stream.decoded_bytes.truncate(start_len);
         session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
@@ -682,12 +655,10 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     if status == 0 {
-        stream.decoded_bytes.truncate(start_len);
         stream.fatal_error = Some(crate::Error::HTTP2ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
-        stream.decoded_bytes.truncate(start_len);
         // Only `100 Continue` is the go-ahead for a withheld body; 102/103
         // are informational and do not satisfy `Expect: 100-continue`.
         if status == 100 {
@@ -701,6 +672,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     }
 
     stream.status_code = status;
+    stream.decoded_headers = headers;
     stream.headers_ready = true;
     if stream.awaiting_continue {
         // Final status without a preceding 100: server has decided without
@@ -715,27 +687,6 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             &[],
         );
         stream.sent_end_stream();
-    }
-    let bytes = stream.decoded_bytes.as_ptr();
-    stream.decoded_headers.reserve_exact(
-        bounds
-            .len()
-            .saturating_sub(stream.decoded_headers.capacity()),
-    );
-    for b in &bounds {
-        // Self-referential — decoded_headers stores raw-ptr slices
-        // borrowing stream.decoded_bytes. picohttp::Header stores raw ptrs so
-        // this is sound as long as decoded_bytes is not reallocated before
-        // delivery (it isn't — only ever appended to once per END_HEADERS).
-        // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
-        let name =
-            unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
-        // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
-        let value =
-            unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, value));
     }
 }
 
@@ -758,8 +709,7 @@ fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 }
 
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
-/// hop-by-hop fields. Names from lshpack are already lowercase for table
-/// hits but a literal can carry anything.
+/// hop-by-hop fields. A literal name can carry anything.
 pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     if name.is_empty() {
         return true;

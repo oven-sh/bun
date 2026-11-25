@@ -12,8 +12,7 @@ use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
-use bun_paths::resolve_path::posix_to_platform_in_place;
-use bun_paths::string_paths::without_trailing_slash_windows_path;
+use bun_paths::{Path, to_native_in_place};
 use bun_react_compiler::Observer;
 use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
 use bun_resolver::options::{ExternalModules, Packages};
@@ -27,10 +26,9 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema::util::FxHashSet;
-use bun_sema_driver::host::{from_native, is_regular_file, to_native};
+use bun_sema_driver::host::{from_native, is_below_backslash, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
-use std::borrow::Cow;
 
 pub(crate) struct BuildContext {
     bundle: NonNull<BundleV2<'static>>,
@@ -123,11 +121,9 @@ impl FileFinder {
             unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&mut unread_log)) };
         resolver.prefer_module_field = search.prefers_module_field;
         resolver.esm_failure = None;
-        let mut directory = to_native(search.directory).to_vec();
-        posix_to_platform_in_place(&mut directory);
-        if directory.last() != Some(&bun_paths::SEP) {
-            directory.push(bun_paths::SEP);
-        }
+        let mut directory =
+            bun_paths::Path::from(&bun_paths::to_native(to_native(search.directory)));
+        directory.push_trailing_sep();
         let result = resolver.resolve_and_auto_install(
             &directory,
             search.specifier,
@@ -146,6 +142,7 @@ impl FileFinder {
             Some(path) if result.flags.is_external() || path.is_data_url() => {
                 FoundCode::External(path.text.to_vec())
             }
+            Some(path) if is_below_backslash(path.text) => FoundCode::not_found(),
             Some(path) => FoundCode::File {
                 path: from_native(path.text),
                 required: (result.path_pair.secondary.as_ref()).map(|it| from_native(it.text)),
@@ -205,7 +202,6 @@ pub(crate) fn with_test_context<R>(
         None,
         &arena,
         Some(NonNull::from(&event_loop)),
-        false,
         None,
         &arena,
     );
@@ -237,21 +233,18 @@ pub(crate) struct BundlerServices {
 
 pub(super) fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
     let rest = path.strip_prefix(ancestor);
-    rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
+    rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep(byte)))
 }
 
 fn is_package_json(path: &[u8]) -> bool {
     bun_paths::basename(path) == b"package.json"
 }
 
-/// The front end writes `/` on every platform, as in `C:/a`. Paths are compared by their bytes here.
-fn with_platform_separators(path: &[u8]) -> Cow<'_, [u8]> {
-    if bun_paths::SEP == b'/' {
-        return Cow::Borrowed(path);
-    }
-    let mut path = path.to_vec();
-    posix_to_platform_in_place(&mut path);
-    Cow::Owned(path)
+/// `folder` keeps its spelling: paths are compared by their bytes here.
+fn in_folder(folder: &[u8], name: &[u8]) -> Path {
+    let mut path = Path::from(folder);
+    path.push(name);
+    path
 }
 
 fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
@@ -264,8 +257,8 @@ fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
     if folders.iter().flatten().any(|it| is_at_or_below(it, root)) {
         return 0;
     }
-    let relative = bun_paths::resolve_path::relative(root, real_folder.unwrap_or(written_folder));
-    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    let relative = bun_paths::Path::relative(root, real_folder.unwrap_or(written_folder));
+    let steps = bun_paths::components(&relative);
     steps.take_while(|&step| step == b"..").count()
 }
 
@@ -280,7 +273,7 @@ const LOCK_FILES: [&[u8]; 6] = [
 
 /// `path` is below a folder that is directly below `node_modules`, or below a scope there, and holds a `package.json`. Hidden files, files in hidden folders and lock files don't count.
 fn is_installed_package_file(path: &[u8]) -> bool {
-    let segments: Vec<&[u8]> = path.split(|&byte| bun_paths::is_sep_any(byte)).collect();
+    let segments: Vec<&[u8]> = path.split(|&byte| bun_paths::is_sep(byte)).collect();
     let is_store = |&segment: &&[u8]| segment == b"node_modules";
     let Some(innermost) = segments.iter().rposition(is_store) else {
         return false;
@@ -323,13 +316,14 @@ fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
         .ok()?;
     let mut entries = bun_sys::dir_iterator::iterate(directory.fd());
     let (mut files, mut folders) = (Vec::new(), Vec::new());
+    let mut path = Path::from(folder);
     while let Some(entry) = entries.next().ok()? {
-        let path = [folder, &[bun_paths::SEP], entry.name.slice_u8()].concat();
-        match entry.kind {
-            bun_sys::EntryKind::File => files.push(path),
-            bun_sys::EntryKind::Directory => folders.push(path),
-            _ => {}
-        }
+        let list = match entry.kind {
+            bun_sys::EntryKind::File => &mut files,
+            bun_sys::EntryKind::Directory => &mut folders,
+            _ => continue,
+        };
+        list.push(path.push_scoped(entry.name.slice_u8()).to_vec());
     }
     Some((files, folders))
 }
@@ -337,7 +331,7 @@ fn list_folder(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
 /// `path` lies below the folder of `manifest` with no `node_modules` above it. Files in hidden folders need `--asset`, as in a package.
 fn is_application_file_under(manifest: &[u8], path: &[u8]) -> bool {
     let folder = bun_paths::dirname(manifest).unwrap_or_default();
-    let mut below = path[folder.len()..].split(|&byte| bun_paths::is_sep_any(byte));
+    let mut below = path[folder.len()..].split(|&byte| bun_paths::is_sep(byte));
     find_node_modules_parent(path).is_none() && !below.any(|it| it.first() == Some(&b'.'))
 }
 
@@ -370,7 +364,7 @@ fn is_readable(path: &[u8]) -> bool {
 /// The folder that holds the outermost `node_modules` of `path`.
 fn find_node_modules_parent(path: &[u8]) -> Option<&[u8]> {
     let mut start = 0;
-    for segment in path.split(|&byte| bun_paths::is_sep_any(byte)) {
+    for segment in path.split(|&byte| bun_paths::is_sep(byte)) {
         if segment == b"node_modules" {
             return Some(&path[..start.max(1) - 1]);
         }
@@ -382,7 +376,7 @@ fn find_node_modules_parent(path: &[u8]) -> Option<&[u8]> {
 /// The folder of the innermost installed package that `path` lies in.
 fn find_package_root(path: &[u8]) -> Option<&[u8]> {
     let (mut segments, mut start) = (Vec::new(), 0);
-    for segment in path.split(|&byte| bun_paths::is_sep_any(byte)) {
+    for segment in path.split(|&byte| bun_paths::is_sep(byte)) {
         start += segment.len() + 1;
         segments.push((segment, start - 1));
     }
@@ -397,7 +391,7 @@ fn is_nearest_package_json(entry_path: &[u8], path: &[u8]) -> bool {
     let holder = bun_paths::dirname(path).filter(|_| bun_paths::basename(path) == b"package.json");
     let mut folder = bun_paths::dirname(entry_path);
     while let (Some(holder), Some(current)) = (holder, folder) {
-        let nearer = ZBox::from_bytes([current, b"/package.json"].concat());
+        let nearer = in_folder(current, b"package.json");
         if current == holder || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &nearer).is_ok() {
             return current == holder;
         }
@@ -423,8 +417,8 @@ fn is_reached_through_symlink(asset: &[u8], path: &[u8]) -> bool {
 /// Purely lexical, because the executable does not follow symlinks.
 fn count_lexical_levels_above(root: &[u8], written: &[u8]) -> usize {
     let folder = bun_paths::dirname(written).unwrap_or(written);
-    let relative = bun_paths::resolve_path::relative(root, folder);
-    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+    let relative = bun_paths::Path::relative(root, folder);
+    let steps = bun_paths::components(&relative);
     steps.take_while(|&step| step == b"..").count()
 }
 
@@ -501,8 +495,8 @@ impl BundlerServices {
     fn embed_eligible_file(&self, module_path: &[u8], source_path: &[u8], is_query: bool) -> bool {
         let reads_unknown_paths = self.files_for_file_system.lock().reads_unknown_paths;
         let written_path = source_path;
-        let module_path = &*with_platform_separators(module_path);
-        let source_path = &*with_platform_separators(source_path);
+        let module_path = &*bun_paths::to_native(module_path);
+        let source_path = &*bun_paths::to_native(source_path);
         if self.names_wanted.runs_in_place {
             return false;
         }
@@ -517,7 +511,7 @@ impl BundlerServices {
             return false;
         }
         // The levels above the root are already settled. They reach as far up as code does, and one level always exists.
-        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let root = bun_paths::without_trailing_sep(&self.names_wanted.root_directory);
         let highest = count_lexical_levels_above(root, module_path).max(1);
         let is_embedded = count_lexical_levels_above(root, source_path) <= highest
             && is_regular_file(source_path)
@@ -556,14 +550,14 @@ impl BundlerServices {
         };
         let mut current = Some(folder);
         while let Some(here) = current {
-            let path = [here, &[bun_paths::SEP], b"package.json"].concat();
+            let path = in_folder(here, b"package.json");
             if path.len() <= farthest.len() || !closed.insert(here.to_vec()) {
                 return;
             }
             current = bun_paths::dirname(here).filter(|above| above.len() < here.len());
-            let is_present = embedded.iter().any(|it| **it == *path)
+            let is_present = embedded.iter().any(|it| **it == **path)
                 || self.assets.iter().any(|asset| is_at_or_below(&path, asset));
-            let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(&path));
+            let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &path);
             if is_present || kind.is_err() {
                 continue;
             }
@@ -575,7 +569,7 @@ impl BundlerServices {
                 return;
             }
             let found = embedded.iter().rfind(|it| it.len() < path.len());
-            added.extend(found.map(|found| (path, found.to_vec())));
+            added.extend(found.map(|found| (path.to_vec(), found.to_vec())));
         }
     }
 
@@ -621,7 +615,7 @@ impl BundlerServices {
 
     /// The executable's folders reach as far above the root as code does.
     fn is_near_code(&self, module_path: &[u8], source_path: &[u8]) -> bool {
-        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let root = bun_paths::without_trailing_sep(&self.names_wanted.root_directory);
         let is_beside_code = || {
             let levels = count_lexical_levels_above(root, source_path);
             levels > 0 && levels <= count_lexical_levels_above(root, module_path)
@@ -630,8 +624,8 @@ impl BundlerServices {
     }
 
     fn is_embeddable_as_asset(&self, module_path: &[u8], source_path: &[u8]) -> bool {
-        let module_path = &*with_platform_separators(module_path);
-        let source_path = &*with_platform_separators(source_path);
+        let module_path = &*bun_paths::to_native(module_path);
+        let source_path = &*bun_paths::to_native(source_path);
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
         let mut around = self.assets.iter().filter(is_around).peekable();
@@ -808,7 +802,7 @@ impl SourceProvider for BundlerServices {
             && search.kind != CodeImportKind::EntryPoint
         {
             let mut directory = to_native(search.directory).to_vec();
-            posix_to_platform_in_place(&mut directory);
+            to_native_in_place(&mut directory);
             self.refused_names.lock().push(RefusedName {
                 directory,
                 specifier: search.specifier.to_vec(),
@@ -940,7 +934,7 @@ impl SourceProvider for BundlerServices {
         if self.names_wanted.runs_in_place {
             return 0;
         }
-        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let root = bun_paths::without_trailing_sep(&self.names_wanted.root_directory);
         let levels = self.assets.iter().map(|it| count_levels_above(root, it));
         levels.max().unwrap_or(0)
     }
@@ -951,18 +945,18 @@ impl SourceProvider for BundlerServices {
     }
 
     fn is_in_asset(&self, source_path: &[u8]) -> bool {
-        let source_path = &*with_platform_separators(source_path);
+        let source_path = &*bun_paths::to_native(source_path);
         let mut assets = self.assets.iter();
         assets.any(|asset| is_at_or_below(source_path, asset))
     }
 
     fn find_package_folder(&self, module_path: &[u8]) -> Option<Vec<u8>> {
-        find_package_root(&with_platform_separators(module_path)).map(<[u8]>::to_vec)
+        find_package_root(&bun_paths::to_native(module_path)).map(<[u8]>::to_vec)
     }
 
     fn search_misses_manifest(&self, module_path: &[u8], folder: &[u8]) -> bool {
-        let module_path = &*with_platform_separators(module_path);
-        let folder = &*with_platform_separators(folder);
+        let module_path = &*bun_paths::to_native(module_path);
+        let folder = &*bun_paths::to_native(folder);
         let kind_of =
             |path: &[u8]| bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(path));
         let is_folder = || matches!(kind_of(folder), Ok(bun_sys::ExistsAtType::Directory));
@@ -988,7 +982,7 @@ impl SourceProvider for BundlerServices {
             if nearest == Some(above) {
                 return false;
             }
-            let manifest = [above, &[bun_paths::SEP], b"package.json"].concat();
+            let manifest = in_folder(above, b"package.json");
             if kind_of(&manifest).is_ok() {
                 return true;
             }
@@ -999,12 +993,12 @@ impl SourceProvider for BundlerServices {
 
     fn is_own_module_of_project(&self, module_path: &[u8]) -> bool {
         !self.names_wanted.runs_in_place
-            && find_node_modules_parent(&with_platform_separators(module_path)).is_none()
+            && find_node_modules_parent(&bun_paths::to_native(module_path)).is_none()
     }
 
     fn is_on_disk(&self, module_path: &[u8], source_path: &[u8]) -> bool {
-        let module_path = &*with_platform_separators(module_path);
-        let source_path = &*with_platform_separators(source_path);
+        let module_path = &*bun_paths::to_native(module_path);
+        let source_path = &*bun_paths::to_native(source_path);
         let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         !self.names_wanted.runs_in_place
             && self.is_near_code(module_path, source_path)
@@ -1017,9 +1011,9 @@ impl SourceProvider for BundlerServices {
     }
 
     fn is_asset_unreachable(&self, module_path: &[u8], source_path: &[u8]) -> bool {
-        let module_path = &*with_platform_separators(module_path);
-        let source_path = &*with_platform_separators(source_path);
-        let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
+        let module_path = &*bun_paths::to_native(module_path);
+        let source_path = &*bun_paths::to_native(source_path);
+        let root = bun_paths::without_trailing_sep(&self.names_wanted.root_directory);
         // Almost every file is below the root.
         if self.names_wanted.runs_in_place || is_at_or_below(source_path, root) {
             return false;
@@ -1037,7 +1031,7 @@ impl SourceProvider for BundlerServices {
     }
 
     fn is_embedded_implicitly(&self, source_path: &[u8], is_query: bool) -> bool {
-        let source_path = &*with_platform_separators(source_path);
+        let source_path = &*bun_paths::to_native(source_path);
         let files = self.files_for_file_system.lock();
         files.is_embedded(source_path, is_query)
     }
@@ -1056,7 +1050,7 @@ impl SourceProvider for BundlerServices {
         let (mut added, mut closed) = (Vec::new(), FxHashSet::default());
         let mut asked: FxHashSet<Vec<u8>> = FxHashSet::default();
         for path in module_paths.iter().filter(|_| has_any) {
-            let path = with_platform_separators(path);
+            let path = bun_paths::to_native(path);
             // Whatever is added has an embedded `package.json` above it, so a folder that had none above it still has none.
             if let Some(folder) = bun_paths::dirname(&path).filter(|it| !asked.contains(*it)) {
                 asked.insert(folder.to_vec());
@@ -1074,10 +1068,10 @@ impl SourceProvider for BundlerServices {
         let mut folder =
             bun_paths::dirname(module_path).filter(|_| is_installed_package_file(module_path));
         while let Some(current) = folder.filter(|it| bun_paths::basename(it) != b"node_modules") {
-            let path = [current, &[bun_paths::SEP], b"package.json"].concat();
+            let path = in_folder(current, b"package.json");
             let is_new = !self.is_embedded_implicitly(&path, false);
             if is_new && self.embed_file_implicitly(b"", module_path, &path, false) {
-                added.push(path);
+                added.push(path.to_vec());
             }
             folder = bun_paths::dirname(current).filter(|above| above.len() < current.len());
         }
@@ -1095,14 +1089,14 @@ impl SourceProvider for BundlerServices {
         source_path: &[u8],
         is_query: bool,
     ) -> bool {
-        let entry = &*with_platform_separators(entry_path);
-        let source = &*with_platform_separators(source_path);
+        let entry = &*bun_paths::to_native(entry_path);
+        let source = &*bun_paths::to_native(source_path);
         (is_installed_package_file(source) || is_nearest_package_json(entry, source))
             && self.embed_eligible_file(module_path, source_path, is_query)
     }
 
     fn read_web_assembly(&self, source_path: &[u8]) -> Option<Vec<u8>> {
-        let source = &*with_platform_separators(source_path);
+        let source = &*bun_paths::to_native(source_path);
         if !is_regular_file(source) {
             return None;
         }
@@ -1111,15 +1105,15 @@ impl SourceProvider for BundlerServices {
     }
 
     fn embed_named_file(&self, module_path: &[u8], source_path: &[u8]) -> bool {
-        let source = &*with_platform_separators(source_path);
+        let source = &*bun_paths::to_native(source_path);
         is_installed_package_file(source)
             && !is_native_program(source)
             && self.embed_eligible_file(module_path, source_path, false)
     }
 
     fn list_files_to_embed(&self, folder: &[u8], reaches_below: bool) -> Vec<Vec<u8>> {
-        let folder = &*with_platform_separators(folder);
-        let folder = without_trailing_slash_windows_path(folder);
+        let folder = &*bun_paths::to_native(folder);
+        let folder = bun_paths::without_trailing_sep(folder);
         match reaches_below {
             true if is_installed_package_file(folder) => list_files_below(folder),
             false if find_node_modules_parent(folder).is_some() => {
@@ -1130,8 +1124,8 @@ impl SourceProvider for BundlerServices {
     }
 
     fn list_excluded_folder(&self, folder: &[u8]) -> Option<Vec<Vec<u8>>> {
-        let folder = &*with_platform_separators(folder);
-        let folder = without_trailing_slash_windows_path(folder);
+        let folder = &*bun_paths::to_native(folder);
+        let folder = bun_paths::without_trailing_sep(folder);
         let is_around = |asset: &Vec<u8>| is_at_or_below(folder, asset);
         if self.assets.iter().any(is_around) || !is_at_or_below(folder, &self.assets_root) {
             return None;
@@ -1140,11 +1134,11 @@ impl SourceProvider for BundlerServices {
     }
 
     fn find_symlink_in_asset(&self, source_path: &[u8]) -> Option<Vec<u8>> {
-        let source_path = &*with_platform_separators(source_path);
+        let source_path = &*bun_paths::to_native(source_path);
         let is_around = |asset: &&Vec<u8>| is_at_or_below(source_path, asset);
         let around = self.assets.iter().filter(is_around);
         let asset = around.max_by_key(|it| it.len())?;
-        let is_end = |&at: &usize| bun_paths::is_sep_any(source_path[at]);
+        let is_end = |&at: &usize| bun_paths::is_sep(source_path[at]);
         let ends = (asset.len() + 1..source_path.len()).filter(is_end);
         let ends = ends.chain([source_path.len()]);
         let mut names = ends.map(|end| &source_path[..end]);

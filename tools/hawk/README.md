@@ -6,7 +6,7 @@ reaches (`hawk::dead_public`) and over-visible declarations
 workspace — the cross-crate cases rustc's per-crate `dead_code` cannot see.
 
 The analysis config lives at the repo root: `hawk.toml` (release profile ×
-the 11 shipped targets, plus overrides for enum variants whose discriminants
+the 12 shipped targets, plus overrides for enum variants whose discriminants
 are external code tables).
 
 Hawk needs a `bin` product to root the analysis, but Bun's product crate

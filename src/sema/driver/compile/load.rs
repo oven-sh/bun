@@ -7,7 +7,7 @@ use crate::{
     Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
-use bun_sema::check::{NodeCounts, Program};
+use bun_sema::check::{Program, ProgramInputs};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -17,7 +17,8 @@ use bun_sema::program::{
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
-    HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
+    HostResolution, JsxRuntime, JsxSettings, Options, Resolver, is_javascript, is_same_path,
+    is_typescript_file_name, join,
 };
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -194,8 +195,8 @@ pub fn load_program<'s>(
     free_unread_leaves(files, host);
     steps.end("free the leaves that nothing reads, settle the texts");
     let checker_session = session.keep(SessionSlot::new());
-    let node_counts = Program::count_nodes(files);
-    let program = make_checker(session, checker_session, files, &node_counts);
+    let program_inputs = ProgramInputs::read(files);
+    let program = make_checker(session, checker_session, files, &program_inputs);
     steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
@@ -240,7 +241,7 @@ pub fn load_program<'s>(
         program,
         files,
         checker_session,
-        node_counts,
+        program_inputs,
         is_checker_freed: AtomicBool::new(false),
         cycles_entered: Default::default(),
         origins,
@@ -261,12 +262,10 @@ fn make_checker<'s>(
     session: &'s Session,
     checker_session: &'s SessionSlot,
     files: &'s Files<'s>,
-    node_counts: &NodeCounts,
+    inputs: &ProgramInputs,
 ) -> &'s UnsafeCell<Program<'s>> {
-    let program = Program::with_node_counts(checker_session.session(), files, node_counts);
-    let program = session.arena().alloc(program);
-    program.find_symbols_of_compiler();
-    UnsafeCell::from_mut(program)
+    let program = Program::with_inputs(checker_session.session(), files, inputs);
+    UnsafeCell::from_mut(session.arena().alloc(program))
 }
 
 fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {
@@ -297,7 +296,7 @@ fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Ve
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
     let is_unread = |&file: &FileId| {
         let module = files.module(file);
-        let is_source = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx);
+        let is_source = matches!(module.facts.kind, FileKind::Ts | FileKind::Tsx);
         module.is_leaf && is_source && !files.is_compiled(file)
     };
     let file_ids: Vec<FileId> = (0..files.modules.len())
@@ -715,11 +714,35 @@ pub(super) fn default_project(
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
         options.retain(|option| option.0 != b"verbatimModuleSyntax" && option.0 != b"lib");
+        let settings = options_of_jsx(&code.jsx);
+        options.retain(|option| settings.iter().all(|setting| option.0 != setting.0));
+        options.extend(settings);
     }
     let directory = &code.working_directory;
     let mut project = config::without_config(host, directory, options, entry_paths.to_vec());
     project.files.retain(|path| is_typescript_file_name(path));
     project
+}
+
+fn options_of_jsx(settings: &JsxSettings) -> Vec<(Vec<u8>, Json)> {
+    let default = JsxSettings::default();
+    let text = |name: &[u8], value: Vec<u8>| (name.to_vec(), Json::String(value));
+    let mut options = Vec::new();
+    match settings.runtime {
+        JsxRuntime::Automatic => {
+            if settings.import_source != default.import_source {
+                options.push(text(b"jsxImportSource", settings.import_source.clone()));
+            }
+        }
+        JsxRuntime::Classic => {
+            options.push(text(b"jsx", b"react".to_vec()));
+            if settings.factory != default.factory || settings.fragment != default.fragment {
+                options.push(text(b"jsxFactory", settings.factory.join(&b'.')));
+                options.push(text(b"jsxFragmentFactory", settings.fragment.join(&b'.')));
+            }
+        }
+    }
+    options
 }
 
 fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> bool {

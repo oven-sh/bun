@@ -44,7 +44,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
-            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -69,7 +68,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            watcher_atomics: _,
+            pending_reload_event: _,
+            spare_reload_event: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
@@ -109,7 +109,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .watcher_atomics
+    //   .pending_reload_event, .spare_reload_event
 
     // pointers that are not considered a part of DevServer
     //   .vm
@@ -305,9 +305,6 @@ impl DevServer {
         // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
-        dev.memory_visualizer_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
         crate::jsc_hooks::timer_all().update(timer, &next);
@@ -321,7 +318,7 @@ impl DevServer {
         if self.write_memory_visualizer_message(&mut payload).is_err() {
             return; // drop packet
         }
-        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
+        self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::Binary);
     }
 
     pub(crate) fn write_memory_visualizer_message(

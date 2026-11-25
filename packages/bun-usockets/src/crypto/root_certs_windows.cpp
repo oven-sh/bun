@@ -4,6 +4,7 @@
 #include <wincrypt.h>
 #include <vector>
 #include <cstring>
+#include <memory>
 #include <string_view>
 
 // Forward declaration to avoid including OpenSSL headers here
@@ -95,20 +96,20 @@ static void GatherCertsForLocation(std::vector<RawCertificate>& raw_certs,
   DWORD flags =
       location | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG;
 
-  HCERTSTORE cert_store = CertOpenStore(
+  std::unique_ptr<void, decltype([](HCERTSTORE store) { CertCloseStore(store, 0); })> cert_store{CertOpenStore(
     CERT_STORE_PROV_SYSTEM_W,
     0,
     0,
     flags,
     store_name
-  );
+  )};
 
-  if (cert_store == NULL) {
+  if (!cert_store) {
     return;
   }
 
   PCCERT_CONTEXT cert_context = NULL;
-  while ((cert_context = CertEnumCertificatesInStore(cert_store, cert_context)) != NULL) {
+  while ((cert_context = CertEnumCertificatesInStore(cert_store.get(), cert_context)) != NULL) {
     if (!IsCertTrustedForServerAuth(cert_context)) {
       continue;
     }
@@ -117,8 +118,6 @@ static void GatherCertsForLocation(std::vector<RawCertificate>& raw_certs,
                          cert_context->pbCertEncoded + cert_context->cbCertEncoded);
     raw_certs.push_back(std::move(raw_cert));
   }
-
-  CertCloseStore(cert_store, 0);
 }
 
 // Main function to load raw system certificates on Windows.

@@ -18,18 +18,16 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
-use crate::program::{ReadingNoTrees, TypeOnlyDeclaration, source_file_may_be_emitted};
+use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
     ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
-    has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
-    try_extract_ts_extension,
+    has_ts_implementation_extension, is_declaration_file_name, join, parent_directory,
+    path_is_relative, try_extract_ts_extension,
 };
 use crate::util::SharedSort;
 use crate::verify::relative_from_file;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use std::sync::Arc;
 
 pub(super) type AliasDeclarations = ArrayHashMap<Decl, Sym>;
@@ -138,7 +136,7 @@ impl Checker<'_, '_> {
         let path = files.module(file).file_name();
         for &(kind, value, start, _) in &self.hir(file).references {
             if kind == ReferenceKind::Path
-                && join(dirname::<Posix>(path), self.atoms().bytes(value)) == path
+                && join(parent_directory(path), self.atoms().bytes(value)) == path
             {
                 let end = start + self.atoms().bytes(value).len() as u32;
                 self.error_at((file, start, end), 1006, &[]);
@@ -418,8 +416,6 @@ impl Checker<'_, '_> {
         let files = self.files();
         self.are_module_exports_checked(module, file)
             || files.files_with_alias_from_exports_of(module).any(|other| {
-                let _reading = ReadingNoTrees::begin();
-                // A leaf's data is freed after its task.
                 (other == file || !files.module(other).is_leaf)
                     && self.is_checked_no_later_than(other, file)
             })
@@ -1490,7 +1486,7 @@ fn is_erased(hir: &hir::File, node: Node) -> bool {
 /// project that references another one or is referenced does.
 fn common_source_directory(options: &Options) -> &[u8] {
     match &options.root_dir[..] {
-        b"" => dirname::<Posix>(&options.config_path),
+        b"" => parent_directory(&options.config_path),
         root_dir => root_dir,
     }
 }

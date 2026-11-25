@@ -2205,6 +2205,37 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
     expect(two.exitCode).toBe(1);
   });
 
+  // The number counts the classes with private names in the files after this one, which other threads check and free.
+  test("prints the same number in the symbol name of a private method on 1 and 8 threads", async () => {
+    const count = 48;
+    const name = (i: number) => `f${String(i).padStart(2, "0")}.ts`;
+    const text = `export class C { static #m() { return C.#m; } static x: number = { f: C.#m }; }\n`;
+    using dir = project(Object.fromEntries(Array.from({ length: count }, (_, i) => [name(i), text])));
+    const expected = Array.from(
+      { length: count },
+      (_, i) =>
+        `${name(i)}(1,54): error TS2322: Type '{ f: () => typeof C.\ufffd#${count - i}@#m; }' is not assignable to type 'number'.`,
+    ).join("\n");
+    const threads = [1, 8, 8];
+    for (const { stdout, exitCode } of await Promise.all(threads.map(n => check(dir, ["--threads", String(n)])))) {
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("counts a file that was freed in the symbol name of a private method", async () => {
+    using dir = project({
+      "a.ts": `export class C { static #m() { return C.#m; } static get = () => ({ f: C.#m }); }\n`,
+      "b.ts": `export class NotImported { #x = 1; y = this.#x; }\n`,
+      "c.ts": `import { C } from "./a";\nexport const x: number = C.get();\n`,
+    });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1", "--skipLibCheck"]);
+    expect(stdout).toBe(
+      `c.ts(2,14): error TS2322: Type '{ f: () => typeof C.\ufffd#2@#m; }' is not assignable to type 'number'.`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("prints related information under an error", async () => {
     using dir = project({
       "types.ts": `export interface User {\n  id: number;\n  email: string;\n}\n`,
@@ -8661,6 +8692,20 @@ export const c5 = N.E.A ? 1 : 2;
         a.ts(8,5): error TS2845: This condition will always return 'true'.
         a.ts(9,19): error TS2845: This condition will always return 'true'.
         a.ts(11,19): error TS2845: This condition will always return 'true'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // TypeScript crashes on this input, so the text of TS18055 has no reference.
+    test("reports TS1164 and TS18055 for an enum member with a computed name under isolatedModules", async () => {
+      using dir = project({
+        "a.ts": `export const s = "x";\n`,
+        "b.ts": `import { s } from "./a";\ndeclare const k: string;\nexport enum E { [k] = s }\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--isolatedModules"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "b.ts(3,17): error TS1164: Computed property names are not allowed in enums.
+        b.ts(3,23): error TS18055: 'E.' has a string type, but must have syntactically recognizable string syntax when 'isolatedModules' is enabled."
       `);
       expect(exitCode).toBe(1);
     });

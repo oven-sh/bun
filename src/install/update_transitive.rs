@@ -266,7 +266,7 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>, direct_
                 continue;
             };
             if range
-                .npm()
+                .npm
                 .version
                 .satisfies(pkg_res[new as usize].npm().version, buf, buf)
             {
@@ -744,22 +744,18 @@ fn root_patched_dependencies<'a>(
     root_package_json_path: &[u8],
     root_dir: &[u8],
 ) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
-    let mut path: &[u8] = root_package_json_path;
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
     // lockfile that it loaded.
-    if path.is_empty() {
-        path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            root_dir,
-            &mut path_buf.0,
-            &[b"package.json"],
-        );
-    }
+    let path = if root_package_json_path.is_empty() {
+        bun_paths::Path::resolve(&[root_dir, b"package.json"])
+    } else {
+        bun_paths::Path::from(root_package_json_path)
+    };
     let opts = GetJsonOptions {
         init_reset_store: false,
         ..Default::default()
     };
-    let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
+    let GetJsonResult::Entry(entry) = cache.get_with_path(log, &path, opts) else {
         return None;
     };
     let patched = entry.root.get_object(b"patchedDependencies")?;
@@ -944,7 +940,13 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
             continue;
         };
         let Some(found) = manifest
-            .find_for_dependency(&range, buf, min_age, excludes)
+            .find_for_range(
+                range.literal.slice(buf),
+                &range.npm.version,
+                buf,
+                min_age,
+                excludes,
+            )
             .unwrap()
         else {
             continue;
@@ -1194,9 +1196,9 @@ fn plan_edges(
             let dep_id = dep_id as DependencyID;
             let inst = &mut instances[instance as usize];
             let literal = (no_overrides
-                && match dep.version.tag {
-                    DependencyVersionTag::Npm => !dep.version.npm().is_alias,
-                    DependencyVersionTag::DistTag => true,
+                && match &dep.version.value {
+                    dependency::Value::Npm(npm) => !npm.is_alias,
+                    dependency::Value::DistTag(_) => true,
                     _ => false,
                 })
             .then_some(dep.version.literal);
@@ -1211,9 +1213,9 @@ fn plan_edges(
             let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
                 continue;
             };
-            let names = match version.tag {
-                DependencyVersionTag::Npm => version.npm().name,
-                DependencyVersionTag::DistTag => version.dist_tag().name,
+            let names = match &version.value {
+                dependency::Value::Npm(npm) => npm.name,
+                dependency::Value::DistTag(dist_tag) => dist_tag.name,
                 _ => continue,
             };
             if !names.eql(pkg_names[inst.pkg_id as usize], buf, buf) {
@@ -1273,7 +1275,7 @@ fn plan_edges(
         let manifest_buf: &[u8] = &manifest.string_buf;
         let pins_before = pins.len();
         for want in &inst.wants {
-            let to = if want.version.tag == DependencyVersionTag::Npm {
+            let to = if want.version.tag() == DependencyVersionTag::Npm {
                 let Some(found) = manifest
                     .find_for_dependency(&want.version, buf, min_age, excludes)
                     .unwrap()

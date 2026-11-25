@@ -1,6 +1,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
+#include "helpers.h"
 #include <JavaScriptCore/Options.h>
+#include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/YarrInterpreter.h>
 #include <wtf/BumpPointerAllocator.h>
 
@@ -92,18 +94,44 @@ extern "C" int Yarr__RegularExpression__matches(Bun::RegularExpression* re, cons
 // Null if Yarr refuses the pattern: then `refusal` is set, otherwise `offsetsSize`.
 extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* characters, uint32_t length, bool is8Bit, uint16_t flags, uint32_t* offsetsSize, uint8_t* refusal)
 {
-    auto* re = new Bun::RegularExpression(WTF::StringView(characters, length, is8Bit), flags);
+    auto re = std::make_unique<Bun::RegularExpression>(WTF::StringView(characters, length, is8Bit), flags);
     if (!re->bytecode) {
         *refusal = static_cast<uint8_t>(re->refusal());
-        delete re;
         return nullptr;
     }
     *offsetsSize = re->bytecode->m_offsetsSize;
-    return re;
+    return re.release();
 }
 
 // `offsets` has room for the `offsetsSize` of `compile`. What a match leaves there: `Compiled::exec` in src/yarr/lib.rs.
 extern "C" bool Yarr__RegularExpression__exec(Bun::RegularExpression* re, const void* characters, uint32_t length, bool is8Bit, uint32_t start, uint32_t* offsets)
 {
     return re->exec(WTF::StringView(characters, length, is8Bit), start, offsets) != JSC::Yarr::offsetNoMatch;
+}
+
+// The three below are for src/jsc/bindgen/reg_exp.rs.
+
+// Empty if the pattern is not valid.
+extern "C" JSC::EncodedJSValue JSC__RegExp__create(JSC::JSGlobalObject* globalObject, const BunString* pattern, uint8_t flags)
+{
+    auto string = pattern->toWTFString();
+    auto* regExp = JSC::RegExp::create(JSC::getVM(globalObject), string.isNull() ? emptyString() : string, OptionSet<JSC::Yarr::Flags>::fromRaw(flags));
+    return regExp->isValid() ? JSC::JSValue::encode(regExp) : JSC::encodedJSValue();
+}
+
+extern "C" bool JSC__RegExp__test(JSC::EncodedJSValue cell, JSC::JSGlobalObject* globalObject, const EncodedSlice* input)
+{
+    auto* regExp = uncheckedDowncast<JSC::RegExp>(JSC::JSValue::decode(cell).asCell());
+    return !!regExp->match(globalObject, Zig::toStringView(*input), 0);
+}
+
+// Null without a match. Otherwise the start and the end of each of `count` groups, until the next match.
+extern "C" const int* JSC__RegExp__exec(JSC::EncodedJSValue cell, JSC::JSGlobalObject* globalObject, const EncodedSlice* input, uint32_t* count)
+{
+    auto* regExp = uncheckedDowncast<JSC::RegExp>(JSC::JSValue::decode(cell).asCell());
+    auto offsets = regExp->ovectorSpan();
+    if (regExp->match(globalObject, Zig::toStringView(*input), 0, offsets) < 0)
+        return nullptr;
+    *count = regExp->numSubpatterns();
+    return offsets.subspan(2).data();
 }

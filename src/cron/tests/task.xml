@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+<Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2000-01-01T01:05:00</StartBoundary>
+      <ScheduleByMonth>
+        <DaysOfMonth>
+          <Day>1</Day>
+          <Day>15</Day>
+        </DaysOfMonth>
+        <Months>
+          <February/>
+        </Months>
+      </ScheduleByMonth>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2000-01-01T01:05:00</StartBoundary>
+      <ScheduleByMonthDayOfWeek>
+        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>
+        <DaysOfWeek>
+          <Monday/>
+        </DaysOfWeek>
+        <Months>
+          <February/>
+        </Months>
+      </ScheduleByMonthDayOfWeek>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2000-01-01T13:05:00</StartBoundary>
+      <ScheduleByMonth>
+        <DaysOfMonth>
+          <Day>1</Day>
+          <Day>15</Day>
+        </DaysOfMonth>
+        <Months>
+          <February/>
+        </Months>
+      </ScheduleByMonth>
+    </CalendarTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2000-01-01T13:05:00</StartBoundary>
+      <ScheduleByMonthDayOfWeek>
+        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>
+        <DaysOfWeek>
+          <Monday/>
+        </DaysOfWeek>
+        <Months>
+          <February/>
+        </Months>
+      </ScheduleByMonthDayOfWeek>
+    </CalendarTrigger>
+  </Triggers>
+<Principals>
+<Principal>
+<LogonType>S4U</LogonType>
+<RunLevel>LeastPrivilege</RunLevel>
+</Principal>
+</Principals>
+<Settings>
+<Enabled>true</Enabled>
+<AllowStartOnDemand>true</AllowStartOnDemand>
+<AllowHardTerminate>true</AllowHardTerminate>
+<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+<StartWhenAvailable>true</StartWhenAvailable>
+</Settings>
+<Actions>
+<Exec>
+<Command>C:\a&amp;b\bun.exe</Command>
+<Arguments>run --cron-title=my_Job-1 --cron-period="5 1,13 1,15 2 1" "C:\&lt;&quot;it&apos;s&quot;&gt;\�.ts"</Arguments>
+</Exec>
+</Actions>
+</Task>

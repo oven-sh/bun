@@ -40,7 +40,6 @@ use core::ptr;
 use std::sync::Once;
 
 use crate::image::codecs;
-use bun_sys::windows;
 
 /// `codecs::Error` plus `BackendUnavailable`; the variants used in this file
 /// are inlined here and `split()`
@@ -835,7 +834,7 @@ impl Drop for LockedGlobal {
 }
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
+/// need. Loaded lazily (`DynLib::open` inside `load_factory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
 /// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(
@@ -883,20 +882,19 @@ fn factory() -> Result<Factory, BackendError> {
 fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
-    // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
-    if dll.is_null() {
-        return;
-    }
-    let Some(sym) = windows::GetProcAddressA(
-        Some(dll),
-        bun_core::ZStr::from_static(b"WICConvertBitmapSource\0"),
-    ) else {
+    // SAFETY: a library of the system, which stays loaded, and the type of its export.
+    let convert = unsafe {
+        bun_sys::DynLib::open(b"windowscodecs.dll")
+            .ok()
+            .and_then(|dll| {
+                dll.leak()
+                    .lookup_as(bun_core::zstr!("WICConvertBitmapSource"))
+            })
+    };
+    let Some(convert) = convert else {
         return;
     };
-    // SAFETY: sym is the export of WICConvertBitmapSource — fn-ptr transmute.
-    let _ = wicConvertBitmapSource
-        .set(unsafe { core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym) });
+    let _ = wicConvertBitmapSource.set(convert);
 
     let mut out: *mut c_void = ptr::null_mut();
     // SAFETY: GUIDs are static; out is a valid out-param.

@@ -1,23 +1,23 @@
 # -- source: main.cjs
-# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total() { var t = 0; for (var i = 0; i < 4; i++) t += this.get(i, 1); return t; } }; } var mixed = mixin;
-# class View extends mixed() { constructor(m) { super(); this.m = m; } get(i, j) { return this.m.get(j, i); } put(v) { this.m = v; } }
-# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } put(v) { this.rows = v; } }
-# function sum(m) { var t = m.constructor === M ? 1 : 0; for (var i = 0; i < 4; i++) t += m.get(i, 1); return t; }
-# function plus(other) { var t = 0; for (var i = 0; i < 4; i++) t += this.get(i, 1) + other.get(1, i); return t; }
-# var m = new M(4), v = new View(m);
-# print(sum(m), sum(v), plus.call(m, v), plus.call(v, m), m.total(), v.total());
+# function hilly(Ground) { return class Hill extends Ground { climb() { var up = 0; for (var k = 1; k < 4; k++) { var step = this.spot(2, k) - this.spot(2, k - 1); if (step > 0) up += step; } return up; } }; } var raised = hilly;
+# class Snow extends raised(Object) { constructor(land) { super(); this.land = land; } spot(i, k) { return this.land.spot(i, k) / 2 + 1; } over(land) { this.land = land; } }
+# class Land extends raised(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, 3 - i, i * i]; this.rows = r; } spot(i, k) { return this[i][k]; } over(rows) { this.rows = rows; } }
+# function top(hill) { var high = hill.constructor === Land ? 1 : 0; for (var i = 0; i < 4; i++) { var here = hill.spot(i, 3); if (here > high) high = here; } return high; }
+# function between(other) { var far = 0; for (var i = 0; i < 4; i++) far += this.spot(i, 1) * 2 - other.spot(3 - i, 2); return far; }
+# var land = new Land(4), snow = new Snow(land);
+# print(top(land), top(snow), between.call(land, snow), between.call(snow, land), land.climb(), snow.climb());
 # -- end of source
 # Only classes below one mixin have the method: a receiver that nothing else tells is the one whose structure tells its class.
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: HasStructureOfClass {{*}}layout=L2
-# CHECK: AreMembersUnchanged conditions=[{layout=L2 key="get"}]
+# CHECK: AreMembersUnchanged conditions=[{layout=L2 key="spot"}]
 # RUN(SLOPPY): walk f3 mechanisms=all
 # SLOPPY-LABEL: code f3:Body
 # SLOPPY: HasStructureOfClass {{*}}layout=L2
 # RUN(ANSWER): run-in-shell
-# ANSWER: 4 3.5 6 7 3 3.5
+# ANSWER: 9 5.5 -1 5 3 1.5
 # ANSWER-NEXT: exited with 0
 # RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
-# CHECKED: 4 3.5 6 7 3 3.5
+# CHECKED: 9 5.5 -1 5 3 1.5
 # CHECKED-NEXT: exited with 0

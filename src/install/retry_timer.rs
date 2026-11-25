@@ -8,7 +8,7 @@ use bun_http::{AsyncHTTP, HTTPClientResult, HTTPResponseMetadata};
 use bun_threading::{Condition, Guarded};
 
 use crate::package_manager_real::run_tasks::download_outcome;
-use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
+use crate::package_manager_real::{INBOX, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
 /// Only used on the install thread. Its tasks aren't counted in `pending_tasks`, so
@@ -198,8 +198,7 @@ fn run() {
         let waiting = timer.deadlines.len();
         timer.deadlines.retain(|deadline| *deadline > now);
         if timer.deadlines.len() < waiting {
-            // SAFETY: the singleton that queued the deadline is never freed.
-            unsafe { PackageManager::wake_raw(package_manager_real::get()) };
+            INBOX.wake();
         }
         match timer.deadlines.iter().min().copied() {
             Some(next) => {

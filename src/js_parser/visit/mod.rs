@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts, Ref,
+    RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, UsedAs,
+    VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -23,8 +23,8 @@ use bun_ast::s::Kind as LocalKind;
 use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
-    AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S, Stmt, StmtData,
+    Symbol,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
@@ -97,6 +97,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_this_nested: true,
             ..Default::default()
         };
+
+        let entered = self.while_loading.enter_function(open_parens_loc);
 
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
@@ -215,6 +217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.react_compiler_may_replace_body = rc_candidate.prev_may_replace_body;
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
+        self.while_loading.functions_around -= entered;
 
         func
     }
@@ -296,7 +299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let orig_dead = self.is_control_flow_dead;
                 let orig_in_deleted = self.in_deleted_export;
                 // `replacement` is a `BackRef` so the
-                // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
+                // borrow of `self.options` does not survive across `visit_expr_as(&mut self)`.
                 // `BackRef` invariant: `self.options.features.replace_exports` is never mutated
                 // during the visit pass, so the entry strictly outlives this loop body.
                 let mut replacement: Option<
@@ -349,13 +352,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                self.visit_expr_in_out(
+                self.visit_expr_as(
                     &mut val,
-                    ExprIn {
-                        is_immediately_assigned_to_decl: true,
-                        // `const { a } = x` reads `x.a` and drops `x`.
-                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
-                        ..Default::default()
+                    if matches!(decl.binding.data, BData::BObject(_)) {
+                        UsedAs::DestructuredInitializer
+                    } else {
+                        UsedAs::Initializer
                     },
                 );
                 self.react_compiler_candidate_name = None;
@@ -753,19 +755,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
-                let assign_target = if is_in_or_of {
-                    AssignTarget::Replace
+                let used_as = if is_in_or_of {
+                    UsedAs::AssignTarget
                 } else {
-                    AssignTarget::None
+                    UsedAs::Value
                 };
                 self.stmt_expr_value = st.value.data;
-                self.visit_expr_in_out(
-                    &mut st.value,
-                    ExprIn {
-                        assign_target,
-                        ..Default::default()
-                    },
-                );
+                self.visit_expr_as(&mut st.value, used_as);
             }
             StmtData::SLocal(mut st) => {
                 for dec in st.decls.slice_mut() {
@@ -1379,6 +1375,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
+                        // Without a `super()` call, the assignments go after the directive prologue.
+                        let prologue_len = leading_directive_count(old_body);
                         let super_end = if class.extends.is_some() {
                             old_body
                                 .iter()
@@ -1387,9 +1385,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if matches!(&se.value.data, ExprData::ECall(c)
                                             if matches!(c.target.data, ExprData::ESuper(_))))
                                 })
-                                .map_or(0, |i| i + 1)
+                                .map_or(prologue_len, |i| i + 1)
                         } else {
-                            0
+                            prologue_len
                         };
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + injected.len(),
@@ -1519,6 +1517,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         #[cfg(debug_assertions)]
         let initial_scope: js_ast::StoreRef<js_ast::Scope> = p.current_scope;
 
+        // What came before is from an expression that this list is in: it belongs to the list around.
+        let outlined_around = p.react_compiler_outlined_from_nested.len();
+
         {
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
@@ -1610,8 +1611,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 p.visit_and_append_stmt(list, stmt)?;
                 // Outlined functions can use variables from this scope, so they can't go at the end of the module.
-                if !p.react_compiler_outlined_from_nested.is_empty() {
-                    visited.extend(p.react_compiler_outlined_from_nested.drain(..));
+                if p.react_compiler_outlined_from_nested.len() > outlined_around {
+                    visited.extend(
+                        p.react_compiler_outlined_from_nested
+                            .drain(outlined_around..),
+                    );
                 }
             }
 
@@ -1733,6 +1737,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 before.extend_from_slice(&non_fn_stmts);
+
+                // A directive only counts while it comes first, so the prologue of
+                // `visited` moves ahead of these statements.
+                let prologue_len = leading_directive_count(&visited);
+                if prologue_len > 0 {
+                    let mut with_prologue =
+                        ListManaged::with_capacity_in(prologue_len + before.len(), p.arena);
+                    with_prologue.extend_from_slice(&visited[..prologue_len]);
+                    with_prologue.extend_from_slice(&before);
+                    before = with_prologue;
+                    visited.copy_within(prologue_len.., 0);
+                    let rest = visited.len() - prologue_len;
+                    visited.truncate(rest);
+                }
             }
 
             let mut visited_count = visited.len();
@@ -2040,9 +2058,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
-                StmtData::SDirective(_) if !p.options.keep_directives => continue,
-
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements
                     if output.len() > 0 {
@@ -2216,6 +2231,20 @@ fn scopes_for_enum_at<'a>(
     map.get(&loc)
         .copied()
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
+}
+
+/// The length of the directive prologue at the head of a body: its directives and the legal
+/// comments between them. A statement that a transform adds to the body goes after it.
+pub(crate) fn leading_directive_count(stmts: &[Stmt]) -> usize {
+    let mut count = 0;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            bun_ast::stmt::Data::SDirective(_) => count = i + 1,
+            bun_ast::stmt::Data::SComment(_) => {}
+            _ => break,
+        }
+    }
+    count
 }
 
 fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {

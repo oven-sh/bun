@@ -92,13 +92,10 @@ fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
 
 #[cfg(windows)]
 fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
+    use bun_sys::windows::kernel32::{GetCurrentProcess, TerminateProcess};
     use core::sync::atomic::{AtomicBool, Ordering};
 
     static IS_DONE: AtomicBool = AtomicBool::new(false);
-    unsafe extern "system" {
-        safe fn GetCurrentProcess() -> *mut c_void;
-        safe fn TerminateProcess(process: *mut c_void, exit_code: u32) -> i32;
-    }
     let _ = std::thread::Builder::new().spawn(|| {
         std::thread::sleep(core::time::Duration::from_secs(u64::from(
             SECONDS_TO_DESCRIBE_FRAMES,

@@ -52,13 +52,14 @@ function inLoop(list) {
   }
   return [objects, others, deep].join(" ");
 }
-function isPlainObject(x) {
-  if (typeof x !== "object" || x === null) return false;
-  let above = x;
-  while (Object.getPrototypeOf(above) !== null) above = Object.getPrototypeOf(above);
-  return Object.getPrototypeOf(x) === above;
+function rungsAbove(x) {
+  if (x === null) return "no ladder";
+  if (typeof x !== "object") return "no object";
+  let rungs = 0;
+  for (let above = Object.getPrototypeOf(x); above !== null; above = Object.getPrototypeOf(above)) rungs++;
+  return rungs;
 }
-for (const f of [objectThenNotNull, notNullThenObject, leaves, loosely, nested, afterwards, isPlainObject]) console.log(f.name, given.map(x => f(hide(x))).join(" "));
+for (const f of [objectThenNotNull, notNullThenObject, leaves, loosely, nested, afterwards, rungsAbove]) console.log(f.name, given.map(x => f(hide(x))).join(" "));
 console.log(inLoop(given.map(hide)), inLoop([hide({ a: { b: null } }), hide(null), hide(5)]));
 let fromOutside = JSON.parse(process.argv[2] ?? "null");
 if (typeof fromOutside === "object" && fromOutside !== null) console.log(Object.getPrototypeOf(Object.getPrototypeOf(fromOutside)));

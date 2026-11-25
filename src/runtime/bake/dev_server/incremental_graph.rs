@@ -11,7 +11,7 @@
 use core::ops::ControlFlow;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSetUnmanaged};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_core::strings;
 
 use super::{
@@ -295,7 +295,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
-    pub(crate) stale_files: DynamicBitSetUnmanaged,
+    pub(crate) stale_files: DynamicBitSet,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
     /// Edge storage; indices into this are `EdgeIndex`.
@@ -441,7 +441,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         are_new_files_stale: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let want = self.bundled_files.count().max(self.stale_files.bit_length);
+        let want = self
+            .bundled_files
+            .count()
+            .max(self.stale_files.bit_length());
         // Align forward to 8 usize words (8*64 bits).
         const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
         let aligned = want.div_ceil(STEP) * STEP;
@@ -564,7 +567,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        if self.stale_files.bit_length > file_index.get() as usize {
+        if self.stale_files.bit_length() > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
         }
 
@@ -628,13 +631,19 @@ impl DevServer {
             if scb {
                 f.is_client_component_boundary = true;
                 result.client_components_added.push(file_index);
-            } else if core::mem::take(&mut f.is_client_component_boundary) {
+            } else if !is_ssr_graph && core::mem::take(&mut f.is_client_component_boundary) {
                 result.client_components_removed.push(file_index);
                 let key = &graph.bundled_files.keys()[file_index.get() as usize];
-                let client_index = self.graphs.client.get_file_index(key).unwrap_or_else(|| {
-                    bun_core::Output::panic(format_args!("Client graph's SCB was already deleted",))
-                });
-                self.disconnect_and_delete_client_file(client_index);
+                let client = &mut self.graphs.client;
+                if let Some(client_index) = client.get_file_index(key) {
+                    let i = client_index.get() as usize;
+                    if client.edge_lists[i].first_dep.is_some() {
+                        // Another client component imports it.
+                        client.bundled_files.values_mut()[i].is_hmr_root = false;
+                    } else {
+                        self.disconnect_and_delete_client_file(client_index);
+                    }
+                }
             }
         }
 
@@ -1177,13 +1186,9 @@ impl Graphs {
         };
         if is_hmr_root {
             let key = &self.client.bundled_files.keys()[file_index.get() as usize];
-            let index = self.server.get_file_index(key).unwrap_or_else(|| {
-                bun_core::Output::panic(format_args!(
-                    "Server Incremental Graph is missing component for {:?}",
-                    bstr::BStr::new(key),
-                ))
-            });
-            self.trace_dependencies(index, gts, goal, index)?;
+            if let Some(index) = self.server.get_file_index(key) {
+                self.trace_dependencies(index, gts, goal, index)?;
+            }
         } else if let Some(route_bundle_index) = html_rbi {
             // HTML modified or asset modified → hard reload; else soft.
             let hard = from_file_index == file_index
@@ -1254,13 +1259,9 @@ impl Graphs {
         };
         if is_scb || kind == FileKind::Css {
             let key = &self.server.bundled_files.keys()[file_index.get() as usize];
-            let index = self.client.get_file_index(key).unwrap_or_else(|| {
-                bun_core::Output::panic(format_args!(
-                    "Client Incremental Graph is missing component for {:?}",
-                    bstr::BStr::new(key),
-                ))
-            });
-            self.trace_imports(index, gts, goal)?;
+            if let Some(index) = self.client.get_file_index(key) {
+                self.trace_imports(index, gts, goal)?;
+            }
 
             if cfg!(debug_assertions) && kind == FileKind::Css {
                 // Server CSS files never have imports.
@@ -1545,12 +1546,12 @@ impl Graphs {
         let _ = log.print(bun_core::Output::error_writer());
 
         let failure = {
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = bun_paths::Path::new();
             let key = match SIDE {
                 Side::Server => &self.server.bundled_files.keys()[idx],
                 Side::Client => &self.client.bundled_files.keys()[idx],
             };
-            let owner_display_name = relative_path(&self.root, &mut *buf, key);
+            let owner_display_name = relative_path(&self.root, &mut buf, key);
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
@@ -1776,7 +1777,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0"),
+                code: bun_core::zstr!("self[Symbol.for(\"bun:hmr\")]({\n"),
                 line_count: 1,
             },
         };
@@ -1786,12 +1787,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let rel = relative_path(
-                        options.root,
-                        &mut *buf,
-                        options.initial_response_entry_point,
-                    );
+                    let mut buf = bun_paths::Path::new();
+                    let rel =
+                        relative_path(options.root, &mut buf, options.initial_response_entry_point);
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1820,9 +1818,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_paths::Path::new();
                     let rel =
-                        relative_path(options.root, &mut *buf, options.react_refresh_entry_point);
+                        relative_path(options.root, &mut buf, options.react_refresh_entry_point);
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1830,8 +1828,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if let Some(files) = options.route_page_files {
                     let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let rel = relative_path(options.root, &mut *buf, abs);
+                        let mut buf = bun_paths::Path::new();
+                        let rel = relative_path(options.root, &mut buf, abs);
                         bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                             rel, end_list,
                         )?;
@@ -1909,7 +1907,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let runtime: bake::HmrRuntime = match options.kind {
             ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Server),
             ChunkKind::HmrChunk => bake::HmrRuntime {
-                code: bun_core::ZStr::from_static(b"({\0"),
+                code: bun_core::zstr!("({"),
                 line_count: 0,
             },
         };

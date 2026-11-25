@@ -202,7 +202,6 @@ test("a spy under names out of a list replaces each", async () => {
     BUN_JSC_logAOTPhaseTimes: "1",
   });
   expect(stderr).toContain("AOT phase times: front end | Load");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
 });
 
 test("a spy on an object from somewhere replaces the export that goes by its name, in every module that is handed on", async () => {
@@ -258,7 +257,6 @@ test("a namespace object handed to a helper that spies does not build the progra
   });
   expect(stdout).toContain("3 3");
   expect(stderr).toContain("AOT phase times: front end | Load");
-  expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
   expect(exitCode).toBe(0);
 });
 

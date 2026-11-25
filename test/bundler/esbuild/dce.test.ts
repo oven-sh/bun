@@ -3478,6 +3478,26 @@ describe("bundler", () => {
       stdout: "foo\nbar",
     },
   });
+  itBundled("dce/PackageJsonSideEffectsArrayBackslash", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import "demo-pkg/a/index.js"
+        import "demo-pkg/b/index.js"
+        import "demo-pkg/c/index.js"
+        import "demo-pkg/d/index.js"
+      `,
+      "/Users/user/project/node_modules/demo-pkg/a/index.js": `console.log('a')`,
+      "/Users/user/project/node_modules/demo-pkg/b/index.js": `console.log('b')`,
+      "/Users/user/project/node_modules/demo-pkg/c/index.js": `console.log('c')`,
+      "/Users/user/project/node_modules/demo-pkg/d/index.js": `console.log('d')`,
+      "/Users/user/project/node_modules/demo-pkg/package.json": JSON.stringify({
+        sideEffects: ["a\\index.js", "\\b\\index.js", "/c\\index.js"],
+      }),
+    },
+    run: {
+      stdout: "a\nb\nc",
+    },
+  });
   itBundled("dce/CallWithNoArg", {
     files: {
       "/entry.js": /* js */ `

@@ -265,7 +265,7 @@ pub mod analyze_transpiled_module {
 
     impl<'a> ModuleInfoDeserialized<'a> {
         /// Self-contained form: this module's own string table, then its body.
-        pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
             let mut offset = 0usize;
             let strings: Vec<&[u8]> = self
                 .strings_lens
@@ -847,11 +847,6 @@ pub mod analyze_transpiled_module {
     }
 }
 
-/// Cold path — called at most once per print to persist output. Dispatch lives
-/// on the parser-tier `RuntimeTranspilerCache` (`TranspilerCacheImpl`
-/// link-interface); the printer just holds the raw pointer.
-pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
-
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
 use bun_core::printer::{
     FIRST_ASCII, FIRST_HIGH_SURROGATE, LAST_ASCII, LAST_LOW_SURROGATE, bmp_escape,
@@ -1247,10 +1242,13 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 pub type SourceMapHandler<'a> = &'a dyn OnSourceMapChunk;
 
 pub trait OnSourceMapChunk {
+    /// `output` holds the printed code.
     fn on_source_map_chunk(
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        output: &mut MutableString,
+        module_info: Option<&analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<()>;
 }
 
@@ -1259,6 +1257,8 @@ impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
         &self,
         chunk: SourceMap::Chunk,
         _: &bun_ast::Source,
+        _: &mut MutableString,
+        _: Option<&analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<()> {
         self.set(Some(chunk));
         Ok(())
@@ -1284,7 +1284,6 @@ pub struct Options<'a> {
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
 
-    pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [bun_ast::Source<'a>]>,
 
@@ -1326,6 +1325,7 @@ pub struct Options<'a> {
     /// Some `import()` / `require()` in this file reads through import items,
     /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
     pub has_dynamic_import_items: bool,
+    pub has_deferred_requires: bool,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1364,7 +1364,6 @@ impl<'a> Default for Options<'a> {
             indent: Indentation::default(),
             source_map_handler: None,
             target: bun_ast::Target::Browser,
-            runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
             commonjs_named_exports: None,
@@ -1385,6 +1384,7 @@ impl<'a> Default for Options<'a> {
             ts_enums: None,
             import_member_bindings: None,
             has_dynamic_import_items: false,
+            has_deferred_requires: false,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -1567,7 +1567,6 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a>,
@@ -2586,6 +2585,13 @@ pub(crate) mod __gated_printer {
             &self.import_records[import_record_index]
         }
 
+        #[inline]
+        fn is_deferred_require(&self, ref_: Ref) -> bool {
+            self.options.has_deferred_requires
+                && !ref_.is_source_contents_slice()
+                && (self.symbols().get_const(ref_)).is_some_and(|it| it.is_deferred_require())
+        }
+
         pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
@@ -3411,9 +3417,7 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data);
-
-                    let is_unbound_eval = !e.is_direct_eval
+                    let is_unbound_eval = e.kind != E::CallKind::DirectEval
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
@@ -3422,10 +3426,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
-                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
-                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
-                        self.print_expr(e.target, Level::Postfix, target_flags);
+                        self.print_callee(e.target, target_flags);
                     }
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
@@ -3854,13 +3856,22 @@ pub(crate) mod __gated_printer {
                         self.stmt_start == n || self.arrow_expr_start == n
                     };
 
+                    let props = e.properties.slice();
+                    let is_deferred = |it: &&G::Property| {
+                        (it.flags).contains(js_ast::flags::Property::IsDeferredRequire)
+                    };
+                    let is_lazy = self.options.has_deferred_requires
+                        && props.iter().any(|it| is_deferred(&it));
                     if wrap {
                         self.print(b"(");
+                    }
+                    if is_lazy {
+                        self.print_space_before_identifier();
+                        self.print(b"$Bun_lazy(");
                     }
                     self.add_source_mapping(expr.loc);
                     self.mark_object_brace();
                     self.print(b"{");
-                    let props = e.properties.slice();
                     if !props.is_empty() {
                         if !e.is_single_line || IS_JSON {
                             self.indent();
@@ -3900,6 +3911,13 @@ pub(crate) mod __gated_printer {
                         self.mark_object_brace();
                     }
                     self.print(b"}");
+                    if is_lazy {
+                        for key in props.iter().filter(is_deferred).filter_map(|it| it.key) {
+                            self.print(b",");
+                            self.print_expr(key, Level::Comma, ExprFlag::none());
+                        }
+                        self.print(b")");
+                    }
                     if wrap {
                         self.print(b")");
                     }
@@ -3963,8 +3981,13 @@ pub(crate) mod __gated_printer {
                     let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
-                    // If this was originally a template literal, print it as one as long as we're not minifying
-                    if e.prefer_template && !self.options.minify_syntax {
+                    // If this was originally a template literal, print it as one as long as we're not minifying.
+                    // One that is a whole statement stays a template literal: as a string it could be a directive.
+                    if e.prefer_template
+                        && (!self.options.minify_syntax
+                            || (level == Level::Lowest
+                                && flags.contains(ExprFlag::ExprResultIsUnused)))
+                    {
                         self.print(b"`");
                         self.print_string_characters_e_string(&e, b'`');
                         self.print(b"`");
@@ -4103,23 +4126,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
-                            self.print(b"(");
-                            self.print_expr(*tag, Level::Lowest, ExprFlag::none());
-                            self.print(b")");
-                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
-                            self.print_commonjs_export_identifier(id, tag.loc, true);
-                        } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
-                        }
+                        self.print_callee(tag.expr, ExprFlag::none());
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -4170,9 +4177,11 @@ pub(crate) mod __gated_printer {
                     // A for-of loop initializer must not start with the token "let" and
                     // must not be the exact token sequence "async of" (e.g. the escaped
                     // identifier in "for (\u0061sync of []) ;"), so wrap in parentheses.
+                    let is_called = self.is_deferred_require(e.ref_);
                     let wrap = self.writer.written() == self.for_of_init_start
                         && (name == b"let"
-                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)));
+                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)))
+                        || is_called;
 
                     if wrap {
                         self.print(b"(");
@@ -4181,6 +4190,10 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
                     self.print_identifier(name);
+                    if is_called {
+                        // A `var` can be read before its declaration.
+                        self.print(b"?.()");
+                    }
 
                     if wrap {
                         self.print(b")");
@@ -4205,24 +4218,10 @@ pub(crate) mod __gated_printer {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
-                                let mut wrap = false;
                                 did_print = true;
-
-                                if let Some(target) = &self.call_target {
-                                    wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
-                                }
-
-                                if wrap {
-                                    self.print_whitespacer(ws!(b"(0, "));
-                                }
                                 self.print_space_before_identifier();
                                 self.add_source_mapping(expr.loc);
                                 self.print_namespace_alias(import_record, namespace);
-
-                                if wrap {
-                                    self.print(b")");
-                                }
                             } else if import_record
                                 .flags
                                 .contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
@@ -4244,18 +4243,6 @@ pub(crate) mod __gated_printer {
 
                         if !did_print {
                             did_print = true;
-
-                            let wrap = if let Some(target) = &self.call_target {
-                                e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
-                            } else {
-                                false
-                            };
-
-                            if wrap {
-                                self.print_whitespacer(ws!(b"(0, "));
-                            }
-
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
                             self.print_symbol(namespace.namespace_ref);
@@ -4269,10 +4256,6 @@ pub(crate) mod __gated_printer {
                                 // TODO: addSourceMappingForName
                                 self.print_string_literal_utf8(alias, false);
                                 self.print(b"]");
-                            }
-
-                            if wrap {
-                                self.print(b")");
                             }
                         }
                     }
@@ -4525,6 +4508,16 @@ pub(crate) mod __gated_printer {
                 self.print(b"[");
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
                 self.print(b"]");
+            }
+        }
+
+        /// The target of a call, or the tag of a template.
+        #[inline(always)] // Not one more stack frame for each link of "a()()()"
+        fn print_callee(&mut self, callee: Expr, flags: ExprFlagSet) {
+            if let ExprData::ECommonjsExportIdentifier(id) = callee.data {
+                self.print_commonjs_export_identifier(id, callee.loc, true);
+            } else {
+                self.print_expr(callee, Level::Postfix, flags);
             }
         }
 
@@ -4910,7 +4903,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
@@ -4950,7 +4943,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if item.flags.contains(js_ast::flags::Property::WasShorthand)
                                         || strings::utf16_eql_string(
                                             key_str.slice16(),
@@ -6911,7 +6904,6 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
-                call_target: None,
                 writer,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,
@@ -7190,6 +7182,7 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
     }
 }
 
+#[derive(Default)]
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
 }
@@ -7318,6 +7311,7 @@ impl<W: WriterTrait> WriterTrait for &mut W {
 // DirectWriter / BufferWriter
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct BufferWriter {
     pub buffer: MutableString,
     /// Watermark into `buffer.list` set by `done()`. Rust can't keep a
@@ -7554,8 +7548,8 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
-    _writer: W,
+pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+    writer: &mut BufferPrinter,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
     mut symbols: js_ast::symbol::Map,
@@ -7659,9 +7653,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     };
 
     // `is_bun_platform = ascii_only` for printAst.
-    type PrinterType<'a, W, const A: bool, const G: bool> =
-        Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
-    let mut writer = _writer;
+    type PrinterType<'a, 'w, const A: bool, const G: bool> =
+        Printer<'a, &'w mut BufferPrinter, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
     // Pre-size the output buffer ~proportional to the source. Transpiled output
     // is almost always within a small factor of the input, so reserving up front
     // keeps the per-token appends below from repeatedly growing+memmoving the
@@ -7669,13 +7662,14 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
+    opts.has_deferred_requires = tree.has_deferred_requires;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
         tree.approximate_newline_count,
     );
-    let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
+    let mut printer = PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
         tree.import_records.as_slice(),
@@ -7687,10 +7681,16 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).
-    if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+    if PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
+
+    // The directive prologue comes ahead of every statement the printer adds.
+    for stmt in tree.directives.slice() {
+        printer.print_stmt(*stmt)?;
+        printer.print_semicolon_if_needed();
+    }
 
     if !printer.options.bundling
         && tree.uses_require_ref
@@ -7707,7 +7707,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         // `require` must be an unbound variable.
         printer.print(b"var {require}=import.meta;");
 
-        if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+        if PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
             }
@@ -7722,7 +7722,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.check_stack_overflow()?;
 
-    let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
+    let have_module_info = PrinterType::<ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
     if have_module_info {
         printer
@@ -7733,46 +7733,18 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             .map_err(|()| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
 
-    let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
-        if printer.options.source_map_handler.is_some() {
-            // WriterTrait exposes the written buffer via `slice()`.
-            Some(
-                printer
-                    .source_map_builder
-                    .generate_chunk(printer.writer.slice()),
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if let Some(cache) = printer.options.runtime_transpiler_cache {
-        let mut srlz_res: Vec<u8> = Vec::new();
-        if have_module_info {
-            printer
-                .module_info
-                .as_ref()
-                .unwrap()
-                .as_deserialized()
-                .serialize(&mut srlz_res)
-                .map_err(|_| crate::Error::WriteFailed)?;
-        }
-        // SAFETY: caller guarantees the cache outlives the print call.
-        unsafe { &mut *cache.as_ptr() }.put(
-            printer.writer.slice(),
-            source_maps_chunk
-                .as_ref()
-                .map(|c| c.buffer.list.as_slice())
-                .unwrap_or(b""),
-            &srlz_res,
-        );
-    }
-
     if GENERATE_SOURCE_MAP {
         if let Some(handler) = &printer.options.source_map_handler {
-            handler.on_source_map_chunk(source_maps_chunk.take().unwrap(), source)?;
+            // WriterTrait exposes the written buffer via `slice()`.
+            let chunk = printer
+                .source_map_builder
+                .generate_chunk(printer.writer.slice());
+            handler.on_source_map_chunk(
+                chunk,
+                source,
+                &mut printer.writer.ctx.buffer,
+                printer.module_info.as_deref(),
+            )?;
         }
     }
 

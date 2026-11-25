@@ -46,7 +46,7 @@ test("aborting fetches whose custom SSL context was evicted does not crash", asy
 });
 
 // The HTTP client thread's queued tasks are popped FIFO and each task's
-// start_queued_task → start_() creates its custom SSL context and runs the
+// InFlightRequest::start creates its custom SSL context and runs the
 // cache-size eviction check synchronously before returning. A plain HTTP
 // fetch queued after the 65 SSL fetches therefore cannot start until every
 // SSL context exists and eviction has fired for indices 60..64, so awaiting

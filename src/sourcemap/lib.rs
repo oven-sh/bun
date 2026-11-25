@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
@@ -504,19 +503,9 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     }
                 }
 
-                let mut load_path_buf = bun_paths::path_buffer_pool::get();
-                // `+ 4` for ".map" plus a trailing NUL for the
-                // `&ZStr` open path; reserve `+ 5`.
-                if source_filename.len() + 5 > load_path_buf.len() {
-                    break 'try_external;
-                }
-                load_path_buf[..source_filename.len()].copy_from_slice(source_filename);
-                load_path_buf[source_filename.len()..source_filename.len() + 4]
-                    .copy_from_slice(b".map");
-                load_path_buf[source_filename.len() + 4] = 0;
-                // SAFETY: byte at `len` was just set to NUL; buffer outlives `load_path`.
-                let load_path =
-                    bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
+                let mut load_path = bun_paths::Path::from(source_filename);
+                load_path.extend_from_slice(b".map");
+                let load_path: &bun_core::ZStr = &load_path;
 
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
                 // freed on scope exit by `Vec`'s Drop.

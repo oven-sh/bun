@@ -227,11 +227,10 @@ impl SecureContext {
 
         let cached = cpp::Bun__SecureContextCache__get(global, key);
         if !cached.is_empty() {
-            if let Some(existing) = Self::from_js(cached) {
+            if let Some(existing) = Self::from_js(&cached) {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
-                // SAFETY: the struct is stored inline in the wrapper, which `cached` keeps alive.
-                if unsafe { (*existing).digest.get() } == d {
+                if existing.digest.get() == d {
                     return Ok(cached);
                 }
             }

@@ -22,71 +22,25 @@
 
 #include "JSDOMException.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
-#include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMWrapperCache.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
-
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
+#include "JSDOMPrototype.h"
 
 namespace WebCore {
 using namespace JSC;
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsDOMExceptionConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMException_code);
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMException_name);
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMException_message);
 
-class JSDOMExceptionPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSDOMExceptionPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSDOMExceptionPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMExceptionPrototype))) JSDOMExceptionPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMExceptionPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSDOMExceptionPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMExceptionPrototype, JSDOMExceptionPrototype::Base);
-
+using JSDOMExceptionPrototype = JSDOMPrototype<JSDOMException>;
 using JSDOMExceptionDOMConstructor = JSDOMConstructor<JSDOMException>;
 
 /* Hash table for constructor */
@@ -170,12 +124,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSDOMExceptionDOMConstructorConstruct, JSDOMException
 
 template<> const ClassInfo JSDOMExceptionDOMConstructor::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMExceptionDOMConstructor) };
 
-template<> JSValue JSDOMExceptionDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
 template<> void JSDOMExceptionDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     initializeBaseProperties(vm, 0, "DOMException"_s, JSDOMException::prototype(vm, globalObject));
@@ -185,7 +133,7 @@ template<> void JSDOMExceptionDOMConstructor::initializeProperties(VM& vm, JSDOM
 /* Hash table for prototype */
 
 static const HashTableValue JSDOMExceptionPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMExceptionConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSDOMExceptionPrototype::constructorGetter, 0 } },
     { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMException_code, 0 } },
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMException_name, 0 } },
     { "message"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsDOMException_message, 0 } },
@@ -216,9 +164,9 @@ static const HashTableValue JSDOMExceptionPrototypeTableValues[] = {
     { "DATA_CLONE_ERR"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 25 } },
 };
 
-const ClassInfo JSDOMExceptionPrototype::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMExceptionPrototype) };
+template<> const ClassInfo JSDOMExceptionPrototype::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMExceptionPrototype) };
 
-void JSDOMExceptionPrototype::finishCreation(VM& vm)
+template<> void JSDOMExceptionPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDOMException::info(), JSDOMExceptionPrototypeTableValues, *this);
@@ -227,46 +175,14 @@ void JSDOMExceptionPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
-JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
-    : JSDOMWrapper<DOMException>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSDOMException::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSDOMExceptionPrototype::create(vm, &globalObject, JSDOMExceptionPrototype::createStructure(vm, &globalObject, globalObject.errorPrototype()));
-}
-
-JSObject* JSDOMException::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSDOMException>(vm, globalObject);
+    return JSDOMExceptionPrototype::create(vm, globalObject, globalObject.errorPrototype());
 }
 
 JSValue JSDOMException::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDOMExceptionDOMConstructor, DOMConstructorID::DOMException>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSDOMException::destroy(JSC::JSCell* cell)
-{
-    JSDOMException* thisObject = static_cast<JSDOMException*>(cell);
-    thisObject->JSDOMException::~JSDOMException();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSDOMExceptionPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSDOMException::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsDOMException_codeGetter(JSGlobalObject& lexicalGlobalObject, JSDOMException& thisObject)
@@ -306,35 +222,6 @@ static inline JSValue jsDOMException_messageGetter(JSGlobalObject& lexicalGlobal
 JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMException>::get<jsDOMException_messageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException));
-}
-
-void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
-{
-    return createWrapper<DOMException>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-DOMException* JSDOMException::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSDOMException>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

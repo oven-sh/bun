@@ -86,7 +86,7 @@
 use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Query, Spare};
 use crate::local::{Log, node_word};
-use crate::program::{FileId, Files, ReadingNoTrees, Sym};
+use crate::program::{FileId, Files, Sym};
 use crate::session::Arena;
 use crate::table::{Prepared, Publish};
 use crate::util::{FxBuild, FxHashMap, SharedSort};
@@ -1056,8 +1056,10 @@ impl<'s> Checker<'_, 's> {
         debug_assert!(self.stack.is_empty());
         for &entry in &cycles.0 {
             let has_tree = |file: FileId| {
-                let module = self.files().module(file);
-                !module.is_leaf || module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty()
+                let files = self.files();
+                !files.module(file).is_leaf
+                    || files.bound(file).symbols.len() > 0
+                    || !files.hir(file).stmts.is_empty()
             };
             if !entry.file_that_names_it().is_some_and(has_tree) {
                 continue;
@@ -1302,7 +1304,6 @@ impl CyclesEntered {
     }
 
     pub fn retain_within_reach_of(&mut self, files: &Files<'_>, visited: &[FileId]) {
-        let _reading = ReadingNoTrees::begin();
         let is_reached = files.reached_from(visited.to_vec());
         self.0.retain(|entry| {
             let file = entry.file_that_names_it();

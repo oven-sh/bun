@@ -49,7 +49,7 @@ impl DeferredBatchTask {
     pub(crate) fn schedule(&mut self) {
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
         // Refused: the VM was torn down mid-bundle, the hop never runs.
-        let _ = self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
+        let _ = self.get_bundle_v2().js_loop_for_plugins().post(task);
     }
 
     /// Plugins' (JS) thread.

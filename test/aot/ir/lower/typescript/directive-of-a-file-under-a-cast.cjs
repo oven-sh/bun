@@ -1,5 +1,5 @@
-// At the top of a file `bun run` takes a string for a directive through casts and parentheses, and it compares its value. A template is none.
-// In a function a directive is a bare string at the head of the body.
+// A directive is a string that starts its statement, as `bun run` has it: types may follow it, but a parenthesis or a cast in front of it makes it none, and so does a template.
+// Of "use strict" the text counts as written: an escape makes it another directive. All of it holds for a file and for a function.
 
 // RUN(AS): link
 // AS: function {{*}}name="underAs"
@@ -12,9 +12,7 @@
 // NONNULL: thisType=
 
 // RUN(ANGLE): link
-// ANGLE: function {{*}}name="underAngleBrackets"
-// ANGLE-NOT: IsSloppy
-// ANGLE: thisType=
+// ANGLE: function {{*}}name="underAngleBrackets"{{*}}flags=[IsSloppy
 
 // RUN(SATISFIES): link
 // SATISFIES: function {{*}}name="underSatisfies"
@@ -27,14 +25,10 @@
 // CONST: thisType=
 
 // RUN(PARENTHESES): link
-// PARENTHESES: function {{*}}name="inParentheses"
-// PARENTHESES-NOT: IsSloppy
-// PARENTHESES: thisType=
+// PARENTHESES: function {{*}}name="inParentheses"{{*}}flags=[IsSloppy
 
 // RUN(ESCAPE): link
-// ESCAPE: function {{*}}name="withAnEscape"
-// ESCAPE-NOT: IsSloppy
-// ESCAPE: thisType=
+// ESCAPE: function {{*}}name="withAnEscape"{{*}}flags=[IsSloppy
 
 // RUN(SECOND): link
 // SECOND: function {{*}}name="behindOthers"
@@ -45,11 +39,16 @@
 // TEMPLATE: function {{*}}name="underATemplate"{{*}}flags=[IsSloppy
 
 // RUN(FUNCTION): link
-// FUNCTION: function {{*}}name="castInAFunction"{{*}}flags=[IsSloppy
+// FUNCTION: function {{*}}name="castInAFunction"
+// FUNCTION-NOT: IsSloppy
+// FUNCTION: thisType=
 
 // RUN(TYPE): link
-// TYPE: function {{*}}name="typeInAFunction"{{*}}flags=[IsSloppy
-// TYPE: function {{*}}name="within"{{*}}flags=[IsSloppy
+// TYPE: function {{*}}name="typeInAFunction"
+// TYPE-NOT: IsSloppy
+// TYPE: function {{*}}name="within"
+// TYPE-NOT: IsSloppy
+// TYPE: thisType=
 
 // FILE: main.cjs
 module.exports = [
@@ -109,7 +108,7 @@ module.exports = function withAnEscape() {
 
 // FILE: second.cts
 "first" as any;
-("second");
+"second"!;
 "use strict";
 export = function behindOthers(this: unknown) {
   return this;

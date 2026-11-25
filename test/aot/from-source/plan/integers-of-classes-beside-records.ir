@@ -1,19 +1,19 @@
-# Node and Reference are one union, so their fields agree on a form. The program reads pos and end of a Node as integers and says nothing of a Reference's: both hold int32s, in four bytes each.
+# Stay and Lease are one union, so their fields agree on a form. The program reads since and till of a Stay as integers and says nothing of a Lease's: both hold int32s, in four bytes each.
 # -- source: main.ts
 # declare function print(value: any): void;
 # declare function parse(text: string): any;
-# class Node { pos: number; end: number; constructor(pos: number, end: number) { this.pos = pos; this.end = end; } }
-# interface Reference { fileName: string; pos: number; end: number }
-# function shift(node: Node, by: number): void { node.pos = node.pos + by | 0; node.end = node.end + by | 0; }
-# function widthOf(item: Node | Reference): number { return item.end - item.pos; }
-# function pragma(name: string, data: any): Reference { return { fileName: name, pos: data.pos, end: data.end }; }
-# const items: (Node | Reference)[] = [new Node(1, 2), pragma("x", parse("{}"))];
-# parse(items as any);
-# shift(items[0] as Node, 1);
-# print(widthOf(items[0]) + widthOf(items[1]));
+# class Stay { since: number; till: number; constructor(nights: number) { this.since = 0; this.till = nights; } }
+# interface Lease { house: string; since: number; till: number }
+# function drifts(stay: Stay, by: number): void { stay.since = stay.since ^ by; stay.till = (stay.till << 1) - by | 0; }
+# function ends(home: Stay | Lease, day: number): boolean { return day >= home.till || day < home.since; }
+# function lease(house: string, words: any): Lease { return { house, since: words.since, till: words.till }; }
+# const homes: (Stay | Lease)[] = [new Stay(5), lease("x", parse("{}"))];
+# parse(homes as any);
+# drifts(homes[0] as Stay, 3);
+# print(ends(homes[0], 4) || ends(homes[1], 9));
 # -- end of source
 # RUN(SLOTS): plan layouts mechanisms=all
-# SLOTS: slot 0 "pos" OptionalInt32
-# SLOTS-NEXT: slot 1 "end" OptionalInt32
-# SLOTS: "end" OptionalInt32
-# SLOTS: "pos" OptionalInt32
+# SLOTS: slot 0 "since" OptionalInt32
+# SLOTS-NEXT: slot 1 "till" OptionalInt32
+# SLOTS: "since" OptionalInt32
+# SLOTS-NEXT: "till" OptionalInt32

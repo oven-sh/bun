@@ -4,15 +4,18 @@ use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::packet_reader::PacketReader;
 
 #[derive(Default)]
-pub struct OKPacket {
-    pub header: u8,
-    pub affected_rows: u64,
-    pub last_insert_id: u64,
-    pub status_flags: StatusFlags,
+pub(crate) struct OKPacket {
+    pub(crate) header: u8,
+    pub(crate) affected_rows: u64,
+    pub(crate) last_insert_id: u64,
+    pub(crate) status_flags: StatusFlags,
 }
 
 impl OKPacket {
-    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'_>,
+    ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0x00 && self.header != 0xfe {
             return Err(AnyMySQLError::InvalidOKPacket);

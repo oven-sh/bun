@@ -72,7 +72,7 @@ pub struct LoadedProgram<'s> {
     program: &'s UnsafeCell<Program<'s>>,
     files: &'s Files<'s>,
     checker_session: &'s SessionSlot,
-    node_counts: bun_sema::check::NodeCounts,
+    program_inputs: bun_sema::check::ProgramInputs,
     is_checker_freed: AtomicBool,
     cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
     origins: Vec<FileOrigin>,
@@ -181,7 +181,7 @@ impl<'s> LoadedProgram<'s> {
             (*self.program.get()).release();
             self.checker_session.empty_in_parallel(in_parallel);
             let session = self.checker_session.session();
-            let program = Program::with_node_counts(session, self.files, &self.node_counts);
+            let program = Program::with_inputs(session, self.files, &self.program_inputs);
             self.program.get().write(program);
         }
     }

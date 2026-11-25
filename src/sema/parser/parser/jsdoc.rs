@@ -300,9 +300,7 @@ pub(crate) fn guess_what_checker_reads(text: &[u8], is_declaration_file: bool) -
     }
 }
 
-/// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
-/// their tags, in two functions. `comments` is every comment in `text`.
-pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_file: bool) -> u8 {
+pub(crate) fn tags_in(text: &[u8], comments: &[Comment]) -> u8 {
     let mut found = 0;
     for &Comment {
         pos: start, end, ..
@@ -313,6 +311,12 @@ pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_
             found |= scan_jsdoc_comment_for_tags(comment);
         }
     }
+    found
+}
+
+/// Returns the `flags` that select which JSDoc comments of a TypeScript file have to be read. Only the checker reads
+/// their tags, in two functions. `found` is `tags_in` all comments of `text`.
+pub(crate) fn read_by_checker(text: &[u8], found: u8, is_declaration_file: bool) -> u8 {
     // `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a `@param` tag
     // `containsArgumentsReference` resolves the identifiers named `arguments` in the body. `getAllJSDocTags` needs to
     // know whether each comment has tags.

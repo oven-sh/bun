@@ -1,5 +1,6 @@
 //! Parser state, plus the helpers every part of the grammar shares: tokens, lookahead, speculation, names and lists.
 
+pub(crate) mod ahead;
 mod class;
 mod comments;
 mod declared;
@@ -206,6 +207,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     /// The private names the enclosing classes have declared so far.
     pub(crate) declared_private_names: Vec<Atom>,
     pub(crate) declared: Declared,
+    ahead: ahead::Ahead,
     /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
     pub(crate) not_arrows: Vec<u32>,
     /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
@@ -322,6 +324,7 @@ struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
+    ahead: ahead::Ahead,
     end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
@@ -346,7 +349,7 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     match (atoms, options.part) {
-        (Some(atoms), _) => scratch.names.use_interner(atoms),
+        (Some(atoms), _) => scratch.names.use_interner(atoms, text.len()),
         (None, None) => scratch.names.begin_own(text.len()),
         // Size the table for the part, not for the whole text.
         (None, Some(part)) => {
@@ -361,30 +364,16 @@ pub(crate) fn run<'a>(
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
-    let names = DeclaredNames {
-        are_collected: options.dialect.oxc_names,
-        need_table: options.dialect.oxc && options.is_javascript,
-        are_of_javascript: options.is_javascript,
-    };
-    declared.begin(text.len(), names);
+    declared.begin(text.len(), declared_names(&options));
     let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
     if let Some(part) = options.part {
         lx.start_at(part.from);
         lx.set_src(text.get(..part.until as usize).unwrap_or(text));
     }
-    set_language(&mut lx, &options);
-    lx.recovers = options.recovers;
+    set_up_lexer(&mut lx, &options);
     lx.comments = std::mem::take(&mut file.comments);
-    lx.attach_comments = options.attach_comments;
-    let is_ecmascript = lx.is_ecmascript;
-    lx.is_typescript_5 = options.dialect.typescript_5;
-    lx.is_babel = options.dialect.babel;
-    lx.is_oxc = options.dialect.oxc;
-    lx.records_html_opens =
-        options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
-    let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.accepts_legacy_octal = options.accepts_legacy_octal;
+    let is_compiled_javascript = options.compiles && lx.is_ecmascript;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
 
@@ -393,6 +382,7 @@ pub(crate) fn run<'a>(
         lx,
         stacks,
         declared,
+        ahead,
         end,
         has_top_level_await,
         has_plain_top_level_await,
@@ -405,7 +395,10 @@ pub(crate) fn run<'a>(
             Parser::<false, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
         }
         (false, false) => {
-            Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+            let mut parser =
+                Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
+            parser.ahead = std::mem::take(&mut scratch.ahead);
+            parser.parse_source()
         }
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
@@ -462,7 +455,28 @@ pub(crate) fn run<'a>(
         has_top_level_await,
         names_await_at_top_level,
         end,
+        tags_in_first_comments: (ahead.tags, ahead.comments_read),
     })
+}
+
+fn declared_names(options: &Options) -> DeclaredNames {
+    DeclaredNames {
+        are_collected: options.dialect.oxc_names,
+        need_table: options.dialect.oxc && options.is_javascript,
+        are_of_javascript: options.is_javascript,
+    }
+}
+
+fn set_up_lexer(lx: &mut Lexer<'_>, options: &Options) {
+    set_language(lx, options);
+    lx.recovers = options.recovers;
+    lx.attach_comments = options.attach_comments;
+    lx.is_typescript_5 = options.dialect.typescript_5;
+    lx.is_babel = options.dialect.babel;
+    lx.is_oxc = options.dialect.oxc;
+    lx.records_html_opens =
+        options.dialect.oxc || lx.is_ecmascript && options.dialect.module_or_script;
+    lx.accepts_legacy_octal = options.accepts_legacy_octal;
 }
 
 fn set_language(lx: &mut Lexer<'_>, options: &Options) {
@@ -512,7 +526,7 @@ pub(crate) fn run_appended(
     if text.len() >= 1 << 30 {
         return (file, vec![None; expressions.len()]);
     }
-    scratch.names.use_interner(atoms);
+    scratch.names.use_interner(atoms, text.len());
     scratch.stops.forget();
     let stops = scratch.stops.find_again(text);
     let mut found = Vec::with_capacity(expressions.len());
@@ -717,6 +731,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             odd_parameters: 0,
             declared_private_names: Vec::new(),
             declared,
+            ahead: ahead::Ahead::default(),
             end: (0, 0),
             has_top_level_await: false,
             has_plain_top_level_await: false,
@@ -762,6 +777,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
+            ahead: self.ahead,
             end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
@@ -844,7 +860,10 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let reparsed = self.jsdoc.reparsed.len();
         let mut is_in_prologue = !self.options.is_json && self.options.part.is_none();
         let mut has_module_declaration = false;
-        while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
+        let mut parsed_ahead = Vec::new().into_iter();
+        while parsed_ahead.len() > 0
+            || self.token() != T::Eof && self.is_at_element(ListKind::SourceElements)
+        {
             if !GENERAL
                 && !COMMENTS
                 && self.options.reads_module_statements_alone
@@ -852,9 +871,13 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             {
                 break;
             }
-            let statement = match self.recovers() {
-                true => self.top_level_statement(),
-                false => self.statement(),
+            if parsed_ahead.len() == 0 && self.may_be_parsed_ahead() {
+                parsed_ahead = self.take_parsed_ahead().into_iter();
+            }
+            let statement = match parsed_ahead.next() {
+                Some(statement) => statement,
+                None if self.recovers() => self.top_level_statement(),
+                None => self.statement(),
             };
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);

@@ -1,10 +1,11 @@
 use core::cell::Cell;
 
+use bun_alloc::AllocError;
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSValue, JsCell};
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::webcore::streams::{self, BufferAction, IntoArray};
@@ -14,19 +15,16 @@ bun_output::declare_scope!(ByteStream, visible);
 
 /// Every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
-/// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
-/// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
+/// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell` or [`JsCell`]. `high_water_mark` /
 /// `size_hint` are written only at init time (before the JS wrapper exists)
 /// and stay bare.
 pub struct ByteStream {
     pub(crate) buffered: Buffered,
     pub(crate) has_received_last_chunk: Cell<bool>,
-    pub(crate) pending: JsCell<streams::Pending>,
+    pub(crate) pending: streams::Pending,
+    /// The producer's error, stored by [`Self::append`] until a reader takes it.
+    pending_error: Cell<Option<streams::StreamError>>,
     pub(crate) done: Cell<bool>,
-    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
-    // `pending_value: Strong`. Never freed by Rust.
-    pub(crate) pending_buffer: Cell<*mut [u8]>,
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
@@ -42,12 +40,9 @@ impl Default for ByteStream {
         Self {
             buffered: Buffered::default(),
             has_received_last_chunk: Cell::new(false),
-            pending: JsCell::new(streams::Pending {
-                result: streams::Result::Done,
-                ..Default::default()
-            }),
+            pending: streams::Pending::default(),
+            pending_error: Cell::new(None),
             done: Cell::new(false),
-            pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
             high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
@@ -106,8 +101,19 @@ impl Buffered {
         bytes
     }
 
-    fn extend(&self, chunk: &[u8]) {
-        self.bytes.with_mut(|b| b.extend_from_slice(chunk));
+    fn try_extend(&self, chunk: &[u8]) -> Result<(), AllocError> {
+        #[cfg(socket_fault_injection)]
+        {
+            use bun_uws_sys::fault_inject::{BYTE_STREAM_BUFFER, fails};
+            if !chunk.is_empty() && fails(BYTE_STREAM_BUFFER) {
+                return Err(AllocError);
+            }
+        }
+        self.bytes.with_mut(|b| {
+            b.try_reserve(chunk.len()).map_err(|_| AllocError)?;
+            b.extend_from_slice(chunk);
+            Ok(())
+        })
     }
 
     /// Drop every buffered byte and release the allocation.
@@ -288,7 +294,7 @@ impl readable_stream::SourceContext for ByteStream {
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 
-    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
+    fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result<'_> {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
@@ -312,21 +318,13 @@ impl readable_stream::SourceContext for ByteStream {
         if self.has_received_last_chunk.get() {
             // Surface a stored terminal error (set by `append(Err)` when no
             // reader was waiting) instead of silently reporting `Done`.
-            if self.has_pending_error() {
-                return self
-                    .pending
-                    .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
-            }
-            return streams::Result::Done;
+            return self
+                .take_pending_error()
+                .map_or(streams::Result::Done, streams::Result::Err);
         }
 
-        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
-
-        // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
-        // returned `streams::Result::Pending` raw-backref needs.
-        streams::Result::Pending(self.pending.as_ptr())
+        streams::Result::Pending(&self.pending)
     }
 
     fn on_cancel(&self) {
@@ -337,21 +335,8 @@ impl readable_stream::SourceContext for ByteStream {
         bun_jsc::mark_binding!();
         if !self.done.get() {
             self.done.set(true);
-
-            self.pending_buffer.set(Self::empty_pending_buffer());
-            let is_promise = self.pending.with_mut(|p| {
-                p.result = streams::Result::Done;
-                p.state == streams::PendingState::Pending
-                    && matches!(p.future, streams::PendingFuture::Promise { .. })
-            });
-            if is_promise {
-                // We must never run JavaScript inside of a GC finalizer.
-                self.pending.with_mut(|p| p.run_on_next_tick());
-            } else {
-                // A `Handler` future is a native continuation, not script:
-                // nothing to settle, so nothing can be left pending.
-                self.pending.with_mut(|p| p.run());
-            }
+            // We must never run JavaScript inside of a GC finalizer.
+            self.pending.close_on_next_tick();
         }
     }
 
@@ -377,10 +362,9 @@ impl readable_stream::SourceContext for ByteStream {
             return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
-        if let streams::Result::Err(err) = &self.pending.get().result {
+        if let Some(err) = self.take_pending_error() {
             let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
-            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
             self.buffered.clear();
             return Ok(jsc::JSPromise::rejected_promise(cx.global(), err_js).to_js());
@@ -406,33 +390,20 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
-    #[inline]
-    const fn empty_pending_buffer() -> *mut [u8] {
-        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-    }
-
-    /// Init-time reset. Runs before the JS
-    /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
-    pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
+    pub(crate) fn from_drain_result(drain_result: DrainResult) -> Self {
+        let mut this = Self::default();
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
-                self.high_water_mark = estimated_size as blob::SizeType;
-                self.size_hint.set(estimated_size as blob::SizeType);
+                this.high_water_mark = estimated_size as blob::SizeType;
+                this.size_hint.set(estimated_size as blob::SizeType);
             }
             DrainResult::Owned { list, size_hint } => {
-                self.buffered.adopt(list, 0);
-                self.size_hint.set(size_hint as blob::SizeType);
+                this.buffered.adopt(list, 0);
+                this.size_hint.set(size_hint as blob::SizeType);
             }
             DrainResult::Aborted => {}
         }
+        this
     }
 
     fn value(&self) -> JSValue {
@@ -557,7 +528,13 @@ impl ByteStream {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) {
+    #[inline]
+    pub(crate) fn on_data(&self, stream: streams::Result<'_>) {
+        bun_core::handle_oom(self.try_on_data(stream));
+    }
+
+    /// `Err`: the chunk is lost, so the producer has to send an error next.
+    pub(crate) fn try_on_data(&self, mut stream: streams::Result<'_>) -> Result<(), AllocError> {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -566,7 +543,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
-            return;
+            return Ok(());
         }
 
         debug_assert!(
@@ -581,14 +558,12 @@ impl ByteStream {
             if let streams::Result::Err(err) = stream {
                 self.detach_sink(Some(&err));
                 sink.end(Some(err));
-                return;
+                return Ok(());
             }
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream, 0)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-                return;
+                return self.append(stream, 0);
             }
 
             let is_done = stream.is_done();
@@ -599,12 +574,12 @@ impl ByteStream {
                 streams::Writable::Err(e) => {
                     self.detach_sink(None);
                     sink.end(Some(streams::StreamError::Error(e)));
-                    return;
+                    return Ok(());
                 }
                 streams::Writable::Done => {
                     self.detach_sink(None);
                     sink.end(None);
-                    return;
+                    return Ok(());
                 }
                 _ => {
                     self.signal_drained();
@@ -615,7 +590,7 @@ impl ByteStream {
                 self.detach_sink(None);
                 sink.end(None);
             }
-            return;
+            return Ok(());
         }
 
         if self.buffer_action.get().is_some() {
@@ -632,10 +607,10 @@ impl ByteStream {
                 action.reject(global, err);
 
                 self.buffered.clear();
-                self.pending.with_mut(|p| p.result = streams::Result::Done);
+                self.pending_error.set(None);
                 self.buffer_action.set(None);
 
-                return;
+                return Ok(());
             }
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
@@ -646,7 +621,7 @@ impl ByteStream {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
                 let Some(mut action) = self.buffer_action.replace(None) else {
                     // Consumed re-entrantly during `signal_drained`.
-                    return;
+                    return Ok(());
                 };
 
                 if self.buffered.capacity() == 0 && matches!(stream, streams::Result::Done) {
@@ -657,7 +632,7 @@ impl ByteStream {
 
                     let mut blob = self.to_any_blob().unwrap();
                     action.fulfill(self.parent_const().global_this(), &mut blob);
-                    return;
+                    return Ok(());
                 }
                 if self.buffered.capacity() == 0 {
                     if let streams::Result::OwnedAndDone(owned) = stream {
@@ -672,7 +647,7 @@ impl ByteStream {
                         self.buffered.adopt(owned, 0);
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
-                        return;
+                        return Ok(());
                     }
                 }
 
@@ -681,32 +656,27 @@ impl ByteStream {
                     "ByteStream.onData appendSlice and action.fulfill()"
                 );
 
-                self.buffered.extend(stream.slice());
-                // The owned `Vec<u8>`
-                // payload of `stream` is freed by its Drop glue at the explicit `drop` below
-                // (Temporary* variants are non-owning `RawSlice` and so are left alone).
+                if self.buffered.try_extend(stream.slice()).is_err() {
+                    self.reject_out_of_memory(action);
+                    return Ok(());
+                }
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 action.fulfill(self.parent_const().global_this(), &mut blob);
-                return;
-            } else {
-                self.buffered.extend(stream.slice());
-                // The owned `Vec<u8>` payload of
-                // `stream` is freed by its Drop glue (Temporary* are non-owning `RawSlice`, left alone).
-                drop(stream);
+            } else if self.buffered.try_extend(stream.slice()).is_err()
+                && let Some(action) = self.buffer_action.replace(None)
+            {
+                self.reject_out_of_memory(action);
             }
 
-            return;
+            return Ok(());
         }
 
         let chunk = stream.slice();
 
-        if self.pending.get().state == streams::PendingState::Pending {
+        if self.pending.is_pending() {
             debug_assert!(self.buffered.is_empty());
-            // Re-derive the destination from the GC-rooted view instead of trusting the
-            // raw pointer captured at pull time: JS can detach or transfer the backing
-            // ArrayBuffer between the pull and the data arriving, leaving
-            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
+            // JS can detach the buffer between the pull and now, which gives an empty slice.
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value
@@ -720,44 +690,33 @@ impl ByteStream {
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
             let has_remaining = chunk.len() > to_copy_len;
-            self.pending_buffer.set(Self::empty_pending_buffer());
+            if has_remaining {
+                let stream = core::mem::replace(&mut stream, streams::Result::Done);
+                self.append(stream, to_copy_len)?;
+            }
 
             let is_really_done =
                 self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
 
-            if is_really_done {
+            let into_array = || IntoArray {
+                value: self.value(),
+                len: to_copy_len as blob::SizeType, // @truncate
+            };
+            let result = if is_really_done {
                 self.done.set(true);
 
-                if to_copy_len == 0 {
-                    if matches!(stream, streams::Result::Err(_)) {
-                        let err = core::mem::replace(&mut stream, streams::Result::Done);
-                        self.pending.with_mut(|p| p.result = err);
-                    } else {
-                        self.pending.with_mut(|p| p.result = streams::Result::Done);
-                    }
+                if to_copy_len > 0 {
+                    streams::Result::IntoArrayAndDone(into_array())
+                } else if matches!(stream, streams::Result::Err(_)) {
+                    core::mem::replace(&mut stream, streams::Result::Done)
                 } else {
-                    let v = self.value();
-                    self.pending.with_mut(|p| {
-                        p.result = streams::Result::IntoArrayAndDone(IntoArray {
-                            value: v,
-                            len: to_copy_len as blob::SizeType, // @truncate
-                        });
-                    });
+                    streams::Result::Done
                 }
             } else {
-                let v = self.value();
-                self.pending.with_mut(|p| {
-                    p.result = streams::Result::IntoArray(IntoArray {
-                        value: v,
-                        len: to_copy_len as blob::SizeType, // @truncate
-                    });
-                });
-            }
+                streams::Result::IntoArray(into_array())
+            };
 
-            if has_remaining {
-                self.append(stream, to_copy_len)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-            } else {
+            if !has_remaining {
                 // Only resume the producer when the whole chunk fit the pull
                 // view. When the tail spilled into `buffer` the next `on_pull`
                 // signals once it drains, so resuming now would let another
@@ -769,38 +728,34 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
-            // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
-            // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
-            // suppressed on `&self`, which is the load-bearing fix vs the old
-            // `&mut self` form.
-            self.pending.with_mut(|p| p.run());
+            self.pending.run(result);
 
-            return;
+            return Ok(());
         }
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
-            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+    }
+
+    fn reject_out_of_memory(&self, mut action: BufferAction) {
+        self.cancel_from_sink(None);
+        let global = self.parent_const().global_this();
+        let error = StrongOptional::create(global.create_out_of_memory_error(), global);
+        action.reject(global, &streams::StreamError::JSValue(error));
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
-    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result<'_>, offset: usize) -> Result<(), AllocError> {
         if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
                     self.buffered.adopt(owned, offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                    let chunk = &temp.slice()[offset..];
-                    let mut buf = Vec::with_capacity(chunk.len());
-                    buf.extend_from_slice(chunk);
-                    self.buffered.adopt(buf, 0);
+                    self.buffered.try_extend(&temp[offset..])?;
                 }
-                streams::Result::Err(err) => {
-                    self.pending
-                        .with_mut(|p| p.result = streams::Result::Err(err));
-                }
+                streams::Result::Err(err) => self.pending_error.set(Some(err)),
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
@@ -809,10 +764,10 @@ impl ByteStream {
 
         match stream {
             streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
-                self.buffered.extend(&temp.slice()[offset..]);
+                self.buffered.try_extend(&temp[offset..])?;
             }
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffered.extend(&owned.slice()[offset..]);
+                self.buffered.try_extend(&owned.slice()[offset..])?;
                 // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
@@ -822,8 +777,7 @@ impl ByteStream {
                 // Erroring a stream discards queued chunks; drop the buffered
                 // bytes now instead of retaining them off-heap until GC.
                 self.buffered.clear();
-                self.pending
-                    .with_mut(|p| p.result = streams::Result::Err(err));
+                self.pending_error.set(Some(err));
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet
@@ -843,7 +797,7 @@ impl ByteStream {
     pub(crate) fn error_native_consumer(&self, reason: JSValue) {
         let waiting = self.sink.get().is_some()
             || self.buffer_action.get().is_some()
-            || self.pending.get().state == streams::PendingState::Pending;
+            || self.pending.is_pending();
         self.on_data(streams::Result::Err(if waiting {
             let global = self.parent_const().global_this();
             streams::StreamError::JSValue(StrongOptional::create(reason, global))
@@ -870,9 +824,8 @@ impl ByteStream {
         }
 
         if !view.is_empty() {
-            self.pending_buffer.set(Self::empty_pending_buffer());
-            self.pending.with_mut(|p| p.result = streams::Result::Done);
-            self.pending.with_mut(|p| p.run());
+            self.pending_error.set(None);
+            self.pending.run(streams::Result::Done);
         }
 
         if let Some(mut action) = self.buffer_action.replace(None) {
@@ -898,21 +851,12 @@ impl ByteStream {
 
     /// The producer failed before anything attached and [`Self::append`] stored its error.
     pub(crate) fn has_pending_error(&self) -> bool {
-        matches!(self.pending.get().result, streams::Result::Err(_))
+        self.pending_error.is_some()
     }
 
-    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
+    /// Take the error stored by [`Self::append`].
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
-        self.pending.with_mut(|p| {
-            if matches!(p.result, streams::Result::Err(_)) {
-                match core::mem::replace(&mut p.result, streams::Result::Done) {
-                    streams::Result::Err(e) => Some(e),
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        })
+        self.pending_error.take()
     }
 
     /// End the attached sink with the stored producer error. Returns false if none is stored.
@@ -931,7 +875,6 @@ impl ByteStream {
         if self.has_received_last_chunk.get() && !self.has_pending_error() {
             let buffer = self.buffered.take();
             self.done.set(true);
-            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.parent_const().is_closed.set(true);
             return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,

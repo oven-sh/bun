@@ -5,8 +5,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
 };
-use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
+use bun_paths::MAX_PATH_BYTES;
 use bun_sys as syscall;
 
 use crate::generated_bindgen::glob::{GlobScanArgument, GlobScanOptions};
@@ -71,27 +70,17 @@ impl ScanOpts {
         if bun_core::strings::contains_char(cwd, 0) {
             return Err(ScanError::NullBytes("cwd", Box::from(cwd)));
         }
-        if resolve_path::Platform::AUTO.is_absolute(cwd) {
+        if bun_paths::is_absolute(cwd) {
             return Ok(Some(Box::from(cwd)));
         }
 
-        let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
-        let in_executable = bun_core::working_directory_in_executable();
-        let cwd_str: Box<[u8]> = if let Some(directory) = in_executable {
-            Box::from(join_string_buf::<platform::Auto>(
-                &mut path_buf2,
-                &[directory, cwd],
-            ))
-        } else if !absolute {
-            Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
-        } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let cwd_len = bun_sys::getcwd(&mut path_buf[..]).map_err(ScanError::Sys)?;
-            Box::from(join_string_buf::<platform::Auto>(
-                &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd],
-            ))
+        let mut base_buf = bun_paths::path_buffer_pool::get();
+        let base: &[u8] = match bun_core::working_directory_in_executable() {
+            Some(directory) => directory,
+            None if absolute => bun_sys::getcwd_z(&mut base_buf).map_err(ScanError::Sys)?,
+            None => b"",
         };
+        let cwd_str: Box<[u8]> = bun_paths::Path::join(&[base, cwd]).as_bytes().into();
         if cwd_str.len() > MAX_PATH_BYTES {
             return Err(ScanError::CwdTooLong(fn_name));
         }
@@ -130,43 +119,25 @@ impl ScanOpts {
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
-    use bun_paths::{PathBuffer, Platform, platform, resolve_path};
+    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter};
+    use bun_paths::Path;
     use bun_standalone_graph::Graph;
     use bun_sys::{E, Error as SysError, FileKind, Result as Maybe, Stat, Tag};
 
     pub(crate) struct StandaloneAccessor;
 
-    #[derive(Clone, Copy)]
     pub(crate) struct StandaloneHandle {
         /// The opened directory's `Graph::dir_key` (`'static`: the graph is
         /// the immortal process singleton), or its path among the sources.
-        dir: Option<&'static [u8]>,
-    }
-
-    impl AccessorHandle for StandaloneHandle {
-        const EMPTY: Self = StandaloneHandle { dir: None };
-
-        fn is_empty(self) -> bool {
-            self.dir.is_none()
-        }
-
-        fn eql(self, other: Self) -> bool {
-            match (self.dir, other.dir) {
-                (Some(a), Some(b)) => a == b,
-                (None, None) => true,
-                _ => false,
-            }
-        }
+        dir: &'static [u8],
     }
 
     /// `path` resolved against the handle's directory when relative.
-    fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
-        if Platform::AUTO.is_absolute(path) {
-            return path;
+    fn resolve(handle: &StandaloneHandle, path: &[u8]) -> Path {
+        match bun_paths::is_absolute(path) {
+            true => Path::from(path),
+            false => Path::join(&[handle.dir, path]),
         }
-        let Some(dir) = handle.dir else { return path };
-        resolve_path::join_string_buf::<platform::Auto>(buf, &[dir, path])
     }
 
     fn open_resolved(path: &[u8]) -> Maybe<StandaloneHandle> {
@@ -177,9 +148,9 @@ pub(crate) mod standalone_accessor {
             // A folder of the sources is listed as one, by its path.
             Ok(_) if !bun_standalone_graph::is_bun_standalone_file_path(path) => {
                 let path = Graph::keep_folder_path(path);
-                Ok(StandaloneHandle { dir: Some(path) })
+                Ok(StandaloneHandle { dir: path })
             }
-            Ok(key) => Ok(StandaloneHandle { dir: Some(key) }),
+            Ok(key) => Ok(StandaloneHandle { dir: key }),
             Err(code) => Err(SysError::from_code(code, Tag::open)),
         }
     }
@@ -208,12 +179,10 @@ pub(crate) mod standalone_accessor {
             }))
         }
 
-        fn iterate(dir: StandaloneHandle) -> Self {
-            // `readdir` only misses for the EMPTY handle: `open_resolved`
-            // proved the directory.
-            let entries = dir
-                .dir
-                .and_then(|key| Graph::get_ref()?.readdir(key, false))
+        fn iterate(dir: &StandaloneHandle) -> Self {
+            // `open_resolved` proved the directory.
+            let entries = Graph::get_ref()
+                .and_then(|graph| graph.readdir(dir.dir, false))
                 .unwrap_or_default();
             StandaloneDirIter {
                 entries: entries.into_iter(),
@@ -223,7 +192,6 @@ pub(crate) mod standalone_accessor {
     }
 
     impl Accessor for StandaloneAccessor {
-        const COUNT_FDS: bool = false;
         type Handle = StandaloneHandle;
         type DirIter = StandaloneDirIter;
 
@@ -232,17 +200,14 @@ pub(crate) mod standalone_accessor {
         }
 
         fn openat(
-            handle: StandaloneHandle,
+            handle: &StandaloneHandle,
             path: &ZStr,
         ) -> Result<Maybe<StandaloneHandle>, bun_core::Error> {
-            // Pooled: a stack `PathBuffer` is ~64 KB on Windows.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            Ok(open_resolved(resolve(handle, path.as_bytes(), &mut buf)))
+            Ok(open_resolved(&resolve(handle, path)))
         }
 
-        fn statat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let resolved = resolve(handle, path.as_bytes(), &mut buf);
+        fn statat(handle: &StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+            let resolved: &[u8] = &resolve(handle, path);
             Graph::get_ref()
                 .and_then(|graph| {
                     graph
@@ -252,13 +217,9 @@ pub(crate) mod standalone_accessor {
                 .ok_or_else(|| SysError::from_code(E::ENOENT, Tag::fstatat))
         }
 
-        fn lstatat(handle: StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
+        fn lstatat(handle: &StandaloneHandle, path: &ZStr) -> Maybe<Stat> {
             // The embedded graph has no symlinks, so lstat == stat.
             Self::statat(handle, path)
-        }
-
-        fn close(_handle: StandaloneHandle) -> Option<SysError> {
-            None
         }
     }
 }
@@ -301,8 +262,6 @@ pub(crate) struct WalkTask {
     walker: AnyGlobWalker,
     err: Option<WalkTaskErr>,
 }
-// SAFETY: the walker owns its pattern/arena; nothing in it is thread-affine.
-unsafe impl Send for WalkTask {}
 
 #[derive(bun_jsc::JsAffine)]
 pub(crate) struct WalkJs {
@@ -407,8 +366,7 @@ impl Glob {
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
         // pattern roots at the cwd. A `/$bunfs/` root walks the graph, as does an embedded directory that is not on disk.
-        let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
-            || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
+        let pattern_is_absolute = bun_paths::is_absolute(self.pattern.slice());
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
             if pattern_is_absolute {
                 let pattern = self.pattern.slice();
@@ -418,7 +376,7 @@ impl Glob {
                     .unwrap_or(pattern.len());
                 let folder = pattern[..literal]
                     .iter()
-                    .rposition(|&c| resolve_path::is_sep_any(c))
+                    .rposition(|&c| bun_paths::is_sep(c))
                     .unwrap_or(0);
                 bun_standalone_graph::is_bun_standalone_file_path(pattern)
                     || graph.owns_directory(&pattern[..folder])

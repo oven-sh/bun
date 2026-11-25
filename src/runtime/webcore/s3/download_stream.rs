@@ -28,6 +28,8 @@ pub struct S3HttpDownloadStreamingTask {
 
     pub(crate) mutex: Mutex,
     pub(crate) reported_response_buffer: MutableString,
+    /// `reported_response_buffer` could not grow. HTTP thread only.
+    pub(crate) is_out_of_memory: bool,
     /// The HTTP-level failure, if any. Guarded by `mutex`; the `request_error`
     /// bit in `state` mirrors `request_error.is_some()`.
     pub(crate) request_error: Option<bun_http::Error>,
@@ -221,6 +223,20 @@ impl S3HttpDownloadStreamingTask {
         // task can be freed by the main thread.
         let _guard = self.mutex.lock_guard();
 
+        let buffer = &mut self.reported_response_buffer;
+        if !self.is_out_of_memory && result.try_body_into(&mut buffer.list).is_err() {
+            *buffer = MutableString::default();
+            self.is_out_of_memory = true;
+            self.signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::HTTPThread::schedule_shutdown(self.async_http_id);
+        }
+        if self.is_out_of_memory {
+            if result.has_more {
+                return false;
+            }
+            result.fail = Some(bun_alloc::AllocError.into());
+        }
+
         // remember the state is atomic load it once, and store it again
         let mut state = self.get_state();
         // old state should have more otherwise it's an HTTP-client bug
@@ -237,7 +253,6 @@ impl S3HttpDownloadStreamingTask {
             should_enqueue
         );
 
-        result.body_into(&mut self.reported_response_buffer.list);
         // Only a body that is being delivered can be resumed: the wrapper resumes as JS takes
         // chunks. An error body is collected whole before it is reported, with no chunk
         // delivered in between, so pausing it would never be undone.

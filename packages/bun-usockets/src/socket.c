@@ -241,7 +241,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     if (c->pending_resolve_callback) {
         // The DNS callback has not been drained. Try to remove c from the
         // request's notify list so it never fires. Returns 0 if the result is
-        // already set (the callback has fired or is about to), in which case
+        // already set (the callback has fired), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
 #ifdef _WIN32
@@ -364,7 +364,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
 /* Bypasses the SSL layer entirely — the public us_socket_close() routes through
  * us_internal_ssl_close() first so a client-initiated close sends close_notify and (with
  * code==0) waits for the peer's, instead of slamming the fd shut and racing the peer's
- * handshake/secureConnection event. openssl.c re-enters here once that graceful path is done. */
+ * handshake/secureConnection event. openssl.cpp re-enters here once that graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
     /* Not an error a connect can fail with, so the holder can tell the two apart. */
     return us_internal_socket_close_and_notify(s, code, reason, LIBUS_ECANCELED);
@@ -683,7 +683,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 }
 
 int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
-    /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
+    /* Bypass-TLS path: openssl.cpp uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
      * Gate only on fd close and TCP-level FIN. */
@@ -740,7 +740,13 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+        int is_full = errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS;
+#ifdef __APPLE__
+        /* The descriptor has to fit in the socket's buffer in one piece. If the reader is behind and it does not, macOS
+           says EMSGSIZE where Linux says EAGAIN. On Linux EMSGSIZE never passes, so a retry there would not end. */
+        is_full = is_full || errno == EMSGSIZE;
+#endif
+        if (is_full) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;
@@ -822,7 +828,6 @@ unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const 
 {
     // This function is manual inlining + modification of
     //      us_socket_remote_address
-    //      AsyncSocket::getRemoteAddress
     // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {

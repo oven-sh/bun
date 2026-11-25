@@ -317,13 +317,30 @@ pub(crate) fn lower_import_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     call: ExprId,
 ) -> ValueId {
+    let replaced = lowering.file.hir.replaced_evaluation(call);
+    match replaced.filter(|_| lowering.file.inputs.may_replace_evaluators) {
+        Some(replaced) => lowering.lower_in_place_of_evaluation(replaced, &mut |lowering| {
+            lower_written_import(lowering, call)
+        }),
+        None => lower_written_import(lowering, call),
+    }
+}
+
+fn lower_written_import(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    call: ExprId,
+) -> ValueId {
     let hir = lowering.file.hir;
     let ExprKind::ImportCall { args } = hir[call].kind else {
         unreachable!("lower_import_call takes an ImportCall");
     };
     let position = hir[call].pos;
     if hir.replaces_evaluation(position) {
-        lowering.set_position(hir.replaced_callee_position(position));
+        let callee = hir.replaced_callee_position(position);
+        lowering.set_position(callee);
+        if hir.text[callee as usize..].starts_with(b"eval") {
+            lowering.emit_test_of_replaced_callee(known::eval, BuiltinId::Eval);
+        }
         lowering.builder.check_evaluation(false);
     }
     let modules = lowering.file.inputs.modules;
@@ -468,7 +485,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         options: Option<ValueId>,
     ) -> ValueId {
-        let module = self.file.inputs.modules.facade(module).unwrap_or(module);
+        let modules = self.file.inputs.modules;
+        // Nothing is known of the namespace that a call with options gives.
+        let options = match options {
+            None if modules.may_typed_form_answer_import(module) => Some(self.builder.undefined()),
+            _ => options,
+        };
+        let module = modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
         self.builder.import_module(module, options, referrer)
@@ -1141,7 +1164,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(done);
     }
 
-    fn add_to_set_of_requires(&mut self, set: VariableKey, made: ValueId) {
+    pub(in crate::lower) fn add_to_set_of_requires(&mut self, set: VariableKey, made: ValueId) {
         let variable = self.file.ensure_variable(set);
         let held = self.builder.get_module_variable(variable);
         let requires = self.builder.create_variable(None);
@@ -1393,6 +1416,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    fn emit_test_of_own_require(&mut self, callee: ValueId) -> ValueId {
+        let expected = self.emit_expected_callee(BuiltinId::ModuleRequire);
+        let is_expected = self.builder.strict_eq(callee, expected);
+        if !self.file.keeps_requires_of_runs() {
+            return is_expected;
+        }
+        let is_own = self.builder.create_variable(None);
+        let of_this_run = self.create_block();
+        let of_other_run = self.create_block();
+        let decided = self.create_block();
+        self.builder
+            .branch(is_expected, Edge::to(of_this_run), Edge::to(of_other_run));
+
+        self.continue_in(of_this_run);
+        let yes = self.builder.boolean(true);
+        self.builder.write_variable(is_own, yes);
+        self.jump(decided);
+
+        self.continue_in(of_other_run);
+        let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+        let is_kept = self.emit_test_of_set_of_requires(kept, callee);
+        self.builder.write_variable(is_own, is_kept);
+        self.jump(decided);
+
+        self.continue_in(decided);
+        self.builder.read_variable(is_own)
+    }
+
     fn emit_test_of_method(
         &mut self,
         callee: Callee,
@@ -1415,10 +1466,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(method_is_expected);
         let is_require = match require {
-            OwnRequire::OfFile => {
-                let expected_receiver = self.emit_expected_callee(BuiltinId::ModuleRequire);
-                self.builder.strict_eq(receiver, expected_receiver)
-            }
+            OwnRequire::OfFile => self.emit_test_of_own_require(receiver),
             OwnRequire::Made
             | OwnRequire::MadeForPath(_)
             | OwnRequire::OfOtherFile(_)
@@ -1487,10 +1535,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let referrer = self.referrer_of(site);
         let spelled_modules = candidates.spelled_modules();
         let is_answered_by_program = |spelled: &&SpelledModule| {
-            !matches!(spelled.module, ModuleRef::External { .. })
-                && does_import_meta_resolve_ask_resolver(
-                    self.file.queries.atom_bytes(spelled.spelling),
-                )
+            // A name among others brings no built-in module into the program, so the resolver answers for one.
+            !matches!(
+                spelled.module,
+                ModuleRef::External { .. } | ModuleRef::Runtime(_)
+            ) && does_import_meta_resolve_ask_resolver(
+                self.file.queries.atom_bytes(spelled.spelling),
+            )
         };
         let answered: Vec<&SpelledModule> = spelled_modules
             .iter()
@@ -1578,10 +1629,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             false => None,
         };
         let from_created_require = plan.is_from_created_require;
+        let requirer = match plan.records {
+            true => {
+                let file = ModuleRef::File(self.file.file);
+                self.file.fragment.declare_module(file)
+            }
+            false => referrer,
+        };
         if plan.records {
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 false,
@@ -1595,7 +1653,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let names_run = requirer_object.is_some();
             self.builder.record_require(
                 module,
-                referrer,
+                requirer,
                 requirer_object,
                 from_created_require,
                 names_run,
@@ -2535,7 +2593,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
-                self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
+                self.emit_path_found_at_build(spelled.spelling, None, spelled.module, is_url);
             let is_candidate = self.builder.strict_eq(text, answer_for_candidate);
             let candidate = self.create_block();
             let mut other = self.create_block();
@@ -2661,7 +2719,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         match self.file.inputs.sources.source_path(file) {
-            Some(path) if !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name)) => {
+            Some(path) if !bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name)) => {
                 Some(self.emit_text(&path))
             }
             _ => Some(self.emit_name_as_given(name, given)),
@@ -2752,6 +2810,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
+        let is_path = bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name));
+        if is_path && !is_url && self.file.has_source_path_of(module) {
+            let specifier = self.emit_name_as_given(name, given);
+            let referrer = self.file.module_id();
+            return self
+                .builder
+                .resolve_dynamic(specifier, referrer, false, false);
+        }
+        self.emit_path_found_at_build(name, given, module, is_url)
+    }
+
+    fn emit_path_found_at_build(
+        &mut self,
+        name: Atom,
+        given: Option<ValueId>,
+        module: ModuleRef,
+        is_url: bool,
+    ) -> ValueId {
         if !is_url && let Some(asked) = self.file.builtin_name_as_asked(name, module) {
             let asked = asked.to_vec();
             let asked = self.file.intern_bytes(&asked);
@@ -2759,7 +2835,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if !is_url
             && let ModuleRef::File(file) = module
-            && !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name))
             && let Some(path) = self.file.inputs.sources.source_path(file)
         {
             return self.emit_text(&path);
@@ -2774,7 +2849,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
-        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
+        let is_path = bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name));
         let name = self.file.intern_atom(name);
         let referrer = self.file.module_id();
         let is_host_value =
@@ -3061,6 +3136,9 @@ fn lower_tested_call(
     lowering.did_lower_callee_of_site(callee.function);
     let mut other_callee = callee;
     let condition = match test {
+        CalleeTest::Expected(BuiltinId::ModuleRequire) => {
+            lowering.emit_test_of_own_require(callee.function)
+        }
         CalleeTest::Expected(expected) => {
             let expected = lowering.emit_expected_callee(expected);
             lowering.builder.strict_eq(callee.function, expected)
@@ -3101,6 +3179,11 @@ fn lower_tested_call(
     let other = lowering.create_block();
     let done = lowering.create_block();
     let (if_true, if_false) = match test {
+        CalleeTest::Expected(BuiltinId::ModuleRequire)
+            if lowering.file.keeps_requires_of_runs() =>
+        {
+            (Edge::to(matched), Edge::to(other))
+        }
         CalleeTest::Expected(_) => {
             other_callee.function = lowering.builder.add_edge_result(other);
             other_callee.key = None;

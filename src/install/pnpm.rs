@@ -4,6 +4,7 @@ use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::strings;
+use bun_paths::{Path, from_portable};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -11,7 +12,7 @@ use bun_sys::{self as sys, Fd};
 use crate::dependency::{self, Behavior, Dependency, DependencyExt as _, VersionTag};
 use crate::integrity::Integrity;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
+use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::migration::{
     as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
     string_bytes, string_hash, take_appended_dependencies,
@@ -173,15 +174,14 @@ fn root_package_json<'a>(
     manager: &'a mut PackageManager,
     log: &mut bun_ast::Log,
 ) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+    let pkg_json_path = join_top_level_dir(&[b"package.json"])?;
     let options = crate::GetJsonOptions {
         guess_indentation: true,
         ..Default::default()
     };
     let cache = &mut manager.workspace_package_json_cache;
     cache
-        .get_with_path(log, pkg_json_path.slice(), options)
+        .get_with_path(log, &pkg_json_path, options)
         .unwrap()
         .ok()
 }
@@ -276,7 +276,7 @@ fn resolution_from_package_entry(
             && let Some(dir) = get_str(obj, b"directory")
         {
             return Ok(Resolution::init(TaggedValue::Folder(
-                string_buf.append(dir)?,
+                string_buf.append(&from_portable(dir))?,
             )));
         }
 
@@ -374,6 +374,15 @@ pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     }
 }
 
+/// Resolves `parts`, as pnpm-lock.yaml spells them, against the project root.
+fn join_top_level_dir(parts: &[&[u8]]) -> Option<Path> {
+    let mut path = Path::from_top_level_dir();
+    for part in parts {
+        path.resolve_in_place(&[&from_portable(part)]);
+    }
+    path.check_len().ok()
+}
+
 /// The package.json of the importer at `path`, relative to the project.
 fn importer_package_json(
     manager: &mut PackageManager,
@@ -382,7 +391,7 @@ fn importer_package_json(
 ) -> Result<Expr, MigratePnpmLockfileError> {
     let json_path = join_top_level_dir(&[path, b"package.json"]).ok_or(InvalidPnpmLockfile)?;
     let cache = &mut manager.workspace_package_json_cache;
-    match cache.get_with_path(log, json_path.slice(), Default::default()) {
+    match cache.get_with_path(log, &json_path, Default::default()) {
         crate::GetJsonResult::Entry(entry) => Ok(entry.root),
         _ => Err(InvalidPnpmLockfile),
     }
@@ -585,11 +594,11 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         let pkg_json_path = join_top_level_dir(&[importer_path, b"package.json"]);
         let importer_pkg_json = match match &pkg_json_path {
-            Some(path) => manager.workspace_package_json_cache.get_with_path(
-                log,
-                path.slice(),
-                Default::default(),
-            ),
+            Some(path) => {
+                manager
+                    .workspace_package_json_cache
+                    .get_with_path(log, path, Default::default())
+            }
             None => crate::GetJsonResult::ReadErr(crate::Error::Sys(
                 bun_errno::SystemErrno::ENAMETOOLONG,
             )),
@@ -656,7 +665,9 @@ pub(crate) fn migrate_pnpm_lockfile(
 
     let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-    pkg_map.put(crate::bun_fs::FileSystem::get().top_level_dir(), 0)?;
+    if let Some(root) = join_top_level_dir(&[b"."]) {
+        pkg_map.put(&root, 0)?;
+    }
 
     for workspace_path in lockfile.workspace_paths.values().to_vec() {
         // Every workspace path is the key of an importer with a named package.json.
@@ -699,7 +710,7 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-        let entry = pkg_map.get_or_put(abs_path.slice())?;
+        let entry = pkg_map.get_or_put(abs_path.as_bytes())?;
         if entry.found_existing {
             return Err(InvalidPnpmLockfile);
         }
@@ -721,16 +732,17 @@ pub(crate) fn migrate_pnpm_lockfile(
         'next_dep: for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
-            if dep.behavior.is_workspace()
-                || !matches!(
-                    dep.version.tag,
-                    VersionTag::Folder | VersionTag::Workspace | VersionTag::Symlink
-                )
-                || (dep.version.tag == VersionTag::Symlink
-                    && !dependency::is_link_path(
-                        dep.version.symlink().slice(string_bytes!(lockfile)),
-                    ))
-            {
+            if dep.behavior.is_workspace() {
+                continue;
+            }
+            let is_local = match &dep.version.value {
+                dependency::Value::Folder(_) | dependency::Value::Workspace(_) => true,
+                dependency::Value::Symlink(target) => {
+                    dependency::is_link_path(target.slice(string_bytes!(lockfile)))
+                }
+                _ => false,
+            };
+            if !is_local {
                 continue;
             }
             let Some(version_str) = importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
@@ -745,14 +757,14 @@ pub(crate) fn migrate_pnpm_lockfile(
             };
 
             // create a link package for the workspace dependency only if it doesn't already exist
-            if dep.version.tag == VersionTag::Workspace {
+            if dep.version.tag() == VersionTag::Workspace {
                 // A link that does not fit a path buffer names no workspace.
                 let link_path_buf = join_top_level_dir(&[workspace_path, link_path])
                     .ok_or(MigratePnpmLockfileError::NonExistentWorkspaceDependency)?;
 
                 for existing_workspace_path in lockfile.workspace_paths.values() {
                     if join_top_level_dir(&[existing_workspace_path.slice(string_bytes!(lockfile))])
-                        .is_some_and(|existing| existing.slice() == link_path_buf.slice())
+                        .is_some_and(|existing| existing.as_bytes() == link_path_buf.as_bytes())
                     {
                         continue 'next_dep;
                     }
@@ -762,13 +774,11 @@ pub(crate) fn migrate_pnpm_lockfile(
             }
 
             // pnpm's value is relative to the importer, the stored one to the project.
-            let mut folder_buf = bun_paths::path_buffer_pool::get();
             let (Some(abs_link_path), Some(folder)) = (
                 join_top_level_dir(&[workspace_path, link_path]),
                 lockfile::package::folder_relative_to_top_level_dir(
-                    workspace_path,
+                    &from_portable(workspace_path),
                     link_path,
-                    &mut folder_buf[..],
                 ),
             ) else {
                 bail!(
@@ -779,7 +789,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 );
             };
 
-            let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
+            let pkg_entry = pkg_map.get_or_put(abs_link_path.as_bytes())?;
             if pkg_entry.found_existing {
                 // they point to the same package
                 continue;
@@ -789,7 +799,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 name: dep.name,
                 name_hash: dep.name_hash,
                 resolution: Resolution::init_symlink(
-                    sbuf!(lockfile).append(&dependency::link_path_for_lockfile(folder))?,
+                    sbuf!(lockfile).append(&dependency::link_path_for_lockfile(&folder))?,
                 ),
                 ..Default::default()
             };
@@ -924,7 +934,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 );
             };
             if let Some(workspace_pkg_id) = pkg_map
-                .get(folder_path.slice())
+                .get(folder_path.as_bytes())
                 .copied()
                 .filter(|id| (*id as usize) < workspace_pkgs_end)
             {
@@ -1070,14 +1080,13 @@ pub(crate) fn migrate_pnpm_lockfile(
             let string_buf = string_bytes!(lockfile);
 
             // implicit workspace dependencies
-            if dep.behavior.is_workspace() {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                // bounded input
-                let _ = path_buf.join(&[dep.version.workspace().slice(string_buf)]);
-                if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
-                    continue;
-                }
+            if dep.behavior.is_workspace()
+                && let dependency::Value::Workspace(path) = &dep.version.value
+                && let Some(path) = join_top_level_dir(&[path.slice(string_buf)])
+                && let Some(workspace_pkg_id) = pkg_map.get(path.as_bytes())
+            {
+                lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
+                continue;
             }
 
             let dep_name = dep.name.slice(string_buf);
@@ -1115,7 +1124,7 @@ pub(crate) fn migrate_pnpm_lockfile(
             if let Some(link_pkg_id) = reference
                 .strip_prefix(b"link:")
                 .and_then(|link_path| join_top_level_dir(&[workspace_path, link_path]))
-                .and_then(|path| pkg_map.get(path.slice()))
+                .and_then(|path| pkg_map.get(path.as_bytes()))
             {
                 lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                 continue;
@@ -1165,11 +1174,11 @@ pub(crate) fn migrate_pnpm_lockfile(
                 continue;
             } else {
                 if matches!(
-                    dep.version.tag,
+                    dep.version.tag(),
                     VersionTag::Folder | VersionTag::Symlink | VersionTag::Workspace
                 ) && let Some(link_pkg_id) =
                     join_top_level_dir(&[strings::without_prefix(reference, b"link:")])
-                        .and_then(|path| pkg_map.get(path.slice()))
+                        .and_then(|path| pkg_map.get(path.as_bytes()))
                 {
                     lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                     continue;
@@ -1347,22 +1356,18 @@ fn declare_folder_dependencies_relative_to_their_package(
 
         for dep_id in rows.begin() as usize..rows.end() as usize {
             let dep = &lockfile.buffers.dependencies[dep_id];
-            if dep.version.tag != VersionTag::Folder {
+            let dependency::Value::Folder(folder) = dep.version.value else {
                 continue;
-            }
-            let folder = *dep.version.folder();
+            };
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = bun_paths::resolve_path::relative(
+            let relative = Path::relative(
                 pkg_dir.slice(string_bytes!(lockfile)),
-                folder.slice(string_bytes!(lockfile)),
-            );
-            literal.extend_from_slice(if relative.is_empty() { b"." } else { relative });
-            #[cfg(windows)]
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
-                &mut literal[b"file:".len()..],
-            );
+                &from_portable(folder.slice(string_bytes!(lockfile))),
+            )
+            .into_portable();
+            literal.extend_from_slice(if relative.is_empty() { b"." } else { &relative });
 
             let appended = sbuf!(lockfile).append(&literal)?;
             lockfile.buffers.dependencies[dep_id].version.literal = appended;

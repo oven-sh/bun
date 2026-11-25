@@ -725,7 +725,7 @@ export default b.declarations(
       listenerCount: readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.f64 }),
       listeners: listsListeners,
       rawListeners: listsListeners,
-      // JSEventEmitter.cpp jsEventEmitterConstructor(): the function that native code keeps for the class.
+      // JSEventEmitter.cpp JSEventEmitter::getConstructor(): the function that native code keeps for the class.
       constructor: b.property(b.callable),
     },
   }),

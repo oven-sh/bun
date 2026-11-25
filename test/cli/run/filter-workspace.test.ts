@@ -1616,6 +1616,50 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  ["!./packages\\x", "x"],
+  ["!.\\packages\\x", "x"],
+  ["!{packages\\x}", "x"],
+  ["!{<dir>/packages\\x}", "x"],
+  ...(isWindows ? [] : [["!./packages/\\[b\\]", "[b]"]]),
+  ...(isWindows ? [] : [["!./packages/b\\\\c", "b\\c"]]),
+  ...(isWindows ? [] : [["!{<dir>/packages/b\\c}", "b\\c"]]),
+])("--filter %s excludes the member", async (filter, folder) => {
+  const member = (name: string) => JSON.stringify({ name, scripts: { present: `echo ran-${name}` } });
+  using dir = tempDir("filter-negated-backslash", {
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*", "packagesx"] }),
+    "packages/a/package.json": member("a"),
+    "packagesx/package.json": member("c"),
+    [`packages/${folder}/package.json`]: member("b"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--filter", "*", "--filter", filter.replace("<dir>", () => String(dir)), "present"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.match(/ran-\w/g)?.sort()).toEqual(["ran-a", "ran-c"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--filter ./a\\x does not select ax", async () => {
+  using dir = tempDir("filter-missing-backslash", {
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["*"] }),
+    "ax/package.json": JSON.stringify({ name: "ax", scripts: { present: "echo ran" } }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--filter", "./a\\x", "present"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
 // Windows paths can't be as long as MAX_PATH_BYTES.
 describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buffer", () => {
   const workspace = {
@@ -1658,6 +1702,21 @@ describe.concurrent.skipIf(isWindows)("workspace paths longer than the path buff
     mkdirSync(join(root, "packages", name));
 
     const { stdout, stderr, exitCode } = await runFilter(root);
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toContain("ok present: ok-ran");
+    expect(exitCode).toBe(0);
+  });
+
+  test("reports a directory below ** that is too deep and still runs the members", async () => {
+    using root = tempDir("filter-deep-tree", {
+      ...workspace,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/**"] }),
+    });
+    const deep = makeDirectoryOfLength(join(String(root), "packages"), MAX_PATH_BYTES - 2);
+    expect(spawnSync({ cmd: ["mkdir", "-p", "below/it"], cwd: deep }).exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await runFilter(String(root));
+    spawnSync({ cmd: ["rm", "-r", "below"], cwd: deep });
     expect(stderr).toContain("ENAMETOOLONG");
     expect(stdout).toContain("ok present: ok-ran");
     expect(exitCode).toBe(0);

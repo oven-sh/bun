@@ -147,11 +147,10 @@ id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& direct
     if (it != cache->end()) return it->value;
 
     NSURL dirURL = NSURL::fileURL(NSString::fromWTF(directory), true);
-    Ref storeCfg(msgCls<id>(cls_WKWebsiteDataStoreConfiguration, s_alloc));
+    Owned<Ref> storeCfg(msgCls<id>(cls_WKWebsiteDataStoreConfiguration, s_alloc));
     storeCfg.m_id = storeCfg.msg<id>(s_initWithDirectory, dirURL.m_id);
     Ref store(msgCls<id>(cls_WKWebsiteDataStore, s_alloc));
     store.m_id = store.msg<id>(s_initWithConfiguration, storeCfg.m_id);
-    storeCfg.release();
 
     cache->add(directory, store.m_id);
     return store.m_id;

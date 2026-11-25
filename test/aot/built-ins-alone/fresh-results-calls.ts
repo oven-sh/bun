@@ -401,6 +401,7 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
+  "%HTTPParser%": ['import { HTTPParser } from "node:_http_common";\nnew HTTPParser()'],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
@@ -408,6 +409,11 @@ export const calls: Record<string, string[]> = {
   Iterator: ["new (class extends Iterator {})()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],
   URLPattern: ['new URLPattern({ pathname: "/a/:b" })', 'new URLPattern("/a/*", "https://example.com")'],
+  "URLPattern.prototype.exec": [
+    'new URLPattern({ pathname: "/a/:b" }).exec("https://example.com/a/1")',
+    'new URLPattern({ pathname: "/a/:b?" }).exec({ pathname: "/a" })',
+    'new URLPattern().exec("/a", "https://example.com")',
+  ],
   "Error.prepareStackTrace > Array": [
     'let handed;\nError.prepareStackTrace = (error, sites) => ((handed = sites), "");\nvoid new Error("x").stack;\nError.prepareStackTrace = undefined;\nhanded',
   ],
@@ -629,6 +635,7 @@ export const notCalled: Record<string, string> = {
   "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
   "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
+  "native:Bindgen:node_util_binding.bind.ts:diffNumbers": ofOneModule("internal/util/diff"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
   "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries": ofOneModule("node:util"),

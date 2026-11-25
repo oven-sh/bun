@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
-use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
+use crate::dependency::{self, Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
@@ -22,13 +22,13 @@ pub(crate) fn workspace_is_missing_on_disk(
     let Some(workspace_path) = lockfile.workspace_paths.get(&workspace_name_hash).copied() else {
         return false;
     };
-    let Some(mut package_json_path) = join_top_level_dir(&[
+    let Some(package_json_path) = join_top_level_dir(&[
         workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
         b"package.json",
     ]) else {
         return true;
     };
-    !bun_sys::exists_z(package_json_path.slice_z())
+    !bun_sys::exists_z(&package_json_path)
 }
 
 /// Doesn't apply to a dependency of a local package. That's an error (see
@@ -87,7 +87,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
     let missing_target = |dep: &Dependency, recorded: DependencySlice| -> Option<PackageID> {
-        if dep.version.tag == DependencyVersionTag::Workspace {
+        if dep.version.tag() == DependencyVersionTag::Workspace {
             if let Some(&id) = missing
                 .iter()
                 .find(|&&id| name_hashes[id as usize] == dep.name_hash)
@@ -231,8 +231,10 @@ fn catalog_entry_is_referenced(
     let buf = lockfile.buffers.string_bytes.as_slice();
     let hits = |dep: &Dependency| {
         dep.name_hash == name_hash
-            && dep.version.tag == DependencyVersionTag::Catalog
-            && CatalogMap::same_name(dep.version.catalog().slice(buf), group)
+            && matches!(
+                &dep.version.value,
+                dependency::Value::Catalog(name) if CatalogMap::same_name(name.slice(buf), group)
+            )
     };
 
     if lockfile.overrides.map.values().iter().any(&hits)

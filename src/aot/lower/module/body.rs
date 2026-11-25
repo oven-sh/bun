@@ -227,6 +227,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(failure) = load_failure {
             lowering.emit_module_failure(failure, false);
         }
+        lowering.store_namespaces_found_by_loader();
         lowering.initialize_path_variables();
         lowering.lower_file_statements();
         finish_body(lowering, Some(scope));

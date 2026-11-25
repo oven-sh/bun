@@ -8,7 +8,7 @@ use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, compare_source_paths};
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
@@ -361,6 +361,14 @@ pub fn entry_module_key<'a>(path: &'a [u8]) -> &'a [u8] {
     standalone_module_graph().map_or(path, |graph| entry_module_key_in(graph, path))
 }
 
+/// The key of the module that a program names by the name of a file of the executable. `None`: another module lies at that path, and the resolver finds it. The file of an entry point `part.cjs` is called `part.js`.
+pub(crate) fn key_of_named_file(name: &'static [u8]) -> Option<&'static [u8]> {
+    let key = entry_module_key(name);
+    let is_other_module =
+        || compiled_program().is_some_and(|program| program.holds_module_at(name));
+    (compare_source_paths(key, name).is_eq() || !is_other_module()).then_some(key)
+}
+
 fn module_key_in(
     graph: &'static dyn StandaloneModuleGraph,
     entry: &'static CompiledEntryPoint,
@@ -430,11 +438,7 @@ pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
 
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
 fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
-        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-        return path.iter().map(to_backslash).collect();
-    }
-    path.into()
+    bun_paths::to_native(path)
 }
 
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
@@ -620,12 +624,11 @@ pub fn entry_point_is_commonjs(global: &JSGlobalObject) -> bool {
 
 #[cfg(target_os = "linux")]
 mod write_execute {
-    const PR_SET_MDWE: libc::c_int = 65;
-    const PR_GET_MDWE: libc::c_int = 66;
+    use bun_sys::linux::{PrctlOp, prctl};
+
     const PR_MDWE_REFUSE_EXEC_GAIN: libc::c_ulong = 1;
     #[cfg(not(bun_hardened))]
     const PR_MDWE_NO_INHERIT: libc::c_ulong = 2;
-    const UNUSED: libc::c_ulong = 0;
 
     static IS_FILTERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -680,8 +683,7 @@ mod write_execute {
     }
 
     fn is_denied_by_the_kernel() -> bool {
-        // SAFETY: the request takes and returns integers only.
-        let bits = unsafe { libc::prctl(PR_GET_MDWE, UNUSED, UNUSED, UNUSED, UNUSED) };
+        let bits = prctl(PrctlOp::GET_MDWE, 0);
         bits > 0 && bits as libc::c_ulong & PR_MDWE_REFUSE_EXEC_GAIN != 0
     }
 
@@ -723,18 +725,12 @@ mod write_execute {
     #[cfg(bun_hardened)]
     fn gain_no_new_privileges() -> Result<(), Failure> {
         let call = "prctl(PR_SET_NO_NEW_PRIVS)";
-        let yes: libc::c_ulong = 1;
-        // SAFETY: the requests take and return integers only.
-        let (set, in_force) = unsafe {
-            let set = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, yes, UNUSED, UNUSED, UNUSED);
-            let errno = last_errno();
-            let read = libc::prctl(libc::PR_GET_NO_NEW_PRIVS, UNUSED, UNUSED, UNUSED, UNUSED);
-            ((set, errno), read == 1)
-        };
-        match (in_force, set) {
+        let set = prctl(PrctlOp::SET_NO_NEW_PRIVS, 1);
+        let errno = last_errno();
+        match (prctl(PrctlOp::GET_NO_NEW_PRIVS, 0) == 1, set) {
             (true, _) => Ok(()),
-            (false, (0, _)) => Err(Failure::NotInForce { call }),
-            (false, (_, errno)) => Err(Failure::Failed { call, errno }),
+            (false, 0) => Err(Failure::NotInForce { call }),
+            (false, _) => Err(Failure::Failed { call, errno }),
         }
     }
 
@@ -792,10 +788,6 @@ mod write_execute {
         let version = (version.next().flatten(), version.next().flatten());
         // glibc 2.34 moved libutil, librt and the services `files` and `dns` into libc.so.6.
         let is_merged = version >= (Some(2), Some(34));
-        // pthread_exit() unwinds with it, and only a reload calls that.
-        if !is_removed(Feature::HotReload) {
-            load(c"libgcc_s.so.1");
-        }
         if !is_merged && !is_removed(Feature::Terminal) {
             load(c"libutil.so.1");
         }
@@ -853,8 +845,7 @@ mod write_execute {
             return;
         }
         let bits = PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT;
-        // SAFETY: the request takes and returns integers only.
-        unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        prctl(PrctlOp::SET_MDWE, bits);
     }
 
     /// Child processes inherit it. Whoever started this process may have set it already.
@@ -873,9 +864,7 @@ mod write_execute {
             return Ok(());
         }
         let call = "prctl(PR_SET_MDWE), which Linux has since 6.3,";
-        let bits = PR_MDWE_REFUSE_EXEC_GAIN;
-        // SAFETY: the request takes and returns integers only.
-        let set = unsafe { libc::prctl(PR_SET_MDWE, bits, UNUSED, UNUSED, UNUSED) };
+        let set = prctl(PrctlOp::SET_MDWE, PR_MDWE_REFUSE_EXEC_GAIN);
         let errno = last_errno();
         if is_denied_by_the_kernel() {
             return Ok(());

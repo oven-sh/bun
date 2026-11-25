@@ -44,14 +44,12 @@ use bun_spawn_sys::ffi::kill;
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::linux::{PrctlOp, prctl};
 
 use crate::posix_event_loop::EventLoopCtx;
 #[cfg(target_os = "macos")]
-use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
-
-/// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
-/// per-instance state.
-pub struct ParentDeathWatchdog;
+use crate::posix_event_loop::{OwnedFilePoll, Owner, PollTag};
 
 /// Exit code used when the watchdog fires. 128 + SIGHUP, matching the
 /// convention for "terminated because the controlling end went away".
@@ -167,11 +165,6 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
-/// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
-/// per-instance state.
-#[cfg(target_os = "macos")]
-static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
-    bun_core::RacyCell::new(ParentDeathWatchdog);
 
 /// Called from `main()` before the CLI starts. Checks the env var and enables
 /// the watchdog as early as possible so the Linux `prctl` window is minimal.
@@ -241,7 +234,7 @@ pub fn enable() {
             // also runs the descendant reaper; on Linux the SIGKILL case relies on
             // env-var inheritance — Bun-spawning-Bun chains self-reap because each
             // link sets its own PDEATHSIG.
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+            if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as _) != 0 {
                 return;
             }
             // Race: parent may have died between getppid() above and prctl()
@@ -288,20 +281,12 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             bun_core::exit(EXIT_CODE as u32);
         }
 
-        // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
-        let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
-        let mut poll = FilePoll::init(
-            handle,
-            Fd::from_native(original_ppid),
-            Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
-        );
-        // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
-        // borrow; `register` does not re-derive the loop.
-        match unsafe { poll.as_mut() }.register(
-            handle.loop_(),
-            crate::file_poll::Flags::Process,
-            true,
-        ) {
+        let owner = Owner::new(PollTag::ParentDeathWatchdog, core::ptr::null_mut());
+        // SAFETY: this tag has no pointee.
+        let poll: OwnedFilePoll =
+            unsafe { OwnedFilePoll::new(handle, Fd::from_native(original_ppid), owner) };
+        // Watches until the process exits.
+        match core::mem::ManuallyDrop::new(poll).register(crate::file_poll::Flags::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no
@@ -322,7 +307,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 /// `FilePoll.Owner` dispatch target — invoked from the event loop's
 /// `ParentDeathWatchdog` poll arm. The kqueue `NOTE_EXIT` for our parent
 /// fired.
-pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
+#[cfg(target_os = "macos")]
+pub fn on_parent_exit() {
     // Global.exit → Bun__onExit → on_process_exit → kill_descendants.
     bun_core::exit(EXIT_CODE as u32);
 }

@@ -1,17 +1,17 @@
-# `table[id] || (table[id] = new Links())`: the list is proven once the variable is known to be filled, and of the key nothing is: it is a parameter, or what a call gives. The read tests the key for itself and is no closed read
-# f2 = linksOf: the key is the result of a call. f3 = linksUnder: a parameter. f4 = textUnder: a text is no list, and its read stays as written. f5 = underText: a key that is proven a text is no index
+# `let shelf = shelves[row]; if (shelf === undefined) shelves[row] = shelf = new Shelf();`: the list is proven once the variable is known to be filled, and of the key nothing is: it is a parameter, or what a call gives. The read tests the key for itself and is no closed read
+# f2 = shelfOf: the key is the result of a call. f3 = shelfUnder: a parameter. f4 = textUnder: a text is no list, and its read stays as written. f5 = underText: a key that is proven a text is no index
 # -- source: list-read-under-a-key-of-which-nothing-is-proven-asks-the-key-itself.ts
 # declare function sink(...values: unknown[]): void;
-# class Links { flags = 0; }
-# class Node { id = 0; }
-# let next = 1;
-# const table: Links[] = [];
-# function idOf(node: Node): number { if (!node.id) { node.id = next; next++; } return node.id; }
-# function linksOf(node: Node): Links { const id = idOf(node); return table[id] || (table[id] = new Links()); }
-# function linksUnder(id: number): Links { return table[id] || (table[id] = new Links()); }
+# class Shelf { books = 2; }
+# class Book { thick = 3; row = -1; }
+# let filled = 0;
+# const shelves: Shelf[] = [];
+# function rowOf(book: Book): number { if (book.row < 0) { filled += book.thick; book.row = filled >> 3; } return book.row; }
+# function shelfOf(book: Book): Shelf { const row = rowOf(book); let shelf = shelves[row]; if (shelf === undefined) shelves[row] = shelf = new Shelf(); shelf.books++; return shelf; }
+# function shelfUnder(row: number): number { const shelf = shelves[row]; if (shelf) return shelf.books; shelves[row] = new Shelf(); return -1; }
 # function textUnder(id: number): string { return "abcdef"[id]; }
-# function underText(id: number): unknown { return table["k" + id]; }
-# sink(linksOf(new Node()).flags, linksUnder(3).flags, textUnder(2), underText(1), linksOf, linksUnder, textUnder, underText);
+# function underText(id: number): unknown { return shelves["k" + id]; }
+# sink(shelfOf(new Book()).books, shelfUnder(3), textUnder(2), underText(1), shelfOf, shelfUnder, textUnder, underText);
 # -- end of source
 # RUN(RESULT): walk f2 mechanisms=all-Inlining
 # RESULT-LABEL: code f2:Body

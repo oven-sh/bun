@@ -1,6 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
+use bun_core::ZStr;
 
 use crate::{SslCtx, us_socket_t};
 
@@ -52,6 +53,11 @@ impl ListenSocket {
         ))
     }
 
+    /// Call before another process gets a duplicate of this socket (see `bsd_accept_socket`).
+    pub fn set_shared(&mut self) {
+        us_listen_socket_set_shared(self)
+    }
+
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close, or when `hostname` is registered again.
     ///
@@ -59,7 +65,7 @@ impl ListenSocket {
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
     /// stores the pointer past this call, so the caller cannot legitimately
     /// hold exclusive `&mut` access.
-    pub fn add_server_name(&mut self, hostname: &core::ffi::CStr, ssl_ctx: *mut SslCtx) {
+    pub fn add_server_name(&mut self, hostname: &ZStr, ssl_ctx: *mut SslCtx) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it).
@@ -92,6 +98,7 @@ impl ListenSocket {
 // `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
+    safe fn us_listen_socket_set_shared(ls: &mut ListenSocket);
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

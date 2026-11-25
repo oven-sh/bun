@@ -10,6 +10,7 @@ import {
   isDebug,
   isWindows,
   MAX_PATH_BYTES,
+  substDrive,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
@@ -44,6 +45,100 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
+  test.skipIf(isWindows)("outputs[].path keeps a backslash in outdir and naming", async () => {
+    using dir = tempDir("bun-build-api-backslash", { "entry.js": `console.log(1);` });
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "a\\b"),
+      naming: "c\\..\\[name].[ext]",
+    });
+
+    expect(outputs.map(output => output.path)).toEqual([join(String(dir), "a\\b", "c\\..\\entry.js")]);
+    expect(await outputs[0].text()).toContain("console.log(1);");
+  });
+
+  test.skipIf(isWindows)("a backslash in the name of a source does not lead a browser to another host", async () => {
+    using dir = tempDir("bun-build-api-backslash-source", {
+      "entry.js": `
+        import image from "./image.png";
+        console.log(image, import("./lazy.js"), import("./dir/a.js"), import("./root/host.js"), import("./second.js"));`,
+      "\\host\\image.png": "image",
+      "\\host\\lazy.js": "export default 1;",
+      "\\host/a.js": "export default 2;",
+      "\\/host.js": "export default 3;",
+      "\\host\\second.js": "export default 4;",
+    });
+    symlinkSync("\\host\\image.png", join(String(dir), "image.png"));
+    symlinkSync("\\host\\lazy.js", join(String(dir), "lazy.js"));
+    symlinkSync("\\host", join(String(dir), "dir"));
+    symlinkSync("\\", join(String(dir), "root"));
+    symlinkSync("\\host\\second.js", join(String(dir), "second.js"));
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js"), join(String(dir), "second.js")],
+      splitting: true,
+      publicPath: "/",
+      naming: { chunk: "[dir]/[name].[ext]", asset: "[name].[ext]" },
+    });
+
+    const text = await outputs.find(output => output.path.endsWith("entry.js"))!.text();
+    expect([...text.matchAll(/(?:=|import\()\s*"(\/.*?)"/g)].map(match => match[1]).sort()).toEqual([
+      "/%5Chost%5Csecond.js",
+      "/_/host.js",
+      "/_host/a.js",
+      "/_host_image.png",
+      "/_host_lazy.js",
+    ]);
+  });
+
+  test("process.chdir() during a build does not change the paths between outputs", async () => {
+    const files: Record<string, string> = { "a/.keep": "", "b/c/d/.keep": "" };
+    for (let i = 0; i < 100; i++) files[`src/lazy${i}.js`] = `export default ${i};`;
+    for (let page = 0; page < 20; page++) {
+      files[`src/pages/p${page}.js`] = Array.from({ length: 100 }, (_, i) => `import("../lazy${i}.js");`).join("\n");
+    }
+    files["build.js"] = `
+      const root = import.meta.dir;
+      const entrypoints = Array.from({ length: 20 }, (_, page) => root + "/src/pages/p" + page + ".js");
+      const specifiers = new Set();
+      for (let round = 0; round < ${isDebug ? 2 : 20}; round++) {
+        let done = false;
+        const build = Bun.build({ entrypoints, root: root + "/src", splitting: true, naming: { chunk: "chunks/[name].js" } });
+        build.finally(() => (done = true));
+        while (!done) {
+          for (let i = 0; i < 50; i++) process.chdir(root + (i % 2 ? "/a" : "/b/c/d"));
+          await new Promise(setImmediate);
+        }
+        for (const output of (await build).outputs)
+          for (const [, directory] of (await output.text()).matchAll(/import\\("(.*\\/)/g)) specifiers.add(directory);
+      }
+      console.log(...specifiers);
+    `;
+    using dir = tempDir("bun-build-api-chdir", files);
+    expect(await bunRun(join(String(dir), "build.js"))).toSpawn("../chunks/");
+  });
+
+  test("a file imported by its default type and with { type: 'file' } is one output", async () => {
+    using dir = tempDir("bun-build-api-file-twice", {
+      "entry.ts": `
+        import a from "./data.wasm";
+        import b from "./data.wasm" with { type: "file" };
+        console.log(a, b);
+      `,
+      "data.wasm": "wasm",
+    });
+
+    const build = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], target: "bun" });
+
+    expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "asset"]);
+    const [, asset] = build.outputs;
+    const name = path.basename(asset.path);
+    expect(await asset.text()).toBe("wasm");
+    // Both imports name it.
+    expect((await build.outputs[0].text()).split(name)).toHaveLength(2 + 1);
   });
 
   test("bytecode works", async () => {
@@ -445,6 +540,16 @@ describe("Bun.build", () => {
       expect(result.stderr).not.toContain("[Disk Cache] Cache hit");
       expect(result.exitCode).toBe(0);
     }
+  });
+
+  test.skipIf(isWindows)("`sources` of a source map counts an outdir with a backslash as one directory", async () => {
+    using dir = tempDir("build-backslash-sources", { "entry.js": "console.log(1);" });
+    await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "o\\p"),
+      sourcemap: "external",
+    });
+    expect((await Bun.file(join(String(dir), "o\\p", "entry.js.map")).json()).sources).toEqual(["../entry.js"]);
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -1858,6 +1963,19 @@ export { greeting };`,
     }
   });
 
+  test("a backslash separates, as in --tsconfig-override", async () => {
+    using dir = tempDir("tsconfig-api-backslash", {
+      "cfg/ts.json": JSON.stringify({ compilerOptions: { strict: false, paths: { which: ["../real.ts"] } } }),
+      "real.ts": `export default "real";`,
+      "index.ts": `export { default } from "which"; export let loose: number = null;`,
+    });
+    process.chdir(String(dir));
+    const { outputs } = await Bun.build({ entrypoints: ["./index.ts"], tsconfig: "./cfg\\ts.json", dts: true });
+    process.chdir(originalCwd);
+    expect(outputs.map(output => path.basename(output.path))).toContain("index.aot.ts");
+    expect(await outputs[0].text()).toContain(`"real"`);
+  });
+
   test("should work from nested directories", async () => {
     const dir = tempDirWithFiles("tsconfig-api-nested", {
       "tsconfig.json": `{
@@ -2686,19 +2804,11 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   }
 
   test("fails the build when an in-memory entry point's directory is too long", async () => {
-    // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() throws.
-    const message = isWindows
-      ? "ENOSYS: failed to open root directory"
-      : "ENAMETOOLONG: Failed to get full path for directory";
+    const message = "ENAMETOOLONG: Failed to get full path for directory";
     expect(
       await run(`
         const entry = "/" + long + "/entry.js";
-        let build;
-        try {
-          build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
-        } catch (error) {
-          build = { success: false, logs: [error] };
-        }
+        const build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
         console.log(build.success, build.logs.map(log => log.message.slice(0, ${message.length})));
       `),
     ).toEqual({
@@ -2736,6 +2846,17 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
         console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));
       `),
     ).toEqual({ stdout: "false [ true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  // A build with assertions stops at the NUL.
+  test.skipIf(isWindows || isDebug || isASAN)("an outdir that is too long is refused behind a NUL too", async () => {
+    using dir = tempDir("bun-build-api-outdir-nul", { "entry.js": "" });
+    const outdir = join(String(dir), "x/y") + "\0" + Buffer.alloc(MAX_PATH_BYTES, "/a").toString();
+
+    const { success } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir, throw: false });
+
+    expect(success).toBe(false);
+    expect(readdirSync(String(dir))).toEqual(["entry.js"]);
   });
 
   test("fails the build when compile.outfile is too long", async () => {
@@ -2778,3 +2899,40 @@ test("the hash in a chunk's name follows everything that the chunk reaches, thro
   expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
   expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
 });
+
+test.concurrent.skipIf(!isWindows).each(["api", "cli", "--no-bundle"])(
+  "does not overwrite an entry point in the root of a drive that stands for a directory (%s)",
+  async how => {
+    const source = "console.log(1); // source\n";
+    using dir = tempDir("build-subst-drive", {
+      "top.js": source,
+      "build.js": `await Bun.build({ entrypoints: [process.argv[2]], outdir: "out" });`,
+    });
+    using drive = substDrive(String(dir));
+    const entry = join(drive.root, "top.js");
+    const args =
+      how === "api" ? ["build.js", entry] : ["build", entry, "--outdir=out", ...(how === "cli" ? [] : [how])];
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: drive.root, env: bunEnv, stderr: "pipe" });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(readFileSync(join(String(dir), "top.js"), "utf8")).toBe(source);
+    expect(readdirSync(join(String(dir), "out"))).toEqual(["top.js"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isWindows)(
+  "[dir] of an asset on a drive that stands for a directory is relative to the root",
+  async () => {
+    using dir = tempDir("build-subst-drive-asset", {
+      "src/index.js": `import logo from "./img/logo.png"; console.log(logo);`,
+      "src/img/logo.png": "png",
+    });
+    using drive = substDrive(String(dir));
+    const { outputs } = await Bun.build({
+      entrypoints: [join(drive.root, "src", "index.js")],
+      naming: { asset: "[dir]/[name].[ext]" },
+    });
+    expect(outputs.map(output => path.normalize(output.path)).sort()).toEqual(["img\\logo.png", "index.js"]);
+  },
+);

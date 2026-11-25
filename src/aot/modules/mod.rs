@@ -59,6 +59,7 @@ pub use requests::Spelling;
 pub(crate) use spelled_files::{directory_of, find_files_that_unknown_names_may_require};
 pub(crate) use test_replacements::asks_for_original_beside_mock;
 pub use unlinked_files::UnlinkedFiles;
+pub(crate) use wrapped::parent_of_pattern;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
@@ -173,6 +174,7 @@ struct ScannedModules {
     reloadable_es_modules: Vec<ModuleRef>,
     is_reloadable: Vec<bool>,
     absent_modules: Vec<ModuleRef>,
+    test_files_that_ask_loader: Vec<FileId>,
     binds_skippable_statements: bool,
 }
 
@@ -240,8 +242,19 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         input, &scans,
     ));
     let absent_modules = test_run_evictions::find_absent_modules_named_by_mocks(input, &scans);
-    let mut is_reloadable =
-        test_run_evictions::find_reloadable_files(input, &scans, &absent_modules);
+    let mut test_files_that_ask_loader = Vec::new();
+    let takes_modules_out = evicted.is_any_module_taken_out()
+        || (!evicted.modules().is_empty() && !test_run_evictions::is_any_module_mocked(input));
+    if takes_modules_out {
+        test_files_that_ask_loader =
+            test_run_evictions::find_test_files_that_ask_loader(input, &scans, &mut run_again);
+    }
+    let mut is_reloadable = test_run_evictions::find_reloadable_files(
+        input,
+        &scans,
+        &absent_modules,
+        &test_files_that_ask_loader,
+    );
     // What the loader finds by itself has the loader's module records.
     for &(_, file) in &modules.left_to_loader {
         is_reloadable[file.idx()] = false;
@@ -265,6 +278,7 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
         reloadable_es_modules,
         is_reloadable,
         absent_modules,
+        test_files_that_ask_loader,
         binds_skippable_statements: checks_statements.is_some(),
     }
 }
@@ -283,6 +297,7 @@ fn bind_scanned_modules(
         reloadable_es_modules,
         is_reloadable,
         absent_modules,
+        test_files_that_ask_loader,
         binds_skippable_statements,
     } = scanned;
     let file_count = input.files.modules.len();
@@ -826,6 +841,7 @@ fn bind_scanned_modules(
             plan.set_is_named_by_mock(module);
         }
         plan.set_absent_modules(absent_modules);
+        plan.set_test_files_that_ask_loader(test_files_that_ask_loader);
         plan.set_names_of_mocks(&mocked);
         if mocks_any_module {
             plan.set_every_module_may_be_mocked();

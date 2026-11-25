@@ -181,7 +181,7 @@ pub(crate) fn create_interval<'a>(heap: &JsHeap<'a>, resolution: f64) -> JsWrapp
 }
 
 pub(crate) fn is_histogram(value: JsLocal<'_>) -> bool {
-    value.to_js().as_class_ref::<Histogram>().is_some()
+    value.to_js().is::<Histogram>()
 }
 
 /// `Histogram`
@@ -412,7 +412,7 @@ struct InFlight {
 /// `histogram` is a `Histogram`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Histogram__retainForStructuredClone(histogram: JSValue) -> u64 {
-    let recordable = js_RecordableHistogram::from_js(histogram).is_some();
+    let recordable = js_RecordableHistogram::from_js(&histogram).is_some();
     let Some(histogram) = histogram.as_class_ref::<Histogram>() else {
         return 0;
     };

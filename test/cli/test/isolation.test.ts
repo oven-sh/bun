@@ -1466,6 +1466,30 @@ describe.concurrent("bun test --isolate=modules", () => {
     ]);
   });
 
+  test("a zlib stream that a file left in the middle of a write becomes idle", async () => {
+    await passes(
+      {
+        "a.test.js": `
+          test("a", () => {
+            const zlib = require("node:zlib");
+            zlib.left = zlib.createDeflate({ chunkSize: 4 << 20 });
+            zlib.left.write(require("node:crypto").randomBytes(2 << 20));
+          });
+        `,
+        "b.test.js": `
+          test("b", async () => {
+            const { left } = require("node:zlib");
+            for (const deadline = performance.now() + 15_000; ; await new Promise(setImmediate)) {
+              try { return left.reset(); }
+              catch (error) { if (!left || performance.now() > deadline) throw error; }
+            }
+          }, 20_000);
+        `,
+      },
+      2,
+    );
+  });
+
   test("Bun.main, import.meta.main, process.argv and Bun.argv name the running file", async () => {
     const file = `
       import { basename } from "node:path";

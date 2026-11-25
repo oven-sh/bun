@@ -21,6 +21,7 @@ const constants = [
 const namesConstant = new RegExp("\\b(?:" + constants.join("|") + ")\\b");
 const arm = (program: string) => "parallel/arms-of-the-library/" + program;
 const callsOfLibrary = "the-library-calls-the-same-built-ins-compiled-as-plain.test.ts";
+const unpublishedChannels = "the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts";
 
 // The line of the arm as it is written, without the blanks around it, and what reaches it. A line that stands twice in a file is listed twice.
 const witnessed: Record<string, [line: string, witness: string][]> = {
@@ -329,6 +330,11 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = CAN_REPLACE_BUILT_IN_FUNCTIONS",
       "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
     ],
+  ],
+  "node/diagnostics_channel.ts": [
+    ["if (!IS_COMPILED_AHEAD_OF_TIME) linkHook(name, createConsoleHook);", unpublishedChannels],
+    ["if (!IS_COMPILED_AHEAD_OF_TIME) linkModuleRequire();", unpublishedChannels],
+    ["if (!IS_COMPILED_AHEAD_OF_TIME) linkModuleImport();", unpublishedChannels],
   ],
 };
 

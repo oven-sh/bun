@@ -170,7 +170,7 @@ const storesInForm = [
     },
     implementation: b.hostCall,
   },
-  ...takingStrings(["name", "value"], [], { ...stateChanged, throws: true }),
+  ...takingStrings(["name", "value"], ["filename"], { ...stateChanged, throws: true }),
 ] satisfies b.FunctionField[];
 
 const otherReceiverIgnored = {

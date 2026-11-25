@@ -47,9 +47,7 @@ fn template_blob(
         }
         // `cached_blob` is typed against the lower crate's opaque `Blob`
         // (it cannot name `webcore::Blob` without a dep cycle).
-        NonNull::new(Blob::new(blob))
-            .expect("Blob::new returned null")
-            .cast()
+        Blob::new(blob).into_non_null().cast()
     })
 }
 

@@ -6,8 +6,7 @@ use core::mem::size_of;
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
-use bun_paths::resolve_path;
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
@@ -98,29 +97,25 @@ impl DirectoryRoute {
         }))
     }
 
-    pub(crate) fn on_head_request(
-        this: ThisPtr<DirectoryRoute>,
-        req: AnyRequest,
-        resp: AnyResponse,
-    ) {
-        Self::on(this, req, resp, Method::HEAD);
+    pub(crate) fn on_head_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on(req, resp, Method::HEAD);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        self.on(req, resp, method);
     }
 
-    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        debug_assert!(this.server.get().is_some());
-        let route = PendingRequest::new(RefPtr::from_this(this));
-        if let Some(server) = this.server.get() {
+    fn on(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+        debug_assert!(self.server.get().is_some());
+        let route = PendingRequest::new(self);
+        if let Some(server) = route.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some((rel_len, had_trailing_slash)) =
-            resolve_subpath(req.url(), &this.url_prefix, &mut path_buf.0[..])
+            resolve_subpath(req.url(), &route.url_prefix, &mut path_buf.0[..])
         else {
             bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
             write_miss(&mut req, resp);
@@ -128,7 +123,7 @@ impl DirectoryRoute {
         };
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let (file, stat, is_index) = match this.open_subpath(rel, had_trailing_slash) {
+        let (file, stat, is_index) = match route.open_subpath(rel, had_trailing_slash) {
             Some(Subpath::File(f, s, idx)) => (f, s, idx),
             Some(Subpath::RedirectSlash) => {
                 let mut loc = bun_paths::path_buffer_pool::get();
@@ -153,7 +148,7 @@ impl DirectoryRoute {
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
 
-        let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
+        let (last_modified_ms, lm_buf, lm_len) = route.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
@@ -187,7 +182,7 @@ impl DirectoryRoute {
         }
         resp.write_header(b"etag", etag);
         if !matches!(resp, AnyResponse::H3(_)) {
-            if let Some(srv) = this.server.get() {
+            if let Some(srv) = route.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
                     resp.write_header(b"alt-svc", alt);
                 }
@@ -235,7 +230,7 @@ impl DirectoryRoute {
             size
         );
 
-        let server = this.server.get().unwrap();
+        let server = route.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
             fd: file.into(),
             resp,
@@ -271,12 +266,7 @@ impl DirectoryRoute {
             if !had_trailing_slash {
                 return Some(Subpath::RedirectSlash);
             }
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
-                &mut buf.0[..],
-                &[rel, b"index.html"],
-            );
-            let (f, s) = open_and_stat(joined)?;
+            let (f, s) = open_and_stat(&bun_paths::Path::from_parts(&[rel, b"index.html"]))?;
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
                 .then_some(Subpath::File(f, s, true));
         }
@@ -287,8 +277,7 @@ impl DirectoryRoute {
 
     /// Symlinks resolve as with `openat2(RESOLVE_IN_ROOT)`, whether or not the kernel has it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let zrel = resolve_path::z(rel, &mut *buf);
+        let zrel: &bun_core::ZStr = &bun_paths::Path::from(rel);
         // NONBLOCK so opening a FIFO without a writer cannot block the event
         // loop on POSIX. Not on Windows: there `openat` maps it to omitting
         // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
@@ -306,10 +295,7 @@ impl DirectoryRoute {
         let fd = bun_sys::openat(self.root.fd(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        use bun_sys::FdExt;
-        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            .ok()
-            .map(File::from_fd)
+        File::from_fd(fd).make_lib_uv_owned().ok()
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {

@@ -32,8 +32,7 @@ public:
 
     DECLARE_INFO;
 
-    // Must be defined for each specialization class.
-    static JSC::JSValue prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
+    static JSC::JSValue prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject) { return parentConstructor<JSClass>(vm, globalObject); }
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);

@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error as BunError;
@@ -13,7 +14,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
-use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{Path, SEP};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -31,7 +32,7 @@ use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
     Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
 };
-use crate::resolution_real::{self as resolution, Resolution};
+use crate::resolution_real::{self as resolution, Resolution, TaggedValue};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
@@ -142,6 +143,8 @@ pub struct Lockfile {
     pub(crate) text_lockfile_version: bun_lock::Version,
 
     pub(crate) meta_hash: MetaHash,
+    /// `hashed_rows` after and before `convert_windows_paths`, line for line, while the file has the old spelling.
+    pub(crate) converted_rows: Option<Box<[Vec<u8>; 2]>>,
 
     pub packages: PackageList,
     pub buffers: Buffers,
@@ -220,7 +223,7 @@ impl LinkedMembers {
         if self.members.is_empty() {
             return None;
         }
-        self.members.get(strings::without_trailing_slash(path))
+        self.members.get(bun_paths::without_trailing_sep(path))
     }
 
     /// Records the workspace at `path` if a symlink leads to it. `is_behind_link` is what the
@@ -239,18 +242,16 @@ impl LinkedMembers {
     fn is_in(folder: &[u8], path: &[u8]) -> bool {
         !folder.is_empty()
             && !path.is_empty()
-            && resolve_path::is_parent_or_equal(folder, path)
-                != resolve_path::ParentEqual::Unrelated
+            && bun_paths::is_parent_or_equal(folder, path) != bun_paths::ParentEqual::Unrelated
     }
 
     /// Checks every folder on the way to the workspace at `path` with `lstat`. This is for a
     /// workspace that no directory listing covered.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
-        let path = strings::without_trailing_slash(path);
+        let path = bun_paths::without_trailing_sep(path);
         if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
         let mut end = 0;
         while end < path.len() {
             end = strings::index_of_char_pos(path, b'/', end + 1).unwrap_or(path.len());
@@ -258,13 +259,8 @@ impl LinkedMembers {
             if self.real_folders.contains_key(folder) {
                 continue;
             }
-            let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                FileSystem::get().top_level_dir(),
-                &mut buf.0,
-                &[folder],
-            )
-            .and_then(|folder| sys::lstat(folder).ok())
-            .is_some_and(|st| {
+            let abs = Path::resolve(&[FileSystem::get().top_level_dir(), folder]);
+            let is_link = !sys::lstat(&abs).is_ok_and(|st| {
                 sys::kind_from_mode(st.st_mode as sys::Mode) != sys::EntryKind::SymLink
             });
             if is_link {
@@ -276,7 +272,7 @@ impl LinkedMembers {
 
     /// Records the workspace at `path`, which is known to be reached through a symlink.
     pub(crate) fn add(&mut self, path: &[u8]) {
-        let path = strings::without_trailing_slash(path);
+        let path = bun_paths::without_trailing_sep(path);
         if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
@@ -294,16 +290,9 @@ impl LinkedMembers {
     /// `path` is absolute or relative to the project root. Returns an empty path if `realpath`
     /// fails.
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
-        let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            FileSystem::get().top_level_dir(),
-            &mut buf.0,
-            &[path],
-        ) else {
-            return Box::default();
-        };
-        match sys::realpath(path, &mut *real_buf) {
+        let path = Path::resolve(&[FileSystem::get().top_level_dir(), path]);
+        match sys::realpath(&path, &mut *real_buf) {
             Ok(real_path) => real_path.into(),
             Err(_) => Box::default(),
         }
@@ -607,6 +596,7 @@ impl Lockfile {
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
         if matches!(result, LoadResult::Ok(_)) {
+            self.convert_windows_paths(dir).unwrap_or_oom();
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
         result
@@ -715,11 +705,83 @@ impl Lockfile {
         })
     }
 
+    /// Older versions wrote `\`. `dir` is the project.
+    fn convert_windows_paths(&mut self, dir: Fd) -> Result<(), AllocError> {
+        let packages_len = self.packages.len();
+        let mut as_stored = None;
+        // An install resolves the members again, so the hash has `/` for them.
+        for is_member in [true, false] {
+            for id in 0..packages_len {
+                let resolution = self.packages.items_resolution()[id];
+                let (stored, tagged): (_, fn(_) -> _) = match (resolution.tag, is_member) {
+                    (ResolutionTag::Workspace, true) => {
+                        (*resolution.workspace(), TaggedValue::Workspace)
+                    }
+                    (ResolutionTag::Folder, false) => (*resolution.folder(), TaggedValue::Folder),
+                    (ResolutionTag::Symlink, false) => {
+                        (*resolution.symlink(), TaggedValue::Symlink)
+                    }
+                    _ => continue,
+                };
+                if !strings::contains_char(self.str(&stored), b'\\') {
+                    continue;
+                }
+                let mut path = self.convert_windows_path(Some(dir), stored)?;
+                if path.is_none()
+                    && resolution.tag == ResolutionTag::Folder
+                    && !self.is_trusted_folder_package(id as PackageID)
+                {
+                    path = self.convert_windows_path(None, stored)?;
+                }
+                let Some(path) = path else { continue };
+                if !is_member && as_stored.is_none() {
+                    let order = self.hash_order(packages_len);
+                    as_stored = Some((self.hashed_rows(&order), order));
+                }
+                self.packages.items_resolution_mut()[id] = Resolution::init(tagged(path));
+            }
+        }
+        self.converted_rows =
+            as_stored.map(|(rows, order)| Box::new([self.hashed_rows(&order), rows]));
+        for i in 0..self.workspace_paths.count() {
+            let stored = self.workspace_paths.values()[i];
+            if let Some(path) = self.convert_windows_path(Some(dir), stored)? {
+                self.workspace_paths.values_mut()[i] = path;
+            }
+        }
+        for id in 0..self.buffers.dependencies.len() {
+            if let dependency::Value::Workspace(stored) =
+                self.buffers.dependencies[id].version.value
+                && let Some(path) = self.convert_windows_path(Some(dir), stored)?
+            {
+                self.buffers.dependencies[id].version.value = dependency::Value::Workspace(path);
+            }
+        }
+        Ok(())
+    }
+
+    /// `None` if `stored` stays, as it does when `dir` has something of that name.
+    fn convert_windows_path(
+        &mut self,
+        dir: Option<Fd>,
+        stored: SemverString,
+    ) -> Result<Option<SemverString>, AllocError> {
+        let path = self.str(&stored);
+        let spelling = match dir {
+            _ if cfg!(windows) => bun_paths::to_portable(path),
+            Some(dir) => sys::existing_spelling(dir, path),
+            None => bun_paths::from_portable(path),
+        };
+        match spelling {
+            Cow::Borrowed(_) => Ok(None),
+            Cow::Owned(converted) => self.string_buf().append(&converted).map(Some),
+        }
+    }
+
     /// The stored literal is relative to the package. `Package::parse` also rebases the
     /// dependencies of local packages.
     pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
         let pkgs = &self.packages;
-        let mut path_buf = bun_paths::path_buffer_pool::get();
         for (pkg_resolution, pkg_dependencies) in
             (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
         {
@@ -730,48 +792,48 @@ impl Lockfile {
                 _ => continue,
             };
             for dep in pkg_dependencies.mut_(self.buffers.dependencies.as_mut_slice()) {
-                let is_link = dep.version.tag == dependency::Tag::Symlink;
-                if dep.version.tag != dependency::Tag::Folder && !is_link {
+                let is_link = dep.version.tag() == dependency::Tag::Symlink;
+                if dep.version.tag() != dependency::Tag::Folder && !is_link {
                     continue;
                 }
                 let buf = self.buffers.string_bytes.as_slice();
                 let literal = dep.version.literal.sliced(buf);
-                let Some(declared) = dependency::parse_with_tag(
+                let Some(DependencyVersion {
+                    value:
+                        dependency::Value::Symlink(declared) | dependency::Value::Folder(declared),
+                    ..
+                }) = dependency::parse_with_tag(
                     dep.name,
                     Some(dep.name_hash),
                     literal.slice,
-                    dep.version.tag,
+                    dep.version.tag(),
                     &literal,
                     None,
                     None,
-                ) else {
+                )
+                else {
                     continue;
                 };
-                let declared_path = if is_link {
-                    declared.symlink().slice(buf)
-                } else {
-                    declared.folder().slice(buf)
-                };
+                let declared_path = declared.slice(buf);
                 if is_link && !dependency::is_link_path(declared_path) {
                     continue;
                 }
-                let Some(relative) = package::folder_relative_to_top_level_dir(
-                    pkg_dir.slice(buf),
-                    declared_path,
-                    &mut path_buf[..],
-                ) else {
+                let Some(relative) =
+                    package::folder_relative_to_top_level_dir(pkg_dir.slice(buf), declared_path)
+                else {
                     continue;
                 };
+                let relative = relative.as_bytes();
                 let mut string_buf = SemverStringBuf {
                     bytes: &mut self.buffers.string_bytes,
                     pool: &mut self.string_pool,
                 };
-                if is_link {
-                    dep.version.value.symlink =
-                        string_buf.append(&dependency::link_path_for_lockfile(relative))?;
+                dep.version.value = if is_link {
+                    let path = dependency::link_path_for_lockfile(relative);
+                    dependency::Value::Symlink(string_buf.append(&path)?)
                 } else {
-                    dep.version.value.folder = string_buf.append(relative)?;
-                }
+                    dependency::Value::Folder(string_buf.append(relative)?)
+                };
             }
         }
         Ok(())
@@ -793,11 +855,9 @@ impl Lockfile {
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
-        if dep.version.tag != dependency::Tag::Catalog {
+        let dependency::Value::Catalog(catalog_name) = dep.version.value else {
             return Some(dep.version.clone());
-        }
-
-        let catalog_name = *dep.version.catalog();
+        };
         let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
         Some(catalog_dep.version)
@@ -1009,15 +1069,17 @@ impl Lockfile {
         let Some(selected) = join_top_level_dir(&[folder.slice(buf)]) else {
             return false;
         };
-        let selected = strings::without_trailing_slash(selected.slice());
         (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
             let dependency = &self.buffers.dependencies[row];
             target == id
                 && crate::dedupe::applied_override(self, row as DependencyID, dependency)
-                    .map(|rule| rule.version())
-                    .filter(|version| version.tag == dependency::version::Tag::Folder)
-                    .and_then(|version| join_top_level_dir(&[version.folder().slice(buf)]))
-                    .is_some_and(|named| strings::without_trailing_slash(named.slice()) == selected)
+                    .and_then(|rule| match &rule.version().value {
+                        dependency::Value::Folder(folder) => {
+                            join_top_level_dir(&[&bun_paths::from_portable(folder.slice(buf))])
+                        }
+                        _ => None,
+                    })
+                    .is_some_and(|named| named.as_bytes() == selected.as_bytes())
         })
     }
 
@@ -1035,11 +1097,13 @@ impl Lockfile {
         let dependencies = self.buffers.dependencies.as_slice();
         let packages = &self.packages;
         let names_url = |declared: &Dependency| {
-            declared.version.tag == dependency::version::Tag::Tarball
-                && matches!(
-                    &declared.version.tarball().uri,
-                    dependency::tarball::Uri::Remote(remote) if remote.slice(buf) == url
-                )
+            matches!(
+                &declared.version.value,
+                dependency::Value::Tarball(dependency::TarballInfo {
+                    uri: dependency::tarball::Uri::Remote(remote),
+                    ..
+                }) if remote.slice(buf) == url
+            )
         };
         (self.overrides.values().chain(self.catalogs.values())).any(names_url)
             || self.package_extensions.has_specifier(url)
@@ -1149,7 +1213,13 @@ impl Lockfile {
                 rows.get(self.buffers.dependencies.as_slice())
             })
             .iter()
-            .filter(|dependency| dependency.behavior.is_bundled())
+            .filter(move |dependency| {
+                let name = dependency.name.slice(buf);
+                dependency.behavior.is_bundled()
+                    && !bun_paths::portable::has_dot_dot(name)
+                    && !strings::contains_char(name, 0)
+                    && bun_paths::components(name).any(|part| part != b".")
+            })
     }
 
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
@@ -1370,6 +1440,7 @@ impl Lockfile {
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
+        new.converted_rows = old.converted_rows.take();
         // Carry the on-disk format version over from the lockfile we loaded so a
         // re-save preserves it (a fresh `new` defaults to the current version).
         new.text_lockfile_version = old.text_lockfile_version;
@@ -1922,26 +1993,17 @@ pub mod printer {
 impl<'a> Printer<'a> {
     #[cold]
     pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
-        // We truncate longer than allowed paths. We should probably throw an error instead.
-        let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
-
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let mut joined_buf = bun_paths::path_buffer_pool::get();
-        let lockfile_path: &[u8] = if bun_paths::is_absolute(path) {
-            path
+        let lockfile_path = if bun_paths::is_absolute(input_lockfile_path) {
+            Path::from(input_lockfile_path)
         } else {
-            let cwd_len = bun_sys::getcwd(&mut cwd_buf[..])?;
-            resolve_path::join_abs_string_buf::<platform::Auto>(
-                &cwd_buf[..cwd_len],
-                &mut joined_buf.0,
-                &[path],
-            )
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let mut path = Path::resolve(&[sys::getcwd_z(&mut cwd_buf)?, input_lockfile_path]);
+            path.copy_trailing_sep_from(input_lockfile_path);
+            path
         };
 
         if lockfile_path.first() == Some(&SEP) {
-            let dir = bun_paths::dirname(lockfile_path).unwrap_or(SEP_STR.as_bytes());
-            let mut dir_buf = bun_paths::path_buffer_pool::get();
-            let _ = sys::chdir(resolve_path::z(dir, &mut dir_buf));
+            let _ = sys::chdir(&Path::from(bun_paths::dirname_or_root(&lockfile_path)));
         }
 
         // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
@@ -1950,7 +2012,7 @@ impl<'a> Printer<'a> {
         let mut lockfile = Box::<Lockfile>::default();
 
         // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
-        let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
+        let load_from_disk = match File::read_from(Fd::cwd(), &lockfile_path) {
             Ok(bytes) => lockfile.load_from_bytes(None, bytes, log),
             Err(_) => lockfile.load_from_cwd::<false>(None, log),
         };
@@ -1975,12 +2037,12 @@ impl<'a> Printer<'a> {
                 bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
-                        text: lockfile_path
+                        text: &lockfile_path
                     },
                 );
                 Global::crash();
             }
-            crate::lockfile::LoadResult::Ok(_) => {}
+            crate::lockfile::LoadResult::Ok(_) => lockfile.convert_windows_paths(Fd::cwd())?,
         }
 
         match printer::Yarn::print(&lockfile, &mut Output::writer_buffered()) {
@@ -2025,6 +2087,11 @@ impl Lockfile {
                 }
 
                 break 'bytes writer_buf;
+            }
+
+            // Only an install has the scripts to hash the new spelling with.
+            if self.converted_rows.take().is_some() {
+                self.meta_hash = ZERO_HASH;
             }
 
             let mut bytes: Vec<u8> = Vec::new();
@@ -2081,26 +2148,6 @@ impl Lockfile {
         slicable.slice(self.buffers.string_bytes.as_slice())
     }
 
-    /// [`str`](Self::str) with the borrow detached from `self`.
-    ///
-    /// The install pipeline frequently needs to read a string out of
-    /// `buffers.string_bytes` and then call back into `&mut PackageManager`
-    /// (which owns the `Lockfile`). The caller would otherwise have to write
-    /// `unsafe { detach_lifetime(self.str(x)) }` at
-    /// every site. Consolidating that here keeps the SAFETY argument in one
-    /// place.
-    ///
-    /// SAFETY (internal): `string_bytes` is append-only for the lifetime of a
-    /// resolve/enqueue pass and is never reallocated while a detached slice is
-    /// live. The returned slice must not outlive the
-    /// `Lockfile`.
-    #[inline]
-    pub(crate) fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
-        // SAFETY: see doc comment — same invariant every prior call site
-        // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
-    }
-
     /// Construct an empty Lockfile value in place.
     #[inline(never)]
     pub fn init_empty(&mut self) {
@@ -2139,34 +2186,20 @@ pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> 
         ZStr::from_buf(&tmpname_buf, written - 1)
     };
 
-    let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
-    let file = File::openat(Fd::cwd(), tmpname, flags, mode).unwrap_or_else(|e| {
-        Output::err(
-            e,
-            "failed to create temporary file to save lockfile",
-            format_args!(""),
-        );
-        Global::crash();
-    });
-
-    if let Err(e) = file.write_all(bytes) {
-        drop(file);
-        let _ = sys::unlink(tmpname);
-        Output::err(e, "failed to write lockfile", format_args!(""));
-        Global::crash();
-    }
-
-    if let Err(e) = file.close_and_move_to(tmpname, filename) {
-        bun_core::handle_error_return_trace(&e);
-
-        // note: file is already closed here.
-        let _ = sys::unlink(tmpname);
-
-        Output::err(
-            &e,
-            "Failed to replace old lockfile with new lockfile on disk",
-            format_args!(""),
-        );
+    let replace = || {
+        let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
+        let tmp = sys::Tmpfile::open(Fd::cwd(), tmpname, flags, mode)
+            .map_err(|e| (e, "failed to create temporary file to save lockfile"))?;
+        (tmp.file.write_all(bytes)).map_err(|e| (e, "failed to write lockfile"))?;
+        tmp.finish(filename).map_err(|(e, _)| {
+            (
+                e,
+                "Failed to replace old lockfile with new lockfile on disk",
+            )
+        })
+    };
+    if let Err((e, what)) = replace() {
+        Output::err(e, what, ());
         Global::crash();
     }
     true
@@ -2215,12 +2248,11 @@ pub(crate) fn linked_workspace_path_in(
     range.satisfies(version, range_buf, buf).then_some(path)
 }
 
-/// Use this for paths from a lockfile, because `join` resolves absolute paths and `..`. Returns
-/// `None` if the result doesn't fit in a path buffer.
-pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
-    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
-    path.join(parts).ok()?;
-    Some(path)
+/// Resolves `parts` against the project root. `None` if it doesn't fit in a path buffer.
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<Path> {
+    let mut path = Path::from_top_level_dir();
+    path.resolve_in_place(parts);
+    path.check_len().ok()
 }
 
 impl Lockfile {
@@ -2244,6 +2276,7 @@ impl Lockfile {
             catalogs: CatalogMap::default(),
             package_extensions: Default::default(),
             meta_hash: ZERO_HASH,
+            converted_rows: None,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
             loaded_package_count: 0,
@@ -2308,8 +2341,8 @@ impl Lockfile {
             }
             let res = &pkg_resolutions[pkg_id as usize];
             // The root package's path.
-            if res.tag == ResolutionTag::Root && dep.version.tag == dependency::Tag::Workspace {
-                dep.version.value.workspace = SemverString::from(b".");
+            if res.tag == ResolutionTag::Root && dep.version.tag() == dependency::Tag::Workspace {
+                dep.version.value = dependency::Value::Workspace(SemverString::from(b"."));
             }
             if res.tag != ResolutionTag::Workspace {
                 continue;
@@ -2317,7 +2350,7 @@ impl Lockfile {
             // This peer was tagged as a workspace link when the lockfile was loaded. A published
             // version that its range accepts may have been added since, so the range is parsed
             // again.
-            if dep.version.tag == dependency::Tag::Workspace
+            if dep.version.tag() == dependency::Tag::Workspace
                 && dep.behavior.is_peer()
                 && !dep.behavior.is_optional_peer()
                 && !is_local_row(dep_id)
@@ -2325,15 +2358,14 @@ impl Lockfile {
                 let literal = dep.version.literal.sliced(buf);
                 if let Some(range) =
                     dependency::parse(dep.name, dep.name_hash, literal.slice, &literal, None, None)
-                    && range.tag == dependency::Tag::Npm
+                    && range.tag() == dependency::Tag::Npm
                 {
                     dep.version = range;
                 }
             }
-            let linked = match dep.version.tag {
-                dependency::Tag::Workspace => true,
-                dependency::Tag::Npm => {
-                    let npm = dep.version.npm();
+            let linked = match &dep.version.value {
+                dependency::Value::Workspace(_) => true,
+                dependency::Value::Npm(npm) => {
                     linked_workspace_path(
                         link_workspace_packages,
                         &self.workspace_paths,
@@ -2361,30 +2393,22 @@ impl Lockfile {
                                 .is_none()))
                 }
                 // For the root, the workspace of that name wins over a `file:` folder.
-                dependency::Tag::Folder => {
+                dependency::Value::Folder(_) => {
                     root_rows.is_some_and(|root| root.contains(dep_id as DependencyID))
                 }
                 // It also wins over a dist-tag of a package with the workspace's name. An `npm:`
                 // alias stays a dist-tag, as it does when package.json is parsed.
-                dependency::Tag::DistTag => {
+                dependency::Value::DistTag(dist_tag) => {
                     root_rows.is_some_and(|root| root.contains(dep_id as DependencyID))
                         && self.workspace_paths.contains(&dep.name_hash)
-                        && (dep.version.dist_tag().name).eql(dep.name, buf, buf)
+                        && (dist_tag.name).eql(dep.name, buf, buf)
                 }
                 _ => false,
             };
             if !linked {
                 continue;
             }
-            // Whole-struct move so `Drop` frees the old npm chain; keep the existing `literal`.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: dependency::Tag::Workspace,
-                literal,
-                value: dependency::Value {
-                    workspace: *res.workspace(),
-                },
-            };
+            dep.version.value = dependency::Value::Workspace(*res.workspace());
         }
     }
 
@@ -2392,7 +2416,7 @@ impl Lockfile {
     /// which that pass didn't tag.
     pub(crate) fn untag_workspace_link(&mut self, dep_id: DependencyID) -> bool {
         let dep = &self.buffers.dependencies[dep_id as usize];
-        if dep.version.tag != dependency::Tag::Workspace {
+        if dep.version.tag() != dependency::Tag::Workspace {
             return true;
         }
         let sliced = dep
@@ -2400,7 +2424,7 @@ impl Lockfile {
             .literal
             .sliced(self.buffers.string_bytes.as_slice());
         match dependency::parse(dep.name, dep.name_hash, sliced.slice, &sliced, None, None) {
-            Some(version) if version.tag == dependency::Tag::Npm => {
+            Some(version) if version.tag() == dependency::Tag::Npm => {
                 self.buffers.dependencies[dep_id as usize].version = version;
                 true
             }
@@ -2417,16 +2441,15 @@ impl Lockfile {
     ) -> bool {
         let dependency = &self.buffers.dependencies[dep_id as usize];
         let version = &dependency.version;
-        if version.tag != dependency::Tag::Workspace {
+        let dependency::Value::Workspace(path) = &version.value else {
             return false;
-        }
+        };
         let buf = self.buffers.string_bytes.as_slice();
-        let path = version.workspace().slice(buf);
+        let path = path.slice(buf);
         // The resolver asks for the version of an override, and that links this workspace or not.
         if self.is_overridden_dependency(dep_id) {
             let links = (crate::dedupe::effective_npm_range(self, dep_id, dependency)).is_some_and(
-                |asked| {
-                    let npm = asked.npm();
+                |crate::dedupe::NpmRange { npm, .. }| {
                     linked_workspace_path(
                         link_workspace_packages,
                         &self.workspace_paths,
@@ -3285,7 +3308,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf = Path::new();
         let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
@@ -3421,11 +3444,54 @@ impl Lockfile {
     ) -> Result<bool, BunError> {
         let previous_meta_hash = self.meta_hash;
         self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
-        Ok(!strings::eql_long(
-            &previous_meta_hash,
-            &self.meta_hash,
-            false,
-        ))
+        Ok(!strings::eql_long(&previous_meta_hash, &self.meta_hash))
+    }
+
+    fn hash_order(&self, packages_len: usize) -> Vec<PackageID> {
+        let mut alphabetized_names: Vec<PackageID> = (1..packages_len as PackageID).collect();
+        let alphabetizer = package::Alphabetizer::<u64> {
+            names: self.packages.items_name().into(),
+            buf: self.buffers.string_bytes.as_slice().into(),
+            resolutions: self.packages.items_resolution().into(),
+        };
+        index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+            alphabetizer.order(a, b)
+        });
+        alphabetized_names
+    }
+
+    fn hashed_rows(&self, order: &[PackageID]) -> Vec<u8> {
+        let names = self.packages.items_name();
+        let resolutions = self.packages.items_resolution();
+        let bytes = self.buffers.string_bytes.as_slice();
+        let mut rows = Vec::new();
+        for &i in order {
+            let _ = writeln!(
+                rows,
+                "{}@{}",
+                bstr::BStr::new(names[i as usize].slice(bytes)),
+                resolutions[i as usize].fmt(bytes, PathSep::Any)
+            );
+        }
+        rows
+    }
+
+    /// `rows` in the spelling and the order of the file, if it has them all. It can have more.
+    fn rows_as_stored(&self, rows: &[u8]) -> Option<Vec<u8>> {
+        let [converted, as_stored] = self.converted_rows.as_deref()?;
+        let mut missing = StringHashMap::<usize>::default();
+        for row in strings::split(rows, b"\n") {
+            *missing.get_or_put_value(row, 0).unwrap_or_oom() += 1;
+        }
+        let mut found = Vec::new();
+        for (row, stored) in strings::split(converted, b"\n").zip(strings::split(as_stored, b"\n"))
+        {
+            if let Some(count @ 1..) = missing.get_mut(row) {
+                *count -= 1;
+                found.push(stored);
+            }
+        }
+        (missing.values().all(|count| *count == 0)).then(|| found.join(&b'\n'))
     }
 
     pub(crate) fn generate_meta_hash(
@@ -3438,24 +3504,13 @@ impl Lockfile {
         }
 
         let mut string_builder = bun_core::StringBuilder::default();
-        let names: &[SemverString] = &self.packages.items_name()[..packages_len];
-        let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
-        let bytes = self.buffers.string_bytes.as_slice();
-        let mut alphabetized_names: Vec<PackageID> = vec![0; packages_len.saturating_sub(1)];
+        let rows = self.hashed_rows(&self.hash_order(packages_len));
+        let rows = self.rows_as_stored(&rows).unwrap_or(rows);
 
         const HASH_PREFIX: &[u8] =
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";
         const HASH_SUFFIX: &[u8] = b"-- END HASH--\n";
-        string_builder.cap += HASH_PREFIX.len() + HASH_SUFFIX.len();
-        for i in 1..packages_len {
-            alphabetized_names[i - 1] = i as PackageID;
-            // posix path separators because we only use posix in the lockfile
-            string_builder.fmt_count(format_args!(
-                "{}@{}\n",
-                bstr::BStr::new(names[i].slice(bytes)),
-                resolutions[i].fmt(bytes, PathSep::Posix)
-            ));
-        }
+        string_builder.cap += HASH_PREFIX.len() + rows.len() + HASH_SUFFIX.len();
 
         const SCRIPTS_BEGIN: &[u8] = b"\n-- BEGIN SCRIPTS --\n";
         const SCRIPTS_END: &[u8] = b"\n-- END SCRIPTS --\n";
@@ -3479,27 +3534,9 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
-        {
-            let alphabetizer = package::Alphabetizer::<u64> {
-                names: names.into(),
-                buf: bytes.into(),
-                resolutions: resolutions.into(),
-            };
-            index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
-                alphabetizer.order(a, b)
-            });
-        }
-
         string_builder.allocate().expect("unreachable");
         let _ = string_builder.append(HASH_PREFIX);
-
-        for &i in alphabetized_names.iter() {
-            let _ = string_builder.fmt(format_args!(
-                "{}@{}\n",
-                bstr::BStr::new(names[i as usize].slice(bytes)),
-                resolutions[i as usize].fmt(bytes, PathSep::Any)
-            ));
-        }
+        let _ = string_builder.append(&rows);
 
         if has_scripts {
             let _ = string_builder.append(SCRIPTS_BEGIN);
@@ -3709,7 +3746,7 @@ impl Lockfile {
             else {
                 continue;
             };
-            let path = package_json_path.slice();
+            let path = package_json_path.as_bytes();
             let entry = match manifests.get_with_path(log, path, Default::default()) {
                 crate::GetJsonResult::Entry(entry) => entry,
                 // An install also skips a workspace that isn't on disk.
@@ -3740,6 +3777,7 @@ impl Lockfile {
 
     pub fn has_trusted_dependency(
         &self,
+        options: &PackageManagerOptions,
         alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
@@ -3768,10 +3806,7 @@ impl Lockfile {
         if url.is_empty() {
             return true;
         }
-        let registry = PackageManager::get()
-            .scope_for_package_name(pkg_name)
-            .url
-            .href();
+        let registry = options.scope_for_package_name(pkg_name).url.href();
         url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
     }
 

@@ -689,6 +689,7 @@ pub struct RuntimeOptions {
     pub smol: bool,
     /// `--check`: type check what is about to be run, and do not run it if there are errors.
     pub check: bool,
+    pub check_options: CheckOptions,
     pub debugger: Debugger,
     pub if_present: bool,
     pub redis_preconnect: bool,
@@ -710,6 +711,14 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct CheckOptions {
+    pub threads: usize,
+    pub pretty: Option<bool>,
+    pub all: bool,
+    pub timing: bool,
 }
 
 #[derive(Default)]
@@ -763,6 +772,7 @@ impl Default for RuntimeOptions {
         Self {
             smol: false,
             check: false,
+            check_options: CheckOptions::default(),
             debugger: Debugger::Unspecified,
             if_present: false,
             redis_preconnect: false,

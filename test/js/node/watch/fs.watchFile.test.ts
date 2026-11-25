@@ -51,6 +51,20 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
   });
+  test("a watcher that starts right after another has stopped sees its file change", async () => {
+    for (let turn = 0; turn < 1000; turn++) {
+      const file = path.join(testDir, `turn-${turn}.txt`);
+      fs.writeFileSync(file, "a");
+      const { promise, resolve } = Promise.withResolvers<void>();
+      fs.watchFile(file, { interval: 5 }, () => resolve());
+      const churn = setInterval(() => fs.appendFileSync(file, "b"), 5);
+      await promise;
+      clearInterval(churn);
+      // One interval of the watcher, so that a pass over it is under way when it stops and the next one starts.
+      await Bun.sleep(5);
+      fs.unwatchFile(file);
+    }
+  }, 120_000);
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];

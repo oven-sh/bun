@@ -157,11 +157,13 @@ impl StatWatcherScheduler {
         let interval = watcher.interval;
         debug_assert_eq!(this.main_thread, thread::current().id());
         this.watchers.push(watcher);
+        // A pass that is out may have taken the queue before this watcher came, and it stops the timer when it finds none.
+        let is_pass_out = this.work_pool_in_flight.load(Ordering::Acquire);
         let current = this.get_interval();
-        if current == 0 || current > interval {
-            // we are not running or the new watcher has a smaller interval
-            this.current_interval.store(interval, Ordering::Relaxed);
-            this.set_timer(interval);
+        if is_pass_out || current == 0 || current > interval {
+            let next = if current == 0 { interval } else { current.min(interval) };
+            this.current_interval.store(next, Ordering::Relaxed);
+            this.set_timer(next);
         }
     }
 
@@ -811,7 +813,10 @@ impl StatWatcherTimerUpdate {
         // `bun test --isolate` retires a file's scheduler and goes on ticking.
         if !self.scheduler.is_shutdown.load(Ordering::Relaxed) {
             let interval = self.scheduler.get_interval();
-            self.scheduler.set_timer(interval);
+            // A later pass that found no watchers leaves the timer to whoever appended one since.
+            if interval != 0 {
+                self.scheduler.set_timer(interval);
+            }
         }
     }
 }

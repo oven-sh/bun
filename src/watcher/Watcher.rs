@@ -280,7 +280,7 @@ impl Watcher {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     fn add_file_descriptor_to_kqueue_without_checks(&self, file: &File, watchlist_id: usize) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
+        use libc::{NOTE_ATTRIB, NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -289,7 +289,8 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
+        // A truncation only posts NOTE_ATTRIB.
+        event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE | NOTE_ATTRIB) as _;
 
         // id
         event.ident = usize::try_from(file.fd().native()).expect("int cast");
@@ -328,9 +329,12 @@ impl Watcher {
         }
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if let Some(file) = &file {
+        let size = file.as_ref().and_then(|file| {
+            // Read first, so that a truncation that posts an event differs from it.
+            let size = file.get_end_pos().ok();
             self.add_file_descriptor_to_kqueue_without_checks(file, watchlist.len());
-        }
+            size
+        });
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = self
             .platform
@@ -342,6 +346,8 @@ impl Watcher {
             hash,
             parent_hash,
             kind: WatchItemKind::File,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
@@ -396,6 +402,8 @@ impl Watcher {
             hash,
             parent_hash,
             kind: WatchItemKind::Directory,
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            size: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
@@ -717,6 +725,9 @@ pub struct WatchItem {
     pub file: Option<CloseOnDrop>,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
+    /// As of the last event. `None` for a directory.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub size: Option<usize>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }
@@ -736,6 +747,10 @@ pub trait WatchItemColumns {
     fn items_file_mut(&mut self) -> &mut [Option<CloseOnDrop>];
     fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size(&self) -> &[Option<usize>];
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size_mut(&mut self) -> &mut [Option<usize>];
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
 }
@@ -758,6 +773,14 @@ impl WatchItemColumns for WatchList {
     }
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size(&self) -> &[Option<usize>] {
+        self.items::<"size", Option<usize>>()
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    fn items_size_mut(&mut self) -> &mut [Option<usize>] {
+        self.items_mut::<"size", Option<usize>>()
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {

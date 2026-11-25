@@ -1,7 +1,9 @@
+use std::time::{Duration, Instant};
+
 use bun_core::output as Output;
 use bun_sys::CloseOnDrop;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher, WatcherThread};
+use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchList, Watcher, WatcherThread};
 
 pub(crate) type Platform = KEventWatcher;
 
@@ -10,6 +12,9 @@ pub struct KEventWatcher {
 }
 
 const CHANGELIST_COUNT: usize = 128;
+
+/// A save that opens with `O_TRUNC` empties the file, then writes it.
+const WAIT_FOR_WRITE_TO_EMPTIED_FILE: Duration = Duration::from_millis(100);
 
 impl KEventWatcher {
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
@@ -57,6 +62,51 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
+/// Returns whether the item at `index` is a file with a new size.
+fn update_size(watchlist: &mut WatchList, index: usize) -> bool {
+    let Some(&Some(before)) = watchlist.items_size().get(index) else {
+        return false;
+    };
+    let Some(Ok(size)) = (watchlist.items_file()[index].as_ref()).map(|file| file.get_end_pos())
+    else {
+        return false;
+    };
+    watchlist.items_size_mut()[index] = Some(size);
+    size != before
+}
+
+fn is_emptied(watchlist: &WatchList, event: WatchEvent) -> bool {
+    event.op.contains(Op::WRITE)
+        && watchlist.items_size().get(event.index as usize) == Some(&Some(0))
+}
+
+/// Appends to `events[..len]` and returns the new length.
+fn append_events(
+    watchlist: &mut WatchList,
+    changes: &[libc::kevent],
+    events: &mut [WatchEvent],
+    mut len: usize,
+) -> usize {
+    for change in changes {
+        let mut event = watch_event_from_kevent(change);
+        if update_size(watchlist, event.index as usize) {
+            event.op |= Op::WRITE;
+        }
+        // Not a truncation: `chmod`, `touch`, `mmap`, an extended attribute.
+        if event.op == Op::METADATA {
+            continue;
+        }
+        match events[..len].last_mut() {
+            Some(last) if last.index == event.index => last.merge(event),
+            _ => {
+                events[len] = event;
+                len += 1;
+            }
+        }
+    }
+    len
+}
+
 pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
     let fd = this.platform.fd.fd();
@@ -74,26 +124,28 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
         count += bun_sys::kevent_wait(fd, &mut changelist[count..], Some(&ts))?;
     }
 
-    let changes = &changelist[..count];
-    let watchevents = &mut thread.watch_events[..count];
-    let mut out_len: usize = 0;
-    if let [first, rest @ ..] = changes {
-        watchevents[0] = watch_event_from_kevent(first);
-        out_len = 1;
-        let mut prev_event = first;
-        for event in rest {
-            if prev_event.udata == event.udata {
-                let new = watch_event_from_kevent(event);
-                watchevents[out_len - 1].merge(new);
-                continue;
-            }
-
-            watchevents[out_len] = watch_event_from_kevent(event);
-            prev_event = event;
-            out_len += 1;
+    let deadline = Instant::now() + WAIT_FOR_WRITE_TO_EMPTIED_FILE;
+    let events = &mut thread.watch_events[..CHANGELIST_COUNT];
+    let mut len: usize = 0;
+    loop {
+        let any_emptied = {
+            let watchlist = &mut this.state.lock().watchlist;
+            len = append_events(watchlist, &changelist[..count], events, len);
+            (events[..len].iter()).any(|&event| is_emptied(watchlist, event))
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if !any_emptied || left.is_zero() || len == events.len() || !this.running.load() {
+            break;
         }
+        let ts = libc::timespec {
+            tv_sec: left.as_secs() as _,
+            tv_nsec: left.subsec_nanos() as _,
+        };
+        count = bun_sys::kevent_wait(fd, &mut changelist[..events.len() - len], Some(&ts))?;
     }
 
-    this.dispatch_file_updates(thread, out_len, &[]);
+    if len > 0 {
+        this.dispatch_file_updates(thread, len, &[]);
+    }
     Ok(())
 }

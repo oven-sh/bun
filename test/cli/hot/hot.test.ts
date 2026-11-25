@@ -2,18 +2,37 @@ import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
 import {
+  appendFileSync,
+  chmodSync,
+  closeSync,
   copyFileSync,
   cpSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  truncateSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
+  writeSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
-import { join } from "path";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isFreeBSD,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  waitForFileToExist,
+} from "harness";
+import { basename, join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -1082,6 +1101,137 @@ it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => 
 
   writeFileSync(join(root, "imported.js"), `console.log("second");`);
   expect(await stdout("second")).toBe(true);
+});
+
+// kqueue reports a truncation as a change of attributes, not as a write.
+it.concurrent.each([
+  ["--hot", "ab"],
+  ["--hot", ""],
+  ["--watch", "ab"],
+  ["--watch", ""],
+])("%s reloads when an import is truncated to %j", async (flag, kept) => {
+  using dir = tempDir("hot-truncated", {
+    "main.js": `import text from "./text.txt";\nconsole.log(JSON.stringify(text));\n`,
+    "text.txt": "abcdef",
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout(`"abcdef"\n`)).toBe(true);
+
+  truncateSync(join(String(dir), "text.txt"), kept.length);
+  expect(await stdout(`"abcdef"\n"${kept}"\n`)).toBe(true);
+});
+
+/** Runs `bun --hot` on a program in `src/` that imports `files`. */
+function traceWatcher(files: string[]) {
+  const imported = [...files, "fence.txt"];
+  const dir = tempDir("hot-traced", {
+    "trace.log": "",
+    "src/main.js": imported.map(file => `import "./${file}";\n`).join("") + `console.log("loaded");\n`,
+    ...Object.fromEntries(imported.map(file => [`src/${file}`, "text"])),
+  });
+  const cwd = join(String(dir), "src");
+  const trace = join(String(dir), "trace.log");
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const loaded = follow(runner.stdout)("loaded");
+  const batches = () =>
+    readFileSync(trace, "utf8")
+      .split("\n")
+      .slice(0, -1)
+      .map(line => Object.entries<{ changed?: string[] }>(JSON.parse(line).files))
+      .map(items => [...new Set(items.flatMap(([path, { changed }]) => changed ?? [basename(path)]))]);
+  return {
+    cwd,
+    /** The names that the watcher reports for `change`, in the batches in which it does. */
+    async batchesOf(change: () => void) {
+      expect(await loaded).toBe(true);
+      const from = batches().length;
+      change();
+      // Events arrive in order: those of `change` are in once this one is.
+      appendFileSync(join(cwd, "fence.txt"), ".");
+      const deadline = Date.now() + 10_000;
+      while (!batches().slice(from).flat().includes("fence.txt")) {
+        if (runner.killed || Date.now() > deadline) throw new Error("No event for fence.txt: " + batches().join(" | "));
+        await Bun.sleep(1);
+      }
+      return batches()
+        .slice(from)
+        .filter(names => names.join() !== "fence.txt")
+        .map(names => names.filter(name => name !== "fence.txt"));
+    },
+    async [Symbol.asyncDispose]() {
+      await runner[Symbol.asyncDispose]();
+      dir[Symbol.dispose]();
+    },
+  };
+}
+
+// Windows reports a new modification time as a write.
+it.concurrent.skipIf(isWindows)("does not report a change of only the attributes of a file or a folder", async () => {
+  const files = ["appended.txt", "truncated.txt", "unchanged.txt"];
+  await using traced = traceWatcher(files);
+  const written = await traced.batchesOf(() => {
+    appendFileSync(join(traced.cwd, "appended.txt"), "more");
+    truncateSync(join(traced.cwd, "truncated.txt"), 1);
+  });
+  expect([...new Set(written.flat())].sort()).toEqual(["appended.txt", "truncated.txt"]);
+
+  const touched = await traced.batchesOf(() => {
+    for (const name of [".", ...files]) {
+      chmodSync(join(traced.cwd, name), 0o700);
+      utimesSync(join(traced.cwd, name), 1, 1);
+    }
+  });
+  expect(touched).toEqual([]);
+});
+
+it.concurrent.skipIf(isWindows)("reports a file that is emptied, then extended to the size it had", async () => {
+  await using traced = traceWatcher(["zeroed.txt"]);
+  let batches: string[][];
+  // If the watcher does not get to run in between, kqueue gives it one event, and the size is the same.
+  do {
+    batches = await traced.batchesOf(() => {
+      truncateSync(join(traced.cwd, "zeroed.txt"), 0);
+      Bun.sleepSync(10);
+      truncateSync(join(traced.cwd, "zeroed.txt"), "text".length);
+    });
+  } while (batches.length === 0);
+  expect([...new Set(batches.flat())]).toEqual(["zeroed.txt"]);
+});
+
+// inotify and Windows report the truncation at once.
+it.concurrent.if(isMacOS || isFreeBSD)("reports a save that empties the file first only after its write", async () => {
+  await using traced = traceWatcher(["saved.txt"]);
+  for (;;) {
+    let elapsed = 0;
+    const batches = await traced.batchesOf(() => {
+      const start = performance.now();
+      const fd = openSync(join(traced.cwd, "saved.txt"), "w");
+      // Longer than the 0.1 ms for which the watcher collects events anyway.
+      Bun.sleepSync(10);
+      writeSync(fd, "TEXT");
+      elapsed = performance.now() - start;
+      closeSync(fd);
+    });
+    // After 100 ms, the watcher takes the empty file for what was saved.
+    if (elapsed >= 100) continue;
+    expect(batches).toEqual([["saved.txt"]]);
+    break;
+  }
 });
 
 // The Windows watcher never reads the cached listing.

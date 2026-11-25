@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { rmSync, symlinkSync } from "node:fs";
+import { rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1", NO_COLOR: "1" };
@@ -362,6 +362,25 @@ test.concurrent.each([
     expect(output.text.split(error).length).toBe(2);
   }
   expect(output.text).not.toContain("internal:bake");
+});
+
+test.concurrent("bun bake reloads again when a save cuts off the old text after a reload read it", async () => {
+  using dir = tempDir("bake-command-cut-off", {
+    "app/pages/index.html": page,
+    "bake.config.ts": `export default { plugin: [] };`,
+  });
+
+  await using proc = spawnBake(String(dir), ["bake", "--port=0"]);
+  const output = collectOutput(proc);
+  await output.waitFor(/the config has "plugin"/);
+
+  // The two steps of Bun.write() and writeFileSync(), with the reload between them.
+  const config = join(String(dir), "bake.config.ts");
+  const fixed = `export default {};`;
+  writeFileSync(config, fixed, { flag: "r+" });
+  await output.waitFor(/export default {};lugin: \[\] };/);
+  truncateSync(config, fixed.length);
+  await output.waitFor(/url: /);
 });
 
 test.concurrent("bun bake --help", async () => {

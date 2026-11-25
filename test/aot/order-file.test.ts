@@ -274,7 +274,7 @@ test.skipIf(!isSupported)(
     expect(sizes[0]).toBeGreaterThan(0);
     expect(sizes).toEqual(sizes.map(() => sizes[0]));
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -340,7 +340,7 @@ console.log(sum);
     const found = Object.keys(places).map(name => [name, [...names].filter(each => each.slice(0, -1) === name).length]);
     expect({ found, before }).toEqual({ found: Object.keys(places).map(name => [name, 8]), before: after });
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -398,7 +398,7 @@ test.skipIf(!isSupported)(
     const alone = bytesOf((await build(String(dir), "program", "a.order")).executable);
     expect(bytesOf((await build(String(dir), "program", "a.order,a.order")).executable)).toBe(alone);
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -419,7 +419,7 @@ test.skipIf(!isSupported)(
         .filter(line => line.startsWith("F "));
     expect(linesOf("first").length).toBe(linesOf("second").length);
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -433,7 +433,7 @@ test.skipIf(!isSupported)(
     expect(await run([plain.executable])).toEqual(expected);
     expect(codeOfStart(plain.executable).size).toBeGreaterThan(0);
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -454,7 +454,7 @@ if (!success) process.exit(1);
     expect((await run([outfile], { BUN_AOT_ORDER_OUT: order })).exitCode).toBe(0);
     expect(readFileSync(order, "utf8")).toStartWith("aot-order v1\n");
   },
-  300_000,
+  240_000,
 );
 
 test.skipIf(!isSupported)(
@@ -490,5 +490,5 @@ test.skipIf(!isSupported || !canTrim)(
     expect(readRemovedFeatures(plain.executable)).toContain(recorder);
     expect(readRemovedFeatures(recording.executable)).not.toContain(recorder);
   },
-  300_000,
+  240_000,
 );

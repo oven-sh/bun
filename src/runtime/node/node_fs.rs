@@ -1717,6 +1717,8 @@ mod _async_tasks {
                 let cancel_token = self.cancel_token.insert(CancelToken::default());
                 if Self::IS_READ {
                     key = Key::from_device_input(*fd);
+                }
+                if !Self::IS_WRITE {
                     cancel_tokens.on_stop = Some(cancel_token.clone());
                 } else if cx.vm().is_main_thread.get() {
                     // A Worker waits for its writes, as in Node.js.

@@ -146,15 +146,16 @@ impl CopyFile {
         let stat = (source.stat().ok()).filter(|stat| sys::S::ISREG(stat.st_mode as _))?;
         let is_source = |path| sys::stat(path).is_ok_and(|other| other.is_same_file(&stat));
         let path = w::verbatim_path(&sys::get_fd_path_owned(source.fd()).ok()?)?;
-        // `CopyFileW` truncates a file that is copied onto itself while it is open for writing.
-        if !is_source(path.as_zstr()) || is_source(to.0) {
+        let has_path = || {
+            w::is_delete_pending(source.fd().native()) == Some(false) && is_source(path.as_zstr())
+        };
+        // `CopyFileW` refuses streams, and truncates a file that is copied onto itself while it is open for writing.
+        if !has_path() || !stream_name(path.as_bytes()).is_empty() || is_source(to.0) {
             return None;
         }
         let result = self.copy_file((path.as_zstr(), path.as_bytes()), to, Some(&stat));
-        // The descriptor still works if the file has been renamed or cannot be opened again.
-        let is_final = |err: &sys::Error| {
-            !matches!(err.get_errno(), E::ECANCELED | E::EBUSY) && is_source(path.as_zstr())
-        };
+        // The descriptor still works if the file has been renamed or deleted meanwhile.
+        let is_final = |err: &sys::Error| err.get_errno() != E::ECANCELED && has_path();
         Some(result).filter(|result| result.as_ref().err().is_none_or(is_final))
     }
 
@@ -245,13 +246,20 @@ impl CopyFile {
             return Err(self.destination.attach_path(err));
         }
 
+        let is_same_stream = || {
+            let [source, destination] = [&source, &destination]
+                .map(|file| sys::get_fd_path_owned(file.fd()).unwrap_or_default());
+            stream_name(&source) == stream_name(&destination)
+        };
+
         Ok(Transfer {
             should_read_from_start: source.is_borrowed()
                 && source_stat.is_some()
                 && !(destination.is_borrowed() && destination_can_block),
             is_same_file: source_stat
                 .zip(destination_stat)
-                .is_some_and(|(source, destination)| source.is_same_file(&destination)),
+                .is_some_and(|(source, destination)| source.is_same_file(&destination))
+                && is_same_stream(),
             source_size: source_stat.map_or(0, |stat| stat.st_size),
             destination_size: match (source_stat, destination_stat) {
                 (None, _) => 0,
@@ -278,6 +286,12 @@ fn can_use_copy_file(path: &[u8]) -> bool {
         name => (name, &[b"con", b"conin$", b"conout$", b"pipe"]),
     };
     !name.is_some_and(|name| strings::eql_any_case_insensitive_ascii(name, device_names))
+}
+
+/// `:name` for an alternate data stream, otherwise empty.
+fn stream_name(path: &[u8]) -> &[u8] {
+    let name = bun_paths::basename(path);
+    &name[strings::index_of_char_usize(name, b':').unwrap_or(name.len())..]
 }
 
 /// A copy through the read/write loop.

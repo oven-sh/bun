@@ -297,6 +297,29 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
     expect(fs.readFileSync(join(String(dir), "copy"), "utf8")).toBe("still here");
   });
 
+  test("copies from an fd whose file is waiting to be deleted", async () => {
+    using dir = tempDir("bun-copy-delete-pending", { source: "still here" });
+    using source = openFile(join(String(dir), "source"), "r");
+    const DELETE = 0x10000;
+    const FILE_FLAG_DELETE_ON_CLOSE = 0x04000000;
+    const path = Buffer.from(join(String(dir), "source") + "\0", "utf16le");
+    kernel32.CloseHandle(kernel32.CreateFileW(path, DELETE, 7, null, 3, FILE_FLAG_DELETE_ON_CLOSE, null));
+    expect(await Bun.write(join(String(dir), "copy"), Bun.file(source.fd))).toBe(10);
+    expect(fs.readFileSync(join(String(dir), "copy"), "utf8")).toBe("still here");
+  });
+
+  test.each(["copy", "source", "source:other", "source:new"])(
+    "copies from an fd of an alternate data stream to %s",
+    async destination => {
+      using dir = tempDir("bun-copy-stream", { source: "a longer file", copy: "old" });
+      fs.writeFileSync(join(String(dir), "source:name"), "stream");
+      fs.writeFileSync(join(String(dir), "source:other"), "Stream");
+      using source = openFile(join(String(dir), "source:name"), "r");
+      expect(await Bun.write(join(String(dir), destination), Bun.file(source.fd))).toBe(6);
+      expect(fs.readFileSync(join(String(dir), destination), "utf8")).toBe("stream");
+    },
+  );
+
   test("path to fd writes at the current file position", async () => {
     using dir = tempDir("bun-copy-to-fd", { source: "0123456789" });
     using destination = openFile(join(String(dir), "destination"), "w");
@@ -545,11 +568,26 @@ describe.skipIf(!isWindows)("unawaited node:fs calls run in order", () => {
     using pipe = createPipe();
     const read = promisify(fs.read)(pipe.readFd, Buffer.alloc(1), 0, 1, null);
     // The handle is not signaled while a request is in flight.
-    while (kernel32.WaitForSingleObject(pipe.readHandle, 0) === 0) await Bun.sleep(1);
+    const isIdle = () => kernel32.WaitForSingleObject(pipe.readHandle, 0) === 0;
+    for (const deadline = Date.now() + 4000; isIdle() && Date.now() < deadline;) await Bun.sleep(1);
+    expect(isIdle()).toBe(false);
     const calls = Array.from({ length: 8 }, () => captureError(promisify(fs.futimes)(pipe.readFd, 1, 1)));
     await (await open(import.meta.path)).close();
     fs.writeSync(pipe.writeFd, "x");
     await Promise.all([read, ...calls]);
+  });
+
+  test.each(["fsync", "fdatasync"])("a Worker that exits does not wait for %s on a pipe", async method => {
+    using pipe = createPipe();
+    const worker = new Worker(
+      `const fs = require("fs");
+       fs.write(${pipe.writeFd}, "abc", () => {});
+       fs.${method}(${pipe.writeFd}, () => {});
+       process.exit(0);`,
+      { eval: true },
+    );
+    await once(worker, "exit");
+    expect(readThreeBytes(pipe.readFd)).toBe("abc");
   });
 
   test("a Worker that exits completes queued ftruncate, futimes and fchmod calls", async () => {
@@ -637,10 +675,11 @@ describe.concurrent("unawaited writes complete before the process exits", () => 
     });
   });
 
-  test.skipIf(!isWindows).each(["Buffer.alloc(1 << 20)", `Bun.file("source")`])(
+  // The data fits the pipe's buffer, so the write does not depend on the reader.
+  test.skipIf(!isWindows).each(["Buffer.alloc(1 << 15)", `Bun.file("source")`])(
     "Bun.write(named pipe path, %s), then process.exit()",
     async data => {
-      using dir = tempDir("bun-write-exit-named-pipe", { source: Buffer.alloc(1 << 20) });
+      using dir = tempDir("bun-write-exit-named-pipe", { source: Buffer.alloc(1 << 15) });
       const pipePath = `\\\\.\\pipe\\bun-write-${crypto.randomUUID()}`;
       await using server = net.createServer();
       await once(server.listen(pipePath), "listening");
@@ -651,7 +690,7 @@ describe.concurrent("unawaited writes complete before the process exits", () => 
         cwd: String(dir),
         stderr: "inherit",
       });
-      expect(Buffer.concat(await Array.fromAsync((await connection)[0])).length).toBe(1 << 20);
+      expect(Buffer.concat(await Array.fromAsync((await connection)[0])).length).toBe(1 << 15);
       expect(await proc.exited).toBe(7);
     },
   );

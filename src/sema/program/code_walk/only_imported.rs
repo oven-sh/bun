@@ -611,18 +611,26 @@ fn find_files_that_require_may_load(
     let mut imported_behind = vec![BEHIND_NO_LOAD; files.len()];
     let mut to_visit: Vec<u32> = Vec::new();
     let imported = std::cell::OnceCell::new();
-    let is_imported = |index: u32| {
-        let imported: &Vec<bool> = imported.get_or_init(|| {
-            let mut imported = vec![false; files.len()];
-            for (file, _) in (0..).zip(&is_of_program).filter(|it| *it.1) {
-                for &(target, site) in named.of(file) {
-                    imported[target as usize] |=
-                        site.map(loading_kind) == Some(Some(CodeImportKind::Import));
-                }
+    let find_named = |is_asked: &dyn Fn(Option<ImportSiteKind>) -> bool| {
+        let mut found = vec![false; files.len()];
+        for (file, _) in (0..).zip(&is_of_program).filter(|it| *it.1) {
+            for &(target, site) in named.of(file) {
+                found[target as usize] |= is_asked(site);
             }
-            imported
-        });
-        imported[index as usize]
+        }
+        found
+    };
+    let is_imported = |index: u32| {
+        let is_import = |site: Option<ImportSiteKind>| {
+            site.map(loading_kind) == Some(Some(CodeImportKind::Import))
+        };
+        imported.get_or_init(|| find_named(&is_import))[index as usize]
+    };
+    // What `require.resolve()` names and no import does is loaded by a `require()` or by its path, if at all.
+    let resolved = std::cell::OnceCell::new();
+    let is_only_resolved = |index: u32| {
+        let is_resolve = |site| matches!(site, Some(ImportSiteKind::RequireResolve(_)));
+        resolved.get_or_init(|| find_named(&is_resolve))[index as usize] && !is_imported(index)
     };
     for entry_point in &context.entry_points() {
         let index = state.index_of[&context.canonical_key(entry_point.key)];
@@ -705,7 +713,9 @@ fn find_files_that_require_may_load(
                 && is_imported(file)
                 && !order.may_be_mocked[file as usize];
             LoadsOfFile {
-                may_be_required: is_named_first || runs_inside_require,
+                may_be_required: is_named_first
+                    || runs_inside_require
+                    || is_only_resolved(file),
                 runs_inside_require,
                 first_load_decides,
             }

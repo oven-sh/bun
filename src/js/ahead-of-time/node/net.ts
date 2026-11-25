@@ -518,6 +518,7 @@ interface UVErrnos {
   UV_ECANCELED: number;
   UV_EISCONN: number;
   UV_ENOBUFS: number;
+  UV_ENOMEM: number;
   UV_ETIMEDOUT: number;
 }
 let uvBinding: UVErrnos | undefined;
@@ -732,6 +733,8 @@ function failWrite(self: $Node.Socket, negErrno: number, callback: WriteCallback
 // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
 function holdRejectedWrite(self: $Node.Socket, handle: SocketHandle, negErrno: number, callback: WriteCallback) {
   if (!self.encrypted || self[kclosed]) return false;
+  // The engine has not ended anything where memory ran out.
+  if (negErrno === uv().UV_ENOMEM) return false;
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
   self._pendingData = null;
   self[kwriteCallback] = callback;

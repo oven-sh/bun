@@ -2621,7 +2621,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         if !self.try_buffer_for_node_net(remaining_in_input_data) {
                             self.buffered_data_for_node_net
                                 .with_mut(|b| b.clear_and_free());
-                            break 'brk -(sys::SystemErrno::ENOMEM as i32);
+                            break 'brk -sys::UV_E::NOMEM;
                         }
 
                         break 'brk rc;
@@ -2631,8 +2631,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             // slower-path: clone the data, do one write.
             if !self.try_buffer_for_node_net(buffer.slice()) {
-                let _ = global.throw_out_of_memory();
-                return WriteResult::Fail;
+                self.buffered_data_for_node_net
+                    .with_mut(|b| b.clear_and_free());
+                break 'brk -sys::UV_E::NOMEM;
             }
             // R-2: `write_maybe_corked` takes `&self` and does not touch
             // `buffered_data_for_node_net`, so a `JsCell::get()` projection
@@ -2856,7 +2857,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // A part may be sent, and the rest cannot follow: JS fails the write.
             if !self.try_buffer_for_node_net(&bytes[uwrote..]) {
                 return WriteResult::Success {
-                    wrote: -(sys::SystemErrno::ENOMEM as i32),
+                    wrote: -sys::UV_E::NOMEM,
                     total: bytes.len(),
                 };
             }

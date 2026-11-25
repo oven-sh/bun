@@ -549,19 +549,19 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
     });
   });
 
-  it.concurrent("a socket write whose rest cannot be kept", async () => {
+  it.concurrent.each(["net", "tls"])("a socket write whose rest cannot be kept (%s)", async transport => {
     const results = await runCapped(
-      {},
+      { key: Buffer.from(tls.key), cert: Buffer.from(tls.cert) },
       /* js */ `
         import { once } from "node:events";
-        import { connect, createServer } from "node:net";
+        import { connect, createServer } from "node:${transport}";
         const { promise, resolve } = Promise.withResolvers();
-        const server = createServer(socket => {
+        const server = createServer({ key: inputs.key, cert: inputs.cert }, socket => {
           socket.on("error", error => resolve(error.code));
           socket.write(Buffer.alloc(32 * 1024 * 1024));
         });
         await once(server.listen(0, "127.0.0.1"), "listening");
-        const client = connect(server.address().port, "127.0.0.1").on("error", () => {}).pause();
+        const client = connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }).on("error", () => {}).pause();
         results.write = await promise;
         client.destroy();
         server.close();

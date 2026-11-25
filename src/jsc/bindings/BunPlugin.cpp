@@ -3339,7 +3339,16 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
 }
 
 // After moveLoadedModule() a module's filename is not its key in the require cache.
-using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
+struct RequireKeys {
+    UncheckedKeyHashMap<Bun::JSCommonJSModule*, String> ofModules;
+    // The keys that hold a module object that isn't of a compiled file, in a run with compiled code.
+    UncheckedKeyHashSet<String> loadedFromSource;
+};
+
+static bool isModuleObjectOfCompiledFile(Bun::JSCommonJSModule* module)
+{
+    return module->compiledModule != Bun::JSCommonJSModule::noCompiledModule || module->compiledModuleLoadedInto != Bun::JSCommonJSModule::noCompiledModule;
+}
 
 // `importer` is null if the requirer's object has been collected. Then it isn't in the require cache, and `importerFilename` is its key.
 static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, Bun::JSCommonJSModule* importer, JSValue importerFilename, JSValue importedValue)
@@ -3350,15 +3359,17 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
     auto* imported = importedValue ? dynamicDowncast<Bun::JSCommonJSModule>(importedValue) : nullptr;
     if (!imported)
         return;
-    String importedKey = requireKeys.get(imported);
-    bool isOfCompiledFile = imported->compiledModule != Bun::JSCommonJSModule::noCompiledModule || imported->compiledModuleLoadedInto != Bun::JSCommonJSModule::noCompiledModule;
-    if (importedKey.isNull() && isOfCompiledFile && imported->filename().isString()) {
+    String importedKey = requireKeys.ofModules.get(imported);
+    if (importedKey.isNull() && isModuleObjectOfCompiledFile(imported) && imported->filename().isString()) {
         importedKey = asString(imported->filename())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, );
+        // The file was loaded again, into another module object.
+        if (requireKeys.loadedFromSource.contains(importedKey))
+            return;
     }
     if (importedKey.isNull())
         return;
-    if (auto importerKey = importer ? requireKeys.find(importer) : requireKeys.end(); importerKey != requireKeys.end()) {
+    if (auto importerKey = importer ? requireKeys.ofModules.find(importer) : requireKeys.ofModules.end(); importerKey != requireKeys.ofModules.end()) {
         addImporter(importersOf, importerKey->value, importedKey);
         return;
     }
@@ -3711,8 +3722,14 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(value);
             if (!commonJSModule || !requireKey.isString())
                 continue;
-            requireKeys.add(commonJSModule, asString(requireKey)->value(globalObject));
+            requireKeys.ofModules.add(commonJSModule, asString(requireKey)->value(globalObject));
             RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && !isModuleObjectOfCompiledFile(commonJSModule)) {
+                requireKeys.loadedFromSource.add(asString(requireKey)->value(globalObject));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+#endif
         }
     }
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
@@ -3751,8 +3768,10 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #if ENABLE(AOT)
     if (evict.all)
         plugins.requirersOfCompiledFiles.clear();
-    for (auto& [required, requirer] : plugins.requirersOfCompiledFiles)
-        addImporter(importersOf, requirer, required);
+    for (auto& [required, requirer] : plugins.requirersOfCompiledFiles) {
+        if (!requireKeys.loadedFromSource.contains(required))
+            addImporter(importersOf, requirer, required);
+    }
 #endif
 
     // A load stuck behind an abandoned fetch never finishes, so the entries waiting on it don't have to stay.

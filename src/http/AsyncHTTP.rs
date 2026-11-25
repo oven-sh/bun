@@ -1,6 +1,6 @@
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
@@ -472,21 +472,41 @@ impl SyncResultSlot {
         }
     }
 
+    /// Whether the result came within `timeout`.
+    fn wait_for(&self, timeout: core::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut slot = self.slot.lock();
+        while slot.is_none() {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return false;
+            };
+            let _ = self
+                .cv
+                .timed_wait_guarded(&mut slot, remaining.as_nanos() as u64);
+        }
+        true
+    }
+
     fn into_inner(mut self) -> (Box<AsyncHTTP<'static>>, HTTPClientResult<'static>) {
         self.slot.get_mut().take().expect("waited for")
     }
 }
 
-fn send_and_wait<'a>(requests: impl Iterator<Item = Box<AsyncHTTP<'a>>>, slots: &[SyncResultSlot]) {
+/// The caller waits for every slot before it returns.
+fn send_to_slots<'a>(requests: impl Iterator<Item = Box<AsyncHTTP<'a>>>, slots: &[SyncResultSlot]) {
     crate::http_thread::init(&Default::default());
     crate::HTTPThread::schedule(slots.iter().zip(requests).map(|(slot, mut request)| {
         request.client.result_callback = HTTPClientResultCallback::new(
             core::ptr::from_ref(slot).cast_mut(),
             SyncResultSlot::on_result,
         );
-        // SAFETY: every request is back before this function returns.
+        // SAFETY: every request is back before the caller returns.
         unsafe { core::mem::transmute::<Box<AsyncHTTP<'a>>, Box<AsyncHTTP<'static>>>(request) }
     }));
+}
+
+fn send_and_wait<'a>(requests: impl Iterator<Item = Box<AsyncHTTP<'a>>>, slots: &[SyncResultSlot]) {
+    send_to_slots(requests, slots);
     slots.iter().for_each(SyncResultSlot::wait);
 }
 
@@ -513,6 +533,36 @@ impl<'a> AsyncHTTP<'a> {
         let (request, mut result) = slot.into_inner();
         result.body_into(&mut response_buffer.list);
         Ok((request, result))
+    }
+
+    /// Like `send_sync`, but a request without a result after `timeout` is aborted, and fails as an aborted one does.
+    /// The time covers the whole request, from the name lookup to the last byte of the body.
+    pub fn send_sync_with_deadline(
+        mut self: Box<Self>,
+        response_buffer: &mut MutableString,
+        timeout: core::time::Duration,
+    ) -> crate::Result<crate::HTTPResponseMetadata> {
+        if !self.url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedProtocol);
+        }
+        // The request points to it. It is declared first, so it is dropped last.
+        let aborted = AtomicBool::new(false);
+        let id = crate::ASYNC_HTTP_ID_MONOTONIC.fetch_add(1, Ordering::Relaxed);
+        self.client.signals.aborted = Some(NonNull::from(&aborted));
+        self.client.async_http_id = id;
+        self.async_http_id = id;
+
+        let slot = SyncResultSlot::new();
+        send_to_slots(core::iter::once(self), core::slice::from_ref(&slot));
+        if !slot.wait_for(timeout) {
+            aborted.store(true, Ordering::Relaxed);
+            // The HTTP thread still has the request, and the slot, until it reports the abort.
+            crate::HTTPThread::schedule_shutdown(id);
+            slot.wait();
+        }
+        let (_request, mut result) = slot.into_inner();
+        result.body_into(&mut response_buffer.list);
+        result.into_metadata()
     }
 
     /// Sends the requests side by side. The results are in the same order.

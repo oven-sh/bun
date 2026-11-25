@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { crash_handler, upgrade_test_helpers } from "bun:internal-for-testing";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunExe,
   bunEnv as env,
@@ -15,7 +15,10 @@ import {
 import { readdirSync, statSync } from "node:fs";
 import { copyFile, link, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
+import { getCanaryLabel } from "../../../.buildkite/scripts/upload-release.ts";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
+// CI builds of a pull request or of main, and `bun bd`. Only such a build takes the canary release without a flag.
+const { is_canary: isCanary } = crash_handler.getFeatureData();
 
 // The asset `bun upgrade` picks for the target this test runs on, and the
 // folder inside it.
@@ -176,7 +179,7 @@ async function writeFakeReleaseZip(outPath: string, version: string): Promise<vo
   }
 }
 
-type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string> };
+type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string>; requests: string[] };
 
 function startReleaseServer(opts: {
   tagName: string;
@@ -184,17 +187,26 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  /** Of the asset that this target takes. */
+  label?: string;
+  /** Of the answer to a request for the release. */
+  status?: number;
+  /** In place of the release. */
+  body?: string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
+  const requests: string[] = [];
   const server = Bun.serve({
     tls: tls,
     port: 0,
     async fetch(req) {
       const { pathname } = new URL(req.url);
+      requests.push(pathname);
       if (pathname.startsWith("/download/")) {
         if (opts.zipPath) return new Response(Bun.file(opts.zipPath));
         return new Response(opts.zipBody ?? "this is not a real zip archive");
       }
+      if (opts.body !== undefined) return new Response(opts.body);
       return new Response(
         JSON.stringify({
           tag_name: opts.tagName,
@@ -202,13 +214,16 @@ function startReleaseServer(opts: {
             url: "foo",
             content_type: "application/zip",
             name,
+            label: name === releaseAsset ? (opts.label ?? "") : "",
             ...(opts.digest ? { digest: opts.digest } : {}),
             browser_download_url: `https://${server.hostname}:${server.port}/download/${name}`,
           })),
         }),
+        { status: opts.status ?? 200 },
       );
     },
   }) as ReleaseServer;
+  server.requests = requests;
   server.env = {
     ...env,
     NODE_TLS_REJECT_UNAUTHORIZED: "0",
@@ -529,4 +544,152 @@ it.concurrent("verifies the downloaded release archive against the digest report
   expect(matched.stderr).toEndWith(unpackFailure);
   expect(matched.staged).toEqual(["9.9.8"]);
   expect(matched.exitCode).toBe(1);
+});
+
+describe("canary", () => {
+  const canaryRelease = "/repos/oven-sh/bun/releases/tags/canary";
+  const alreadyOnLatest =
+    "Congrats! You're already on the latest canary build of Bun\n\nTo downgrade to the latest stable release, run bun upgrade --stable\n";
+
+  // A zip with no more than the directory at its end, which is all that the canary publish reads of one.
+  function makeZipDirectory(entryName: string, size: number, crc: number): Buffer {
+    const name = Buffer.from(entryName);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt32LE(crc, 16);
+    entry.writeUInt32LE(size, 24);
+    entry.writeUInt16LE(name.length, 28);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(1, 8);
+    end.writeUInt16LE(1, 10);
+    end.writeUInt32LE(entry.length + name.length, 12);
+    return Buffer.concat([entry, name, end]);
+  }
+
+  // The label that the canary publish gives the asset of this target when the executable in its zip is the stand-in,
+  // and the one it gives a zip that it cannot read.
+  let label: string, labelWithoutExecutable: string;
+  let commit: string, size: number, crc32: string;
+  beforeAll(async () => {
+    commit = Bun.revision;
+    let crc = 0;
+    size = 0;
+    for await (const chunk of Bun.file(standInExe).stream()) {
+      crc = Bun.hash.crc32(chunk, crc);
+      size += chunk.length;
+    }
+    crc32 = crc.toString(16).padStart(8, "0");
+
+    using zips = tempDir("bun-upgrade-canary-zips", {
+      [releaseAsset]: makeZipDirectory(`${releaseFolder}/bun${isWindows ? ".exe" : ""}`, size, crc),
+      unreadable: { [releaseAsset]: "not a zip" },
+    });
+    label = getCanaryLabel(join(String(zips), releaseAsset), commit);
+    using warn = spyOn(console, "warn").mockImplementation(() => {});
+    labelWithoutExecutable = getCanaryLabel(join(String(zips), "unreadable", releaseAsset), commit);
+    expect(warn).toHaveBeenCalledTimes(1);
+    // A debug build is close to 2 GB.
+  }, 60_000);
+
+  // The zip of the canary release is at a compiled-in github.com URL. This proxy is in front of github.com: it notes
+  // the tunnels that `bun upgrade` asks for and opens none, so a download fails after it has shown itself.
+  async function upgrade(apiEnv: Record<string, string | undefined>, ...flags: string[]) {
+    const tunnels: string[] = [];
+    using proxy = Bun.serve({
+      port: 0,
+      fetch(req) {
+        tunnels.push(`${req.method} ${req.headers.get("host")}`);
+        return new Response("no tunnel", { status: 502 });
+      },
+    });
+    const proxyUrl = `http://${proxy.hostname}:${proxy.port}`;
+    const noProxy = "localhost,127.0.0.1,::1";
+    await using proc = spawn({
+      cmd: [standInExe, "upgrade", ...flags],
+      cwd: standInDir,
+      // A debug build prints the assets it looks at there.
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...apiEnv,
+        HTTPS_PROXY: proxyUrl,
+        https_proxy: proxyUrl,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        NO_PROXY: noProxy,
+        no_proxy: noProxy,
+      },
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, tunnels };
+  }
+
+  // Without the label, and whenever it cannot read one, `bun upgrade` goes on to the download as it did before.
+  function expectDownload({ stderr, exitCode, tunnels }: Awaited<ReturnType<typeof upgrade>>) {
+    expect(stderr).toContain("Bun upgrade failed with error: ProxyConnectFailed\n");
+    expect(stderr).not.toContain("Congrats");
+    expect(stderr).not.toContain("JSON");
+    expect({ exitCode, tunnels }).toEqual({ exitCode: 1, tunnels: ["CONNECT github.com:443"] });
+  }
+
+  it.concurrent.skipIf(!isCanary)(
+    "stops before the download when the label of the asset names its executable",
+    async () => {
+      using server = startReleaseServer({ tagName: "canary", label });
+      const { stderr, exitCode, tunnels } = await upgrade(server.env);
+      // A slow run shows the progress of the request first.
+      expect(stderr).toEndWith(alreadyOnLatest);
+      expect({ exitCode, tunnels, requests: server.requests }).toEqual({
+        exitCode: 0,
+        tunnels: [],
+        requests: [canaryRelease],
+      });
+      expect(readdirSync(standInDir)).toEqual([basename(standInExe)]);
+    },
+  );
+
+  const otherCrc32 = () => (crc32 === "00000000" ? "00000001" : "00000000");
+  it.concurrent.skipIf(!isCanary).each([
+    ["has no label", () => ({})],
+    ["is of another commit", () => ({ label: label.replace(commit, "0".repeat(40)) })],
+    ["has an executable of another size", () => ({ label: label.replace(` ${size} `, ` ${size + 1} `) })],
+    ["has an executable of other bytes", () => ({ label: label.replace(` ${crc32})`, ` ${otherCrc32()})`) })],
+    ["has a zip that the publish could not read", () => ({ label: labelWithoutExecutable })],
+    ["has the label of another asset", () => ({ label: label.replace(releaseAsset, "bun-other.zip") })],
+    ["has more in its label", () => ({ label: label + " " })],
+    ["is not the canary", () => ({ label, tagName: "bun-v9.9.9" })],
+    ["is not to be had", () => ({ label, status: 403 })],
+    ["has no asset for this target", () => ({ label, assetNames: [] })],
+    ["is a page of HTML", () => ({ body: "<!DOCTYPE html><html><body>Sign in to the network</body></html>" })],
+    ["is empty", () => ({ body: "" })],
+    ["is an empty object", () => ({ body: "{}" })],
+    ["is an array", () => ({ body: "[]" })],
+    ["has no assets", () => ({ body: `{"tag_name":"canary"}` })],
+    ["has assets that are no array", () => ({ body: `{"tag_name":"canary","assets":{}}` })],
+  ] as const)("downloads when the release %s", async (_, release) => {
+    using server = startReleaseServer({ tagName: "canary", ...release() });
+    expectDownload(await upgrade(server.env));
+    expect(server.requests).toEqual([canaryRelease]);
+  });
+
+  it.concurrent.skipIf(!isCanary)(
+    "downloads when the release does not come in time",
+    async () => {
+      // Takes the connection and never answers. `bun upgrade` waits 5 seconds for the release.
+      using api = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      using server = startReleaseServer({ tagName: "canary", label });
+      expectDownload(await upgrade({ ...server.env, GITHUB_API_DOMAIN: `127.0.0.1:${api.port}` }));
+      expect(server.requests).toEqual([]);
+    },
+    30_000,
+  );
+
+  // A build that is no canary, and `bun-profile`, are not the executable of the asset that the run takes.
+  it.concurrent("does not ask for the release when its label cannot name the executable", async () => {
+    using server = startReleaseServer({ tagName: "canary", label });
+    expectDownload(await upgrade(server.env, "--canary", "--profile"));
+    expect(server.requests).toEqual([]);
+  });
 });

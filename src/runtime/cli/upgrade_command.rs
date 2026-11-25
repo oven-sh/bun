@@ -68,6 +68,9 @@ pub(crate) struct Version {
     pub(crate) tag: Box<[u8]>,
     pub(crate) size: u32,
     pub(crate) digest: Integrity,
+    /// The label of the release asset. The canary publish writes
+    /// `<asset> (<commit> <size of the executable> <its CRC-32>)` there.
+    pub(crate) label: Box<[u8]>,
 }
 
 impl Version {
@@ -150,6 +153,33 @@ impl Version {
     }
 }
 
+const fn is_commit(sha: &str) -> bool {
+    let sha = sha.as_bytes();
+    let mut i = 0;
+    while i < sha.len() {
+        if !matches!(sha[i], b'0'..=b'9' | b'a'..=b'f') {
+            return false;
+        }
+        i += 1;
+    }
+    sha.len() == 40
+}
+
+/// The size of a file and the CRC-32 that a zip archive stores for those bytes.
+fn size_and_crc32(path: &ZStr) -> sys::Maybe<(u64, u32)> {
+    let file = sys::File::open(path, sys::O::RDONLY, 0)?;
+    let mut chunk = vec![0u8; 256 * 1024];
+    let (mut size, mut crc) = (0u64, 0u32);
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            return Ok((size, crc));
+        }
+        size += read as u64;
+        crc = bun_highway::checksums::crc32(crc, &chunk[..read]);
+    }
+}
+
 // Exported C symbol — null-terminated
 // Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
 // `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
@@ -175,10 +205,18 @@ pub(crate) struct UpgradeCommand;
 impl UpgradeCommand {
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
-    pub(crate) fn get_latest_version<const SILENT: bool>(
+    const STABLE_RELEASE_PATH: &'static str =
+        "repos/Jarred-Sumner/bun-releases-for-updater/releases/latest";
+    const CANARY_RELEASE_PATH: &'static str = "repos/oven-sh/bun/releases/tags/canary";
+
+    /// A `silent` lookup is one the caller can do without: it prints no error, never exits, and
+    /// gives up after `SILENT_LOOKUP_DEADLINE`.
+    pub(crate) fn get_latest_version(
         env_loader: &mut DotEnv::Loader,
         mut refresher: Option<&mut Progress::Progress>,
         use_profile: bool,
+        release_path: &str,
+        silent: bool,
     ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
@@ -208,8 +246,9 @@ impl UpgradeCommand {
         let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
             url_buf,
-            "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+            "https://{}/{}",
             bstr::BStr::new(github_api_domain),
+            release_path,
         )
         .expect("oom");
         let api_url = URL::parse(&url_buf[..]);
@@ -265,11 +304,12 @@ impl UpgradeCommand {
             HTTP::FetchRedirect::Follow,
         );
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
-
-        if !SILENT {
-            async_http.client.progress = refresher.as_deref_mut();
-        }
-        let response = async_http.send_sync(metadata_body)?;
+        async_http.client.progress = refresher.as_deref_mut();
+        let response = if silent {
+            async_http.send_sync_with_deadline(metadata_body, Self::SILENT_LOOKUP_DEADLINE)?
+        } else {
+            async_http.send_sync(metadata_body)?
+        };
 
         match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
@@ -290,7 +330,7 @@ impl UpgradeCommand {
         let expr = match JSON::parse_utf8(&source, &mut log, bump) {
             Ok(e) => e,
             Err(err) => {
-                if !SILENT {
+                if !silent {
                     let refresher = refresher.expect("infallible: progress active");
                     refresher.end();
                     refresher.refresh();
@@ -312,7 +352,7 @@ impl UpgradeCommand {
         };
 
         if log.errors > 0 {
-            if !SILENT {
+            if !silent {
                 let refresher = refresher.expect("infallible: progress active");
                 refresher.end();
                 refresher.refresh();
@@ -329,10 +369,11 @@ impl UpgradeCommand {
             tag: Box::default(),
             size: 0,
             digest: Integrity::default(),
+            label: Box::default(),
         };
 
         if !expr.is_object() {
-            if !SILENT {
+            if !silent {
                 let refresher = refresher.expect("infallible: progress active");
                 refresher.end();
                 refresher.refresh();
@@ -354,7 +395,7 @@ impl UpgradeCommand {
         }
 
         if version.tag.is_empty() {
-            if !SILENT {
+            if !silent {
                 let refresher = refresher.expect("infallible: progress active");
                 refresher.end();
                 refresher.refresh();
@@ -437,6 +478,12 @@ impl UpgradeCommand {
                             }
                         }
 
+                        if let Some(label_) = asset.as_property(b"label") {
+                            if let Some(label) = label_.expr.as_utf8_string_literal() {
+                                version.label = Box::<[u8]>::from(label);
+                            }
+                        }
+
                         if let Some(size_) = asset.as_property(b"size") {
                             if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size =
@@ -449,7 +496,7 @@ impl UpgradeCommand {
             }
         }
 
-        if !SILENT {
+        if !silent {
             let refresher = refresher.expect("infallible: progress active");
             refresher.end();
             refresher.refresh();
@@ -465,6 +512,66 @@ impl UpgradeCommand {
         }
 
         Ok(None)
+    }
+
+    const SILENT_LOOKUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5);
+
+    /// What the GitHub API says of the canary release, for a build whose executable the canary
+    /// publish can have labelled. A build that the publish cannot have made, and `bun-profile`,
+    /// which is not the executable of the asset that a run without `--profile` asks for, make no
+    /// request. The caller downloads the asset without an answer, so every failure is a `None`.
+    fn canary_release_of_published_build(
+        env_loader: &mut DotEnv::Loader,
+        use_profile: bool,
+    ) -> Option<Version> {
+        const IS_PUBLISHED_BUILD: bool = Environment::IS_CANARY && is_commit(Environment::GIT_SHA);
+
+        if !IS_PUBLISHED_BUILD || use_profile {
+            return None;
+        }
+
+        let refresher = &mut Progress::Progress::default();
+        refresher.start(b"Checking the canary release", 0);
+        let version = Self::get_latest_version(
+            env_loader,
+            Some(&mut *refresher),
+            false,
+            Self::CANARY_RELEASE_PATH,
+            true,
+        );
+        refresher.end();
+        refresher.refresh();
+        version
+            .ok()
+            .flatten()
+            .filter(|version| &*version.tag == b"canary")
+    }
+
+    /// Whether the label of the asset names the commit of this build, and the size and the
+    /// CRC-32 of the executable that runs. `getCanaryLabel` in .buildkite/scripts/upload-release.ts
+    /// writes the label, from the same commit as this build has.
+    fn label_names_running_executable(label: &[u8]) -> bool {
+        const LABEL_PREFIX: &str =
+            const_format::concatcp!(Version::ZIP_FILENAME, " (", Environment::GIT_SHA, " ");
+
+        if !label.starts_with(LABEL_PREFIX.as_bytes()) {
+            return false;
+        }
+        let Some((size, crc)) = bun_core::self_exe_path()
+            .ok()
+            .and_then(|path| size_and_crc32(path).ok())
+        else {
+            return false;
+        };
+        let mut expected = LABEL_PREFIX.as_bytes().to_vec();
+        write!(&mut expected, "{size} {crc:08x})").expect("oom");
+        expected == label
+    }
+
+    fn print_already_on_latest_canary() {
+        bun_core::pretty_errorln!(
+            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
+        );
     }
 
     const EXE_SUFFIX: &'static str = if cfg!(windows) { ".exe" } else { "" };
@@ -559,10 +666,12 @@ impl UpgradeCommand {
             let refresher = &mut Progress::Progress::default();
             refresher.start(b"Fetching version tags", 0);
 
-            let Some(version) = Self::get_latest_version::<false>(
+            let Some(version) = Self::get_latest_version(
                 &mut env_loader,
                 Some(&mut *refresher),
                 use_profile,
+                Self::STABLE_RELEASE_PATH,
+                false,
             )?
             else {
                 return Ok(0);
@@ -605,6 +714,13 @@ impl UpgradeCommand {
 
             version
         } else {
+            // The one request for the release in a run.
+            let release = Self::canary_release_of_published_build(&mut env_loader, use_profile);
+            if release.is_some_and(|release| Self::label_names_running_executable(&release.label)) {
+                Self::print_already_on_latest_canary();
+                return Ok(0);
+            }
+
             Version {
                 tag: b"canary"[..].into(),
                 zip_url: const_format::concatcp!(
@@ -615,6 +731,7 @@ impl UpgradeCommand {
                 .into(),
                 size: 0,
                 digest: Integrity::default(),
+                label: Box::default(),
             }
         };
 
@@ -1107,9 +1224,7 @@ impl UpgradeCommand {
                     );
 
                     if target_hash == source_hash {
-                        bun_core::pretty_errorln!(
-                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
-                        );
+                        Self::print_already_on_latest_canary();
                         return Ok(0);
                     }
                 }

@@ -520,7 +520,10 @@ const nameTypesOfBun = (config: string) => {
 };
 for (const [name, { files, errors, stdout }] of Object.entries(rows)) {
   if (!("node_modules/made-up/types.d.ts" in files) || name.includes("for lack of Bun's types")) continue;
-  const named = Object.entries(files).map(([path, text]) => [path, path.endsWith("tsconfig.json") ? nameTypesOfBun(text) : text]);
+  const named = Object.entries(files).map(([path, text]) => [
+    path,
+    path.endsWith("tsconfig.json") ? nameTypesOfBun(text) : text,
+  ]);
   rows[`${name}, with Bun's types installed`] = {
     files: { ...Object.fromEntries(named), ...installedTypesOfBun },
     errors,

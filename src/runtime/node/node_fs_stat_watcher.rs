@@ -161,7 +161,11 @@ impl StatWatcherScheduler {
         let is_pass_out = this.work_pool_in_flight.load(Ordering::Acquire);
         let current = this.get_interval();
         if is_pass_out || current == 0 || current > interval {
-            let next = if current == 0 { interval } else { current.min(interval) };
+            let next = if current == 0 {
+                interval
+            } else {
+                current.min(interval)
+            };
             this.current_interval.store(next, Ordering::Relaxed);
             this.set_timer(next);
         }

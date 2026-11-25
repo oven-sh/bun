@@ -18,24 +18,28 @@ function project(waits: number) {
     "part8.mjs": `export const value = 1;\n`,
   };
   for (let index = 0; index < 8; index++)
-    files[`part${index}.mjs`] = `import { value as next } from "./part${index + 1}.mjs";\nexport const value = next + 1;\n`;
+    files[`part${index}.mjs`] =
+      `import { value as next } from "./part${index + 1}.mjs";\nexport const value = next + 1;\n`;
   return files;
 }
 
-test.concurrent.each([0, 1])("a load that another comes ahead of keeps no steps of the levels it never goes through (%p waits)", async waits => {
-  using dir = tempDir("aot-loads-come-ahead", project(waits));
-  const cwd = String(dir);
-  const executable = join(cwd, isWindows ? "main.exe" : "main");
-  await using built = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable],
-    cwd,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [buildErrors, buildExitCode] = await Promise.all([built.stderr.text(), built.exited]);
-  expect({ buildExitCode, buildErrors }).toEqual({ buildExitCode: 0, buildErrors: expect.any(String) });
-  await using ran = Bun.spawn({ cmd: [executable], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "first 9\nsecond 11\n", exitCode: 0 });
-});
+test.concurrent.each([0, 1])(
+  "a load that another comes ahead of keeps no steps of the levels it never goes through (%p waits)",
+  async waits => {
+    using dir = tempDir("aot-loads-come-ahead", project(waits));
+    const cwd = String(dir);
+    const executable = join(cwd, isWindows ? "main.exe" : "main");
+    await using built = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildErrors, buildExitCode] = await Promise.all([built.stderr.text(), built.exited]);
+    expect({ buildExitCode, buildErrors }).toEqual({ buildExitCode: 0, buildErrors: expect.any(String) });
+    await using ran = Bun.spawn({ cmd: [executable], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "first 9\nsecond 11\n", exitCode: 0 });
+  },
+);

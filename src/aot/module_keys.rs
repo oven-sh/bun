@@ -160,8 +160,8 @@ pub fn parses_text_as_data(loader: Loader) -> bool {
 }
 
 pub fn is_parsed_as_data(path: &[u8]) -> bool {
-    let type_of_form = path_without_form(path)
-        .and_then(|file| Loader::from_string(&path[file.len() + 1..]));
+    let type_of_form =
+        path_without_form(path).and_then(|file| Loader::from_string(&path[file.len() + 1..]));
     parses_text_as_data(type_of_form.unwrap_or_else(|| loader_by_name(path)))
 }
 

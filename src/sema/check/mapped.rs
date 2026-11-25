@@ -295,7 +295,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.generic_mapped_types_in_progress.push((file, node));
         let used = self.stack_in_use() - self.stack_below_generic_mapped_types;
-        let is_endless = used > MOST_STACK_OF_GENERIC_MAPPED_TYPES.min(self.stack_limit as isize / 2);
+        let is_endless =
+            used > MOST_STACK_OF_GENERIC_MAPPED_TYPES.min(self.stack_limit as isize / 2);
         let name = if is_in_progress && is_endless {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;

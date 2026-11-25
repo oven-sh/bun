@@ -2249,7 +2249,10 @@ export interface Told { "node:http2": 9 }"#;
 fn text_made_by_folding_is_written_as_a_value() {
     let texts: [(&str, &[RuntimeModule]); 8] = [
         (r#"JSON.parse('["node:dgram"]')"#, &[NodeDgram]),
-        (r#"JSON.parse('{ "node:dgram": 1, "os" : 2 }')"#, &[NodeDgram]),
+        (
+            r#"JSON.parse('{ "node:dgram": 1, "os" : 2 }')"#,
+            &[NodeDgram],
+        ),
         (r#"JSON.parse('{ "held": "dgram" }')"#, &[NodeDgram]),
         (r#"JSON.parse('"node:dgram" [') "#, &[]),
         (r#"["node:d", "gram"].join("")"#, &[NodeDgram]),

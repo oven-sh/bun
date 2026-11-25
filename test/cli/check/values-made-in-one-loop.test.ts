@@ -9,7 +9,11 @@ const tsconfig = JSON.stringify({
   compilerOptions: { strict: true, noEmit: true, target: "esnext", module: "esnext", lib: ["esnext"], types: [] },
 });
 
-const program = (declared: string, made: string, size: number) => `declare const n: number; declare function id<T>(x: T): T;
+const program = (
+  declared: string,
+  made: string,
+  size: number,
+) => `declare const n: number; declare function id<T>(x: T): T;
 declare function over(x: string): number; declare function over(x: number): string; declare function over(x: unknown): boolean;
 export function f() {
   let a${declared};

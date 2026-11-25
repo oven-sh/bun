@@ -15,7 +15,15 @@ export function first(a: any, b?: any): any { return (1 as any[]) as Ring<nowher
 `,
   "between.ts": `import {} from "./first";\n`,
 };
-const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: "esnext", moduleResolution: "bundler", lib: ["esnext"], types: [] };
+const compilerOptions = {
+  strict: true,
+  noEmit: true,
+  target: "esnext",
+  module: "esnext",
+  moduleResolution: "bundler",
+  lib: ["esnext"],
+  types: [],
+};
 
 // The errors of both are TypeScript 7.0.2's.
 test("an alias and the default of a type parameter in one ring", async () => {
@@ -24,7 +32,11 @@ test("an alias and the default of a type parameter in one ring", async () => {
     ...files,
   });
   const check = async (threads: number) => {
-    const { stdout } = await run([bunExe(), "check", "--no-pretty", "--all", `--threads=${threads}`, "-p", "."], String(dir), { ...bunEnv, NO_COLOR: "1" });
+    const { stdout } = await run(
+      [bunExe(), "check", "--no-pretty", "--all", `--threads=${threads}`, "-p", "."],
+      String(dir),
+      { ...bunEnv, NO_COLOR: "1" },
+    );
     return stdout.match(/^space\.ts\(\d+,\d+\): error (TS2456|TS2716)/gm);
   };
   for (const threads of [1, 8, 32]) {

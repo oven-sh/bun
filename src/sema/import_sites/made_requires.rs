@@ -919,11 +919,7 @@ fn is_written_out_of_texts(text: Text<'_, '_, '_, '_>, e: ExprId, parts_left: us
     }
 }
 
-pub fn find_chosen_require_base(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    call: ExprId,
-) -> Option<usize> {
+pub fn find_chosen_require_base(hir: &File<'_>, bound: &Bound<'_>, call: ExprId) -> Option<usize> {
     let text = Text::of(hir, bound, None);
     let given = find_arguments_of_create_require(text, call, StepsLeft::ALL)?;
     if find_made_require(text, call, StepsLeft::ALL).is_some() {

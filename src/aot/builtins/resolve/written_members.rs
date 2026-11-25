@@ -106,7 +106,10 @@ fn is_of_test_runner(id: BuiltinId) -> bool {
 }
 
 fn is_test_hook(id: BuiltinId) -> bool {
-    is_of_test_runner(id) && names_of_writers().hooks.contains(&Some(table::entry(id).name))
+    is_of_test_runner(id)
+        && names_of_writers()
+            .hooks
+            .contains(&Some(table::entry(id).name))
 }
 
 fn mocks_modules(object: BuiltinId) -> bool {
@@ -662,8 +665,10 @@ impl Resolver<'_, '_> {
                 ExprKind::Assign {
                     op: None, target, ..
                 } => {
-                    let statement =
-                        self.input.bound.parent_of_expr(self.outermost_assertion_of(user));
+                    let statement = self
+                        .input
+                        .bound
+                        .parent_of_expr(self.outermost_assertion_of(user));
                     matches!(statement, Parent::Stmt(it) if matches!(hir[it].kind, StmtKind::Expr(_)))
                         && self.target_keeps_spy(target, followed)
                 }
@@ -813,10 +818,12 @@ impl Resolver<'_, '_> {
     fn is_handed_to_hook(&self, function: FnId) -> bool {
         let hir = self.input.hir;
         let values = self.values_of_functions.get_or_init(|| {
-            let written = self.evaluated_exprs().filter_map(|expr| match hir[expr].kind {
-                ExprKind::Fn(function) => Some((function, expr)),
-                _ => None,
-            });
+            let written = self
+                .evaluated_exprs()
+                .filter_map(|expr| match hir[expr].kind {
+                    ExprKind::Fn(function) => Some((function, expr)),
+                    _ => None,
+                });
             written.collect()
         });
         let Some(&value) = values.get(&function) else {
@@ -874,7 +881,8 @@ impl Resolver<'_, '_> {
                 }
             }
             let Binding::Symbol(name) = bound.binding(value) else {
-                return self.value_of(value).is_some() || matches!(hir[value].kind, ExprKind::Ident(known::undefined));
+                return self.value_of(value).is_some()
+                    || matches!(hir[value].kind, ExprKind::Ident(known::undefined));
             };
             match *bound.symbol(name).decls {
                 [Decl::Fn(_)] => return bound.binding_stability(name) == BindingStability::Stable,

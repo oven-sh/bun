@@ -9,7 +9,7 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
     ResolvedForm, ResolvedFrom, does_import_meta_resolve_ask_resolver,
-    find_chosen_require_base, find_base_that_a_call_made_of_own_file,
+    find_base_that_a_call_made_of_own_file, find_chosen_require_base,
     find_module_printed_as_require, find_names_folded_by_transpiler,
     find_other_values_of_own_require, find_own_require, find_require_call,
     holds_import_meta_require, is_call_of_create_require,

@@ -782,7 +782,8 @@ fn in_a_test_run_a_file_notes_the_names_that_a_named_object_is_asked_for_and_doe
 
 #[test]
 fn replaced_member_receivers_are_exposed() {
-    const IMPORTS: &str = "import { afterEach, beforeEach, expect, jest, mock, spyOn, vi } from 'bun:test'; ";
+    const IMPORTS: &str =
+        "import { afterEach, beforeEach, expect, jest, mock, spyOn, vi } from 'bun:test'; ";
     for source in [
         "Object.defineProperty(process, 'exit', { value() { return super.valueOf(); } });",
         "Object.defineProperty(process, 'exit', { value() { return (() => this)(); } });",

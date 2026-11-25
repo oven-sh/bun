@@ -4785,8 +4785,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.task.hold_back();
         }
-        let has_any_for_return = self.any_returns_in_resolution != any_returns
-            && self.lowest_taint == self.frames.len();
+        let has_any_for_return =
+            self.any_returns_in_resolution != any_returns && self.lowest_taint == self.frames.len();
         let stored = self.end_scope(scope).ok();
         let replaces = self.in_progress_variance_reads != variance_reads;
         let propagating = self.reliability;

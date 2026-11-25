@@ -713,9 +713,7 @@ fn find_files_that_require_may_load(
                 && is_imported(file)
                 && !order.may_be_mocked[file as usize];
             LoadsOfFile {
-                may_be_required: is_named_first
-                    || runs_inside_require
-                    || is_only_resolved(file),
+                may_be_required: is_named_first || runs_inside_require || is_only_resolved(file),
                 runs_inside_require,
                 first_load_decides,
             }

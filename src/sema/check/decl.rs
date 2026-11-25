@@ -5054,7 +5054,11 @@ impl<'p, 's> Checker<'p, 's> {
             && value_declaration.ty.is_none()
             && value_declaration.default.is_some()
             && !param.flags.contains(Flags::REST)
-            && (self.p.pat_types.get(&self.task, &(file, value_declaration.pat))).is_none();
+            && (self
+                .p
+                .pat_types
+                .get(&self.task, &(file, value_declaration.pat)))
+            .is_none();
         // TypeScript asks for the default of a parameter that the call has an argument for.
         let is_eager = !has_argument && (!is_asked || value_declaration.default.is_none());
         let mut declared = TypeId::UNRESOLVED;

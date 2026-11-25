@@ -36,7 +36,17 @@ export const q: never = e(1); export const p: never = f0(1);
 
 // The errors are those of TypeScript 7.0.2.
 const expected = {
-  "lists.ts": ["3,10 TS7023", "3,32 TS7023", "3,37 TS7022", "4,10 TS7023", "5,10 TS7023", "5,32 TS7022", "6,10 TS7023", "8,14 TS2322", "8,44 TS2322"],
+  "lists.ts": [
+    "3,10 TS7023",
+    "3,32 TS7023",
+    "3,37 TS7022",
+    "4,10 TS7023",
+    "5,10 TS7023",
+    "5,32 TS7022",
+    "6,10 TS7023",
+    "8,14 TS2322",
+    "8,44 TS2322",
+  ],
   "patterns.ts": [
     "3,10 TS7023",
     "3,32 TS7023",
@@ -59,7 +69,10 @@ const expected = {
 
 test.concurrent.each(["lists.ts", "patterns.ts"] as const)("rings of functions through a default, %s", async name => {
   using dir = tempDir("check-defaults-in-rings", { "tsconfig.json": tsconfig, [name]: programs[name] });
-  const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty", "--all"], String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const { stdout, stderr } = await run([bunExe(), "check", "--no-pretty", "--all"], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   const told = (stdout + stderr).matchAll(/^\w+\.ts\((\d+,\d+)\): error (TS\d+)/gm);
   expect([...told].map(([, at, code]) => `${at} ${code}`)).toEqual(expected[name]);
 });

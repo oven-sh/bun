@@ -28,7 +28,9 @@ pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
     may_construct_worker,
 };
-pub use call_sites::{is_load_found_late, is_site_of_handed_url};
+pub use call_sites::{
+    find_class_of_super_call, is_load_found_late, is_site_of_handed_url, is_super_call,
+};
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
 };

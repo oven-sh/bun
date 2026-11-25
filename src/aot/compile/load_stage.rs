@@ -40,9 +40,10 @@ use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, CommonJsVariable};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::{Constant, FoldInputs, FoldedValue};
-use bun_sema::hir::{ExprId, ExprKind, MemberKey};
+use bun_sema::hir::{ClassId, ExprId, ExprKind, MemberKey};
 use bun_sema::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
+    ImportSiteKind, ImportSpecifier, find_class_of_super_call,
+    find_made_requires_that_go_out_of_sight, is_load_found_late, is_super_call,
 };
 use bun_sema::node::NodeData;
 use bun_sema::program::{
@@ -473,7 +474,45 @@ fn find_worker_positions(
             places.push((sources.diagnostic_path(file).to_vec(), position));
         }
     }
+    for (file, class) in find_classes_whose_super_calls_are_among(files, workers) {
+        let class = &files.hir(file)[class];
+        for position in [class.start, class.text_start] {
+            places.push((sources.diagnostic_path(file).to_vec(), position));
+        }
+    }
     places
+}
+
+/// A class that extends `Worker` is reported at the class. Every construction of it or of an heir goes through its constructor.
+fn find_classes_whose_super_calls_are_among(
+    files: &Files<'_>,
+    workers: &[(FileId, ExprId)],
+) -> Vec<(FileId, ClassId)> {
+    let workers = workers.iter().copied();
+    let known: FxHashSet<(FileId, ExprId)> = workers
+        .filter(|&(file, at)| is_super_call(files.hir(file), at))
+        .collect();
+    let in_files: FxHashSet<FileId> = known.iter().map(|it| it.0).collect();
+    let mut classes = Vec::new();
+    for &file in files.compiled_files() {
+        if !in_files.contains(&file) {
+            continue;
+        }
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let calls = (0..hir.exprs.len() as u32).map(ExprId);
+        let calls: Vec<ExprId> = calls.filter(|&it| is_super_call(hir, it)).collect();
+        let class_of = |&call: &ExprId| find_class_of_super_call(hir, bound, call);
+        let unknown = calls.iter().filter(|&&call| !known.contains(&(file, call)));
+        let unknown: FxHashSet<Option<ClassId>> = unknown.map(class_of).collect();
+        // A call in a function below a constructor may be of any class.
+        if unknown.contains(&None) {
+            continue;
+        }
+        let of_known = calls.iter().filter_map(class_of);
+        let of_known = of_known.filter(|&class| !unknown.contains(&Some(class)));
+        classes.extend(of_known.map(|class| (file, class)));
+    }
+    classes
 }
 
 fn find_unknown_node_workers(

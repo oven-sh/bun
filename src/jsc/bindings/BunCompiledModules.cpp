@@ -541,11 +541,11 @@ static bool isCommonJSModuleUnderActualKey(Zig::GlobalObject* globalObject, cons
     return original && original == module->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().exportsPublicName());
 }
 
-// The build names what a file is under a type `file?type`. A query of the program is another thing. In a test run no compiled file has a query.
+// The build names what a file is under a type `file?type`. A query of the program is another thing. In a test run the form answers it.
 static bool isPathOfForm(const String& path)
 {
     size_t mark = path.reverseFind('?');
-    if (mark == notFound)
+    if (mark == notFound || isBunTest)
         return false;
     String file = path.left(mark);
     String type = path.substring(mark + 1);
@@ -555,8 +555,6 @@ static bool isPathOfForm(const String& path)
     auto pathOfForm = OwnedString::adopt(Bun__AOT__pathOfForm(&fileArgument, &typeArgument, &isFormWithoutAttributes));
     if (pathOfForm.isDead() || pathOfForm.transferToWTFString() != path)
         return false;
-    if (isBunTest)
-        return true;
     auto module = findModuleForPath(path);
     return module && AOT::isDataFile(*module);
 }

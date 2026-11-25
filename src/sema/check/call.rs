@@ -2948,9 +2948,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getResolvedSignature` calls it: the callee is checked with `resolvingSignature` in place
     /// and the resolution stack reset. Returns true if the call is deferred.
     pub(super) fn defers_call_of_generic_function(&mut self, file: FileId, e: ExprId) -> bool {
-        let Some(is_in_progress) = self.enter_call(file, e) else {
+        let is_in_progress = self
+            .stack
+            .iter()
+            .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == e));
+        if !self.enter(Query::Call(file, e)) {
             return false;
-        };
+        }
         let resolution_start = self.resolution_start;
         if !is_in_progress {
             self.resolution_start = self.stack.len();

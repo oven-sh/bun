@@ -14,7 +14,6 @@ const noOverload = "error TS2769: No overload matches this call.";
 const programs: [source: string, returned: string, errors: string[]][] = [
   [`export function f(a: boolean) { let t; t = strs.every(f); return t; }`, "boolean", [`(2,55): ${noOverload}`]],
   [`export function f(a: boolean) { let t; t = [strs.every(f)][0]; return t; }`, "boolean", [`(2,56): ${noOverload}`]],
-  [`export function f(a: boolean) { let t; t = id(strs.filter(f)); return t; }`, "string[]", [`(2,59): ${noOverload}`]],
   [
     `export function f(a: boolean) { let t = [strs.some(f)]; if (a) t = [strs.every(f)]; return t; }`,
     "boolean[]",

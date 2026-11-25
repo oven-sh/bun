@@ -727,7 +727,7 @@ enum WrittenMember {
 }
 
 fn written_member(hir: &hir::File<'_>, object: ExprId, name: Atom) -> WrittenMember {
-    let Some(ExprKind::Object(props)) = hir.exprs.get(object.idx()).map(|it| it.kind) else {
+    let ExprKind::Object(props) = hir[hir.skip_type_assertions(object)].kind else {
         return WrittenMember::Unread;
     };
     let mut found = WrittenMember::Absent;

@@ -529,6 +529,8 @@ const MANY_TARGETS: usize = 512;
 struct LiteralWalk<'p> {
     ahead: &'p [TypeId],
     only_literals: bool,
+    /// All that is ahead, literals or not, until a type of the other union is not among it.
+    members: &'p [TypeId],
 }
 
 /// How many types `a` and `b` have in common from the start.
@@ -4201,21 +4203,9 @@ impl<'p, 's> Checker<'p, 's> {
             corresponds,
         } = self.undefined_stripped_target_if_needed(sources, target);
         let (mut walk, in_common) = self.begin_literal_walk(sources, target);
-        // FOR SPEED: the constituents of two unions are in one order, so those of a filtered union are met on one way through the other.
-        let mut ahead: &'p [TypeId] = match self.data(target) {
-            TypeData::Union(parts) if parts.len() >= MANY_TARGETS => parts,
-            _ => &[],
-        };
         for (i, &t) in sources.iter().enumerate().skip(in_common) {
-            if self.is_literal_ahead(&mut walk, t) {
+            if self.is_ahead(&mut walk, t) {
                 continue;
-            }
-            match ahead.iter().position(|&part| part == t) {
-                Some(at) => {
-                    ahead = &ahead[at + 1..];
-                    continue;
-                }
-                None => ahead = &[],
             }
             // Many unions are mappings of one another, so the members at the same index are related.
             if corresponds {
@@ -4254,8 +4244,19 @@ impl<'p, 's> Checker<'p, 's> {
         let walk = LiteralWalk {
             ahead: &targets[in_common..],
             only_literals,
+            members: targets,
         };
         (walk, in_common)
+    }
+
+    /// True if `walk` has `t` ahead of it. The members of a filtered union are met on one way through the union.
+    fn is_ahead(&self, walk: &mut LiteralWalk<'p>, t: TypeId) -> bool {
+        if self.is_literal_ahead(walk, t) {
+            return true;
+        }
+        let found = walk.members.iter().position(|&member| member == t);
+        walk.members = found.map_or(&[], |at| &walk.members[at + 1..]);
+        found.is_some()
     }
 
     /// True if `t` is a literal that `walk` has ahead of it. The walk moves behind `t`, or to where it would be.

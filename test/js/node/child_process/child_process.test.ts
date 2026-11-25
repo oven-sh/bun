@@ -462,6 +462,28 @@ describe("spawn()", () => {
     expect(end! - start < 2000).toBe(true);
   });
 
+  // Runs sh and cat.
+  it.skipIf(isWindows).each([0, 1, 1536, 2048, 2049, 30_000])(
+    "delivers a write of %d bytes as one chunk, whether it is there before the first read or not",
+    async size => {
+      for (const readsLate of [false, true]) {
+        using dir = tempDir("one-chunk", { data: Buffer.alloc(size, "x").toString() });
+        const child = spawn("sh", ["-c", "cat data; echo written >&2; read _; cat data"], { cwd: String(dir) });
+        if (readsLate) await once(child.stderr, "data");
+        const chunks: Buffer[] = [];
+        child.stdout.on("data", chunk => {
+          chunks.push(chunk);
+          child.stdin.end("\n");
+        });
+        if (size === 0) child.stdin.end("\n");
+        await once(child, "close");
+        expect(chunks.map(chunk => [Buffer.isBuffer(chunk), chunk.toString()])).toEqual(
+          size === 0 ? [] : Array(2).fill([true, Buffer.alloc(size, "x").toString()]),
+        );
+      }
+    },
+  );
+
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {

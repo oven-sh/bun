@@ -20,6 +20,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kFirstChunkSize = Symbol("firstChunkSize");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -39,6 +40,7 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kFirstChunkSize]: number;
   debugId: number;
 }
 
@@ -55,7 +57,12 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options: $Node.ReadableOptions): NativeReadable {
+/** `firstChunkSize` is for a pipe, whose reader returns a chunk that does not fit in an array of its own. */
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options: $Node.ReadableOptions,
+  firstChunkSize = 0,
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
@@ -77,6 +84,7 @@ function constructNativeReadable(readableStream: ReadableStream, options: $Node.
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kFirstChunkSize] = firstChunkSize;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -119,7 +127,8 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   maxToRead ??= stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];
   if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
-    var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
+    var size = stream[kFirstChunkSize] || (maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE);
+    stream[kFirstChunkSize] = 0;
     stream[kRemainingChunk] = chunk = Buffer.alloc(size);
   }
   $debug(`[${stream.debugId}] getRemainingChunk, ${chunk?.byteLength} bytes`);

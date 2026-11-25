@@ -617,6 +617,75 @@ fn lookup_that_is_out_finishes_its_search_at_the_new_servers() {
 }
 
 #[test]
+fn query_that_is_out_follows_the_transport_that_was_read() {
+    for (before, after, server, transport) in [
+        (
+            "",
+            "nameserver 10.0.0.1\noptions use-vc",
+            "10.0.0.1:53",
+            Transport::Tcp,
+        ),
+        (
+            "options use-vc",
+            "nameserver 10.0.0.1",
+            "10.0.0.1:53",
+            Transport::Udp,
+        ),
+        (
+            "",
+            "nameserver 127.0.0.1\noptions use-vc",
+            DEFAULT,
+            Transport::Tcp,
+        ),
+    ] {
+        let mut test = resolv_conf(before).start();
+        test.resolve(RecordType::A, "a.test");
+        assert_eq!(refuse(&mut test), NOTHING);
+        let out = test.sent_one();
+        assert_ne!(test.transport_of(&out), transport);
+
+        test.world().write(RESOLV_CONF, after);
+        assert_eq!(test.resolve(RecordType::A, "b.test"), NOTHING);
+        let mut sent = test.sent();
+        // At a server that stays, it is out until that try fails.
+        if server == DEFAULT {
+            assert_eq!(questions(&sent), ["b.test A"]);
+            assert_eq!(test.process_error(out.socket), NOTHING);
+            sent.extend(test.sent());
+        }
+        assert_eq!(questions(&sent), ["b.test A", "a.test A"], "{after}");
+        for query in sent {
+            assert_eq!(test.server_of(&query), server, "{after}");
+            assert_eq!(test.transport_of(&query), transport, "{after}");
+        }
+    }
+}
+
+#[test]
+fn query_that_a_truncated_reply_moved_to_a_stream_stays_there() {
+    let mut test = resolv_conf("").tries(2).start();
+    let truncated = test.ask("a.test");
+    assert_eq!(test.decline(&truncated, TRUNCATED), NOTHING);
+    assert_eq!(test.transport_of(&test.sent_one()), Transport::Tcp);
+    test.resolve(RecordType::A, "refused.test");
+    assert_eq!(refuse(&mut test), NOTHING);
+    assert_eq!(refuse(&mut test), ["2: ECONNREFUSED"]);
+
+    test.world().write(RESOLV_CONF, "nameserver 10.0.0.1");
+    assert_eq!(test.resolve(RecordType::A, "b.test"), NOTHING);
+    let [b, moved] = test.sent_exactly();
+    assert_eq!(
+        questions(&[b.clone(), moved.clone()]),
+        ["b.test A", "a.test A"]
+    );
+    assert_eq!(test.server_of(&moved), "10.0.0.1:53");
+    assert_eq!(
+        [test.transport_of(&b), test.transport_of(&moved)],
+        [Transport::Udp, Transport::Tcp]
+    );
+}
+
+#[test]
 fn no_read_while_replies_are_taken() {
     let mut test = resolv_conf("search s").start();
     test.ask("other.test");

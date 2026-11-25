@@ -135,7 +135,8 @@ impl<S: System, R> Client<S, R> {
         if !config.servers.is_empty() {
             let servers: Vec<SocketAddr> = self.servers().collect();
             Self::name_servers(&mut config, &mut self.servers);
-            self.config = config;
+            let transport = core::mem::replace(&mut self.config, config).transport;
+            self.follow_transport(transport);
             if !self.servers().eq(servers) {
                 self.cache = Cache::default();
                 self.leave_removed_servers();

@@ -412,28 +412,25 @@ impl<S: System, R> Client<S, R> {
         self.send(question, None);
     }
 
-    /// Before a new question goes out while a server fails.
+    /// Before a new question goes out while a server fails. Only a request for records reads the configuration again here: others have done so by then.
     #[cold]
     fn after_a_failure(&mut self, question: &Question) {
-        if self.servers.is_in_doubt() {
-            self.reload_for(question);
+        let is_request =
+            |query: &mut Query<R>| matches!(query.waiting.first(), Some(Purpose::Records(_)));
+        if self.servers.is_in_doubt() && find(&mut self.queries, question).is_some_and(is_request) {
+            self.reload();
         }
         if self.system.random().is_multiple_of(PROBE_ODDS) {
             self.probe(question, self.config.transport);
         }
     }
 
-    /// For a request for records, whose query is new. Other requests have read the configuration by then.
-    #[cold]
-    fn reload_for(&mut self, question: &Question) {
-        let is_request =
-            |query: &mut Query<R>| matches!(query.waiting.first(), Some(Purpose::Records(_)));
-        if find(&mut self.queries, question).is_some_and(is_request) {
-            self.reload();
-            let transport = self.config.transport;
-            let query = find(&mut self.queries, question).into_iter();
-            query.for_each(|query| query.transport = transport);
-        }
+    /// Queries that are out go the way the configuration that was read again says. One that a truncated reply moved to a stream stays there.
+    pub(crate) fn follow_transport(&mut self, before: Transport) {
+        let transport = self.config.transport;
+        let followed = self.queries.iter_mut();
+        let followed = followed.filter(|query| query.transport == before);
+        followed.for_each(|query| query.transport = transport);
     }
 
     /// If it was lost, all that come later would have to wait for the timeout.

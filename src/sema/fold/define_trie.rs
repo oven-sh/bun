@@ -3,7 +3,7 @@ use super::inputs::{
     StoredByMocks, TrieNode,
 };
 use super::{Constant, slice_in};
-use crate::atom::{Atom, known};
+use crate::atom::Atom;
 use crate::hir::RoomForDefines;
 use crate::session::Arena;
 
@@ -59,9 +59,7 @@ impl<'s> FoldInputs<'s> {
         let names_in_place_in_bundle: Vec<PathInPlace<'s>> = (names_in_place.iter())
             .map(|&it| PathInPlace {
                 is_in_bundle: true,
-                may_end_in_brackets: options.minifies_syntax
-                    || (it.path.root == DefineRoot::ImportMeta
-                        && matches!(it.path.members, [known::hot, _])),
+                may_end_in_brackets: options.minifies_syntax,
                 ..it
             })
             .collect();

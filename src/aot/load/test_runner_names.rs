@@ -36,6 +36,10 @@ pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
     }
 }
 
+pub(crate) fn is_made_by_build(name: &[u8]) -> bool {
+    name.starts_with(b"%")
+}
+
 fn written_name_of_marked_local(name: &[u8]) -> &[u8] {
     name_asked_of_scope_objects(name)
         .or_else(|| crate::load::react_compiler::module_items::name_of_outlined_function(name))

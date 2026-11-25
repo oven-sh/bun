@@ -3,6 +3,7 @@ use super::folder::{Effects, Folded, Folder};
 use super::inputs::{
     DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind, StoredByMocks,
 };
+use super::known_to_bun_run::is_hot_of_import_meta;
 use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
@@ -163,7 +164,7 @@ impl<'s> Folder<'_, 's> {
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
             is_in_optional_chain: is_in_chain,
-            is_index: hir.is_written_in_brackets(e) && !self.is_hot_of_import_meta(obj),
+            is_index: hir.is_written_in_brackets(e) && !is_hot_of_import_meta(self.hir, obj),
         };
         let object_state = self.path_states.get(&obj);
         let object_state =
@@ -181,7 +182,7 @@ impl<'s> Folder<'_, 's> {
             return folded;
         }
         if name == known::hot
-            && self.is_hot_of_import_meta(e)
+            && is_hot_of_import_meta(self.hir, e)
             && !is_in_chain
             && !self.is_assignment_target(e)
             && !self.is_delete_operand(e)

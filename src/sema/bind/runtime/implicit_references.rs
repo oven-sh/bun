@@ -4,7 +4,7 @@ use super::stores::find_outermost_cast;
 use super::{CommonJsVariable, ImplicitReference, ImplicitReferenceKind};
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BoundBuilder, Parent, ScopeId};
-use crate::fold::{DefineRoot, PathInPlace};
+use crate::fold::{DefineRoot, PathInPlace, is_hot_of_import_meta};
 use crate::hir::*;
 use crate::util::FxHashMap;
 use bun_core::identifier::is_identifier;
@@ -110,10 +110,17 @@ impl ReferencePass<'_, '_> {
                     }
                     _ => true,
                 };
+                let may_be_in_brackets = in_place.may_end_in_brackets
+                    || hir.member_key(e).is_some_and(|(object, _)| {
+                        is_hot_of_import_meta(hir, hir.skip_type_assertions(object))
+                    });
+                let places = &self.references.places_of_defined_paths;
+                let is_room_taken = places.last().is_some_and(|inner| inner.0 >= root);
                 if is_free
                     && !hir.is_written_by_define(root)
                     && bound.parent_of_expr(e) != Parent::None
-                    && (last.is_none() || self.is_member_replaced(e, in_place))
+                    && (last.is_none() || self.is_member_replaced(e, may_be_in_brackets))
+                    && !is_room_taken
                     && !self.is_inside_longer_path(e, in_place)
                     && self.is_first_name_at_hand(scope, in_place)
                     && hir.has_room_in_front(root, in_place.members.len())
@@ -126,10 +133,10 @@ impl ReferencePass<'_, '_> {
         }
     }
 
-    fn is_member_replaced(&self, member: ExprId, in_place: &PathInPlace<'_>) -> bool {
+    fn is_member_replaced(&self, member: ExprId, may_be_in_brackets: bool) -> bool {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let target = find_outermost_cast(hir, bound, member);
-        (in_place.may_end_in_brackets || !hir.is_written_in_brackets(member))
+        (may_be_in_brackets || !hir.is_written_in_brackets(member))
             && bound.get_assignment_target(hir, target).is_none()
     }
 
@@ -138,7 +145,7 @@ impl ReferencePass<'_, '_> {
             |longer: &&[Atom]| self.find_path_around(path, &longer[in_place.path.members.len()..]);
         let mut replaced = in_place.longer_paths.iter().filter_map(find);
         let mut dropped = in_place.longer_dropped_paths.iter().filter_map(find);
-        replaced.any(|whole| self.is_member_replaced(whole, in_place))
+        replaced.any(|whole| self.is_member_replaced(whole, in_place.may_end_in_brackets))
             || dropped.any(|whole| self.leads_to_dropped_call(whole, in_place))
     }
 

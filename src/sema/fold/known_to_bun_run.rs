@@ -5,7 +5,7 @@ use super::inputs::DefineValue;
 use super::known_sets::is_prototype_of_patterns_locked;
 use crate::atom::{Atom, known};
 use crate::bind::{CommonJsVariable, Parent};
-use crate::hir::{BinOp, ExprId, ExprKind, MemberKey, UnOp};
+use crate::hir::{BinOp, ExprId, ExprKind, File, MemberKey, UnOp};
 use crate::import_sites::is_free_common_js;
 use crate::util::PositionSet;
 
@@ -49,6 +49,11 @@ pub(super) struct ExcludedOperand {
     pub(super) operand: ExprId,
     pub(super) is_excluded_by_bun_run: bool,
     pub(super) is_excluded_under_minify_syntax: bool,
+}
+
+pub(crate) fn is_hot_of_import_meta(hir: &File<'_>, e: ExprId) -> bool {
+    matches!(hir.member_key(e), Some((object, MemberKey::Name(known::hot)))
+        if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::ImportMeta))
 }
 
 impl<'s> Folder<'_, 's> {
@@ -236,12 +241,6 @@ impl<'s> Folder<'_, 's> {
                 None => return false,
             }
         }
-    }
-
-    pub(super) fn is_hot_of_import_meta(&self, e: ExprId) -> bool {
-        let hir = self.hir;
-        matches!(hir.member_key(e), Some((object, MemberKey::Name(known::hot)))
-            if matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::ImportMeta))
     }
 
     pub(super) fn find_text_of_pattern(&self, e: ExprId) -> Option<Value> {

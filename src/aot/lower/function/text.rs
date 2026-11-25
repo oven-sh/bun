@@ -22,6 +22,7 @@ use crate::diagnostics::Span;
 use crate::ir::FunctionKey;
 use crate::ir::generated::{ModuleKind, SourceRange};
 use crate::load::SourceKind;
+use crate::load::test_runner_names::{is_made_by_build, written_name_of_local};
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -315,10 +316,11 @@ impl FileLowering<'_, '_, '_, '_> {
             let ExprKind::Ident(name) = hir[first].kind else {
                 continue;
             };
-            if atoms.bytes(name).starts_with(b"%") {
+            let name = written_name_of_local(atoms.bytes(name));
+            if is_made_by_build(name) {
                 continue;
             }
-            names.push(atoms.bytes(name));
+            names.push(name);
             let container = self.find_member_container(first);
             names.extend(container.map(|it| atoms.bytes(bound.symbol(it).name)));
             names.reverse();

@@ -32,6 +32,7 @@ pub use inputs::{
 };
 pub use known_sets::KnownSets;
 pub(crate) use known_sets::outermost_cast;
+pub(crate) use known_to_bun_run::is_hot_of_import_meta;
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
     MembersBehindNames, Passes, PathBelowFolder, PathEnd, find_export_of_module,

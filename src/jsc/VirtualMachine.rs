@@ -1669,7 +1669,7 @@ impl VirtualMachine {
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
     }
 
-    /// Over-reports: `uv_loop_alive` can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
+    /// Over-reports: it can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
     #[cfg(windows)]
     fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
         self.platform_loop_opt()

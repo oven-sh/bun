@@ -26,7 +26,7 @@ use bun_uws as uws;
 use bun_uws_sys::thunk::ExtSlot;
 
 #[cfg(windows)]
-use bun_libuv_sys::UvStream as _;
+use bun_libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -189,6 +189,8 @@ impl Channel {
             }
             // `pipe` closes it.
             end.into_raw();
+            // As on POSIX: the link is no work of the tests, and the worker holds the loop itself while it waits for a command.
+            pipe.unref();
             return self.adopt_pipe(pipe);
         }
         #[cfg(not(windows))]
@@ -208,7 +210,7 @@ impl Channel {
 
     /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. The pipe stays ref'd so the loop blocks for the peer's first frame.
+    /// reading. The parent end stays ref'd so the loop blocks for the worker's first frame.
     #[cfg(windows)]
     pub(crate) fn adopt_pipe(&self, mut pipe: uv::Owned<uv::Pipe>) -> bool {
         // The read callbacks are expressed via the `StreamReader` trait impl

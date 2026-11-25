@@ -3149,7 +3149,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
     bool isMockInLoader = isBuiltin && loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports();
     if (loaded.compiledModule && mock->wasInstalledOverFailedLoad && !JSC::AOT::requireRunsMocks(vm) && originalEvaluationError(globalObject, specifier))
         return;
-    if (loaded.compiledModule && (!loaded.esmNamespace || isMockInLoader) && JSC::AOT::hasMockSlot(globalObject, *loaded.compiledModule) && (mock->unevaluatedCompiledModule || mock->replacesRequiredDataFile || isBuiltin || JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule))) {
+    bool isBesideUnevaluatedFile = loaded.compiledModule && mock->unevaluatedCompiledModule && *mock->unevaluatedCompiledModule != loaded.compiledModule->index() && JSC::AOT::importAttributeVariants(globalObject, specifier).contains(*loaded.compiledModule);
+    if (loaded.compiledModule && (!loaded.esmNamespace || isMockInLoader) && JSC::AOT::hasMockSlot(globalObject, *loaded.compiledModule) && ((mock->unevaluatedCompiledModule && !isBesideUnevaluatedFile) || mock->replacesRequiredDataFile || isBuiltin || JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule))) {
         JSValue answer = exports;
         if (commonJSExports) {
             answer = commonJSExports->exportsObject();
@@ -6582,6 +6583,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
         JSC::AOT::deferMock(globalObject, variant, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError);
     };
+    auto formsBeside = [&](std::optional<JSC::AOT::ModuleID> mocked) {
+        auto forms = JSC::AOT::importAttributeVariants(globalObject, specifier);
+        auto file = mocked && forms.contains(*mocked) ? Bun::findMockedModule(specifier) : std::nullopt;
+        if (file && !forms.contains(*file) && JSC::AOT::mayBeMocked(globalObject, *file))
+            forms.append(*file);
+        return forms;
+    };
     bool formsWait = false;
     if (vm.hasCompiledCode() && !loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule) {
         auto variants = JSC::AOT::importAttributeVariants(globalObject, specifier);
@@ -6653,7 +6661,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (loaded.compiledModule && !mock->wasInstalledOverFailedLoad && (!endedMockModule || activatesOnNextLoad) && !loaded.esmNamespace && !loaded.commonJSModule && (activatesOnNextLoad || keepsCompiledModule || waitsOverActiveMock || isEarlierMockPending || !hasLoaded(*loaded.compiledModule))) {
         wait(*loaded.compiledModule);
         RETURN_IF_EXCEPTION(scope, {});
-        for (JSC::AOT::ModuleID variant : JSC::AOT::importAttributeVariants(globalObject, specifier)) {
+        for (JSC::AOT::ModuleID variant : formsBeside(loaded.compiledModule)) {
             wait(variant);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -6813,7 +6821,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (previous && !mock->wasInstalledOverFailedLoad)
             globalObject->onLoadPlugins.pendingCompiledMocks.removeAllMatching([&](const auto& waiting) { return waiting.second.get() == previous; });
         if (vm.hasCompiledCode() && !formsWait && !endedMockModule && mock->factory.get()) {
-            for (JSC::AOT::ModuleID variant : JSC::AOT::importAttributeVariants(globalObject, specifier)) {
+            for (JSC::AOT::ModuleID variant : formsBeside(loaded.compiledModule)) {
                 if (JSC::AOT::hasStartedLoading(globalObject, variant))
                     continue;
                 wait(variant);

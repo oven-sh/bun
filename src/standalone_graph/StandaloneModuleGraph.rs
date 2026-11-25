@@ -3204,6 +3204,48 @@ fn place_of_image(
     }
 }
 
+/// What `to_executable` does with the executable it staged. The rename that puts it at the outfile replaces whatever has
+/// that name, and only root can put a device back. Not on Windows: no directory entry is a device there.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Delivery {
+    Replace,
+    /// The outfile leads to the null device: the executable is built, and none of it is written there.
+    Discard,
+}
+
+#[cfg(not(windows))]
+impl Delivery {
+    fn plan(root_dir: Fd, name: &ZStr) -> Delivery {
+        // Links are followed: `/dev/stdout` is one, and the copy to another file system opens the name as it is.
+        match bun_sys::fstatat(root_dir, name) {
+            Ok(stat) => Delivery::of(stat.st_mode as bun_sys::Mode, stat.st_rdev, null_device),
+            // Nothing has the name, or a link there leads nowhere. Any other error is the rename's to report.
+            Err(_) => Delivery::Replace,
+        }
+    }
+
+    /// `mode` and `rdev` are of what the outfile leads to. `null_device` is asked about a character device alone.
+    fn of(
+        mode: bun_sys::Mode,
+        rdev: libc::dev_t,
+        null_device: impl FnOnce() -> Option<libc::dev_t>,
+    ) -> Delivery {
+        use bun_sys::FileKind;
+        match bun_sys::kind_from_mode(mode) {
+            FileKind::CharacterDevice if null_device() == Some(rdev) => Delivery::Discard,
+            _ => Delivery::Replace,
+        }
+    }
+}
+
+/// The device number of `/dev/null`, which is only read here.
+#[cfg(not(windows))]
+fn null_device() -> Option<libc::dev_t> {
+    let stat = bun_sys::stat(bun_core::zstr!("/dev/null")).ok()?;
+    bun_sys::S::ISCHR(stat.st_mode as bun_sys::Mode).then_some(stat.st_rdev)
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3221,6 +3263,10 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
+    #[cfg(not(windows))]
+    let outfile_posix = path::Path::from(bun_paths::basename(outfile));
+    #[cfg(not(windows))]
+    let delivery = Delivery::plan(root_dir, &outfile_posix);
     let image_place = place_of_image(target, additions.compiled_program.as_deref());
     let GraphBytes { mut bytes, image } = match to_bytes(
         target,
@@ -3258,8 +3304,12 @@ pub fn to_executable(
     let output_directory: &[u8] = b".";
     #[cfg(not(windows))]
     let mut output_directory_buf = bun_paths::path_buffer_pool::get();
+    // Nothing is renamed into the directory of the null device, so nothing is staged there.
     #[cfg(not(windows))]
-    let output_directory: &[u8] = if additions.compiled_program.is_some() {
+    let stages_beside_outfile =
+        additions.compiled_program.is_some() && delivery == Delivery::Replace;
+    #[cfg(not(windows))]
+    let output_directory: &[u8] = if stages_beside_outfile {
         match bun_sys::get_fd_path(root_dir, &mut output_directory_buf) {
             Ok(directory) => directory,
             Err(_) => b".",
@@ -3377,8 +3427,11 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
+        if delivery == Delivery::Discard {
+            // `injected` unlinks the staged copy.
+            return Ok(CompileResult::Success);
+        }
         let temp_posix: &ZStr = &injected.temp_path;
-        let outfile_posix = path::Path::from(bun_paths::basename(outfile));
 
         if let Err(e) =
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
@@ -3871,4 +3924,76 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use bun_core::{ZBox, zstr};
+    use bun_sys::{Fd, S};
+
+    use super::Delivery;
+    use crate::compiled_program::tests::TemporaryFolder;
+
+    const NULL_DEVICE: libc::dev_t = 0x103;
+
+    fn delivery(kind: bun_sys::Mode, rdev: libc::dev_t) -> Delivery {
+        Delivery::of(kind | 0o666, rdev, || Some(NULL_DEVICE))
+    }
+
+    #[test]
+    fn rename_replaces_what_is_not_the_null_device() {
+        for kind in [S::IFREG, S::IFDIR, S::IFIFO, S::IFSOCK, S::IFBLK] {
+            assert_eq!(delivery(kind, NULL_DEVICE), Delivery::Replace);
+        }
+        assert_eq!(delivery(S::IFCHR, NULL_DEVICE + 4), Delivery::Replace);
+        assert_eq!(
+            Delivery::of(S::IFCHR | 0o666, 0, || None),
+            Delivery::Replace
+        );
+    }
+
+    #[test]
+    fn null_device_gets_nothing() {
+        assert_eq!(delivery(S::IFCHR, NULL_DEVICE), Delivery::Discard);
+    }
+
+    #[test]
+    fn only_a_character_device_asks_for_the_null_device() {
+        for kind in [S::IFREG, S::IFDIR, S::IFIFO, S::IFBLK, S::IFSOCK] {
+            Delivery::of(kind | 0o666, NULL_DEVICE, || {
+                panic!("{kind:o} read the null device")
+            });
+        }
+    }
+
+    /// `plan` reads what a name leads to and opens nothing, so the devices of the system can stand at the end of a link.
+    #[test]
+    fn plan_reads_the_name_in_its_directory_and_follows_links() {
+        let folder = TemporaryFolder::create("delivery");
+        let path = |name: &str| ZBox::from_vec(folder.join(name));
+        folder.write("file", b"text");
+        bun_sys::mkdir(&path("folder"), 0o755).unwrap();
+        // SAFETY: the path is NUL-terminated.
+        assert_eq!(unsafe { libc::mkfifo(path("pipe").as_ptr(), 0o600) }, 0);
+        for (target, link) in [
+            ("file", "to-file"),
+            ("nothing", "to-nothing"),
+            ("/dev/null", "to-null"),
+        ] {
+            let target = ZBox::from_bytes(target.as_bytes());
+            bun_sys::symlink(&target, &path(link)).unwrap();
+        }
+        let directory = bun_sys::open_dir_absolute(&folder.join(".")).unwrap();
+        let directory = bun_sys::CloseOnDrop::new(directory);
+        let plan = |name: &str| Delivery::plan(directory.fd(), &ZBox::from_bytes(name.as_bytes()));
+
+        for name in ["file", "folder", "pipe", "nothing", "to-file", "to-nothing"] {
+            assert_eq!(plan(name), Delivery::Replace, "{name}");
+        }
+        assert_eq!(plan("to-null"), Delivery::Discard);
+        assert_eq!(
+            Delivery::plan(Fd::cwd(), zstr!("/dev/null")),
+            Delivery::Discard
+        );
+    }
 }

@@ -1527,6 +1527,37 @@ pub(crate) mod strings_impl {
         append_utf16_as_utf8(list, input);
     }
 
+    /// `None` without memory for it. A surrogate pair split between two of the Latin-1 and UTF-16 `parts` is two unpaired surrogates.
+    pub fn try_concat_to_utf8(parts: &[crate::StringView<'_>]) -> Option<Vec<u8>> {
+        enum Part<'a> {
+            Latin1(WithUtf8Len<'a, u8>),
+            Utf16(WithUtf8Len<'a, u16>),
+        }
+        let mut utf8_len = 0;
+        let mut measured = Vec::with_capacity(parts.len());
+        for part in parts {
+            debug_assert!(!part.is_utf8());
+            measured.push(if part.is_8bit() {
+                let input = WithUtf8Len::latin1(part.latin1());
+                utf8_len += input.utf8_len();
+                Part::Latin1(input)
+            } else {
+                let input = WithUtf8Len::utf16(part.utf16());
+                utf8_len += input.utf8_len();
+                Part::Utf16(input)
+            });
+        }
+        let mut list = Vec::new();
+        list.try_reserve_exact(utf8_len + 16).ok()?;
+        for part in measured {
+            match part {
+                Part::Latin1(input) => append_latin1_as_utf8(&mut list, input),
+                Part::Utf16(input) => append_utf16_as_utf8(&mut list, input),
+            }
+        }
+        Some(list)
+    }
+
     pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
         let input = WithUtf8Len::utf16(utf16);
         let mut list = Vec::with_capacity(input.utf8_len() + 16);

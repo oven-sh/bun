@@ -32,6 +32,11 @@ unsafe extern "C" {
         substrings: *mut JSValue,
     );
     fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
+    fn JSC__JSString__leavesOfRope<'a>(
+        this: &'a JSString,
+        leaves: *mut StringView<'a>,
+        capacity: u32,
+    ) -> u32;
     safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
     -> JSValue;
     fn JSC__JSString__tryCreateUninitializedLatin1(
@@ -182,6 +187,19 @@ impl JSString {
             JSC__JSString__firstCharacters(self, characters.as_mut_ptr(), characters.len() as u32)
                 as usize
         }
+    }
+
+    /// The UTF-8 of a rope of a few pieces, which stays unresolved. `None` for any other string, or without memory for it.
+    pub fn short_rope_to_utf8(&self) -> Option<Vec<u8>> {
+        let mut leaves: [StringView<'_>; 8] = [const { StringView::EMPTY }; 8];
+        // SAFETY: at most `leaves.len()` of them are written.
+        let count =
+            unsafe { JSC__JSString__leavesOfRope(self, leaves.as_mut_ptr(), leaves.len() as u32) };
+        // Nothing here runs JS or allocates a cell, so the pieces stay where they are.
+        if count == 0 {
+            return None;
+        }
+        bun_core::strings::try_concat_to_utf8(&leaves[..count as usize])
     }
 
     /// `length` characters of this string from `offset` on, sharing them with it.

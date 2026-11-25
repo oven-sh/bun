@@ -276,6 +276,16 @@ impl HTTPRequestBody {
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        if value.is_string_literal()
+            && let Some(bytes) = value.as_string().short_rope_to_utf8()
+        {
+            return Ok(HTTPRequestBody::AnyBlob(AnyBlob::InternalBlob(
+                InternalBlob {
+                    bytes,
+                    was_string: true,
+                },
+            )));
+        }
         let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))

@@ -1,5 +1,6 @@
 // @ts-expect-error no such export
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
+import { jscDescribe } from "bun:jsc";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
 import {
@@ -4305,4 +4306,51 @@ it("verbose fetch logging escapes control characters coming from the peer", asyn
   expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
   expect(stderr).not.toMatch(/[\x80-\x9f]/);
   expect(exitCode).toBe(0);
+});
+
+describe("a string body in pieces", () => {
+  // Long enough that `+` and `slice` share their operands and do not copy them.
+  const ascii = Buffer.alloc(300, "a").toString();
+  const latin1 = Buffer.alloc(300, 0xe9).toString("latin1");
+  const wide = Buffer.alloc(900, "日").toString();
+  const pieces = { ascii, latin1, wide, lead: ascii + "\ud83d", trail: "\ude00" + ascii, pair: ascii + "\u{1f600}" };
+  for (const piece of Object.values(pieces)) piece.charCodeAt(0);
+
+  it("a string in pieces is sent as the string in one piece", async () => {
+    using server = Bun.serve({ port: 0, fetch: async request => new Response(await request.bytes()) });
+    const builders: Record<string, () => string> = {};
+    for (const [a, first] of Object.entries(pieces)) {
+      builders[`part of ${a}`] = () => first.slice(1, -1);
+      for (const [b, second] of Object.entries(pieces)) {
+        builders[`${a} ${b}`] = () => first + second;
+        builders[`${a} part of ${b} ${a}`] = () => `${first}${second.slice(0, 200)}${first}`;
+        for (const count of [7, 8, 9, 100]) {
+          builders[`${count} of ${a} and ${b}`] = () => {
+            let text = first;
+            for (let i = 1; i < count; i++) text = i % 2 ? text + second : first + text;
+            return text;
+          };
+        }
+      }
+    }
+    const different: string[] = [];
+    for (const [name, build] of Object.entries(builders)) {
+      const body = build();
+      const response = await fetch(server.url, { method: "POST", body });
+      const expected = Buffer.from(build().toWellFormed());
+      if (!expected.equals(await response.bytes()) || body !== build()) different.push(name);
+    }
+    expect(different).toEqual([]);
+  });
+
+  it("a body of a few pieces is sent without making one string of them", async () => {
+    using server = Bun.serve({ port: 0, fetch: async request => new Response(await request.text()) });
+    for (const piece of [pieces.ascii, pieces.latin1, pieces.wide]) {
+      const body = `${piece}\n${pieces.ascii}`;
+      expect(jscDescribe(body)).toContain("(rope)");
+      const response = await fetch(server.url, { method: "POST", body });
+      expect(jscDescribe(body)).toContain("(rope)");
+      expect(await response.text()).toBe(piece + "\n" + pieces.ascii);
+    }
+  });
 });

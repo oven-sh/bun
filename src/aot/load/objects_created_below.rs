@@ -254,7 +254,7 @@ impl Finder<'_, '_> {
 pub(crate) fn is_created_below(hir: &File<'_>, expression: ExprId) -> bool {
     let written = hir[expression];
     matches!(written.kind, ExprKind::New(_))
-        && hir.text[written.pos as usize..].starts_with(b"Object")
+        && (hir.text.get(written.pos as usize..)).is_some_and(|text| text.starts_with(b"Object"))
 }
 
 pub(crate) fn written_name_of_prototype(hir: &File<'_>, expression: ExprId) -> Option<ExprId> {

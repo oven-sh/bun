@@ -79,6 +79,10 @@ impl RuntimeHost<'_> {
 impl Host for RuntimeHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut *self.unreadable.lock())
+    }
+
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("library: ")
     }

@@ -966,6 +966,12 @@ pub(crate) fn log_steps_of_load(project: &'static str) -> Option<Box<dyn FnMut(&
 impl Host for LoadHost<'_> {
     delegate_host_services_to_disk!(disk);
 
+    fn take_unreadable(&self) -> Vec<Vec<u8>> {
+        let mut paths = std::mem::take(&mut *self.unreadable.lock());
+        paths.extend(self.disk.take_unreadable());
+        paths
+    }
+
     fn log_steps_of_load(&self) -> Option<Box<dyn FnMut(&str) + '_>> {
         log_steps_of_load("")
     }

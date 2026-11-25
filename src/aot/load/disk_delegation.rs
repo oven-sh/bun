@@ -11,12 +11,6 @@ macro_rules! forward_to_disk {
 
 macro_rules! delegate_host_services_to_disk {
     ($disk:ident) => {
-        fn take_unreadable(&self) -> Vec<Vec<u8>> {
-            let mut paths = std::mem::take(&mut *self.unreadable.lock());
-            paths.extend(bun_sema::resolve::Host::take_unreadable(self.$disk));
-            paths
-        }
-
         fn realpath(&self, path: &[u8]) -> Vec<u8> {
             match crate::load::is_host_path(path) {
                 true => path.to_vec(),

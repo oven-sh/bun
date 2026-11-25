@@ -309,6 +309,17 @@ test.concurrent("bun install prints an excerpt of a one-line package.json that i
   expect(stderr.length).toBeLessThan(1024);
 });
 
+// The 40 bytes before the error are blanks, and so is the excerpt. Blanks at the end of a line are not printed,
+// so nothing is left to print: the message and the place stand alone.
+test.concurrent("an error after 2,000 blanks at the end of a line prints no source line", async () => {
+  const { stderr, excerpts } = await printedExcerpts(["build", "blank.js"], {
+    "blank.js": "var a = (" + fill(2000, " "),
+  });
+  expect(excerpts).toEqual([]);
+  expect(stderr).toStartWith("error: Unexpected end of file\n");
+  expect(stderr.length).toBeLessThan(1024);
+});
+
 /**
  * What `BuildMessage.position` holds for the first error of `source`: the
  * column, the length of `lineText`, and the character that a reader finds when
@@ -552,6 +563,68 @@ test.concurrent.each([
     expect(stderr).not.toContain("S3cretValue");
   },
 );
+
+// The excerpt of a line of more than 1,000 bytes can be without the `token` key
+// that marks a string as a secret. So where the errors of a file are redacted,
+// such a line is printed whole and masked, as before. Blanks at the end of the
+// line count for its length. The errors reach the log through two functions.
+const stars = (count: number) => fill(count, "*");
+const secret = (count: number) => fill(count, "secretvalue");
+test.concurrent.each([
+  {
+    title: "a syntax error at the end of a line of 1,112 bytes",
+    args: ["install"],
+    bunfig: `[install]\ntoken = "${secret(1100)}" ]\n`,
+    printed: `2 | token = "${stars(1100)}" ]`,
+  },
+  {
+    title: "a syntax error at the end of a line of 963 bytes and 60 spaces",
+    args: ["install"],
+    bunfig: `[install]\ntoken = "${secret(951)}" ]${fill(60, " ")}\n`,
+    printed: `2 | token = "${stars(951)}" ]`,
+  },
+  {
+    title: "a syntax error at the end of a line of 1,000 bytes and a tab",
+    args: ["install"],
+    bunfig: `[install]\ntoken = "${secret(988)}" ]\t\n`,
+    printed: `2 | token = "${stars(988)}" ]`,
+  },
+  {
+    title: "an invalid value at the end of a line of 1,000 bytes and a space",
+    args: ["install"],
+    bunfig: `install = { registry = { token = "${secret(950)}" }, cafile = 1 } \n`,
+    printed: `1 | install = { registry = { token = "${stars(950)}" }, cafile = 1 }`,
+  },
+  {
+    title: "an invalid [lint] value at the end of a line of 1,230 bytes",
+    args: ["lint", "a.js"],
+    bunfig: `[lint]\nrules = {${fill(1200, " ")}"no-var" = "always" }\n`,
+    printed: `2 | rules = {${fill(1200, " ")}"no-var" = "always" }`,
+  },
+])("a redacted line is printed whole and masked: $title", async ({ args, bunfig, printed }) => {
+  using dir = tempDir("parse-col-redacted", {
+    "bunfig.toml": bunfig,
+    "package.json": "{}",
+    "a.js": "export {};\n",
+    "eslint.config.js": "export default [{ rules: {} }];\n",
+  });
+  const run = async (colors: Record<string, string | undefined>) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...colors },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return Bun.stripANSI(stdout + stderr).replaceAll("\r\n", "\n");
+  };
+  const outputs = await Promise.all([run({ NO_COLOR: "1" }), run({ NO_COLOR: undefined, FORCE_COLOR: "1" })]);
+  for (const output of outputs) {
+    expect(output).toContain(printed + "\n");
+    expect(output).not.toContain("secretvalue");
+  }
+});
 
 // The logger used to slice the line from one byte before its start to pick
 // up (and later trim) a preceding `\n`; after a three-byte U+2028 or U+2029

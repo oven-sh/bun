@@ -141,59 +141,6 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-// An error in the last 80 bytes of a line of more than 1,000 bytes is printed
-// with an excerpt, which can be without the `token` key that marks the string
-// as a secret. So the line of such an error is not printed for a file whose
-// errors are redacted. The two errors reach the log through different functions.
-test.each([
-  {
-    title: "a syntax error",
-    bunfig: (secret: string) => `[install]\ntoken = "${secret}" ]\n`,
-    error: "error: Expected a newline or end of file after a key/value pair",
-    at: "bunfig.toml:2:1112",
-  },
-  {
-    title: "an invalid value",
-    bunfig: (secret: string) => `install = { registry = { token = "${secret}" }, cafile = 1 }\n`,
-    error: "error: Invalid cafile. Expected a string.",
-    at: "bunfig.toml:1:1149",
-  },
-])(
-  "no part of a bunfig token is printed when $title is at the end of a line of more than 1,000 bytes",
-  async ({ bunfig, error, at }) => {
-    const secret = Buffer.alloc(1100, "secretvalue").toString();
-    using dir = tempDir("redacted-bunfig-long-line", {
-      "bunfig.toml": bunfig(secret),
-      "package.json": "{}",
-    });
-    const install = async (env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: { ...bunEnv, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: Bun.stripANSI(stderr), exitCode };
-    };
-    const [plain, colored] = await Promise.all([
-      install({ NO_COLOR: "1" }),
-      install({ NO_COLOR: undefined, FORCE_COLOR: "1" }),
-    ]);
-
-    for (const { stdout, stderr, exitCode } of [plain, colored]) {
-      expect(stdout).not.toContain("secretvalue");
-      expect(stderr).not.toContain("secretvalue");
-      // The message and its place come first: no source line and no caret are above them.
-      expect(stderr).toStartWith(`${error}\n    at `);
-      expect(stderr.split("\n")[1]).toEndWith(at);
-      expect(stderr).not.toContain("token = ");
-      expect(exitCode).toBe(1);
-    }
-  },
-);
-
 // The config loaders split user:password@ off a registry URL, but a token
 // written as a path segment stays part of it, and these messages echo that
 // URL (or the manifest / tarball URL built from it) when no request can be

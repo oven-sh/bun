@@ -601,17 +601,15 @@ impl Location {
         (&text[kept], column.saturating_sub(shown.column_number))
     }
 
-    /// `excerpt` of a location that other code made: a line over [`MAX_WHOLE_LINE_LEN`] is cut around `column`.
+    /// `excerpt` of a location without `cut_around`: a line over [`MAX_WHOLE_LINE_LEN`] is cut around `column`.
     fn excerpt_around_column<'a>(&self, text: &'a [u8]) -> (&'a [u8], usize) {
-        let is_short = |line: &[u8]| line.len() <= MAX_WHOLE_LINE_LEN;
-        if is_short(text) {
+        if text.len() <= MAX_WHOLE_LINE_LEN {
             return (text, 0);
         }
-        let (before, line) = split_error_line(text);
-        if is_short(line) {
-            // The lines in front are context that their creator chose. They go only if one of them is long.
-            let is_context_short = bun_core::strings::split(before, b"\n").all(is_short);
-            return (if is_context_short { text } else { line }, 0);
+        // The lines in front of a short line are context that their creator chose, and they stay.
+        let (_, line) = split_error_line(text);
+        if line.len() <= MAX_WHOLE_LINE_LEN {
+            return (text, 0);
         }
         let units = u32::try_from(self.column.saturating_sub(1)).unwrap_or(0);
         let offset = bun_core::strings::wtf8_offset_of_utf16_index(line, units);
@@ -811,12 +809,11 @@ impl Data {
 
         if let Some(location) = &self.location {
             if let Some(stored) = location.line_text.as_deref() {
-                let is_long = || split_error_line(stored).1.len() > MAX_WHOLE_LINE_LEN;
-                let (line_text_, units_in_front) = if as_stored {
+                // Above the limit a redacted line is shown as it is stored: a cut there could be without the key that marks a secret.
+                let is_redacted_long =
+                    redact_sensitive_information && stored.len() > MAX_WHOLE_LINE_LEN;
+                let (line_text_, units_in_front) = if as_stored || is_redacted_long {
                     (stored, 0)
-                } else if redact_sensitive_information && is_long() {
-                    // An excerpt can be without the key that marks a secret, so no line is shown.
-                    (&[][..], 0)
                 } else {
                     location.excerpt()
                 };
@@ -3267,12 +3264,6 @@ mod location_tests {
         assert_eq!(
             made_by_other_code(&long, 601).excerpt(),
             (&line[560..680], 560)
-        );
-        // A long line in front of a short line is not shown either.
-        let after_long = [&line[..], b"\nlet a = ];"].concat();
-        assert_eq!(
-            made_by_other_code(&after_long, 9).excerpt(),
-            (&b"let a = ];"[..], 0)
         );
     }
 }

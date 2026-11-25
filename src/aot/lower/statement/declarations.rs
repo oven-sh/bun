@@ -352,7 +352,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .names_read_on_answer(holder.file, holder.id)
                 .is_empty();
         if reads_default_alone {
-            let held = self.lower_default_of_copy(holder, copy, helper, &arguments);
+            let held = self.lower_default_of_copy(holder, answer, copy);
             self.set_position(self.file.hir[pattern].pos);
             self.initialize_converted_symbol(symbol, name, held);
             return true;
@@ -384,13 +384,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_default_of_copy(
         &mut self,
         holder: Sym,
+        answer: ValueId,
         copy: CopiedExports,
-        helper: ValueId,
-        arguments: &[ValueId],
     ) -> ValueId {
-        let answer = arguments[0];
         let held = self.builder.create_variable(None);
-        let (plain, done) = (self.create_block(), self.create_block());
+        let shown = self.builder.create_variable(None);
+        let (plain, is_shown, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
         if copy.passes_over_marker {
             self.jump(plain);
         } else {
@@ -408,18 +411,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.write_variable(held, marked);
             self.jump(done);
             if lacks_default != plain {
-                // The copy has no default of its own either: what stands above it is asked at each read.
+                // The copy has no default of its own either: what stands above it stands above the value.
                 self.continue_in(lacks_default);
-                let made = emit_call(self, helper, None, arguments);
-                self.builder.write_variable(held, made);
-                self.jump(done);
+                let inherited = self.emit_named_read(marked, known::default);
+                self.builder.write_variable(shown, inherited);
+                self.jump(is_shown);
             }
         }
         self.continue_in(plain);
+        self.builder.write_variable(shown, answer);
+        self.jump(is_shown);
+
+        self.continue_in(is_shown);
         let variable = self
             .file
             .ensure_variable(VariableKey::RequiredAnswer(holder));
-        self.builder.put_module_variable(variable, answer);
+        let shown = self.builder.read_variable(shown);
+        self.builder.put_module_variable(variable, shown);
         self.builder.write_variable(held, answer);
         self.jump(done);
 

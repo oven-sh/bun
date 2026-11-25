@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { generateKeyPairSync, sign, X509Certificate, type KeyPairKeyObjectResult as KeyPair } from "crypto";
+import { ECDH, generateKeyPairSync, sign, X509Certificate, type KeyPairKeyObjectResult as KeyPair } from "crypto";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, tempDir, tmpdirSync } from "harness";
@@ -1102,51 +1102,60 @@ describe("a certificate is accepted when any path to a trusted certificate is va
   const signed = (tbs: Buffer, signer: KeyPair) =>
     seq(tbs, ecdsa, tlv(0x03, hex("00"), sign("sha256", tbs, signer.privateKey)));
 
-  const [serverAuth, clientAuth] = [oid("2b06010505070301"), oid("2b06010505070302")];
+  const [serverAuth, clientAuth, anyUse] = [oid("2b06010505070301"), oid("2b06010505070302"), oid("551d2500")];
   const keyCertSign = extension("551d0f", hex("03020106")); // and cRLSign
   const isCA = [extension("551d13", seq(hex("0101ff"))), keyCertSign];
   const notCA = extension("551d13", seq());
   const localhost = extension("551d11", seq(tlv(0x82, Buffer.from("localhost")), tlv(0x87, hex("7f000001"))), false);
+  const keyId = (id: string) => extension("551d0e", tlv(0x04, hex(id)), false);
+  const issuerKeyId = (id: string) => extension("551d23", seq(tlv(0x80, hex(id))), false);
   const onlyExampleCom = extension("551d1e", seq(tlv(0xa0, seq(tlv(0x82, Buffer.from("example.com"))))));
 
-  const [rootKey, intKey, otherKey, leafKey] = [0, 1, 2, 3].map(() =>
-    generateKeyPairSync("ec", { namedCurve: "prime256v1" }),
-  );
+  const newKey = () => generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const [rootKey, intKey, otherKey, leafKey] = [newKey(), newKey(), newKey(), newKey()];
   const key = leafKey.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 
-  type Spec = { issuer: string; key: KeyPair; signer: KeyPair; extensions: Buffer[]; padding: number; until: number };
+  type Spec = { issuer: string; key: KeyPair; signer: KeyPair; extensions: Buffer[]; padding: number; valid: Buffer };
   let serial = 0x100;
-  /** Without key identifiers, so that only the name tells who the issuer may be. */
-  function mint(subject: string, { issuer, key, signer, extensions, padding, until }: Spec) {
+  /** Usually without key identifiers, so that only the name tells who the issuer may be. */
+  function mint(subject: string, { issuer, key, signer, extensions, padding, valid }: Spec) {
     const tbs = seq(
       hex("a003020102"),
       tlv(0x02, hex((serial++).toString(16).padStart(4, "0"))),
       ecdsa,
       dn(issuer),
-      seq(time(2020), time(until)),
+      valid,
       dn(subject),
       key.publicKey.export({ type: "spki", format: "der" }),
       tlv(0xa3, seq(...extensions, extension("2a0305", Buffer.alloc(padding), false))),
     );
     return armor("CERTIFICATE", signed(tbs, signer));
   }
-  const usual = { extensions: isCA, padding: 100, until: 2120 };
+  const usual = { extensions: isCA, padding: 100, valid: seq(time(2020), time(2120)) };
+  const expired = { valid: seq(time(2020), time(2021)) };
   const mintRoot = (spec?: Partial<Spec>) =>
     mint("root", { ...usual, issuer: "root", key: rootKey, signer: rootKey, ...spec });
   const mintInt = (spec?: Partial<Spec>) =>
     mint("int", { ...usual, issuer: "root", key: intKey, signer: rootKey, ...spec });
   const mintLeaf = (spec?: Partial<Spec>) =>
     mint("leaf", { ...usual, issuer: "int", key: leafKey, signer: intKey, extensions: [notCA, localhost], ...spec });
-  const crlOf = (issuer: string, signer: KeyPair, ...revoked: string[]) => {
-    const entries = revoked.map(pem => seq(tlv(0x02, hex(new X509Certificate(pem).serialNumber)), time(2020)));
-    const list = entries.length ? seq(...entries) : hex("");
-    return armor("X509 CRL", signed(seq(hex("020101"), ecdsa, dn(issuer), time(2020), time(2120), list), signer));
-  };
-  const distrusted = (pem: string) =>
-    armor("TRUSTED CERTIFICATE", Buffer.concat([new X509Certificate(pem).raw, seq(tlv(0xa0, serverAuth))]));
+  const serialOf = (pem: string) => hex(new X509Certificate(pem).serialNumber);
+  type CRLSpec = { revoked: string[]; until: number; extensions: Buffer[] };
+  function crlOf(issuer: string, signer: KeyPair, { revoked = [], until = 2120, extensions }: Partial<CRLSpec> = {}) {
+    const entries = revoked.map(pem => seq(tlv(0x02, serialOf(pem)), time(2020)));
+    const rest = [entries.length ? seq(...entries) : hex(""), extensions ? tlv(0xa0, seq(...extensions)) : hex("")];
+    return armor("X509 CRL", signed(seq(hex("020101"), ecdsa, dn(issuer), time(2020), time(until), ...rest), signer));
+  }
+  /** easy-rsa names the certificate of the issuer, so each renewal has CRLs of its own. */
+  const issuerSerial = (pem: string) => [extension("551d23", seq(tlv(0x82, serialOf(pem))), false)];
+  const withSettings = (pem: string, ...settings: Buffer[]) =>
+    armor("TRUSTED CERTIFICATE", Buffer.concat([new X509Certificate(pem).raw, seq(...settings)]));
+  const trusted = (pem: string, ...uses: Buffer[]) => withSettings(pem, seq(...uses));
+  const distrusted = (pem: string, use = serverAuth) => withSettings(pem, tlv(0xa0, use));
 
   const [root, int, leaf] = [mintRoot(), mintInt(), mintLeaf()];
   const other = mint("other", { ...usual, issuer: "other", key: otherKey, signer: otherKey });
+  const [rootCRL, intCRL] = [crlOf("root", rootKey), crlOf("int", intKey)];
   const byOther = { issuer: "other", signer: otherKey };
   const rootByOther = mintRoot(byOther);
   const shortNotCA = mintRoot({ extensions: [notCA, keyCertSign], padding: 1 });
@@ -1162,14 +1171,46 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     signer: intKey,
     extensions: [onlyAnAddress],
   });
+  const encodedAs = (spki: Buffer) => ({ publicKey: { export: () => spki } }) as any as KeyPair;
+  const unknownKey = encodedAs(seq(seq(oid("2a0306")), tlv(0x03, hex("0001"))));
+  const rogueInt = mintInt({ ...byOther, key: leafKey });
+  const rogueLeaf = mintLeaf({ signer: leafKey });
+  const [renewedInt, renewedRoot] = [mintInt(), mintRoot({ padding: 1 })];
+  const leafAsRoot = [100, 1].map(padding =>
+    mint("leaf", { ...usual, issuer: "leaf", key: leafKey, signer: leafKey, padding }),
+  );
+  // A rollover: the root gets a new key and keeps its name. The link lets those who know the old key trust the new one.
+  const oldRoot = mintRoot({ extensions: [...isCA, keyId("01")] });
+  const newRoot = mintRoot({ key: otherKey, signer: otherKey, extensions: [...isCA, keyId("02")] });
+  const link = mintRoot({ key: otherKey, extensions: [...isCA, keyId("02"), issuerKeyId("01")] });
+  const byNewRoot = mintLeaf({ issuer: "root", signer: otherKey, extensions: [notCA, localhost, issuerKeyId("02")] });
+  const oldRootCRL = crlOf("root", rootKey, { extensions: [issuerKeyId("01")] });
   const constrained = () => mintRoot({ extensions: [...isCA, onlyExampleCom], padding: 1 });
   const anyName = { checkServerIdentity: () => undefined };
-  const loop = () => [
-    mintInt({ issuer: "loop" }),
-    mint("loop", { ...usual, issuer: "int", key: rootKey, signer: otherKey }),
+  const loop = (one: KeyPair, another: KeyPair) => [
+    mintInt({ issuer: "loop", key: one }),
+    mint("loop", { ...usual, issuer: "int", key: another, signer: otherKey }),
   ];
-  const decoys = (count: number) => Array.from({ length: count }, () => mintInt({ key: otherKey, signer: otherKey }));
+  // Two signatures each: its own on the leaf, and the root's on it. `int` takes those, and both again with all the rest.
+  const decoys = Array.from({ length: 48 }, () => mintInt({ key: otherKey, signer: otherKey }));
+  const deadEnd = mintInt({ issuer: "unknown" });
+  const inPlaceOfADecoy = (spec: Partial<Spec>) => [leaf, ...decoys.slice(1), mintInt(spec), deadEnd, int];
+  const constrainedInt = mintInt({ extensions: [...isCA, onlyExampleCom] });
+  const leafThatIsCA = mintLeaf({ extensions: [isCA[0], localhost] });
+  const selfIssued = mintLeaf({ issuer: "leaf", extensions: [notCA, digitalSignature, localhost] });
+  const twin = mintLeaf({ issuer: "leaf", signer: leafKey, extensions: [...isCA, onlyExampleCom] });
+  const issuedByTwin = mintLeaf({
+    issuer: "leaf",
+    signer: leafKey,
+    extensions: [notCA, digitalSignature, localhost, ...issuerSerial(twin)],
+  });
 
+  /** In TLS 1.3 they go out with the first write. */
+  const sendTickets = (socket: TLSSocket) =>
+    socket
+      .resume()
+      .on("error", () => {})
+      .write("!");
   const servers = new Map<string, Promise<Server>>();
   afterAll(async () => {
     for (const server of servers.values()) (await server).close();
@@ -1177,7 +1218,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
   async function portOf(chain: string[]) {
     const cert = chain.join("");
     if (!servers.has(cert)) {
-      const server = tls.createServer({ key, cert });
+      const server = tls.createServer({ key, cert }, sendTickets);
       servers.set(
         cert,
         once(server.listen(0, "127.0.0.1"), "listening").then(() => server),
@@ -1222,6 +1263,12 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       "CERT_SIGNATURE_FAILURE",
       "CERT_SIGNATURE_FAILURE",
     ],
+    [
+      "has an unknown type of key",
+      { key: unknownKey },
+      "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+      "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+    ],
     ["has an unknown issuer", byOther, "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT"],
   ] as [string, Partial<Spec>, string, string][])("next to a copy that %s", (_, spec, asRoot, asInt) => {
     const accepted = ["authorized", "authorized", "authorized", "authorized"];
@@ -1254,13 +1301,12 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     [
       "a revoked copy",
       [leaf],
-      { ca: [root, int, mintInt({ padding: 200 })], crl: [crlOf("root", rootKey, int), crlOf("int", intKey)] },
+      { ca: [root, int, mintInt({ padding: 200 })], crl: [crlOf("root", rootKey, { revoked: [int] }), intCRL] },
     ],
-    ["a partial chain", [leaf], { ca: [mintInt({ key: leafKey, padding: 1 }), int], allowPartialTrustChain: true }],
     [
-      "a pinned leaf",
-      [leaf],
-      { ca: [leaf, mintInt({ extensions: [notCA, keyCertSign] })], allowPartialTrustChain: true },
+      "an unusable copy in `ca`, and an unknown type of key from the server",
+      [leaf, mintInt({ key: unknownKey }), int],
+      { ca: [root, mintInt({ extensions: [notCA, keyCertSign] })] },
     ],
     [
       "a self-signed leaf that may not sign certificates",
@@ -1268,18 +1314,63 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       { ca: [mintLeaf({ issuer: "leaf" }), selfSigned] },
     ],
     [
-      "a pinned leaf that its issuer does not permit",
-      [leaf],
-      { ca: [leaf, mintInt({ extensions: [...isCA, onlyExampleCom] })], allowPartialTrustChain: true },
+      "...or that has the name and key of a root",
+      [selfSigned],
+      { ca: [mintLeaf({ issuer: "leaf", extensions: [notCA, keyCertSign], padding: 1 }), leafAsRoot[0]] },
     ],
     ["a common name that one copy does not permit", [namedByCN, int], { ca: [constrained(), root], ...anyName }],
-    ["a path listed after a loop", [leaf, ...loop(), int], { ca: root }],
     [
-      "a path listed after many dead ends",
-      [leaf, int, mintInt(byOther)],
-      { ca: [other, ...Array.from({ length: 6 }, () => mintRoot({ key: leafKey, signer: leafKey }))] },
+      "a path listed after loops",
+      [leaf, ...Array.from({ length: 5 }, () => loop(intKey, rootKey)).flat(), int],
+      { ca: root },
     ],
-    ["100 issuers to try", [leaf, ...decoys(49), int], { ca: root }],
+    [
+      "a path listed after unknown roots",
+      [leaf, int, ...Array.from({ length: 5 }, newKey).map(key => mintRoot({ key, signer: key })), mintInt(byOther)],
+      { ca: other },
+    ],
+    [
+      "one name twice, with two keys",
+      [
+        leaf,
+        mintInt({ issuer: "int", signer: otherKey, extensions: [...isCA, keyId("01"), issuerKeyId("02")] }),
+        mintInt({ key: otherKey, extensions: [...isCA, keyId("02")] }),
+      ],
+      { ca: [shortNotCA, root] },
+    ],
+    [
+      "one key twice, with two names",
+      [
+        leaf,
+        mintInt({ issuer: "alias", signer: intKey }),
+        mint("alias", { ...usual, issuer: "root", key: intKey, signer: rootKey }),
+      ],
+      { ca: [shortNotCA, root] },
+    ],
+    ["100 signatures to check", [leaf, ...decoys, int], { ca: root }],
+    ["...with a large certificate", inPlaceOfADecoy({ issuer: "unknown", padding: 3500 }), { ca: root }],
+    ["...with a certificate that may not sign", inPlaceOfADecoy({ extensions: [digitalSignature] }), { ca: root }],
+    [
+      "a pinned leaf after more than that",
+      [leaf, ...decoys, ...decoys.slice(0, 3)],
+      { ca: [leaf, root], allowPartialTrustChain: true },
+    ],
+    ...[expired, { valid: seq(time(2119), time(2120)) }].map(outOfDate => [
+      "a path listed after many copies that are out of date",
+      [leaf, int],
+      { ca: [shortNotCA, root, ...Array.from({ length: 13 }, () => mintInt(outOfDate))] },
+    ]),
+    [
+      "a root after 100 of that name that the key identifier rules out",
+      [leaf, mintInt({ extensions: [...isCA, issuerKeyId("01")] })],
+      {
+        ca: [
+          ...Array.from({ length: 100 }, () => mintRoot({ extensions: [...isCA, keyId("02")], padding: 1 })),
+          shortNotCA,
+          oldRoot,
+        ],
+      },
+    ],
   ] as [string, string[], tls.ConnectionOptions][])("accepts %s", async (_, chain, options) => {
     expect(await connect(chain, options)).toBe("authorized");
   });
@@ -1287,7 +1378,7 @@ describe("a certificate is accepted when any path to a trusted certificate is va
   it.each([
     ["two unusable copies", [leaf, int], { ca: [shortNotCA, rootByOther] }, "INVALID_PURPOSE"],
     ["...in the other order", [leaf, int], { ca: [rootByOther, shortNotCA] }, "INVALID_PURPOSE"],
-    ["an expired leaf", [mintLeaf({ until: 2021 }), int], { ca: [root, mintRoot()] }, "CERT_HAS_EXPIRED"],
+    ["an expired leaf", [mintLeaf(expired), int], { ca: [root, mintRoot()] }, "CERT_HAS_EXPIRED"],
     [
       "a leaf for clients",
       [mintLeaf({ extensions: [notCA, localhost, extension("551d25", seq(clientAuth))] }), int],
@@ -1298,8 +1389,114 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     [
       "a revoked leaf",
       [leaf, int],
-      { ca: [root, mintRoot()], crl: [crlOf("root", rootKey), crlOf("int", intKey, leaf)] },
+      { ca: [root, mintRoot()], crl: [rootCRL, crlOf("int", intKey, { revoked: [leaf] })] },
       "CERT_REVOKED",
+    ],
+    [
+      "a revoked leaf, through a certificate of its issuer that has an older CRL",
+      [leaf, int],
+      {
+        ca: [root, renewedInt],
+        crl: [
+          rootCRL,
+          crlOf("int", intKey, { extensions: issuerSerial(int) }),
+          crlOf("int", intKey, { extensions: issuerSerial(renewedInt), revoked: [leaf] }),
+        ],
+      },
+      "CERT_REVOKED",
+    ],
+    [
+      "a revoked intermediate, likewise",
+      [leaf, int],
+      {
+        ca: [root, renewedRoot],
+        crl: [
+          intCRL,
+          crlOf("root", rootKey, { extensions: issuerSerial(root) }),
+          crlOf("root", rootKey, { extensions: issuerSerial(renewedRoot), revoked: [int] }),
+        ],
+      },
+      "CERT_REVOKED",
+    ],
+    [
+      "a revoked root, likewise",
+      [selfSigned],
+      {
+        ca: leafAsRoot,
+        crl: [
+          crlOf("leaf", leafKey, { extensions: issuerSerial(leafAsRoot[0]) }),
+          crlOf("leaf", leafKey, { extensions: issuerSerial(leafAsRoot[1]), revoked: leafAsRoot }),
+        ],
+      },
+      "CERT_REVOKED",
+    ],
+    [
+      "the server's copy of an intermediate that is revoked in `ca`",
+      [leaf, renewedInt],
+      { ca: [root, int], crl: [crlOf("root", rootKey, { revoked: [int] }), intCRL] },
+      "CERT_REVOKED",
+    ],
+    [
+      "a cross-signed copy of a root that revokes itself",
+      [leaf, int, rootByOther],
+      { ca: [root, other], crl: [crlOf("root", rootKey, { revoked: [root] }), intCRL, crlOf("other", otherKey)] },
+      "CERT_REVOKED",
+    ],
+    [
+      "the CRL of the old key in place of one that is out of date",
+      [byNewRoot, link],
+      {
+        ca: [oldRoot, newRoot],
+        crl: [oldRootCRL, crlOf("root", otherKey, { extensions: [issuerKeyId("02")], until: 2021 })],
+      },
+      "CRL_HAS_EXPIRED",
+    ],
+    ["...or missing", [byNewRoot, link], { ca: [oldRoot, newRoot], crl: oldRootCRL }, "UNABLE_TO_GET_CRL"],
+    [
+      "a pinned leaf that its issuer does not permit",
+      [leaf],
+      { ca: [leaf, constrainedInt], allowPartialTrustChain: true },
+      "UNSPECIFIED",
+    ],
+    [
+      "...and that has issued a copy of it",
+      [leafThatIsCA, mintInt({ issuer: "leaf", signer: leafKey })],
+      { ca: [leafThatIsCA, constrainedInt], allowPartialTrustChain: true },
+      "UNSPECIFIED",
+    ],
+    [
+      "...whose type of key is unknown",
+      [leaf],
+      { ca: [leaf, mintInt({ key: unknownKey, extensions: [...isCA, onlyExampleCom] })], allowPartialTrustChain: true },
+      "UNSPECIFIED",
+    ],
+    [
+      "...whose key it has",
+      [rogueLeaf],
+      {
+        ca: [rogueLeaf, mintInt({ key: leafKey, extensions: [...isCA, onlyExampleCom] })],
+        allowPartialTrustChain: true,
+      },
+      "UNSPECIFIED",
+    ],
+    ["...whose name and key it has", [issuedByTwin], { ca: [issuedByTwin, twin] }, "UNSPECIFIED"],
+    [
+      "...whose name it has, by way of an intermediate without its root",
+      [selfIssued, mint("leaf", { ...usual, issuer: "root", key: intKey, signer: rootKey })],
+      {
+        ca: [
+          selfIssued,
+          mint("leaf", {
+            ...usual,
+            issuer: "leaf",
+            key: intKey,
+            signer: intKey,
+            extensions: [...isCA, onlyExampleCom],
+          }),
+          rootByOther,
+        ],
+      },
+      "UNSPECIFIED",
     ],
     ["a root that only the server sent", [leaf, int, root], { ca: shortNotCA }, "INVALID_PURPOSE"],
     ["intermediates without their root", [leaf], { ca: [int, mintInt()] }, "UNABLE_TO_GET_ISSUER_CERT"],
@@ -1309,31 +1506,106 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       { ca: [shortNotCA, root], servername: "example.com" },
       "ERR_TLS_CERT_ALTNAME_INVALID",
     ],
-    ["more than 100 issuers to try", [leaf, ...decoys(50), int], { ca: root }, "CERT_SIGNATURE_FAILURE"],
+    ["101 signatures to check", [leaf, ...decoys, deadEnd, int], { ca: root }, "CERT_SIGNATURE_FAILURE"],
+    [
+      "...counting a certificate that may not sign",
+      [leaf, ...decoys, mintInt({ extensions: [digitalSignature] }), int],
+      { ca: root },
+      "CERT_SIGNATURE_FAILURE",
+    ],
+    [
+      "...and a very large one twice",
+      inPlaceOfADecoy({ issuer: "unknown", padding: 4096 }),
+      { ca: root },
+      "CERT_SIGNATURE_FAILURE",
+    ],
     [
       "a common name that no copy permits",
       [namedByCN, int],
       { ca: [constrained(), constrained()], ...anyName },
       "UNSPECIFIED",
     ],
-    ["nothing but loops", [leaf, ...Array.from({ length: 20 }, loop).flat()], { ca: root }, "CERT_SIGNATURE_FAILURE"],
+    [
+      "10! * 10! dead ends",
+      [leaf, ...Array.from({ length: 10 }, () => loop(newKey(), newKey())).flat()],
+      { ca: root },
+      "CERT_SIGNATURE_FAILURE",
+    ],
   ] as [string, string[], tls.ConnectionOptions, string][])("refuses %s", async (_, chain, options, code) => {
     expect(await connect(chain, options)).toBe(code);
   });
 
+  const crossSigned = [leaf, int, rootByOther];
+  const point = intKey.publicKey.export({ type: "spki", format: "der" }).subarray(-65);
+  const compressed = ECDH.convertKey(point, "prime256v1", undefined, undefined, "compressed") as Buffer;
+  const hybrid = Buffer.concat([Buffer.from([compressed[0] | 4]), point.subarray(1)]);
+  const p256 = seq(oid("2a8648ce3d0201"), oid("2a8648ce3d030107"));
+  const [compressedIntKey, hybridIntKey] = [compressed, hybrid].map(point =>
+    encodedAs(seq(p256, tlv(0x03, hex("00"), point))),
+  );
   it.each([
-    ["nothing", [leaf, int], [root], "authorized"],
-    ["the leaf", [leaf, int], [distrusted(leaf), root], "CERT_REJECTED"],
-    ["the intermediate", [leaf, int], [distrusted(int), root], "CERT_REJECTED"],
-    ["the intermediate, and the server has another copy", [leaf, mintInt()], [distrusted(int), root], "CERT_REJECTED"],
+    ["distrusts nothing", [leaf, int], [root], "authorized"],
+    ["distrusts the leaf", [leaf, int], [distrusted(leaf), root], "CERT_REJECTED"],
+    ["distrusts the intermediate", [leaf, int], [distrusted(int), root], "CERT_REJECTED"],
+    ["...and the server has another copy", [leaf, mintInt()], [distrusted(int), root], "CERT_REJECTED"],
     [
-      "the root, and the server has a cross-signed copy",
-      [leaf, int, rootByOther],
-      [distrusted(root), other],
+      "...with the key compressed",
+      [leaf, mintInt({ key: compressedIntKey })],
+      [distrusted(int), root],
+      "CERT_REJECTED",
+    ],
+    [
+      "...with the key in a form that cannot be read",
+      [leaf, int],
+      [distrusted(mintInt({ key: hybridIntKey })), root],
+      "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+    ],
+    [
+      "...and lists another copy first",
+      [leaf, rootByOther],
+      [mintInt(), distrusted(int), other],
       "UNABLE_TO_GET_ISSUER_CERT",
     ],
-    ["the root, and another path avoids it", [leaf, int, mintInt(byOther)], [distrusted(root), other], "authorized"],
-  ])("caFile distrusts %s", async (_, chain, file, expected) => {
+    ["distrusts a cross-signed root", crossSigned, [distrusted(root), other], "UNABLE_TO_GET_ISSUER_CERT"],
+    ["...for any use", crossSigned, [distrusted(root, anyUse), other], "UNABLE_TO_GET_ISSUER_CERT"],
+    ["...for another use", crossSigned, [distrusted(root, clientAuth), other], "authorized"],
+    ["trusts it for another use", crossSigned, [trusted(root, clientAuth), other], "UNABLE_TO_GET_ISSUER_CERT"],
+    ["trusts an intermediate for any use", [leaf, rootByOther], [trusted(int, anyUse), other], "authorized"],
+    [
+      "trusts one copy of the root for another use, and one for this",
+      [leaf, int],
+      [trusted(root, clientAuth), trusted(renewedRoot, serverAuth), other],
+      "authorized",
+    ],
+    [
+      "trusts an intermediate for another use",
+      [leaf, rootByOther],
+      [trusted(int, clientAuth), other],
+      "UNABLE_TO_GET_ISSUER_CERT",
+    ],
+    ["trusts it for no use", crossSigned, [trusted(root), other], "UNABLE_TO_GET_ISSUER_CERT"],
+    ["trusts an unusable copy of it", crossSigned, [trusted(shortNotCA, serverAuth), other], "authorized"],
+    [
+      "gives an intermediate a friendly name",
+      [leaf, rootByOther],
+      [withSettings(int, tlv(0x0c, Buffer.from("int"))), other],
+      "authorized",
+    ],
+    ["distrusts another key of that name", [leaf, int], [distrusted(shortOtherKey), root], "authorized"],
+    ["distrusts a root that a path avoids", [leaf, int, mintInt(byOther)], [distrusted(root), other], "authorized"],
+    [
+      "distrusts the issuer of a pinned leaf",
+      [selfIssued],
+      [distrusted(mint("leaf", { ...usual, issuer: "leaf", key: intKey, signer: intKey })), selfIssued],
+      "CERT_REJECTED",
+    ],
+    [
+      "has a CRL, which takes `crl` to count",
+      [leaf, int],
+      [shortNotCA, root, crlOf("int", intKey, { revoked: [leaf] })],
+      "authorized",
+    ],
+  ])("caFile %s", async (_, chain, file, expected) => {
     using dir = tempDir("distrust", { "ca.pem": file.join("") });
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     using socket = await Bun.connect({
@@ -1352,6 +1624,37 @@ describe("a certificate is accepted when any path to a trusted certificate is va
       },
     });
     expect(await promise).toBe(expected);
+  });
+
+  it.each([
+    ["clients", clientAuth, "UNABLE_TO_GET_ISSUER_CERT"],
+    ["servers", serverAuth, "authorized"],
+  ])("the caFile of a server distrusts a cross-signed root for %s", async (_, use, expected) => {
+    using dir = tempDir("distrust", { "ca.pem": distrusted(root, use) + other });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: {
+        ...harnessCert,
+        caFile: join(String(dir), "ca.pem"),
+        requestCert: true,
+        rejectUnauthorized: false,
+      } as Bun.TLSOptions,
+      socket: {
+        data() {},
+        handshake: (_, __, error) => resolve((error as NodeJS.ErrnoException | null)?.code ?? "authorized"),
+        error: (_, error) => reject(error),
+      },
+    });
+    const cert = crossSigned.join("");
+    const client = tls.connect({ host: "127.0.0.1", port: server.port, key, cert, rejectUnauthorized: false });
+    client.once("error", reject);
+    try {
+      expect(await promise).toBe(expected);
+    } finally {
+      client.destroy();
+    }
   });
 
   describe.each(bothOrders(root, shortOtherKey).map((ca, i) => [i ? "last" : "first", ca] as const))(
@@ -1450,35 +1753,306 @@ describe("a certificate is accepted when any path to a trusted certificate is va
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "40 ok\n", stderr: "", exitCode: 0 });
   });
 
-  const rogueInt = mintInt({ ...byOther, key: leafKey });
-  const rogueLeaf = mintLeaf({ signer: leafKey });
-  const otherAsIfByRoot = mint("other", { ...usual, issuer: "root", key: otherKey, signer: otherKey });
-  it.each([
-    ["an ordinary chain", [leaf, int], [root], [leaf, int, root]],
-    ["a cross-signed root", [leaf, int, rootByOther], [root, other], [leaf, int, rootByOther, other]],
-    ["two intermediates from the server", [rogueLeaf, int, rogueInt], [root, other], [rogueLeaf, rogueInt, other]],
-    ["one from the server and one in `ca`", [rogueLeaf, int], [root, other, rogueInt], [rogueLeaf, rogueInt, other]],
-    ["two roots in `ca`", [leaf, int], [shortOtherKey, root], [leaf, int, root]],
-    [
-      "a copy of the root that names another issuer",
-      [rogueLeaf, rogueInt, otherAsIfByRoot],
-      [root, other],
-      [rogueLeaf, rogueInt, otherAsIfByRoot],
-    ],
-    ["100 signatures to check", [leaf, ...decoys(99), int], [other], [leaf, int]],
-    ["more than 100 signatures to check", [leaf, ...decoys(100), int], [other], [leaf]],
-  ])("getPeerCertificate(true) links to whoever signed: %s", async (_, chain, ca, expected) => {
-    const socket = tls.connect({ host: "127.0.0.1", port: await portOf(chain), ca, rejectUnauthorized: false });
-    try {
-      await once(socket, "secureConnect");
-      const serials = new Set<string>();
-      for (let cert = socket.getPeerCertificate(true); cert && !serials.has(cert.serialNumber);) {
-        serials.add(cert.serialNumber);
-        cert = cert.issuerCertificate;
+  /** What `side` makes of `chain`, and then again with the session of that connection. */
+  async function seenBy(
+    side: "client" | "server",
+    maxVersion: tls.SecureVersion,
+    chain: string[],
+    trust: tls.ConnectionOptions,
+    trustOfResumingClient = trust,
+  ) {
+    const identity = { key, cert: chain.join("") };
+    await using server = tls.createServer(
+      side === "client" ? identity : { ...harnessCert, ...trust, requestCert: true, rejectUnauthorized: false },
+      sendTickets,
+    );
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const seen = [];
+    let session: Buffer | undefined;
+    for (const event of ["session", "secureConnect"]) {
+      const options = side === "server" ? identity : session ? trustOfResumingClient : trust;
+      const client = tls.connect({
+        host: "127.0.0.1",
+        port,
+        maxVersion,
+        session,
+        rejectUnauthorized: false,
+        ...options,
+      });
+      try {
+        const [[accepted], [arg]] = await Promise.all([once(server, "secureConnection"), once(client, event)]);
+        const socket: TLSSocket = side === "client" ? client : accepted;
+        const serials = [];
+        for (let cert = socket.getPeerCertificate(true), last; cert && serials.at(-1) !== "itself";) {
+          serials.push(cert === last ? "itself" : cert.serialNumber);
+          [last, cert] = [cert, cert.issuerCertificate];
+        }
+        seen.push({ error: socket.authorizationError ?? null, resumed: socket.isSessionReused(), serials });
+        session ??= arg as Buffer;
+      } finally {
+        client.destroy();
       }
-      expect([...serials]).toEqual(expected.map(pem => new X509Certificate(pem).serialNumber));
-    } finally {
-      socket.destroy();
     }
+    return seen;
+  }
+
+  const serialsOf = (chain: string[]) =>
+    chain.map(pem => (pem === "itself" ? pem : new X509Certificate(pem).serialNumber));
+  const revokedInt = mintInt(byOther);
+  const forgedInt = mintInt({ issuer: "other", signer: leafKey });
+  const both = { ca: [root, other] };
+  const usualPath = [leaf, int, root, "itself"];
+  // Applications pin this chain. [name, what the peer sends, what is trusted, the chain]
+  it.each([
+    ["an ordinary chain", [leaf, int], both, usualPath],
+    ["a cross-signed root", [leaf, int, rootByOther], both, [leaf, int, rootByOther, other, "itself"]],
+    ["a forged copy", [leaf, forgedInt, int, mintInt(byOther)], both, usualPath],
+    ["an expired copy", [leaf, mintInt({ ...byOther, ...expired }), int], both, usualPath],
+    [
+      "a copy that does not permit the name",
+      [leaf, mintInt({ ...byOther, extensions: [...isCA, onlyExampleCom] }), int],
+      both,
+      usualPath,
+    ],
+    [
+      "a revoked copy",
+      [leaf, revokedInt, int],
+      { ...both, crl: [crlOf("other", otherKey, { revoked: [revokedInt] }), rootCRL, intCRL] },
+      usualPath,
+    ],
+    ["a CA that did not sign", [rogueLeaf, int, rogueInt], both, [rogueLeaf, rogueInt, other, "itself"]],
+    ["...and is in `ca`", [rogueLeaf, rogueInt], { ca: [int, root, other] }, [rogueLeaf, rogueInt, other, "itself"]],
+    ["two roots in `ca`", [leaf, int], { ca: [shortOtherKey, root] }, usualPath],
+    [
+      "from `ca` to what the peer sent and back",
+      [leaf, rootByOther],
+      { ca: [int, other] },
+      [leaf, int, rootByOther, other, "itself"],
+    ],
+    [
+      "a forged issuer of a self-signed leaf",
+      [selfSigned, mint("leaf", { ...usual, issuer: "root", key: leafKey, signer: leafKey })],
+      { ca: [root, selfSigned] },
+      [selfSigned],
+    ],
+    [
+      "a pinned leaf that names a CA from the peer",
+      [rogueLeaf, int],
+      { ca: [rogueLeaf, root], allowPartialTrustChain: true },
+      [rogueLeaf],
+    ],
+    [
+      "a pinned leaf whose issuer has expired",
+      [leaf, decoys[0]],
+      { ca: [leaf, mintInt(expired), root], allowPartialTrustChain: true },
+      [leaf],
+    ],
+    [
+      "a pinned leaf that has a path as well",
+      [leaf, int],
+      { ca: [leaf, shortOtherKey, root], allowPartialTrustChain: true },
+      usualPath,
+    ],
+    [
+      "a partial chain",
+      [leaf],
+      { ca: [mintInt({ key: leafKey, padding: 1 }), int, shortNotCA], allowPartialTrustChain: true },
+      [leaf, int],
+    ],
+    [
+      "...that has a root after all",
+      [leaf],
+      { ca: [mintInt({ key: leafKey, padding: 1 }), int, root], allowPartialTrustChain: true },
+      usualPath,
+    ],
+    [
+      "a longer partial chain",
+      [leaf, decoys[0], int],
+      { ca: rootByOther, allowPartialTrustChain: true },
+      [leaf, int, rootByOther],
+    ],
+  ] as [string, string[], tls.SecureContextOptions, string[]][])(
+    "getPeerCertificate(true) with %s",
+    async (_, chain, trust, expected) => {
+      const serials = serialsOf(expected);
+      const outcomes = (["client", "server"] as const).flatMap(side =>
+        (["TLSv1.2", "TLSv1.3"] as const).map(version => seenBy(side, version, chain, trust)),
+      );
+      expect(await Promise.all(outcomes)).toEqual(
+        outcomes.map(() => [
+          { error: null, resumed: false, serials },
+          { error: null, resumed: true, serials },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    ["client", clientAuth],
+    ["server", serverAuth],
+  ] as const)("getPeerCertificate(true) on a %s, with a copy that is for the likes of it", async (side, use) => {
+    const copy = mintInt({ ...byOther, extensions: [...isCA, extension("551d25", seq(use))] });
+    expect(await seenBy(side, "TLSv1.3", [leaf, copy, int], both)).toEqual([
+      { error: null, resumed: false, serials: serialsOf(usualPath) },
+      { error: null, resumed: true, serials: serialsOf(usualPath) },
+    ]);
+  });
+
+  it.each([
+    ["client", serverAuth],
+    ["server", clientAuth],
+  ] as const)(
+    "getPeerCertificate(true) on a %s, with a pinned leaf that makes the chain partial",
+    async (side, use) => {
+      const extensions = [notCA, digitalSignature, localhost, extension("551d25", seq(use))];
+      const pinned = mintLeaf({ issuer: "leaf", extensions });
+      const [issuer, namesake] = [intKey, otherKey].map((key, i) =>
+        mint("leaf", { ...usual, issuer: "root", key, signer: rootKey, padding: i ? 1 : 100 }),
+      );
+      expect(await seenBy(side, "TLSv1.3", [pinned], { ca: [pinned, issuer, namesake] })).toEqual([
+        { error: null, resumed: false, serials: serialsOf([pinned, issuer]) },
+        { error: null, resumed: true, serials: serialsOf([pinned, issuer]) },
+      ]);
+    },
+  );
+
+  async function bunConnect(chain: string[], options: object, open?: (socket: Bun.Socket) => void) {
+    const { promise, resolve, reject } = Promise.withResolvers<Bun.Socket>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: await portOf(chain),
+      tls: options,
+      socket: {
+        data() {},
+        open,
+        handshake: resolve,
+        error: (_, error) => reject(error),
+        close: () => reject(new Error("closed before the handshake")),
+      },
+    });
+    return await promise;
+  }
+  const issuerSeenBy = (socket: Bun.Socket) =>
+    (socket.getPeerCertificate(false) as tls.DetailedPeerCertificate).issuerCertificate.serialNumber;
+
+  it("Bun.connect stays with the path of the handshake", async () => {
+    const { context } = tls.createSecureContext({ ca: root });
+    using socket = await bunConnect([leaf, decoys[0], mintInt(byOther), int], { secureContext: context });
+    context.addCACert(other);
+    expect([socket.getAuthorizationError(), issuerSeenBy(socket)]).toEqual([null, ...serialsOf([int])]);
+  });
+
+  it("a client keeps its certificate from a server that has the wrong name", async () => {
+    // In TLS 1.2 the certificate goes out before the handshake is over for the client.
+    await using server = tls.createServer({
+      key,
+      cert: leaf + int,
+      maxVersion: "TLSv1.2",
+      requestCert: true,
+      rejectUnauthorized: false,
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { promise, resolve } = Promise.withResolvers<string>();
+    for (const event of ["secureConnection", "tlsClientError"]) server.once(event, () => resolve(event));
+    const { port } = server.address() as AddressInfo;
+    const options = { host: "127.0.0.1", port, servername: "example.com", ca: [shortNotCA, root], ...harnessCert };
+    const [error] = await once(tls.connect(options), "error");
+    expect([error.code, await promise]).toEqual(["ERR_TLS_CERT_ALTNAME_INVALID", "tlsClientError"]);
+  });
+
+  it("getPeerCertificate(true) with a forged copy and the wrong name", async () => {
+    const error = "ERR_TLS_CERT_ALTNAME_INVALID";
+    expect(await seenBy("client", "TLSv1.3", [leaf, forgedInt, int], { ...both, servername: "example.com" })).toEqual([
+      { error, resumed: false, serials: serialsOf(usualPath) },
+      { error, resumed: true, serials: serialsOf(usualPath) },
+    ]);
+    const port = await portOf([leaf, forgedInt, int]);
+    const [{ code, cert }] = await once(
+      tls.connect({ host: "127.0.0.1", port, ...both, servername: "example.com" }),
+      "error",
+    );
+    expect([code, cert.issuerCertificate.serialNumber]).toEqual([error, ...serialsOf([int])]);
+  });
+
+  const forgedRoot = mintRoot({ issuer: "other", signer: leafKey });
+  it.each([
+    ["no path is valid", { ca: other }, "CERT_SIGNATURE_FAILURE", [leaf, int, forgedRoot, other, "itself"]],
+    ["the first path is valid", both, null, usualPath],
+  ])("a session that is resumed where %s", async (_, trust, error, expected) => {
+    expect(await seenBy("client", "TLSv1.3", [leaf, int, forgedRoot], { ca: [shortNotCA, root] }, trust)).toEqual([
+      { error: null, resumed: false, serials: serialsOf(usualPath) },
+      { error, resumed: true, serials: serialsOf(expected) },
+    ]);
+  });
+
+  async function sessionOf(chain: string[], options: tls.ConnectionOptions) {
+    const socket = tls.connect({ host: "127.0.0.1", port: await portOf(chain), ...options });
+    const [session] = await once(socket, "session");
+    socket.destroy();
+    return session as Buffer;
+  }
+
+  it.each([
+    [[leaf, int], shortNotCA, "INVALID_PURPOSE"],
+    [[namedByCN, int], constrained(), "UNSPECIFIED"],
+  ])("a session that is resumed where no path is valid, by a client that rejects (%#)", async (chain, ca, code) => {
+    const session = await sessionOf(chain, { ca: [ca, root] });
+    expect(await connect(chain, { ca, session, ...anyName })).toBe(code);
+  });
+
+  // Any other session outlasts its certificates. [name, year of the handshake, first year of the root, last one]
+  const thisYear = new Date().getUTCFullYear();
+  it.each([
+    ["the root has expired since", -2, -2, -2, "authorized"],
+    ["the root was renewed since", -2, -1, 1, "authorized"],
+    ["the clock went back since, from beyond 2038", 13, 13, 13, "authorized"],
+    ["the root is valid neither then nor now", -3, -2, -2, "INVALID_PURPOSE"],
+  ])("a session that is resumed when %s", async (_, handshake, from, until, expected) => {
+    const session = await sessionOf([leaf, int], { ca: [shortNotCA, root] });
+    // verifyResult [5] INTEGER, as us_cert_verify_cb sets it.
+    const resultAt = (ms: number) => 2 ** 30 + (Math.floor(ms / 1000) % 2 ** 30);
+    const offset = session.indexOf(hex("a5060204")) + 4;
+    expect(resultAt(Date.now()) - session.readUInt32BE(offset)).toBeWithin(0, 60);
+    session.writeUInt32BE(resultAt(Date.UTC(thisYear + handshake, 6)), offset);
+    const ca = [shortNotCA, mintRoot({ valid: seq(time(thisYear + from), time(thisYear + until + 1)) })];
+    expect(await connect([leaf, int], { ca, session })).toBe(expected);
+  });
+
+  it("a session that is refused when it is resumed stays refused", async () => {
+    await using server = Bun.spawn({
+      cmd: ["node", join(import.meta.dir, "renegotiation-feature.js")],
+      env: { ...bunEnv, SERVER_CERT: leaf + int, SERVER_KEY: key },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { value } = await server.stdout.getReader().read();
+    const port = Number(new URL(new TextDecoder().decode(value)).port);
+    const first = tls.connect({ host: "localhost", port, ca: [shortNotCA, root] });
+    const [session] = await once(first, "session");
+    first.destroy();
+    const secureContext = tls.createSecureContext({ ca: other });
+    const socket = tls.connect({ host: "localhost", port, secureContext, session, rejectUnauthorized: false });
+    await once(socket, "secureConnect");
+    const resumed = socket.isSessionReused();
+    secureContext.context.addCACert(root);
+    // The response comes after a renegotiation.
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    const [response] = await once(socket, "data");
+    socket.destroy();
+    expect([resumed, String(response).slice(0, 15), socket.authorized]).toEqual([true, "HTTP/1.1 200 OK", false]);
+  });
+
+  it("a session that was replaced before the handshake is not the one that is verified again", async () => {
+    const chain = [rogueLeaf, int, rogueInt];
+    const [replaced, session] = await Promise.all([sessionOf([leaf, forgedInt, int], both), sessionOf(chain, both)]);
+    using socket = await bunConnect(chain, both, socket => {
+      socket.setSession(replaced);
+      socket.getPeerCertificate(false);
+      socket.getAuthorizationError();
+      socket.setSession(session);
+    });
+    const seen = [socket.authorized, socket.isSessionReused(), issuerSeenBy(socket)];
+    expect(seen).toEqual([true, true, ...serialsOf([rogueInt])]);
   });
 });

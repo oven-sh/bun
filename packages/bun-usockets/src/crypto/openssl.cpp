@@ -31,6 +31,7 @@
 
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -217,7 +218,8 @@ static us_server_names_ptr us_server_names_ref(struct us_listen_socket_t *ls);
 
 using us_session_sink_ptr = std::unique_ptr<void, void (*)(void *sink)>;
 
-/* Allocated for an accepted socket, a node:tls socket's events, a client's first renegotiation, fetch's session sink, and a first spill. */
+/* Allocated for an accepted socket, a node:tls socket's events, a client's first renegotiation, fetch's session sink, a first spill,
+ * and a chain whose first path was refused. */
 struct us_ssl_rare_t : us_allocated_t {
   /* Non-NULL exactly while us_socket_t::ssl_spilled is set. */
   us_unique_ptr<struct us_ssl_spill_t, us_free> spill;
@@ -227,6 +229,9 @@ struct us_ssl_rare_t : us_allocated_t {
   us_unique_ptr<struct us_ssl_pending_event_t, us_ssl_pending_events_free> pending_head;
   struct us_ssl_pending_event_t *pending_tail;
   us_session_sink_ptr session_sink{nullptr, nullptr};
+  /* See us_ssl_get_verify_result. One of the two is set once it has verified a resumed session. */
+  us_x509_stack_ptr other_path;
+  int other_path_error;
   uint64_t reneg_window_start_ms;
   uint32_t reneg_count;
 };
@@ -1074,6 +1079,8 @@ static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ct
   return 1;
 }
 
+long us_ssl_get_verify_result(SSL *ssl);
+
 /* Whether this socket is a rejecting client whose chain verification failed:
  * from that point on its handshake output is suppressed and the handshake is
  * reported as failed. */
@@ -1081,7 +1088,7 @@ static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
   if (!s->ssl_inline_reject || !s->ssl_verify_failed) return 0;
   /* Only the final verdict rejects: an alternate chain can recover a per-depth failure. */
-  return SSL_get_verify_result(s_ssl(s)) != X509_V_OK;
+  return us_ssl_get_verify_result(s_ssl(s)) != X509_V_OK;
 }
 
 /* What the owner of a client says about the name on the server's certificate. */
@@ -1185,68 +1192,170 @@ static int us_x509_store_ctx_own_error(X509_STORE_CTX *ctx, int ok) {
   return error == X509_V_OK && ok ? us_x509_store_ctx_common_name_error(ctx) : error;
 }
 
-using us_x509_store_ctx_ptr = us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free>;
 using us_x509_borrowed_stack_ptr = us_unique_ptr<STACK_OF(X509), sk_X509_free>;
 
-/* The verdict of `ctx` on one path: its leaf, `intermediates`, and `anchor` from the store. */
-static int us_x509_verify_path(X509_STORE_CTX *ctx, STACK_OF(X509) *intermediates, X509 *anchor) {
+struct us_x509_path_search_t {
+  X509_STORE_CTX *ctx;
+  int64_t now;
+  int trust, checks_crls;
+  us_x509_borrowed_stack_ptr intermediates{sk_X509_new_null()};
+  /* As maxChainSignatureChecks in Go's crypto/x509. */
+  int signatures_left = 100;
+  us_x509_stack_ptr found{};
+};
+
+/* Asks X509_verify_cert about one path: the leaf, `intermediates`, and `anchor` from the store. */
+static void us_x509_verify_path(struct us_x509_path_search_t *search, X509 *anchor) {
+  X509_STORE_CTX *ctx = search->ctx;
+  /* It comes to these after the CRLs, which a forged certificate can make slow. */
+  for (size_t i = sk_X509_num(search->intermediates.get()); i-- > 0;) {
+    X509 *subject = i > 0 ? sk_X509_value(search->intermediates.get(), i - 1) : X509_STORE_CTX_get0_cert(ctx);
+    if (X509_verify(subject, X509_get0_pubkey(sk_X509_value(search->intermediates.get(), i))) != 1) return;
+  }
+  X509_STORE *store = X509_STORE_CTX_get0_store(ctx);
   us_x509_borrowed_stack_ptr trusted{sk_X509_new_null()};
-  us_x509_store_ctx_ptr path{X509_STORE_CTX_new()};
+  us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free> path{X509_STORE_CTX_new()};
   if (trusted == NULL || path == NULL || !sk_X509_push(trusted.get(), anchor) ||
-      !X509_STORE_CTX_init(path.get(), X509_STORE_CTX_get0_store(ctx), X509_STORE_CTX_get0_cert(ctx), intermediates) ||
+      !X509_STORE_CTX_init(path.get(), store, X509_STORE_CTX_get0_cert(ctx), search->intermediates.get()) ||
       !X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(path.get()), X509_STORE_CTX_get0_param(ctx))) {
-    return X509_V_ERR_OUT_OF_MEM;
+    return;
+  }
+  /* When it comes from us_x509_verify_cert_by_any_path, it is not a way around the issuer of the leaf. */
+  unsigned long added = X509_V_FLAG_PARTIAL_CHAIN & ~X509_VERIFY_PARAM_get_flags(X509_STORE_get0_param(store));
+  if (sk_X509_num(search->intermediates.get()) > 0) {
+    X509_VERIFY_PARAM_clear_flags(X509_STORE_CTX_get0_param(path.get()), added);
   }
   X509_STORE_CTX_set0_trusted_stack(path.get(), trusted.get());
-  if (!X509_verify_cert(path.get())) return X509_STORE_CTX_get_error(path.get());
-  return us_x509_store_ctx_own_error(path.get(), 1);
+  if (X509_verify_cert(path.get()) && us_x509_store_ctx_own_error(path.get(), 1) == X509_V_OK) {
+    search->found.reset(X509_STORE_CTX_get1_chain(path.get()));
+  }
 }
 
-/* Depth-first: whether `path`, which ends in `subject`, verifies through any issuer in the store or from the peer. */
-static int us_x509_extend_path(X509_STORE_CTX *ctx, STACK_OF(X509) *path, X509 *subject, int *issuers_left) {
-  us_x509_stack_ptr stored{X509_STORE_CTX_get1_certs(ctx, X509_get_issuer_name(subject))};
-  STACK_OF(X509) *sent = X509_STORE_CTX_get0_untrusted(ctx);
-  size_t num_stored = sk_X509_num(stored.get());
-  for (size_t i = 0; i < num_stored + sk_X509_num(sent); i++) {
-    X509 *issuer = i < num_stored ? sk_X509_value(stored.get(), i) : sk_X509_value(sent, i - num_stored);
-    if (X509_check_issued(issuer, subject) != X509_V_OK || sk_X509_find(path, NULL, issuer)) continue;
-    if (--*issuers_left < 0) return 0;
-    if (i < num_stored) {
-      int error = us_x509_verify_path(ctx, path, issuer);
-      if (error == X509_V_OK || error == X509_V_ERR_CERT_REJECTED) return error == X509_V_OK;
-    }
-    if (X509_get_extension_flags(issuer) & EXFLAG_SS) continue;
-    if (!sk_X509_push(path, issuer)) return 0;
-    if (us_x509_extend_path(ctx, path, issuer, issuers_left)) return 1;
-    sk_X509_pop(path);
+/* In OpenSSL's obj_trust, unlike BoringSSL's, anyExtendedKeyUsage stands for every use. */
+static int us_x509_trust_is(struct us_x509_path_search_t *search, X509 *stored, int verdict) {
+  return X509_check_trust(stored, search->trust, 0) == verdict ||
+         X509_check_trust(stored, NID_anyExtendedKeyUsage, 0) == verdict;
+}
+
+/* And a list of uses rejects the others. */
+static int us_x509_has_list_of_uses(X509 *stored) {
+  uint8_t *out = NULL;
+  int len = i2d_X509_AUX(stored, &out);
+  if (len <= 0) return 1;
+  us_unique_ptr<uint8_t[], OPENSSL_free> der{out};
+  CBS in, settings;
+  CBS_init(&in, der.get(), len);
+  return CBS_get_asn1(&in, NULL, CBS_ASN1_SEQUENCE) && CBS_get_asn1(&in, &settings, CBS_ASN1_SEQUENCE) &&
+         CBS_peek_asn1_tag(&settings, CBS_ASN1_SEQUENCE);
+}
+
+static int us_x509_is_in_any_crl(struct us_x509_path_search_t *search, X509 *cert) {
+  if (!search->checks_crls) return 0;
+  us_x509_crl_stack_ptr crls{X509_STORE_CTX_get1_crls(search->ctx, X509_get_issuer_name(cert))};
+  for (size_t i = 0; i < sk_X509_CRL_num(crls.get()); i++) {
+    if (X509_CRL_get0_by_cert(sk_X509_CRL_value(crls.get(), i), NULL, cert)) return 1;
   }
   return 0;
 }
 
-/* As maxChainSignatureChecks in Go's crypto/x509. */
-static const int us_x509_max_issuers_to_try = 100;
+/* X509_verify_cert only sees the trust settings and CRLs that a path leads to, and the peer has a say in the path. */
+static int us_x509_store_refuses(struct us_x509_path_search_t *search, STACK_OF(X509) *same_subject, X509 *cert,
+                                 int is_stored) {
+  EVP_PKEY *key = X509_get0_pubkey(cert);
+  if (key == NULL) return 1;
+  for (size_t i = 0; i < sk_X509_num(same_subject); i++) {
+    X509 *stored = sk_X509_value(same_subject, i);
+    /* One that cannot be read may be the same. */
+    EVP_PKEY *stored_key = X509_get0_pubkey(stored);
+    if (stored_key != NULL && !EVP_PKEY_eq(stored_key, key)) continue;
+    if (us_x509_trust_is(search, stored, X509_TRUST_REJECTED)) return 1;
+    if (is_stored && stored != cert) continue;
+    if (!us_x509_trust_is(search, stored, X509_TRUST_TRUSTED) && us_x509_has_list_of_uses(stored)) return 1;
+    if (us_x509_is_in_any_crl(search, stored)) return 1;
+  }
+  return !is_stored && us_x509_is_in_any_crl(search, cert);
+}
+
+/* The same name and key again is a loop (RFC 4158, section 5.2). With another key, its CRL would do for both. */
+static int us_x509_path_repeats(struct us_x509_path_search_t *search, X509 *next) {
+  size_t num = sk_X509_num(search->intermediates.get());
+  for (size_t i = 0; num > 0 && i <= num; i++) {
+    X509 *cert = i < num ? sk_X509_value(search->intermediates.get(), i) : X509_STORE_CTX_get0_cert(search->ctx);
+    if (X509_subject_name_cmp(cert, next) != 0) continue;
+    /* The budget does not cover this, and EVP_PKEY_eq does arithmetic. */
+    if (search->checks_crls || !ASN1_STRING_cmp(X509_get0_pubkey_bitstr(cert), X509_get0_pubkey_bitstr(next))) return 1;
+  }
+  return 0;
+}
+
+static int us_x509_is_out_of_date(struct us_x509_path_search_t *search, X509 *cert) {
+  return X509_cmp_time_posix(X509_get0_notBefore(cert), search->now) > 0 ||
+         X509_cmp_time_posix(X509_get0_notAfter(cert), search->now) < 0;
+}
+
+/* Depth-first through the issuers of `subject`, the last of `intermediates`, in the store and from the peer. */
+static void us_x509_extend_path(struct us_x509_path_search_t *search, X509 *subject) {
+  STACK_OF(X509) *path = search->intermediates.get(), *sent = X509_STORE_CTX_get0_untrusted(search->ctx);
+  X509_NAME *name = X509_get_issuer_name(subject);
+  us_x509_stack_ptr stored{X509_STORE_CTX_get1_certs(search->ctx, name)};
+  size_t num_stored = sk_X509_num(stored.get());
+  for (size_t i = 0; i < num_stored + sk_X509_num(sent) && search->found == NULL; i++) {
+    int is_stored = i < num_stored;
+    X509 *issuer = is_stored ? sk_X509_value(stored.get(), i) : sk_X509_value(sent, i - num_stored);
+    /* Many certificates can make X509_check_issued slow, and a large one the lookups for its issuer. */
+    if (is_stored ? X509_check_issued(issuer, subject) : X509_NAME_cmp(X509_get_subject_name(issuer), name)) continue;
+    if (us_x509_is_out_of_date(search, issuer) || us_x509_path_repeats(search, issuer)) continue;
+    if ((search->signatures_left -= 1 + i2d_X509(issuer, NULL) / 4096) < 0) return;
+    if (is_stored ? X509_verify(subject, X509_get0_pubkey(issuer)) != 1 : X509_check_issued(issuer, subject)) continue;
+    if (us_x509_store_refuses(search, stored.get(), issuer, is_stored)) continue;
+    if (is_stored && (search->signatures_left -= (int)sk_X509_num(path) + 1) >= 0) us_x509_verify_path(search, issuer);
+    if (X509_get_extension_flags(issuer) & EXFLAG_SS) continue;
+    if (!sk_X509_push(path, issuer)) return;
+    /* Applications look for the root, also above an intermediate that is trusted by itself. */
+    us_x509_stack_ptr partial = std::move(search->found);
+    us_x509_extend_path(search, issuer);
+    if (search->found == NULL) search->found = std::move(partial);
+    sk_X509_pop(path);
+  }
+}
+
+/* As in X509_verify_cert, a leaf is not its own anchor next to its issuer, whose constraints apply. */
+static int us_x509_store_ctx_has_issuer_of(X509_STORE_CTX *ctx, X509 *leaf) {
+  int names_itself = X509_check_issued(leaf, leaf) == X509_V_ERR_KEYUSAGE_NO_CERTSIGN;
+  if (names_itself && X509_verify(leaf, X509_get0_pubkey(leaf)) == 1) return 0;
+  X509 *issuer = NULL;
+  X509_STORE_CTX_get1_issuer(&issuer, ctx, leaf);
+  return us_x509_ptr{issuer} != NULL;
+}
 
 /* X509_verify_cert builds one path, out of the first issuers it comes to, and does not go back. */
-static int us_x509_store_ctx_has_valid_path(X509_STORE_CTX *ctx) {
+static us_x509_stack_ptr us_x509_store_ctx_find_valid_path(X509_STORE_CTX *ctx, int purpose, int64_t now) {
+  int trust = purpose == X509_PURPOSE_SSL_CLIENT ? X509_TRUST_SSL_CLIENT : X509_TRUST_SSL_SERVER;
+  int checks_crls = (X509_VERIFY_PARAM_get_flags(X509_STORE_CTX_get0_param(ctx)) & X509_V_FLAG_CRL_CHECK) != 0;
+  struct us_x509_path_search_t search{ctx, now, trust, checks_crls};
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
+  if (search.intermediates == NULL || us_x509_is_out_of_date(&search, leaf)) return NULL;
   us_x509_stack_ptr same_subject{X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf))};
-  for (size_t i = 0; i < sk_X509_num(same_subject.get()); i++) {
-    if (X509_cmp(sk_X509_value(same_subject.get(), i), leaf) != 0) continue;
-    int error = us_x509_verify_path(ctx, NULL, sk_X509_value(same_subject.get(), i));
-    if (error == X509_V_OK || error == X509_V_ERR_CERT_REJECTED) return error == X509_V_OK;
+  if (us_x509_store_refuses(&search, same_subject.get(), leaf, 0)) return NULL;
+  us_x509_extend_path(&search, leaf);
+  for (size_t i = 0; i < sk_X509_num(same_subject.get()) && !search.found; i++) {
+    X509 *stored = sk_X509_value(same_subject.get(), i);
+    if (X509_cmp(stored, leaf) != 0 || us_x509_store_ctx_has_issuer_of(ctx, leaf)) continue;
+    us_x509_verify_path(&search, stored);
   }
-  us_x509_borrowed_stack_ptr path{sk_X509_new_null()};
-  int issuers_left = us_x509_max_issuers_to_try;
-  return path != NULL && us_x509_extend_path(ctx, path.get(), leaf, &issuers_left);
+  return std::move(search.found);
 }
 
 /* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
  * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
  * which says whether to go on. Without one, as in quic.cpp and node:quic, this returns 0 as it would. */
-static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
+static int us_x509_verify_chain(X509_STORE_CTX *ctx, int purpose, int64_t now, us_x509_stack_ptr &other_path) {
+  X509_STORE_CTX_set_time_posix(ctx, 0, now);
   int ok = X509_verify_cert(ctx);
   int error = us_x509_store_ctx_own_error(ctx, ok);
-  if ((error != X509_V_OK || X509_STORE_CTX_get_error(ctx) != X509_V_OK) && us_x509_store_ctx_has_valid_path(ctx)) {
+  if (error == X509_V_OK && X509_STORE_CTX_get_error(ctx) == X509_V_OK) return ok;
+  other_path = us_x509_store_ctx_find_valid_path(ctx, purpose, now);
+  if (other_path) {
     /* libssl does not do this for quic.cpp, and SSL_get_error takes whatever is left for a failure. */
     ERR_clear_error();
     X509_STORE_CTX_set_error(ctx, X509_V_OK);
@@ -1259,9 +1368,15 @@ static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   return verify_callback ? verify_callback(0, ctx) : 0;
 }
 
+static int us_ssl_purpose_of_peer(const SSL *ssl) {
+  return ssl && SSL_is_server(ssl) ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER;
+}
+
 static int us_x509_verify_chain_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
-  return us_x509_verify_chain(ctx);
+  SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  us_x509_stack_ptr other_path;
+  return us_x509_verify_chain(ctx, us_ssl_purpose_of_peer(ssl), time(NULL), other_path);
 }
 
 /* For node:quic, which builds its own SSL_CTX. */
@@ -1270,7 +1385,8 @@ void us_ssl_ctx_reject_blocked_keys(SSL_CTX *ctx) {
 }
 
 /* A self-issued leaf that may not sign certificates is its own anchor when the store holds that very certificate (#44365). */
-int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
+static int us_x509_verify_cert_by_any_path(X509_STORE_CTX *ctx, int purpose, int64_t now,
+                                           us_x509_stack_ptr &other_path) {
   X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
   uint32_t flags = X509_get_extension_flags(leaf);
   if ((flags & EXFLAG_SI) && !(flags & EXFLAG_SS) && X509_check_purpose(leaf, purpose, 0) == 1) {
@@ -1282,70 +1398,72 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
       }
     }
   }
-  return us_x509_verify_chain(ctx);
+  return us_x509_verify_chain(ctx, purpose, now, other_path);
 }
 
-/* One call of getPeerCertificate(true). Mirrors IssuerWalk in tls_socket_functions.rs. */
-struct us_x509_issuer_walk_t {
-  X509_STORE *store;
-  STACK_OF(X509) *sent;
-  int had_choice;
-  int signatures_checked;
-};
-
-static us_x509_stack_ptr us_x509_issuer_walk_get1_stored(struct us_x509_issuer_walk_t *walk, X509 *subject,
-                                                         X509 **first) {
-  us_x509_store_ctx_ptr lookup{walk->store ? X509_STORE_CTX_new() : NULL};
-  if (lookup == NULL || !X509_STORE_CTX_init(lookup.get(), walk->store, NULL, NULL)) return NULL;
-  if (first) X509_STORE_CTX_get1_issuer(first, lookup.get(), subject);
-  return us_x509_stack_ptr{X509_STORE_CTX_get1_certs(lookup.get(), X509_get_issuer_name(subject))};
+int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
+  us_x509_stack_ptr other_path;
+  return us_x509_verify_cert_by_any_path(ctx, purpose, time(NULL), other_path);
 }
 
-/* Applications pin this chain, and X509_check_issued only compares what anyone can copy. As long as each link has one
- * candidate, it is the chain that was verified. Past that, signatures have to say so. */
-int us_x509_issuer_walk_accepts(struct us_x509_issuer_walk_t *walk, X509 *subject, X509 *issuer) {
-  if (X509_check_issued(issuer, subject) != X509_V_OK) return 0;
-  us_x509_stack_ptr stored = us_x509_issuer_walk_get1_stored(walk, subject, NULL);
-  int has_choice = 0, check_signature = walk->had_choice;
-  for (STACK_OF(X509) *others : {walk->sent, stored.get()}) {
-    for (size_t i = 0; i < sk_X509_num(others) && !check_signature; i++) {
-      X509 *other = sk_X509_value(others, i);
-      if (other == issuer || X509_check_issued(other, subject) != X509_V_OK) continue;
-      has_choice = 1;
-      check_signature = ASN1_STRING_cmp(X509_get0_pubkey_bitstr(other), X509_get0_pubkey_bitstr(issuer)) != 0;
+/* X509_V_OK in a session, which holds what the peer sent and cannot say which of it was verified. The 30 bits below
+ * it are those of the time, because any other session outlasts its certificates. */
+#define US_X509_V_OK_BY_OTHER_PATH 0x40000000
+
+/* Such a session is verified again when it is resumed, as in ssl_crypto_x509_session_verify_cert_chain. */
+long us_ssl_get_verify_result(SSL *ssl) {
+  long result = SSL_get_verify_result(ssl);
+  if (!(result & US_X509_V_OK_BY_OTHER_PATH)) return result;
+  struct us_ssl_rare_t *rare = us_ssl_rare_ensure(ssl);
+  if (rare->other_path || rare->other_path_error || SSL_in_init(ssl)) return rare->other_path_error;
+  STACK_OF(X509) *sent = SSL_get_peer_full_cert_chain(ssl);
+  X509_STORE *store = SSL_CTX_get_cert_store(SSL_get_SSL_CTX(ssl));
+  us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free> ctx{X509_STORE_CTX_new()};
+  int64_t now = time(NULL);
+  /* The clock can have gone back since, and the store can have been renewed. */
+  int64_t then_and_now[] = {now - ((int32_t)((uint32_t)(now - result) << 2) >> 2), now};
+  for (int64_t when : then_and_now) {
+    if (ctx == NULL || !X509_STORE_CTX_init(ctx.get(), store, sk_X509_value(sent, 0), sent) ||
+        !X509_STORE_CTX_set_default(ctx.get(), SSL_is_server(ssl) ? "ssl_client" : "ssl_server") ||
+        !X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(ctx.get()), SSL_get0_param(ssl))) {
+      Bun__outOfMemory();
     }
+    /* The callback of the SSL can only run inside of an SSL_* call. */
+    X509_STORE_CTX_set_verify_cb(ctx.get(), us_verify_callback);
+    us_x509_verify_cert_by_any_path(ctx.get(), us_ssl_purpose_of_peer(ssl), when, rare->other_path);
+    rare->other_path_error = X509_STORE_CTX_get_error(ctx.get());
+    if (rare->other_path_error == X509_V_OK) break;
   }
-  if (check_signature && (++walk->signatures_checked > us_x509_max_issuers_to_try ||
-                          X509_verify(subject, X509_get0_pubkey(issuer)) != 1)) {
-    ERR_clear_error();
-    return 0;
-  }
-  walk->had_choice |= has_choice;
-  return 1;
+  ERR_clear_error();
+  if (rare->other_path || rare->other_path_error) return rare->other_path_error;
+  rare->other_path.reset(X509_STORE_CTX_get1_chain(ctx.get()));
+  if (!rare->other_path) Bun__outOfMemory();
+  return X509_V_OK;
 }
 
-X509 *us_x509_issuer_walk_get1_from_store(struct us_x509_issuer_walk_t *walk, X509 *subject) {
-  X509 *first = NULL;
-  us_x509_stack_ptr stored = us_x509_issuer_walk_get1_stored(walk, subject, &first);
-  us_x509_ptr owned{first};
-  if (first == NULL || us_x509_issuer_walk_accepts(walk, subject, first)) return owned.release();
-  for (size_t i = 0; i < sk_X509_num(stored.get()); i++) {
-    X509 *other = sk_X509_value(stored.get(), i);
-    if (other != first && us_x509_issuer_walk_accepts(walk, subject, other) && X509_up_ref(other)) return other;
-  }
-  return NULL;
+/* The path that was verified, leaf first, when names may lead along another one. */
+STACK_OF(X509) *us_ssl_get0_other_path(const SSL *ssl) {
+  struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
+  return rare ? rare->other_path.get() : NULL;
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
 static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
   SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-  int ok = us_x509_verify_cert(ctx, ssl && SSL_is_server(ssl) ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER);
+  us_x509_stack_ptr other_path;
+  int64_t now = time(NULL);
+  int ok = us_x509_verify_cert_by_any_path(ctx, us_ssl_purpose_of_peer(ssl), now, other_path);
   if (!ssl) return ok;
+  int error = X509_STORE_CTX_get_error(ctx);
+  if (other_path) {
+    us_ssl_rare_ensure(ssl)->other_path = std::move(other_path);
+    X509_STORE_CTX_set_error(ctx, US_X509_V_OK_BY_OTHER_PATH | (now & (US_X509_V_OK_BY_OTHER_PATH - 1)));
+  }
   void *wrapper = us_ssl_wrapper(ssl);
   struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);
   if (s) s->ssl_peer_chain_checked = 1;
-  if (SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
+  if (SSL_is_server(ssl) || error != X509_V_OK) return ok;
   int verdict = wrapper ? us_ssl_wrapper_server_identity(wrapper, ssl)
                 : s     ? us_dispatch_server_identity(s, ssl)
                         : US_IDENTITY_UNCHECKED;
@@ -1946,11 +2064,11 @@ const char *us_X509_error_code(long err) {
   return code;
 }
 
-static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
+static long us_internal_verify_peer_certificate(SSL *ssl, long def) {
   if (!ssl) return def;
   long err = def;
   if (us_x509_ptr{SSL_get_peer_certificate(ssl)}) {
-    err = SSL_get_verify_result(ssl);
+    err = us_ssl_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
     if (curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) {

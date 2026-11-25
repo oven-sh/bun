@@ -411,6 +411,43 @@ impl core::ops::DerefMut for OwnedX509 {
     }
 }
 
+/// Finds the issuer of a certificate in a trust store.
+pub struct IssuerLookup<'a>(
+    core::ptr::NonNull<X509_STORE_CTX>,
+    core::marker::PhantomData<&'a X509_STORE>,
+);
+
+impl<'a> IssuerLookup<'a> {
+    pub fn new(store: &'a X509_STORE) -> Option<Self> {
+        let ctx = core::ptr::NonNull::new(X509_STORE_CTX_new())?;
+        let lookup = Self(ctx, core::marker::PhantomData);
+        // SAFETY: the context keeps a pointer to `store`, which outlives it.
+        let ready = unsafe {
+            X509_STORE_CTX_init(
+                ctx.as_ptr(),
+                store,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        (ready == 1).then_some(lookup)
+    }
+
+    pub fn issuer_of(&self, cert: &X509) -> Option<OwnedX509> {
+        let mut issuer = None;
+        // SAFETY: `new` initialized the context.
+        unsafe { X509_STORE_CTX_get1_issuer(&mut issuer, self.0.as_ptr(), cert) };
+        issuer
+    }
+}
+
+impl Drop for IssuerLookup<'_> {
+    fn drop(&mut self) {
+        // SAFETY: we own the context, freed once.
+        unsafe { X509_STORE_CTX_free(self.0.as_ptr()) }
+    }
+}
+
 /// Owns one `CRYPTO_BUFFER` reference. A slice of them is a `CRYPTO_BUFFER **`.
 #[repr(transparent)]
 pub struct OwnedCryptoBuffer(core::ptr::NonNull<CRYPTO_BUFFER>);
@@ -1375,6 +1412,20 @@ unsafe extern "C" {
     pub safe fn X509_STORE_add_crl(store: &X509_STORE, crl: &X509_CRL) -> c_int;
     pub fn X509_STORE_set_flags(store: &X509_STORE, flags: c_ulong) -> c_int;
     fn X509_STORE_free(store: *mut X509_STORE);
+    safe fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
+    fn X509_STORE_CTX_init(
+        ctx: *mut X509_STORE_CTX,
+        store: &X509_STORE,
+        x509: *mut X509,
+        chain: *mut struct_stack_st_X509,
+    ) -> c_int;
+    fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
+    /// Leaves `issuer` as it is when there is none.
+    fn X509_STORE_CTX_get1_issuer(
+        issuer: &mut Option<OwnedX509>,
+        ctx: *mut X509_STORE_CTX,
+        x: &X509,
+    ) -> c_int;
     pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
     fn X509_CRL_free(crl: *mut X509_CRL);
     fn PEM_read_bio_X509_CRL(

@@ -33,6 +33,9 @@ using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
 inline void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
 using us_x509_stack_ptr = us_unique_ptr<STACK_OF(X509), us_x509_stack_free>;
 
+inline void us_x509_crl_stack_free(STACK_OF(X509_CRL) *crls) { sk_X509_CRL_pop_free(crls, X509_CRL_free); }
+using us_x509_crl_stack_ptr = us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free>;
+
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();
 

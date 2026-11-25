@@ -108,8 +108,6 @@ function systemLibs(cfg: Config): string[] {
       "bcrypt.lib",
       "ntdll.lib",
       "userenv.lib",
-      "advapi32.lib",
-      "iphlpapi.lib",
       "dbghelp.lib",
       "crypt32.lib",
       "advapi32.lib",

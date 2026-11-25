@@ -24,8 +24,10 @@ test("a tick of the idle GC timer that fires late does not make the next one lat
       globalThis.litter = Array.from({ length: 500 }, (_, i) => ({ i }));
     };
     let previous = -Infinity, first, late;
+    const seen = [];
     globalThis.registry = new FinalizationRegistry(() => {
       const now = performance.now();
+      seen.push(Math.round(now));
       if (first === undefined) {
         litter();
         if (Math.abs(now - previous - interval) < 0.1 * interval) {
@@ -41,8 +43,11 @@ test("a tick of the idle GC timer that fires late does not make the next one lat
         process.exit(0);
       }
     });
-    // Ends a run that finds no schedule.
-    setTimeout(() => process.exit(1), 8 * interval);
+    // Ends a run that finds no schedule, or no tick after it.
+    setTimeout(() => {
+      console.error("gave up, collections at ms: " + seen.join(" "));
+      process.exit(1);
+    }, 8 * interval);
     // From a timer: the collection that follows the entry point has run by then, so the next one is a tick's.
     setTimeout(litter, 0);
   `;
@@ -57,9 +62,9 @@ test("a tick of the idle GC timer that fires late does not make the next one lat
       BUN_JSC_useConcurrentGC: "0",
     },
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const [late, next] = stdout.trim().split(" ").map(Number);
   expect(
     {
@@ -69,6 +74,6 @@ test("a tick of the idle GC timer that fires late does not make the next one lat
       theNextTickIsOnSchedule: Math.abs(next - Math.round(next)) < 0.3,
       exitCode,
     },
-    `the late tick and the next one, in intervals after the first: ${JSON.stringify(stdout)}`,
+    `the late tick and the next one, in intervals after the first: ${JSON.stringify(stdout)}\n${stderr}`,
   ).toEqual({ theLateTickCollects: true, theNextTickIsOnSchedule: true, exitCode: 0 });
 });

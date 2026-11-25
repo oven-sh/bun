@@ -21,7 +21,7 @@ use bun_uws as uws;
 
 use super::hold::{Dial, Hold, Object, SocketDial};
 use super::protocol_jsc::{
-    ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
+    binary_key_error, reply_to_js, resp_value_to_js, results_to_js, valkey_error_to_js,
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
@@ -927,12 +927,18 @@ impl JSValkeyClient {
             Event::Resolved {
                 mut promise,
                 mut value,
-                as_buffer: return_as_buffer,
+                reply,
             } => {
-                let options = ToJSOptions { return_as_buffer };
-                let value = resp_value_to_js_with_options(&mut value, global, options);
+                if reply.refuses(&value) {
+                    return promise.reject(global, binary_key_error(&mut value, global, reply));
+                }
+                let value = reply_to_js(&mut value, global, reply);
                 promise.settle(global, value)
             }
+            Event::Executed {
+                mut promise,
+                mut results,
+            } => promise.settle(global, results_to_js(&mut results, global)),
             Event::Rejected {
                 mut promise,
                 message,

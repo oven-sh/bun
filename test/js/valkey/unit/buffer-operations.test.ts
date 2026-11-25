@@ -108,6 +108,44 @@ describe.skipIf(!isEnabled)("Valkey: Buffer Operations", () => {
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out).toStrictEqual(value);
   });
+
+  test("{ buffer: true } reads back what was stored", async () => {
+    const { redis } = ctx;
+    const [bytes, value] = [{ buffer: true } as const, Buffer.of(0xff, 0xfe, 0x00, 0x41)];
+    const [string, hash, list, set, zset, stream, copy] = ["s", "h", "l", "set", "z", "x", "c"].map(ctx.generateKey);
+    await redis.set(string, value);
+    await redis.hset(hash, "f", value);
+    await redis.rpush(list, value);
+    await redis.sadd(set, value);
+    await redis.send("ZADD", [zset, 1, value]);
+    const id = await redis.send("XADD", [stream, "*", "f", value]);
+
+    expect(await redis.mget(string, copy, bytes)).toEqual([value, null]);
+    expect(await redis.hgetall(hash, bytes)).toEqual({ f: value });
+    expect(await redis.lrange(list, 0, -1, bytes)).toEqual([value]);
+    expect(await redis.sscan(set, 0, bytes)).toEqual(["0", [value]]);
+    expect(await redis.zrange(zset, 0, -1, "WITHSCORES", bytes)).toEqual([[value, 1]]);
+    expect(await redis.xrange(stream, "-", "+", bytes)).toEqual([[Buffer.from(id), [Buffer.from("f"), value]]]);
+
+    expect(await redis.send("RESTORE", [copy, 0, (await redis.dump(hash))!], bytes)).toBe("OK");
+    expect(await redis.hget(copy, "f", bytes)).toEqual(value);
+
+    await redis.send("MULTI", []);
+    expect<unknown>(await redis.dump(string)).toBe("QUEUED");
+    expect(await redis.send("EXEC", [])).toEqual([await redis.send("DUMP", [string], bytes)]);
+
+    await redis.send("MULTI", []);
+    expect(await redis.get(string)).toBe("QUEUED");
+    expect(await redis.send("EXEC", [], bytes)).toEqual([value]);
+
+    await redis.send("HSET", [hash, value, "v"]);
+    expect((await redis.hgetall(hash, bytes).catch(error => error)).reply).toContainEqual([value, Buffer.from("v")]);
+    expect((await redis.hscan(hash, 0, bytes))[1]).toContainEqual(value);
+
+    await redis.send("MULTI", []);
+    await Promise.all([redis.echo("a"), redis.hgetall(hash, bytes), redis.getdel(string, bytes)]);
+    expect(await redis.send("EXEC", [])).toEqual(["a", expect.any(Error), value]);
+  });
 });
 
 function expectAssert(value: unknown): asserts value {

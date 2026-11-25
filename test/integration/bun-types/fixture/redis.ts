@@ -328,3 +328,79 @@ redis.append("k", 10n);
 redis.lpush("list", true);
 // @ts-expect-error - a bigint member throws at runtime
 redis.sadd("set", 10n);
+
+// { buffer }
+type Bytes = Buffer<ArrayBuffer>;
+const bytes = { buffer: true } as const;
+declare const either: { buffer: boolean | undefined };
+declare const anything: any;
+declare const names: string[];
+expectType(redis.get("k", { buffer: true })).is<Promise<Bytes | null>>();
+expectType(redis.get("k", { buffer: false })).is<Promise<string | null>>();
+expectType(redis.get("k", either)).is<Promise<string | Bytes | null>>();
+expectType(redis.hgetall("k", bytes)).is<Promise<Record<string, Bytes>>>();
+expectType(redis.randomkey(bytes)).is<Promise<Bytes | null>>();
+expectType(redis.mget(...names, { buffer: true })).is<Promise<(Bytes | null)[]>>();
+expectType(redis.mget("k", either)).is<Promise<(string | Bytes | null)[]>>();
+expectType(redis.hmget("k", "a", "b", bytes)).is<Promise<Array<Bytes | null>>>();
+expectType(redis.hmget("k", names, bytes)).is<Promise<Array<Bytes | null>>>();
+expectType(redis.set("k", "v", "GET", bytes)).is<Promise<Bytes | null>>();
+expectType(redis.set("k", "v", "EX", 1, "GET", bytes)).is<Promise<"OK" | Bytes | null>>();
+expectType(redis.getex("k", "EX", 1, bytes)).is<Promise<Bytes | null>>();
+expectType(redis.lpop("k", bytes)).is<Promise<Bytes | null>>();
+expectType(redis.lpop("k", 2, bytes)).is<Promise<Bytes[] | null>>();
+expectType(redis.blpop("k", 0, bytes)).is<Promise<[Bytes, Bytes] | null>>();
+expectType(redis.hrandfield("k", 2, "WITHVALUES", bytes)).is<Promise<[Bytes, Bytes][]>>();
+expectType(redis.zrange("k", 0, -1, bytes)).is<Promise<Bytes[]>>();
+expectType(redis.zrange("k", 0, -1, "REV", "WITHSCORES", bytes)).is<Promise<[Bytes, number][]>>();
+expectType(redis.zrangebyscore("k", 0, 9, "WITHSCORES", "LIMIT", 0, 5, bytes)).is<Promise<[Bytes, number][]>>();
+expectType(redis.zdiff(1, "k", "WITHSCORES", bytes)).is<Promise<[Bytes, number][]>>();
+expectType(redis.scan((await redis.scan(0, bytes))[0], "COUNT", 5, bytes)).is<Promise<[string, Bytes[]]>>();
+expectType(redis.xrange("k", "-", "+", bytes)).is<Promise<[Bytes, Bytes[]][]>>();
+expectType(redis.eval("", 0, "a", bytes)).is<Promise<any>>();
+expectType(redis.send("GET", ["k"], bytes)).is<Promise<any>>();
+expectType(redis.pubsub("CHANNELS", bytes)).is<Promise<any>>();
+expectType(redis.pubsub("NUMSUB", "a", buf)).is<Promise<any>>();
+expectType(redis.dump("k")).is<Promise<Bytes | null>>();
+// A buffer has a `buffer` too, and `any` is still an argument of the command.
+expectType(redis.mget("k", buf)).is<Promise<(string | null)[]>>();
+expectType(redis.mget("k", anything)).is<Promise<(string | null)[]>>();
+expectType(redis.lpop("k", anything)).is<Promise<string[] | null>>();
+// The last signature has no option.
+expectType<ReturnType<Bun.RedisClient["get"]>>().is<Promise<string | null>>();
+expectType(redis.mget.apply(redis, names)).is<Promise<(string | null)[]>>();
+expectType(names.map(redis.get, redis)).is<Promise<string | null>[]>();
+class Prefixed extends Bun.RedisClient {
+  override get(key: Bun.RedisClient.KeyLike): Promise<string | null> {
+    return super.get(`prefix:${key}`);
+  }
+}
+// What comes back can go in again.
+declare const stored: Bytes;
+redis.srem("k", stored);
+redis.zscore("k", stored);
+redis.eval("", 0, stored);
+redis.xack("k", "g", stored);
+redis.xrange("k", stored, "+", bytes);
+redis.xread("STREAMS", "k", stored, bytes);
+redis.xclaim("k", "g", "c", 0, stored, bytes);
+redis.xtrim("k", "MINID", stored);
+redis.geosearch("k", "FROMMEMBER", stored);
+// @ts-expect-error - the reply could be either
+redis.get("k", anything ? bytes : undefined);
+// @ts-expect-error - it is the last argument
+redis.mget(bytes, "k");
+// @ts-expect-error - no stored data in the reply
+redis.incr("k", bytes);
+// @ts-expect-error - nor here
+redis.object("ENCODING", "k", bytes);
+// @ts-expect-error - nor here
+redis.xgroup("DESTROY", "k", "g", bytes);
+// @ts-expect-error - nor here
+redis.debug("OBJECT", "k", bytes);
+// @ts-expect-error - always bytes
+redis.dump("k", bytes);
+// @ts-expect-error - the result type does not choose the option
+const notBytes: Promise<Bytes | null> = redis.get("k");
+// @ts-expect-error - nor here
+const norBytes: Promise<(Bytes | null)[]> = redis.mget("k");

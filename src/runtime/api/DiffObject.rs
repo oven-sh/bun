@@ -14,8 +14,8 @@ use bun_text_diff::tokens::{
 };
 
 use crate::generated_bindgen::diff_object::{
-    ArrayChange, Change, FilePatch, FileToApply, Hunk, HunkToApply, HunksOptions, LinesOptions,
-    Options, PatchOptions, PatchToApply, TextOptions,
+    ApplyOptions, ArrayChange, Change, FilePatch, FileToApply, Hunk, HunkToApply, HunksOptions,
+    LinesOptions, Options, PatchOptions, PatchToApply, TextOptions,
 };
 
 trait JsUnit: Unit {
@@ -94,8 +94,37 @@ fn limit<'a>(heap: &JsHeap<'a>, name: &str, value: f64) -> bindgen::Result<'a, u
     ))
 }
 
-fn max_edits<'a>(heap: &JsHeap<'a>, option: Option<f64>) -> bindgen::Result<'a, usize> {
-    limit(heap, "maxEditLength", option.unwrap_or(f64::INFINITY))
+#[cold]
+fn unsupported<'a>(heap: &JsHeap<'a>, options: &[(&str, bool)]) -> bindgen::Error<'a> {
+    let (name, _) = options.iter().find(|it| it.1).copied().unwrap_or_default();
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!("The property 'options.{name}' is not supported"),
+    )
+}
+
+macro_rules! refuse {
+    ($heap:expr, $($name:literal: $is_set:expr),*) => {
+        if $($is_set)|* {
+            return Err(unsupported($heap, &[$(($name, $is_set)),*]));
+        }
+    };
+}
+
+/// Reads the options of all functions that compare.
+macro_rules! max_edits {
+    ($heap:expr, $options:expr, $($refused:tt)*) => {{
+        refuse!(
+            $heap,
+            "timeout": $options.timeout,
+            "callback": $options.callback,
+            "comparator": $options.comparator,
+            "oneChangePerToken": $options.one_change_per_token,
+            $($refused)*
+        );
+        let max = $options.max_edit_length.unwrap_or(f64::INFINITY);
+        limit($heap, "maxEditLength", max)?
+    }};
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -155,7 +184,12 @@ macro_rules! compare_lines {
                 case: $options.ignore_case,
                 whitespace: $options.ignore_whitespace,
             },
-            max_edits: max_edits($heap, $options.max_edit_length)?,
+            max_edits: max_edits!(
+                $heap,
+                $options,
+                "newlineIsToken": $options.newline_is_token,
+                "ignoreNewlineAtEof": $options.ignore_newline_at_eof
+            ),
         }
     };
 }
@@ -249,7 +283,7 @@ macro_rules! split_by {
             options: &TextOptions,
         ) -> bindgen::Result<'a, Option<impl Iterator<Item = Change> + use<'s>>> {
             let ignore = Ignore { case: options.ignore_case, whitespace: false };
-            let max_edits = max_edits(heap, options.max_edit_length)?;
+            let max_edits = max_edits!(heap, options, "intlSegmenter": options.intl_segmenter);
             Ok(changes($split, Texts::new(heap, [old, new], false)?, Compare { ignore, max_edits }))
         }
     )*};
@@ -351,7 +385,7 @@ pub(crate) fn arrays<'a>(
     new: JsLocal<'a, JSArray>,
     options: &Options,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
-    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
+    let max_edits = max_edits!(&cx.heap, options, "ignoreCase": options.ignore_case);
     MarkedArgumentBuffer::new(|old_copy| {
         MarkedArgumentBuffer::new(|new_copy| {
             let (old, new) = ((old.to_js(), old_copy), (new.to_js(), new_copy));
@@ -438,6 +472,7 @@ pub(crate) fn create_patch<'a>(
     new: &String,
     options: &PatchOptions<'_>,
 ) -> bindgen::Result<'a, Option<String>> {
+    refuse!(heap, "headerOptions": options.header_options);
     let context = limit(heap, "context", options.context)?;
     let compare = compare_lines!(heap, options);
     let texts = Texts::new(heap, [old, new], options.strip_trailing_cr)?;
@@ -624,7 +659,14 @@ pub(crate) fn apply_patch<'a>(
     heap: &JsHeap<'a>,
     source: &String,
     patch: PatchToApply,
+    options: &ApplyOptions,
 ) -> bindgen::Result<'a, String> {
+    refuse!(
+        heap,
+        "fuzzFactor": options.fuzz_factor,
+        "compareLine": options.compare_line,
+        "autoConvertLineEndings": !options.auto_convert_line_endings
+    );
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
         PatchToApply::File(file) if file.is_binary => Err(binary_patch(heap)),

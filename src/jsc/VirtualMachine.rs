@@ -2079,6 +2079,14 @@ impl VirtualMachine {
         }
     }
 
+    /// For a task that has to run whether or not a macro starts or returns first.
+    #[cfg(windows)]
+    pub fn deferred_tasks_of_both_loops(
+        &self,
+    ) -> [&crate::DeferredTaskQueue::DeferredTaskQueue; 2] {
+        [&self.regular_event_loop, &self.macro_event_loop].map(|it| &it.deferred_tasks)
+    }
+
     fn run_deferred_tasks(&self) {
         if !self.is_inside_deferred_task_queue.get() {
             let _inside = self.is_inside_deferred_task_queue.raise_for_scope();

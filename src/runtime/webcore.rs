@@ -61,7 +61,7 @@ pub(crate) struct AutoFlusher {
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
-/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`, and on Windows for the IPC `SendQueue`.
+/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
 pub(crate) trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`

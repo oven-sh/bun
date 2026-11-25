@@ -9,8 +9,6 @@ use bun_ptr::CellExt as _;
 use bun_ptr::{Attached, Detach, RefPtr};
 
 use crate::json_line_buffer::JSONLineBuffer;
-#[cfg(windows)]
-use crate::webcore::{AutoFlusher, HasAutoFlusher};
 use bun_collections::VecExt;
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, StringView, strings};
@@ -885,7 +883,7 @@ struct WindowsState {
     try_close_after_write: Cell<bool>,
     /// Messages sent since microtasks last drained.
     burst_message_count: Cell<u32>,
-    auto_flusher: AutoFlusher,
+    is_flush_scheduled: Cell<bool>,
     /// The parent process. Only set in a child.
     parent: core::cell::OnceCell<(u32, std::os::windows::io::OwnedHandle)>,
 }
@@ -1091,7 +1089,7 @@ impl SendQueue {
                 try_close_after_write: Cell::new(false),
                 deferred_ack_nack: Cell::new(None),
                 burst_message_count: Cell::new(0),
-                auto_flusher: AutoFlusher::default(),
+                is_flush_scheduled: Cell::new(false),
                 parent: core::cell::OnceCell::new(),
             },
         });
@@ -1163,10 +1161,7 @@ impl SendQueue {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
         {
-            if self.windows.auto_flusher.registered.get() {
-                let vm = VirtualMachine::get();
-                AutoFlusher::unregister_deferred_microtask_with_type_unchecked(self, vm);
-            }
+            self.unschedule_flush();
             self.windows.inflight_write_len.set(None);
             self.windows.reader.deinit();
             self.windows.writer.close_without_reporting(self);
@@ -1729,13 +1724,35 @@ impl SendQueue {
         {
             return false;
         }
-        AutoFlusher::register_deferred_microtask_with_type(self, vm);
+        if !self.windows.is_flush_scheduled.replace(true) {
+            for tasks in vm.deferred_tasks_of_both_loops() {
+                tasks.post_task(self.root.get().map(|root| root.cast()), Self::on_flush);
+            }
+        }
         self.windows.burst_message_count.update(|count| count + 1);
         let queue = self.queue.get();
         self.windows.burst_message_count.get() > MAX_UNCOALESCED_MESSAGES
             && queue.len() == 1
             && queue[0].handle.is_none()
             && queue[0].data.list.len() < MAX_COALESCED_LEN
+    }
+
+    #[cfg(windows)]
+    fn unschedule_flush(&self) {
+        if self.windows.is_flush_scheduled.take() {
+            for tasks in VirtualMachine::get().deferred_tasks_of_both_loops() {
+                tasks.unregister_task(self.root.get().map(|root| root.cast()));
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe extern "C" fn on_flush(this: *mut c_void) -> bool {
+        // SAFETY: the root of a `SendQueue`, which `socket_closed_notify` unregisters before it is freed.
+        let this = unsafe { RefPtr::init_ref(this.cast::<SendQueue>()) };
+        this.unschedule_flush();
+        this.flush_deferred_write();
+        this.windows.is_flush_scheduled.get()
     }
 
     #[cfg(windows)]
@@ -1897,21 +1914,6 @@ impl SendQueue {
             let _ = self.windows.parent.set((pid, process));
         }
         self.windows_configure_server(pipe)
-    }
-}
-
-#[cfg(windows)]
-impl HasAutoFlusher for SendQueue {
-    fn auto_flusher(&self) -> &AutoFlusher {
-        &self.windows.auto_flusher
-    }
-
-    unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: fn contract. `socket_closed_notify` unregisters `this` before it is freed.
-        let this = unsafe { RefPtr::init_ref((*this).root_ptr()) };
-        this.windows.auto_flusher.registered.set(false);
-        this.flush_deferred_write();
-        false
     }
 }
 

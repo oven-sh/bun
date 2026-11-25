@@ -55,8 +55,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Is the symbol a member of this scope?
                 if let Some(member) = scope.get_member_with_hash(name, hash) {
                     declare_loc = member.loc;
-                    // Unbound globals live in the module scope. So do the
-                    // top-level symbols, whose names no nested slot shares.
+                    // Unbound globals live in the module scope.
+                    // No nested slot shares a top-level name.
                     scope_use = self.track_scope_uses
                         && (scope.parent.is_some()
                             || (!self.reuse_nested_slots

@@ -2121,10 +2121,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
         let _ = p.visit_for_loop_init(data.init, true);
-        // The binding of `for (using x of y)` is declared in the loop body
-        // once it is lowered, here or by a tool that reads the output: a
-        // scope further in than the one that holds it, and `y` is outside
-        // that declaration.
+        // Lowering, here or in a tool that reads the output, declares the binding of `for (using x of y)` in the loop body: `y` is outside it.
         if p.reuse_nested_slots {
             if let StmtData::SLocal(local) = data.init.data {
                 if local.kind.is_using() {
@@ -2333,11 +2330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
-            // A case is minified when the cases after it are not visited yet
-            // (here, or when Bun loads the output), and a `let` with one use
-            // so far is inlined into that use. A read in a later case is then
-            // outside every declaration. So is a read of a declaration that
-            // dead code removal takes out of its case (`SlotNotes`).
+            // A case is minified before later cases are visited (here, or when Bun loads the output): a `let` read there can be gone.
             for at in locals_before..p.switch_case_locals.len() {
                 let (symbol, uses) = p.switch_case_locals[at];
                 if p.symbols[symbol as usize].use_count_estimate > uses {

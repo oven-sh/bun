@@ -213,8 +213,7 @@ impl ScopeUseSpan {
         }
     }
 
-    /// Sorts `spans` and joins the spans of one symbol that overlap, so that
-    /// `any_in` finds a span with one search.
+    /// Sorts `spans` and joins one symbol's overlapping spans, so `any_in` needs one search.
     pub fn merge(spans: &mut Vec<ScopeUseSpan>) {
         spans.sort_unstable();
         let mut kept = 0;
@@ -233,8 +232,7 @@ impl ScopeUseSpan {
         spans.truncate(kept);
     }
 
-    /// Whether `spans` (from `merge`) has a span of `symbol` that meets the
-    /// scopes `first..=last`.
+    /// Whether `spans` (from `merge`) has a span of `symbol` that meets scopes `first..=last`.
     pub fn any_in(spans: &[ScopeUseSpan], symbol: u32, first: u32, last: u32) -> bool {
         let i = spans.partition_point(|s| (s.symbol, s.last) < (symbol, first));
         spans
@@ -246,9 +244,8 @@ impl ScopeUseSpan {
 /// Where the file references each symbol, for the bundler's number renamer:
 /// a nested binding may keep a name an enclosing binding also has when the
 /// enclosing one is never referenced beneath it. Filled only when bundling
-/// without identifier minification: with it, the parser records the same
-/// uses and spends them on `Symbol::nested_scope_slot` itself. References to
-/// unbound globals are left out (every scope avoids their names anyway).
+/// without identifier minification. References to unbound globals are left
+/// out (every scope avoids their names anyway).
 pub struct ScopeUseList {
     /// `false`: nothing was recorded; every symbol must count as referenced
     /// everywhere.
@@ -272,13 +269,10 @@ impl Default for ScopeUseList {
     }
 }
 
-/// `ScopeUseList::points` by symbol. Scopes are numbered in pre-order
-/// (`Scope::visit_span`), so a scope together with everything inside it is
-/// the span `[first, last]`.
+/// `ScopeUseList::points` by symbol. A scope with everything inside it is the pre-order span `[first, last]`.
 #[derive(Default)]
 pub struct ScopeUsePoints {
-    /// `scopes[offsets[i]..offsets[i + 1]]`: the scopes that reference symbol
-    /// `i`, ascending.
+    /// `scopes[offsets[i]..offsets[i + 1]]`: the scopes that reference symbol `i`, ascending.
     offsets: Vec<u32>,
     scopes: Vec<u32>,
 }
@@ -286,8 +280,7 @@ pub struct ScopeUsePoints {
 impl ScopeUsePoints {
     /// The symbols of `points` are below `symbol_count`.
     pub fn build(points: &[ScopeUse], symbol_count: usize) -> ScopeUsePoints {
-        // Counting sort. `offsets[i]` = end of bucket `i`; filling each
-        // bucket from its end turns it into the start.
+        // Counting sort: `offsets[i]` is the end of bucket `i`, then its start once the bucket is filled from its end.
         let mut offsets = vec![0u32; symbol_count + 1];
         for point in points {
             offsets[point.symbol as usize] += 1;

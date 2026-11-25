@@ -409,10 +409,7 @@ impl Scope {
         (first != u32::MAX && first <= last).then_some((first, last))
     }
 
-    /// The scopes a reference must stay out of for a binding of this scope
-    /// not to capture it: `visit_span`, which for a function body or a catch
-    /// block is the span of its parameter scope, whose bindings it cannot
-    /// redeclare.
+    /// `visit_span`, or the parameter scope's for a function body or catch block, which cannot redeclare those bindings.
     pub fn capture_span(&self) -> Option<(u32, u32)> {
         match (self.kind, self.parent.as_deref()) {
             (Kind::FunctionBody, Some(parent)) => parent.visit_span(),

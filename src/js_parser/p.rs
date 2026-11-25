@@ -550,15 +550,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// with them, also in JavaScript, where an unused import otherwise stays for its side effects.
     /// Few: the data functions of a page and what they use.
     pub(crate) used_by_deleted_exports: Vec<u32>,
-    /// Fill `scope_uses`: bundling with the number renamer, or
-    /// `reuse_nested_slots`.
+    /// Fill `scope_uses`: bundling with the number renamer, or `reuse_nested_slots`.
     pub(crate) track_scope_uses: bool,
-    /// Minifying identifiers, and not for the runtime's module loader: the
-    /// scope uses go to `renamer::assign_nested_scope_slots`, not to the Ast.
+    /// Minifying identifiers, not for the runtime module loader: `renamer::assign_nested_scope_slots` reads the scope uses.
     pub(crate) reuse_nested_slots: bool,
-    /// With `reuse_nested_slots`, for the `switch` statements being visited:
-    /// each `let`, `const` or function that a case declares, with its use
-    /// count at the end of that case.
+    /// For the `switch` statements being visited: each `let`, `const` or function of a case, with its use count at the end of the case.
     pub(crate) switch_case_locals: Vec<(u32, u32)>,
     /// Filled with `reuse_nested_slots`.
     pub(crate) slot_notes: renamer::SlotNotes,
@@ -1795,8 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // s() lives in the impl block above (deduped).
 
-    /// What becomes `ScopeUseList::spans`. Ends the module scope's
-    /// `visit_span`.
+    /// What becomes `ScopeUseList::spans`. Ends the module scope's `visit_span`.
     fn finish_scope_use_spans(&mut self) -> Vec<js_ast::ast_result::ScopeUseSpan> {
         use js_ast::ast_result::ScopeUseSpan;
         if !self.track_scope_uses {
@@ -1856,8 +1851,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         list
     }
 
-    /// With `reuse_nested_slots`: writes a mark for `renamer::SlotNotes`
-    /// at the scope being visited.
+    /// With `reuse_nested_slots`: writes a mark for `renamer::SlotNotes` at the scope being visited.
     pub(crate) fn slot_mark(&mut self, mark: u32, symbol: u32) {
         let scope = self.current_scope.visit_span[0];
         debug_assert!(scope < 1 << renamer::slot_mark::SHIFT);
@@ -2034,10 +2028,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope = self.current_scope;
         if scope.visit_span[0] == u32::MAX {
             // The parse pass (TypeScript decorator metadata resolves type
-            // names then): no scope numbering yet. The metadata is printed
-            // behind the class, where a name of the class is free.
+            // names then): no scope numbering yet.
             self.span_uses.push((None, symbol));
             if self.reuse_nested_slots {
+                // The metadata is printed behind the class, where a name of the class is free.
                 self.slot_notes.unique(symbol);
             }
         } else if scope.kind == js_ast::scope::Kind::ClassBody {
@@ -9628,8 +9622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         lexer.track_comments = opts.features.minify_identifiers;
-        // What the runtime's module loader prints must not change with the
-        // transpiler cache in use.
+        // The output of the runtime module loader is cached: its names must not change.
         let reuse_nested_slots = opts.features.minify_identifiers
             && (opts.bundle || !opts.features.commonjs_at_runtime)
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NESTED_SLOT_REUSE::get()

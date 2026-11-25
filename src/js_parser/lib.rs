@@ -680,8 +680,7 @@ pub mod renamer {
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, Kind as SymbolKind, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
-    /// The symbols that `stmt` declares with `let`, `const`, `using` or
-    /// `class`.
+    /// The symbols that `stmt` declares with `let`, `const`, `using` or `class`.
     pub(crate) fn lexical_declarations(stmt: &bun_ast::Stmt, mut each: impl FnMut(u32)) {
         fn identifiers(binding: bun_ast::Binding, each: &mut impl FnMut(u32)) {
             use bun_ast::binding::Data;
@@ -715,37 +714,18 @@ pub mod renamer {
         }
     }
 
-    /// Which symbols need a slot that no enclosing scope holds, because
-    /// their name can be printed where no declaration binds it: the name
-    /// then stays free there.
-    ///
-    /// Dead code removal, here or in a tool that reads the output, removes a
-    /// `let`, `const` or class declaration that follows a `return`, `throw`,
-    /// `break` or `continue` in its statement list. A read of the name that
-    /// still runs is then a read of a free name, where it was a read in the
-    /// dead zone of the binding: both throw. What still runs is what comes
-    /// before the declaration, a function declaration of the same list (it
-    /// is hoisted, and kept), and another case of the same `switch`
-    /// (`s_switch` looks at those).
-    ///
-    /// The visit pass writes a mark between the scope uses, which are in
-    /// visit order, for each jump, each such declaration and each function
-    /// declaration. `finish` reads the two together, so a reference costs
-    /// nothing more.
+    /// Which symbols need a slot that no enclosing scope holds: their name can be printed where no declaration binds it.
     #[derive(Default)]
     pub(crate) struct SlotNotes {
         unique: Vec<u32>,
     }
 
-    /// A mark is a `ScopeUse` with the scope that is being visited and one
-    /// of these in the bits above it.
+    /// A mark is a `ScopeUse` whose scope has one of these above the bits of the scope being visited.
     pub(crate) mod slot_mark {
         pub(crate) const SHIFT: u32 = 29;
-        /// A `return`, `throw`, `break` or `continue`. Any of them can be a
-        /// statement of a list around it once a test is folded.
+        /// A `return`, `throw`, `break` or `continue`. A folded test can make it a statement of a list around it.
         pub(crate) const JUMP: u32 = 1 << SHIFT;
-        /// A statement starts that declares `ScopeUse::symbol` with `let`,
-        /// `const`, `using` or `class`.
+        /// A statement starts that declares `ScopeUse::symbol` with `let`, `const`, `using` or `class`.
         pub(crate) const DECLARED: u32 = 2 << SHIFT;
         /// A function declaration starts.
         pub(crate) const FUNCTION: u32 = 3 << SHIFT;
@@ -757,8 +737,7 @@ pub mod renamer {
             self.unique.push(symbol);
         }
 
-        /// Takes the marks out of `uses`. Returns, by symbol, which need a
-        /// slot that no enclosing scope holds.
+        /// Takes the marks out of `uses`. Returns, by symbol, which need a slot that no enclosing scope holds.
         fn finish(
             &self,
             uses: &mut Vec<ScopeUse>,
@@ -770,9 +749,7 @@ pub mod renamer {
             for &symbol in &self.unique {
                 unique[symbol as usize] = true;
             }
-            // By symbol: `READ` once a reference is passed, `DECLARED` once
-            // its declaration is, and above them one more than the scope of
-            // its declaration if that is behind a jump.
+            // By symbol: `READ`, `DECLARED`, and above them one more than the declaring scope if that is behind a jump.
             const READ: u32 = 1 << 0;
             const DECLARED: u32 = 1 << 1;
             const SCOPE_SHIFT: u32 = 2;
@@ -791,6 +768,7 @@ pub mod renamer {
                         } else if *note >> SCOPE_SHIFT != 0
                             && functions.contains(&((*note >> SCOPE_SHIFT) - 1))
                         {
+                            // A function declaration of the same list is hoisted, and kept behind a jump.
                             unique[it.symbol as usize] = true;
                         }
                         return true;
@@ -807,6 +785,7 @@ pub mod renamer {
                     }
                     slot_mark::DECLARED => {
                         let note = &mut notes[it.symbol as usize];
+                        // Dead code removal takes out a declaration behind a jump and keeps the reads that still run.
                         if has_jump[scope as usize] {
                             if *note & READ != 0 {
                                 unique[it.symbol as usize] = true;
@@ -822,8 +801,7 @@ pub mod renamer {
                 }
                 false
             });
-            // A reference in a class body is no scope use: it can come
-            // before the declaration.
+            // A reference in a class body is a span, not a point: it can come before the declaration.
             for span in spans {
                 if notes[span.symbol as usize] >> SCOPE_SHIFT != 0 {
                     unique[span.symbol as usize] = true;
@@ -837,8 +815,7 @@ pub mod renamer {
     struct ScopeTree {
         /// `u32::MAX` for the module scope.
         parent_of: Vec<u32>,
-        /// The scope of the function, static block or TypeScript closure
-        /// around it.
+        /// The scope of the function, static block or TypeScript closure around it.
         function_of: Vec<u32>,
     }
 
@@ -875,8 +852,7 @@ pub mod renamer {
         }
     }
 
-    /// Where the file references each of its symbols, by the symbol that is
-    /// printed for the reference.
+    /// Where the file references each symbol, by the symbol that is printed for the reference.
     pub(crate) struct ScopeLiveness {
         points: ScopeUsePoints,
         /// From `ScopeUseSpan::merge`.
@@ -897,9 +873,7 @@ pub mod renamer {
         ) -> ScopeLiveness {
             let scopes = ScopeTree::new(module_scope);
             let unique = notes.finish(points, spans, symbols.len(), &scopes);
-            // `symbol::Map::follow_printed` for one file, before any linking.
-            // A member of a TypeScript enum or namespace that another block
-            // of it reads is printed as a property of the closure argument.
+            // `symbol::Map::follow_printed` for one file. A TypeScript enum member read from another block prints as a property of the closure argument.
             let printed = |symbol: u32| -> u32 {
                 let mut symbol = printed_in_place_of(symbols, symbol);
                 while let Some(alias) = &symbols[symbol as usize].namespace_alias {
@@ -930,8 +904,7 @@ pub mod renamer {
             }
         }
 
-        /// Whether `symbol` is referenced in the scopes `span`; `None` is a
-        /// scope the visit pass did not number, which may reference anything.
+        /// Whether the scopes `span` reference `symbol`. `None`: a scope the visit pass did not number, which may reference anything.
         fn is_live(&self, symbol: u32, span: Option<(u32, u32)>) -> bool {
             let Some((first, last)) = span else {
                 return true;
@@ -944,8 +917,7 @@ pub mod renamer {
             self.unique[symbol as usize]
         }
 
-        /// Whether a function other than the one of `scope`, which declares
-        /// `symbol`, can reference it.
+        /// Whether a function other than the one of `scope`, which declares `symbol`, can reference it.
         fn is_captured(&self, symbol: u32, scope: &Scope) -> bool {
             let function_of = |at: u32| self.scopes.function_of.get(at as usize).copied();
             let Some(own) = function_of(scope.visit_span[0]) else {
@@ -960,10 +932,7 @@ pub mod renamer {
         }
     }
 
-    /// `liveness`: a nested scope may take the slot of a symbol of an
-    /// enclosing scope that nothing in the nested scope references. This is
-    /// what the number renamer does with names (`ScopeUses::sees`). Without
-    /// it every scope counts on from the scopes around it, as in esbuild.
+    /// With `liveness`, a scope may take the slot of an enclosing symbol that nothing in it references. Without, slots count on as in esbuild.
     pub(crate) fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,
         module_scope: &Scope,
@@ -1091,10 +1060,7 @@ pub mod renamer {
         slot_counts
     }
 
-    /// `symbol::Map::follow` for one file, before any linking. A parameter
-    /// that the function body declares again with `var` links to the symbol
-    /// of the body, so that one takes its slot where the parameter is
-    /// declared.
+    /// `symbol::Map::follow` for one file. A parameter that the body redeclares with `var` links to the symbol of the body.
     fn printed_in_place_of(symbols: &[Symbol], mut symbol: u32) -> u32 {
         while symbols[symbol as usize].has_link() {
             symbol = symbols[symbol as usize].link.get().inner_index();
@@ -1105,37 +1071,27 @@ pub mod renamer {
     #[derive(Clone, Copy)]
     struct SlotHolder {
         symbol: u32,
-        /// How many of the symbols that hold this slot in the enclosing
-        /// scopes are in a temporal dead zone before their declaration runs.
+        /// How many of the holders of this slot in the enclosing scopes have a temporal dead zone.
         dead_zones: u32,
         /// `SlotReuse::scopes` of the scope that gave the slot to `symbol`.
         scope: u32,
     }
 
-    /// Slot assignment that differs from esbuild's `AssignNestedScopeSlots`
-    /// for the default namespace: a member takes the lowest slot that no
-    /// symbol referenced in its scope holds. Fewer distinct names are left,
-    /// and the short ones repeat more.
+    /// Unlike esbuild's `AssignNestedScopeSlots`: a member takes the lowest slot that no symbol referenced in its scope holds.
     struct SlotReuse<'a> {
         liveness: &'a ScopeLiveness,
-        /// Default namespace slot -> the symbol that holds it in the
-        /// innermost enclosing scope.
+        /// Default namespace slot -> the symbol that holds it in the innermost enclosing scope.
         holders: Vec<SlotHolder>,
-        /// `(slot, the holder a scope took it from)`, put back when the scope
-        /// is left.
+        /// `(slot, the holder a scope took it from)`, put back when the scope is left.
         displaced: Vec<(u32, SlotHolder)>,
-        /// The slots that had no `SlotHolder::dead_zones` when a scope added
-        /// them, ascending. A scope further in can have given one to a
-        /// symbol with a dead zone since.
+        /// Slots with no `SlotHolder::dead_zones` when added, ascending. A scope further in can have given one a dead zone since.
         clear: Vec<u32>,
         max_holders: u32,
         /// How many scopes `assign` has entered.
         scopes: u32,
     }
 
-    /// Whether a read of a symbol of this kind, declared in `scope`, can
-    /// come before its declaration has run (`let`, `const`, a class, and a
-    /// function in a block, which is printed as a `let`).
+    /// Whether a read can run before the declaration: `let`, `const`, a class, and a function in a block (printed as a `let`).
     fn has_dead_zone(kind: SymbolKind, scope: &Scope) -> bool {
         match kind {
             SymbolKind::Other
@@ -1172,9 +1128,7 @@ pub mod renamer {
             }
             sorted_members.sort_unstable();
 
-            // Every slot below `next`, and every slot of `clear` below
-            // `next_clear`, is held by a symbol that this scope references or
-            // declares.
+            // Slots below `next`, and slots of `clear` below `next_clear`, are held by symbols this scope references or declares.
             let mut next = 0;
             let mut next_clear = 0;
             let clear_len = self.clear.len();
@@ -1191,21 +1145,14 @@ pub mod renamer {
                     continue;
                 }
                 let kind = symbol.kind;
-                // A `var` binds in the function around this scope: it comes
-                // here only through a catch binding of its name, when a
-                // declaration between the two stops it. The name of a
-                // TypeScript enum can be printed before its declaration.
+                // A `var` here is held only by a catch binding of its name, but binds in the function. An enum's name can print before its declaration.
                 let unique = (kind == SymbolKind::Hoisted && !scope.kind_stops_hoisting())
                     || kind == SymbolKind::TsEnum
                     || self.liveness.is_unique(member)
                     || self.liveness.is_unique(inner_index);
                 let mut found = None;
                 if !unique {
-                    // JavaScriptCore checks a read for the dead zone by name:
-                    // a parameter, a `var` or a function, and a binding that
-                    // another function reads, pay that check once they have
-                    // the name of a `let`, `const` or class further out. They
-                    // take a slot of `clear` only.
+                    // JavaScriptCore checks the dead zone by name: a parameter, `var`, function or captured binding takes no slot of an outer `let`.
                     let mut pays_dead_zone_check = scope.kind_stops_hoisting()
                         && matches!(
                             kind,
@@ -1265,8 +1212,7 @@ pub mod renamer {
                 symbols[inner_index as usize].nested_scope_slot = at as u32;
             }
 
-            // A generated symbol may be declared in a scope further out than
-            // this one: it takes a slot that no enclosing scope holds.
+            // A generated symbol may be declared further out than this scope: it takes a slot that no enclosing scope holds.
             for ref_ in scope.generated.slice() {
                 let inner_index = printed_in_place_of(symbols, ref_.inner_index());
                 let symbol = &mut symbols[inner_index as usize];

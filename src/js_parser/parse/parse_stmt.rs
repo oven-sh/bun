@@ -1843,9 +1843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
-                    // `abstract class` is accepted as the whole body of `if`,
-                    // `else`, a loop or `with`. It is printed in a block, but
-                    // its name is declared around the statement.
+                    // As the whole body of `if`, `else`, a loop or `with`, `abstract class` prints in a block, but its name is declared around it.
                     let in_block = p.reuse_nested_slots
                         && matches!(
                             opts.lexical_decl,

@@ -583,6 +583,7 @@ pub(crate) fn run_appended(
 
 /// What an appended text may add to [`rare`](bun_sema::hir::rare): the checks for early errors read the whole file.
 const RARE_SYNTAX_IN_APPENDED_TEXT: u32 = rare::DELETES_A_NAME
+    | rare::DELETES_DEFAULT
     | rare::DIRECTIVE_IN_FUNCTION
     | rare::NEW_TARGET
     | rare::ODD_JUMP

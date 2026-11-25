@@ -308,7 +308,7 @@ fn is_known_only_at_run_time(exports: &CommonJsExports, owner: ModuleRef, name: 
             || match name == known::default {
                 true => {
                     exports.marker_for_imports(owner) != Some(false)
-                        && !exports.has_default_of_its_own(owner)
+                        && (exports.deletes_default || !exports.has_default_of_its_own(owner))
                 }
                 false => !text.is_always_found_by_statements(name),
             })

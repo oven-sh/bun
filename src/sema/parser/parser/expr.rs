@@ -1103,6 +1103,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 Some(ExprKind::Dot { .. }) if is_private(self.f.name_pos(operand)) => {
                     self.f.rare_syntax |= rare::DELETES_A_NAME;
                 }
+                Some(ExprKind::Dot { name, .. }) if name == known::default => {
+                    self.f.rare_syntax |= rare::DELETES_DEFAULT;
+                }
                 // oxc looks through these wrappers.
                 Some(
                     ExprKind::As { .. }

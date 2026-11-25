@@ -270,7 +270,7 @@ fn declare(
     };
     let id = file.declare_function(FunctionKey::Source(source), create);
     if !file.inputs.library_functions.is_left_out(source) && !file.is_of_other_part(function) {
-        file.constructor_function_layout(source);
+        file.note_declared_constructor_function(source, id);
     }
     id
 }

@@ -335,7 +335,7 @@ fn name_data_files_found_by_patterns(
     has_found_data
 }
 
-/// Returns true if `e` is in a function, declarator or statement that the executable leaves out, or nested in one. A parent that the walk doesn't know ends it with false.
+/// Returns true if `e` is in a function, declarator or statement that the executable leaves out, or nested in one, unless the body of an inner module that stays lies between. A parent that the walk doesn't know ends it with false.
 fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, e: ExprId) -> bool {
     let bound = files.bound(file);
     let mut node = bound.parent_of_expr(e);
@@ -359,8 +359,12 @@ fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, 
             }
             Parent::Case(case) => Parent::Stmt(bound.case_stmt[case.idx()]),
             Parent::FnBody(function) => {
-                if left_out.functions.contains(&FunctionRef { file, function }) {
+                let body = FunctionRef { file, function };
+                if left_out.functions.contains(&body) {
                     return true;
+                }
+                if left_out.bodies_of_kept_inner_modules.contains(&body) {
+                    return false;
                 }
                 match bound.fns[function.idx()].owner {
                     FnOwner::Expr(written) => bound.parent_of_expr(written),

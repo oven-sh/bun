@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::StringView;
 use bun_core::Utf8Bytes;
+use bun_core::strings::CodeUnits;
 
 bun_opaque::opaque_ffi! {
     /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
@@ -31,7 +32,7 @@ unsafe extern "C" {
         count: usize,
         substrings: *mut JSValue,
     );
-    fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32) -> u32;
+    fn JSC__JSString__firstCharacters(this: &JSString, characters: *mut u16, capacity: u32);
     safe fn JSC__JSString__singleLatin1Character(global: &JSGlobalObject, character: u8)
     -> JSValue;
     fn JSC__JSString__tryCreateUninitializedLatin1(
@@ -41,7 +42,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Where `JSC::JSString` and `JSC::JSRopeString` keep what [`JSString::latin1_characters`] reads. bindings.cpp asserts each of these beside `JSC__JSString__substringOfResolved`.
+/// Where `JSC::JSString` and `JSC::JSRopeString` keep what [`JSString::characters`] reads. bindings.cpp asserts each of these beside `JSC__JSString__substringOfResolved`.
 mod layout {
     /// `JSString::m_fiber`: a `StringImpl*`, or the flags of a rope.
     pub(super) const FIBER: usize = 8;
@@ -55,14 +56,14 @@ mod layout {
     pub(super) const FIBER2_LOWER: usize = 26;
 }
 
-/// The characters of an 8-bit string and where they lie in a string that is no rope, so that a part of them can be answered as a substring.
+/// The characters of a string and where they lie in a string that is no rope, so that a part of them can be answered as a substring.
 #[derive(Clone, Copy)]
-pub struct Latin1Characters<'a> {
+pub(crate) struct Characters<'a> {
     /// The string itself, or the base of a substring. Never a rope.
-    pub owner: &'a JSString,
-    /// Where `characters` start in `owner`.
-    pub offset: u32,
-    pub characters: &'a [u8],
+    pub(crate) owner: &'a JSString,
+    /// Where `units` start in `owner`.
+    pub(crate) offset: u32,
+    pub(crate) units: CodeUnits<'a>,
 }
 
 impl JSString {
@@ -110,9 +111,9 @@ impl JSString {
         unsafe { ((std::ptr::from_ref(self) as usize + offset) as *const T).read_unaligned() }
     }
 
-    /// The characters of an 8-bit string that is no rope, read in place.
+    /// The characters of a string that is no rope, read in place.
     #[inline(always)]
-    pub fn flat_latin1_characters(&self) -> Option<&[u8]> {
+    pub(crate) fn flat_characters(&self) -> Option<CodeUnits<'_>> {
         // SAFETY: every JSString has `m_fiber`.
         let fiber: usize = unsafe { self.read_at(layout::FIBER) };
         if fiber & layout::IS_ROPE != 0 {
@@ -120,73 +121,76 @@ impl JSString {
         }
         // SAFETY: the fiber of a string that is no rope is its StringImpl, never null.
         let text = unsafe { &*(fiber as *const bun_core::WTFStringImplStruct) };
-        if !text.is_8bit() {
-            return None;
-        }
-        // SAFETY: an 8-bit StringImpl has that many Latin-1 characters there, and the pointer is not null, which spares
-        // the caller of an inlined `Option<&[u8]>` the test for it.
+        let length = text.length() as usize;
+        // SAFETY: a StringImpl has that many characters there, of the width that it says.
         Some(unsafe {
-            let characters = text.m_ptr.latin1;
-            core::hint::assert_unchecked(!characters.is_null());
-            core::slice::from_raw_parts(characters, text.length() as usize)
+            if text.is_8bit() {
+                CodeUnits::U8(core::slice::from_raw_parts(text.m_ptr.latin1, length))
+            } else {
+                CodeUnits::U16(core::slice::from_raw_parts(text.m_ptr.utf16, length))
+            }
         })
     }
 
-    /// The characters, read in place: no call, nothing resolved, nothing thrown.
-    #[inline]
-    pub fn latin1_characters(&self) -> Option<Latin1Characters<'_>> {
+    /// Whether it is a rope that is no substring.
+    #[inline(always)]
+    pub(crate) fn has_to_be_resolved(&self) -> bool {
         // SAFETY: every JSString has `m_fiber`.
         let fiber: usize = unsafe { self.read_at(layout::FIBER) };
-        if fiber & layout::IS_ROPE != 0 {
-            return self.latin1_characters_of_substring(fiber);
-        }
-        Some(Latin1Characters {
-            owner: self,
-            offset: 0,
-            characters: self.flat_latin1_characters()?,
-        })
+        fiber & layout::IS_ROPE != 0 && fiber & layout::IS_SUBSTRING == 0
     }
 
+    /// The characters, read in place: nothing resolved, nothing thrown. `None` for a rope that is no substring.
     /// The width of a substring's characters is that of its base's storage now: a string that is used as a
     /// property key takes the storage of an equal key, of either width.
-    #[inline]
-    fn latin1_characters_of_substring(&self, fiber: usize) -> Option<Latin1Characters<'_>> {
+    #[inline(always)]
+    pub(crate) fn characters(&self) -> Option<Characters<'_>> {
+        if let Some(units) = self.flat_characters() {
+            return Some(Characters {
+                owner: self,
+                offset: 0,
+                units,
+            });
+        }
+        // SAFETY: every JSString has `m_fiber`.
+        let fiber: usize = unsafe { self.read_at(layout::FIBER) };
         if fiber & layout::IS_SUBSTRING == 0 {
             return None;
         }
         // SAFETY: `fiber` says that this cell is a JSRopeString, which has these fields. The
-        // base of a substring is a JSString that is no rope and that the substring keeps alive,
-        // and offset + length lie within it.
-        unsafe {
+        // base of a substring is a JSString that the substring keeps alive.
+        let (owner, offset, length) = unsafe {
             let length: u32 = self.read_at(layout::ROPE_LENGTH);
             let lower: u32 = self.read_at(layout::FIBER1_LOWER);
             let upper: u16 = self.read_at(layout::FIBER1_UPPER);
             let offset: u32 = self.read_at(layout::FIBER2_LOWER);
             let owner = &*(((upper as usize) << 32 | lower as usize) as *const JSString);
-            let start = offset as usize;
-            Some(Latin1Characters {
-                owner,
-                offset,
-                characters: owner
-                    .flat_latin1_characters()?
-                    .get_unchecked(start..start + length as usize),
-            })
-        }
+            (owner, offset, length)
+        };
+        let range = offset as usize..offset as usize + length as usize;
+        let units = match owner.flat_characters()? {
+            CodeUnits::U8(units) => CodeUnits::U8(&units[range]),
+            CodeUnits::U16(units) => CodeUnits::U16(&units[range]),
+        };
+        Some(Characters {
+            owner,
+            offset,
+            units,
+        })
     }
 
-    /// How many of the first characters were written to `characters`: all that fit.
+    /// The first `N` characters, and 0 for those it does not have.
     #[cold]
-    pub fn first_characters(&self, characters: &mut [u16]) -> usize {
-        // SAFETY: at most `characters.len()` of them are written.
-        unsafe {
-            JSC__JSString__firstCharacters(self, characters.as_mut_ptr(), characters.len() as u32)
-                as usize
-        }
+    pub(crate) fn first_characters<const N: usize>(&self) -> [u16; N] {
+        let mut characters = [0; N];
+        // SAFETY: at most `N` of them are written.
+        unsafe { JSC__JSString__firstCharacters(self, characters.as_mut_ptr(), N as u32) };
+        characters
     }
 
     /// `length` characters of this string from `offset` on, sharing them with it.
     #[inline(always)]
-    pub unsafe fn substring_of_resolved(
+    pub(crate) unsafe fn substring_of_resolved(
         &self,
         global: &JSGlobalObject,
         offset: u32,
@@ -198,7 +202,7 @@ impl JSString {
 
     /// As [`substring_of_resolved`](Self::substring_of_resolved), several with one call.
     #[inline(always)]
-    pub unsafe fn substrings_of_resolved<const N: usize>(
+    pub(crate) unsafe fn substrings_of_resolved<const N: usize>(
         &self,
         global: &JSGlobalObject,
         ranges: &[[u32; 2]; N],
@@ -214,7 +218,8 @@ impl JSString {
                 substrings.as_mut_ptr(),
             )
         };
-        substrings
+        // SAFETY: an element of a local array. One by one, as they were written: a wider load would wait for the stores.
+        core::array::from_fn(|index| unsafe { (&raw const substrings[index]).read_volatile() })
     }
 
     /// `JSString::MaxLength`.
@@ -226,21 +231,9 @@ impl JSString {
         JSC__JSString__singleLatin1Character(global, character)
     }
 
-    /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]). SAFETY: `fill` writes all of them, and allocates nothing in the JavaScript heap.
+    /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]), `None` when they cannot be allocated. SAFETY: `fill` writes all of them.
     #[inline(always)]
-    pub unsafe fn create_latin1_with(
-        global: &JSGlobalObject,
-        length: usize,
-        fill: impl FnOnce(*mut u8),
-    ) -> JSValue {
-        // SAFETY: forwarded.
-        unsafe { Self::try_create_latin1_with(global, length, fill) }
-            .unwrap_or_else(|| bun_core::out_of_memory())
-    }
-
-    /// As [`create_latin1_with`](Self::create_latin1_with), `None` when the characters cannot be allocated.
-    #[inline(always)]
-    pub unsafe fn try_create_latin1_with(
+    pub(crate) unsafe fn try_create_latin1_with(
         global: &JSGlobalObject,
         length: usize,
         fill: impl FnOnce(*mut u8),

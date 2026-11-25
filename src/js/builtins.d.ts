@@ -225,6 +225,10 @@ interface Console {
 declare function $argument<T = any>(index: number): any | undefined;
 /** returns number of arguments */
 declare function $argumentCount(): number;
+/** `arguments as LazyArguments` is made where it is written, so a call that does not get there allocates nothing. Only read its `length` and its elements: `bun run` makes an array. */
+type LazyArguments = any;
+/** `process`, whatever script has made of `globalThis.process`. */
+declare const $process: typeof process;
 /** array.push(item) */
 declare function $arrayPush(array: T[], item: T): void;
 
@@ -570,6 +574,7 @@ declare interface Function {
 
 interface String {
   $charCodeAt: String["charCodeAt"];
+  $substr: String["substr"];
   // add others as needed
 }
 

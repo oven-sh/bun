@@ -1,6 +1,5 @@
-// src/runtime/node/path.rs reads an 8-bit string where it is, sixteen characters at a time on POSIX, and answers with parts
-// of its operands. A 16-bit string goes through UTF-8 and the functions of src/node_path that follow Node's source line by
-// line. So the same characters in 16-bit storage say what the answer is.
+// src/runtime/node/path.rs reads a string where it is, in either width, and answers with parts of its operands.
+// The searches are not the same code for the two widths, and short 8-bit paths have functions of their own.
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -33,7 +32,6 @@ const forms: Record<string, (text: string) => any> = {
   substring: text => flat("<<" + text + ">>>").slice(2, -3),
   substringOfWhatBecame16Bit: text => substringOfKey("[[" + text + "]]]", copy, narrowCopy),
   substringOfWhatBecame8Bit: text => substringOfKey("((" + text + ")))", narrowCopy, copy),
-  stringObject: text => new String(text),
 };
 
 function createRandom(seed: number) {
@@ -252,73 +250,39 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
   });
 
   test("what is no string", () => {
-    const message = (name: string, got: string) => `The "${name}" property must be of type string, got ${got}`;
+    const message = (name: string, got: string) => `The "${name}" argument must be of type string. Received ${got}`;
     for (const name of ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse"] as const) {
       expect(() => p[name](5 as any)).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: message("path", "number"),
+          message: message("path", "type number (5)"),
         }),
       );
       expect(() => (p[name] as any)()).toThrow(message("path", "undefined"));
-      expect(() => p[name]([] as any)).toThrow(message("path", "array"));
-      expect(() => p[name](null as any)).toThrow(message("path", "object"));
+      expect(() => p[name]([] as any)).toThrow(message("path", "an instance of Array"));
+      expect(() => p[name](null as any)).toThrow(message("path", "null"));
     }
-    expect(() => p.basename("a", 5 as any)).toThrow(message("ext", "number"));
-    expect(() => p.basename(5 as any, 6 as any)).toThrow(message("ext", "number"));
+    expect(() => p.basename("a", 5 as any)).toThrow(message("suffix", "type number (5)"));
+    expect(() => p.basename(5 as any, 6 as any)).toThrow(message("suffix", "type number (6)"));
+    expect(() => p.basename("a", null as any)).toThrow(message("suffix", "null"));
     expect(p.basename("a.b", undefined)).toBe("a.b");
-    expect(() => p.relative(5 as any, 6 as any)).toThrow(message("from", "number"));
-    expect(() => p.relative("a", 6 as any)).toThrow(message("to", "number"));
-    expect(() => p.join("a", "b", {} as any)).toThrow(message("paths[2]", "object"));
-    expect(() => p.join(true as any, {} as any)).toThrow(message("paths[0]", "boolean"));
-    expect(() => p.resolve("a", "b", {} as any)).toThrow(message("paths[2]", "object"));
-    expect(() => p.resolve(true as any, {} as any)).toThrow(message("paths[1]", "object"));
+    expect(() => p.relative(5 as any, 5 as any)).toThrow(message("from", "type number (5)"));
+    expect(() => p.relative("a", 6 as any)).toThrow(message("to", "type number (6)"));
+    expect(() => p.matchesGlob(5 as any, 6 as any)).toThrow(message("path", "type number (5)"));
+    expect(() => p.matchesGlob("a", 6 as any)).toThrow(message("pattern", "type number (6)"));
+    expect(() => p.join(5 as any)).toThrow(message("path", "type number (5)"));
+    expect(() => p.join("a", "b", {} as any)).toThrow(message("path", "an instance of Object"));
+    expect(() => p.join(true as any, {} as any)).toThrow(message("path", "type boolean (true)"));
+    expect(() => p.resolve(5 as any)).toThrow(message("paths[0]", "type number (5)"));
+    expect(() => p.resolve(true as any, {} as any)).toThrow(message("paths[1]", "an instance of Object"));
+    expect(() => p.resolve("a", "b", {} as any)).toThrow(message("paths[2]", "an instance of Object"));
+    expect(() => p.resolve("a", null as any, "b", "c", "d")).toThrow(message("paths[1]", "null"));
     expect(p.toNamespacedPath(5 as any)).toBe(5 as any);
-  });
-
-  test("String objects are converted first, in the order of the operands", () => {
-    const log: string[] = [];
-    const noisy = (name: string, text: string): any =>
-      Object.assign(new String(text), { toString: () => (log.push(name), text) });
-    const ran = (run: () => unknown) => {
-      log.length = 0;
-      try {
-        run();
-      } catch {}
-      return log.join();
-    };
-    expect(ran(() => p.basename(noisy("path", "a.b"), noisy("ext", ".b")))).toBe("path,ext");
-    expect(ran(() => p.basename(5 as any, noisy("ext", ".b")))).toBe("ext");
-    expect(ran(() => p.relative(noisy("from", "a"), noisy("to", "b")))).toBe("from,to");
-    expect(ran(() => p.join(5 as any, noisy("second", "b"), noisy("third", "c")))).toBe("second,third");
-    expect(ran(() => p.resolve(noisy("first", "a"), noisy("second", "/b"), noisy("third", "c")))).toBe(
-      "first,second,third",
-    );
-  });
-
-  test("the functions are named and counted as they were", () => {
-    for (const name of [
-      "basename",
-      "dirname",
-      "extname",
-      "format",
-      "isAbsolute",
-      "join",
-      "normalize",
-      "parse",
-      "relative",
-      "resolve",
-      "toNamespacedPath",
-    ] as const) {
-      expect([name, p[name].name, p[name].length]).toEqual([name, `bound ${name}`, 1]);
-    }
   });
 });
 
-const { stringObject, ...formsOfStrings } = forms;
-
-test.each(Object.entries(formsOfStrings))("node:url reads a %s as the same characters in 16-bit storage", (_, form) => {
+test.each(Object.entries(forms))("node:url reads a %s as the same characters in 16-bit storage", (_, form) => {
   const { different, compare } = createComparison();
   const answerOf = (run: () => unknown) => {
     try {

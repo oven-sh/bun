@@ -51,7 +51,7 @@ export const f64 = new DoubleType();
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.usv` for a `USVString`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
+/** The JS value itself, as a `JsLocal<'a>`. `.orAbsent`. */
 export const any = new AnyType();
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */

@@ -191,7 +191,19 @@ describe("path.parse", () => {
         assert.strictEqual(path.format(element), expect);
       });
 
-      [null, undefined, 1, true, false, "string"].forEach(pathObject => {
+      [
+        [null, "null"],
+        [undefined, "undefined"],
+        [1, "type number (1)"],
+        [-0, "type number (-0)"],
+        [true, "type boolean (true)"],
+        [false, "type boolean (false)"],
+        ["string", "type string ('string')"],
+        ["it's\n", `type string ("it's\\n")`],
+        ["abcdefghijklmnopqrstuvwxyz'abc", "type string ('abcdefghijklmnopqrstuvwxy...')"],
+        [[], "an instance of Array"],
+        [function named() {}, "function named"],
+      ].forEach(([pathObject, received]) => {
         assert.throws(
           () => {
             path.format(pathObject);
@@ -199,19 +211,7 @@ describe("path.parse", () => {
           {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
-            // TODO: Make our error messages use util.inspect like Node:
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/lib/internal/errors.js#L1370-L1440
-            // https://github.com/nodejs/node/blob/68885d512640556ba95b18f5ab2e0b9e76013399/test/common/index.js#L815
-            //
-            // Node's error message template is:
-            //  `The "pathObject" argument must be of type object. Received ${inspect(input, { depth: -1 })}`
-            //
-            // For example, when we throw for path.format(null) our error message is:
-            //   The "pathObject" property must be of type object, got object
-            //
-            // While Node's error message is:
-            //   The "pathObject" argument must be of type object. Received null
-            message: `The "pathObject" property must be of type object, got ${typeof pathObject}`,
+            message: `The "pathObject" argument must be of type object. Received ${received}`,
           },
         );
       });

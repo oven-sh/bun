@@ -1,156 +1,108 @@
-// The native functions of `path.posix` and `path.win32`. src/js/node/path.ts puts them on the two objects.
+// The native functions of `path.posix` and `path.win32`. None of them runs what a script can replace: src/js/node/path.ts does that.
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::path" });
 
-const text = b.string.allowStringObject.local;
-const result = b.string.local;
+const text = b.string.local;
 
-/** An operand that is refused is described in the message of the error: that reads its constructor.name or prints it the way console.log does. Nothing keeps it. */
-const describedInMessage = (...membersRead: string[]) => [table.printedByFormatter("constructor", ...membersRead)];
+/** The arguments of a function that takes strings alone. The message about anything else reads its constructor.name, or prints it the way console.log does. */
+const strings = <Args extends Record<string, b.Type>>(args: Args) => ({
+  args,
+  expected: Object.fromEntries(Object.keys(args).map(name => [name, ["string"]])),
+  uses: Object.fromEntries(Object.keys(args).map(name => [name, [table.printedByFormatter("constructor")]])),
+});
 
 /** What a function that looks at nothing but its operands says to the table of built-ins. */
 const ofOperandsAlone = { reads: [], writes: [] } as const;
-/** The working directory completes a path that is not absolute, and on Windows a variable of the environment names that of a drive. */
-const ofWorkingDirectory = { reads: ["ExternalState"], writes: [] } as const;
+const allocates = { capability: "heap", throws: true, ...ofOperandsAlone } as const;
 
-export const ParsedPath = b.dictionary({ root: result, dir: result, base: result, ext: result, name: result });
+export const ParsedPath = b.dictionary({ root: text, dir: text, base: text, ext: text, name: text });
 
-const ofPath = (name: string, returns: b.Type) =>
-  b.fn({
-    name,
-    namedAsBound: true,
-    length: 1,
-    args: { path: text },
-    validatorExpects: { path: "string" },
-    returns,
-    capability: "heap",
-    throws: true,
-    ...ofOperandsAlone,
-  });
+const ofPath = (name: string, returns: b.Type) => b.fn({ name, ...strings({ path: text }), returns, ...allocates });
 
 const basename = () =>
   b.fn({
     name: "basename",
-    namedAsBound: true,
-    length: 1,
-    args: { path: text, ext: text.optional },
-    validatorExpects: { path: "string", ext: "string" },
-    convertedFirst: ["ext"],
-    returns: result,
-    capability: "heap",
-    throws: true,
-    ...ofOperandsAlone,
+    length: 2,
+    ...strings({ path: text, suffix: text.optional }),
+    convertedFirst: ["suffix"],
+    returns: text,
+    ...allocates,
   });
 
 /** Of a rope it reads the first characters where they are, so it allocates nothing. */
-const isAbsolute = () =>
-  b.fn({
-    name: "isAbsolute",
-    namedAsBound: true,
-    length: 1,
-    args: { path: text },
-    validatorExpects: { path: "string" },
-    returns: b.bool,
-    ...ofOperandsAlone,
-  });
+const isAbsolute = () => b.fn({ name: "isAbsolute", ...strings({ path: text }), returns: b.bool, ...ofOperandsAlone });
 
-const join = () =>
-  b.fn({
-    name: "join",
-    namedAsBound: true,
-    length: 1,
-    args: { paths: b.rest(text) },
-    validatorExpects: { paths: "string" },
-    returns: result,
-    capability: "heap",
-    throws: true,
-    ...ofOperandsAlone,
-  });
+/** `undefined` where Node does not call `normalize`. */
+const join = () => b.fn({ name: "join", ...strings({ path: b.rest(text) }), returns: text.optional, ...allocates });
 
+/** What `join` passes to `normalize`, or answers without it. */
+const concatenate = () => b.fn({ name: "join", args: { paths: b.rest(text) }, returns: text, ...allocates });
+
+/** `undefined` if one of them takes a working directory. */
 const relative = () =>
-  b.fn({
-    name: "relative",
-    namedAsBound: true,
-    length: 1,
-    args: { from: text, to: text },
-    validatorExpects: { from: "string", to: "string" },
-    returns: result,
-    capability: "heap",
-    throws: true,
-    ...ofWorkingDirectory,
-  });
+  b.fn({ name: "relative", ...strings({ from: text, to: text }), returns: text.optional, ...allocates });
 
-/** It looks at its arguments from the last to the first that is absolute, and only one it looks at has to be a string. */
+const relativeOfResolved = () =>
+  b.fn({ name: "relative", args: { from: text, to: text }, returns: text, ...allocates });
+
+/** A number is the index of what is no string, -1 if it takes the working directory, or minus the code of the letter if it takes that of a drive. */
 const resolve = () =>
   b.fn({
     name: "resolve",
-    namedAsBound: true,
-    length: 1,
-    args: { paths: b.rest(b.any.stringObjectAsString) },
-    returns: result,
-    capability: "heap",
-    throws: true,
-    uses: { paths: describedInMessage() },
-    ...ofWorkingDirectory,
+    args: { paths: b.rest(b.any) },
+    returns: b.any.returning("string", "int32"),
+    uses: { paths: table.inspected },
+    ...allocates,
   });
 
-const format = () =>
-  b.fn({
-    name: "format",
-    namedAsBound: true,
-    length: 1,
-    args: { pathObject: b.any },
-    returns: result,
-    capability: "js",
-    throws: true,
-    runsOnlyOperandCode: true,
-    uses: { pathObject: describedInMessage("root", "dir", "base", "name", "ext") },
-    ...ofOperandsAlone,
-  });
+const resolveFrom = () =>
+  b.fn({ name: "resolve", args: { directory: text, paths: b.rest(text) }, returns: text, ...allocates });
 
 export const basenamePosix = basename();
-export const dirnamePosix = ofPath("dirname", result);
-export const extnamePosix = ofPath("extname", result);
-export const formatPosix = format();
+export const concatenatePosix = concatenate();
+export const dirnamePosix = ofPath("dirname", text);
+export const extnamePosix = ofPath("extname", text);
 export const isAbsolutePosix = isAbsolute();
 export const joinPosix = join();
-export const normalizePosix = ofPath("normalize", result);
+export const normalizePosix = ofPath("normalize", text);
 export const parsePosix = ofPath("parse", ParsedPath);
 export const relativePosix = relative();
+export const relativeOfResolvedPosix = relativeOfResolved();
 export const resolvePosix = resolve();
-export const toNamespacedPathPosix = b.fn({
-  name: "toNamespacedPath",
-  namedAsBound: true,
-  length: 1,
-  args: { path: b.any },
-  returns: b.any.returning(table.operand("path").spec),
-  capability: "heap",
-  uses: { path: [table.returned] },
-  ...ofOperandsAlone,
-});
+export const resolveFromPosix = resolveFrom();
 
 export const basenameWin32 = basename();
-export const dirnameWin32 = ofPath("dirname", result);
-export const extnameWin32 = ofPath("extname", result);
-export const formatWin32 = format();
+export const concatenateWin32 = concatenate();
+export const dirnameWin32 = ofPath("dirname", text);
+export const extnameWin32 = ofPath("extname", text);
 export const isAbsoluteWin32 = isAbsolute();
 export const joinWin32 = join();
-export const normalizeWin32 = ofPath("normalize", result);
+export const normalizeWin32 = ofPath("normalize", text);
 export const parseWin32 = ofPath("parse", ParsedPath);
 export const relativeWin32 = relative();
+export const relativeOfResolvedWin32 = relativeOfResolved();
 export const resolveWin32 = resolve();
-/** A `String` object counts as a string, and an empty one is answered as it is. */
-export const toNamespacedPathWin32 = b.fn({
-  name: "toNamespacedPath",
-  namedAsBound: true,
-  length: 1,
-  args: { path: b.any },
-  returns: b.any.returning(table.union(table.string, table.operand("path")).spec),
-  capability: "js",
+export const resolveFromWin32 = resolveFrom();
+
+/** `process.cwd()` with backslashes for `win32`, and else with slashes and from the first of them on. */
+export const respell = b.fn({ args: { directory: text, win32: b.bool }, returns: text, ...allocates });
+
+/** The variable `=C:` of the environment, which only Windows has and `process.env` lacks. */
+export const workingDirectoryOfDrive = b.fn({
+  args: { letter: b.u8 },
+  returns: text.optional,
+  capability: "heap",
   throws: true,
-  runsOnlyOperandCode: true,
-  uses: { path: [table.returned, table.runs("ToPrimitive")] },
-  ...ofWorkingDirectory,
+  reads: ["ExternalState"],
+  writes: [],
+});
+
+const { args: pathAndPattern, ...aboutPathAndPattern } = strings({ path: text, pattern: text });
+export const matchesGlob = b.fn({
+  args: { ...pathAndPattern, win32: b.bool, ignoresCase: b.bool },
+  ...aboutPathAndPattern,
+  returns: b.bool,
+  ...allocates,
 });

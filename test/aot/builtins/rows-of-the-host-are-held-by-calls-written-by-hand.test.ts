@@ -12,7 +12,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
 import { EventEmitter, getEventListeners } from "node:events";
 import { closeSync, openSync } from "node:fs";
-import { join, posix, win32 } from "node:path";
+import { join } from "node:path";
 import { domainToASCII, domainToUnicode } from "node:url";
 import { MIMEParams, MIMEType, parseEnv } from "node:util";
 import { describe, test } from "../supported";
@@ -671,24 +671,6 @@ const cases: Case[] = [
     place: "the result",
     typesIn: result,
     see: () => [{ value: new MIMEParams() }, { value: new (class extends MIMEParams {})() }],
-  },
-  {
-    row: "native:Bindgen:node_path.bind.ts:toNamespacedPathWin32",
-    mode: "Call",
-    place: "the result",
-    typesIn: result,
-    see: () =>
-      [{}, "C:\\a"].map(operand => ({
-        value: win32.toNamespacedPath(operand as string),
-        args: [operand],
-      })),
-  },
-  {
-    row: "native:Bindgen:node_path.bind.ts:toNamespacedPathPosix",
-    mode: "Call",
-    place: "the result",
-    typesIn: result,
-    see: () => [{}, "/a", 7].map(operand => ({ value: posix.toNamespacedPath(operand as string), args: [operand] })),
   },
   {
     row: "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding",

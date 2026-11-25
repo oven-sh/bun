@@ -3900,7 +3900,7 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, c
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
-// JSString::latin1_characters in src/jsc/JSString.rs reads these fields itself.
+// JSString::characters in src/jsc/JSString.rs reads these fields itself.
 static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
@@ -3963,7 +3963,7 @@ extern "C" void JSC__JSString__substringsOfResolved(JSC::JSString* string, JSC::
 }
 
 // At most `capacity` of them. A rope is not resolved: nothing is allocated in the heap and nothing is thrown.
-extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, char16_t* characters, uint32_t capacity)
+extern "C" void JSC__JSString__firstCharacters(const JSC::JSString* string, char16_t* characters, uint32_t capacity)
 {
     uint32_t count = 0;
     JSC::JSRopeString::LeafIterator leaves { string };
@@ -3972,7 +3972,6 @@ extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, 
         for (unsigned i = 0; i < leaf.length() && count < capacity; ++i)
             characters[count++] = leaf[i];
     }
-    return count;
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)

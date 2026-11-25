@@ -41,8 +41,9 @@ function eachRow(rows: Row[]) {
 describe.concurrent("one reason to keep more", () => {
   eachRow([
     ["hello world", "main.mjs", helloWorld, 5, ""],
-    ["eval", "main.mjs", `console.log(eval(${fromOutside}));`, 87, "dynamic-import eval"],
-    ["new Function", "main.mjs", `console.log(new Function(${fromOutside})());`, 86, "dynamic-import eval"],
+    ["node:path", "main.mjs", `import { join } from "node:path";\nconsole.log(join("a", "b"));`, 16, ""],
+    ["eval", "main.mjs", `console.log(eval(${fromOutside}));`, 88, "dynamic-import eval"],
+    ["new Function", "main.mjs", `console.log(new Function(${fromOutside})());`, 87, "dynamic-import eval"],
     [
       "import() of a computed path",
       "main.mjs",
@@ -61,18 +62,18 @@ describe.concurrent("one reason to keep more", () => {
       "createRequire and a constant path",
       "main.mjs",
       `import { createRequire } from "node:module";\nconsole.log(typeof createRequire(import.meta.url)("node:path").join);`,
-      145,
+      147,
       "dynamic-import runtime-code",
     ],
     [
       "node:vm",
       "main.mjs",
       `import vm from "node:vm";\nconsole.log(vm.runInNewContext(${fromOutside}));`,
-      147,
+      149,
       "dynamic-import runtime-code",
     ],
     ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 216, everyBlocker],
-    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 143, "native-code"],
+    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 144, "native-code"],
   ]);
 });
 

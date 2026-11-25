@@ -605,17 +605,18 @@ const paths: [string, string, string[]][] = [
 function pathPrograms(): Program[] {
   const programs: Program[] = [];
   for (const [name, passed, uses] of paths) {
+    const isNative = name !== "format" && name !== "toNamespacedPath";
     for (const [flavor, suffix] of [
       ["posix", "Posix"],
       ["win32", "Win32"],
     ]) {
       programs.push({
         name: `path-${flavor}-${kebab(name)}-and-what-it-answers`,
-        rows: [`native:Bindgen:node_path.bind.ts:${name}${suffix}`],
+        rows: isNative ? [`native:Bindgen:node_path.bind.ts:${name}${suffix}`] : [],
         text: lines('import path from "node:path";', `const result = path.${flavor}.${name}(${passed});`, uses),
       });
     }
-    if (name !== "format" && name !== "toNamespacedPath") {
+    if (isNative) {
       programs.push({
         name: `path-${kebab(name)}-of-a-number-throws`,
         rows: [`native:Bindgen:node_path.bind.ts:${name}Posix`],
@@ -632,7 +633,7 @@ function pathPrograms(): Program[] {
   }
   programs.push({
     name: "path-format-reads-the-members-of-its-argument-through-getters",
-    rows: ["native:Bindgen:node_path.bind.ts:formatPosix"],
+    rows: [],
     text: lines(
       'import path from "node:path";',
       "const probe = {",

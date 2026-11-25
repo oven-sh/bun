@@ -667,6 +667,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         if (d != d) return builder.append("type number (NaN)"_s);
         if (d == infinity) return builder.append("type number (Infinity)"_s);
         if (d == -infinity) return builder.append("type number (-Infinity)"_s);
+        if (!d && std::signbit(d)) return builder.append("type number (-0)"_s);
         builder.append("type number ("_s);
         builder.append(d);
         builder.append(')');
@@ -716,51 +717,13 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
 
-        StringView view = str;
-
-        const bool needsEllipsis = jsString->length() > 28;
-        // node checks for the presence of a single quote.
-        // - if it does not exist, use single quotes.
-        // - if it exists, json stringify (use double quotes).
-        // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
-        const bool needsEscape = str->contains('\'');
-        if (needsEllipsis) {
-            view = str->substring(0, 25);
-        }
+        // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1048
+        String shown = str->length() > 28 ? makeString(str->left(25), "..."_s) : str->toString();
         builder.append("type string ("_s);
-        if (needsEscape) [[unlikely]] {
-            builder.append('"');
-            if (view.is8Bit()) {
-                const auto span = view.span<Latin1Character>();
-                for (const auto c : span) {
-                    if (c == '"') {
-                        builder.append("\\\""_s);
-                    } else {
-                        builder.append(c);
-                    }
-                }
-            } else {
-                const auto span = view.span<char16_t>();
-                for (const auto c : span) {
-                    if (c == '"') {
-                        builder.append("\\\""_s);
-                    } else {
-                        builder.append(c);
-                    }
-                }
-            }
-        } else {
-            builder.append('\'');
-            builder.append(view);
-        }
-        if (needsEllipsis) {
-            builder.append("..."_s);
-        }
-        if (needsEscape) [[unlikely]] {
-            builder.append('"');
-        } else {
-            builder.append('\'');
-        }
+        if (shown.contains('\''))
+            builder.appendQuotedJSONString(shown);
+        else
+            builder.append('\'', shown, '\'');
         builder.append(')');
         return;
     }

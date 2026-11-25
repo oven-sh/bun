@@ -66,11 +66,9 @@ must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the sa
 place of the list is the whole message: Node's C++ writes its own out that way, and so do the Bun APIs
 that have a message of their own. A dictionary named in `expected` reports what is not an object as the
 argument, and not under the dictionary's name. A range has its own errors, so it is not named in `expected`.
-`validatorExpects: { path: "string" }` throws what `src/runtime/node/util/validators.rs` does instead:
-"The "path" property must be of type string, got number".
 
 `name` is the JS function's `name` where the export is called something else: `basenamePosix` and
-`basenameWin32` are both `"basename"`. `convertedFirst: ["ext"]` converts those arguments before
+`basenameWin32` are both `"basename"`. `convertedFirst: ["suffix"]` converts those arguments before
 the others, for a function whose error is about its second argument when both are wrong.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
@@ -367,25 +365,18 @@ storage, and `text.slice(..)` is read in place, where `b.string` would copy it i
 with a modifier, and not in an array.
 
 `b.string.local` is the JS string itself. Nothing is resolved, counted or copied to pass it, so it
-is what costs least, and compiled code passes the string it holds as it is. `string.latin1()` is
-the characters of an 8-bit string where they are, read without a call; it is `None` for a 16-bit
-string and for a rope that is not a substring. `string.flat_latin1()` is the few instructions of it
-for a string that is no rope at all, to inline in front of everything else, and
-`string.resolved_latin1(heap)` resolves a rope first, so that only a 16-bit string is left, which
-`string.view(heap)` serves. An answer that is part of an operand is
-`latin1.substring(heap, start, end)`, which shares the characters, and all of them are the operand
-itself; `latin1.substrings_unchecked(heap, ranges)` makes several with one call.
-`heap.create_latin1_string(characters)` makes a new one, and `heap.create_latin1_string_with(length, fill)`
-one that `fill` writes in place. Both end the process when the characters cannot be allocated;
-`heap.try_create_latin1_string(characters)` answers with an error instead, for as many characters as JavaScript
-cares to pass. It is also a result. `b.string.allowStringObject.local` takes a
-`String` object too: the `String` objects among the arguments are converted first, in the order of
-the arguments, and the types are checked after that. `src/runtime/node/path.rs` is written this way.
+is what costs least, and compiled code passes the string it holds as it is. `string.characters(heap)` is
+its characters where they are, in Latin-1 or UTF-16 (`.units()`). Only a rope that is not a substring is
+resolved for it. `string.latin1(heap)` resolves nothing, and is `None` for such a rope and for a 16-bit string.
+An answer that is part of an operand is `characters.substring(heap, range)`, which shares the characters,
+and all of them are the operand itself; `characters.substrings(heap, ranges)` makes several with one call.
+`heap.create_string_of(units)` makes a new one, and `heap.create_latin1_string_with(length, fill)`
+one that `fill` writes in place. Both answer with an error when there are too many characters.
+`heap.create_latin1_string(characters)` ends the process when they cannot be allocated.
+It is also a result. `src/runtime/node/path.rs` is written this way.
 
 `b.rest(T)` is the last argument and every one after it, as a slice of the caller's frame. `T` is
-`b.string.local` or `b.any`. An error names the one it is about: "paths[2]". `b.any.stringObjectAsString`
-is for a body that tells a string from anything else itself, because it does not look at every
-argument: a `String` object arrives as its string, and anything else as it is.
+`b.string.local` or `b.any`.
 
 `b.any.orAbsent` is an `Option<JsLocal<'a>>`, for an argument that a caller may leave out. The host
 function passes `undefined` for one that is left out, as for every argument. Code that `bun build --compile --aot`

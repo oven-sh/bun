@@ -29,7 +29,6 @@ import {
   Method,
   OptionalType,
   RefType,
-  RestType,
   Signature,
   Type,
   memberIdentifier,
@@ -276,11 +275,6 @@ function computeContentProtocols(containers: readonly Type[]): ProtocolSpec[] {
   return [...protocols, ...(names.size > 0 ? [b.named(...names)] : [])];
 }
 
-/** The wrapper hands the argument to `stringOfStringObject`, which runs the `toString` of a `String` object, whatever else the type accepts. */
-function convertsStringObject(type: Type): boolean {
-  return (type instanceof RestType ? type.element : type).cppPrepare("") !== null;
-}
-
 /** `.otherAsNull` takes anything, and converts what the type inside it takes. */
 function convertedTypeOf(type: Type): TypeSpec {
   const isIgnoringOthers = type instanceof OptionalType && type.modifier === "otherAsNull";
@@ -288,8 +282,7 @@ function convertedTypeOf(type: Type): TypeSpec {
 }
 
 function computeConversionUses(type: Type): UseSpec[] {
-  const runsToString = acceptsStringObject(convertedTypeOf(type)) || convertsStringObject(type);
-  const ownConversion = runsToString ? [b.runs("ToPrimitive")] : [];
+  const ownConversion = acceptsStringObject(convertedTypeOf(type)) ? [b.runs("ToPrimitive")] : [];
   const containers = findContainers(type);
   if (containers.length === 0) return ownConversion;
   const contentProtocols = computeContentProtocols(containers);

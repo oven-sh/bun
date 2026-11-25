@@ -79,20 +79,16 @@ describe("path.resolve", () => {
     //   assert.strictEqual(resolvedPath.toLowerCase(), process.cwd().toLowerCase());
     // }
 
-    // TODO: Enable once support for customizing process.cwd lands.
-    // if (!isWindows) {
-    //   // Test handling relative paths to be safe when process.cwd() fails.
-    //   const cwd = process.cwd;
-    //   process.cwd = () => "";
-    //   try {
-    //     assert.strictEqual(process.cwd(), "");
-    //     const resolved = path.resolve();
-    //     const expected = ".";
-    //     assert.strictEqual(resolved, expected);
-    //   } finally {
-    //     process.cwd = cwd;
-    //   }
-    // }
+    if (!isWindows) {
+      // Test handling relative paths to be safe when process.cwd() fails.
+      const cwd = process.cwd;
+      process.cwd = () => "";
+      try {
+        assert.strictEqual(path.resolve(), ".");
+      } finally {
+        process.cwd = cwd;
+      }
+    }
   });
 
   test("UNC path before drive-relative path does not corrupt resolvedDevice", () => {
@@ -177,7 +173,7 @@ describe("path.resolve", () => {
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {
       return path.posix.resolve(undefined, "hi");
-    }).toThrow('The "paths[0]" property must be of type string, got undefined');
+    }).toThrow('The "paths[0]" argument must be of type string. Received undefined');
     expect(() => {
       return path.posix.resolve(undefined, "/hi");
     }).not.toThrow();
@@ -227,6 +223,35 @@ describe("path.resolve", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("a worker sees that the main thread has changed the working directory", async () => {
+    using dir = tempDir("resolve-worker-cwd", {
+      "inner/file": "",
+      "main.cjs": `
+        const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+        const path = require("node:path");
+        if (isMainThread) {
+          const worker = new Worker(__filename);
+          worker.on("message", names => {
+            console.log(names.join());
+            if (path.basename(process.cwd()) === "inner") return worker.terminate();
+            process.chdir("inner");
+            worker.postMessage("again");
+          });
+        } else {
+          const answer = () =>
+            parentPort.postMessage(
+              [process.cwd(), path.resolve(), path.resolve("x", "..")].map(it => path.relative(__dirname, it)),
+            );
+          parentPort.on("message", answer);
+          answer();
+        }`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split(/\r?\n/), stderr }).toEqual({ lines: [",,", "inner,inner,inner"], stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {

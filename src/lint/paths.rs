@@ -7,7 +7,7 @@
 //! Path operations go through `bun_node_path`, so they behave like `node:path`, which ESLint and Prettier use.
 
 use bun_core::strings;
-use bun_node_path as node;
+use bun_node_path::{posix, utf8, win32};
 use bun_paths::{to_native_in_place, to_portable_in_place};
 use bun_sema::resolve::is_same_path;
 
@@ -46,12 +46,11 @@ pub fn to_native(mut path: Vec<u8>) -> Vec<u8> {
 /// Converts `raw_path`, a path written in the file at `from` or in a file in the directory `from`. If `from` is a
 /// Windows path, `\` is also a separator.
 pub fn portable(from: &[u8], raw_path: &[u8]) -> Vec<u8> {
-    from_node_path(Style::of(from), raw_path)
+    from_node_path(Style::of(from), raw_path.to_vec())
 }
 
 /// Converts a result from `bun_node_path`, which uses `\` in Windows paths.
-fn from_node_path(style: Style, answer: &[u8]) -> Vec<u8> {
-    let mut path = answer.to_vec();
+fn from_node_path(style: Style, mut path: Vec<u8>) -> Vec<u8> {
     if style == Style::Windows {
         strings::replace_char_in_place(&mut path, b'\\', b'/');
     }
@@ -72,8 +71,8 @@ pub fn is_absolute(path: &[u8]) -> bool {
 
 pub(crate) fn is_absolute_as(style: Style, path: &[u8]) -> bool {
     match style {
-        Style::Posix => node::is_absolute_posix_t(path),
-        Style::Windows => node::is_absolute_windows_t(path),
+        Style::Posix => posix::is_absolute(path),
+        Style::Windows => win32::is_absolute(path),
     }
 }
 
@@ -83,13 +82,9 @@ pub fn resolve(base: &[u8], path: &[u8]) -> Vec<u8> {
 }
 
 pub fn resolve_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
-    let paths = [base, path];
-    let len = node::resolve_buf_len(style == Style::Windows, &paths);
-    let mut buffers = vec![0; 2 * len];
-    let (buf, buf2) = buffers.split_at_mut(len);
     let resolved = match style {
-        Style::Posix => node::resolve_posix_t(&paths, buf, buf2),
-        Style::Windows => node::resolve_windows_t(&paths, buf, buf2),
+        Style::Posix => utf8::posix::resolve([base, path]),
+        Style::Windows => utf8::win32::resolve([base, path]),
     };
     from_node_path(style, resolved)
 }
@@ -116,13 +111,9 @@ pub fn relative_as(style: Style, base: &[u8], path: &[u8]) -> Vec<u8> {
     if let Some(rest) = inside_as(style, base, path) {
         return rest.to_vec();
     }
-    let len = node::relative_buf_len::<u8>(base, path);
-    let mut buffers = vec![0; 3 * len];
-    let (buf, rest) = buffers.split_at_mut(len);
-    let (buf2, buf3) = rest.split_at_mut(len);
     let relative = match style {
-        Style::Posix => node::relative_posix_t(base, path, buf, buf2, buf3),
-        Style::Windows => node::relative_windows_t(base, path, buf, buf2, buf3),
+        Style::Posix => utf8::posix::relative(base, path),
+        Style::Windows => utf8::win32::relative(base, path),
     };
     from_node_path(style, relative)
 }
@@ -230,39 +221,36 @@ pub fn dirname(path: &[u8]) -> &[u8] {
 
 pub fn dirname_as(style: Style, path: &[u8]) -> &[u8] {
     match style {
-        Style::Posix => node::dirname_posix_t(path),
-        Style::Windows => node::dirname_windows_t(path),
+        Style::Posix => utf8::posix::dirname(path),
+        Style::Windows => utf8::win32::dirname(path),
     }
 }
 
 /// `path.basename(path)`
 pub fn basename(path: &[u8]) -> &[u8] {
     match Style::of(path) {
-        Style::Posix => node::basename_posix_t(path, None),
-        Style::Windows => node::basename_windows_t(path, None),
+        Style::Posix => &path[posix::basename(path)],
+        Style::Windows => &path[win32::basename(path)],
     }
 }
 
 /// `path.win32.basename(path)`: the file name of `path`, whichever separator it uses.
 pub fn file_name(path: &[u8]) -> &[u8] {
-    node::basename_windows_t(path, None)
+    &path[win32::basename(path)]
 }
 
 /// `path.extname(path)`
 pub fn extname(path: &[u8]) -> &[u8] {
     match Style::of(path) {
-        Style::Posix => node::extname_posix_t(path),
-        Style::Windows => node::extname_windows_t(path),
+        Style::Posix => &path[posix::extname(path)],
+        Style::Windows => &path[win32::extname(path)],
     }
 }
 
 /// `path.win32.toNamespacedPath(path)`: `\\?\C:\a`, `\\?\UNC\server\share\a`. Windows doesn't normalize what follows
 /// `\\?\` or limit its length.
 pub fn namespaced(path: &[u8]) -> Vec<u8> {
-    let len = node::to_namespaced_path_buf_len::<u8>(path);
-    let mut buffers = vec![0; 2 * len];
-    let (buf, buf2) = buffers.split_at_mut(len);
-    node::to_namespaced_path_windows_t(path, buf, buf2).to_vec()
+    utf8::win32::to_namespaced_path(path)
 }
 
 /// Resolves `path`. A relative path is resolved against `/`.
@@ -297,13 +285,10 @@ pub fn join(directory: &[u8], name: &[u8]) -> Vec<u8> {
 
 /// `path.join(a, b)`
 pub fn join_normalized(a: &[u8], b: &[u8]) -> Vec<u8> {
-    let (style, paths) = (Style::of(a), [a, b]);
-    let len = node::join_buf_len(style == Style::Windows, &paths);
-    let mut buffers = vec![0; 2 * len];
-    let (buf, buf2) = buffers.split_at_mut(len);
+    let style = Style::of(a);
     let joined = match style {
-        Style::Posix => node::join_posix_t(&paths, buf, buf2),
-        Style::Windows => node::join_windows_t(&paths, buf, buf2),
+        Style::Posix => utf8::posix::join([a, b]),
+        Style::Windows => utf8::win32::join([a, b]),
     };
     from_node_path(style, joined)
 }
@@ -311,10 +296,9 @@ pub fn join_normalized(a: &[u8], b: &[u8]) -> Vec<u8> {
 /// `path.normalize(path)`
 pub fn normalize(path: &[u8]) -> Vec<u8> {
     let style = Style::of(path);
-    let mut buf = vec![0; node::normalize_buf_len(path)];
     let normalized = match style {
-        Style::Posix => node::normalize_posix_t(path, &mut buf),
-        Style::Windows => node::normalize_windows_t(path, &mut buf),
+        Style::Posix => utf8::posix::normalize(path),
+        Style::Windows => utf8::win32::normalize(path),
     };
     from_node_path(style, normalized)
 }

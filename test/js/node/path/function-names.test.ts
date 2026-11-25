@@ -1,26 +1,35 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
-import { inspect } from "node:util";
 
-const names = [
-  "resolve",
-  "normalize",
-  "isAbsolute",
-  "join",
-  "relative",
-  "toNamespacedPath",
-  "dirname",
-  "basename",
-  "extname",
-  "format",
-  "parse",
-] as const;
+test.each(["posix", "win32"] as const)("the members of path.%s are those of Node.js, in its order", flavor => {
+  const describe = (value: any) => (typeof value === "function" ? `${value.name}/${value.length}` : typeof value);
+  expect(Object.entries(path[flavor]).map(([key, value]) => [key, describe(value)])).toEqual([
+    ["resolve", "resolve/0"],
+    ["normalize", "normalize/1"],
+    ["isAbsolute", "isAbsolute/1"],
+    ["join", "join/0"],
+    ["relative", "relative/2"],
+    ["toNamespacedPath", "toNamespacedPath/1"],
+    ["dirname", "dirname/1"],
+    ["basename", "basename/2"],
+    ["extname", "extname/1"],
+    ["format", "bound _format/1"],
+    ["parse", "parse/1"],
+    ["matchesGlob", "matchesGlob/2"],
+    ["sep", "string"],
+    ["delimiter", "string"],
+    ["win32", "object"],
+    ["posix", "object"],
+    ["_makeLong", "toNamespacedPath/1"],
+  ]);
+});
 
-test.each(["posix", "win32"] as const)("the functions of path.%s are named as bound functions are", flavor => {
-  expect(names.map(name => path[flavor][name].name)).toEqual(names.map(name => `bound ${name}`));
-  expect(names.map(name => inspect(path[flavor][name]))).toEqual(names.map(name => `[Function: bound ${name}]`));
-  expect(names.map(name => Bun.inspect(path[flavor][name]))).toEqual(names.map(name => `[Function: ${name}]`));
-  expect(names.map(name => String(path[flavor][name]).replace(/\s+/g, " "))).toEqual(
-    names.map(name => `function ${name}() { [native code] }`),
-  );
+test.each(["posix", "win32"] as const)("the functions of path.%s are no constructors", flavor => {
+  const { format, ...methods } = path[flavor] as any;
+  for (const method of Object.values<any>(methods)) {
+    if (typeof method !== "function") continue;
+    expect(Object.hasOwn(method, "prototype")).toBe(false);
+    expect(() => new method("a", "b")).toThrow(TypeError);
+  }
+  expect(typeof new format({ base: "a" })).toBe("object");
 });

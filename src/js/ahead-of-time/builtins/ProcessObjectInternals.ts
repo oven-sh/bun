@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
+// Written against that file with the SHA-256 1462c103e8fb4df9976d48c629a7e2aaa6dba33e6a8a7420f2105cd88d5d4051.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -763,22 +763,19 @@ export function createOnWarning(
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0: unknown = processObject.argv0 || "node";
-      let program: string;
+      let program = "node";
       // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
-      // Anything else goes to node:path, which throws unless the program replaced basename().
-      if (typeof argv0 !== "string" && CAN_LOAD_NODE_PATH) {
-        program = require("node:path").basename(argv0);
-      } else {
-        // Nothing can have replaced basename(), so the module stays out of the executable. Object lists a member from when it is first read,
-        // and node:path reads these three when it loads.
-        if (typeof argv0 !== "string") {
-          const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
-        }
+      if (typeof argv0 === "string") {
         program = (
           process.platform === "win32"
             ? $bindgen("node_path.bind.ts", "basenameWin32")
             : $bindgen("node_path.bind.ts", "basenamePosix")
-        )(argv0 as string);
+        )(argv0);
+      } else if (CAN_LOAD_NODE_PATH) {
+        // Throws unless the program replaced basename().
+        try {
+          program = require("node:path").basename(argv0);
+        } catch {}
       }
       msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }

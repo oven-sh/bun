@@ -122,15 +122,27 @@ unsafe extern "C" {
 
     fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize;
 
-    fn highway_index_of_untidy_slash_or_non_ascii(path: *const u8, len: usize) -> usize;
+    fn highway_index_of_untidy_backslash(path: *const u8, len: usize) -> usize;
+
+    fn highway_index_of_untidy_backslash_or_slash_or_colon(path: *const u8, len: usize) -> usize;
+
+    fn highway_either_byte_bits(text: *const u8, len: usize, a: u8, b: u8) -> u64;
 
     fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize;
 
     fn highway_last_index_of_slash_or_dot(path: *const u8, len: usize) -> usize;
 
+    fn highway_last_index_of_backslash(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash_or_backslash(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash_or_backslash_or_dot(path: *const u8, len: usize) -> usize;
+
     fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize;
 
     fn highway_count_slashes(path: *const u8, len: usize) -> usize;
+
+    fn highway_count_backslashes(path: *const u8, len: usize) -> usize;
 
     fn highway_fill_with_skip_mask(
         mask: *const u8,
@@ -294,7 +306,7 @@ unsafe extern "C" {
 /// they do at most one (masked) vector op or just their scalar tail, so for
 /// haystacks this short the FFI hop plus the dispatch-table call dominates —
 /// do those bytes inline. Also keeps cold call sites from dragging an FFI
-/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+/// call into a caller's hot loop.
 const SCALAR_CUTOFF: usize = 16;
 
 /// Miri cannot call foreign functions, and the workspace denies std's search
@@ -1030,75 +1042,66 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     found
 }
 
-/// Index of the first `/` of `path` in front of a part that is empty, `.` or `..`. A part ends in front of a `/` or
-/// where `path` ends.
-#[inline(always)]
-pub fn index_of_untidy_slash(path: &[u8]) -> Option<usize> {
-    if cfg!(miri) {
-        return (1..path.len())
-            .find(|&at| {
-                path[at - 1] == b'/'
-                    && matches!(
-                        &path[at..],
-                        [b'/', ..]
-                            | [b'.']
-                            | [b'.', b'/', ..]
-                            | [b'.', b'.']
-                            | [b'.', b'.', b'/', ..]
-                    )
-            })
-            .map(|at| at - 1);
-    }
-    // SAFETY: path.ptr/len are a valid readable range.
-    let result = unsafe { highway_index_of_untidy_slash(path.as_ptr(), path.len()) };
-    let found = found_at(result, path.len());
-    debug_assert!(found.is_none_or(|i| path[i] == b'/' && matches!(path[i + 1], b'/' | b'.')));
-    found
+fn is_untidy_separator_at(path: &[u8], at: usize, separator: u8) -> bool {
+    path[at] == separator
+        && match path[at + 1..] {
+            [b'.'] | [b'.', b'.'] => true,
+            [b'.', b'.', next, ..] => next == separator,
+            [b'.', next, ..] | [next, ..] => next == separator,
+            [] => false,
+        }
 }
 
-/// Index of the first byte of `path` that is not ASCII or is what [`index_of_untidy_slash`] looks for.
-#[inline(always)]
-pub fn index_of_untidy_slash_or_non_ascii(path: &[u8]) -> Option<usize> {
-    if cfg!(miri) {
-        return (0..path.len())
-            .find(|&at| !path[at].is_ascii() || index_of_untidy_slash(&path[at..]) == Some(0));
-    }
-    // SAFETY: path.ptr/len are a valid readable range.
-    let result = unsafe { highway_index_of_untidy_slash_or_non_ascii(path.as_ptr(), path.len()) };
-    let found = found_at(result, path.len());
-    debug_assert!(found.is_none_or(|i| {
-        !path[i].is_ascii() || (path[i] == b'/' && matches!(path[i + 1], b'/' | b'.'))
-    }));
-    found
+/// Wrappers of kernels that answer the first (`find`) or the last (`rfind`) index at which `$is` holds.
+macro_rules! path_searches {
+    ($( $(#[$doc:meta])* $name:ident = $kernel:ident, $find:ident(|$path:ident, $at:ident| $is:expr); )*) => {$(
+        $(#[$doc])*
+        #[inline(always)]
+        pub fn $name($path: &[u8]) -> Option<usize> {
+            let is = |&$at: &usize| $is;
+            if cfg!(miri) {
+                return (0..$path.len()).$find(is);
+            }
+            // SAFETY: path.ptr/len are a valid readable range.
+            let found = found_at(unsafe { $kernel($path.as_ptr(), $path.len()) }, $path.len());
+            debug_assert!(found.as_ref().is_none_or(is));
+            found
+        }
+    )*};
+}
+path_searches! {
+    /// Index of the first `/` of `path` in front of a part that is empty, `.` or `..`.
+    index_of_untidy_slash = highway_index_of_untidy_slash,
+        find(|path, at| is_untidy_separator_at(path, at, b'/'));
+    /// [`index_of_untidy_slash`] with `\` for `/`.
+    index_of_untidy_backslash = highway_index_of_untidy_backslash,
+        find(|path, at| is_untidy_separator_at(path, at, b'\\'));
+    /// [`index_of_untidy_backslash`], or of a `/` or a `:` if that is first.
+    index_of_untidy_backslash_or_slash_or_colon = highway_index_of_untidy_backslash_or_slash_or_colon,
+        find(|path, at| matches!(path[at], b'/' | b':') || is_untidy_separator_at(path, at, b'\\'));
+    /// [`last_index_of_char`] for a `/` that is expected within a few dozen bytes of the end.
+    last_index_of_slash = highway_last_index_of_slash,
+        rfind(|path, at| path[at] == b'/');
+    last_index_of_slash_or_dot = highway_last_index_of_slash_or_dot,
+        rfind(|path, at| matches!(path[at], b'/' | b'.'));
+    last_index_of_backslash = highway_last_index_of_backslash,
+        rfind(|path, at| path[at] == b'\\');
+    last_index_of_slash_or_backslash = highway_last_index_of_slash_or_backslash,
+        rfind(|path, at| matches!(path[at], b'/' | b'\\'));
+    last_index_of_slash_or_backslash_or_dot = highway_last_index_of_slash_or_backslash_or_dot,
+        rfind(|path, at| matches!(path[at], b'/' | b'\\' | b'.'));
 }
 
-/// Index of the last `/` of a path, which is expected within a few dozen bytes of the end. [`last_index_of_char`] is for
-/// a byte that can be anywhere in a long text.
+/// One bit for every byte of `text`, which has at most 64, the lowest bit first: whether it is `a` or `b`.
 #[inline(always)]
-pub fn last_index_of_slash(path: &[u8]) -> Option<usize> {
+pub fn either_byte_bits(text: &[u8], a: u8, b: u8) -> u64 {
+    assert!(text.len() <= 64);
     if cfg!(miri) {
-        return (0..path.len()).rev().find(|&at| path[at] == b'/');
+        let bit = |at: usize| u64::from(text[at] == a || text[at] == b) << at;
+        return (0..text.len()).map(bit).sum();
     }
-    // SAFETY: path.ptr/len are a valid readable range.
-    let result = unsafe { highway_last_index_of_slash(path.as_ptr(), path.len()) };
-    let found = found_at(result, path.len());
-    debug_assert!(found.is_none_or(|i| path[i] == b'/'));
-    found
-}
-
-/// [`last_index_of_slash`] for a `/` or a `.`, whichever is last.
-#[inline(always)]
-pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
-    if cfg!(miri) {
-        return (0..path.len())
-            .rev()
-            .find(|&at| matches!(path[at], b'/' | b'.'));
-    }
-    // SAFETY: path.ptr/len are a valid readable range.
-    let result = unsafe { highway_last_index_of_slash_or_dot(path.as_ptr(), path.len()) };
-    let found = found_at(result, path.len());
-    debug_assert!(found.is_none_or(|i| matches!(path[i], b'/' | b'.')));
-    found
+    // SAFETY: text.ptr/len are a valid readable range.
+    unsafe { highway_either_byte_bits(text.as_ptr(), text.len(), a, b) }
 }
 
 /// How many bytes `a` and `b` start with in common.
@@ -1124,6 +1127,16 @@ pub fn count_slashes(path: &[u8]) -> usize {
     }
     // SAFETY: path.ptr/len are a valid readable range.
     unsafe { highway_count_slashes(path.as_ptr(), path.len()) }
+}
+
+/// [`count_slashes`] of `\`.
+#[inline(always)]
+pub fn count_backslashes(path: &[u8]) -> usize {
+    if cfg!(miri) {
+        return count_char(path, b'\\');
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    unsafe { highway_count_backslashes(path.as_ptr(), path.len()) }
 }
 
 // `&[u16]` requires

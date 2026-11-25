@@ -1,4 +1,4 @@
-// matchesGlob() tests the path, then the pattern, and says what internal/validators would say. The pattern is not tested where it is the one of the call before.
+// matchesGlob() tests the path, then the pattern, and says what internal/validators would say.
 const path = require("node:path");
 function ask(...operands) {
   try {

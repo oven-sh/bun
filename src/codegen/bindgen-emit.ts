@@ -717,47 +717,17 @@ const isPassedByPointer = (type: Type) => type.layout().size > 16;
 
 type Argument = Signature["args"][number];
 
-/** A converted `String` object is in no frame but this one. */
-const cppHeldArgument = (type: Type, i: number) =>
-  type.cppPrepare("") === null
-    ? cppHeldValue(type, `argument${i}`)
-    : { holder: "JSC::EnsureStillAliveScope", value: `argument${i}.value()` };
-
 /** Lines that declare `argument${i}`, which holds what is converted. `fromParameters`: as for `cppCallBody`. */
 function cppDeclareArgument({ type }: Argument, i: number, fromParameters?: { failure: string }): string[] {
   if (type instanceof VariadicType) return [];
-  if (type instanceof RestType) {
-    return [
-      `Bun::Bindgen::RestArguments argument${i} { *callFrame, ${i} };`,
-      ...(type.element.cppPrepare("") === null
-        ? []
-        : [`argument${i}.convertStringObjects(*globalObject);`, "RETURN_IF_EXCEPTION(scope, {});"]),
-    ];
-  }
+  if (type instanceof RestType) return [`Bun::Bindgen::RestArguments argument${i} { *callFrame, ${i} };`];
   const passed = fromParameters ? `parameter${i}` : `callFrame->argument(${i})`;
-  const prepared = type.cppPrepare(passed);
-  const { holder } = cppHeldArgument(type, i);
-  if (prepared !== null) {
-    return [`${holder} argument${i} = ${prepared};`, `RETURN_IF_EXCEPTION(scope, ${fromParameters?.failure ?? "{}"});`];
-  }
+  const { holder } = cppHeldValue(type, `argument${i}`);
   return [
     !fromParameters && isIfPassed(type)
       ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
       : `${holder} argument${i} = ${passed};`,
   ];
-}
-
-/** As `cppContext`, for an argument: `value` is the argument or, with `index`, one of a `b.rest`. */
-function cppArgumentContext(
-  lines: string[],
-  { name, expected, validatorExpects }: Argument,
-  i: number,
-  value: string,
-  index?: string,
-): string {
-  if (expected !== undefined || !validatorExpects) return cppContext(lines, i, name, expected, value);
-  const fields = [asciiLiteral(name), asciiLiteral(validatorExpects), value, ...(index ? [index] : [])];
-  return `Bun::Bindgen::asLvalue(Bun::Bindgen::ValidatorArgumentContext { ${fields.join(", ")} })`;
 }
 
 /** What a thunk holds its result to: the words of `.returning`, and a class or a JS string, for which Rust may hand back any JS value. */
@@ -862,12 +832,12 @@ function cppCallBody(
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
   const readLast: string[] = [];
   const convert = (argument: Argument, i: number): string[] => {
-    const { name, type } = argument;
+    const { name, type, expected } = argument;
     if (type instanceof VariadicType) return [`auto converted${i} = Bun::Bindgen::variadicArguments(callFrame, ${i});`];
     const lines: string[] = [];
     if (type instanceof RestType) {
       if (!(type.element instanceof LocalStringType)) return [];
-      const ctx = cppArgumentContext(lines, argument, i, `argument${i}.at(index)`, "index");
+      const ctx = cppContext(lines, i, name, expected, `argument${i}.at(index)`);
       return [
         ...lines,
         `for (size_t index = 0; index < argument${i}.size(); ++index) {`,
@@ -878,8 +848,8 @@ function cppCallBody(
         "}",
       ];
     }
-    const { value } = cppHeldArgument(type, i);
-    const ctx = cppArgumentContext(lines, argument, i, value);
+    const { value } = cppHeldValue(type, `argument${i}`);
+    const ctx = cppContext(lines, i, name, expected, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
     return [...lines, ...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}")];
   };
@@ -1853,8 +1823,7 @@ ${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${indent(cppDispatch(f
 }
 
 function creatorOf(fn: FunctionDefinition): string {
-  if (fn.replacesBoundFunction) return "createBoundFunctionReplacement";
-  return fn.namedAsBound ? "createFunctionNamedAsBound" : "createFunction";
+  return fn.replacesBoundFunction ? "createBoundFunctionReplacement" : "createFunction";
 }
 
 function cppSourceForFunction(fn: FunctionDefinition, guard: Guard | null): string {

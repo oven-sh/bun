@@ -5484,11 +5484,13 @@ impl VirtualMachine {
             bun_sys::Result::Ok(cwd) => bun_paths::Path::from(cwd),
             bun_sys::Result::Err(err) => {
                 let _ = bun_sys::chdir(&bun_paths::Path::from(fs.top_level_dir()));
+                bun_core::did_change_working_directory();
                 return bun_sys::Result::Err(err);
             }
         };
         cwd.push_trailing_sep();
         fs.set_top_level_dir(Self::intern_cwd(fs, &cwd));
+        bun_core::did_change_working_directory();
         Ok(())
     }
 

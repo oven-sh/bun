@@ -1989,22 +1989,16 @@ impl<'a> ESModule<'a> {
                             // (e.g. `@myproject/resolver`) that we hand back to
                             // package-resolve. Per the Node.js packages spec these
                             // are URL-like specifiers and must keep forward slashes.
-                            let mut joined = bun_paths::path_buffer_pool::get();
-                            let result = bun_node_path::join_posix_t(
-                                &[str, subpath],
-                                &mut resolve_target_buf.0,
-                                &mut joined.0,
-                            );
+                            let result = bun_node_path::utf8::posix::join([str, subpath]);
                             if let Some(log) = this.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
                                     bstr::BStr::new(str),
-                                    bstr::BStr::new(result)
+                                    bstr::BStr::new(&result)
                                 ));
                             }
-                            let path = Box::<[u8]>::from(result);
                             return Resolution {
-                                path,
+                                path: result.into_boxed_slice(),
                                 status: Status::PackageResolve,
                             };
                         }

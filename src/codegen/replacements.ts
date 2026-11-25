@@ -12,6 +12,8 @@ export const replacements: ReplacementRule[] = [
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
+  { from: /\barguments as LazyArguments\b/g, to: "$argumentsFrom(0)" },
+  { from: /\b__intrinsic__process\b/g, to: "$natives.process" },
 ];
 
 /** `$<name>(` is `$makeErrorWithCode(<number>, `. The numbers are `Bun::ErrorCode` (generate-node-errors.ts). */

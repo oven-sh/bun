@@ -228,7 +228,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject, JS
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(globalObject, prefix, code, suffix)));
 }
-extern "C" BunString Bun__Node__Path_joinWTF(const BunString* lhs, const char* rhs, size_t len);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -271,8 +271,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/modules/cjs/loader.js#L1603-L1620
     if (trailingSlash) {
-        BunString lhs = Bun::toString(val);
-        val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
+        JSValue joined = Bun::pathJoin(globalObject, jsString(vm, val), jsNontrivialString(vm, "noop.js"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        val = joined.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Called in a Bun.ModuleGraph's context: that graph's require().

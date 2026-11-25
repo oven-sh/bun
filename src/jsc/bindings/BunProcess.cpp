@@ -1064,14 +1064,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     WTF::String directory = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     EncodedSlice str = Zig::toEncodedSlice(directory);
-    JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
-    // the next process.cwd() re-query the OS - do not re-populate it here.
-    processObject->clearCachedCwd();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
+    RELEASE_AND_RETURN(scope, Bun__Process__setCwd(globalObject, &str));
 }
 
 // One number can have two names, e.g. SIGABRT and SIGIOT.
@@ -5968,6 +5961,8 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
 #endif
 }
 
+extern "C" std::atomic<uint32_t> Bun__workingDirectoryChanges;
+
 JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5975,20 +5970,16 @@ JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    uint32_t changes = Bun__workingDirectoryChanges.load(std::memory_order_acquire);
+    if (auto* cached = processObject->cachedCwd(changes)) {
         return cached;
     }
 
     auto cwd = Bun__Process__getCwd(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
-    processObject->setCachedCwd(vm, cwdStr);
+    processObject->setCachedCwd(vm, cwdStr, changes);
     RELEASE_AND_RETURN(scope, cwdStr);
-}
-
-extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObject)
-{
-    return JSValue::encode(getCachedCwd(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

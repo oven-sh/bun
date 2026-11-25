@@ -359,24 +359,21 @@ describe("highway byte-search kernels", () => {
   });
 });
 
-// The kernels of node:path (src/node_path/tidy.rs).
 describe("kernels for paths", () => {
   const SLASH = 0x2f;
+  const BACKSLASH = 0x5c;
+  const COLON = 0x3a;
   const DOT = 0x2e;
-  const slashOrDot = enc("/.");
-  const isUntidyPartAt = (p: Uint8Array, at: number) =>
-    p[at] === SLASH ||
+  const isUntidyPartAt = (p: Uint8Array, at: number, separator: number) =>
+    p[at] === separator ||
     (p[at] === DOT &&
       (at + 1 === p.length ||
-        p[at + 1] === SLASH ||
-        (p[at + 1] === DOT && (at + 2 === p.length || p[at + 2] === SLASH))));
-  function refIndexOfUntidySlash(p: Uint8Array) {
-    for (let i = 0; i + 1 < p.length; i++) if (p[i] === SLASH && isUntidyPartAt(p, i + 1)) return i;
-    return p.length;
-  }
-  function refIndexOfUntidySlashOrNonAscii(p: Uint8Array) {
+        p[at + 1] === separator ||
+        (p[at + 1] === DOT && (at + 2 === p.length || p[at + 2] === separator))));
+  function refIndexOfUntidy(p: Uint8Array, separator: number, ...stops: number[]) {
     for (let i = 0; i < p.length; i++) {
-      if (p[i] >= 0x80 || (p[i] === SLASH && i + 1 < p.length && isUntidyPartAt(p, i + 1))) return i;
+      if (stops.includes(p[i])) return i;
+      if (p[i] === separator && i + 1 < p.length && isUntidyPartAt(p, i + 1, separator)) return i;
     }
     return p.length;
   }
@@ -387,18 +384,34 @@ describe("kernels for paths", () => {
   }
   /** A copy that ends where its buffer ends, so that ASAN sees a read past it. */
   const exact = (p: Uint8Array) => new Uint8Array(p);
-  function check(p: Uint8Array, at: () => string) {
-    p = exact(p);
-    compare("indexOfUntidySlash", hw("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
+  const lastOfAny = [
+    ["lastIndexOfSlashOrDot", enc("/.")],
+    ["lastIndexOfSlashOrBackslash", enc("/\\")],
+    ["lastIndexOfSlashOrBackslashOrDot", enc("/\\.")],
+  ] as const;
+  const withBackslashes = (p: Uint8Array) =>
+    p.map(byte => (byte === SLASH ? BACKSLASH : byte === BACKSLASH ? SLASH : byte));
+  /** Those for backslashes get `p` with the two separators in each other's place. */
+  function checkUntidy(p: Uint8Array, at: () => string) {
+    const other = withBackslashes(p);
+    compare("indexOfUntidySlash", hw("indexOfUntidySlash", exact(p), 0), refIndexOfUntidy(p, SLASH), at);
+    compare("indexOfUntidyBackslash", hw("indexOfUntidyBackslash", other, 0), refIndexOfUntidy(other, BACKSLASH), at);
     compare(
-      "indexOfUntidySlashOrNonAscii",
-      hw("indexOfUntidySlashOrNonAscii", p, 0),
-      refIndexOfUntidySlashOrNonAscii(p),
+      "indexOfUntidyBackslashOrSlashOrColon",
+      hw("indexOfUntidyBackslashOrSlashOrColon", other, 0),
+      refIndexOfUntidy(other, BACKSLASH, SLASH, COLON),
       at,
     );
+  }
+  function check(p: Uint8Array, at: () => string) {
+    checkUntidy(p, at);
+    const other = withBackslashes(p);
+    p = exact(p);
     compare("lastIndexOfSlash", hw("lastIndexOfSlash", p, 0), refLastIndexOf(p, SLASH), at);
-    compare("lastIndexOfSlashOrDot", hw("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
+    compare("lastIndexOfBackslash", hw("lastIndexOfBackslash", other, 0), refLastIndexOf(other, BACKSLASH), at);
+    for (const [op, set] of lastOfAny) compare(op, hw(op, p, 0), refLastIndexOfAny(p, set), at);
     compare("countSlashes", hw("countSlashes", p, 0), refCount(p, SLASH), at);
+    compare("countBackslashes", hw("countBackslashes", other, 0), refCount(other, BACKSLASH), at);
   }
 
   it("every text of up to 8 characters over '/', '.' and 'a'", () => {
@@ -428,7 +441,7 @@ describe("kernels for paths", () => {
           if (!part.endsWith("/") && pos + planted.length !== len) continue;
           const p = tidy.slice();
           p.set(planted, pos);
-          check(p, () => `len=${len} part=${part} pos=${pos}`);
+          (part === "//" ? check : checkUntidy)(p, () => `len=${len} part=${part} pos=${pos}`);
         }
       }
     }
@@ -453,22 +466,50 @@ describe("kernels for paths", () => {
     }
   });
 
-  it("a byte outside ASCII at every position of a path of every length up to 100, in front of and behind an untidy part", () => {
-    for (let len = 1; len <= 100; len++) {
+  it("a colon or the other separator at every position of a path of every length up to 70, in front of and behind an untidy part", () => {
+    for (let len = 1; len <= 70; len++) {
       const tidy = new Uint8Array(len);
       for (let i = 0; i < len; i++) tidy[i] = i % 7 === 0 ? SLASH : 0x61 + (i % 5);
       tidy[len - 1] = 0x61;
-      for (const byte of [0x80, 0xe9, 0xff]) {
+      for (const byte of [COLON, BACKSLASH, BACKSLASH | 0x80]) {
         for (let pos = 0; pos < len; pos++) {
           const p = tidy.slice();
           p[pos] = byte;
           check(p, () => `len=${len} byte=${byte} pos=${pos}`);
           for (const untidy of [pos - 9, pos - 2, pos + 1, pos + 8]) {
-            if (untidy < 0 || untidy + 2 > len) continue;
+            if (byte > 0x7f || untidy < 0 || untidy + 2 > len) continue;
             const both = p.slice();
             both[untidy] = both[untidy + 1] = SLASH;
-            check(both, () => `len=${len} byte=${byte} pos=${pos} untidy=${untidy}`);
+            checkUntidy(both, () => `len=${len} byte=${byte} pos=${pos} untidy=${untidy}`);
           }
+        }
+      }
+    }
+  });
+
+  it("eitherByteBits: each of the two at every position of a text of every length up to 64", () => {
+    const word = new BigUint64Array(1);
+    const bytesOfWord = new Uint8Array(word.buffer);
+    for (let len = 0; len <= 64; len++) {
+      for (let pos = -1; pos < len; pos++) {
+        for (const [a, b] of [
+          [SLASH, SLASH],
+          [SLASH, BACKSLASH],
+          [0, 0x7f],
+        ]) {
+          const p = exact(filler(len, 0));
+          let expected = 0n;
+          for (const [at, byte] of [
+            [pos, a],
+            [len - 1 - pos, b],
+          ]) {
+            if (at < 0 || at >= len) continue;
+            p[at] = byte;
+            expected |= 1n << BigInt(at);
+          }
+          bytesOfWord.set([a, b]);
+          hw("eitherByteBits", p, bytesOfWord);
+          compare("eitherByteBits", Number(word[0] ^ expected), 0, () => `len=${len} pos=${pos} bytes=${a},${b}`);
         }
       }
     }

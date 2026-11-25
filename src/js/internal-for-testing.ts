@@ -48,6 +48,10 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
   2,
 );
 
+/** `path.matchesGlob` as it is on any platform: `ignoresCase` is what macOS and Windows pass. */
+export const matchesGlobForTesting: (path: string, pattern: string, win32: boolean, ignoresCase: boolean) => boolean =
+  $bindgen("node_path.bind.ts", "matchesGlob");
+
 // Runtime-dispatched SIMD byte-search kernels (src/jsc/bindings/highway_strings.cpp)
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
@@ -66,11 +70,16 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "indexOfUntidySlash"
-    | "indexOfUntidySlashOrNonAscii"
+    | "indexOfUntidyBackslash"
+    | "indexOfUntidyBackslashOrSlashOrColon"
     | "lastIndexOfSlash"
     | "lastIndexOfSlashOrDot"
+    | "lastIndexOfBackslash"
+    | "lastIndexOfSlashOrBackslash"
+    | "lastIndexOfSlashOrBackslashOrDot"
     | "commonPrefixLength"
     | "countSlashes"
+    | "countBackslashes"
     | "memmem"
     | "memrmem"
     | "memmem16"
@@ -79,6 +88,7 @@ export const highwayStringsForTesting: (
     | "lineStarts"
     | "oddBlocks"
     | "byteBits"
+    | "eitherByteBits"
     | "byteSetPrefixLength"
     | "zstdIsQuicker"
     | "zstdCountBytes"

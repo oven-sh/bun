@@ -1,23 +1,26 @@
 import { serialize } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { isDebug } from "harness";
 import { posix, win32 } from "node:path";
 
 // A string is serialized with one byte or two for each character, as it is held.
 const isWide = (text: string) => serialize(text).byteLength > serialize("x".repeat(text.length)).byteLength;
 
-// An answer is held in 16 bits if and only if one of its characters is outside ASCII, whatever else the operands hold.
-// A string of one character is one that all share.
+// An answer is held in 8 bits if the operands are, and has the characters that the same call has with a letter in their place.
 test.each([
   ["posix", posix],
   ["win32", win32],
 ])("%s: one character outside ASCII at every position of a name of every length up to 100", (_, path) => {
   const wrong: string[] = [];
+  let withLetter: string[] = [];
+  let withCharacter: string[] = [];
   function check(call: string, answer: string) {
-    if (answer.length > 1 && isWide(answer) !== /[^\x00-\x7f]/.test(answer))
-      wrong.push(`${call}: ${JSON.stringify(answer)}`);
+    if (isWide(answer)) wrong.push(`${call}: ${JSON.stringify(answer)}`);
+    withCharacter.push(answer.replaceAll("é", "x"));
   }
-  for (let length = 1; length <= 100; length++) {
+  for (let length = 1; length <= 100; length += isDebug ? 9 : 1) {
     for (let position = -1; position < length; position++) {
+      withCharacter = [];
       const plain = "x".repeat(length);
       const name = position < 0 ? plain : plain.slice(0, position) + "é" + plain.slice(position + 1);
       // A rope is not what the functions are given most of the time.
@@ -46,6 +49,8 @@ test.each([
       check(`relative of an untidy path ${at}`, path.relative("/a/./b", flat(`/a/${name}`)));
       const parsed = path.parse(flat(`/${name}/${plain}.${name}`));
       for (const key of ["root", "dir", "base", "ext", "name"] as const) check(`parse ${key} ${at}`, parsed[key]);
+      if (position < 0) withLetter = withCharacter;
+      else if (!Bun.deepEquals(withCharacter, withLetter)) wrong.push(`${at}: ${JSON.stringify(withCharacter)}`);
     }
   }
   expect(wrong.slice(0, 20)).toEqual([]);

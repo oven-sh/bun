@@ -2286,97 +2286,105 @@ net[Stream] cew function
 net[Stream] = net[Socket]
 path: object above=Object extensible=true
 path[resolve] cew function
-path[resolve]: function native name="bound resolve" length=1 above=Function extensible=true
+path[resolve]: function function name="resolve" length=0 above=Function extensible=true
 path[resolve][length] c-- number
 path[resolve][name] c-- string
 path[normalize] cew function
-path[normalize]: function native name="bound normalize" length=1 above=Function extensible=true
+path[normalize]: function native name="normalize" length=1 above=Function extensible=true
 path[normalize][length] c-- number
 path[normalize][name] c-- string
 path[isAbsolute] cew function
-path[isAbsolute]: function native name="bound isAbsolute" length=1 above=Function extensible=true
+path[isAbsolute]: function native name="isAbsolute" length=1 above=Function extensible=true
 path[isAbsolute][length] c-- number
 path[isAbsolute][name] c-- string
 path[join] cew function
-path[join]: function native name="bound join" length=1 above=Function extensible=true
+path[join]: function function name="join" length=0 above=Function extensible=true
 path[join][length] c-- number
 path[join][name] c-- string
 path[relative] cew function
-path[relative]: function native name="bound relative" length=1 above=Function extensible=true
+path[relative]: function function name="relative" length=2 above=Function extensible=true
 path[relative][length] c-- number
 path[relative][name] c-- string
 path[toNamespacedPath] cew function
-path[toNamespacedPath]: function native name="bound toNamespacedPath" length=1 above=Function extensible=true
+path[toNamespacedPath]: function function name="toNamespacedPath" length=1 above=Function extensible=true
 path[toNamespacedPath][length] c-- number
 path[toNamespacedPath][name] c-- string
 path[dirname] cew function
-path[dirname]: function native name="bound dirname" length=1 above=Function extensible=true
+path[dirname]: function native name="dirname" length=1 above=Function extensible=true
 path[dirname][length] c-- number
 path[dirname][name] c-- string
 path[basename] cew function
-path[basename]: function native name="bound basename" length=1 above=Function extensible=true
+path[basename]: function native name="basename" length=2 above=Function extensible=true
 path[basename][length] c-- number
 path[basename][name] c-- string
 path[extname] cew function
-path[extname]: function native name="bound extname" length=1 above=Function extensible=true
+path[extname]: function native name="extname" length=1 above=Function extensible=true
 path[extname][length] c-- number
 path[extname][name] c-- string
 path[format] cew function
-path[format]: function native name="bound format" length=1 above=Function extensible=true
+path[format]: function native name="bound _format" length=1 above=Function extensible=true
 path[format][length] c-- number
 path[format][name] c-- string
 path[parse] cew function
-path[parse]: function native name="bound parse" length=1 above=Function extensible=true
+path[parse]: function native name="parse" length=1 above=Function extensible=true
 path[parse][length] c-- number
 path[parse][name] c-- string
+path[matchesGlob] cew function
+path[matchesGlob]: function function name="matchesGlob" length=2 above=Function extensible=true
+path[matchesGlob][length] c-- number
+path[matchesGlob][name] c-- string
 path[sep] cew string
 path[delimiter] cew string
 path[win32] cew object
 path[win32]: object above=Object extensible=true
 path[win32][resolve] cew function
-path[win32][resolve]: function native name="bound resolve" length=1 above=Function extensible=true
+path[win32][resolve]: function function name="resolve" length=0 above=Function extensible=true
 path[win32][resolve][length] c-- number
 path[win32][resolve][name] c-- string
 path[win32][normalize] cew function
-path[win32][normalize]: function native name="bound normalize" length=1 above=Function extensible=true
+path[win32][normalize]: function native name="normalize" length=1 above=Function extensible=true
 path[win32][normalize][length] c-- number
 path[win32][normalize][name] c-- string
 path[win32][isAbsolute] cew function
-path[win32][isAbsolute]: function native name="bound isAbsolute" length=1 above=Function extensible=true
+path[win32][isAbsolute]: function native name="isAbsolute" length=1 above=Function extensible=true
 path[win32][isAbsolute][length] c-- number
 path[win32][isAbsolute][name] c-- string
 path[win32][join] cew function
-path[win32][join]: function native name="bound join" length=1 above=Function extensible=true
+path[win32][join]: function function name="join" length=0 above=Function extensible=true
 path[win32][join][length] c-- number
 path[win32][join][name] c-- string
 path[win32][relative] cew function
-path[win32][relative]: function native name="bound relative" length=1 above=Function extensible=true
+path[win32][relative]: function function name="relative" length=2 above=Function extensible=true
 path[win32][relative][length] c-- number
 path[win32][relative][name] c-- string
 path[win32][toNamespacedPath] cew function
-path[win32][toNamespacedPath]: function native name="bound toNamespacedPath" length=1 above=Function extensible=true
+path[win32][toNamespacedPath]: function function name="toNamespacedPath" length=1 above=Function extensible=true
 path[win32][toNamespacedPath][length] c-- number
 path[win32][toNamespacedPath][name] c-- string
 path[win32][dirname] cew function
-path[win32][dirname]: function native name="bound dirname" length=1 above=Function extensible=true
+path[win32][dirname]: function native name="dirname" length=1 above=Function extensible=true
 path[win32][dirname][length] c-- number
 path[win32][dirname][name] c-- string
 path[win32][basename] cew function
-path[win32][basename]: function native name="bound basename" length=1 above=Function extensible=true
+path[win32][basename]: function native name="basename" length=2 above=Function extensible=true
 path[win32][basename][length] c-- number
 path[win32][basename][name] c-- string
 path[win32][extname] cew function
-path[win32][extname]: function native name="bound extname" length=1 above=Function extensible=true
+path[win32][extname]: function native name="extname" length=1 above=Function extensible=true
 path[win32][extname][length] c-- number
 path[win32][extname][name] c-- string
 path[win32][format] cew function
-path[win32][format]: function native name="bound format" length=1 above=Function extensible=true
+path[win32][format]: function native name="bound _format" length=1 above=Function extensible=true
 path[win32][format][length] c-- number
 path[win32][format][name] c-- string
 path[win32][parse] cew function
-path[win32][parse]: function native name="bound parse" length=1 above=Function extensible=true
+path[win32][parse]: function native name="parse" length=1 above=Function extensible=true
 path[win32][parse][length] c-- number
 path[win32][parse][name] c-- string
+path[win32][matchesGlob] cew function
+path[win32][matchesGlob]: function function name="matchesGlob" length=2 above=Function extensible=true
+path[win32][matchesGlob][length] c-- number
+path[win32][matchesGlob][name] c-- string
 path[win32][sep] cew string
 path[win32][delimiter] cew string
 path[win32][win32] cew object
@@ -2385,18 +2393,10 @@ path[win32][posix] cew object
 path[win32][posix] = path
 path[win32][_makeLong] cew function
 path[win32][_makeLong] = path[win32][toNamespacedPath]
-path[win32][matchesGlob] cew function
-path[win32][matchesGlob]: function native name="bound matchesGlob" length=2 above=Function extensible=true
-path[win32][matchesGlob][length] c-- number
-path[win32][matchesGlob][name] c-- string
 path[posix] cew object
 path[posix] = path
 path[_makeLong] cew function
 path[_makeLong] = path[toNamespacedPath]
-path[matchesGlob] cew function
-path[matchesGlob]: function native name="bound matchesGlob" length=2 above=Function extensible=true
-path[matchesGlob][length] c-- number
-path[matchesGlob][name] c-- string
 querystring: object above=Object extensible=true
 querystring[unescapeBuffer] cew function
 querystring[unescapeBuffer]: function function name="unescapeBuffer" length=2 above=Function extensible=true

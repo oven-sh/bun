@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-made-type-finds-its-file-behind-a-reset.test.ts": {
+    "default": 3000,
+    "asan": 12000
+  },
   "aot/a-build-reads-the-members-of-one-object-in-linear-time.test.ts": {
     "default": 120000,
     "asan": 480000

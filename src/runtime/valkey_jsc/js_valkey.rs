@@ -357,15 +357,11 @@ impl JSValkeyClient {
     ) -> JsResult<RefPtr<JSValkeyClient>> {
         let vm_ref = cx.global().bun_vm();
 
-        let url_slice = if !url.is_undefined_or_null() {
-            url.to_utf8(cx.global())?
+        let (url_slice, origin) = if !url.is_undefined_or_null() {
+            (url.to_utf8(cx.global())?, valkey::Origin::Given)
         } else {
-            let env = vm_ref.env_loader();
-            Utf8Bytes::Borrowed(
-                env.get(b"REDIS_URL")
-                    .or_else(|| env.get(b"VALKEY_URL"))
-                    .unwrap_or(b"valkey://localhost:6379"),
-            )
+            let (url, origin) = valkey::Origin::url_from_env(vm_ref.env_loader());
+            (Utf8Bytes::Borrowed(url), origin)
         };
         let mut fallback_url_buf = [0u8; 2048];
 
@@ -533,6 +529,7 @@ impl JSValkeyClient {
             _ => valkey::Address::Host {
                 host: hostname_slice.into(),
                 port,
+                origin,
             },
         };
         let tls = match tls {

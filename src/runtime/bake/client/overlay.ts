@@ -715,16 +715,19 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
 }
 
 function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageLevel) {
-  const underlineStart = Math.max(0, location.column - 1 - location.lineTextColumnOffset);
   return [
     elem("div", { class: "code" }, [
       elem("div", { class: "gutter" }, [elemText("div", null, `${location.line}`)]),
       elem("div", { class: "view" }, [
         mapCodePreviewLine(syntaxHighlight(location.lineText)),
-        elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
-          elemText("span", { class: "space" }, "_".repeat(underlineStart)),
-          elemText("span", { class: "line" }, "_".repeat(location.length)),
-        ]),
+        ...(location.column > 0
+          ? [
+              elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
+                elemText("span", { class: "space" }, "_".repeat(location.column - 1 - location.lineTextColumnOffset)),
+                elemText("span", { class: "line" }, "_".repeat(location.length)),
+              ]),
+            ]
+          : []),
       ]),
     ]),
   ];

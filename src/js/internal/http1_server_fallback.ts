@@ -1,7 +1,7 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, NodeHTTPHeaderState, headerStateSymbol, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { builtinChannel } = require("internal/shared");
@@ -18,6 +18,8 @@ const reportError = globalThis.reportError;
 function rethrowUncaught(err) {
   throw err;
 }
+
+function ignoreError() {}
 
 // Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
 function failPendingWriteCallbacks(res, err) {
@@ -626,9 +628,12 @@ function connectionListenerHTTP1(server, socket, options) {
     // Match Node's http _connectionListener: attach err.rawPacket and, when no
     // 'clientError' listener is present, write the same raw error response
     // Node's socketOnError does before destroying.
+    socket.removeListener("error", onHttp1SocketErrorListener);
+    if (socket.listenerCount("error", ignoreError) === 0) socket.on("error", ignoreError);
     prepareError(err, parser, rawPacket);
     if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
+      const isResponding = socket._httpMessage?.[headerStateSymbol] === NodeHTTPHeaderState.sent;
+      if (socket.writable && !socket.destroyed && !isResponding) {
         const code = err?.code;
         socket.write(
           code === "HPE_HEADER_OVERFLOW"

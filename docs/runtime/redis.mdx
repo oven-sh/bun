@@ -54,6 +54,8 @@ By default, the client reads connection information from the following environme
 - `VALKEY_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
+An empty value counts as not set.
+
 ### Connection Lifecycle
 
 The Redis client automatically handles connections in the background:
@@ -433,6 +435,7 @@ When a connection is lost, the client automatically attempts to reconnect with e
    - Queues commands if `enableOfflineQueue` is true (default)
    - Rejects commands immediately if `enableOfflineQueue` is false
 5. A timeout or a busy server counts as one retry. After one, the retries keep the process alive only for a command, a subscription or a handler. Errors such as `WRONGPASS` end the retries
+6. The client returns to the database of its last successful `SELECT`, also after `close()` and `connect()`. It forgets that database at `RESET` and when the server refuses it
 
 ---
 

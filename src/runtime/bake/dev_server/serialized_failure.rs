@@ -198,15 +198,13 @@ fn write_log_msg(msg: &bun_ast::Msg, w: &mut Writer) {
 fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
     write_string32(data.text.as_ref(), w);
     if let Some(loc) = &data.location {
-        // The reader takes a line of 0 as "no location" and reads no more of it.
+        // Contract with `readBundlerMessageLocationOrNull`: `line <= 0` = no location (nothing else follows); `column 0` = line known, no column.
         if loc.line <= 0 {
             _ = w.write_int_le::<u32>(0);
             return;
         }
-        debug_assert!(loc.column >= 0); // zero based and not negative
-
         _ = w.write_int_le::<i32>(loc.line);
-        _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
+        _ = w.write_int_le::<u32>(loc.column.max(0) as u32);
         _ = w.write_int_le::<u32>(loc.length);
 
         let (line_text, units_in_front) = loc.excerpt();

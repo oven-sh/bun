@@ -19,6 +19,7 @@ struct Search<'a, 's> {
     members: KnownObjects<'a, 's>,
     stored_into: FxHashSet<Sym>,
     handed_on: FxHashSet<Sym>,
+    listed: FxHashSet<Sym>,
     held: FxHashSet<(Sym, Sym)>,
     pending: Vec<(Sym, Sym)>,
 }
@@ -296,7 +297,10 @@ impl Search<'_, '_> {
                 ExprKind::Call(_) | ExprKind::New(_) => {
                     return self.note_argument(file, parent, outermost, enumeration);
                 }
-                ExprKind::Array(_) => return self.note_element(file, parent, enumeration),
+                ExprKind::Array(_) => {
+                    self.listed.insert(enumeration);
+                    return self.note_element(file, parent, enumeration);
+                }
                 ExprKind::Assign { target, value, .. } if value == outermost => {
                     let target = hir.skip_type_assertions(target);
                     if let (ExprKind::Ident(_), Binding::Symbol(id)) =
@@ -384,6 +388,7 @@ fn add_enums_stored_by_name(
     files: &Files<'_>,
     graph: &ModuleGraph,
     handed_on: &FxHashSet<Sym>,
+    listed: FxHashSet<Sym>,
     stored: &mut FxHashSet<Sym>,
 ) {
     let (mut enums, mut members) = (AtomSet::default(), AtomSet::default());
@@ -398,6 +403,7 @@ fn add_enums_stored_by_name(
             .for_each(|it| members.insert(it));
     }
     let (mut objects_stored, mut names_stored) = (AtomSet::default(), AtomSet::default());
+    let mut stores_into_what_a_call_returns = false;
     for row in &graph.rows {
         let (hir, bound) = (files.hir(row.file), files.bound(row.file));
         for (index, expression) in hir.exprs.iter().enumerate() {
@@ -415,6 +421,10 @@ fn add_enums_stored_by_name(
                 None => match hir[hir.skip_type_assertions(object)].kind {
                     ExprKind::Ident(name) | ExprKind::Dot { name, .. } => {
                         (&enums, &mut objects_stored, name)
+                    }
+                    ExprKind::Call(_) => {
+                        stores_into_what_a_call_returns |= !is_read(hir, bound, access);
+                        continue;
                     }
                     _ => continue,
                 },
@@ -442,6 +452,9 @@ fn add_enums_stored_by_name(
             }
         }
     }
+    if stores_into_what_a_call_returns {
+        stored.extend(listed);
+    }
 }
 
 fn list_references(files: &Files<'_>, file: FileId) -> Vec<(SymbolId, ExprId)> {
@@ -465,6 +478,7 @@ pub(super) fn find_enums_stored_into(files: &Files<'_>, graph: &ModuleGraph) -> 
         members: KnownObjects::new(files, graph, &known),
         stored_into: FxHashSet::default(),
         handed_on: FxHashSet::default(),
+        listed: FxHashSet::default(),
         held: FxHashSet::default(),
         pending: Vec::new(),
     };
@@ -482,6 +496,7 @@ pub(super) fn find_enums_stored_into(files: &Files<'_>, graph: &ModuleGraph) -> 
             search.note_use(holder.file, name, enumeration);
         }
     }
-    add_enums_stored_by_name(files, graph, &search.handed_on, &mut search.stored_into);
+    let (handed_on, listed) = (&search.handed_on, search.listed);
+    add_enums_stored_by_name(files, graph, handed_on, listed, &mut search.stored_into);
     search.stored_into
 }

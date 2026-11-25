@@ -306,7 +306,7 @@ test("fs.promises async stack with Promise.all", async () => {
 
 it("an unused FileHandle.writer() does not prevent close()", async () => {
   await using dir = tempDir("unused-writer", { "x.txt": "hello" });
-  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  const fh = await fsPromises.open(join(String(dir), "x.txt"), "r+");
   fh.writer(); // never written to, never ended
   // must not hang: the writer only refs the handle once a write happens
   await fh.close();
@@ -315,7 +315,7 @@ it("an unused FileHandle.writer() does not prevent close()", async () => {
 
 it("sources created before close() refuse to use the stale fd", async () => {
   await using dir = tempDir("stale-fd", { "x.txt": "hello" });
-  const file = join(dir, "x.txt");
+  const file = join(String(dir), "x.txt");
 
   // writer
   {
@@ -349,7 +349,7 @@ it("sources created before close() refuse to use the stale fd", async () => {
 
 it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async () => {
   await using dir = tempDir("rm-eisdir", { "sub/a.txt": "x" });
-  const target = join(dir, "sub");
+  const target = join(String(dir), "sub");
   await expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
   const { promise, resolve } = Promise.withResolvers();
   fs.rm(target, err => resolve(err));
@@ -361,7 +361,7 @@ it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async 
 
 it("close() while an operation is in flight actually closes the fd", async () => {
   await using dir = tempDir("deferred-close", { "x.txt": "hello" });
-  const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+  const fh = await fsPromises.open(join(String(dir), "x.txt"), "r");
   const fd = fh.fd;
   // take an extra ref so close() defers, then release it
   const read = fh.read(Buffer.alloc(5), 0, 5, 0);
@@ -379,32 +379,32 @@ it("fail()/end() with autoClose defer the close past an in-flight write", async 
   // fail() while a large write is on the threadpool must not close the fd
   // under it; the write completes, then the handle closes.
   {
-    const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+    const fh = await fsPromises.open(join(String(dir), "a.bin"), "w");
     const w = fh.writer({ autoClose: true });
     const big = Buffer.alloc(8 << 20, 65);
     const pending = w.write(big);
     w.fail(new Error("stop"));
     await pending; // must not reject with EBADF
-    expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength);
+    expect(fs.statSync(join(String(dir), "a.bin")).size).toBe(big.byteLength);
     expect(fh.fd).toBe(-1); // deferred teardown closed the handle
   }
   // end() while a write is pending waits for it and reports all bytes
   {
-    const fh = await fsPromises.open(join(dir, "b.bin"), "w");
+    const fh = await fsPromises.open(join(String(dir), "b.bin"), "w");
     const w = fh.writer({ autoClose: true });
     const big = Buffer.alloc(8 << 20, 66);
     const pending = w.write(big);
     const total = await w.end();
     await pending;
     expect(total).toBe(big.byteLength);
-    expect(fs.statSync(join(dir, "b.bin")).size).toBe(big.byteLength);
+    expect(fs.statSync(join(String(dir), "b.bin")).size).toBe(big.byteLength);
     expect(fh.fd).toBe(-1);
   }
 });
 
 it("teardown waits for every concurrent in-flight write", async () => {
   await using dir = tempDir("writer-concurrent", { "a.bin": "" });
-  const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+  const fh = await fsPromises.open(join(String(dir), "a.bin"), "w");
   const w = fh.writer({ autoClose: true, start: 0 });
   const big = Buffer.alloc(4 << 20, 65);
   // two unawaited writes in flight; the first one finishing must not run the
@@ -414,7 +414,7 @@ it("teardown waits for every concurrent in-flight write", async () => {
   w.fail(new Error("stop"));
   await p1;
   await p2; // must not reject with EBADF
-  expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength * 2);
+  expect(fs.statSync(join(String(dir), "a.bin")).size).toBe(big.byteLength * 2);
   expect(fh.fd).toBe(-1);
 });
 
@@ -439,7 +439,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const signal = AbortSignal.abort();
     expect.assertions(4);
     try {
-      await fsPromises.readFile(join(dir, "f.txt"), { signal });
+      await fsPromises.readFile(join(String(dir), "f.txt"), { signal });
     } catch (err) {
       expectNodeAbortError(err, signal.reason);
     }
@@ -450,7 +450,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const reason = new Error("my reason");
     expect.assertions(4);
     try {
-      await fsPromises.readFile(join(dir, "f.txt"), { signal: AbortSignal.abort(reason) });
+      await fsPromises.readFile(join(String(dir), "f.txt"), { signal: AbortSignal.abort(reason) });
     } catch (err) {
       expectNodeAbortError(err, reason);
     }
@@ -460,7 +460,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     await using dir = tempDir("fs-abort-readfile-inflight", { "f.txt": "hello" });
     const ac = new AbortController();
     const reason = new Error("stop");
-    const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+    const promise = fsPromises.readFile(join(String(dir), "f.txt"), { signal: ac.signal });
     ac.abort(reason);
     expect.assertions(4);
     try {
@@ -475,7 +475,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("readFile aborted while in flight with the default abort reason", async () => {
     await using dir = tempDir("fs-abort-readfile-inflight-default", { "f.txt": "hello" });
     const ac = new AbortController();
-    const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+    const promise = fsPromises.readFile(join(String(dir), "f.txt"), { signal: ac.signal });
     ac.abort();
     expect.assertions(4);
     try {
@@ -490,7 +490,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const signal = AbortSignal.abort();
     expect.assertions(4);
     try {
-      await fsPromises.appendFile(join(dir, "f.txt"), "data", { signal });
+      await fsPromises.appendFile(join(String(dir), "f.txt"), "data", { signal });
     } catch (err) {
       expectNodeAbortError(err, signal.reason);
     }
@@ -501,7 +501,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const signal = AbortSignal.abort();
     expect.assertions(4);
     try {
-      await fsPromises.writeFile(join(dir, "f.txt"), "data", { signal });
+      await fsPromises.writeFile(join(String(dir), "f.txt"), "data", { signal });
     } catch (err) {
       expectNodeAbortError(err, signal.reason);
     }
@@ -513,7 +513,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expect.assertions(4);
     try {
       await fsPromises.writeFile(
-        join(dir, "f.txt"),
+        join(String(dir), "f.txt"),
         (async function* () {
           yield "a";
         })(),
@@ -530,7 +530,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expect.assertions(4);
     try {
       await fsPromises.writeFile(
-        join(dir, "f.txt"),
+        join(String(dir), "f.txt"),
         (async function* () {
           yield "a";
           ac.abort();
@@ -546,9 +546,9 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test("callback readFile and writeFile with a pre-aborted signal", async () => {
     await using dir = tempDir("fs-abort-callback", { "f.txt": "hello" });
     const signal = AbortSignal.abort();
-    const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal }, resolve));
+    const readErr = await new Promise(resolve => fs.readFile(join(String(dir), "f.txt"), { signal }, resolve));
     expectNodeAbortError(readErr, signal.reason);
-    const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
+    const writeErr = await new Promise(resolve => fs.writeFile(join(String(dir), "o.txt"), "x", { signal }, resolve));
     expectNodeAbortError(writeErr, signal.reason);
   });
 });

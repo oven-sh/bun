@@ -87,7 +87,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
   await buildResult.exited;
 
   // Read the bundled output
-  const bundledPath = join(dir, "dist", "entryBuild.js");
+  const bundledPath = join(String(dir), "dist", "entryBuild.js");
   const bundled = await Bun.file(bundledPath).text();
 
   expect(bundled).toMatchInlineSnapshot(`

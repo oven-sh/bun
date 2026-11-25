@@ -11,7 +11,7 @@ test("Bun.file().stat() should handle UTF-8 paths with German umlauts", async ()
   await using dir = tempDir("utf8-german-umlaut", {
     "über café résumé.txt": content,
   });
-  const filepath = join(dir, "über café résumé.txt");
+  const filepath = join(String(dir), "über café résumé.txt");
 
   // Verify Node.js fs works correctly
   expect(existsSync(filepath)).toBe(true);
@@ -32,7 +32,7 @@ test("Bun.file().stat() should handle UTF-8 paths with Japanese characters", asy
   await using dir = tempDir("utf8-japanese", {
     "日本語ファイル.txt": content,
   });
-  const filepath = join(dir, "日本語ファイル.txt");
+  const filepath = join(String(dir), "日本語ファイル.txt");
 
   expect(existsSync(filepath)).toBe(true);
   const bunStat = await Bun.file(filepath).stat();
@@ -46,7 +46,7 @@ test("Bun.file().stat() should handle UTF-8 paths with emoji", async () => {
   await using dir = tempDir("utf8-emoji", {
     "🌟.txt": content,
   });
-  const filepath = join(dir, "🌟.txt");
+  const filepath = join(String(dir), "🌟.txt");
 
   expect(existsSync(filepath)).toBe(true);
   const bunStat = await Bun.file(filepath).stat();
@@ -60,7 +60,7 @@ test("Bun.file().stat() should handle UTF-8 paths with mixed special characters"
   await using dir = tempDir("utf8-mixed", {
     "café_résumé_ñ_test.md": content,
   });
-  const filepath = join(dir, "café_résumé_ñ_test.md");
+  const filepath = join(String(dir), "café_résumé_ñ_test.md");
 
   expect(existsSync(filepath)).toBe(true);
   const bunStat = await Bun.file(filepath).stat();
@@ -73,7 +73,7 @@ test("Bun.file().delete() should handle UTF-8 paths", async () => {
   await using dir = tempDir("utf8-unlink", {
     "delete_üñíçödé.txt": "delete me",
   });
-  const filepath = join(dir, "delete_üñíçödé.txt");
+  const filepath = join(String(dir), "delete_üñíçödé.txt");
 
   expect(existsSync(filepath)).toBe(true);
 
@@ -90,7 +90,7 @@ test("Bun.file().text() should handle UTF-8 paths with special characters", asyn
   await using dir = tempDir("utf8-text", {
     "read_äöü.txt": content,
   });
-  const filepath = join(dir, "read_äöü.txt");
+  const filepath = join(String(dir), "read_äöü.txt");
 
   const text = await Bun.file(filepath).text();
   expect(text).toBe(content);

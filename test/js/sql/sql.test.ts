@@ -12268,7 +12268,7 @@ CREATE TABLE ${table_name} (
           describe("SQLite errors", () => {
             test("SQLite constraint violation throws SQLiteError", async () => {
               await using dir = tempDir("sqlite-error-test", {});
-              const dbPath = path.join(dir, "test.db");
+              const dbPath = path.join(String(dir), "test.db");
 
               const db = new SQL({ filename: dbPath, adapter: "sqlite" });
 
@@ -12296,7 +12296,7 @@ CREATE TABLE ${table_name} (
 
             test("SQLite syntax error throws SQLiteError", async () => {
               await using dir = tempDir("sqlite-syntax-error-test", {});
-              const dbPath = path.join(dir, "test.db");
+              const dbPath = path.join(String(dir), "test.db");
 
               const db = new SQL({ filename: dbPath, adapter: "sqlite" });
 
@@ -12315,7 +12315,7 @@ CREATE TABLE ${table_name} (
 
             test("SQLite database locked throws SQLiteError", async () => {
               await using dir = tempDir("sqlite-locked-test", {});
-              const dbPath = path.join(dir, "test.db");
+              const dbPath = path.join(String(dir), "test.db");
 
               await using db1 = new SQL({ filename: dbPath, adapter: "sqlite" });
               await using db2 = new SQL({ filename: dbPath, adapter: "sqlite" });

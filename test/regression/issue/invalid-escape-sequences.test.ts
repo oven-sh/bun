@@ -8,7 +8,7 @@ test("Invalid escape sequence \\x in identifier shows helpful error message", as
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -28,7 +28,7 @@ test("Invalid escaped double quote in identifier shows helpful error message", a
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -48,7 +48,7 @@ test("Invalid escaped single quote in identifier shows helpful error message", a
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -68,7 +68,7 @@ test("Invalid escaped backtick in identifier shows helpful error message", async
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -88,7 +88,7 @@ test("Invalid escaped backslash in identifier shows helpful error message", asyn
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -108,7 +108,7 @@ test("Invalid escaped z in identifier shows helpful error message", async () => 
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -137,7 +137,7 @@ test("invalid \\x followed by multi-byte codepoint does not panic (#30893)", asy
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -157,7 +157,7 @@ test("invalid \\x with second hex digit being multi-byte codepoint does not pani
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -175,7 +175,7 @@ test("invalid \\u followed by multi-byte codepoint does not panic (#30893)", asy
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -193,7 +193,7 @@ test("invalid \\u{ followed by multi-byte codepoint does not panic (#30893)", as
   });
 
   const { stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "test.js")],
+    cmd: [bunExe(), join(String(dir), "test.js")],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -212,7 +212,7 @@ test("Valid unicode escapes in identifiers should work", async () => {
     });
 
     const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "valid1.js")],
+      cmd: [bunExe(), join(String(dir), "valid1.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -230,7 +230,7 @@ test("Valid unicode escapes in identifiers should work", async () => {
     });
 
     const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "valid2.js")],
+      cmd: [bunExe(), join(String(dir), "valid2.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -326,7 +326,7 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
   test.each(cases)("$name → column $expectCol", ({ source, msg, pattern, expectCol }) => {
     using dir = tempDir("caret-pos", { "test.js": source });
     const { stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "test.js")],
+      cmd: [bunExe(), join(String(dir), "test.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -368,7 +368,7 @@ describe("pathological `\\u{...}` escapes (#30825)", () => {
   const run = (source: string) => {
     using dir = tempDir("u-brace", { "test.js": source });
     const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "test.js")],
+      cmd: [bunExe(), join(String(dir), "test.js")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",

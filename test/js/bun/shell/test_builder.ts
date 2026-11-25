@@ -65,7 +65,7 @@ export function createTestBuilder(path: string) {
 
     directory(path: string): this {
       const tempdir = this.getTempDir();
-      fs.mkdirSync(join(tempdir, path), { recursive: true });
+      fs.mkdirSync(join(String(tempdir), path), { recursive: true });
       return this;
     }
 
@@ -102,7 +102,7 @@ export function createTestBuilder(path: string) {
      */
     file(path: string, contents: string): this {
       const tempdir = this.getTempDir();
-      fs.writeFileSync(join(tempdir, path), contents);
+      fs.writeFileSync(join(String(tempdir), path), contents);
       return this;
     }
 
@@ -229,12 +229,12 @@ export function createTestBuilder(path: string) {
 
       for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
         const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
-        const actual = await Bun.file(join(this.tempdir!, filename)).text();
+        const actual = await Bun.file(join(String(this.tempdir!), filename)).text();
         expect(actual).toEqual(expected);
       }
 
       for (const fsname of this._doesNotExist) {
-        expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+        expect(fs.existsSync(join(String(this.tempdir!), fsname))).toBeFalsy();
       }
     }
 

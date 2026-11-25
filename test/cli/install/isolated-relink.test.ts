@@ -38,7 +38,7 @@ async function run(cmd: string, dir: string, env: Record<string, string> = {}): 
   await using proc = Bun.spawn({
     cmd: [bunExe(), cmd, "--linker", "isolated"],
     // CI exports BUN_INSTALL_CACHE_DIR for the whole file. Concurrent installs into one cache race on Windows.
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...env },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"), ...env },
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -69,7 +69,7 @@ const noChanges = installed("Done! Checked 3 packages (no changes)", false);
  * `node_modules`. A real directory with a package.json maps to its `name@version` and is not entered.
  */
 async function layout(packageDir: string): Promise<Record<string, string>> {
-  const nm = join(packageDir, "node_modules");
+  const nm = join(String(packageDir), "node_modules");
   const entries: Record<string, string> = {};
   const rel = (path: string) => relative(nm, path).replaceAll("\\", "/");
   async function walk(dir: string) {
@@ -106,7 +106,7 @@ function without(entries: Record<string, string>, key: string) {
 
 // The `node_modules` of a store entry. The fixtures have no peers, so the entry names carry no peer hash.
 function storeNodeModules(packageDir: string, name: string, version: string) {
-  return join(packageDir, "node_modules", ".bun", `${name}@${version}`, "node_modules");
+  return join(String(packageDir), "node_modules", ".bun", `${name}@${version}`, "node_modules");
 }
 
 // On Windows a bin is a `<name>.exe` + `<name>.bunx` shim pair instead of a symlink.
@@ -162,7 +162,7 @@ test.concurrent("an existing store entry is re-linked when an override re-resolv
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
   expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.1.0"));
 
-  await write(join(packageDir, "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
+  await write(join(String(packageDir), "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
   // no-deps@1.1.0 is orphaned, not removed
   const relinked = { ...oneRangeDepLayout("1.0.0"), ...noDepsPackage("1.1.0") };
@@ -181,7 +181,7 @@ test.concurrent("a dependency link deleted from an existing store entry is recre
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
   expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.1.0"));
 
-  await unlink(join(packageDir, "node_modules", link));
+  await unlink(join(String(packageDir), "node_modules", link));
   expect(await layout(packageDir)).toEqual(without(oneRangeDepLayout("1.1.0"), link));
 
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n1 package installed", false));
@@ -208,7 +208,10 @@ test.concurrent("dependency bins are re-linked when a store entry is re-linked",
     without(usesWhatBinLayout("1.0.0"), ".bun/uses-what-bin@1.0.0/node_modules/.bin/what-bin"),
   );
 
-  await write(join(packageDir, "package.json"), JSON.stringify(usesWhatBin({ overrides: { "what-bin": "1.5.0" } })));
+  await write(
+    join(String(packageDir), "package.json"),
+    JSON.stringify(usesWhatBin({ overrides: { "what-bin": "1.5.0" } })),
+  );
   expect(await install(packageDir)).toEqual(installed("+ uses-what-bin@1.0.0\n\n2 packages installed"));
   // what-bin@1.0.0 is orphaned, not removed
   expect(await layout(packageDir)).toEqual({ ...usesWhatBinLayout("1.5.0"), ...whatBinPackage("1.0.0") });
@@ -227,7 +230,7 @@ test.concurrent("re-linking a store entry does not re-run its lifecycle scripts"
   const markerMtime = (await lstat(marker)).mtimeMs;
 
   await write(
-    join(packageDir, "package.json"),
+    join(String(packageDir), "package.json"),
     JSON.stringify(usesWhatBin({ trustedDependencies: ["uses-what-bin"], overrides: { "what-bin": "1.5.0" } })),
   );
   expect(await install(packageDir)).toEqual(installed("+ uses-what-bin@1.0.0\n\n2 packages installed"));
@@ -279,7 +282,7 @@ test.concurrent("the orphaned store entry survives the re-link until bun prune",
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
   expect(await layout(packageDir)).toEqual(oneRangeDepLayout("1.1.0"));
 
-  await write(join(packageDir, "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
+  await write(join(String(packageDir), "package.json"), JSON.stringify(oneRangeDep({ "no-deps": "1.0.0" })));
   expect(await install(packageDir)).toEqual(installed("+ one-range-dep@1.0.0\n\n2 packages installed"));
   expect(await layout(packageDir)).toEqual({ ...oneRangeDepLayout("1.0.0"), ...noDepsPackage("1.1.0") });
 

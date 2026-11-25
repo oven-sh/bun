@@ -80,10 +80,10 @@ snapshots:
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
     // Check that bun.lock was created
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
     // Read and snapshot the migrated lockfile
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-pnpm-migration");
 
     // Verify install works with migrated lockfile
@@ -109,8 +109,8 @@ snapshots:
     expect(installExitCode).toBe(0);
 
     // Verify packages were installed
-    expect(fs.existsSync(join(tmpDir, "node_modules/is-number"))).toBe(true);
-    expect(fs.existsSync(join(tmpDir, "node_modules/left-pad"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "node_modules/is-number"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "node_modules/left-pad"))).toBe(true);
   });
 
   test("pnpm workspace lockfile migration", async () => {
@@ -259,11 +259,11 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-pnpm-migration");
-    const packageJson = JSON.parse(fs.readFileSync(join(tmpDir, "package.json"), "utf8"));
+    const packageJson = JSON.parse(fs.readFileSync(join(String(tmpDir), "package.json"), "utf8"));
     expect(packageJson).toMatchSnapshot("workspace-pnpm-migration-package-json");
   });
 
@@ -297,7 +297,7 @@ importers:
     const migrate = await run(String(tmpDir), "pm", "migrate");
     expect(migrate.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(migrate.exitCode).toBe(0);
-    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLock = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLock).toContain(`"utils": "${specifier}"`);
     expect(bunLock).toContain('"utils@link:./packages/utils"');
 
@@ -305,7 +305,7 @@ importers:
     expect(install.stderr).not.toContain("error:");
     expect(install.exitCode).toBe(0);
 
-    expect(await run(join(tmpDir, "packages", "app"), "-e", `console.log(require("utils"))`)).toEqual({
+    expect(await run(join(String(tmpDir), "packages", "app"), "-e", `console.log(require("utils"))`)).toEqual({
       stdout: "utils\n",
       stderr: "",
       exitCode: 0,
@@ -392,9 +392,9 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("npm-aliases-pnpm-migration");
   });
 
@@ -426,7 +426,7 @@ snapshots:
 
     const v8ExitCode = await v8Proc.exited;
     expect(v8ExitCode).toBe(0);
-    expect(fs.existsSync(join(v8Dir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(v8Dir), "bun.lock"))).toBe(true);
   });
 
   test("handles missing pnpm-lock.yaml gracefully", async () => {
@@ -565,7 +565,7 @@ importers:
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    const bunLock = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLock = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLock).toContain(`"bin": {
         "tool-a": "a.js",
         "tool-c": "c.js",
@@ -601,13 +601,13 @@ describe.concurrent("pnpm-workspace.yaml is imported into package.json", () => {
   }
 
   function readPackageJson(dir: string) {
-    return JSON.parse(fs.readFileSync(join(dir, "package.json"), "utf8"));
+    return JSON.parse(fs.readFileSync(join(String(dir), "package.json"), "utf8"));
   }
 
   // `@w/b` can only see `@w/a` if the install knew `packages/*` were workspaces.
   async function versionOfAResolvedFromB(dir: string) {
     const { stdout, stderr, exitCode } = await runBun(
-      join(dir, "packages/b"),
+      join(String(dir), "packages/b"),
       "-e",
       `console.log(require("@w/a/package.json").version)`,
     );
@@ -662,7 +662,7 @@ overrides:
     expect(first.exitCode).toBe(0);
 
     expect(readPackageJson(dir)).toEqual({ ...rootPackageJson, workspaces: ["packages/*"] });
-    const lockfile = fs.readFileSync(join(dir, "bun.lock"), "utf8");
+    const lockfile = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(lockfile).toContain(`"@w/a": ["@w/a@workspace:packages/a"]`);
     expect(lockfile).toContain(`"@w/b": ["@w/b@workspace:packages/b"]`);
     await versionOfAResolvedFromB(dir);
@@ -682,7 +682,7 @@ overrides:
     expect(exitCode).toBe(0);
 
     expect(readPackageJson(dir)).toEqual(catalogFixtureImported);
-    expect(fs.readFileSync(join(dir, "bun.lock"), "utf8")).toContain(`"@w/b": ["@w/b@workspace:packages/b"]`);
+    expect(fs.readFileSync(join(String(dir), "bun.lock"), "utf8")).toContain(`"@w/b": ["@w/b@workspace:packages/b"]`);
     await versionOfAResolvedFromB(dir);
   });
 
@@ -786,7 +786,7 @@ importers:
     expect(exitCode).toBe(0);
 
     expect(readPackageJson(dir)).toEqual(declared);
-    const lockfile = fs.readFileSync(join(dir, "bun.lock"), "utf8");
+    const lockfile = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(lockfile).toContain(`"@w/a": ["@w/a@workspace:packages/a"]`);
     expect(lockfile).not.toContain("@w/b");
   });
@@ -799,15 +799,15 @@ importers:
       ...workspacePackages,
     });
     expect((await runBun(dir, "install")).exitCode).toBe(0);
-    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    fs.writeFileSync(join(dir, "pnpm-workspace.yaml"), workspaceYaml);
+    fs.writeFileSync(join(String(dir), "pnpm-workspace.yaml"), workspaceYaml);
     const { stderr, exitCode } = await runBun(dir, "install");
     expect(stderr).not.toContain("copied pnpm");
     expect(exitCode).toBe(0);
 
     expect(readPackageJson(dir)).toEqual(single);
-    expect(fs.readFileSync(join(dir, "bun.lock"), "utf8")).not.toContain("@w/a");
+    expect(fs.readFileSync(join(String(dir), "bun.lock"), "utf8")).not.toContain("@w/a");
   });
 
   // A 0444 package.json does not stop root from writing it, and the mode bits mean something else on Windows.
@@ -840,18 +840,18 @@ importers:
       ...workspacePackages,
       ...lockfile,
     });
-    fs.chmodSync(join(dir, "package.json"), 0o444);
+    fs.chmodSync(join(String(dir), "package.json"), 0o444);
 
     // The migrated package.json is written just before the lockfile, so nothing is saved that depends on it.
     let { stderr, exitCode } = await runBun(dir, "install");
     expect(stderr).toContain("error: failed to write package.json: EACCES");
     expect(stderr).not.toContain("copied pnpm");
     expect(exitCode).toBe(1);
-    expect(fs.readFileSync(join(dir, "package.json"), "utf8")).toBe(original);
-    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(false);
+    expect(fs.readFileSync(join(String(dir), "package.json"), "utf8")).toBe(original);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(false);
 
     // Once it is writable again the same install completes the move.
-    fs.chmodSync(join(dir, "package.json"), 0o644);
+    fs.chmodSync(join(String(dir), "package.json"), 0o644);
     ({ stderr, exitCode } = await runBun(dir, "install"));
     expect(stderr).toContain(movedWorkspaces);
     expect(exitCode).toBe(0);

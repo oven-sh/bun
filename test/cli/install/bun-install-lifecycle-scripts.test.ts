@@ -3533,7 +3533,7 @@ test.concurrent.skipIf(!isLinux)(
     });
     // A JavaScript string can't hold a lone 0xE9 byte, so TMPDIR is set by a shell script written as raw bytes.
     await writeFile(
-      join(dir, "install.sh"),
+      join(String(dir), "install.sh"),
       Buffer.concat([
         Buffer.from(`TMPDIR='${dir}/caf`),
         Buffer.from([0xe9]),
@@ -3547,14 +3547,14 @@ test.concurrent.skipIf(!isLinux)(
       env: {
         ...baseEnv,
         BUN_TMPDIR: undefined,
-        BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
-        RESULT: join(dir, "result"),
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        RESULT: join(String(dir), "result"),
       },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(readFileSync(join(dir, "result"), "utf8")).toBe("found");
+    expect(readFileSync(join(String(dir), "result"), "utf8")).toBe("found");
     expect(exitCode).toBe(0);
   },
 );

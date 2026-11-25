@@ -93,14 +93,14 @@ test("discovers from filesystem paths", () => {
     children: [
       {
         part: "/:world",
-        page: path.join(dir, "[world].tsx"),
+        page: path.join(String(dir), "[world].tsx"),
         layout: null,
         children: [],
       },
       {
         part: "/meow",
         page: null,
-        layout: path.join(dir, "meow/_layout.tsx"),
+        layout: path.join(String(dir), "meow/_layout.tsx"),
         children: [
           {
             part: "/bark",
@@ -114,7 +114,7 @@ test("discovers from filesystem paths", () => {
                 children: [
                   {
                     part: "/hello",
-                    page: path.join(dir, "meow/bark/[param]/hello.tsx"),
+                    page: path.join(String(dir), "meow/bark/[param]/hello.tsx"),
                     layout: null,
                     children: [],
                   },
@@ -126,7 +126,7 @@ test("discovers from filesystem paths", () => {
       },
       {
         part: "/hello",
-        page: path.join(dir, "hello.tsx"),
+        page: path.join(String(dir), "hello.tsx"),
         layout: null,
         children: [],
       },

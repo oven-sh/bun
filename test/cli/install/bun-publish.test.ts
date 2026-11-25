@@ -816,7 +816,7 @@ test.concurrent("can publish a package then install it", async () => {
   expect(exitCode).toBe(0);
 
   await runBunInstall(env, String(dir));
-  expect(await file(join(dir, "node_modules", "publish-pkg-1", "package.json")).json()).toEqual(pkg);
+  expect(await file(join(String(dir), "node_modules", "publish-pkg-1", "package.json")).json()).toEqual(pkg);
 });
 
 test.concurrent("the publish request has the Content-Type that verdaccio accepts", async () => {
@@ -862,7 +862,7 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 
   await runBunInstall(env, String(dir));
-  expect(await file(join(dir, "node_modules", name, "package.json")).json()).toEqual(pkg);
+  expect(await file(join(String(dir), "node_modules", name, "package.json")).json()).toEqual(pkg);
 });
 
 describe("relative tarball path", () => {
@@ -976,7 +976,7 @@ test.concurrent("can publish scoped packages", async () => {
   expect(exitCode).toBe(0);
 
   await runBunInstall(env, String(dir));
-  expect(await file(join(dir, "node_modules", "@scoped", "pkg-1", "package.json")).json()).toEqual(pkg);
+  expect(await file(join(String(dir), "node_modules", "@scoped", "pkg-1", "package.json")).json()).toEqual(pkg);
 });
 
 test.concurrent.each([
@@ -1041,13 +1041,15 @@ test.concurrent.each([
   await runBunInstall(env, String(dir));
 
   // Windows gets `.bunx` shims instead of symlinks.
-  const linked = (link: string) => exists(join(dir, "node_modules", ".bin", isWindows ? `${link}.bunx` : link));
+  const linked = (link: string) => exists(join(String(dir), "node_modules", ".bin", isWindows ? `${link}.bunx` : link));
   expect({
     "bin1": await linked("bin1"),
     "bin2": await linked("bin2"),
     "bin3.js": await linked("bin3.js"),
     "bin4.js": await linked("bin4.js"),
-    "moredir/bin4.js": await exists(join(dir, "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js")),
+    "moredir/bin4.js": await exists(
+      join(String(dir), "node_modules", ".bin", isWindows ? "moredir" : "moredir/bin4.js"),
+    ),
     [name]: await linked(name),
   }).toEqual(links);
 });
@@ -1137,9 +1139,9 @@ test.concurrent("dependencies are installed", async () => {
 
   expect(
     await Promise.all([
-      file(join(dir, "node_modules", "no-deps", "package.json")).json(),
-      file(join(dir, "node_modules", "a-dep", "package.json")).json(),
-      file(join(dir, "node_modules", "basic-1", "package.json")).json(),
+      file(join(String(dir), "node_modules", "no-deps", "package.json")).json(),
+      file(join(String(dir), "node_modules", "a-dep", "package.json")).json(),
+      file(join(String(dir), "node_modules", "basic-1", "package.json")).json(),
     ]),
   ).toMatchObject([
     { name: "no-deps", version: "1.0.0" },
@@ -1157,7 +1159,7 @@ test.concurrent("can publish workspace package", async () => {
     "packages/publish-pkg-3/package.json": JSON.stringify(pkg),
   });
 
-  const { out, err, exitCode } = await publish(env, join(dir, "packages", "publish-pkg-3"));
+  const { out, err, exitCode } = await publish(env, join(String(dir), "packages", "publish-pkg-3"));
   expect(err).toBe("");
   expect(normalizePublishOutput(out, registry.port)).toMatchInlineSnapshot(`
     "bun publish <version> (<revision>)
@@ -1177,9 +1179,12 @@ test.concurrent("can publish workspace package", async () => {
   `);
   expect(exitCode).toBe(0);
 
-  await write(join(dir, "package.json"), JSON.stringify({ name: "root", dependencies: { "publish-pkg-3": "3.3.3" } }));
+  await write(
+    join(String(dir), "package.json"),
+    JSON.stringify({ name: "root", dependencies: { "publish-pkg-3": "3.3.3" } }),
+  );
   await runBunInstall(env, String(dir));
-  expect(await file(join(dir, "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkg);
+  expect(await file(join(String(dir), "node_modules", "publish-pkg-3", "package.json")).json()).toEqual(pkg);
 });
 
 // https://github.com/oven-sh/bun/issues/20477: releases bump the versions after the last `bun install`,
@@ -1907,7 +1912,7 @@ describe.concurrent("lifecycle scripts", () => {
     expect(out).toContain(`\n + ${name}@4.4.4${args.length ? " (dry-run)" : ""}\n`);
     expect(exitCode).toBe(0);
 
-    expect(await file(join(dir, "order.txt")).text()).toBe(
+    expect(await file(join(String(dir), "order.txt")).text()).toBe(
       "prepublishOnly\nprepack\nprepare\npostpack\npublish\npostpublish\n",
     );
   });
@@ -1940,7 +1945,7 @@ describe.concurrent("lifecycle scripts", () => {
     `);
     expect(exitCode).toBe(0);
 
-    expect(await exists(join(dir, "order.txt"))).toBeFalse();
+    expect(await exists(join(String(dir), "order.txt"))).toBeFalse();
   });
 });
 
@@ -1969,7 +1974,7 @@ test.concurrent("prepublishOnly modifying version publishes correct version (#17
 
   // Should be able to install the package at the UPDATED version (9.9.9), not the original (1.0.0)
   await runBunInstall(env, String(dir));
-  const installedPkg = await file(join(dir, "node_modules", "publish-version-update", "package.json")).json();
+  const installedPkg = await file(join(String(dir), "node_modules", "publish-version-update", "package.json")).json();
   expect(installedPkg.version).toBe("9.9.9");
 });
 
@@ -1999,7 +2004,7 @@ test.concurrent("attempting to publish a private package should fail", async () 
   expect(err).toBe("error: attempted to publish a private package\n");
   expect(exitCode).toBe(1);
   expect(await registry.packages.has("publish-pkg-6")).toBeFalse();
-  expect(await exists(join(dir, "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
+  expect(await exists(join(String(dir), "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
 });
 
 // npm checks `manifest.private` with JS truthiness, so every non-empty string and non-zero number refuses the
@@ -2072,7 +2077,7 @@ describe.concurrent("the last of two equal keys in package.json wins", () => {
     });
     const args: string[] = [];
     if (from === "a tarball") {
-      await Bun.Archive.write(join(dir, "it.tgz"), { "package/package.json": equalKeys }, { compress: "gzip" });
+      await Bun.Archive.write(join(String(dir), "it.tgz"), { "package/package.json": equalKeys }, { compress: "gzip" });
       args.push("./it.tgz");
     }
 
@@ -2409,7 +2414,7 @@ describe.concurrent("access", () => {
     expect(exitCode).toBe(0);
 
     await runBunInstall(env, String(dir));
-    expect(await file(join(dir, "node_modules", name, "package.json")).json()).toEqual(pkg);
+    expect(await file(join(String(dir), "node_modules", name, "package.json")).json()).toEqual(pkg);
   });
 });
 
@@ -2439,7 +2444,7 @@ describe.concurrent("tag", () => {
     expect(exitCode).toBe(0);
 
     await runBunInstall(env, String(dir));
-    expect(await file(join(dir, "node_modules", "publish-pkg-9", "package.json")).json()).toEqual(pkg);
+    expect(await file(join(String(dir), "node_modules", "publish-pkg-9", "package.json")).json()).toEqual(pkg);
   });
 
   function tagPackage(mock: MockRegistry, version: string, fields = {}) {
@@ -3137,7 +3142,7 @@ describe.concurrent("readme", () => {
     });
 
     await pack(String(dir), env);
-    await write(join(dir, "bunfig.toml"), mockBunfig(mock));
+    await write(join(String(dir), "bunfig.toml"), mockBunfig(mock));
 
     const { out, err, exitCode } = await publish(env, String(dir), "./readme-pkg-2-2.0.0.tgz");
     expect(err).toBe("");
@@ -3307,7 +3312,7 @@ describe.concurrent("bin in the published manifest", () => {
       "scripts/here.sh": "#!/bin/sh\n",
     });
     await Bun.Archive.write(
-      join(dir, "tool-1.0.0.tgz"),
+      join(String(dir), "tool-1.0.0.tgz"),
       {
         "package/package.json": JSON.stringify({ name: "tool", version: "1.0.0", ...fields }),
         "package/bin/tool-cmd": "#!/bin/sh\n",
@@ -3337,9 +3342,9 @@ describe.concurrent("bin in the published manifest", () => {
       "pkg/index.js": "module.exports = 1;",
     });
     // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
-    await symlink(join(dir, "outside"), join(dir, "pkg", "linked"), "junction");
+    await symlink(join(String(dir), "outside"), join(String(dir), "pkg", "linked"), "junction");
 
-    const { err, exitCode } = await publish(env, join(dir, "pkg"));
+    const { err, exitCode } = await publish(env, join(String(dir), "pkg"));
     expect(err).toBe(warning);
     expect(mock.requests).toEqual([request("PUT", "/bin-pkg")]);
     const [{ manifest }] = mock.requests;
@@ -3598,7 +3603,7 @@ describe.concurrent("--tolerate-republish", () => {
     expect(exitCode).toBe(0);
 
     // a version the registry does not have is published as without the flag
-    await write(join(dir, "package.json"), pkg("1.0.1"));
+    await write(join(String(dir), "package.json"), pkg("1.0.1"));
     ({ out, err, exitCode } = await publish(env, String(dir), "--tolerate-republish"));
     expect(ran(err)).toEqual(events.map(event => `$ echo ${event}`));
     expect(out).toContain("\n + republish-scripts@1.0.1\n");
@@ -3718,7 +3723,7 @@ describe.concurrent("--recursive and --filter", () => {
     for (const { method, userAgent } of registry.mock.requests) {
       if (method === "PUT") expect(userAgent).toContain(" workspaces/true");
     }
-    expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+    expect(existsSync(join(String(dir), "bun.lock"))).toBeFalse();
     expect(exitCode).toBe(0);
   });
 
@@ -3747,7 +3752,7 @@ describe.concurrent("--recursive and --filter", () => {
       plain: { name: "rec-plain", version: "1.0.0", dependencies: { "rec-a": spec } },
     });
 
-    for (const [cwd, ...flags] of [[join(dir, "packages", "plain")], [String(dir), "-r", "--tag", "next"]]) {
+    for (const [cwd, ...flags] of [[join(String(dir), "packages", "plain")], [String(dir), "-r", "--tag", "next"]]) {
       delete registry.manifests["rec-plain"];
       const { out, err, exitCode } = await publish(env, cwd, ...flags);
       expect(err).not.toContain("error:");
@@ -3765,8 +3770,8 @@ describe.concurrent("--recursive and --filter", () => {
       a: { scripts },
       b: { scripts: { ...scripts, prepare: "only-a || echo tool of nobody" } },
     });
-    for (const name of ["a", "b"]) writeBinCommand(join(dir, "packages", name), "tool", `tool of rec-${name}`);
-    writeBinCommand(join(dir, "packages", "a"), "only-a", "tool of rec-a, in rec-b");
+    for (const name of ["a", "b"]) writeBinCommand(join(String(dir), "packages", name), "tool", `tool of rec-${name}`);
+    writeBinCommand(join(String(dir), "packages", "a"), "only-a", "tool of rec-a, in rec-b");
 
     const { out, err, exitCode } = await publish(env, String(dir), "--filter", "rec-a", "--filter", "rec-b");
     expect(lines(err).filter(line => !line.includes("only-a"))).toEqual(Array(11).fill("$ tool"));
@@ -4090,12 +4095,12 @@ describe.concurrent("--recursive and --filter", () => {
       "package.json": JSON.stringify({ name: "consumer", dependencies: { "publish-recursive-b": "1.0.0" } }),
     });
     await runBunInstall(env, String(consumer));
-    expect(await file(join(consumer, "node_modules", "publish-recursive-b", "package.json")).json()).toEqual({
+    expect(await file(join(String(consumer), "node_modules", "publish-recursive-b", "package.json")).json()).toEqual({
       name: "publish-recursive-b",
       version: "1.0.0",
       dependencies: { "publish-recursive-a": "1.0.0" },
     });
-    expect(await exists(join(consumer, "node_modules", "publish-recursive-a", "package.json"))).toBeTrue();
+    expect(await exists(join(String(consumer), "node_modules", "publish-recursive-a", "package.json"))).toBeTrue();
   });
 
   // rec-a is logged in without ENTER. The login of rec-c lasts until ENTER, pressed there, has opened a page.
@@ -4129,8 +4134,9 @@ describe.concurrent("--recursive and --filter", () => {
       return Response.json({ token: "otp" });
     });
     using dir = workspace(mock, {}, { "opener/xdg-open": `#!/bin/sh\necho "$1" >> "$OPENED"\n` });
-    chmodSync(join(dir, "opener", "xdg-open"), 0o755);
-    const opened = () => (existsSync(join(dir, "opened")) ? readFileSync(join(dir, "opened"), "utf8") : "");
+    chmodSync(join(String(dir), "opener", "xdg-open"), 0o755);
+    const opened = () =>
+      existsSync(join(String(dir), "opened")) ? readFileSync(join(String(dir), "opened"), "utf8") : "";
 
     await using proc = spawn({
       cmd: [bunExe(), "publish", "-r"],
@@ -4138,7 +4144,11 @@ describe.concurrent("--recursive and --filter", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
-      env: { ...env, OPENED: join(dir, "opened"), PATH: [join(dir, "opener"), env.PATH ?? ""].join(delimiter) },
+      env: {
+        ...env,
+        OPENED: join(String(dir), "opened"),
+        PATH: [join(String(dir), "opener"), env.PATH ?? ""].join(delimiter),
+      },
     });
     const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
@@ -4259,7 +4269,7 @@ describe.concurrent.each(unprintable)("%s is printed escaped", (_, raw, spelled)
   test("in a tarball", async () => {
     using dir = tempDir("publish-tarball-names", { "package.json": "{}" });
     await Bun.Archive.write(
-      join(dir, "it.tgz"),
+      join(String(dir), "it.tgz"),
       {
         "package/package.json": JSON.stringify({
           name: `a${raw}b`,

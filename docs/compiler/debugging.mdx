@@ -189,10 +189,11 @@ A test of how your code copes with one of these has to run under `bun test`.
 
 ### Module mocks
 
-`mock.module()`, `vi.mock()`, `jest.mock()` and `spyOn()` on a module's exports work as in [`bun test`](/test/mocks), with two differences.
+`mock.module()`, `vi.mock()`, `jest.mock()` and `spyOn()` on a module's exports work as in [`bun test`](/test/mocks), with three differences.
 
 - When a mock ends, `bun test` runs the files that imported the mocked module again at their next import. With `--aot` a file that can't run again keeps what its top-level code computed. The run ends with a list of the ones it knows of, each with the test file that was running.
 - The original of a mocked module runs from source, not compiled. That goes for `importOriginal()`, `vi.importActual()`, `jest.requireActual()` and a mock that has no factory. The tests still work, but that code isn't what your executable runs.
+- If a preload has loaded a CommonJS file with `require()` alone, and a test file mocks it and then imports it, `bun test` can keep the mock for the test files after it, until the modules are reset. With `--aot` the mock ends with its test file.
 
 ## Run under the compiler's rules
 

@@ -1999,7 +1999,6 @@ impl StandaloneModuleGraph {
 
     /// `/$bunfs/root/../root/a` leaves the root and comes back by its name.
     fn key_through_own_root(name: &[u8]) -> Option<Vec<u8>> {
-        strings::index_of(name, b"/..")?;
         let key = absolute_key(name)?;
         (key.starts_with(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())).then(|| key.to_vec())
     }
@@ -2552,7 +2551,7 @@ impl StandaloneModuleGraph {
             let as_read = match is_directory(&as_read) {
                 true => as_read,
                 false => (self.key_of_mounted_asset(&as_read))
-                    .or_else(|| Self::key_through_own_root(written))?,
+                    .or_else(|| Self::key_through_own_root(name))?,
             };
             if !is_directory(&as_read) {
                 return None;

@@ -881,8 +881,7 @@ impl Resolver<'_, '_> {
                 }
             }
             let Binding::Symbol(name) = bound.binding(value) else {
-                return self.value_of(value).is_some()
-                    || matches!(hir[value].kind, ExprKind::Ident(known::undefined));
+                return self.value_of(value).is_some() || self.is_nullish_constant(value);
             };
             match *bound.symbol(name).decls {
                 [Decl::Fn(_)] => return bound.binding_stability(name) == BindingStability::Stable,

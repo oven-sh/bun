@@ -825,6 +825,7 @@ fn replaced_member_receivers_are_exposed() {
         "const { mockReturnThis } = spyOn(process, 'exit'); f(mockReturnThis);",
         "const give = g => spyOn(process, 'exit').mockImplementation(g); f(give);",
         "spyOn(process, 'exit').mockImplementation([f][0]);",
+        "const give = undefined => spyOn(process, 'exit').mockImplementation(undefined); f(give);",
         "Object.defineProperty(process, 'exit', { ...f, configurable: true });",
         "Object.assign(process, { ...f });",
     ] {

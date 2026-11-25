@@ -112,7 +112,7 @@ impl Resolver<'_, '_> {
         is_require.then(|| ResolvedValue::object(cache))
     }
 
-    fn is_nullish_constant(&self, e: ExprId) -> bool {
+    pub(super) fn is_nullish_constant(&self, e: ExprId) -> bool {
         let input = self.input;
         let e = input.hir.skip_type_assertions(e);
         let names_undefined =

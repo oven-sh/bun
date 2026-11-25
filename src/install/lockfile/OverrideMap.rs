@@ -208,6 +208,7 @@ struct ParseContext<'a, 'b> {
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
+    root_json: Expr,
     log: &'a mut bun_ast::Log,
     source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
@@ -817,6 +818,7 @@ impl OverrideMap {
             pm,
             lockfile_dependencies,
             root_package,
+            root_json: expr,
             log,
             source: json_source,
             workspace_names,
@@ -1296,11 +1298,12 @@ fn parse_override_value(
 
         match root_ref {
             Some(root_ref) => root_ref,
-            None => match workspace_ref_literal(
+            None => match declared_ref_literal(
                 ctx.pm,
                 ctx.log,
                 ctx.source,
                 ctx.workspace_names,
+                &ctx.root_json,
                 ref_name,
             ) {
                 Ok(Some(literal)) => ctx.builder.append::<SemverString>(&literal),
@@ -1389,24 +1392,25 @@ fn count_ref_value(
     let Some(ref_name) = value.strip_prefix(b"$") else {
         return;
     };
-    if let Some(declared) = declared_dependency(root_json, ref_name) {
-        if let Some(literal) = declared.as_utf8_string_literal() {
-            builder.count(literal);
-        }
-        return;
-    }
-    if let Ok(Some(literal)) = workspace_ref_literal(pm, log, source, workspace_names, ref_name) {
+    if let Ok(Some(literal)) =
+        declared_ref_literal(pm, log, source, workspace_names, root_json, ref_name)
+    {
         builder.count(&literal);
     }
 }
 
-fn workspace_ref_literal(
+/// The root comes first: one that was migrated can lack a row that its package.json declares.
+fn declared_ref_literal(
     pm: &mut PackageManager,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
+    root_json: &Expr,
     ref_name: &[u8],
 ) -> Result<Option<Vec<u8>>, Ambiguous> {
+    if let Some(declared) = declared_dependency(root_json, ref_name) {
+        return Ok(declared.as_utf8_string_literal().map(<[u8]>::to_vec));
+    }
     if workspace_names.count() == 0 {
         return Ok(None);
     }

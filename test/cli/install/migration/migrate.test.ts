@@ -2296,6 +2296,39 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
+  test.concurrent.each([
+    ["no member declares it", "dependencies", {}],
+    ["a member has a shorter range", "dependencies", { a: "^1.0.0" }],
+    ["a member has a longer range", "dependencies", { a: ">=1.0.0 <2.0.0 || >=3.0.0" }],
+    ["the members differ", "dependencies", { a: "^1.0.0", b: "^2.0.0" }],
+    ["it is a peer that npm left out", "peerDependencies", {}],
+  ])(
+    "a reference in an override takes the range of the root, also without a locked package: %s",
+    async (_, group, ranges) => {
+      const files: Record<string, string> = {};
+      const root = { name: "root", workspaces: ["a", "b"] };
+      const declared = { [group]: { "no-deps": ">=1.0.1 <1.1.0" } };
+      // `--legacy-peer-deps` lists the peer and installs nothing for it. The others are newer than the lockfile.
+      const packages: Record<string, unknown> = { "": group === "peerDependencies" ? { ...root, ...declared } : root };
+      for (const name of root.workspaces) {
+        packages[name] = { name, version: "1.0.0" };
+        packages[`node_modules/${name}`] = { resolved: name, link: true };
+        files[`${name}/package.json`] = JSON.stringify({
+          name,
+          version: "1.0.0",
+          dependencies: { "no-deps": ranges[name] },
+        });
+      }
+      files["package.json"] = JSON.stringify({ ...root, ...declared, overrides: { "a-dep": "$no-deps" } });
+      files["package-lock.json"] = npmLock("root", packages);
+      using dir = synthetic("npm-migrate-ref-without-row", files);
+
+      const { stderr, lock } = await migrate(dir);
+      expect(stderr).not.toContain("Could not resolve");
+      expect(lock.overrides).toStrictEqual({ "a-dep": ">=1.0.1 <1.1.0" });
+    },
+  );
+
   test.concurrent("nested and version-scoped overrides migrate into a lockfileVersion 3 bun.lock", async () => {
     using dir = overridesFixture({ overrides: { "arg@4": "4.1.3", ws: { arg: "4.1.3" } } });
     const { text, lock } = await migrate(dir);

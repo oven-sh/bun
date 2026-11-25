@@ -29,6 +29,7 @@ const written: [string, (file: string) => string][] = [
 ];
 const ways = written.map(([name, write], index) => [name, write(`w${index + 1}.ts`)]);
 const asWritten = ways.map(([name], index) => `SEEN ${name} | w${index + 1} 42`);
+const asWrittenOver = ways.map(([name]) => `SEEN ${name} | from disk 42`);
 
 const imports = `import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,7 +93,7 @@ test("an executable holds the file of each Worker, however its path is written",
 test("a test run compiles the file of each Worker, however its path is written", async () => {
   const files = {
     ...project,
-    // A file that was compiled answers with what it said when the build read it.
+    // A file that runs from its text trips the wire. A file that the test itself writes over is read from disk, as under plain bun test.
     "workers.test.ts": `import { test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 ${imports}test("the Workers answer", async () => {
@@ -110,7 +111,10 @@ ${say.join("")}});
   };
   const plain = await see([], {});
   expect(plain).toEqual({ seen: asWritten, taken: [], stderr: "", exitCode: 0 });
-  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(plain);
+  expect(await see(["--aot"], { BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(plain);
+  const writtenOver = await see([], { WRITES_OVER_WORKERS: "1" });
+  expect(writtenOver).toEqual({ ...plain, seen: asWrittenOver });
+  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(writtenOver);
 }, 240_000);
 
 // Two more starts that the build can't read. Each program is built by itself, so that none has its file compiled on account of another.

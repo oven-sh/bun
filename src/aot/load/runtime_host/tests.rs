@@ -374,13 +374,10 @@ fn unknown_host_path_is_unreadable() {
             panic!("no read of the archive is deferred");
         };
         assert!(code.is_empty());
-        let unreadable: [&[u8]; 3] = [
-            MISSING_SOURCE,
-            b"/$bun/plugin/v/config",
-            MISSING_PROGRAM_FILE,
-        ];
+        let unreadable: [&[u8]; 2] = [MISSING_SOURCE, b"/$bun/plugin/v/config"];
         assert_eq!(host.take_unreadable(), unreadable);
         assert!(host.take_unreadable().is_empty());
+        assert_eq!(host.disk.take_unreadable(), [MISSING_PROGRAM_FILE]);
         assert!(fixture.take_messages().is_empty());
     });
 }

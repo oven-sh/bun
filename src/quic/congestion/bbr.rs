@@ -1,7 +1,8 @@
 //! draft-cardwell-iccrg-bbr-congestion-control-00.
 
-use super::bandwidth_sampler::BandwidthSampler;
+use super::bandwidth_sampler::{BandwidthSampler, micros};
 use super::ceiling::Ceiling;
+use super::rtt::GRANULARITY;
 use super::windowed_filter::WindowedMax;
 use super::{Feedback, Flight, INITIAL_WINDOW, MAX_WINDOW, MICROS_PER_SECOND, Rtt, SEGMENT};
 use crate::time::{Duration, Instant};
@@ -12,6 +13,10 @@ const UNCONDITIONAL_WINDOW: u64 = 2000 * SEGMENT;
 const DEFAULT_RTT: Duration = Duration::from_millis(25);
 const MIN_RTT_EXPIRY: Duration = Duration::from_secs(10);
 const PROBE_RTT_TIME: Duration = Duration::from_millis(200);
+/// The factor by which a flight can be slower than expected on a path that has not changed.
+const MAX_SLOWDOWN: u64 = 4;
+/// What is shorter may be due to the hosts.
+const MIN_TRICKLE_TIME: Duration = Duration::from_millis(50);
 const ROUNDS_WITHOUT_GROWTH: u8 = 3;
 /// After how many they are forgotten, or twice as many if there was a queue.
 const CLEAR_ROUNDS: u8 = 4;
@@ -51,10 +56,62 @@ enum Mode {
         since: Instant,
     },
     ProbeRtt {
+        arrival: Arrival,
         /// Not set until the flight is small enough.
-        until: Option<Instant>,
+        until: Instant,
         has_round_passed: bool,
     },
+}
+
+/// Of what is in flight when no more is added.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+struct Arrival {
+    last_at: Instant,
+    last_sent_at: Instant,
+    len: u32,
+    micros: u32,
+    longest_pause_micros: u32,
+    /// How much of the time is due to the application, which did not write any faster.
+    writing_micros: u32,
+    /// How much of the last pause is not.
+    unexplained_micros: u32,
+}
+
+impl Arrival {
+    fn add(&mut self, len: u64) {
+        self.len = self.len.saturating_add(len.try_into().unwrap_or(u32::MAX));
+    }
+
+    fn on_feedback(&mut self, now: Instant, sent_at: Instant, is_limited: bool, it: &Feedback) {
+        let pause = now - core::mem::replace(&mut self.last_at, now);
+        let gap = micros(sent_at - core::mem::replace(&mut self.last_sent_at, sent_at));
+        if pause >= GRANULARITY {
+            self.unexplained_micros = 0;
+        }
+        // Or else it may have been the wait for the loss to be found.
+        if it.lost == 0 {
+            let pause = micros(pause);
+            self.micros = self.micros.saturating_add(pause);
+            self.longest_pause_micros = self.longest_pause_micros.max(pause);
+            self.unexplained_micros = self.unexplained_micros.saturating_add(pause);
+        }
+        if is_limited {
+            let explained = gap.min(self.unexplained_micros);
+            self.unexplained_micros -= explained;
+            self.writing_micros = self.writing_micros.saturating_add(explained);
+        }
+        self.add(it.acked);
+    }
+
+    fn duration(&self) -> Duration {
+        Duration::from_micros(self.micros.into())
+    }
+
+    /// `None` if it has stalled, if nobody was there to take note, or if it has not been up to the path.
+    fn bandwidth(&self) -> Option<u64> {
+        (self.longest_pause_micros.max(self.writing_micros) < self.micros / 4)
+            .then(|| u64::from(self.len) * MICROS_PER_SECOND / u64::from(self.micros))
+    }
 }
 
 /// §4.2.3.4.
@@ -173,6 +230,13 @@ impl Bbr {
         self.recovery.is_some()
     }
 
+    pub(super) fn holds_back(&self) -> bool {
+        self.is_recovering()
+            || self.pacing_gain() < Gain::UNIT
+            || self.was_congested_in_cycle && self.is_cycling()
+            || self.suspects_short_queue()
+    }
+
     pub(super) fn min_rtt(&self, rtt: &Rtt) -> Duration {
         match (self.min_rtt.is_zero(), rtt.has_sample()) {
             (false, _) => self.min_rtt,
@@ -222,6 +286,9 @@ impl Bbr {
 
     pub(super) fn on_late(&mut self, len: u64) {
         self.sampler.delivered += len;
+        if let Mode::ProbeRtt { arrival, .. } = &mut self.mode {
+            arrival.add(len);
+        }
         self.lost_in_round = self.lost_in_round.saturating_sub(len);
         self.recovery.take_if(|it| {
             it.lost = it.lost.saturating_sub(len);
@@ -304,7 +371,7 @@ impl Bbr {
         if self.mode == Mode::Drain && feedback.in_flight <= capacity.max(self.min_window()) {
             self.probe_bandwidth(now);
         }
-        self.probe_rtt(now, feedback, is_round_start, has_min_rtt_expired);
+        self.probe_rtt(now, feedback, rtt, is_round_start, has_min_rtt_expired);
 
         let pacing_rate = self.pacing_gain().of(self.bandwidth.get());
         self.pacing_rate = match self.is_pipe_filled {
@@ -549,31 +616,81 @@ impl Bbr {
         &mut self,
         now: Instant,
         feedback: &Feedback,
+        rtt: &Rtt,
         is_round_start: bool,
         has_min_rtt_expired: bool,
     ) {
-        let (until, has_round_passed) = match self.mode {
-            Mode::ProbeRtt {
-                until,
-                has_round_passed,
-            } => (until, has_round_passed),
-            _ if has_min_rtt_expired => (None, false),
-            _ => return,
-        };
-        self.sampler.on_application_limited(feedback.last_sent);
-        let has_round_passed = has_round_passed || (until.is_some() && is_round_start);
-        if has_round_passed && until.is_some_and(|until| now >= until) {
-            self.min_rtt_at = now;
-            return match self.is_pipe_filled {
-                true => self.probe_bandwidth(now),
-                false => self.mode = Mode::Startup,
+        if let Mode::ProbeRtt { arrival, until, .. } = &mut self.mode {
+            if *until == Instant::NEVER {
+                let is_limited = self.is_last_sample_limited;
+                arrival.on_feedback(now, self.sampler.sent_at, is_limited, feedback);
+            }
+        } else if has_min_rtt_expired {
+            self.mode = Mode::ProbeRtt {
+                arrival: Arrival {
+                    last_at: now,
+                    last_sent_at: self.sampler.sent_at,
+                    ..Arrival::default()
+                },
+                until: Instant::NEVER,
+                has_round_passed: false,
             };
         }
-        let is_drained = feedback.in_flight < self.min_window() + self.segment;
-        self.mode = Mode::ProbeRtt {
-            until: until.or_else(|| is_drained.then(|| now + PROBE_RTT_TIME)),
+        let min_window = self.min_window();
+        let Mode::ProbeRtt {
+            arrival,
+            until,
             has_round_passed,
+        } = &mut self.mode
+        else {
+            return;
         };
+        self.sampler.on_application_limited(feedback.last_sent);
+        if *until == Instant::NEVER {
+            if feedback.in_flight < min_window + self.segment {
+                *until = now + PROBE_RTT_TIME;
+                if arrival.bandwidth().is_some() {
+                    self.round_end = feedback.last_sent;
+                }
+            }
+            return;
+        }
+        *has_round_passed |= is_round_start;
+        if *has_round_passed && now >= *until {
+            let arrival = *arrival;
+            self.min_rtt_at = now;
+            match self.lower_bandwidth(now, &arrival, rtt) {
+                Some(bandwidth) => self.start_over(bandwidth),
+                None if self.is_pipe_filled => self.probe_bandwidth(now),
+                None => self.mode = Mode::Startup,
+            }
+        }
+    }
+
+    /// Of a path that has slowed down so much that it would take too long for the former one to expire.
+    fn lower_bandwidth(&self, now: Instant, arrival: &Arrival, rtt: &Rtt) -> Option<u64> {
+        let bandwidth = arrival.bandwidth()?;
+        let own_queue = self.min_window() * MICROS_PER_SECOND / bandwidth.max(1);
+        let rtt = rtt.min.max(self.min_rtt - Duration::from_micros(own_queue));
+        (bandwidth < self.bandwidth.get() / MAX_SLOWDOWN
+            && arrival.duration() > MIN_TRICKLE_TIME.max(rtt * MAX_SLOWDOWN)
+            && now <= arrival.last_at + MIN_RTT_EXPIRY / 2)
+            .then_some(bandwidth)
+    }
+
+    fn start_over(&mut self, bandwidth: u64) {
+        *self = Self {
+            sampler: core::mem::replace(&mut self.sampler, BandwidthSampler::new()),
+            window: delivered_in(self.min_rtt, bandwidth),
+            recovery: self.recovery.take(),
+            min_rtt: self.min_rtt,
+            min_rtt_at: self.min_rtt_at,
+            round_end: self.round_end,
+            ran_dry_at: self.ran_dry_at,
+            has_lost_packets: self.has_lost_packets,
+            ..Self::new(self.segment, self.random)
+        };
+        self.bandwidth.update(self.round, bandwidth);
     }
 
     /// §4.2.3.

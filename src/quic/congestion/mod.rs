@@ -198,7 +198,10 @@ impl Controller {
         let window = self.window();
         if self.in_flight >= window {
             self.refill_at = Instant::NEVER;
-            self.pacer.on_limited_otherwise();
+            match self.holds_back() {
+                true => self.pacer.on_limited_otherwise(),
+                false => self.pacer.on_window_full(now, window),
+            }
             return Permit::Blocked;
         }
         if now < self.refill_at {
@@ -297,6 +300,14 @@ impl Controller {
         match &self.model {
             Model::Cubic(cubic) => cubic.is_recovering,
             Model::Bbr(bbr) => bbr.is_recovering(),
+        }
+    }
+
+    /// Whether a window that has been full is to be the end of making up for waking late.
+    fn holds_back(&self) -> bool {
+        match &self.model {
+            Model::Cubic(_) => true,
+            Model::Bbr(bbr) => bbr.holds_back() || self.spread.is_on,
         }
     }
 
@@ -430,6 +441,7 @@ impl Controller {
                 }
             }
         }
+        self.pacer.reconsider_catching_up(self.holds_back());
         self.update_pacing_rate(rtt);
     }
 

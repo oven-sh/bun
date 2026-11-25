@@ -50,8 +50,10 @@ pub(super) struct Pacer {
     /// How many packets go out without delay.
     burst_tokens: u8,
     next: Instant,
-    /// A sender that nothing else holds back makes up for waking late, up to this time.
+    /// A sender makes up for waking late up to this time, unless something else holds it back for long.
     catch_up_until: Instant,
+    /// Since that was set.
+    was_window_full: bool,
     /// What `next` is rounded down by, in fractions of a microsecond.
     remainder: u64,
     /// In fractions of a microsecond.
@@ -91,7 +93,13 @@ pub(super) struct Pacer {
 
 impl Pacer {
     pub(super) fn set_rate(&mut self, len: u64, per: Duration, rtt: &Rtt) {
-        self.time_per_byte = per.as_micros().saturating_mul(1 << FRACTION_BITS) / len.max(1);
+        let time_per_byte = per.as_micros().saturating_mul(1 << FRACTION_BITS) / len.max(1);
+        if self.was_window_full && time_per_byte < self.time_per_byte {
+            // It stays as many bytes.
+            let lag = self.catch_up_until - GRANULARITY - self.next;
+            self.next = self.next + (lag - lag * time_per_byte / self.time_per_byte);
+        }
+        self.time_per_byte = time_per_byte;
         self.max_lag = rtt.probe_timeout();
         // The shorter the path, the less it takes to make up for a burst that gets lost.
         self.bonus = match rtt.has_sample() && !self.is_shared {
@@ -156,13 +164,42 @@ impl Pacer {
         if self.rest > 0 {
             return None;
         }
-        self.catch_up_until = self.next + self.max_lag;
+        (self.catch_up_until, self.was_window_full) = (self.next + self.max_lag, false);
         Some(self.next)
     }
 
     #[inline]
     pub(super) fn on_limited_otherwise(&mut self) {
         self.catch_up_until = Instant::default();
+    }
+
+    /// Whoever wakes late fills the window before it has read the acknowledgments that are waiting.
+    #[inline]
+    pub(super) fn on_window_full(&mut self, now: Instant, window: u64) {
+        if core::mem::replace(&mut self.was_window_full, true) {
+            return;
+        }
+        if self.is_queue_in_doubt() || self.next + GRANULARITY >= now {
+            return self.on_limited_otherwise();
+        }
+        let owed = self.time_per_byte.saturating_mul(window / 2) >> FRACTION_BITS;
+        self.next = self.next.max(now - Duration::from_micros(owed));
+        self.catch_up_until = self.catch_up_until.min(now + GRANULARITY);
+    }
+
+    /// Once they have been read.
+    #[inline]
+    pub(super) fn reconsider_catching_up(&mut self, is_held_back: bool) {
+        if self.was_window_full && (is_held_back || self.is_queue_in_doubt()) {
+            self.on_limited_otherwise();
+        }
+    }
+
+    fn is_queue_in_doubt(&self) -> bool {
+        self.overflows > 0
+            || self.trial.max_overflows() < MAX_OVERFLOWS
+            || self.trial.is_unsettled()
+            || self.is_shared
     }
 
     pub(super) fn on_application_limited(&mut self) {

@@ -687,6 +687,84 @@ fn pacer_makes_up_for_waking_late() {
 }
 
 #[test]
+fn pacer_makes_up_for_waking_late_once_the_window_has_room() {
+    let nothing: fn(&mut Pacer) = |_| {};
+    let overflow: fn(&mut Pacer) = |it| it.on_overflow(false, 0);
+    let share_by_now: fn(&mut Pacer) = |it| {
+        (0..9).for_each(|_| it.on_start_settled(true));
+        it.reconsider_catching_up(false);
+    };
+    let double: fn(&mut Pacer) = |it| it.set_rate(2000, millis(1), &steady(millis(17)));
+    let halve: fn(&mut Pacer) = |it| it.set_rate(500, millis(1), &steady(millis(17)));
+    let share: fn(&mut Pacer) = |it| (0..9).for_each(|_| it.on_start_settled(true));
+    for (late, window, before, after, wait, expected) in [
+        (40_000, 100_000, nothing, nothing, 0, 42),
+        (40_000, 100_000, nothing, nothing, 1000, 43),
+        (40_000, 100_000, nothing, nothing, 1001, 2),
+        (40_000, 40_000, nothing, nothing, 0, 22),
+        (40_000, 2000, nothing, nothing, 0, 3),
+        (40_000, 100_000, overflow, nothing, 0, 1),
+        (40_000, 100_000, share, nothing, 0, 2),
+        (40_000, 100_000, Pacer::on_limited_otherwise, nothing, 0, 2),
+        (
+            40_000,
+            100_000,
+            nothing,
+            |it| it.reconsider_catching_up(false),
+            0,
+            42,
+        ),
+        (
+            40_000,
+            100_000,
+            nothing,
+            |it| it.reconsider_catching_up(true),
+            0,
+            2,
+        ),
+        (40_000, 100_000, nothing, share_by_now, 0, 2),
+        (40_000, 40_000, nothing, double, 0, 24),
+        (40_000, 40_000, nothing, halve, 0, 11),
+        (1001, 100_000, nothing, nothing, 1000, 4),
+        (1000, 100_000, nothing, nothing, 1000, 2),
+    ] {
+        let mut pacer = pacer_at(1000, millis(1));
+        let now = START + pace(&mut pacer, START).1 + micros(late);
+        before(&mut pacer);
+        (0..2).for_each(|_| pacer.on_window_full(now, window));
+        after(&mut pacer);
+        assert_eq!(pace(&mut pacer, now + micros(wait)).0, expected, "{late}");
+    }
+}
+
+#[test]
+fn pacer_is_only_held_back_if_the_window_has_been_full() {
+    let mut pacer = pacer_at(1000, millis(1));
+    pacer.on_window_full(START, 100_000);
+    let now = START + pace(&mut pacer, START).1 + millis(40);
+    pacer.reconsider_catching_up(true);
+    assert_eq!(pace(&mut pacer, now).0, 42);
+}
+
+#[test]
+fn acknowledgments_that_are_read_late_let_bbr_go_on() {
+    for (algorithm, lost, expected) in [
+        (Algorithm::Bbr, 0, 16),
+        (Algorithm::Bbr, 1, 2),
+        (Algorithm::Cubic, 0, 3),
+    ] {
+        let mut sender = Sender::new(algorithm);
+        sender.rtt.update(millis(40), Duration::ZERO);
+        sender.send(20).feedback(lost, 0).burst();
+        let len = sender.flights.len();
+        sender.wait(millis(50)).burst();
+        assert_eq!(sender.controller.room(), 0);
+        sender.wait(micros(100)).feedback(0, len);
+        assert_eq!(sender.burst(), expected);
+    }
+}
+
+#[test]
 fn pacer_starts_a_burst_after_three_packets_or_a_quarter_of_a_millisecond() {
     for (per, pause) in [(micros(16), 48), (micros(64), 192), (micros(128), 250)] {
         let mut pacer = pacer_at(1024, per);
@@ -1032,6 +1110,23 @@ fn bursts_get_longer_as_far_as_it_makes_no_difference() {
         let trials = quanta.chunk_by(|a, b| a == b).filter(|it| it.contains(&8));
         assert_eq!(trials.count(), 3);
         assert!(quanta.iter().all(|it| (4..=8).contains(it)));
+    }
+}
+
+#[test]
+fn overflows_that_are_disregarded_limit_what_is_made_up_for() {
+    for has_retreated in [false, true] {
+        let mut periods = Periods::new();
+        periods.run(5, |_| (110, 10));
+        periods.overflows = false;
+        periods.run(has_retreated.into(), |_| (110, 90));
+        let Periods { pacer, now, .. } = &mut periods;
+        (0..MAX_OVERFLOWS * 256 * 64).for_each(|_| _ = pacer.on_sent(*now, 1024));
+        assert_eq!(pacer.max_turn(), usize::MAX);
+        *now = *now + millis(10_000);
+        *now = *now + pace(pacer, *now).1 + millis(40);
+        pacer.on_window_full(*now, 1 << 20);
+        assert_eq!(pace(pacer, *now).0, 17);
     }
 }
 
@@ -2565,6 +2660,273 @@ fn bbr_does_not_probe_the_round_trip_time_if_it_sees_it_without_filling_the_path
             smallest = smallest.min(sender.segments());
         }
         assert_eq!(smallest == 4, probes, "{rtt} {until}");
+    }
+}
+
+#[test]
+fn bbr_does_not_fill_the_queue_again_after_the_path_has_become_much_slower() {
+    let mut path = Path::fast(Algorithm::Bbr, 3000);
+    path.saturate(millis(3000), |_| {});
+    path.time_per_packet = millis(5);
+    path.saturate(millis(15_000), |_| {});
+    let used = path.saturate(millis(15_000), |it| assert!(it.rtt.latest < millis(100)));
+    assert_within(used, 97..=100);
+}
+
+#[test]
+fn bbr_starts_over_in_startup_too() {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 1, millis(10)).send(120);
+    sender.wait(millis(10_001)).feedback(0, 60);
+    for _ in 0..5 {
+        sender.wait(millis(12)).feedback(0, 12);
+    }
+    assert_eq!(sender.rounds_of(1, 20, millis(10)).segments(), 11);
+}
+
+#[test]
+fn bbr_does_not_go_by_an_old_trickle() {
+    for (pause, expected) in [(4_990_000, 11), (4_990_001, 180)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1000, millis(10)).send(120);
+        sender.wait(micros(10_001)).feedback(0, 60);
+        for _ in 0..5 {
+            sender.wait(millis(12)).feedback(0, 12);
+        }
+        sender.wait(micros(pause)).rounds_of(1, 1, millis(10));
+        assert_eq!(sender.segments(), expected);
+    }
+}
+
+#[test]
+fn what_arrives_among_losses_or_late_is_part_of_a_trickle() {
+    let among_losses: fn(&mut Sender) = |it| _ = it.feedback(0, 5).feedback(1, 13);
+    let late: fn(&mut Sender) = |it| {
+        it.controller.on_late(13 * SEGMENT);
+        it.feedback(0, 5);
+    };
+    for (len, step) in [(19, among_losses), (5, late)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1000, millis(10)).send(60 + 5 * len);
+        sender.wait(micros(10_001)).feedback(0, 60);
+        (0..5).for_each(|_| step(sender.wait(millis(12))));
+        assert_eq!(gain(sender.rounds_of(1, 20, millis(10))), 100);
+    }
+}
+
+/// Probes the round-trip time up to the last round, with `len` packets arriving after each pause.
+fn trickle(former_rtt: Duration, pauses: &[u64], len: u64, rtt: Duration) -> Sender {
+    let mut sender = Sender::new(Algorithm::Bbr);
+    let per_second = MICROS_PER_SECOND / former_rtt.as_micros();
+    sender.rounds_of(6000 / per_second, 10 * per_second, former_rtt);
+    sender.send(60 + len * pauses.len() as u64);
+    sender.wait(rtt + micros(1)).feedback(0, 60);
+    assert_eq!(sender.segments(), 4);
+    for &pause in pauses {
+        sender.wait(micros(pause)).feedback(0, len as usize);
+    }
+    sender.rounds_of(
+        1,
+        (millis(200) - micros(1)).as_micros() / rtt.as_micros(),
+        rtt,
+    );
+    sender
+}
+
+#[test]
+fn bbr_starts_over_if_a_flight_trickles_in() {
+    let uneven = |longest| vec![15_000, 15_000, longest, 15_000, 15_000];
+    for (former_rtt, pauses, len, rtt, expected) in [
+        (10, vec![10_001; 5], 12, 10_000, (12, 153)),
+        (10, vec![10_000; 5], 12, 10_000, (121, 100)),
+        (10, vec![12_000; 5], 17, 10_000, (15, 153)),
+        (10, vec![12_000; 5], 18, 10_000, (121, 100)),
+        (10, uneven(19_998), 12, 10_000, (8, 153)),
+        (10, uneven(20_000), 12, 10_000, (121, 100)),
+        (100, vec![100_000; 5], 100, 128_999, (129, 48)),
+        (100, vec![100_000; 5], 100, 129_000, (1801, 100)),
+        (10, vec![3_000_000; 5], 100, 10_000, (4, 153)),
+    ] {
+        let mut sender = trickle(millis(former_rtt), &pauses, len, micros(rtt));
+        sender.rounds_of(1, 1, micros(rtt));
+        assert_eq!((sender.segments(), gain(&sender)), expected);
+        sender.rounds_of(1, 1, micros(2 * rtt));
+        assert_eq!(min_rtt(&sender), micros(rtt));
+    }
+}
+
+#[test]
+fn bbr_keeps_what_it_knows_about_packets_when_it_starts_over() {
+    let mut sender = trickle(millis(100), &[100_000; 5], 100, millis(100));
+    sender.send(4).wait(millis(100));
+    sender.controller.on_persistent_congestion();
+    assert_eq!(sender.feedback(3, 1).segments(), 4);
+    sender.send(1).wait(millis(100)).feedback(0, 1);
+    assert_eq!((sender.segments(), gain(&sender)), (102, 48));
+
+    let mut sender = trickle(millis(10), &[3_000_000; 5], 100, millis(10));
+    sender.controller.set_datagram_len(9000);
+    sender.rounds_of(1, 1, millis(10)).send(5).wait(millis(10));
+    assert_eq!(sender.feedback(4, 1).window(), 4 * 9000);
+
+    let mut sender = trickle(millis(100), &[100_000; 5], 100, millis(100));
+    sender.send(3).run_dry().wait(millis(100)).feedback(0, 1);
+    assert_eq!(sender.feedback(1, 0).feedback(0, 1).segments(), 4);
+
+    let mut sender = trickle(millis(100), &[100_000; 5], 100, millis(100));
+    sender
+        .send(2)
+        .wait(millis(100))
+        .feedback(0, 1)
+        .feedback(0, 1);
+    assert!(matches!(&sender.controller.model, Model::Bbr(it) if it.random != 0));
+    assert_eq!(sender.rounds_of(10, 10, millis(100)).segments(), 202);
+    assert_eq!(sender.rounds_of(10, 1, millis(100)).segments(), 30);
+}
+
+#[test]
+fn acknowledgments_that_are_read_late_may_tell_bbr_to_hold_back() {
+    for (lost, is_spread, expected) in [(0, false, 16), (1, false, 2), (0, true, 2)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rtt.update(millis(40), Duration::ZERO);
+        sender.send(20).burst();
+        sender.wait(millis(50)).burst();
+        sender.controller.spread.is_on = is_spread;
+        sender.wait(micros(100)).feedback(lost, 19);
+        assert_eq!(sender.burst(), expected);
+    }
+}
+
+#[test]
+fn bbr_holds_back_if_the_queue_may_be_short() {
+    let holds_back = |sender: &Sender| sender.controller.holds_back();
+    let mut sender = Sender::new(Algorithm::Bbr);
+    for _ in 0..3 {
+        assert!(!holds_back(&sender));
+        sender.send(20).run_dry().wait(millis(20)).feedback(1, 19);
+        sender.send(1).run_dry().wait(millis(20)).feedback(0, 1);
+    }
+    assert!(holds_back(&sender));
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(60, 20, millis(10));
+    sender.send(60).wait(millis(13)).feedback(1, 59);
+    for expected in [true, false] {
+        sender.rounds_of(60, 5, micros(10_001));
+        assert_eq!(holds_back(&sender), expected);
+    }
+    sender.send(80).wait(micros(10_001)).feedback(0, 60);
+    assert!(gain(&sender) < 100 && holds_back(&sender));
+
+    let mut sender = Sender::new(Algorithm::Bbr);
+    sender.rounds_of(20, 1, millis(10)).send(20).run_dry();
+    sender
+        .wait(millis(14))
+        .feedback(1, 19)
+        .send(1)
+        .wait(millis(10));
+    assert!(!holds_back(sender.feedback(0, 1)));
+}
+
+#[test]
+fn bbr_does_not_catch_up_while_it_drains_the_queue() {
+    let mut path = Path::fast(Algorithm::Bbr, 400);
+    path.unsent = u64::MAX / 2;
+    while path.pace() > 50 || path.delivered < 200 || path.controller.room() < 20 * LEN {
+        path.step();
+    }
+    path.now = path.now + millis(60);
+    while path.controller.permit(path.now, u64::MAX) == Permit::Now {
+        path.send();
+    }
+    path.longest_burst = 0;
+    path.step();
+    assert_within(path.longest_burst, 1..=20);
+}
+
+#[test]
+fn bbr_does_not_allow_for_more_of_a_queue_than_there_can_be() {
+    for (pause, expected) in [(80_001, 15), (80_000, 100)] {
+        let mut sender = trickle(millis(100), &[pause; 5], 5, millis(100));
+        assert_eq!(gain(sender.rounds_of(1, 1, millis(100))), expected);
+    }
+}
+
+#[test]
+fn waiting_for_a_loss_to_be_found_is_not_part_of_a_trickle() {
+    for (pause, acked, expected) in [(10_001, 1, 58), (10_000, 1, 100), (10_001, 0, 57)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1000, millis(10)).send(130 + acked);
+        sender.wait(micros(10_001)).feedback(0, 60);
+        for _ in 0..4 {
+            sender.wait(micros(pause)).feedback(0, 12);
+        }
+        sender.wait(millis(500)).feedback(10, acked as usize);
+        sender.wait(micros(pause)).feedback(0, 12);
+        assert_eq!(gain(sender.rounds_of(1, 20, millis(10))), expected);
+    }
+}
+
+#[test]
+fn bbr_does_not_take_the_pace_of_the_application_for_that_of_the_path() {
+    for (gaps, runs_dry, expected) in [
+        ([4999; 5], true, 153),
+        ([5000; 5], true, 100),
+        ([5000; 5], false, 153),
+        ([0, 0, 90_000, 0, 4999], true, 153),
+        ([0, 0, 90_000, 0, 5000], true, 100),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1000, millis(10)).send(1);
+        if runs_dry {
+            sender.run_dry();
+        }
+        for gap in gaps {
+            sender.wait(micros(gap)).send(12);
+        }
+        assert_eq!(sender.wait(millis(10)).feedback(0, 1).segments(), 4);
+        for _ in 0..5 {
+            sender.wait(millis(20)).feedback(0, 12);
+        }
+        assert_eq!(gain(sender.rounds_of(1, 20, millis(10))), expected);
+    }
+}
+
+#[test]
+fn acknowledgments_that_are_read_together_share_the_pause_before_them() {
+    for (gaps, apart, expected) in [
+        ([0, 19].repeat(5), 999, 100),
+        ([0, 19].repeat(5), 1000, 153),
+        ([vec![15; 2], vec![0; 8]].concat(), 0, 153),
+    ] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender.rounds_of(60, 1000, millis(10)).send(1).run_dry();
+        for gap in gaps {
+            sender.wait(millis(gap)).send(6);
+        }
+        sender.wait(millis(10)).feedback(0, 1);
+        for _ in 0..5 {
+            sender.wait(millis(20)).feedback(0, 6);
+            sender.wait(micros(apart)).feedback(0, 6);
+        }
+        assert_eq!(gain(sender.rounds_of(1, 20, millis(10))), expected);
+    }
+}
+
+#[test]
+fn bbr_does_not_take_the_end_of_a_trickle_for_a_round_of_probing() {
+    for (pause, is_over) in [(10, false), (0, true)] {
+        let mut sender = Sender::new(Algorithm::Bbr);
+        sender
+            .rounds_of(60, 1000, millis(10))
+            .send(61)
+            .wait(millis(10));
+        sender.send(1).wait(micros(1)).feedback(0, 1).send(3);
+        for _ in 0..5 {
+            sender.wait(millis(pause)).feedback(0, 12);
+        }
+        sender.wait(millis(300)).send(1).feedback(0, 4);
+        assert_eq!(sender.segments() > 4, is_over);
     }
 }
 

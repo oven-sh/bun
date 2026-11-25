@@ -8,12 +8,12 @@ pub(super) struct BandwidthSampler {
     pub(super) delivered: u64,
     delivered_at: Instant,
     /// Of the newest packet that was delivered.
-    sent_at: Instant,
+    pub(super) sent_at: Instant,
     /// The last packet that was sent before the application ran dry, until a later one is delivered.
     limited_through: Option<u64>,
 }
 
-fn micros(duration: Duration) -> u32 {
+pub(super) fn micros(duration: Duration) -> u32 {
     duration.as_micros().try_into().unwrap_or(u32::MAX)
 }
 

@@ -1584,6 +1584,9 @@ impl Build<'_> {
             &in_parallel,
         );
         known_helpers.keep_private_states_in_collections(&contents.replaced_builtins);
+        if !self.options.load.runs_tests && !contents.mocks_any_module {
+            known_helpers.follow_imports(view.files());
+        }
         steps.end_with(|| format!("{project_name}: known helpers"));
         let run_of_library = crate::test_runs::RunContents::default();
         let plugin_answers_for_names_left_to_host = project == ProjectId::Application

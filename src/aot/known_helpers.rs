@@ -1,6 +1,7 @@
 mod canonical;
 mod find;
 mod held_early;
+mod imported;
 mod private_state;
 mod published;
 mod quiet;
@@ -13,6 +14,7 @@ pub use self::find::{
     BindingValues, Certainty, FileHelpers, HeldFunction, KnownFunction, KnownReference,
 };
 use self::held_early::find_files_held_early;
+use self::imported::{ImportedHelpers, find_imported_helpers};
 pub use self::private_state::{FilePrivateStates, StateOwner};
 pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
@@ -54,6 +56,7 @@ pub struct KnownHelpers {
     files: Vec<FileHelpers>,
     private_states: Vec<OnceLock<FilePrivateStates>>,
     binding_names: FxHashSet<Atom>,
+    imported: Vec<ImportedHelpers>,
 }
 
 fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
@@ -147,6 +150,42 @@ impl KnownHelpers {
             known.private_states.resize_with(file_count, OnceLock::new);
         }
         known
+    }
+
+    /// For a build in which no test runner replaces what a file exports.
+    pub fn follow_imports(&mut self, files: &Files<'_>) {
+        self.imported = find_imported_helpers(self, files);
+    }
+
+    pub fn imports_helpers(&self, file: FileId) -> bool {
+        let imported = self.imported.get(file.idx());
+        imported.is_some_and(|imported| !imported.bindings.is_empty())
+    }
+
+    /// Others may call the function declarations of a file that imports helpers before its body begins.
+    pub fn importer_may_start_early(&self, file: FileId) -> bool {
+        let imported = self.imported.get(file.idx());
+        imported.is_some_and(|imported| imported.may_start_early)
+    }
+
+    /// The only function that an imported `callee` ever holds. It does so once the body of `file` has begun, and a call before that may throw.
+    pub fn imported_callee(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let imported = self.imported.get(file.idx())?;
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let home = *find_by_key(&imported.bindings, symbol)?;
+        let values = self.binding(home.file, home.id)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(home.file, held.definition)?;
+        let is_only_value =
+            held.closure == held.definition && !files.bound(home.file).is_visible_to_eval(home.id);
+        (is_only_value && self.holds_for_importers(home.file, values, known)).then_some(known)
     }
 
     pub fn leave_replaceable_variables(&mut self, modules: &ModuleGraph) {

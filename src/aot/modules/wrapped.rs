@@ -408,6 +408,12 @@ impl Finder<'_, '_> {
         }
     }
 
+    fn find_helper_called_by_body(&self, callee: ExprId) -> Option<&KnownFunction> {
+        let (helpers, files, file) = (self.helpers, self.files, self.file);
+        (helpers.certain_callee(files, file, callee))
+            .or_else(|| helpers.imported_callee(files, file, callee))
+    }
+
     fn read_declaration(&self, statement: StmtId, declaration: VarDeclId) -> Option<Candidate> {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[declaration];
@@ -424,9 +430,7 @@ impl Finder<'_, '_> {
         if site.chain != Chain::No || site.args.len() != 1 {
             return None;
         }
-        let known = self
-            .helpers
-            .certain_callee(self.files, self.file, site.callee)?;
+        let known = self.find_helper_called_by_body(site.callee)?;
         let shape = classify(known.shape)?;
         let callback = self.find_callback(hir.id_at(site.args, 0), shape.takes_literal)?;
         if !self.can_be_body(callback, shape.kind, ThisOfBody::Unknown) {
@@ -532,7 +536,7 @@ impl Finder<'_, '_> {
             let mut functions = helpers.functions();
             functions.any(|(_, known)| classify(known.shape).is_some())
         });
-        if !has_wrapper {
+        if !has_wrapper && !self.helpers.imports_helpers(self.file) {
             return callbacks;
         }
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
@@ -546,6 +550,7 @@ impl Finder<'_, '_> {
             let shape = self
                 .helpers
                 .only_callee(self.files, self.file, site.callee)
+                .or_else(|| (self.helpers).imported_callee(self.files, self.file, site.callee))
                 .and_then(|known| classify(known.shape));
             let callback = shape
                 .and_then(|shape| self.find_callback(hir.id_at(site.args, 0), shape.takes_literal));
@@ -621,6 +626,15 @@ impl Finder<'_, '_> {
             && bound.is_stable_binding(symbol)
     }
 
+    fn lists_values_alone(&self, table: ExprId) -> bool {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(table)].kind else {
+            return false;
+        };
+        let mut properties = properties.iter().map(|property| hir[property]);
+        properties.all(|it| it.kind == PropKind::Init && !hir::is_proto_setter(&it))
+    }
+
     fn runs_nothing(&self, call: CallId) -> bool {
         let hir = self.hir;
         let site = hir[call];
@@ -628,17 +642,17 @@ impl Finder<'_, '_> {
             let known = self.helpers.function(self.file, factory);
             return known.is_some_and(|known| known.shape.helper() == Helper::Require);
         }
-        let Some(known) = self
-            .helpers
-            .certain_callee(self.files, self.file, site.callee)
-        else {
+        let Some(known) = self.find_helper_called_by_body(site.callee) else {
             return false;
         };
         match known.shape.helper() {
             Helper::CommonJs | Helper::Esm => true,
             Helper::Export => {
-                let target = hir.ids(site.args).next();
+                let mut arguments = hir.ids(site.args);
+                let target = arguments.next();
                 target.is_some_and(|target| self.holds_new_empty_object(target))
+                    && (known.shape == Shape::ExportGettersOfLiteral
+                        || arguments.all(|table| self.lists_values_alone(table)))
             }
             _ => false,
         }
@@ -670,6 +684,7 @@ impl Finder<'_, '_> {
             return Some(SiteTime::WithBodyOf(around));
         }
         Some(SiteTime::At(match hir[outermost].kind {
+            FnKind::Decl if self.helpers.importer_may_start_early(self.file) => 0,
             FnKind::Decl => end_of_head,
             _ => end_of_head.max(hir[outermost].start),
         }))
@@ -1168,7 +1183,7 @@ pub(super) fn is_closed_bundle(
         return false;
     };
     finder.collect_exported_symbols();
-    finder.collect_candidates(helpers.has_functions(file));
+    finder.collect_candidates(helpers.has_functions(file) || helpers.imports_helpers(file));
     let end_of_head = finder.find_end_of_head();
     finder.read_mentions(end_of_head);
     finder.refuse_misfits();
@@ -1195,7 +1210,7 @@ fn find_in_file(
         return FileModules::default();
     };
     finder.collect_exported_symbols();
-    finder.collect_candidates(helpers.has_functions(file));
+    finder.collect_candidates(helpers.has_functions(file) || helpers.imports_helpers(file));
     let once_callbacks = finder.find_once_callbacks();
     if finder.candidates.is_empty() {
         return FileModules {
@@ -1454,7 +1469,8 @@ var __esmRethrows = (fn, res, err) => () => {
     fn holders_of(files: &[(&str, &str)], name: &str) -> Vec<String> {
         with_graph(files, |_, bind_input| {
             let files = bind_input.files;
-            let helpers = KnownHelpers::compute(files, &run_serially);
+            let mut helpers = KnownHelpers::compute(files, &run_serially);
+            helpers.follow_imports(files);
             let wrapped = compute(files, &helpers);
             let file = file_named(bind_input, name);
             let modules = wrapped.of_file(file).iter();
@@ -1676,6 +1692,40 @@ var require_a = __commonJS((exports) => { require_b(); });
         let imported_later =
             "import \"./other.cjs\";\nimport(\"./bundle.mjs\").then(bundle => bundle.run());";
         assert_eq!(holders(imported_later, leaf, ""), ["require_a"]);
+    }
+
+    #[test]
+    fn a_wrapper_is_followed_across_an_import() {
+        let runtime = format!("{BUN}export {{ __commonJS, __esm as once }};");
+        let holders = |chunk: &str, runtime: &str, leaf: &str| {
+            let files = [
+                ("main.mjs", "import \"./chunk.mjs\";"),
+                ("chunk.mjs", chunk),
+                ("runtime.mjs", runtime),
+                ("leaf.mjs", leaf),
+            ];
+            holders_of(&files, "chunk.mjs")
+        };
+        let chunk = "import { __commonJS, once } from \"./runtime.mjs\";\nimport \"./leaf.mjs\";
+var require_a = __commonJS((exports) => { exports.a = 1; });
+var require_b = __commonJS((exports) => { exports.b = require_a().a; });
+var init_c = once(() => {});
+init_c();
+require_a();
+export function run() { return require_b().b; }";
+        assert_eq!(
+            holders(chunk, &runtime, ""),
+            ["require_a", "require_b", "init_c"]
+        );
+        let on_a_cycle = "import { run } from \"./chunk.mjs\";\nrun();";
+        assert_eq!(
+            holders(chunk, &runtime, on_a_cycle),
+            ["require_a", "init_c"]
+        );
+        let runtime_on_a_cycle = format!("import \"./chunk.mjs\";\n{runtime}");
+        assert_eq!(holders(chunk, &runtime_on_a_cycle, ""), [""; 0]);
+        let stored_again = format!("{runtime}\n__commonJS = __esm = null;");
+        assert_eq!(holders(chunk, &stored_again, ""), [""; 0]);
     }
 
     #[test]

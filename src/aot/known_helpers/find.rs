@@ -207,6 +207,23 @@ fn is_call_that_runs_nothing(_: hir::CallId) -> bool {
     false
 }
 
+pub(super) fn exports_function_declaration(hir: &hir::File<'_>, bound: &Bound<'_>) -> bool {
+    hir.ids(hir.body)
+        .any(|statement| match hir[statement].kind {
+            StmtKind::Fn(function) => hir[function]
+                .flags
+                .intersects(Flags::EXPORT | Flags::DEFAULT),
+            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => hir[export]
+                .items
+                .iter()
+                .any(|item| match bound.exported_binding(item) {
+                    Binding::Symbol(symbol) => bound.binding_kind(symbol) == BindingKind::Function,
+                    Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+                }),
+            _ => false,
+        })
+}
+
 pub(super) fn find_global(path: &[&str]) -> Option<BuiltinId> {
     let (root, members) = path.split_first()?;
     let mut builtin = table::global(table::find_name(root.as_bytes())?)?;
@@ -662,23 +679,7 @@ impl<'a, 's> Finder<'a, 's> {
     }
 
     fn exports_function_declaration(&self) -> bool {
-        let (hir, bound) = (self.file.hir, self.file.bound);
-        hir.ids(hir.body)
-            .any(|statement| match hir[statement].kind {
-                StmtKind::Fn(function) => hir[function]
-                    .flags
-                    .intersects(Flags::EXPORT | Flags::DEFAULT),
-                StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => hir[export]
-                    .items
-                    .iter()
-                    .any(|item| match bound.exported_binding(item) {
-                        Binding::Symbol(symbol) => {
-                            bound.binding_kind(symbol) == BindingKind::Function
-                        }
-                        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-                    }),
-                _ => false,
-            })
+        exports_function_declaration(self.file.hir, self.file.bound)
     }
 
     fn is_defined_in_head(&self, symbol: SymbolId) -> bool {

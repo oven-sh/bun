@@ -2,7 +2,7 @@ use crate::builtins::RuntimeModule;
 use crate::modules::find_files_that_unknown_names_may_require;
 use bun_sema::components::strongly_connected_components;
 use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::program::{CodeAnswer, ComputedTargets, Files};
+use bun_sema::program::{CodeAnswer, ComputedTargets, FileId, Files};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Load {
@@ -39,6 +39,11 @@ fn imports_drain_microtasks(files: &Files<'_>) -> bool {
         }
         _ => false,
     })
+}
+
+pub(super) fn loads_nothing_ahead_of_its_body(files: &Files<'_>, file: FileId) -> bool {
+    let mut sites = files.analysis(file).import_sites.iter();
+    sites.all(|site| classify(site.kind, false) != Load::AheadOfTheBody)
 }
 
 pub(super) fn find_files_held_early(files: &Files<'_>) -> Vec<bool> {

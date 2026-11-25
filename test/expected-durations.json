@@ -7228,6 +7228,13 @@
     "windows": 5400,
     "windows-aarch64": 2700
   },
+  "bundler/compile-aot-decimal.test.ts": {
+    "default": 4700,
+    "asan": 26300,
+    "musl": 4000,
+    "windows": 15700,
+    "windows-aarch64": 12600
+  },
   "bundler/compile-aot-heap-snapshot.test.ts": {
     "default": 1000,
     "asan": 3800,

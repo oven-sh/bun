@@ -2793,6 +2793,44 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     expect(exitCode).toBe(0);
   });
 
+  // The onLoad answers on the program's event loop. A macro is waited for on the macro's, which runs nothing the
+  // program started, so the macro's module cannot wait for the program's load of shared.ts.
+  it.each([1, 2])(
+    "whose module imports what an async onLoad is still loading for the program, called in %d file(s)",
+    async callers => {
+      const users = Array.from({ length: callers }, (_, i) => `user${i}`);
+      const extra = {
+        "lib/dependency.ts": `export const one = 1;`,
+        "lib/shared.ts": `import { one } from "./dependency.ts"; export const N = 41 + one;`,
+        "lib/imports-shared.ts": `import { N } from "./shared.ts"; export function macro() { return N; }`,
+        ...Object.fromEntries(
+          users.map(user => [
+            `lib/${user}.ts`,
+            `import { macro } from "./imports-shared.ts" with { type: "macro" }; export default macro();`,
+          ]),
+        ),
+        "async-plugin.ts": `
+          Bun.plugin({
+            name: "async onLoad",
+            setup(build) {
+              build.onLoad({ filter: /[\\/]lib[\\/].*\.ts$/ }, async ({ path }) => ({ contents: await Bun.file(path).text(), loader: "ts" }));
+            },
+          });
+        `,
+        "entry.ts": `
+          import { N } from "./lib/shared.ts";
+          ${users.map(user => `import ${user} from "./lib/${user}.ts";`).join("\n")}
+          console.log([N, ${users}].join());
+        `,
+      };
+      expect(await run(extra, ["--preload", "./async-plugin.ts", "entry.ts"])).toEqual({
+        stdout: Array.from({ length: callers + 1 }, () => 42).join() + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   // Loading one link queues the next on another thread, just as another chain's macro starts running.
   it("in files that other threads transpile while a macro runs", async () => {
     const chains = Array.from({ length: 10 }, (_, chain) => chain);

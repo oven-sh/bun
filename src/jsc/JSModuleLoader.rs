@@ -14,6 +14,10 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         arg1: &BunString,
     ) -> *mut JSInternalPromise;
+    safe fn Bun__Macros__loadEntryPoint(
+        arg0: &JSGlobalObject,
+        arg1: &BunString,
+    ) -> *mut JSInternalPromise;
     safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
         arg0: &JSGlobalObject,
         arg1: &BunString,
@@ -38,6 +42,15 @@ impl JSModuleLoader {
             global_object,
             key,
         ))
+    }
+
+    /// [`Self::load_and_evaluate_module_ptr`] in the module graph of the global object's macros,
+    /// which has its own registry.
+    pub fn load_and_evaluate_macro_module_ptr(
+        global_object: &JSGlobalObject,
+        key: &BunString,
+    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
+        core::ptr::NonNull::new(Bun__Macros__loadEntryPoint(global_object, key))
     }
 
     /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]

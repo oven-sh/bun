@@ -35,6 +35,7 @@ namespace Bun {
 class InternalModuleRegistry;
 class HandleScopeImpl;
 class JSNextTickQueue;
+class JSModuleGraph;
 class Process;
 class SecureContextCache;
 class GCProfilerObserver;
@@ -420,6 +421,9 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_nodeModuleSourceMapOriginStructure)                   \
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
+                                                                                                             \
+    /* What the macros this thread's program runs are loaded into (Bun__Macros__loadEntryPoint). */          \
+    V(public, WriteBarrier<Bun::JSModuleGraph>, m_macroModuleGraph)                                          \
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \

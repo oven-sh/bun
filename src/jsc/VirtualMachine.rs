@@ -98,6 +98,8 @@ pub struct InitOptions {
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
+    /// The VM of a thread that transpiles and has no program: it is made to run macros.
+    pub runs_only_macros: bool,
     /// The arguments of the program.
     pub argv: &'static [Box<[u8]>],
     /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
@@ -124,6 +126,7 @@ impl Default for InitOptions {
             smol: false,
             eval_mode: false,
             is_main_thread: false,
+            runs_only_macros: false,
             argv: &[],
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
@@ -282,6 +285,8 @@ pub struct VirtualMachine {
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: Cell<bool>,
+    /// [`InitOptions::runs_only_macros`].
+    runs_only_macros: bool,
     pub(crate) is_from_devserver: bool,
     pub(crate) has_enabled_macro_mode: Cell<bool>,
 
@@ -3060,6 +3065,7 @@ impl VirtualMachine {
             macro_guard_depth: Cell::new(0),
             auto_killer: Default::default(),
             has_any_macro_remappings: Cell::new(false),
+            runs_only_macros: opts.runs_only_macros,
             is_from_devserver: false,
             has_enabled_macro_mode: Cell::new(false),
             is_in_preload: Cell::new(false),
@@ -5739,8 +5745,15 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> Option<*mut JSInternalPromise> {
         let path_str = bun_core::StringView::from_bytes(entry_path);
-        let promise =
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global(), &path_str)?.as_ptr();
+        // The wait below runs the macro loop, which completes nothing the program started. So
+        // beside a program the macro's modules get a registry of their own: in the program's,
+        // an import would join a load or an evaluation that only the program's loop can finish.
+        let promise = if self.runs_only_macros {
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global(), &path_str)
+        } else {
+            jsc::JSModuleLoader::load_and_evaluate_macro_module_ptr(self.global(), &path_str)
+        }?
+        .as_ptr();
         let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }

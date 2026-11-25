@@ -176,7 +176,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsModuleGraphRequireMainGetter, (JSC::JSGlobalObject * 
 
 static void putModuleGraphRequireMain(VM& vm, JSFunction* requireFunction, JSCommonJSModule* requirer)
 {
-    if (requirer->moduleGraph())
+    if (auto* graph = requirer->moduleGraph(); graph && !graph->runsInRealmContext())
         requireFunction->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsModuleGraphRequireMainGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
 }
 

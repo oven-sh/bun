@@ -594,6 +594,67 @@ describe("event loop routing around macros", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The macro's modules are loaded while "with-macro.ts" is transpiled, and waited for on the macro loop. What
+  // the program's evaluation of "shared.ts" awaits can only complete on the regular loop, so the macro cannot
+  // wait for that evaluation: it has a "shared.ts" of its own.
+  test.concurrent.each([
+    ["setImmediate()", `await new Promise(resolve => setImmediate(resolve));`],
+    ["a file read", `await Bun.file(import.meta.path).text();`],
+  ])("a macro imports a module that the program is evaluating, suspended on %s", async (_name, suspend) => {
+    const { lines, stderr, exitCode } = await run({
+      "shared.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\n${suspend}\nexport const N = 42;\n`,
+      "helper.cjs": `exports.load = () => import("./shared.ts");\n`,
+      "m.ts": [
+        `import { N } from "./shared.ts";`,
+        `import helper from "./helper.cjs";`,
+        `export function fromImport() {\n  return N;\n}`,
+        `export async function fromCommonJS() {\n  return (await helper.load()).N;\n}`,
+        `export async function fromImportCall() {\n  return (await import("./shared.ts")).N;\n}`,
+        ``,
+      ].join("\n"),
+      "with-macro.ts": [
+        `import { fromImport, fromCommonJS, fromImportCall } from "./m.ts" with { type: "macro" };`,
+        `export const answers = [fromImport(), fromCommonJS(), fromImportCall()];`,
+        ``,
+      ].join("\n"),
+      "index.ts": [
+        `const shared = import("./shared.ts");`,
+        `while (!globalThis.evaluations) await new Promise(resolve => setImmediate(resolve));`,
+        `const { answers } = require("./with-macro.ts");`,
+        `console.log((await shared).N, answers.join(), globalThis.evaluations);`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["42 42,42,42 2"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A module that the program has finished evaluating has nothing left to wait for: the macro gets that module.
+  // One that the macro loads first is the macro's own, transpiled for a macro, and the program evaluates its own.
+  test.concurrent.each([
+    [
+      "the program evaluated first",
+      1,
+      `const { N } = await import("./shared.ts");\nconst { answer } = require("./with-macro.ts");`,
+    ],
+    [
+      "the macro loads first",
+      2,
+      `const { answer } = require("./with-macro.ts");\nconst { N } = await import("./shared.ts");`,
+    ],
+  ])(
+    "a module that a macro and the program both import, which %s, is evaluated %d time(s)",
+    async (_name, evaluations, load) => {
+      const { lines, stderr, exitCode } = await run({
+        "shared.ts": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nexport const N = 42;\n`,
+        "m.ts": `import { N } from "./shared.ts";\nexport function value() {\n  return N;\n}\n`,
+        "with-macro.ts": `import { value } from "./m.ts" with { type: "macro" };\nexport const answer = value();\n`,
+        "index.ts": `${load}\nconsole.log(N, answer, globalThis.evaluations);\n`,
+      });
+      expect({ lines, stderr }).toEqual({ lines: [`42 42 ${evaluations}`], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // If a program callback did run mid-macro, work it started there would be routed to the macro loop and,
   // finishing after the macro returned, would need the regular loop to adopt it. Either way the chain
   // must complete and the process must exit.

@@ -17,6 +17,7 @@
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
@@ -602,10 +603,18 @@ JSModuleGraph* JSModuleGraph::create(VM& vm, Zig::GlobalObject* globalObject, St
     return cell;
 }
 
+JSModuleGraph* JSModuleGraph::createInRealmContext(VM& vm, Zig::GlobalObject* globalObject, Structure* structure, JSModuleLoader* loader, unsigned overlayShape)
+{
+    auto* cell = new (NotNull, allocateCell<JSModuleGraph>(vm)) JSModuleGraph(vm, structure, Ref { *globalObject->scriptExecutionContext() }, loader, overlayShape, nullptr, nullptr);
+    cell->finishCreation(vm, globalObject);
+    return cell;
+}
+
 void JSModuleGraph::destroy(JSCell* cell)
 {
     auto* graph = static_cast<JSModuleGraph*>(cell);
-    graph->m_context->moduleGraphDestroyed();
+    if (!graph->runsInRealmContext())
+        graph->m_context->moduleGraphDestroyed();
     graph->JSModuleGraph::~JSModuleGraph();
 }
 
@@ -615,6 +624,8 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     ASSERT(inherits(info()));
     m_requireMap.set(vm, this, JSMap::create(vm, globalObject->mapStructure()));
     setOverlaySlot(vm, overlay(), moduleGraphSlotName(vm), this);
+    if (runsInRealmContext())
+        return;
     m_context->setModuleGraph(this);
     // The graph's context travels with the async context: the top-level code of the graph's
     // modules runs in it however their evaluation is reached, and run() enters it.
@@ -715,6 +726,7 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!runsInRealmContext());
     if (!disposed())
         m_loader->clearAll();
     // Everything the graph's script opened goes: servers, sockets, timers, in-flight requests,
@@ -737,6 +749,45 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
     graph->dispose(globalObject);
     // (Emptying its require map can run a getter; the graph being disposed has nobody to tell.)
     (void)scope.tryClearException();
+}
+
+// ─── Macros ───────────────────────────────────────────────────────────────────
+//
+// A macro that the program's own thread runs is loaded while a module of the program is being
+// transpiled, and is waited for on the macro event loop, which runs nothing the program started.
+// Loaded into the program's registry, its imports would join whatever load or evaluation the
+// program has in flight for the same module, and that can only finish on the program's loop.
+
+// VirtualMachine::_load_macro_entry_point: loads and evaluates `key` in the macros' graph.
+extern "C" JSPromise* Bun__Macros__loadEntryPoint(Zig::GlobalObject* globalObject, const BunString* key)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSModuleGraph* graph = globalObject->m_macroModuleGraph.get();
+    if (!graph) {
+        unsigned overlayShape = 0;
+        JSModuleLoader* loader = createModuleGraphLoader(globalObject, nullptr, overlayShape);
+        scope.assertNoException();
+        graph = JSModuleGraph::createInRealmContext(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape);
+        globalObject->m_macroModuleGraph.set(vm, globalObject, graph);
+    }
+    // JSC::loadAndEvaluateModule(), for this loader.
+    Identifier resolved = graph->loader()->resolve(globalObject, Identifier::fromString(vm, key->toWTFString()), {}, nullptr, /* useImportMap */ false);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
+    JSPromise* promise = graph->loader()->loadModule(globalObject, resolved, nullptr, nullptr, { ModuleLoadFlag::Evaluate });
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
+}
+
+AbstractModuleRecord* evaluatedProgramModuleForMacros(Zig::GlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type)
+{
+    auto* entry = globalObject->moduleLoader()->getRegisteredMayBeNull(key, type);
+    auto* record = entry ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+    // One that is still loading or evaluating is what the macro must not wait for.
+    if (!record || record->status() != CyclicModuleRecord::Status::Evaluated || record->evaluationError())
+        return nullptr;
+    return record;
 }
 
 // ─── bun test --isolate=modules ───────────────────────────────────────────────

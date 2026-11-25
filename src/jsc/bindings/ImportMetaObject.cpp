@@ -649,7 +649,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (Bun::JSModuleGraph* graph = thisObject->moduleGraph()) {
+    if (Bun::JSModuleGraph* graph = thisObject->moduleGraph(); graph && !graph->runsInRealmContext()) {
         JSValue mainPath = graph->mainPath();
         if (!mainPath.isString())
             return JSValue::encode(jsBoolean(false));

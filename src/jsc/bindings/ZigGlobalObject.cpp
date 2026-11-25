@@ -4484,7 +4484,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+    Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
+    if (Bun::hasCompiledModules() && !graph) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
         JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(referrer));
@@ -4492,6 +4493,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
+    }
+
+    if (graph && graph == static_cast<Zig::GlobalObject*>(globalObject)->m_macroModuleGraph.get()) [[unlikely]] {
+        // makeModule() takes a record for the module itself.
+        if (auto* shared = Bun::evaluatedProgramModuleForMacros(static_cast<Zig::GlobalObject*>(globalObject), JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript))
+            return resolvedInternalPromise(globalObject, shared);
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
@@ -4558,7 +4565,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // pool; route to the synchronous fetch instead so the returned promise is
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
-    Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
     if (vm.synchronousModuleQueue()) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),

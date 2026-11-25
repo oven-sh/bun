@@ -39,6 +39,9 @@ public:
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
     // `maker`: the graph in whose context this one is being made (null: the host's).
     static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
+    // A registry and require cache of its own, and nothing else: its script runs in the realm's context
+    // (Zig::GlobalObject::m_macroModuleGraph). Never disposed.
+    static JSModuleGraph* createInRealmContext(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -57,6 +60,8 @@ public:
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); }
     bool disposed() const { return m_context->isStopped(); }
+    // Made by createInRealmContext(): part of the realm's program, which is where its main module is.
+    bool runsInRealmContext() const { return !m_context->isForModuleGraph(); }
     // The context that owns what the graph's script opens.
     WebCore::ScriptExecutionContext& context() const { return m_context.get(); }
 
@@ -150,6 +155,11 @@ JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSMo
 // dispose() of the graph `context` was made for (its context is stopped with it); just the stop
 // if the graph has been collected.
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
+
+// ── Macros ───────────────────────────────────────────────────────────────────────────
+// For a fetch by Zig::GlobalObject::m_macroModuleGraph: the program's record of `key` if the
+// program finished evaluating it, which the macros then share.
+JSC::AbstractModuleRecord* evaluatedProgramModuleForMacros(Zig::GlobalObject*, const JSC::Identifier& key, JSC::ScriptFetchParameters::Type);
 
 // ── bun test --isolate=modules ───────────────────────────────────────────────────────
 // What the runner and module mocks use to load modules: the running test file's graph if there is one, otherwise the global object.

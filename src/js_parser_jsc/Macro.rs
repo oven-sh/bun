@@ -262,6 +262,7 @@ fn init_macro_vm(
         transform_options,
         env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
         is_main_thread: false,
+        runs_only_macros: true,
         ..Default::default()
     };
     let vm = VirtualMachine::init(log, options)?;

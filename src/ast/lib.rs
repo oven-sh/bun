@@ -517,7 +517,7 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
-/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
+/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it if it is valid UTF-8.
 pub const MAX_WHOLE_LINE_LEN: usize = 1000;
 
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.

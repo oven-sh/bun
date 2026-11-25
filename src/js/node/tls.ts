@@ -401,6 +401,9 @@ function checkServerIdentity(hostname, cert) {
     const ip = canonicalizeIP(hostname);
     valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
+  } else if (RegExpPrototypeExec.$call(/^(?:(?:\d+|0x[\da-f]*)(?:\.|$)){1,4}$/i, hostnameASCIIWithoutFQDN) !== null) {
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/tls.js#L461-L464. A name that only ends in a number ("db.1") stays a name, unlike in Node.js.
+    reason = "Host is a non-canonical IP address";
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {

@@ -688,8 +688,7 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["foo-bar.example.com.", wildcardSan, undefined],
     ])("%j vs %j", expectReason);
 
-    // A host is an IP address only as typed. UTS #46 maps this one to
-    // "127.0.0.1", and Node still matches it as a DNS name.
+    // A host is an IP address only as typed. UTS #46 maps this one to "127.0.0.1".
     it("a host that maps to an IPv4 literal does not match an IP SAN", async () => {
       const m = makeCert("x", [["ip", "127.0.0.1"]]);
       const host = "\uff11\uff12\uff17.0.0.1";
@@ -750,9 +749,26 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["ip", "1.2.3.4"],
       ["ip", "1.2.3.0"],
       ["ip", "1.2.3.4.5"],
+      ...["*.0.0.1", "127.1", "0x7f000001", "db.1", "1.2.3.test", "0xg.1", "1.2.3.4.5"].map((name): San => [
+        "dns",
+        name,
+      ]),
     ]);
     it.each([
       ["127.0.0.1", true],
+      ["db.1", true],
+      ["1.2.3.test", true],
+      ["0xg.1", true],
+      ["1.2.3.4.5", true],
+      // As of v26.12.1.
+      ["0177.0.0.1", false],
+      ["08.0.0.1", false],
+      ["0x.0.0.1", false],
+      ["0X7F000001", false],
+      ["127.1.", false],
+      ["127.1..", false],
+      ["\uff11\uff12\uff17.0.0.1", false],
+      ["127\u30020\u30020\u30021\u3002", false],
       ["127.1", false],
       ["10", false],
       ["0x7f000001", false],
@@ -919,8 +935,8 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
 
     // RFC 6066 takes no IP address as the server name in SNI. fetch asked
     // ares_inet_pton, which does not read a zoned host as an address and reads
-    // "127.1" as one. A host is sent as SNI when the matcher takes it as a DNS
-    // name, as in Node.js.
+    // "127.1" as one. A host is sent as SNI unless net.isIP takes it, as in
+    // Node.js.
     it("fetch sends SNI for a DNS name only", async () => {
       const names: string[] = [];
       const server = tls.createServer(
@@ -1063,9 +1079,7 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
 
   // A host is an IP address only in the strict form that net.isIP takes. The
   // native matcher asked ares_inet_pton, which also reads "127.1" (as
-  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". Such a
-  // host is a name: it matches no iPAddress, and it matches a dNSName or a CN
-  // with the same text, as in tls.checkServerIdentity().
+  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits".
   const shorthandRows: Array<[host: string, cn: string, sans: San[], match: boolean]> = [
     ["127.0.0.1", "x", [["ip", "127.0.0.1"]], true],
     ["0x7f000001", "x", [["ip", "127.0.0.1"]], false],
@@ -1076,13 +1090,14 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ["127.1", "x", [["ip", "127.0.0.1"]], false],
     ["10", "x", [["ip", "10.0.0.0"]], false],
     ["1.2.3", "x", [["ip", "1.2.3.0"]], false],
-    ["127.1", "x", [["dns", "127.1"]], true],
-    ["10", "x", [["dns", "10"]], true],
-    ["0x7f000001", "x", [["dns", "0x7f000001"]], true],
-    ["127.1", "127.1", [], true],
-    ["127.1", "127.1", [["ip", "127.0.0.1"]], true],
+    // As of v26.12.1.
+    ["127.1", "x", [["dns", "127.1"]], false],
+    ["10", "x", [["dns", "10"]], false],
+    ["0x7f000001", "x", [["dns", "0x7f000001"]], false],
+    ["127.1", "127.1", [], false],
+    ["127.1", "127.1", [["ip", "127.0.0.1"]], false],
   ];
-  describe.concurrent("a host in IP shorthand is a name", () => {
+  describe.concurrent("a host in IP shorthand", () => {
     it.each(shorthandRows)("%j vs CN %j, SAN %j", async (host, cn, sans, match) => {
       const m = makeCert(cn, sans);
       expect({ csi: csi(m.x509, host), fetch: await fetchOk(m, host) }).toEqual({

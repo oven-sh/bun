@@ -68,8 +68,7 @@ pub(crate) struct Version {
     pub(crate) tag: Box<[u8]>,
     pub(crate) size: u32,
     pub(crate) digest: Integrity,
-    /// The label of the release asset. The canary publish writes
-    /// `<asset> (<commit> <size of the executable> <its CRC-32>)` there.
+    /// The label of the release asset, which `label_names_running_executable` reads.
     pub(crate) label: Box<[u8]>,
 }
 
@@ -209,8 +208,7 @@ impl UpgradeCommand {
         "repos/Jarred-Sumner/bun-releases-for-updater/releases/latest";
     const CANARY_RELEASE_PATH: &'static str = "repos/oven-sh/bun/releases/tags/canary";
 
-    /// A `silent` lookup is one the caller can do without: it prints no error, never exits, and
-    /// gives up after `SILENT_LOOKUP_DEADLINE`.
+    /// A `silent` lookup prints no error, never exits, and gives up after `SILENT_LOOKUP_DEADLINE`.
     pub(crate) fn get_latest_version(
         env_loader: &mut DotEnv::Loader,
         mut refresher: Option<&mut Progress::Progress>,
@@ -516,16 +514,14 @@ impl UpgradeCommand {
 
     const SILENT_LOOKUP_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5);
 
-    /// What the GitHub API says of the canary release, for a build whose executable the canary
-    /// publish can have labelled. A build that the publish cannot have made, and `bun-profile`,
-    /// which is not the executable of the asset that a run without `--profile` asks for, make no
-    /// request. The caller downloads the asset without an answer, so every failure is a `None`.
+    /// The canary release, asked for only by a build whose executable its publish can have labelled.
     fn canary_release_of_published_build(
         env_loader: &mut DotEnv::Loader,
         use_profile: bool,
     ) -> Option<Version> {
         const IS_PUBLISHED_BUILD: bool = Environment::IS_CANARY && is_commit(Environment::GIT_SHA);
 
+        // `bun-profile` is not the executable of the asset that a run without `--profile` asks for.
         if !IS_PUBLISHED_BUILD || use_profile {
             return None;
         }
@@ -541,15 +537,14 @@ impl UpgradeCommand {
         );
         refresher.end();
         refresher.refresh();
+        // The caller downloads the asset without an answer.
         version
             .ok()
             .flatten()
             .filter(|version| &*version.tag == b"canary")
     }
 
-    /// Whether the label of the asset names the commit of this build, and the size and the
-    /// CRC-32 of the executable that runs. `getCanaryLabel` in .buildkite/scripts/upload-release.ts
-    /// writes the label, from the same commit as this build has.
+    /// Whether `label` is the `<asset> (<commit> <size> <crc32>)` that `getCanaryLabel` writes for this executable.
     fn label_names_running_executable(label: &[u8]) -> bool {
         const LABEL_PREFIX: &str =
             const_format::concatcp!(Version::ZIP_FILENAME, " (", Environment::GIT_SHA, " ");

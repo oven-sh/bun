@@ -535,8 +535,7 @@ impl<'a> AsyncHTTP<'a> {
         Ok((request, result))
     }
 
-    /// Like `send_sync`, but a request without a result after `timeout` is aborted, and fails as an aborted one does.
-    /// The time covers the whole request, from the name lookup to the last byte of the body.
+    /// Like `send_sync`, but aborts a request with no result `timeout` after the send, connect and body included.
     pub fn send_sync_with_deadline(
         mut self: Box<Self>,
         response_buffer: &mut MutableString,

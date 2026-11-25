@@ -1559,8 +1559,11 @@ mod _async_tasks {
         type Shared = ();
         type Resume = Infallible;
         const OUTLIVES_SCRIPT: bool = false;
-        const SHOULD_RUN_DURING_TEARDOWN: bool =
-            cfg!(windows) && (Self::IS_WRITE || matches!(F, NodeFSFunctionEnum::Close));
+        const SHOULD_RUN_DURING_TEARDOWN: bool = {
+            use NodeFSFunctionEnum::{Close, Fchmod, Fdatasync, Fsync, Ftruncate, Futimes};
+            let changes_file = matches!(F, Fchmod | Fdatasync | Fsync | Ftruncate | Futimes);
+            cfg!(windows) && (Self::IS_WRITE || changes_file || matches!(F, Close))
+        };
         const IS_FILE_IO: bool = {
             use NodeFSFunctionEnum::*;
             matches!(F, Close | Open | Read | Readv | Write | Writev)
@@ -1638,15 +1641,22 @@ mod _async_tasks {
             matches!(F, Read | ReadFile | Readv)
         };
 
+        /// The other calls wait for I/O that is in flight on the handle.
+        #[cfg(windows)]
+        const IS_IMMEDIATE_ON_DEVICE: bool = {
+            use NodeFSFunctionEnum::{Close, Fchown, Fstat};
+            matches!(F, Close | Fchown | Fstat)
+        };
+
         fn run_operation(&self) -> Maybe<R> {
             let dispatch =
                 || NodeFS::dispatch::<R, A, F>(&mut NodeFS::default(), &self.args, Flavor::Async);
             #[cfg(windows)]
             if let Some(cancel_token) = &self.cancel_token {
-                let tag = if Self::IS_WRITE {
-                    sys::Tag::write
-                } else {
+                let tag = if Self::IS_READ {
                     sys::Tag::read
+                } else {
+                    sys::Tag::write
                 };
                 return cancel_token
                     .run(dispatch)
@@ -1700,8 +1710,8 @@ mod _async_tasks {
             let mut cancel_tokens = CancelTokens::default();
             if let Some(pinned_fd) = windows::pin_fd_generation(*fd) {
                 *fd = pinned_fd;
-            } else if !Self::IS_READ && !Self::IS_WRITE {
-                // Not ordered: in-flight device reads and writes retain the file themselves.
+            } else if Self::IS_IMMEDIATE_ON_DEVICE {
+                // Not ordered: in-flight device calls retain the file themselves.
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             } else {
                 let cancel_token = self.cancel_token.insert(CancelToken::default());

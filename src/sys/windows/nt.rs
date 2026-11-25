@@ -241,6 +241,7 @@ pub(super) fn query_directory_entry<T: NtInformation<FILE_INFORMATION_CLASS>>(
         });
         match status {
             NTSTATUS::NO_MORE_FILES => NTSTATUS::NO_SUCH_FILE,
+            NTSTATUS::BUFFER_OVERFLOW => NTSTATUS::NAME_TOO_LONG,
             status => status,
         }
     })

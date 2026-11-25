@@ -464,7 +464,8 @@ pub struct FILE_ID_FULL_DIR_INFORMATION {
     pub FileNameLength: ULONG,
     pub EaSize: ULONG,
     pub FileId: LARGE_INTEGER,
-    pub FileName: [WCHAR; 1],
+    /// Fits the longest name.
+    pub FileName: [WCHAR; 256],
 }
 
 /// `FILE_FS_SIZE_INFORMATION` (`ntddk.h`).
@@ -507,7 +508,7 @@ const _: () = {
     assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, FileNameLength) == 96);
     assert!(core::mem::size_of::<FILE_STAT_BASIC_INFORMATION>() == 104);
     assert!(core::mem::offset_of!(FILE_STAT_BASIC_INFORMATION, VolumeSerialNumber) == 80);
-    assert!(core::mem::size_of::<FILE_ID_FULL_DIR_INFORMATION>() == 88);
+    assert!(core::mem::size_of::<FILE_ID_FULL_DIR_INFORMATION>() == 592);
     assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId) == 72);
     assert!(core::mem::size_of::<FILE_FS_SIZE_INFORMATION>() == 24);
     assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
@@ -1385,6 +1386,7 @@ impl Win32Error {
     pub const DELETE_PENDING: Win32Error = Win32Error(303);
     pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
     pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+    pub const REQUEST_ABORTED: Win32Error = Win32Error(1235);
     pub const IO_PENDING: Win32Error = Win32Error(997);
     pub const NOACCESS: Win32Error = Win32Error(998);
     pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
@@ -1590,6 +1592,25 @@ unsafe extern "system" {
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
+
+    pub fn CopyFileExW(
+        lpExistingFileName: LPCWSTR,
+        lpNewFileName: LPCWSTR,
+        lpProgressRoutine: unsafe extern "system" fn(
+            LARGE_INTEGER,
+            LARGE_INTEGER,
+            LARGE_INTEGER,
+            LARGE_INTEGER,
+            DWORD,
+            DWORD,
+            HANDLE,
+            HANDLE,
+            *const c_void,
+        ) -> DWORD,
+        lpData: *const c_void,
+        pbCancel: *mut BOOL,
+        dwCopyFlags: DWORD,
+    ) -> BOOL;
 
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 

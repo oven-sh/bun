@@ -62,7 +62,7 @@ impl IoOrder {
 pub(crate) struct OrderGuard {
     queue: Arc<JobQueue>,
     schedule_next: fn(UnscheduledJob),
-    _pending_write: Option<PendingWrite>,
+    pending_write: Option<PendingWrite>,
 }
 
 impl OrderGuard {
@@ -78,7 +78,7 @@ impl OrderGuard {
         let job = create_job(OrderGuard {
             queue: Arc::clone(&queue),
             schedule_next: UnscheduledJob::schedule_as_continuation,
-            _pending_write: is_write.then(|| cx.vm().uws_loop().port().add_pending_write()),
+            pending_write: is_write.then(|| cx.vm().uws_loop().port().add_pending_write()),
         });
         let mut waiting = queue.waiting.lock();
         if let Some(jobs) = &mut *waiting {
@@ -90,8 +90,9 @@ impl OrderGuard {
     }
 
     /// For a task that is about to block: the next job does not wait for it to return.
-    pub(crate) fn release_early(mut self) {
+    pub(crate) fn release_early(mut self) -> Option<PendingWrite> {
         self.schedule_next = UnscheduledJob::schedule;
+        self.pending_write.take()
     }
 }
 

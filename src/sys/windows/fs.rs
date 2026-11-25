@@ -1,6 +1,8 @@
 //! File system calls that report the same errors as Node.js. Paths are Win32 paths.
 
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
+use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::os::windows::io::{AsRawHandle as _, IntoRawHandle as _, OwnedHandle};
 
@@ -618,6 +620,45 @@ pub fn fstat(fd: Fd) -> Maybe<Stat> {
             st_ino: handle.addr() as u64,
             ..Stat::new_device(mode, device_type)
         })
+    })
+}
+
+/// `CopyFileW` that removes `dest` and fails with `OPERATION_ABORTED` if `source` is not `expected`.
+pub fn copy_expected_file(source: &WStr, dest: &WStr, expected: &Stat) -> Result<(), Win32Error> {
+    unsafe extern "system" fn check_source(
+        _total_size: i64,
+        _total_transferred: i64,
+        _stream_size: i64,
+        _stream_transferred: i64,
+        _stream_number: u32,
+        _reason: u32,
+        source: HANDLE,
+        _dest: HANDLE,
+        expected: *const c_void,
+    ) -> u32 {
+        const PROGRESS_CANCEL: u32 = 1;
+        const PROGRESS_QUIET: u32 = 3;
+        // SAFETY: the pointer passed to `CopyFileExW` below, which has not returned.
+        let expected = unsafe { &*expected.cast::<Stat>() };
+        match stat_handle(source, FollowSymlinks::Yes) {
+            Ok(stat) if stat.is_same_file(expected) => PROGRESS_QUIET,
+            _ => PROGRESS_CANCEL,
+        }
+    }
+    // SAFETY: both paths are NUL-terminated, and `expected` outlives the call.
+    let result = check(unsafe {
+        w::CopyFileExW(
+            super::path_ptr(source)?,
+            super::path_ptr(dest)?,
+            check_source,
+            ptr::from_ref(expected).cast(),
+            ptr::null_mut(),
+            0,
+        )
+    });
+    result.map_err(|err| match err {
+        Win32Error::REQUEST_ABORTED => Win32Error::OPERATION_ABORTED,
+        err => err,
     })
 }
 

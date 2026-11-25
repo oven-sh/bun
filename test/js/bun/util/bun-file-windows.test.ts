@@ -45,6 +45,7 @@ const { symbols: kernel32 } = isWindows
       CreatePipe: { args: ["ptr", "ptr", "ptr", "u32"], returns: "i32" },
       CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
       CloseHandle: { args: ["i64"], returns: "i32" },
+      WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
     })
   : ({ symbols: {} } as any);
 
@@ -56,7 +57,7 @@ function createPipe() {
     .fd as number;
   const openFds = new Set([readFd, writeFd]);
   const close = (fd: number) => openFds.delete(fd) && closeSync(fd);
-  return { readFd, writeFd, close, [Symbol.dispose]: () => [...openFds].forEach(close) };
+  return { readFd, readHandle: handles[0], writeFd, close, [Symbol.dispose]: () => [...openFds].forEach(close) };
 }
 
 function createPattern(size: number) {
@@ -223,6 +224,7 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
     ["link", "path"],
     ["path", "r"],
     ["link", "r"],
+    ["path", "r+"],
     ["r+", "path"],
     ["a", "path"],
     ["a", "r"],
@@ -251,6 +253,23 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
     expect(await Bun.write(Bun.file(join(String(dir), "longer")).slice(0, 4), Bun.file(source.fd))).toBe(4);
     expect(fs.readFileSync(join(String(dir), "longer"), "utf8")).toBe("0123");
     expect(readThreeBytes(source.fd)).toBe("345");
+  });
+
+  test.each(["r", "r+", "a"])("fd (%s) to path preserves mtime and the source mode", async flags => {
+    using dir = tempDir("bun-copy-fd-metadata", { source: "x" });
+    using source = openFile(join(String(dir), "source"), flags);
+    fs.utimesSync(join(String(dir), "source"), 1000, 1000);
+    fs.chmodSync(join(String(dir), "source"), 0o444);
+    expect(await Bun.write(join(String(dir), "copy"), Bun.file(source.fd))).toBe(1);
+    expect(fs.statSync(join(String(dir), "copy"))).toMatchObject({ mtimeMs: 1_000_000, mode: 0o100444 });
+  });
+
+  test("fd to a sliced path copies the slice length from a read-only file", async () => {
+    using dir = tempDir("bun-copy-fd-slice", { source: "0123456789" });
+    fs.chmodSync(join(String(dir), "source"), 0o444);
+    using source = openFile(join(String(dir), "source"), "r");
+    expect(await Bun.write(Bun.file(join(String(dir), "copy")).slice(0, 4), Bun.file(source.fd))).toBe(4);
+    expect(fs.readFileSync(join(String(dir), "copy"), "utf8")).toBe("0123");
   });
 
   test("fd to path applies the mode option", async () => {
@@ -362,9 +381,9 @@ describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
       invalidSourceFd: { code: "EBADF", syscall: "fstat" },
       invalidDestinationFd: { code: "EBADF", syscall: "fstat" },
       fromDirectory: { code: "EISDIR", syscall: "read" },
-      toDirectory: { code: "EISDIR", syscall: "open", path: tempPath("subdir") },
+      toDirectory: { code: "ENOENT", syscall: "copyfile", path: tempPath("subdir") },
       pipeToDirectory: { code: "EISDIR", syscall: "open", path: tempPath("subdir") },
-      missingParent: { code: "ENOENT", syscall: "open", path: tempPath("a", "b") },
+      missingParent: { code: "ENOENT", syscall: "copyfile", path: tempPath("a", "b") },
       missingSource: { code: "ENOENT", syscall: "open", path: tempPath("missing") },
       destination: "old",
     });
@@ -445,6 +464,18 @@ describe.skipIf(!isWindows)("unawaited Bun.write() calls are applied in order", 
     expect(results).toMatchObject([{ code: "ENOENT" }, { code: "ENOENT" }, { resolved: 1 }]);
   });
 
+  test.each(["bytes", "file"])("except to a named pipe path, where each call connects (%s)", async kind => {
+    using dir = tempDir("bun-write-order-named-pipe", { source: createPattern(1 << 20) });
+    const data = kind === "file" ? Bun.file(join(String(dir), "source")) : createPattern(1 << 20);
+    const pipePath = `\\\\.\\pipe\\bun-write-${crypto.randomUUID()}`;
+    const peers: net.Socket[] = [];
+    await using server = net.createServer({ pauseOnConnect: true }, peer => {
+      if (peers.push(peer) === 2) for (const socket of peers) socket.resume();
+    });
+    await once(server.listen(pipePath), "listening");
+    expect(await Promise.all([Bun.write(pipePath, data), Bun.write(pipePath, data)])).toEqual([1 << 20, 1 << 20]);
+  });
+
   test("a copy waiting for input does not block the next write", async () => {
     using input = createPipe();
     using output = createPipe();
@@ -508,6 +539,34 @@ describe.skipIf(!isWindows)("unawaited node:fs calls run in order", () => {
       text: chunks.join(""),
       truncatedText: "0 ",
     });
+  });
+
+  test("calls that wait for a pipe read do not hold up files", async () => {
+    using pipe = createPipe();
+    const read = promisify(fs.read)(pipe.readFd, Buffer.alloc(1), 0, 1, null);
+    // The handle is not signaled while a request is in flight.
+    while (kernel32.WaitForSingleObject(pipe.readHandle, 0) === 0) await Bun.sleep(1);
+    const calls = Array.from({ length: 8 }, () => captureError(promisify(fs.futimes)(pipe.readFd, 1, 1)));
+    await (await open(import.meta.path)).close();
+    fs.writeSync(pipe.writeFd, "x");
+    await Promise.all([read, ...calls]);
+  });
+
+  test("a Worker that exits completes queued ftruncate, futimes and fchmod calls", async () => {
+    using dir = tempDir("fs-order-worker-exit", {});
+    const path = join(String(dir), "file");
+    const worker = new Worker(
+      `const fs = require("fs");
+       const fd = fs.openSync(require("worker_threads").workerData, "w");
+       for (let size = 1; size <= 1000; size++) fs.ftruncate(fd, size, () => {});
+       fs.futimes(fd, 5, 5, () => {});
+       fs.fchmod(fd, 0o444, () => {});
+       fs.close(fd, () => {});
+       process.exit(0);`,
+      { eval: true, workerData: path },
+    );
+    await once(worker, "exit");
+    expect(fs.statSync(path)).toMatchObject({ size: 1000, mtimeMs: 5000, mode: 0o100444 });
   });
 
   test("errors report the fd", async () => {
@@ -577,6 +636,25 @@ describe.concurrent("unawaited writes complete before the process exits", () => 
       expect(await run(`${call}; process.exit(7);`, stdoutKind)).toEqual({ stdout: "a", file: undefined, exitCode: 7 });
     });
   });
+
+  test.skipIf(!isWindows).each(["Buffer.alloc(1 << 20)", `Bun.file("source")`])(
+    "Bun.write(named pipe path, %s), then process.exit()",
+    async data => {
+      using dir = tempDir("bun-write-exit-named-pipe", { source: Buffer.alloc(1 << 20) });
+      const pipePath = `\\\\.\\pipe\\bun-write-${crypto.randomUUID()}`;
+      await using server = net.createServer();
+      await once(server.listen(pipePath), "listening");
+      const connection = once(server, "connection");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `Bun.write(${JSON.stringify(pipePath)}, ${data}); process.exit(7);`],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+      });
+      expect(Buffer.concat(await Array.fromAsync((await connection)[0])).length).toBe(1 << 20);
+      expect(await proc.exited).toBe(7);
+    },
+  );
 
   test.skipIf(!isWindows).each([
     [`Bun.write(1, bytes)`, undefined],

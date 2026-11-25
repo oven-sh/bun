@@ -124,6 +124,11 @@ impl JobFile {
         Ok(self.kind()? != FileKind::File)
     }
 
+    /// Each open of a named pipe is a connection of its own.
+    pub(super) fn is_own_connection(&self) -> bool {
+        !self.is_borrowed() && matches!(self.kind(), Ok(FileKind::NamedPipe))
+    }
+
     pub(super) fn write_all(
         &self,
         mut bytes: &[u8],

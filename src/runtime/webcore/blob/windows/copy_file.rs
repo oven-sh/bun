@@ -6,7 +6,7 @@ use bun_core::{ZStr, strings};
 use bun_jsc::job::{CancelTokens, OwnedJob, Running};
 use bun_jsc::{JSPromiseStrong, JSValue, Job, JsResult, JsThread, SystemError};
 use bun_ptr::RefPtr;
-use bun_sys::windows::{Win32Error, named_pipe};
+use bun_sys::windows::{self as w, Win32Error, named_pipe};
 use bun_sys::windows_format::wtf16;
 use bun_sys::{self as sys, E, Mode, O, Tag, Win32ErrorExt as _};
 
@@ -49,12 +49,15 @@ impl OwnedJob for CopyFile {
             transfer.as_ref().map_or((false, false), |transfer| {
                 (transfer.source_can_block, transfer.destination_can_block)
             });
-        // Other writes must not wait for a source that may never reach EOF.
-        if let Some(order_guard) = order_guard.take_if(|_| source_can_block) {
-            order_guard.release_early();
-        }
+        let is_own_connection = destination_can_block
+            && (transfer.as_ref()).is_ok_and(|transfer| transfer.destination.is_own_connection());
+        // Neither other writes nor the exit wait for a source that may never reach EOF.
+        let pending_write = order_guard
+            .take_if(|_| source_can_block || is_own_connection)
+            .and_then(io_order::OrderGuard::release_early)
+            .filter(|_| !source_can_block);
         run_and_finish(job, source_can_block || destination_can_block, |this| {
-            let _order_guard = order_guard;
+            let _guards = (order_guard, pending_write);
             this.result = transfer.and_then(|transfer| transfer.run(&this.blocking_io));
         });
     }
@@ -133,13 +136,33 @@ impl CopyFile {
         if feature_flag::BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get() == Some(true) {
             return None;
         }
-        Some(self.copy_file(from?, to?))
+        let to = to?;
+        let source = match &self.source {
+            Target::Fd(source) if w::is_disk_file(source.fd()) && self.max_length == MAX_SIZE => {
+                source
+            }
+            _ => return Some(self.copy_file(from?, to, None)),
+        };
+        let stat = (source.stat().ok()).filter(|stat| sys::S::ISREG(stat.st_mode as _))?;
+        let is_source = |path| sys::stat(path).is_ok_and(|other| other.is_same_file(&stat));
+        let path = w::verbatim_path(&sys::get_fd_path_owned(source.fd()).ok()?)?;
+        // `CopyFileW` truncates a file that is copied onto itself while it is open for writing.
+        if !is_source(path.as_zstr()) || is_source(to.0) {
+            return None;
+        }
+        let result = self.copy_file((path.as_zstr(), path.as_bytes()), to, Some(&stat));
+        // The descriptor still works if the file has been renamed or cannot be opened again.
+        let is_final = |err: &sys::Error| {
+            !matches!(err.get_errno(), E::ECANCELED | E::EBUSY) && is_source(path.as_zstr())
+        };
+        Some(result).filter(|result| result.as_ref().err().is_none_or(is_final))
     }
 
     fn copy_file(
         &self,
         (from, original_from): (&ZStr, &[u8]),
         (to, original_to): (&ZStr, &[u8]),
+        expected_source: Option<&sys::Stat>,
     ) -> sys::Result<SizeType> {
         let copy_error =
             |errno: E, path| sys::Error::from_code(errno, Tag::copyfile).with_path(path);
@@ -152,7 +175,11 @@ impl CopyFile {
             .map_err(|err| encode_error(err, original_to))?;
 
         let mut mkdirp = self.mkdirp_if_not_exists;
-        while let Err(err) = sys::windows::CopyFileW(from_w, to_w, false) {
+        let copy = || match expected_source {
+            Some(expected_source) => w::copy_expected_file(from_w, to_w, expected_source),
+            None => w::CopyFileW(from_w, to_w, false),
+        };
+        while let Err(err) = copy() {
             match err.to_node_errno() {
                 E::EBUSY
                     if let Ok(source) = sys::stat(from)

@@ -39,12 +39,16 @@ impl OwnedJob for WriteFile {
 
     fn run(mut job: Running<Self>) {
         let this = job.off();
-        let order_guard = this.order_guard.take();
+        let mut order_guard = this.order_guard.take();
         let file = JobFile::open_destination(&mut this.target, O::TRUNC | SEQUENTIAL, this.mkdirp);
         // A bad descriptor is reported by the write.
         let can_block = matches!(file.as_ref().map(JobFile::can_block), Ok(Ok(true)));
+        let is_own_connection = can_block && file.as_ref().is_ok_and(JobFile::is_own_connection);
+        let pending_write = order_guard
+            .take_if(|_| is_own_connection)
+            .and_then(io_order::OrderGuard::release_early);
         run_and_finish(job, can_block, move |this| {
-            let _order_guard = order_guard;
+            let _guards = (order_guard, pending_write);
             let bytes = &this.source.shared_view()[this.range.clone()];
             let io = can_block.then_some(&this.blocking_io);
             this.result = file.and_then(|file| file.write_all(bytes, io));

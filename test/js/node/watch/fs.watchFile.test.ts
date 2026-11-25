@@ -52,19 +52,41 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].mtimeMs).toBe(0);
   });
   test("a watcher that starts right after another has stopped sees its file change", async () => {
-    for (let turn = 0; turn < 1000; turn++) {
-      const file = path.join(testDir, `turn-${turn}.txt`);
-      fs.writeFileSync(file, "a");
-      const { promise, resolve } = Promise.withResolvers<void>();
-      fs.watchFile(file, { interval: 5 }, () => resolve());
-      const churn = setInterval(() => fs.appendFileSync(file, "b"), 5);
-      await promise;
-      clearInterval(churn);
-      // One interval of the watcher, so that a pass over it is under way when it stops and the next one starts.
-      await Bun.sleep(5);
-      fs.unwatchFile(file);
-    }
-  }, 120_000);
+    const turns = 60;
+    // Several processes at once: in one of them the pass over the stopped watcher is under way when the next one starts.
+    const fixture = `
+      const fs = require("node:fs");
+      let seen = 0;
+      for (let turn = 0; turn < ${turns}; turn++) {
+        const file = process.pid + "-" + turn + ".txt";
+        fs.writeFileSync(file, "a");
+        let isChanged = false;
+        const listener = () => { isChanged = true; };
+        fs.watchFile(file, { interval: 5 }, listener);
+        for (let i = 0; i < 1000 && !isChanged; i++) {
+          fs.appendFileSync(file, "b");
+          await Bun.sleep(5);
+        }
+        if (isChanged) seen++;
+        fs.unwatchFile(file, listener);
+      }
+      console.log("seen " + seen);
+    `;
+    const results = await Promise.all(
+      Array.from({ length: 20 }, async () => {
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          cwd: testDir,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        return { stdout: stdout.trim(), exitCode };
+      }),
+    );
+    expect(results).toEqual(Array(20).fill({ stdout: `seen ${turns}`, exitCode: 0 }));
+  }, 60_000);
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];

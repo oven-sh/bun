@@ -875,7 +875,9 @@ fn warn_about_unembedded_reads(
         for read in list_reads(file) {
             let path = read.path;
             let is_query = read.is_query && !provider.is_searched_for(to_native(&path));
-            let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
+            // `node:fs` says of compiled code that it is there, and doesn't have its text.
+            let is_code = (is_query || read.is_listing)
+                && (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
             if let (false, Some(entry)) = (is_code, entry)
                 && !is_in_left_out_code(files, left_out, file, read.operand)
             {
@@ -955,8 +957,10 @@ fn warn_about_unembedded_reads(
         for read in &reads {
             let (operand, path) = (read.operand, &read.path);
             let is_query = read.is_query && !provider.is_searched_for(to_native(path));
-            let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
-            if !is_code && provider.is_embedded_implicitly(to_native(path), is_query) {
+            let code = files.by_path.get(path).filter(|it| !sources.is_data(*it));
+            let is_code = code.is_some();
+            let is_text = !(is_code && (is_query || read.is_listing));
+            if is_text && provider.is_embedded_implicitly(to_native(path), is_query) {
                 if !lists_files || is_in_left_out_code(files, left_out, file, operand) {
                     continue;
                 }
@@ -966,8 +970,15 @@ fn warn_about_unembedded_reads(
                 }
                 let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
                 let name = compute_display_path(project_root, to_native(path));
-                let code = Code::FileEmbeddedImplicitly;
-                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                let size = code.map(|it| sources.byte_count(it).to_string());
+                let note = match &size {
+                    Some(size) => {
+                        let code = Code::TextOfCodeEmbedded;
+                        Diagnostic::new(code, Some(span), &[&name, size.as_bytes()])
+                    }
+                    None => Diagnostic::new(Code::FileEmbeddedImplicitly, Some(span), &[&name]),
+                };
+                diagnostics.add(Some(view), note);
                 noted.insert(to_native(path).to_vec());
                 continue;
             }

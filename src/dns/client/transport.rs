@@ -79,14 +79,16 @@ pub(crate) struct Query<R> {
     avoided: ServerSet,
     /// Those that replied with [`Message::excuse`].
     excused: ServerSet,
+    /// How often it went on after one.
+    excuses: usize,
     last_error: Error,
 }
 
 impl<R> Query<R> {
     /// Those for which a try that failed is as far as it goes.
     fn let_go(&mut self, error: Error) -> impl Iterator<Item = Step<R>> {
-        let have_enough = self.waiting.extract_if(.., |purpose| match purpose {
-            Purpose::Addresses(lookup, RecordType::AAAA) => lookup.can_do_without_ipv6(),
+        let have_enough = self.waiting.extract_if(.., move |purpose| match purpose {
+            Purpose::Addresses(lookup, RecordType::AAAA) => lookup.can_do_without_ipv6(error),
             _ => false,
         });
         have_enough.map(move |purpose| Step::Finish(purpose, Err(error)))
@@ -359,7 +361,6 @@ impl<T> Connections<T> {
                 let deadline = entry.remove().deadline;
                 self.deadlines.remove(&deadline);
                 connection.unsent.remove(&deadline.1);
-                connection.strays_left += 1;
                 self.recent_ids.insert(id);
                 self.idle.push(socket);
             }
@@ -390,13 +391,21 @@ impl<S: System, R> Client<S, R> {
     }
 
     pub(crate) fn join_or_send(&mut self, question: Question, purpose: Purpose<R>) {
+        let goes_on_after_excuse = matches!(purpose, Purpose::Addresses(..));
         // One that has failed waits longer and gives up sooner.
-        let matches =
-            |query: &Query<R>| query.failed_tries == 0 && query.question.matches(question.bytes());
+        let matches = |query: &Query<R>| {
+            query.failed_tries <= query.excuses * usize::from(goes_on_after_excuse)
+                && query.question.matches(question.bytes())
+        };
         let hash = |query: &Query<R>| query.question.hash;
         match self.queries.entry(question.hash, matches, hash) {
             hash_table::Entry::Occupied(entry) => {
                 let query = entry.into_mut();
+                if let Purpose::Addresses(lookup, kind) = &purpose
+                    && query.excuses > 0
+                {
+                    lookup.move_on(*kind, &query.question);
+                }
                 query.waiting.push(purpose);
                 let last_try = query.last_try;
                 return self.repeat(last_try);
@@ -412,6 +421,7 @@ impl<S: System, R> Client<S, R> {
                 failures_since_timeout: 0,
                 avoided: ServerSet::default(),
                 excused: ServerSet::default(),
+                excuses: 0,
                 last_error: Error::ETIMEOUT,
             }),
         };
@@ -628,7 +638,10 @@ impl<S: System, R> Client<S, R> {
             let places = query.late_tries.into_iter().chain(query.last_try);
             self.connections.forget(question, places);
         }
-        if let Ok(message) = outcome {
+        // Whoever asks for records is to get the excuse.
+        if let Ok(message) = outcome
+            && query.excuses == 0
+        {
             self.cache.insert(question, message, self.now, &self.system);
         }
         for purpose in query.waiting {
@@ -695,6 +708,7 @@ impl<S: System, R> Client<S, R> {
         {
             return false;
         }
+        query.excuses += 1;
         let others = query.waiting.extract_if(.., |it| match it {
             Purpose::Addresses(lookup, kind) => {
                 lookup.move_on(*kind, question);

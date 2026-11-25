@@ -920,6 +920,17 @@ test("the exports have the order and the names of Node's", () => {
   expect(dns.promises).toBe(dns_promises.default);
 });
 
+test("a request of the callback API has no promise", () => {
+  const { promise } = Promise.withResolvers();
+  const req = Object.assign(
+    dns.lookup("localhost", () => {}),
+    { promise },
+  );
+  req.resolve(1);
+  req.reject(new Error());
+  expect(Bun.peek.status(promise)).toBe("pending");
+});
+
 test("the callback API returns the request", () => {
   const resolver = new dns.Resolver();
   resolver.setServers([]);
@@ -1551,6 +1562,32 @@ describe("resolve record types", () => {
     },
   );
 
+  test.concurrent("a name is converted if it has at most 1024 bytes", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const [fits, longer] = ["a.test", "ab.test"].map(name => Buffer.alloc(1018, "\u00ad").toString() + name);
+      expect(await resolver.resolve4(fits)).toEqual(["10.0.0.1"]);
+      expect(await resolver.resolve4(longer).catch(err => err.code)).toBe("EBADNAME");
+      expect(queries).toEqual(["A a.test"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("Bun.dns.reverse() does not convert the address, whoever else asks", async () => {
+    const { socket, resolver } = await startFakeServer();
+    try {
+      const script = `
+        dns.setServers(${JSON.stringify(resolver.getServers())});
+        const both = [dns.promises, Bun.dns].map(it => it.reverse("１９２.0.2.1").then(String, err => err.code));
+        console.log(...(await Promise.all(both)));
+      `;
+      expect(await bunRun(["-e", script])).toSpawn(`${byType.PTR.expected} DNS_ENOTIMP`);
+    } finally {
+      socket.close();
+    }
+  });
+
   test.concurrent("reverse() converts the address as it does a name", async () => {
     const { socket, queries, resolver } = await startFakeServer();
     try {
@@ -1722,9 +1759,13 @@ describe("resolve record types", () => {
         dns.setServers(${JSON.stringify(servers.flatMap(it => it.resolver.getServers()))});
         console.log(await dns.promises.resolve4("resolve.test").catch(err => err.code));
         console.log((await Bun.dns.lookup("lookup.test.", { backend: "c-ares", family: 4 }))[0].address);
+        console.log(await dns.promises.resolve4("lookup.test").catch(err => err.code));
       `;
-      expect(await bunRun(["-e", script])).toSpawn(`${code}\n10.0.0.1`);
-      expect(servers.map(it => it.queries)).toEqual([["A resolve.test", "A lookup.test"], ["A lookup.test"]]);
+      expect(await bunRun(["-e", script])).toSpawn(`${code}\n10.0.0.1\n${code}`);
+      expect(servers.map(it => it.queries)).toEqual([
+        ["A resolve.test", "A lookup.test", "A lookup.test"],
+        ["A lookup.test"],
+      ]);
     } finally {
       for (const { socket } of servers) socket.close();
     }
@@ -2527,13 +2568,18 @@ describe.skipIf(!isLinux || !cc)("with a preloaded resolver library", () => {
           }
         }
 
-        // A port below 20 is the status.
+        // A port below 20 is the status. From 100 on, it selects one of the names in NAMES.
         int getnameinfo(const struct sockaddr *address, socklen_t length, char *host, socklen_t host_length,
                         char *service, socklen_t service_length, int flags) {
           const struct sockaddr_in6 *v6 = (const void *)address;
           int is_v6 = address->sa_family == AF_INET6, port = ntohs(v6->sin6_port);
           if (port < 20) return fail(-port);
-          snprintf(host, host_length, "v%d.zone%d.é.test", is_v6 ? 6 : 4, is_v6 ? v6->sin6_scope_id : 0);
+          snprintf(host, host_length, "v%d.zone%d.test", is_v6 ? 6 : 4, is_v6 ? v6->sin6_scope_id : 0);
+          if (port >= 100) {
+            const char *name = getenv("NAMES");
+            for (int i = 100; i < port; i++) name = strchr(name, ',') + 1;
+            snprintf(host, host_length, "%.*s", (int)strcspn(name, ","), name);
+          }
           snprintf(service, service_length, "%d%s", port, flags == NI_NAMEREQD ? "-required" : "");
           return 0;
         }
@@ -2545,8 +2591,9 @@ describe.skipIf(!isLinux || !cc)("with a preloaded resolver library", () => {
   });
   afterAll(() => dir[Symbol.dispose]());
 
-  async function run(script) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, cwd: String(dir), stderr: "pipe" });
+  async function run(script, more) {
+    const cmd = [bunExe(), "-e", script];
+    await using proc = Bun.spawn({ cmd, env: { ...env, ...more }, cwd: String(dir), stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trimEnd().split("\n"), asked: stderr.match(/(?<=^getaddrinfo ).*/gm) ?? stderr, exitCode };
   }
@@ -2634,8 +2681,15 @@ describe.skipIf(!isLinux || !cc)("with a preloaded resolver library", () => {
 
   // https://github.com/oven-sh/bun/issues/24970
   test.concurrent("Bun.dns.lookup() asks the system if resolv.conf names no server", async () => {
-    const script = `console.log((await Bun.dns.lookup("a.test", { backend: "c-ares" }))[0].address)`;
-    expect(await run(script)).toEqual({ stdout: ["2001:db8::1"], asked: ["a.test"], exitCode: 0 });
+    const script = `
+      for (const name of ["a.test", "192.0.2.9", "1.2", "a.onion"])
+        console.log(await Bun.dns.lookup(name, { backend: "c-ares" }).then(it => it[0].address, err => err.code));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: ["2001:db8::1", "192.0.2.9", "DNS_ENOTFOUND", "DNS_ENOTFOUND"],
+      asked: ["a.test"],
+      exitCode: 0,
+    });
   });
 
   test.concurrent("lookupService() asks the system", async () => {
@@ -2647,7 +2701,30 @@ describe.skipIf(!isLinux || !cc)("with a preloaded resolver library", () => {
       }
     `;
     expect(await run(script)).toEqual({
-      stdout: ["v4.zone0", "v6.zone0", "v4.zone0", "v6.zone1", "v6.zone7"].map(it => `${it}.é.test 80-required`),
+      stdout: ["v4.zone0", "v6.zone0", "v4.zone0", "v6.zone1", "v6.zone7"].map(it => `${it}.test 80-required`),
+      asked: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("lookupService() answers with a host name in ASCII, as reverse() does", async () => {
+    const names = {
+      "A_b-1.test": "A_b-1.test",
+      "a.test.": "a.test.",
+      "bücher.test": "xn--bcher-kva.test",
+      "a b.test": "ENOTFOUND",
+      "é b.test": "ENOTFOUND",
+      "-a.test": "ENOTFOUND",
+      "\ufffd.test": "ENOTFOUND",
+      ".": "ENOTFOUND",
+      "": "ENOTFOUND",
+    };
+    const script = `
+      for (let port = 100; port < ${100 + Object.keys(names).length}; port++)
+        console.log(await dns.promises.lookupService("192.0.2.1", port).then(it => it.hostname, err => err.code));
+    `;
+    expect(await run(script, { NAMES: Object.keys(names).join() })).toEqual({
+      stdout: Object.values(names),
       asked: "",
       exitCode: 0,
     });
@@ -2775,6 +2852,22 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
     return { stdout, stderr, exitCode };
   }
 
+  const waitForRelease = `
+    #include <fcntl.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    static int wait_for_release(void) {
+      int fd = open("waiting", O_WRONLY | O_CREAT | O_APPEND, 0600);
+      if (write(fd, "x", 1) != 1) return EAI_FAIL;
+      close(fd);
+      while (access("release", F_OK)) usleep(1000);
+      return EAI_NONAME;
+    }
+    int getnameinfo(const struct sockaddr *a, socklen_t b, char *c, socklen_t d, char *e, socklen_t f, int g) {
+      return wait_for_release();
+    }
+  `;
+
   test.each([
     "dns.promises.lookup(name)",
     "dns.promises.lookupService(ip, 80)",
@@ -2783,21 +2876,8 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
     "fetch('http://' + name)",
   ])("files can be read while %s waits", async call => {
     const result = await runWithShim(
-      `
-        #include <fcntl.h>
-        #include <netdb.h>
-        #include <unistd.h>
-        static int wait_for_release(void) {
-          int fd = open("waiting", O_WRONLY | O_CREAT | O_APPEND, 0600);
-          if (write(fd, "x", 1) != 1) return EAI_FAIL;
-          close(fd);
-          while (access("release", F_OK)) usleep(1000);
-          return EAI_NONAME;
-        }
+      `${waitForRelease}
         int getaddrinfo(const char *a, const char *b, const struct addrinfo *c, struct addrinfo **d) {
-          return wait_for_release();
-        }
-        int getnameinfo(const struct sockaddr *a, socklen_t b, char *c, socklen_t d, char *e, socklen_t f, int g) {
           return wait_for_release();
         }
       `,
@@ -2813,6 +2893,20 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
       `,
     );
     expect(result).toEqual({ stdout: "ENOTFOUND\n", stderr: "", exitCode: 0 });
+  });
+
+  test("lookup() has others than lookupService()", async () => {
+    const result = await runWithShim(
+      waitForRelease,
+      `
+        const codes = Array.from({ length: 8 }, (_, i) => dns.promises.lookupService("192.0.2." + i, 80).catch(err => err.code));
+        while (!(fs.statSync("waiting", { throwIfNoEntry: false })?.size >= 4)) await new Promise(setImmediate);
+        console.log((await dns.promises.lookup("localhost", 4)).address);
+        fs.writeFileSync("release", "");
+        console.log(...new Set(await Promise.all(codes)));
+      `,
+    );
+    expect(result).toEqual({ stdout: "127.0.0.1\nENOTFOUND\n", stderr: "", exitCode: 0 });
   });
 
   test("those of the shared pool serve if no other can be started", async () => {

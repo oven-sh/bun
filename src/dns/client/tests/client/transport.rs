@@ -617,6 +617,21 @@ fn late_replies_are_expected() {
 }
 
 #[test]
+fn reply_that_a_lookup_did_without_is_expected() {
+    let mut test = two_servers().start();
+    test.lookup("b.test", Family::Inet);
+    test.decline(&test.sent_one(), SERVFAIL);
+    test.sent_one();
+    test.lookup("a.test", Family::Unspecified);
+    let [a, aaaa] = test.sent_exactly();
+    test.decline(&aaaa, SERVFAIL);
+    let elsewhere = test.sent_one();
+    assert_eq!(test.deliver(&a, &good(&a)).len(), 1);
+    (0..99).for_each(|_| drop(test.decline(&elsewhere, 0)));
+    assert_eq!(strays_left(&mut test, elsewhere.socket), 32);
+}
+
+#[test]
 fn copies_of_a_reply_that_left_nothing_to_wait_for() {
     for was_busy in [false, true] {
         let mut test = resolv_conf("search s").start();

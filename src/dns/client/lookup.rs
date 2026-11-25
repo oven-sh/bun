@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use bun_core::{ip_address, strings};
 
-use crate::client::{Answers, Client, Outcome, Purpose, Reply};
+use crate::client::{Answer, Answers, Client, Outcome, Purpose, Reply};
 use crate::config::{Config, Source, WHITESPACE, lines};
 use crate::hosts::Table;
 use crate::message::{Address, Message, Question, Record, RecordType};
@@ -52,9 +52,10 @@ pub(crate) struct AddressLookup<R> {
 }
 
 impl<R> AddressLookup<R> {
-    /// While AAAA is being asked for. It is not worth waiting for then.
-    pub(crate) fn can_do_without_ipv6(&self) -> bool {
-        self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND)
+    /// After a try for AAAA ended with `error`. It is not worth waiting for then.
+    pub(crate) fn can_do_without_ipv6(&self, error: Error) -> bool {
+        (self.has_ipv4.get() || self.other_error.get() == Some(Error::ENOTFOUND))
+            && !(self.has_ipv4_moved_on.get() && is_refusal(error))
     }
 
     /// To another server, after an excuse.
@@ -82,6 +83,16 @@ pub(crate) struct NameLookup<R> {
 fn is_refusal(error: Error) -> bool {
     use Error::*;
     matches!(error, ESERVFAIL | EREFUSED | ENOTIMP | EFORMERR)
+}
+
+/// An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
+pub(crate) fn answer_at_once(host: &[u8]) -> Option<Answer> {
+    if let Some(ip) = ip_address::parse_strict(host) {
+        return Some(Ok(Reply::Addresses(vec![Address { ip, ttl: 0 }])));
+    }
+    let has_none = name::encode(host, &mut [0; name::MAX_LEN]).is_some_and(name::is_onion)
+        || ip_address::to_ip_address(host).is_some();
+    has_none.then_some(Err(Error::ENOTFOUND))
 }
 
 /// hostname(7)
@@ -145,18 +156,12 @@ impl<S: System, R> Client<S, R> {
         self.hosts.current(&self.config.hosts_path, &self.system)
     }
 
-    /// Best first. An address is its own answer, whatever its family. One in a short form, such as `127.1`, has none.
+    /// Best first.
     #[must_use]
     pub fn lookup(&mut self, host: &[u8], family: Family, request: R) -> Answers<R> {
         self.request(|this| {
-            if let Some(ip) = ip_address::parse_strict(host) {
-                let address = Address { ip, ttl: 0 };
-                return this.answer(request, Ok(Reply::Addresses(vec![address])));
-            }
-            if name::encode(host, &mut [0; name::MAX_LEN]).is_some_and(name::is_onion)
-                || ip_address::to_ip_address(host).is_some()
-            {
-                return this.answer(request, Err(Error::ENOTFOUND));
+            if let Some(answer) = answer_at_once(host) {
+                return this.answer(request, answer);
             }
             let alias = host_alias(host, &this.system);
             let lookup = AddressLookup {

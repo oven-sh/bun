@@ -38,21 +38,29 @@ interface LookupOptions {
 
 const kPerfHooksContext = Symbol("kPerfHooksDnsContext");
 
+let setPromise: (req: ReqWrap, promise: Promise<unknown>) => void;
+
 class ReqWrap {
   declare callback: Callback;
   declare hostname: string;
   declare oncomplete: (err: any, result: any, second: any) => void;
   /** If "node:dns/promises" asked. */
-  declare promise?: Promise<unknown>;
+  #promise: Promise<unknown> | undefined;
+
+  static {
+    setPromise = (req, promise) => {
+      req.#promise = promise;
+    };
+  }
 
   resolve(value: unknown) {
-    const { promise } = this;
-    if ($isPromise(promise)) $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
+    const promise = this.#promise;
+    if (promise) $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
   }
 
   reject(err: Error) {
-    const { promise } = this;
-    if (!$isPromise(promise)) return;
+    const promise = this.#promise;
+    if (!promise) return;
     preferAsyncStack(err, promise);
     $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
   }
@@ -372,7 +380,7 @@ function startLookup(hostname: string, options: LookupOptions, callback: Callbac
   req.family = family;
   req.hostname = hostname;
   req.oncomplete = options.all ? onlookupall : onlookup;
-  if (promise) req.promise = promise;
+  if (promise) setPromise(req, promise);
 
   const order =
     dnsOrder === "ipv4first"
@@ -396,7 +404,7 @@ function startLookupService(address: string, port: number, callback: Callback, p
   req.hostname = address;
   req.port = port;
   req.oncomplete = onlookupservice;
-  if (promise) req.promise = promise;
+  if (promise) setPromise(req, promise);
 
   const err = cares.getnameinfo(req, address, port);
   if (err) throw new DNSException(err, "getnameinfo", address);
@@ -420,7 +428,7 @@ function startQuery(
   req.hostname = hostname;
   req.oncomplete = onresolve;
   req.ttl = ttl;
-  if (promise) req.promise = promise;
+  if (promise) setPromise(req, promise);
 
   const err = resolver._handle[bindingName](req, hostname);
   if (err) throw new DNSException(err, bindingName, hostname);

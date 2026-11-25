@@ -7,7 +7,7 @@ use crate::Error;
 use crate::cache::Cache;
 use crate::config::{Config, port_or_default};
 use crate::hosts::Hosts;
-use crate::lookup::{AddressLookup, NameLookup};
+use crate::lookup::{AddressLookup, NameLookup, answer_at_once};
 use crate::message::{Address, Message, Question, RecordType, Records};
 use crate::servers::{ServerId, Servers};
 use crate::system::{Events, SocketId, System, Transport};
@@ -136,9 +136,9 @@ impl<S: System, R> Client<S, R> {
         self.servers.iter().map(|server| server.address)
     }
 
-    /// Whether neither the system nor [`set_servers`](Self::set_servers) named one.
-    pub fn guesses_server(&self) -> bool {
-        self.follows_system && !self.config.names_a_server
+    /// Whether [`lookup`](Self::lookup) can need one, and neither the system nor [`set_servers`](Self::set_servers) named one.
+    pub fn guesses_server_for(&self, host: &[u8]) -> bool {
+        self.follows_system && !self.config.names_a_server && answer_at_once(host).is_none()
     }
 
     /// Port 0 is the default one.

@@ -131,6 +131,7 @@ impl<P: Poll> System for Os<P> {
     }
 
     fn wall_clock(&self) -> i64 {
+        // `bun_core::time::timestamp()` divides an `i128`, and each cache hit gets here.
         let since_epoch = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
         since_epoch.map_or(0, |it| it.as_secs() as i64)
     }

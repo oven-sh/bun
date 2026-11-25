@@ -342,7 +342,7 @@ fn guess_does_not_replace_a_server() {
     test.world().write(RESOLV_CONF, "");
     test.decline(&query, REFUSED);
     assert_eq!(next_server(&mut test), OLD);
-    assert!(!test.client.guesses_server());
+    assert!(!test.client.guesses_server_for(b"a.test"));
 }
 
 #[test]
@@ -414,18 +414,22 @@ fn replies_are_kept_unless_the_list_changes() {
 
 #[test]
 fn server_that_is_a_guess() {
-    let guesses = |setup: Setup| setup.start().client.guesses_server();
+    let guesses = |setup: Setup| setup.start().client.guesses_server_for(b"a.test");
     assert!(guesses(Setup::default()) && guesses(resolv_conf("search s")));
     assert!(!guesses(resolv_conf("nameserver 127.0.0.1")));
+    for needs_none in ["1.2.3.4", "1.2", "a.onion"] {
+        let test = Setup::default().start();
+        assert!(!test.client.guesses_server_for(needs_none.as_bytes()));
+    }
 
     let mut test = Setup::default().start();
     test.set_servers(&[DEFAULT]);
-    assert!(!test.client.guesses_server());
+    assert!(!test.client.guesses_server_for(b"a.test"));
 
     let mut test = Setup::default().start();
     let query = test.ask("a.test");
     test.world().write(RESOLV_CONF, "nameserver 1.1.1.1");
     test.decline(&query, REFUSED);
     test.ask("a.test");
-    assert!(!test.client.guesses_server());
+    assert!(!test.client.guesses_server_for(b"a.test"));
 }

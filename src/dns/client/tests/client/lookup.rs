@@ -417,6 +417,74 @@ fn excuse_is_final_for_the_others() {
 }
 
 #[test]
+fn reply_after_an_excuse_is_not_kept() {
+    let answers = [address("1.1.1.1", 9)];
+    let negative = [soa(9, 9)];
+    for (flags, sections) in [(0, [&answers[..], &[]]), (NXDOMAIN, [&[], &negative[..]])] {
+        for is_read_again in [false, true] {
+            let mut test = two_servers().start();
+            test.lookup("a.test.", Family::Inet);
+            test.decline(&test.sent_one(), REFUSED);
+            let next = test.sent_one();
+            if is_read_again {
+                test.ask("b.test");
+            }
+            let reply = reply(&next.bytes, flags, [sections[0], sections[1], &[]]);
+            assert_eq!(test.deliver(&next, &reply).len(), 1);
+            let anew = test.ask("a.test");
+            assert_eq!(test.server_of(&anew), FIRST);
+        }
+    }
+}
+
+#[test]
+fn lookup_waits_with_one_that_was_excused() {
+    let mut test = three_servers().start();
+    test.lookup("a.test", Family::Inet);
+    for _ in 0..2 {
+        test.decline(&test.sent_one(), SERVFAIL);
+        assert_eq!(test.lookup("a.test", Family::Inet), NOTHING);
+    }
+    assert_eq!(
+        test.answer(&test.sent_one(), &[address("1.1.1.1", 9)]),
+        ["1.1.1.1/9", "2: 1.1.1.1/9", "3: 1.1.1.1/9"]
+    );
+
+    let mut test = two_servers().start();
+    test.lookup("a.test", Family::Inet);
+    test.decline(&test.sent_one(), SERVFAIL);
+    test.sent_one();
+    test.wait(2000);
+    test.decline(&test.sent_one(), SERVFAIL);
+    test.sent_one();
+    test.lookup("a.test", Family::Inet);
+    assert_eq!(test.server_of(&test.sent_one()), FIRST);
+}
+
+#[test]
+fn lookup_that_comes_later_has_moved_on_too() {
+    let all = [address("1.1.1.1", 0), address("1::1", 0)];
+    let (mut test, sent) = both(two_servers(), "a.test");
+    test.decline(&sent[0], SERVFAIL);
+    test.decline(&sent[1], SERVFAIL);
+    let [a, aaaa] = test.sent_exactly();
+    test.lookup("a.test", Family::Unspecified);
+    assert_eq!(test.answer(&a, &all), NOTHING);
+    assert_eq!(
+        test.answer(&aaaa, &all),
+        ["1::1/0, 1.1.1.1/0", "2: 1::1/0, 1.1.1.1/0"]
+    );
+
+    let mut test = two_servers().start();
+    test.lookup("a.test", Family::Inet6);
+    test.decline(&test.sent_one(), SERVFAIL);
+    let aaaa = test.sent_one();
+    test.lookup("a.test", Family::Unspecified);
+    assert_eq!(test.answer(&test.sent_one(), &all), ["2: 1.1.1.1/0"]);
+    assert_eq!(test.answer(&aaaa, &all), ["1::1/0"]);
+}
+
+#[test]
 fn excuse_for_both_families() {
     let all = [address("1.1.1.1", 1), address("1::1", 2)];
     for first in [0, 1] {
@@ -427,6 +495,25 @@ fn excuse_for_both_families() {
             let sent = test.sent_exactly::<2>();
             assert_eq!(test.answer(&sent[second], &all), NOTHING);
             assert_eq!(test.answer(&sent[1 - second], &all), ["1::1/2, 1.1.1.1/1"]);
+        }
+    }
+}
+
+#[test]
+fn excuse_for_ipv6_after_ipv4_from_elsewhere() {
+    let all = [address("1.1.1.1", 1), address("1::1", 2)];
+    for is_answered in [true, false] {
+        let mut test = two_servers().start();
+        test.lookup("a.test", Family::Unspecified);
+        let [a, aaaa] = test.sent_exactly();
+        test.decline(&a, REFUSED);
+        assert_eq!(test.answer(&test.sent_one(), &all), NOTHING);
+        assert_eq!(test.decline(&aaaa, REFUSED), NOTHING);
+        if is_answered {
+            let elsewhere = test.sent_one();
+            assert_eq!(test.answer(&elsewhere, &all), ["1::1/2, 1.1.1.1/1"]);
+        } else {
+            assert_eq!(test.wait(2000), ["1.1.1.1/1"]);
         }
     }
 }

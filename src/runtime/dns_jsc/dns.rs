@@ -233,6 +233,10 @@ fn name_to_ascii(name: &[u8]) -> Option<Cow<'_, [u8]>> {
     if strings::first_non_ascii(name).is_none() {
         return Some(Cow::Borrowed(name));
     }
+    // Four bytes for each character of the longest name.
+    if name.len() > 1024 {
+        return None;
+    }
     let ascii = Bun__idnaToASCII(&bun::StringView::borrow_utf8(name));
     (!ascii.is_dead() && !ascii.is_empty()).then(|| Cow::Owned(ascii.to_owned_slice()))
 }
@@ -243,6 +247,12 @@ fn host_to_ascii(host: &[u8]) -> Option<Cow<'_, [u8]>> {
         return Some(Cow::Borrowed(host));
     }
     name_to_ascii(host)
+}
+
+/// As `res_hnok(3)`
+fn is_hostname(name: &[u8]) -> bool {
+    let is_allowed = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_');
+    !matches!(name, [] | [b'-' | b'.', ..]) && name.iter().all(is_allowed)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -288,7 +298,7 @@ mod lib_c {
         type OffThread = Self;
         type Js = LibcRequest;
         fn pool() -> &'static ThreadPool {
-            WorkPool::for_resolver()
+            WorkPool::for_getaddrinfo()
         }
         fn run(
             this: &mut Self,
@@ -365,10 +375,14 @@ impl bun_jsc::JobContext for ServiceLookup {
     type OffThread = Self;
     type Js = NodeRequest;
     fn pool() -> &'static ThreadPool {
-        WorkPool::for_resolver()
+        WorkPool::for_getnameinfo()
     }
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        this.result = NameInfo::lookup(&this.address);
+        this.result = NameInfo::lookup(&this.address).and_then(|NameInfo { host, service }| {
+            let host = name_to_ascii(&host).filter(|it| is_hostname(it));
+            let host = host.ok_or(UV_EAI_NONAME)?.into_owned();
+            Ok(NameInfo { host, service })
+        });
         Some(done)
     }
     fn then(this: Self, request: NodeRequest, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
@@ -1625,7 +1639,7 @@ pub(crate) mod internal {
     /// per-thread mDNSResponder connection went away with its thread is
     /// finished (see `SharedConnection::close_for_terminate`).
     pub(super) fn run_on_work_pool(req: Arc<Request>) {
-        WorkPool::go_on(WorkPool::for_resolver(), req, work_pool_callback);
+        WorkPool::go_on(WorkPool::for_getaddrinfo(), req, work_pool_callback);
     }
 
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
@@ -2271,12 +2285,13 @@ impl Resolver {
         req: (ReqWrap<'a>, JsLocal<'a>),
         name: &[u8],
     ) -> JsResult<c_int> {
-        let Some(ip) = name_to_ascii(name).and_then(|name| parse_address(&name)) else {
+        let name = name_to_ascii(name).unwrap_or_default();
+        let Some(ip) = parse_address(&name) else {
             return Ok(UV_EINVAL);
         };
         let lookup = DNSLookup::with_request(cx.global(), req, Order::Verbatim);
         let send = |client: &mut Client, query| client.reverse(ip, query);
-        self.ask(QueryKind::Addr, wyhash(name), name, lookup, send);
+        self.ask(QueryKind::Addr, wyhash(&name), &name, lookup, send);
         Ok(0)
     }
 
@@ -2404,7 +2419,7 @@ impl Resolver {
         let normalized = normalize_dns_name(host, &mut opts.backend);
         // The system may have other ways, such as nss-resolve(8).
         if opts.backend == GetAddrInfoBackend::CAres
-            && self.with_client(|client| client.guesses_server())
+            && self.with_client(|client| client.guesses_server_for(normalized))
         {
             opts.backend = GetAddrInfoBackend::System;
         }

@@ -130,7 +130,6 @@ impl Batch {
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
-static RESOLVER_POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
 fn create(min_threads: u16) -> ThreadPool {
@@ -146,10 +145,20 @@ impl WorkPool {
         POOL.get_or_init(|| create(0))
     }
 
-    /// For `getaddrinfo` and `getnameinfo`, which can wait for the network for seconds while other work goes on.
-    pub fn for_resolver() -> &'static ThreadPool {
+    pub fn for_getaddrinfo() -> &'static ThreadPool {
+        static POOL: OnceLock<ThreadPool> = OnceLock::new();
+        Self::for_resolver(&POOL)
+    }
+
+    pub fn for_getnameinfo() -> &'static ThreadPool {
+        static POOL: OnceLock<ThreadPool> = OnceLock::new();
+        Self::for_resolver(&POOL)
+    }
+
+    /// For a call that can wait for the network for seconds while other work goes on.
+    fn for_resolver(pool: &'static OnceLock<ThreadPool>) -> &'static ThreadPool {
         // libuv's default number of threads.
-        let pool = RESOLVER_POOL.get_or_init(|| create(4).named("Bun DNS").without_spare_threads());
+        let pool = pool.get_or_init(|| create(4).named("Bun DNS").without_spare_threads());
         pool.warm(1);
         if pool.has_workers() {
             pool

@@ -3163,6 +3163,293 @@ declare module "bun" {
     scanImports(code: Bun.StringOrBuffer): Import[];
   }
 
+  /**
+   * A filesystem path accepted by `Bun.TypeChecker` methods.
+   *
+   * A string is a native filesystem path. A `URL` must be a `file:` URL.
+   * Relative paths resolve against the checker's `cwd`, never against a
+   * project's config directory.
+   */
+  type TypeCheckerPath = string | URL;
+
+  /**
+   * The severity of a {@link Bun.TypeCheckerDiagnostic}.
+   *
+   * A string, so a diagnostic is directly useful as JSON. Bun does not
+   * publish a numeric enum for it.
+   */
+  type TypeCheckerDiagnosticCategory = "error" | "warning" | "suggestion" | "message";
+
+  /**
+   * One diagnostic from a checked project, in the wording `bun check` prints.
+   *
+   * Diagnostics are ordinary values, not rejections: a project with type
+   * errors still resolves its snapshot with the errors here. An operation
+   * that cannot run at all — an invalid argument, an unreadable source, or
+   * an incomplete check — rejects instead, and never produces a snapshot
+   * that looks clean.
+   *
+   * Every `getDiagnostics()` call returns fresh arrays and diagnostic
+   * objects, so mutating a returned value cannot change the snapshot or a
+   * later result.
+   */
+  interface TypeCheckerDiagnostic {
+    /** Absolute native path of the file the diagnostic is in, or a `bundled:///` URI for Bun's embedded libraries. Omitted when the diagnostic is not tied to a file. */
+    readonly fileName?: string | undefined;
+
+    /** Zero-based UTF-16 code-unit offset of the start of the range. Omitted when there is no source range. */
+    readonly pos?: number | undefined;
+    /** Zero-based UTF-16 code-unit offset just past the end of the range. Omitted when there is no source range. */
+    readonly end?: number | undefined;
+
+    /** One-based line of the start of the range. Omitted when there is no source range. */
+    readonly line?: number | undefined;
+    /** One-based column of the start of the range, counted in UTF-16 code units. Omitted when there is no source range. */
+    readonly column?: number | undefined;
+    /** One-based line just past the end of the range. Omitted when there is no source range. */
+    readonly endLine?: number | undefined;
+    /** One-based column just past the end of the range, counted in UTF-16 code units. Omitted when there is no source range. */
+    readonly endColumn?: number | undefined;
+
+    /** The numeric diagnostic code, without the `TS` prefix. */
+    readonly code: number;
+    readonly category: TypeCheckerDiagnosticCategory;
+
+    /** The fully rendered message. */
+    readonly text: string;
+
+    /** Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text}, when the checker provides it. */
+    readonly messageChain?: readonly TypeCheckerDiagnostic[] | undefined;
+    /** Related source locations, such as where a name was declared, when the checker provides them. */
+    readonly relatedInformation?: readonly TypeCheckerDiagnostic[] | undefined;
+  }
+
+  /**
+   * The desired-state changes applied by one {@link Bun.TypeChecker.updateSnapshot} call.
+   *
+   * Every update runs one full check over the resulting state, on a
+   * background thread, and resolves to an immutable snapshot of that check.
+   * Calls on one checker are serialized in invocation order, and each
+   * call's changes are captured before it is queued, so a later call's
+   * edits never appear in an earlier call's snapshot. A failed check does
+   * not roll back the changes: the next update starts from the latest
+   * requested state.
+   */
+  interface TypeCheckerSnapshotUpdate {
+    /**
+     * Projects to retain across snapshots.
+     *
+     * Each entry is a `tsconfig.json` path or a directory containing one,
+     * resolved against the checker's `cwd`. Opening the same project twice
+     * increments its open refcount; it stays open until a matching
+     * {@link Bun.TypeCheckerSnapshotUpdate.closeProjects} entry brings the
+     * count back to zero. Projects pulled in by reference may also appear
+     * in the snapshot.
+     */
+    readonly openProjects?: readonly TypeCheckerPath[] | undefined;
+
+    /**
+     * Undo one matching open of each listed project.
+     *
+     * Closing a project that is not open is an idempotent no-op, so cleanup
+     * paths do not need to track exact ownership. `closeProjects` applies
+     * before `openProjects` within one update, so listing a project in both
+     * reloads it.
+     */
+    readonly closeProjects?: readonly TypeCheckerPath[] | undefined;
+
+    /**
+     * Persistent in-memory source overrides, resolved against the checker's `cwd`.
+     *
+     * A string inserts or replaces the override for that path; the text is
+     * used instead of whatever is on disk. Overrides persist across
+     * snapshots until replaced or removed, and may name a file that does
+     * not exist on disk. `null` removes the override and reveals the file
+     * on disk again (or removes a diskless file from the next check).
+     * `undefined` is not a valid value.
+     */
+    readonly sourceChanges?: ReadonlyMap<TypeCheckerPath, string | null> | undefined;
+  }
+
+  /** Options for constructing a {@link Bun.TypeChecker}. */
+  interface TypeCheckerOptions {
+    /**
+     * The directory that relative paths resolve against.
+     *
+     * Defaults to `process.cwd()` at construction. Fixed for the lifetime
+     * of the checker. May be a `file:` URL.
+     */
+    readonly cwd?: TypeCheckerPath | undefined;
+  }
+
+  /**
+   * The materialized result of checking one project in one snapshot.
+   *
+   * A program is an immutable observation of a full check, not a handle to
+   * a checker kept alive between snapshots. Holding a program does not
+   * keep its native checker running.
+   */
+  interface TypeCheckerProgram {
+    /**
+     * Returns all diagnostics for this project, or only those for `file`.
+     *
+     * A clean file and a file with no matching diagnostics both return an
+     * empty array. Diagnostics keep the checker's order, and filtering by
+     * file keeps each diagnostic's related information attached to it.
+     * The returned array and diagnostic objects are fresh values; mutating
+     * them does not affect the snapshot.
+     *
+     * @param file A path resolved the same way as
+     * {@link Bun.TypeCheckerSnapshot.getProject}'s argument.
+     */
+    getDiagnostics(file?: TypeCheckerPath): Promise<readonly TypeCheckerDiagnostic[]>;
+  }
+
+  /**
+   * One project result in a snapshot.
+   *
+   * Project objects are not reused across snapshots, even when the
+   * project's config did not change.
+   */
+  interface TypeCheckerProject {
+    /**
+     * The absolute native path of the project's config file.
+     *
+     * Accessing this after the owning snapshot has been disposed or the
+     * root checker has been closed throws.
+     */
+    readonly configFileName: string;
+    readonly program: TypeCheckerProgram;
+  }
+
+  /**
+   * An immutable observation of one full check.
+   *
+   * Later updates never mutate a snapshot, and taking a newer snapshot
+   * does not invalidate an older one. A snapshot stays valid until it is
+   * disposed or the root checker is closed; after that, its projects and
+   * programs are stale and their accessors throw (or, for
+   * `getDiagnostics()`, reject).
+   */
+  interface TypeCheckerSnapshot {
+    /**
+     * Every project result the check produced, in the checker's stable
+     * project order, including referenced projects and projects with no
+     * diagnostics.
+     *
+     * Local and non-blocking: this does not run the checker.
+     */
+    getProjects(): readonly TypeCheckerProject[];
+    /**
+     * Returns the result for the project named by `configFile`, or
+     * `undefined` when the check produced no result for it.
+     *
+     * `configFile` is a `tsconfig.json` path or a directory containing one,
+     * resolved against the checker's `cwd` the same way as
+     * {@link Bun.TypeCheckerSnapshotUpdate.openProjects}. Local and
+     * non-blocking: this does not run the checker.
+     */
+    getProject(configFile: TypeCheckerPath): TypeCheckerProject | undefined;
+
+    /**
+     * Invalidates this snapshot's projects and programs immediately and
+     * releases the diagnostic data they held.
+     *
+     * Idempotent and never throws. Does not close the root checker and
+     * does not affect any other snapshot. Local and non-blocking: this
+     * does not run the checker.
+     */
+    dispose(): void;
+    [Symbol.dispose](): void;
+  }
+
+  /**
+   * Runs the same project checks as `bun check`, asynchronously, and
+   * returns the diagnostics as structured values.
+   *
+   * Checking never runs on the JavaScript thread. `updateSnapshot()`
+   * serializes calls on one checker in invocation order, applies that
+   * call's desired-state changes, runs one full check, and resolves to an
+   * immutable {@link Bun.TypeCheckerSnapshot}. Only this class is
+   * publicly constructible; snapshots, projects, and programs come from
+   * their parents. There is no synchronous checking variant.
+   *
+   * TypeScript errors are diagnostics in the resolved snapshot, not
+   * rejected promises. Invalid arguments, adapter failures, unreadable
+   * sources, and incomplete checks reject the update.
+   *
+   * @example
+   * ```ts
+   * await using checker = new Bun.TypeChecker({ cwd: process.cwd() });
+   *
+   * using snapshot = await checker.updateSnapshot({
+   *   openProjects: ["tsconfig.json"],
+   * });
+   *
+   * const project = snapshot.getProject("tsconfig.json");
+   * if (project === undefined) {
+   *   throw new Error("The requested project did not produce a result");
+   * }
+   *
+   * for (const diagnostic of await project.program.getDiagnostics()) {
+   *   console.error({
+   *     file: diagnostic.fileName,
+   *     offset: diagnostic.pos,
+   *     code: `TS${diagnostic.code}`,
+   *     message: diagnostic.text,
+   *   });
+   * }
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Override an unsaved buffer, then remove the override to return to
+   * // the file on disk. Overrides persist across snapshots until replaced
+   * // or removed; the earlier snapshot keeps observing the old text.
+   * using next = await checker.updateSnapshot({
+   *   sourceChanges: new Map([
+   *     ["src/index.ts", `const answer: string = 42;\n`],
+   *   ]),
+   * });
+   *
+   * using disk = await checker.updateSnapshot({
+   *   sourceChanges: new Map([["src/index.ts", null]]),
+   * });
+   * ```
+   */
+  class TypeChecker implements AsyncDisposable {
+    constructor(options?: TypeCheckerOptions);
+
+    /**
+     * Applies this call's desired-state changes, then runs one full check
+     * and resolves to an immutable snapshot of it.
+     *
+     * Calls on one checker are serialized in invocation order, and each
+     * call captures its own desired state, so an earlier call's snapshot
+     * never contains a later call's edits. An update with no open
+     * projects resolves to an empty snapshot. `updateSnapshot({})` with
+     * projects open runs a fresh full check and re-reads disk state, so no
+     * change-notification hints are needed.
+     *
+     * Resolves even when the check found TypeScript errors. Rejects for
+     * invalid arguments, adapter or I/O failures, and any call made after
+     * {@link Bun.TypeChecker.close} has begun.
+     */
+    updateSnapshot(update?: TypeCheckerSnapshotUpdate): Promise<TypeCheckerSnapshot>;
+
+    /**
+     * Rejects new and undelivered updates, disposes every live snapshot,
+     * and resolves once already-running native checks have finished.
+     *
+     * Closing does not cancel a native check that is already running; it
+     * detaches its result and waits for it to finish. Idempotent: repeated
+     * calls return the same completion. Closing an already idle checker
+     * resolves without scheduling a check.
+     */
+    close(): Promise<void>;
+    [Symbol.asyncDispose](): Promise<void>;
+  }
+
   type ImportKind =
     | "import-statement"
     | "require-call"

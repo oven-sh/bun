@@ -666,9 +666,8 @@ impl<'a, T: Unit> Parser<'a, T> {
         {
             if is_hunk_header(line) {
                 let header = self.line.clone().map_or(&[][..], |line| &self.text[line]);
-                let mut hunk = self.hunk(line)?;
-                file.lost_cr = self.restore_cr(header, &mut hunk.lines);
-                file.hunks.push(hunk);
+                file.hunks.push(self.hunk(line)?);
+                file.lost_cr = self.restore_cr(header, &mut file.hunks);
             } else {
                 if first_text.is_none() && !trim(line).is_empty() {
                     first_text = Some((self.number, line));
@@ -688,22 +687,27 @@ impl<'a, T: Unit> Parser<'a, T> {
     }
 
     /// See [`FilePatch::lost_cr`].
-    fn restore_cr(&self, header: &[T], lines: &mut [Range<usize>]) -> bool {
+    fn restore_cr(&self, header: &[T], hunks: &mut [PatchHunk<Range<usize>>]) -> bool {
         let end = self.text.len();
         if self.line.is_some() || is(self.text.last(), b'\r') {
             return false;
         }
-        let (whole, trimmed) = lines.split_at_mut(lines.partition_point(|line| line.end < end));
+        let Some((last, earlier)) = hunks.split_last_mut() else {
+            return false;
+        };
+        let at = last.lines.partition_point(|line| line.end < end);
+        let (whole, trimmed) = last.lines.split_at_mut(at);
+        let earlier = if whole.is_empty() { &*earlier } else { &[] };
+        let whole = || earlier.iter().flat_map(|hunk| &hunk.lines).chain(&*whole);
         let is_marker = |line: &Range<usize>| is(self.text.get(line.start), b'\\');
         let has_cr = |line: &Range<usize>| is(self.text[line.clone()].last(), b'\r');
         let lost_cr = !trimmed.is_empty()
             && (is(header.last(), b'\r')
                 || !trimmed.iter().any(is_marker)
-                    && whole.iter().any(has_cr)
-                    && whole
-                        .iter()
-                        .zip(whole[1..].iter().map(is_marker).chain([false]))
-                        .all(|(line, is_marked)| is_marked || is_marker(line) || has_cr(line)));
+                    && whole()
+                        .zip(whole().skip(1).map(is_marker).chain([false]))
+                        .all(|(line, is_marked)| is_marked || is_marker(line) || has_cr(line))
+                    && whole().any(has_cr));
         if lost_cr {
             trimmed.iter_mut().for_each(|line| line.end += 1);
         }

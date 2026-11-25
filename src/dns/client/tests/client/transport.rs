@@ -616,19 +616,68 @@ fn late_replies_are_expected() {
     assert_eq!(strays_left(&mut test, 0), 32 + 5);
 }
 
-#[test]
-fn reply_that_a_lookup_did_without_is_expected() {
+/// Keeps the socket for the second server open.
+fn second_server_is_slow() -> Test {
     let mut test = two_servers().start();
-    test.lookup("b.test", Family::Inet);
+    test.world()
+        .randoms
+        .extend((0..3).flat_map(|_| 0..=u16::MAX));
+    test.lookup("slow.test", Family::Inet);
     test.decline(&test.sent_one(), SERVFAIL);
     test.sent_one();
+    test
+}
+
+/// Returns the query for AAAA that the lookup did not wait for.
+fn do_without_ipv6(test: &mut Test) -> Sent {
     test.lookup("a.test", Family::Unspecified);
     let [a, aaaa] = test.sent_exactly();
     test.decline(&aaaa, SERVFAIL);
+    if test.ms_to_next_check() == 2 {
+        test.wait(2);
+    }
     let elsewhere = test.sent_one();
-    assert_eq!(test.deliver(&a, &good(&a)).len(), 1);
-    (0..99).for_each(|_| drop(test.decline(&elsewhere, 0)));
-    assert_eq!(strays_left(&mut test, elsewhere.socket), 32);
+    assert_eq!(test.answer(&a, &[address("1.1.1.1", 0)]).len(), 1);
+    elsewhere
+}
+
+#[test]
+fn replies_that_lookups_did_without_are_expected() {
+    let mut test = second_server_is_slow();
+    let forgotten = do_without_ipv6(&mut test);
+    (0..99).for_each(|_| drop(test.decline(&forgotten, 0)));
+    assert_eq!(strays_left(&mut test, forgotten.socket), 32);
+
+    for copies in [0, 1] {
+        let mut test = second_server_is_slow();
+        let forgotten: Vec<Sent> = (0..33).map(|_| do_without_ipv6(&mut test)).collect();
+        for _ in 0..16384 {
+            let query = test.ask("b.test");
+            test.decline(&query, 0);
+        }
+        for it in forgotten.iter().cycle().take(33 * (1 + copies)) {
+            test.decline(it, 0);
+        }
+        assert_eq!(
+            test.world().opened[forgotten[0].socket].is_open,
+            copies == 0
+        );
+    }
+}
+
+#[test]
+fn id_that_a_lookup_did_without_stays_taken() {
+    let mut test = second_server_is_slow();
+    let forgotten = do_without_ipv6(&mut test);
+    test.lookup("b.test", Family::Inet);
+    test.world().randoms.push_front(forgotten.id());
+    test.decline(&test.sent_one(), SERVFAIL);
+    let next = test.sent_one();
+    assert!(next.socket == forgotten.socket && next.id() != forgotten.id());
+
+    let mut test = second_server_is_slow();
+    let sockets = (0..32768).map(|_| do_without_ipv6(&mut test).socket);
+    assert_eq!(sockets.filter(|&it| it == forgotten.socket).count(), 32767);
 }
 
 #[test]

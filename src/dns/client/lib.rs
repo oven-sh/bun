@@ -34,5 +34,6 @@ pub use system::{
 };
 
 type HashMap<K, V> = hashbrown::HashMap<K, V, bun_wyhash::BuildHasher>;
+type HashSet<T> = hashbrown::HashSet<T, bun_wyhash::BuildHasher>;
 
 pub const DEFAULT_PORT: u16 = 53;

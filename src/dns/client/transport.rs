@@ -13,7 +13,7 @@ use crate::client::{Client, Outcome, Purpose, Step};
 use crate::message::{self, Message, Question, Received, RecordType};
 use crate::servers::{Server, ServerId, ServerSet, Substitute};
 use crate::system::{Events, Socket, SocketError, SocketId, System, Transport};
-use crate::{Error, HashMap};
+use crate::{Error, HashMap, HashSet};
 
 pub(crate) const MIN_TIMEOUT: Duration = Duration::from_millis(250);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -138,6 +138,8 @@ struct Connection<T> {
     /// `None` until it is watched.
     watches_writable: Option<bool>,
     tries: HashMap<MessageId, Try>,
+    /// Those of the datagrams whose replies are yet to come, for nobody.
+    forgotten: HashSet<MessageId>,
     /// It should take no more tries.
     is_retired: bool,
     /// A timeout of this try, or of an older one, does not tell against it.
@@ -198,6 +200,7 @@ impl<T: Socket> Connection<T> {
             peer,
             watches_writable: None,
             tries: HashMap::default(),
+            forgotten: HashSet::default(),
             is_retired: false,
             cleared_up_to: 0,
             room: S::DATAGRAMS_HELD,
@@ -212,7 +215,8 @@ impl<T: Socket> Connection<T> {
     }
 
     fn can_take_more(&self) -> bool {
-        self.tries.len() < MAX_TRIES_PER_SOCKET && self.output.len() < LONG_OUTPUT_LEN
+        self.tries.len() + self.forgotten.len() < MAX_TRIES_PER_SOCKET
+            && self.output.len() < LONG_OUTPUT_LEN
     }
 
     /// In place of a new one, which there is not. Finding that out can take long.
@@ -352,8 +356,8 @@ impl<T> Connections<T> {
         ((connection.server, connection.transport) == (to, Transport::Tcp)).then_some(connection)
     }
 
-    fn forget(&mut self, question: &Question, places: impl IntoIterator<Item = Place>) {
-        for (socket, id) in places {
+    fn forget(&mut self, question: &Question, places: &[Place]) {
+        for &(socket, id) in places {
             if let Some(connection) = self.open.get_mut(&socket)
                 && let Entry::Occupied(entry) = connection.tries.entry(id)
                 && entry.get().question.is(question)
@@ -361,6 +365,9 @@ impl<T> Connections<T> {
                 let deadline = entry.remove().deadline;
                 self.deadlines.remove(&deadline);
                 connection.unsent.remove(&deadline.1);
+                if connection.transport == Transport::Udp {
+                    connection.forgotten.insert(id);
+                }
                 self.recent_ids.insert(id);
                 self.idle.push(socket);
             }
@@ -585,7 +592,7 @@ impl<S: System, R> Client<S, R> {
                     self.steps.push_back(end);
                     return Ok(());
                 };
-                if !connection.tries.contains_key(&id) {
+                if !connection.tries.contains_key(&id) && !connection.forgotten.contains(&id) {
                     break id;
                 }
             },
@@ -633,10 +640,10 @@ impl<S: System, R> Client<S, R> {
         let Ok(entry) = self.queries.find_entry(question.hash, is_it) else {
             return;
         };
-        let (query, _) = entry.remove();
+        let (mut query, _) = entry.remove();
         if !query.late_tries.is_empty() {
-            let places = query.late_tries.into_iter().chain(query.last_try);
-            self.connections.forget(question, places);
+            query.late_tries.extend(query.last_try);
+            self.connections.forget(question, &query.late_tries);
         }
         // Whoever asks for records is to get the excuse.
         if let Ok(message) = outcome
@@ -731,7 +738,7 @@ impl<S: System, R> Client<S, R> {
         let (error, last_try) = (query.last_error, query.last_try);
         self.steps.extend(query.let_go(error));
         if query.waiting.is_empty() {
-            self.connections.forget(question, last_try);
+            self.connections.forget(question, last_try.as_slice());
             self.end(question, &Err(error));
         }
     }
@@ -947,8 +954,11 @@ impl<S: System, R> Client<S, R> {
                 let is_from_peer = sender.is_some_and(|it| (it.ip(), it.port()) == (ip, port));
                 if !is_from_peer || !self.receive(connection, &buffer) {
                     let recent_ids = &self.connections.recent_ids;
-                    let is_ours =
-                        |id| recent_ids.contains(id) || connection.tries.contains_key(&id);
+                    let is_ours = |id| {
+                        connection.forgotten.remove(&id)
+                            || recent_ids.contains(id)
+                            || connection.tries.contains_key(&id)
+                    };
                     let cost = usize::from(!message::id_of(&buffer).is_some_and(is_ours));
                     connection.strays_left =
                         (connection.strays_left.checked_sub(cost)).ok_or(Failed)?;
@@ -1040,7 +1050,7 @@ impl<S: System, R> Client<S, R> {
                 }
                 // What becomes of the last try no longer counts.
                 let last_try = find(&mut self.queries, &question).and_then(|it| it.last_try);
-                self.connections.forget(&question, last_try);
+                self.connections.forget(&question, last_try.as_slice());
                 self.steps.push_front(Step::End(question, Ok(message)));
             }
             Received::Truncated => {

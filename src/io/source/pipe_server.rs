@@ -148,6 +148,7 @@ pub struct PipeConnect {
 
 struct ConnectWaiter {
     on_connect: Cell<Option<Box<dyn FnOnce(Result<OwnedHandle, Win32Error>)>>>,
+    deferred_result: Cell<Option<Request>>,
     enqueue_time: Instant,
     _queue: Rc<ConnectQueue>,
 }
@@ -233,6 +234,7 @@ impl ConnectQueue {
     ) -> Rc<ConnectWaiter> {
         let waiter = Rc::new(ConnectWaiter {
             on_connect: Cell::new(Some(on_connect)),
+            deferred_result: Cell::new(None),
             enqueue_time: Instant::now(),
             _queue: Rc::clone(&self),
         });
@@ -280,25 +282,27 @@ impl ConnectQueue {
         self.inflight_wait.set(Some(request));
     }
 
-    /// `inflight_wait` is still set, so a client started from a callback is enqueued and handled in a later iteration.
     fn on_wait_complete(self: Rc<Self>, status: NTSTATUS) {
         if status == NTSTATUS::SUCCESS {
             self.last_progress.set(Instant::now());
         }
-        let waiter_count = self.waiters.borrow().len();
-        for _ in 0..waiter_count {
-            let waiter = self.waiters.borrow().front().and_then(Weak::upgrade);
-            let result = waiter.as_deref().map(|waiter| self.connect(waiter));
-            if let Some(Err(Win32Error::PIPE_BUSY)) = result {
-                break;
+        let mut waiters = self.waiters.borrow_mut();
+        while let Some(waiter) = waiters.front() {
+            if let Some(waiter) = waiter.upgrade() {
+                let result = self.connect(&waiter);
+                if matches!(result, Err(Win32Error::PIPE_BUSY)) {
+                    break;
+                }
+                // Deferred, so that the next wait has started when the callback runs.
+                waiter
+                    .deferred_result
+                    .set(waiter.on_connect.take().map(|on_connect| {
+                        Request::defer(self.npfs_root.port(), move || on_connect(result))
+                    }));
             }
-            self.waiters.borrow_mut().pop_front();
-            if let (Some(on_connect), Some(result)) =
-                (waiter.and_then(|waiter| waiter.on_connect.take()), result)
-            {
-                on_connect(result);
-            }
+            waiters.pop_front();
         }
+        drop(waiters);
         if self.waiters.borrow().is_empty() {
             self.inflight_wait.set(None);
         } else if matches!(

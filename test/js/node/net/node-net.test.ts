@@ -4102,6 +4102,24 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
          console.log((await once(client, "error"))[0].code);`,
         "true\nENOENT\n",
       ],
+      [
+        "connect() on a busy pipe completes while a 'connect' listener runs the event loop",
+        `const handle = createPipe(PIPE_ACCESS_DUPLEX);
+         const firstClientFd = require("fs").openSync(name, "r+");
+         const clients = [net.connect(name), net.connect(name)];
+         await new Promise(setImmediate);
+         createPipe(PIPE_ACCESS_DUPLEX);
+         clients[0].once("connect", () => {
+           require("fs").closeSync(firstClientFd);
+           k32.CloseHandle(handle);
+           createPipe(PIPE_ACCESS_DUPLEX);
+           const setup = () => once(clients[1], "connect").then(() => {});
+           Bun.build({ entrypoints: ["missing.js"], plugins: [{ name: "wait", setup }] }).catch(() => {});
+           console.log(clients[1].connecting);
+           clients.forEach(client => client.destroy());
+         });`,
+        "false\n",
+      ],
     ])("%s", async (_, script, expected) => {
       expect(await run(prelude + script, pipeName())).toEqual(successResult(expected));
     });

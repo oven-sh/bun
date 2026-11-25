@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import vm from "node:vm";
 import { join } from "node:path";
+import vm from "node:vm";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
-import { generateProgram } from "./minify-names-programs";
 
 describe("bundler", () => {
   // A direct eval at the top level of a file the bundler wraps in a CommonJS

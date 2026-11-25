@@ -33,7 +33,7 @@ fn collect_strings<'r>(res: &'r Res, strings: &mut Vec<&'r [u16]>) {
 }
 
 fn needs_length(text: &[u16]) -> bool {
-    text.len() > 40 || matches!(text, [0xdc00..0xe000, ..]) || text.contains(&0)
+    text.len() > 40 || matches!(text, [0xdc00..0xe000, ..]) || text.contains(&0u16)
 }
 
 impl<'r, 'a> Image<'r, 'a> {

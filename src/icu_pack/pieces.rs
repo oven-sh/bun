@@ -113,7 +113,7 @@ impl<'a> Level<'a> {
                 tasks.push(one_of(&[Step::new(SKIP, &[skipped - 1])]));
                 skipped = 0;
             }
-            assert!(text.len() < NUMBERS && !text.contains(&0));
+            assert!(text.len() < NUMBERS && !text.contains(&0u16));
             let before = match leaf & Leaf::IS_VERBATIM {
                 0 => &mapped[..],
                 _ => verbatim,
@@ -444,8 +444,8 @@ fn overlapped(mut texts: Vec<&[u16]>) -> Vec<u16> {
     runs.concat()
 }
 
-fn find(text: &[u16], part: &[u16]) -> Option<usize> {
-    (0..text.len()).find(|&at| text[at..].starts_with(part))
+fn find(whole: &[u16], part: &[u16]) -> Option<usize> {
+    (0..whole.len()).find(|&at| whole[at..].starts_with(part))
 }
 
 pub(crate) struct Written {

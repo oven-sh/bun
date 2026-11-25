@@ -1362,7 +1362,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         JSValue::UNDEFINED,
         JSValue::UNDEFINED,
     ) {
-        Ok((client, _)) => client,
+        Ok((p, _)) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =

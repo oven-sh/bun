@@ -19,6 +19,7 @@ const otherInstances = [
   'import { statfsSync } from "node:fs";\nstatfsSync(".")',
   'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })[0]',
   'import { opendirSync } from "node:fs";\nconst folder = opendirSync("/");\nfolder.closeSync();\nfolder',
+  'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })',
   'new File(["a"], "n")',
   "new FormData()",
   'new MessageEvent("x", { data: { a: 1 }, ports: [] })',
@@ -49,7 +50,6 @@ const otherInstances = [
   'await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"])',
   'new Bun.S3Client({}).file("a")',
   "new Bun.RedisClient()",
-  'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })',
 ];
 
 /** The message of the TypeError for a receiver that is no Script prints the receiver, which inherits the getter. */

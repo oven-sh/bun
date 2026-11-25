@@ -16,6 +16,7 @@ use bun_jsc::{
     JsCell, JsResult, Strong,
 };
 use bun_ptr::RefPtr;
+use bun_sql_jsc::shared::server_identity;
 use bun_uws as uws;
 
 use super::hold::{Dial, Hold, Object, SocketDial};
@@ -24,7 +25,6 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
-use bun_sql_jsc::shared::server_identity;
 use bun_valkey::client::{
     Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
 };
@@ -350,8 +350,8 @@ impl JSValkeyClient {
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
-        url: JsLocal<'_>,
-        options: JsLocal<'_>,
+        url: JsLocal<'a>,
+        options: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let (client, check_server_identity) =
             Self::create_no_js_no_pubsub(&cx.js_thread(), url.to_js(), options.to_js())?;
@@ -362,7 +362,7 @@ impl JSValkeyClient {
         Ok(this)
     }
 
-    /// Create a Valkey client that does not have an associated JS object, and `tls.checkServerIdentity` for that object to hold.
+    /// Create a Valkey client that does not have an associated JS object, and find `tls.checkServerIdentity` for one.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
         url: JSValue,
@@ -1191,11 +1191,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this: &JSValkeyClient,
         ssl: &mut boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
-        let has_callback = this.dial.hold().is_some_and(|hold| {
-            js::check_server_identity_get_cached(hold.object().to_js()).is_some()
-        });
-        let matches_name = this.tls.reject_unauthorized(this.vm) && !has_callback;
-        let hostname = matches_name.then(|| Self::configured_hostname(this));
+        let rejects = this.tls.reject_unauthorized(this.vm)
+            && (this.dial.hold()).is_none_or(|hold| {
+                js::check_server_identity_get_cached(hold.object().to_js()).is_none()
+            });
+        let hostname = rejects.then(|| Self::configured_hostname(this));
         boringssl::server_identity(ssl, hostname)
     }
 
@@ -1266,31 +1266,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 let hostname = Self::configured_hostname(this);
                 if let Some(callback) = js::check_server_identity_get_cached(hold.object().to_js())
                 {
-                    // A renegotiation can't change the certificate.
-                    if this.asked_server_identity.replace(true) {
-                        return Ok(());
-                    }
-                    let global = &this.global_object;
-                    let hostname = if hostname.is_empty() {
-                        b"localhost"
-                    } else {
-                        hostname
-                    };
-                    let verdict =
-                        server_identity::check(global, callback, &Self::socket(socket), hostname);
-                    // It can close the client, and `onclose` can dial again.
-                    if !this
-                        .dial
-                        .hold()
-                        .is_some_and(|it| core::ptr::eq(&raw const *it, hold))
-                    {
-                        return Ok(());
-                    }
-                    if let Err(reason) = verdict {
-                        return Self::fail_handshake(this, reason);
-                    }
-                    this.start();
-                    return Ok(());
+                    return Self::ask_about_identity(hold, callback, socket, hostname);
                 }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
@@ -1325,6 +1301,37 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // this no matter if reject_unauthorized is false, because we were disconnected by the
             // server
             return Self::fail_handshake_with_verify_error(this, &ssl_error);
+        }
+        Ok(())
+    }
+
+    /// `tls.checkServerIdentity` replaces the name check.
+    fn ask_about_identity(
+        hold: &Hold,
+        callback: JSValue,
+        socket: SocketType<SSL>,
+        hostname: &[u8],
+    ) -> JsResult<()> {
+        let this = &hold.client;
+        // A renegotiation, in which BoringSSL refuses another certificate.
+        if this.asked_server_identity.replace(true) {
+            return Ok(());
+        }
+        // As in Node, for a unix socket.
+        let hostname: &[u8] = if hostname.is_empty() {
+            b"localhost"
+        } else {
+            hostname
+        };
+        let socket = Self::socket(socket);
+        let verdict = server_identity::check(&this.global_object, callback, &socket, hostname);
+        // It closed this socket, and may have dialed the next.
+        if !(this.dial.hold()).is_some_and(|current| core::ptr::eq(Rc::as_ptr(&current), hold)) {
+            return Ok(());
+        }
+        match verdict {
+            Ok(()) => this.start(),
+            Err(reason) => return Self::fail_handshake(this, reason.to_error().unwrap_or(reason)),
         }
         Ok(())
     }
@@ -1470,19 +1477,8 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                if let Some(callback) = tls.get(global_object, "checkServerIdentity")?
-                    && callback.to_boolean()
-                {
-                    if !callback.is_callable() {
-                        return Err(global_object.throw_invalid_property_type_value(
-                            b"tls.checkServerIdentity",
-                            b"function",
-                            callback,
-                        ));
-                    }
-                    this.check_server_identity =
-                        Some(callback.with_graph_context_if_needed(global_object));
-                }
+                this.check_server_identity = server_identity::callback_of(global_object, tls)?
+                    .map(|callback| callback.with_graph_context_if_needed(global_object));
                 let options = TLSOptions::from_js(global_object, tls)?;
                 let mut given = match ParsedTls::given(global_object, &options, false)? {
                     Some(given) => given,

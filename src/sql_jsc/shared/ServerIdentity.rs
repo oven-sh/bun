@@ -10,13 +10,19 @@ unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }
 
-pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
+pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
     if !tls.is_object() {
         return Ok(None);
     }
-    Ok(tls
-        .get(global, "checkServerIdentity")?
-        .filter(|callback| callback.is_callable()))
+    match tls.get(global, "checkServerIdentity")? {
+        Some(callback) if callback.is_callable() => Ok(Some(callback)),
+        Some(other) if !other.is_null() => Err(global.throw_invalid_property_type_value(
+            b"tls.checkServerIdentity",
+            b"function",
+            other,
+        )),
+        Some(_) | None => Ok(None),
+    }
 }
 
 /// `Err` is what the connection fails with. Runs user code, which can close the connection.

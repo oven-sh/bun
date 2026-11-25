@@ -210,18 +210,21 @@ impl<S: System, R> Client<S, R> {
     #[cold]
     fn reload(&mut self) {
         self.doubts_config = false;
-        self.reload_at = self.now.saturating_add(RELOAD_INTERVAL);
-        let config = load_config(&mut self.system, self.timeout);
+        let mut config = load_config(&mut self.system, self.timeout);
+        if config.names_a_server {
+            let servers = core::mem::take(&mut config.servers);
+            if self.servers.replace(servers.into_iter()) {
+                self.cache = Cache::default();
+            }
+            self.leave_removed_servers();
+        }
         // There may have been no descriptor to read it with.
-        if self.config.names_a_server && !config.names_a_server {
-            return;
+        if config.names_a_server || !self.config.names_a_server {
+            self.config = config;
         }
-        self.config = config;
-        let servers = core::mem::take(&mut self.config.servers);
-        if self.servers.replace(servers.into_iter()) {
-            self.cache = Cache::default();
+        if self.config.names_a_server {
+            self.reload_at = self.now.saturating_add(RELOAD_INTERVAL);
         }
-        self.leave_removed_servers();
     }
 
     fn call(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {

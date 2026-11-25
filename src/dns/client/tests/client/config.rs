@@ -361,6 +361,18 @@ fn not_read_again_too_soon() {
 }
 
 #[test]
+fn never_too_soon_to_replace_a_guess() {
+    let mut test = Setup::default().start();
+    for _ in 0..2 {
+        let query = test.ask("a.test");
+        assert_eq!(test.server_of(&query), DEFAULT);
+        test.decline(&query, REFUSED);
+    }
+    test.world().write(RESOLV_CONF, "nameserver 1.1.1.1");
+    assert_eq!(next_server(&mut test), OLD);
+}
+
+#[test]
 fn all_of_it_is_read_again() {
     let mut test = resolv_conf("search s").timeout(3000).start();
     let text = "search t\noptions use-vc timeout:1";

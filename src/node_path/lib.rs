@@ -13,6 +13,7 @@ pub use tidy::{
 use bun_core::strings::CodeUnitsMut;
 use bun_core::strings::{self, CodeUnits};
 use bun_paths::MAX_PATH_BYTES;
+use bun_paths::path_buffer_pool::{PathBufferPoolT, PoolStorage};
 use bun_paths::portable::is_sep as is_sep_windows_t;
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
@@ -25,16 +26,20 @@ pub use bun_paths::PathChar;
 /// per-width `get_cwd` plus `Default` for zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
 pub trait PathCharCwd: PathChar + Default {
+    /// Room for the working directory, which [`bun_paths::path_buffer_pool`] lends.
+    type CwdBuffer: PoolStorage + core::ops::DerefMut<Target = [Self]>;
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> &mut [Self];
 }
 impl PathCharCwd for u8 {
+    type CwdBuffer = bun_paths::PathBuffer;
     #[inline]
     fn get_cwd(buf: &mut [u8]) -> &mut [u8] {
         get_cwd_u8(buf)
     }
 }
 impl PathCharCwd for u16 {
+    type CwdBuffer = bun_paths::WPathBuffer;
     #[inline]
     fn get_cwd(buf: &mut [u16]) -> &mut [u16] {
         get_cwd_u16(buf)
@@ -50,7 +55,8 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if let (CodeUnits::U8(a), CodeUnits::U8(b)) = (T::units(a), T::units(b)) {
-        return strings::eql_case_insensitive_ascii(a, b, true);
+        // Not `strings::eql_case_insensitive_ascii`, which reads no further than a NUL.
+        return a.eq_ignore_ascii_case(b);
     }
     if a.len() != b.len() {
         return false;
@@ -105,22 +111,15 @@ pub struct PathParsed<'a, T: PathCharCwd> {
     pub name: &'a [T],
 }
 
+/// As long as the working directory is at most.
 const fn max_path_size<T: PathCharCwd>() -> usize {
-    if T::IS_U16 {
+    // It has no more UTF-16 code units than bytes.
+    if T::IS_U16 && bun_paths::PATH_MAX_WIDE < MAX_PATH_BYTES {
         bun_paths::PATH_MAX_WIDE
     } else {
         MAX_PATH_BYTES
     }
 }
-
-/// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
-/// the current target. Used for sizing stack buffers where the `T`-dependent
-/// array length can't be expressed as a const-generic.
-const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
-    MAX_PATH_BYTES
-} else {
-    bun_paths::PATH_MAX_WIDE
-};
 
 pub const fn path_size<T: PathCharCwd>() -> usize {
     if T::IS_U16 {
@@ -204,7 +203,20 @@ fn get_cwd_u8(buf: &mut [u8]) -> &mut [u8] {
 }
 
 fn get_cwd_u16(buf: &mut [u16]) -> &mut [u16] {
-    strings::convert_utf8_to_utf16_in_buffer(buf, working_directory())
+    let cached_cwd = working_directory();
+    if strings::is_valid_utf8(cached_cwd) {
+        return strings::convert_utf8_to_utf16_in_buffer(buf, cached_cwd);
+    }
+    // `process.cwd()` is made of these bytes by the same function. It holds U+FFFD for each of the bytes of an unpaired
+    // surrogate, which `convert_utf8_to_utf16_in_buffer` reads as that surrogate.
+    let decoded = bun_core::String::clone_utf8(cached_cwd);
+    let len = decoded.length();
+    if decoded.is_utf16() {
+        buf[0..len].copy_from_slice(decoded.utf16());
+    } else {
+        strings::copy_u8_into_u16(&mut buf[0..len], decoded.latin1());
+    }
+    &mut buf[0..len]
 }
 
 #[inline]
@@ -2038,16 +2050,11 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         i64::try_from(paths.len() - 1).expect("int cast")
     };
     while i_i64 > -2 && !resolved_absolute {
-        // Borrowck: `path` may borrow from tmp_buf which lives
-        // in this scope; copy into buf2 before reusing.
-        // Sized to the larger of the two T variants.
-        let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
         } else {
-            // cwd is limited to MAX_PATH_BYTES.
-            tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)
+            // cwd is limited to MAX_PATH_BYTES. Nothing is written to `buf` before the path is normalized into it.
+            &*posix_cwd_t(buf)
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2134,10 +2141,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf2: &mut [T],
 ) -> &'a [T] {
     let is_sep_t = is_sep_windows_t::<T>;
-    // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    // From this thread's pool: it is too much to put on the stack and to fill at every call.
+    let mut tmp_buf = PathBufferPoolT::<T::CwdBuffer>::get();
     // Taken by the last iteration.
-    let mut cwd_buf = &mut tmp_buf[..];
+    let mut cwd_buf: &mut [T] = &mut tmp_buf;
 
     let mut resolved_device: Option<Device<'_, T>> = None;
     // Backed by expandable buf2 because resolvedTail may be long.

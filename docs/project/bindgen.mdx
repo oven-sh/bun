@@ -378,7 +378,9 @@ itself; `latin1.substrings_unchecked(heap, ranges)` makes several with one call.
 `heap.create_latin1_string(characters)` makes a new one, and `heap.create_latin1_string_with(length, fill)`
 one that `fill` writes in place. Both end the process when the characters cannot be allocated;
 `heap.try_create_latin1_string(characters)` answers with an error instead, for as many characters as JavaScript
-cares to pass. It is also a result. `b.string.allowStringObject.local` takes a
+cares to pass. `heap.create_string_of_units(units)` makes one of Latin-1 characters or of UTF-16 code units, as the
+operands were held, and holds it as `heap.create_utf8_string(utf8)` holds the same text: in 8 bits if all of it is
+ASCII, and in 16 bits if not. `b.string.local` is also a result. `b.string.allowStringObject.local` takes a
 `String` object too: the `String` objects among the arguments are converted first, in the order of
 the arguments, and the types are checked after that. `src/runtime/node/path.rs` is written this way.
 

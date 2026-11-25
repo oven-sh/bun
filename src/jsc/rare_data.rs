@@ -285,31 +285,40 @@ impl Default for RareData {
 
 /// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
+/// They are made of 16-bit units, so a path is put together in them from Latin-1 characters or from UTF-16 code units.
 #[derive(Default)]
 pub struct PathBuf {
-    pub(crate) small: Option<Box<[u8; 2 * MAX_PATH_BYTES]>>,
-    pub(crate) medium: Option<Box<[u8; 8 * MAX_PATH_BYTES]>>,
-    pub(crate) large: Option<Box<[u8; 32 * MAX_PATH_BYTES]>>,
+    pub(crate) small: Option<Box<[u16; MAX_PATH_BYTES]>>,
+    pub(crate) medium: Option<Box<[u16; 4 * MAX_PATH_BYTES]>>,
+    pub(crate) large: Option<Box<[u16; 16 * MAX_PATH_BYTES]>>,
 }
 
 impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
-    /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
+    /// As many bytes as the largest tier has.
+    pub const MAX_BYTES: usize = 32 * MAX_PATH_BYTES;
+
+    /// Returns the smallest lazily-allocated tier buffer that fits `min_len` bytes.
+    pub fn bytes(&mut self, min_len: usize) -> &mut [u8] {
+        bun_core::slice_as_bytes_mut(self.utf16(min_len.div_ceil(2)))
+    }
+
+    /// Returns the smallest lazily-allocated tier buffer that fits `min_len` UTF-16 code units.
     // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn get(&mut self, min_len: usize) -> &mut [u8] {
-        if min_len <= 2 * Self::S {
+    pub fn utf16(&mut self, min_len: usize) -> &mut [u16] {
+        if min_len <= Self::S {
             &mut **self
                 .small
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 2 * MAX_PATH_BYTES]>)
-        } else if min_len <= 8 * Self::S {
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; MAX_PATH_BYTES]>)
+        } else if min_len <= 4 * Self::S {
             &mut **self
                 .medium
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 8 * MAX_PATH_BYTES]>)
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; 4 * MAX_PATH_BYTES]>)
         } else {
             &mut **self
                 .large
-                .get_or_insert_with(bun_core::boxed_zeroed::<[u8; 32 * MAX_PATH_BYTES]>)
+                .get_or_insert_with(bun_core::boxed_zeroed::<[u16; 16 * MAX_PATH_BYTES]>)
         }
     }
 }

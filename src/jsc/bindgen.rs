@@ -167,6 +167,42 @@ impl<'a> JsHeap<'a> {
         JsLocal::from_js_result(crate::StringJsc::into_js(string, self.global_object()))
     }
 
+    /// A string with a copy of `units`, Latin-1 characters or UTF-16 code units, held as
+    /// [`create_utf8_string`](Self::create_utf8_string) holds the same text: in 8 bits if all of them are ASCII, and
+    /// in 16 bits if not.
+    pub fn create_string_of_units<T: bun_core::strings::PathByte>(
+        &self,
+        units: &[T],
+    ) -> Result<'a, JsLocal<'a, JSString>> {
+        use bun_core::strings::{self, CodeUnits};
+        if units.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        match T::units(units) {
+            CodeUnits::U8(latin1) if strings::is_all_ascii(latin1) => self.try_copy_latin1(latin1),
+            CodeUnits::U8(latin1) => {
+                let (string, utf16) = bun_core::String::create_uninitialized_utf16(latin1.len());
+                if string.is_dead() {
+                    return Err(self.memory_allocation_failed());
+                }
+                strings::copy_u8_into_u16(utf16, latin1);
+                return self.create_string(string);
+            }
+            // A loop without an early exit is vectorized.
+            CodeUnits::U16(utf16)
+                if utf16
+                    .chunks(64)
+                    .all(|block| block.iter().fold(0, |all, &unit| all | unit) < 0x80) =>
+            {
+                self.try_narrow_ascii(utf16)
+            }
+            CodeUnits::U16(utf16) => self
+                .try_create_string(bun_core::EncodedSlice::utf16(utf16))
+                .ok(),
+        }
+        .ok_or_else(|| self.memory_allocation_failed())
+    }
+
     /// A string with a copy of `text`.
     #[inline]
     pub fn try_create_string(
@@ -196,6 +232,24 @@ impl<'a> JsHeap<'a> {
             _ => unsafe {
                 JSString::try_create_latin1_with(global, latin1.len(), |to| {
                     to.copy_from_nonoverlapping(latin1.as_ptr(), latin1.len());
+                })
+            }?,
+        }))
+    }
+
+    /// As [`try_copy_latin1`](Self::try_copy_latin1), of UTF-16 code units that are all ASCII.
+    #[inline]
+    fn try_narrow_ascii(&self, ascii: &[u16]) -> Option<JsLocal<'a, JSString>> {
+        let global = self.global_object();
+        Some(JsLocal::from_raw(match *ascii {
+            [] => JSValue::js_empty_string(global),
+            [character] => JSString::single_latin1_character(global, character as u8),
+            // SAFETY: all of the characters are written, and to narrow them allocates nothing.
+            _ => unsafe {
+                JSString::try_create_latin1_with(global, ascii.len(), |to| {
+                    for (index, &character) in ascii.iter().enumerate() {
+                        to.add(index).write(character as u8);
+                    }
                 })
             }?,
         }))

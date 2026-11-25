@@ -27,12 +27,15 @@ use crate::ZStr;
 // path-relative formatting) so one uncontended read-lock is cheaper than a UB
 // window; writes are rare and serial.
 static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
+static TOP_LEVEL_DIR_IS_ASCII: AtomicBool = AtomicBool::new(true);
 
 /// Record the top-level directory (interned `'static` slice). Idempotent;
 /// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
-    *TOP_LEVEL_DIR.write() = dir;
+    let mut current = TOP_LEVEL_DIR.write();
+    *current = dir;
+    TOP_LEVEL_DIR_IS_ASCII.store(dir.is_ascii(), Ordering::Release);
 }
 
 /// Top-level directory recorded at startup (defaults to `"."`).
@@ -42,6 +45,7 @@ pub fn top_level_dir() -> &'static [u8] {
 }
 
 static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
+static WORKING_DIRECTORY_IN_EXECUTABLE_IS_ASCII: AtomicBool = AtomicBool::new(true);
 static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> =
     crate::RwLock::new(None);
 
@@ -49,6 +53,8 @@ static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> =
 pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
     let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
     *current = directory;
+    WORKING_DIRECTORY_IN_EXECUTABLE_IS_ASCII
+        .store(directory.is_none_or(<[u8]>::is_ascii), Ordering::Release);
     HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
 }
 
@@ -59,6 +65,17 @@ pub fn working_directory_in_executable() -> Option<&'static [u8]> {
         return None;
     }
     *WORKING_DIRECTORY_IN_EXECUTABLE.read()
+}
+
+/// Whether every byte of the working directory is ASCII: of [`working_directory_in_executable`], or of
+/// [`top_level_dir`] where that is `None`. Read without a lock, for what asks at every call.
+#[inline]
+pub fn working_directory_is_ascii() -> bool {
+    if HAS_WORKING_DIRECTORY_IN_EXECUTABLE.load(Ordering::Acquire) {
+        WORKING_DIRECTORY_IN_EXECUTABLE_IS_ASCII.load(Ordering::Acquire)
+    } else {
+        TOP_LEVEL_DIR_IS_ASCII.load(Ordering::Acquire)
+    }
 }
 
 /// Set by `bun_crash_handler::init()` once it has installed its segfault

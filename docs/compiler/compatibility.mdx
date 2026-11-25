@@ -201,6 +201,8 @@ Where the build can't tell which file a Worker starts from, it also compiles the
 
 Code that's loaded from disk is interpreted. It can use globals, built-in modules, files and packages on disk, and what your program passes to it. It can't import the files that were compiled into the executable, and a package that it imports is a second instance.
 
+Under `bun test --aot`, a compiled file that another process writes while the tests are built or running can throw `Cannot load`, with a message that it was written after the test run was compiled. `bun test` reads the file instead. Run the tests again, or without `--aot`.
+
 Next.js and Angular load your pages by dynamic paths. [Libraries](/compiler/libraries) shows what to pass.
 
 ## Loader hooks and the module cache

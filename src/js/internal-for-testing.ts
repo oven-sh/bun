@@ -9,6 +9,12 @@
 
 const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
+export const expireCurrentVMDeadline: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_expireCurrentVMDeadline",
+  0,
+);
+
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");

@@ -5029,3 +5029,36 @@ console.log(fs.readFileSync(path.join(__dirname, "folder\\ufffd", "note.txt"), "
     120_000,
   );
 });
+
+// https://github.com/oven-sh/bun/issues/49604
+// The disk refuses a path that long for its length alone, so the executable looks up none of its `..`.
+// The lookups for these do not end in the time that a test has.
+test.skipIf(isWindows)(
+  "a path longer than the disk takes names nothing, in the executable or on the disk",
+  async () => {
+    using dir = tempDir("aot-path-over-the-limit", {
+      "app/sub/keep.txt": "",
+      "app/main.mjs": `import fs from "node:fs";
+import os from "node:os";
+const code = error => error.code;
+// Every \`..\` comes after a folder that is there, in the executable or on the disk.
+const steps = { "in the program": __dirname + "/sub/../", "on the disk": "/" + os.tmpdir().split("/")[1] + "/../" };
+for (const [label, step] of Object.entries(steps)) {
+  const long = step.repeat(20000) + "data.txt";
+  const file = Bun.file(long);
+  console.log(label, await file.exists(), await file.text().catch(code), await file.stat().catch(code), fs.existsSync(long));
+  try {
+    fs.readFileSync(long);
+  } catch (error) {
+    console.log(label, error.code, error.syscall);
+  }
+}
+`,
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.mjs");
+    const refused = (label: string) => `${label} false ENAMETOOLONG ENAMETOOLONG false\n${label} ENAMETOOLONG open\n`;
+    expect(plain.stdout).toBe(refused("in the program") + refused("on the disk"));
+    expect(compiled).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
+  },
+  120_000,
+);

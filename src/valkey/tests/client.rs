@@ -168,10 +168,22 @@ impl Driver {
                 Event::Resolved {
                     promise,
                     value,
-                    as_buffer,
+                    reply,
                 } => {
-                    let buffer = if as_buffer { " as buffer" } else { "" };
-                    format!("resolve #{promise} {}{buffer}", show(&value))
+                    let kind = match reply {
+                        Reply::Value | Reply::Bool => "",
+                        Reply::Binary => " as binary",
+                        Reply::Page => " as page",
+                        Reply::Buffer => " as buffer",
+                    };
+                    format!("resolve #{promise} {}{kind}", show(&value))
+                }
+                Event::Executed { promise, results } => {
+                    let results = results
+                        .iter()
+                        .map(|it| format!("{}{:?}", show(&it.0), it.1));
+                    let results = results.collect::<Vec<_>>().join(" ");
+                    format!("resolve #{promise} as {results}")
                 }
                 Event::Rejected { promise, message } => {
                     format!("reject #{promise} {}", message.escape_ascii())
@@ -1018,17 +1030,17 @@ mod selected_database {
             ("SET k v +QUEUED, EXEC *3 +OK -ERR +OK", "SELECT 5"),
             ("SELECT 7 +QUEUED, EXEC *3 +OK +OK +OK", "SELECT 7"),
             ("SELECT 7 +QUEUED, EXEC *3 +OK +OK -ERR", "SELECT 6"),
-            ("WATCH k -ERR, EXEC *2 +OK +OK", "SELECT 6"),
+            ("WATCH k -ERR, EXEC *2 -ERR +OK", "SELECT 6"),
             (
                 "SET k v >1 +invalidate +QUEUED, EXEC *3 -ERR +OK -ERR",
                 "SELECT 6",
             ),
             ("EXEC *2 +OK +other", "SELECT 5"),
             (
-                "EXEC -EXECABORT, SELECT 7 +QUEUED, EXEC *2 +OK -ERR",
+                "EXEC -EXECABORT, SELECT 7 +QUEUED, EXEC *2 +OK +OK",
                 "SELECT 5",
             ),
-            ("EXEC _, SELECT 7 +QUEUED, EXEC *2 +OK -ERR", "SELECT 5"),
+            ("EXEC _, SELECT 7 +QUEUED, EXEC *2 +OK +OK", "SELECT 5"),
             ("EVAL x 0 *1 +OK", "SELECT 5"),
             (
                 "EXEC NX k -CROSSSLOT, SELECT 7 +QUEUED, EXEC *2 +OK -ERR",
@@ -1196,15 +1208,84 @@ mod pipeline {
     }
 
     #[test]
-    fn reply_kinds() {
+    fn exec_keeps_the_bytes_that_a_command_asked_for() {
+        use Reply::{Binary, Bool, Buffer, Page, Value};
+        const THREE: &str = "*3\r\n:1\r\n:2\r\n:3\r\n";
         let mut it = Driver::connected(Config::default());
-        for reply in [Reply::Bool, Reply::Bool, Reply::Bool, Reply::Buffer] {
+        let mut last = |steps: &[(&str, Reply, &str)]| {
+            for &(command, reply, answer) in steps {
+                it.send_as(command, reply);
+                it.advance();
+                it.checkpoint();
+                it.read(answer);
+            }
+            let line = it.take().pop().unwrap();
+            let id = line.trim_start_matches("resolve #");
+            id.trim_start_matches(char::is_numeric).trim().to_string()
+        };
+        let multi = ("MULTI", Value, "+OK\r\n");
+        let queued = |reply| ("X", reply, "+QUEUED\r\n");
+        let [value, bool, binary, page, buffer] = [Value, Bool, Binary, Page, Buffer].map(queued);
+        let [exec, exec_binary] = [Value, Binary].map(|reply| ("exec", reply, THREE));
+        let refused = ("WATCH", Binary, "-ERR\r\n");
+
+        assert_eq!(last(&[multi, value, bool, value, exec]), "?");
+        assert_eq!(
+            last(&[multi, bool, page, refused, buffer, exec]),
+            "as 1Value 2Page 3Buffer"
+        );
+        assert_eq!(
+            last(&[multi, value, page, bool, exec_binary]),
+            "as 1Binary 2Page 3Binary"
+        );
+        assert_eq!(
+            last(&[multi, value, value, value, exec_binary]),
+            "as 1Binary 2Binary 3Binary"
+        );
+        let nested = ("MULTI", Value, "-ERR\r\n");
+        let subscribe = ("SUBSCRIBE a", Binary, "+QUEUED\r\n");
+        assert_eq!(
+            last(&[multi, value, binary, nested, subscribe, exec]),
+            "as 1Value 2Binary 3Value"
+        );
+        // A peer that counts differently.
+        assert_eq!(last(&[multi, binary, exec]), "as 1Value 2Value 3Binary");
+        assert_eq!(
+            last(&[multi, page, binary, value, page, exec]),
+            "as 1Binary 2Value 3Page"
+        );
+        // Nothing is left for the next one.
+        let ends = [
+            exec,
+            ("EXEC", Value, "_\r\n"),
+            ("EXEC", Value, "-MOVED\r\n"),
+            ("DISCARD", Value, "+OK\r\n"),
+            ("RESET", Value, "+RESET\r\n"),
+        ];
+        for end in ends {
+            assert_eq!(last(&[multi, binary, end, binary, exec]), "?");
+        }
+        // Another array is not the reply to EXEC.
+        assert_eq!(last(&[multi, binary, ("MGET", Value, THREE), exec]), "?");
+        last(&[multi, binary]);
+        it.lost();
+        it.handshake();
+        it.send("EXEC");
+        it.read(THREE);
+        assert!(it.take().pop().unwrap().ends_with('?'));
+    }
+
+    #[test]
+    fn reply_kinds() {
+        use Reply::{Binary, Bool, Buffer};
+        let mut it = Driver::connected(Config::default());
+        for reply in [Bool, Bool, Bool, Buffer, Binary] {
             it.send_as("X", reply);
         }
         it.send("X");
         it.checkpoint();
         it.log.clear();
-        it.read(":2\r\n:-1\r\n+a\r\n+b\r\n-ERR\r\n+extra\r\n");
+        it.read(":2\r\n:-1\r\n+a\r\n+b\r\n+c\r\n-ERR\r\n+extra\r\n");
         assert_eq!(
             it.take(),
             [
@@ -1212,7 +1293,8 @@ mod pipeline {
                 "resolve #2 false",
                 "resolve #3 a",
                 "resolve #4 b as buffer",
-                "reject #5 ERR",
+                "resolve #5 c as binary",
+                "reject #6 ERR",
                 "ignored",
             ]
         );
@@ -1396,7 +1478,7 @@ mod subscriptions {
 
     #[test]
     fn a_second_prefix_counts_as_a_reply() {
-        for command in ["X", "SELECT 1", "EXEC"] {
+        for command in ["X", "SELECT 1", "MULTI", "EXEC"] {
             let mut it = Driver::connected(Config::default());
             it.read(&push("spsubscribe", "k"));
             it.send(command);

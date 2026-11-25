@@ -51,7 +51,7 @@ enum State {
     /// Connected, but script has not touched the client.
     Spare,
     Ready,
-    /// As [`Ready`], inside MULTI. Holds what is queued from the first SELECT on: EXEC's last results answer it.
+    /// As [`Ready`], inside MULTI. Holds what is queued from the first SELECT or request for bytes on: EXEC's last results answer it.
     Queuing(Vec<Expect>),
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
@@ -130,10 +130,23 @@ enum Expect {
     Ack,
     /// Confirms the database to come back to.
     Database(u32),
-    Exec,
+    Multi,
+    /// For the results of the commands that did not ask for bytes themselves.
+    Exec(Reply),
 }
 
 impl Expect {
+    fn reply(self) -> Reply {
+        match self {
+            Expect::Reply(reply) | Expect::Exec(reply) => reply,
+            Expect::Ack | Expect::Database(_) | Expect::Multi => Reply::Value,
+        }
+    }
+
+    fn matters_at_exec(self) -> bool {
+        matches!(self, Expect::Database(_)) || self.reply().keeps_bytes()
+    }
+
     #[cold]
     fn select(database: &[u8], reply: Reply) -> Self {
         bun_core::fmt::parse_unsigned(database, 10).map_or(Expect::Reply(reply), Expect::Database)
@@ -179,7 +192,12 @@ pub enum Event<P> {
     Resolved {
         promise: P,
         value: RESPValue,
-        as_buffer: bool,
+        reply: Reply,
+    },
+    /// Each result is converted, or refused, on its own.
+    Executed {
+        promise: P,
+        results: Vec<(RESPValue, Reply)>,
     },
     Rejected {
         promise: P,
@@ -586,7 +604,8 @@ impl<P> Client<P> {
         let is = |command: &[u8]| name.eq_ignore_ascii_case(command);
         let expect = match (ACKS.get_ascii_case_insensitive(name), args) {
             (Some(_), _) => Expect::Ack,
-            (None, _) if is(b"EXEC") => Expect::Exec,
+            (None, _) if is(b"EXEC") => Expect::Exec(reply),
+            (None, []) if is(b"MULTI") => Expect::Multi,
             (None, []) if is(b"RESET") => Expect::Database(self.config.database),
             (None, [database]) if is(b"SELECT") => Expect::select(database.as_ref(), reply),
             (None, _) => Expect::Reply(reply),
@@ -731,7 +750,7 @@ impl<P> Client<P> {
             Opening(Step::Hello, by) => self.on_hello(value, by),
             Opening(Step::Select(hello), by) => self.on_select(value, hello, by),
             Queuing(queued) => {
-                self.state = self.after_reply_in_multi(&value, queued);
+                self.state = self.ahead_of_reply_in_multi(&value, queued);
                 return self.on_reply(value);
             }
             state @ (Ready | Spare) => {
@@ -824,24 +843,17 @@ impl<P> Client<P> {
         }
     }
 
-    fn after_reply_in_multi(&mut self, value: &RESPValue, mut queued: Vec<Expect>) -> State {
+    fn ahead_of_reply_in_multi(&self, value: &RESPValue, mut queued: Vec<Expect>) -> State {
         match (value, self.in_flight.front().map(|it| it.expect)) {
             (RESPValue::Push(_), _) | (_, None) => Queuing(queued),
-            (RESPValue::Array(results), Some(Expect::Exec)) => {
-                let mut ran = results.iter().rev().zip(queued.into_iter().rev());
-                let last = ran.find_map(|it| match it {
-                    (RESPValue::SimpleString(text), Expect::Database(it)) if **text == *b"OK" => {
-                        Some(it)
-                    }
-                    _ => None,
-                });
-                self.database = last.unwrap_or(self.database);
-                Ready
-            }
-            (_, Some(Expect::Exec)) => Ready,
+            // For `answer_tracked`.
+            (RESPValue::Array(_), Some(Expect::Exec(_))) => Queuing(queued),
+            (_, Some(Expect::Exec(_))) => Ready,
             (RESPValue::Error(_), _) => Queuing(queued),
             (RESPValue::SimpleString(text), Some(expect)) if **text == *b"QUEUED" => {
-                queued.push(expect);
+                if !queued.is_empty() || expect.matters_at_exec() {
+                    queued.push(expect);
+                }
                 Queuing(queued)
             }
             // To DISCARD or RESET.
@@ -871,32 +883,65 @@ impl<P> Client<P> {
                 Event::Resolved {
                     promise,
                     value: RESPValue::Boolean(int > 0),
-                    as_buffer: false,
+                    reply: Reply::Bool,
                 }
             }
-            value => {
-                if let Expect::Database(database) = expect {
-                    self.note_database(&value, database);
-                }
-                Event::Resolved {
+            value => match expect {
+                Expect::Reply(reply) => Event::Resolved {
                     promise,
                     value,
-                    as_buffer: matches!(expect, Expect::Reply(Reply::Buffer)),
-                }
-            }
+                    reply,
+                },
+                expect => self.answer_tracked(value, expect, promise),
+            },
         }
     }
 
     #[cold]
-    fn note_database(&mut self, reply: &RESPValue, database: u32) {
-        let RESPValue::SimpleString(status) = reply else {
-            return;
-        };
-        match (&**status, &self.state) {
-            (b"OK" | b"RESET", _) => self.database = database,
-            (b"QUEUED", Ready) => self.state = Queuing(vec![Expect::Database(database)]),
+    fn answer_tracked(&mut self, mut value: RESPValue, expect: Expect, promise: P) -> Event<P> {
+        match (&mut value, expect, &mut self.state) {
+            (RESPValue::SimpleString(status), Expect::Database(database), _)
+                if matches!(&**status, b"OK" | b"RESET") =>
+            {
+                self.database = database;
+            }
+            (_, Expect::Multi, Ready) => self.state = Queuing(Vec::new()),
+            (RESPValue::Array(results), Expect::Exec(others), Queuing(queued)) => {
+                let queued = core::mem::take(queued);
+                self.state = Ready;
+                if !queued.is_empty() || others.keeps_bytes() {
+                    let results = self.executed(results, others, queued);
+                    return Event::Executed { promise, results };
+                }
+            }
             _ => {}
         }
+        Event::Resolved {
+            promise,
+            value,
+            reply: expect.reply(),
+        }
+    }
+
+    fn executed(
+        &mut self,
+        results: &mut Vec<RESPValue>,
+        others: Reply,
+        queued: Vec<Expect>,
+    ) -> Vec<(RESPValue, Reply)> {
+        let mut results: Vec<_> = results.drain(..).map(|it| (it, others)).collect();
+        let mut last = None;
+        for ((result, reply), expect) in results.iter_mut().rev().zip(queued.into_iter().rev()) {
+            match (result, expect) {
+                (RESPValue::SimpleString(text), Expect::Database(it)) if **text == *b"OK" => {
+                    last = last.or(Some(it));
+                }
+                (_, Expect::Reply(own)) if own.keeps_bytes() => *reply = own,
+                _ => {}
+            }
+        }
+        self.database = last.unwrap_or(self.database);
+        results
     }
 
     fn on_push(&mut self, push: Push) -> Event<P> {
@@ -934,7 +979,8 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         match self.in_flight.front().map(|it| it.expect) {
-            None | Some(Expect::Reply(_) | Expect::Database(_) | Expect::Exec)
+            None
+            | Some(Expect::Reply(_) | Expect::Database(_) | Expect::Multi | Expect::Exec(_))
                 if !self.is_subscriber =>
             {
                 self.answer(RESPValue::Push(push))

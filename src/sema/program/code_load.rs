@@ -7,9 +7,8 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{ExportedRequire, JsxMode};
 use crate::module_format::DeclaredModuleType;
 use crate::resolve::{
-    CodeFile, CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects,
-    EnclosingPackage, HostPayload, JsxSettings, ProjectResolvers, SiteResolution,
-    TranspileSettings,
+    CodeHost, CodeImportKind, CodeOptions, CodeResolution, DeclaredSideEffects, EnclosingPackage,
+    HostPayload, JsxSettings, ProjectResolvers, SiteResolution, TranspileSettings,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -62,7 +61,6 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     entry_points_that_run_first: FxHashSet<Vec<u8>>,
     files_with_module_form: Guarded<FxHashSet<Vec<u8>>>,
     has_module_forms: AtomicBool,
-    files_required_by_unknown_names: Guarded<FxHashMap<Vec<u8>, Vec<CodeFile<'r>>>>,
     pub(super) is_case_sensitive: bool,
 }
 
@@ -112,7 +110,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             are_guesses_out: Guarded::new(false),
             entry_points_that_run_first,
             files_with_module_form: Guarded::new(FxHashSet::default()),
-            files_required_by_unknown_names: Guarded::new(FxHashMap::default()),
             has_module_forms: AtomicBool::new(false),
             is_case_sensitive,
         }
@@ -291,19 +288,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let path = to_path(path, self.is_case_sensitive).into_owned();
         self.has_module_forms.store(true, Ordering::Relaxed);
         self.files_with_module_form.lock().insert(path)
-    }
-
-    pub(super) fn note_file_required_by_unknown_name(&self, requirer: &[u8], file: CodeFile<'r>) {
-        let mut files = self.files_required_by_unknown_names.lock();
-        files.entry(requirer.to_vec()).or_default().push(file);
-    }
-
-    pub(super) fn files_required_by_unknown_names_in(&self, requirer: &[u8]) -> Vec<CodeFile<'r>> {
-        if !self.has_module_forms.load(Ordering::Relaxed) {
-            return Vec::new();
-        }
-        let files = self.files_required_by_unknown_names.lock();
-        files.get(requirer).cloned().unwrap_or_default()
     }
 
     pub(super) fn runs_first(&self, key: LoadKey<'_>) -> bool {

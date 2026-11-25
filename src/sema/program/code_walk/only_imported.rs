@@ -3,9 +3,7 @@ use crate::bind::{Bound, FnOwner, MemberOwner, Parent};
 use crate::hir::{ExprId, ExprKind, FnId};
 use crate::import_sites::ImportSite;
 use crate::module_format::ModuleFormat;
-use crate::resolve::{
-    CodeFile, CodeImportKind, ComputedResolution, SiteResolution, is_typescript_file_name,
-};
+use crate::resolve::{CodeImportKind, ComputedResolution, SiteResolution, is_typescript_file_name};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum LoadedBy {
@@ -596,8 +594,6 @@ struct LoadsOfFile {
     runs_inside_require: bool,
     /// An import may run it, and a `require()` may run it in front of the import.
     first_load_decides: bool,
-    /// The file that may require it, if none does by a name that is followed.
-    requirer_by_unknown_name: Option<u32>,
 }
 
 fn find_files_that_require_may_load(
@@ -692,26 +688,6 @@ fn find_files_that_require_may_load(
             }
         }
     }
-    // A `require()` of a name that is not followed may load any file that an import names.
-    let mut behind_unknown_names = BEHIND_NO_LOAD;
-    let mut requirer_of_unknown_names = None;
-    for (index, file) in (0..).zip(files) {
-        let requires = |site| loading_kind(site) == Some(CodeImportKind::Require);
-        if is_of_program[index as usize] && names_unknown_file(file, &requires) {
-            order.note(&order.load_in(index), &mut behind_unknown_names);
-            requirer_of_unknown_names.get_or_insert(index);
-        }
-    }
-    let mut named_by_unknown_names_alone = FxHashSet::default();
-    if behind_unknown_names.lowest != NOT_LOADED {
-        for &(file, ()) in asked {
-            let behind = &mut required_behind[file as usize];
-            if behind.lowest == NOT_LOADED {
-                named_by_unknown_names_alone.insert(file);
-            }
-            order.note(&behind_unknown_names, behind);
-        }
-    }
     while let Some(file) = to_visit.pop() {
         let behind = imported_behind[file as usize].clone();
         for (target, kind) in named.loaded_by(file) {
@@ -740,8 +716,6 @@ fn find_files_that_require_may_load(
                 may_be_required: is_named_first || runs_inside_require || is_only_resolved(file),
                 runs_inside_require,
                 first_load_decides,
-                requirer_by_unknown_name: requirer_of_unknown_names
-                    .filter(|_| named_by_unknown_names_alone.contains(&file)),
             }
         })
         .collect()
@@ -993,9 +967,9 @@ pub(super) fn forget_files_that_another_loader_reads(
 }
 
 /// Compiles the files that an import may run as ES modules, and a `require()` as CommonJS files, as both.
-pub(super) fn add_both_module_forms<'r>(
-    context: &CodeLoadContext<'_, '_, 'r>,
-    state: &mut WalkState<'_, 'r>,
+pub(super) fn add_both_module_forms(
+    context: &CodeLoadContext<'_, '_, '_>,
+    state: &mut WalkState<'_, '_>,
 ) -> bool {
     if context.host.may_load_files_again() {
         return false;
@@ -1007,20 +981,10 @@ pub(super) fn add_both_module_forms<'r>(
     }
     let answers = find_files_that_require_may_load(context, state, &candidates);
     let mut given: Vec<u32> = Vec::new();
-    let mut asked_again = None;
     for ((index, ()), loads) in candidates.into_iter().zip(answers) {
         let path = state.files[index as usize].target.key.path;
         if loads.first_load_decides && context.add_module_form(path) {
             given.push(index);
-            if let Some(requirer) = loads.requirer_by_unknown_name {
-                let file = CodeFile {
-                    path,
-                    host_module: None,
-                };
-                let requirer_path = state.files[requirer as usize].target.key.path;
-                context.note_file_required_by_unknown_name(requirer_path, file);
-                asked_again = Some(requirer);
-            }
         }
     }
     for &index in &given {
@@ -1030,13 +994,7 @@ pub(super) fn add_both_module_forms<'r>(
             forget_parsed_file(state, index);
         }
     }
-    let has_forgotten = forget_importers(state, &given);
-    if let Some(requirer) = asked_again
-        && state.files[requirer as usize].parsed.is_some()
-    {
-        forget_parsed_file(state, requirer);
-    }
-    has_forgotten || !given.is_empty()
+    forget_importers(state, &given) || !given.is_empty()
 }
 
 fn forget_importers(state: &mut WalkState<'_, '_>, imported: &[u32]) -> bool {

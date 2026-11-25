@@ -696,27 +696,6 @@ pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteK
             || find_module_printed_as_require(hir, bound, callee).is_some())
 }
 
-/// `require("bun:os")`, `(0, require)("bun:os")` and `module.require("bun:os")`, but not `const load = require; load("bun:os")`
-pub fn is_require_written_out(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteKind) -> bool {
-    let ImportSiteKind::Require(call) = site else {
-        return true;
-    };
-    let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
-        return false;
-    };
-    let mut callee = hir.skip_type_assertions(hir[call].callee);
-    while let ExprKind::Binary {
-        op: BinOp::Comma,
-        right,
-        ..
-    } = hir[callee].kind
-    {
-        callee = hir.skip_type_assertions(right);
-    }
-    is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
-        || find_module_printed_as_require(hir, bound, callee).is_some()
-}
-
 pub fn is_name_read_by_transpiler(
     hir: &File<'_>,
     bound: &Bound<'_>,

@@ -3272,6 +3272,8 @@ impl<'p, 's> Checker<'p, 's> {
     ///   retracted. What happens to the task later doesn't matter, because the measurement is over.
     /// - The task has committed every cycle through a measurement. A thread that takes the variances evaluates the query
     ///   in the cycle with them and closes no cycle, so they wait for the commit that has the query's result.
+    ///   `share_variances_awaiting_commit` is the exception: if a limit discards the visit of the first file in program
+    ///   order that isn't checked yet, its commit won't come, and it shares the measurements that it has finished.
     ///
     /// A value that isn't shared is recorded (`OrderDependent`) as if every variance in it had been used.
     /// The next commit compares it with the entry in `serial_variances` at that point, and registers it

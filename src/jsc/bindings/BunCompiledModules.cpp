@@ -1480,7 +1480,7 @@ void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key
     RETURN_IF_EXCEPTION(scope, );
     // `require.cache[path] = { exports: fake }`, as tests replace a CommonJS module.
     if (reloadsFilesFromDisk())
-        RELEASE_AND_RETURN(scope, AOT::willReplaceRequireCacheEntry(globalObject, *module, entry));
+        RELEASE_AND_RETURN(scope, AOT::willReplaceRequireCacheEntry(globalObject, *module));
     RELEASE_AND_RETURN(scope, AOT::willSetRequireCacheEntry(globalObject, *module, entry));
 }
 

@@ -313,6 +313,7 @@ fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
                 | ExprKind::Class(_)
                 | ExprKind::Jsx(_)
                 | ExprKind::New(_)
+                | ExprKind::Decimal(_)
                 | ExprKind::Regex(_) => return true,
                 _ => {}
             }
@@ -332,7 +333,7 @@ fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
         } => is_construction(left, Some(right)).then_some("logical expression"),
         ExprKind::Jsx(jsx) => Some(if jsx.is_fragment() { "JSX fragment" } else { "JSX element" }),
         ExprKind::Assign { value, .. } => is_construction(value, None).then_some("assignment expression"),
-        ExprKind::New(_) => Some("object construction"),
+        ExprKind::New(_) | ExprKind::Decimal(_) => Some("object construction"),
         ExprKind::Regex(_) => Some("regular expression"),
         _ => None,
     }

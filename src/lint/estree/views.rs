@@ -117,6 +117,7 @@ pub(super) fn literals() -> NodeTags {
             ExprTag::Number,
             ExprTag::String,
             ExprTag::BigInt,
+            ExprTag::Decimal,
             ExprTag::Regex,
         ]
         .into()
@@ -172,6 +173,7 @@ pub(super) fn all_exprs() -> NodeTags {
         Number,
         String,
         BigInt,
+        Decimal,
         Regex,
         Template,
         TaggedTemplate,

@@ -185,7 +185,7 @@ impl<'a> State<'a> {
 }
 
 /// The tags that `:expression` matches.
-const EXPRESSIONS: [ExprTag; 33] = [
+const EXPRESSIONS: [ExprTag; 34] = [
     ExprTag::Ident,
     ExprTag::This,
     ExprTag::Null,
@@ -194,6 +194,7 @@ const EXPRESSIONS: [ExprTag; 33] = [
     ExprTag::Number,
     ExprTag::String,
     ExprTag::BigInt,
+    ExprTag::Decimal,
     ExprTag::Regex,
     ExprTag::Template,
     ExprTag::TaggedTemplate,

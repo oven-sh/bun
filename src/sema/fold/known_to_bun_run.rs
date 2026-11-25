@@ -443,6 +443,7 @@ impl<'s> Folder<'_, 's> {
             }
             return match kind {
                 ExprKind::Regex { .. }
+                | ExprKind::Decimal(_)
                 | ExprKind::Fn(_)
                 | ExprKind::Class(_)
                 | ExprKind::Object(_)
@@ -512,7 +513,7 @@ impl<'s> Folder<'_, 's> {
                 return true;
             }
             match hir[e].kind {
-                ExprKind::Fn(_) | ExprKind::Regex { .. } => return true,
+                ExprKind::Fn(_) | ExprKind::Regex { .. } | ExprKind::Decimal(_) => return true,
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                     return self.is_condition_told_by_shape(e);
                 }

@@ -15,10 +15,20 @@ static OF_EXECUTABLE: AtomicU8 = AtomicU8::new(0);
 impl DecimalOptions {
     // `JSCInitialize` reads these bits.
     const DECIMAL: u8 = 1 << 0;
+    const STRUCTURED_CLONE: u8 = 1 << 1;
+    const TO_JSON: u8 = 1 << 2;
+    const OPERATORS: u8 = 1 << 3;
+    const LITERALS: u8 = 1 << 4;
     /// The program was compiled ahead of time for these options, and takes no variable.
     const ARE_FIXED: u8 = 1 << 7;
 
-    const NAMES: &[(u8, &[u8])] = &[(Self::DECIMAL, b"useDecimal=")];
+    const NAMES: &[(u8, &[u8])] = &[
+        (Self::DECIMAL, b"useDecimal="),
+        (Self::STRUCTURED_CLONE, b"useDecimalStructuredClone="),
+        (Self::TO_JSON, b"useDecimalToJSON="),
+        (Self::OPERATORS, b"useDecimalOperators="),
+        (Self::LITERALS, b"useDecimalLiterals="),
+    ];
 
     pub const fn from_bits(bits: u8) -> Self {
         Self(bits)
@@ -86,5 +96,18 @@ impl DecimalOptions {
 
     pub const fn has_decimal(self) -> bool {
         self.0 & Self::DECIMAL != 0
+    }
+
+    /// An extension does nothing without `Decimal`.
+    const fn has(self, extension: u8) -> bool {
+        self.has_decimal() && self.0 & extension != 0
+    }
+
+    pub const fn has_operators(self) -> bool {
+        self.has(Self::OPERATORS)
+    }
+
+    pub const fn has_literals(self) -> bool {
+        self.has(Self::LITERALS)
     }
 }

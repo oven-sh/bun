@@ -69,6 +69,7 @@ fn is_async_yield(func: Func, is_oxlint: bool) -> bool {
             ExprKind::String(_)
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => false,
             // typescript-eslint skips a `Literal`, tsgolint an `ast.IsLiteralExpression`.
             ExprKind::True | ExprKind::False | ExprKind::Null if !is_oxlint => false,

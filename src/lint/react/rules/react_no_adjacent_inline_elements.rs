@@ -46,6 +46,7 @@ fn is_inline(node: Expr<'_>) -> Option<bool> {
         // Converted to a string, none of these starts or ends with whitespace.
         ExprKind::Number(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::True
         | ExprKind::False

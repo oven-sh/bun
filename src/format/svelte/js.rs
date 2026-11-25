@@ -30,6 +30,7 @@ fn kind_of(e: Expr<'_>) -> ExpressionKind {
         | ExprKind::False
         | ExprKind::Number(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_) => ExpressionKind::OtherLiteral,
         ExprKind::Binary {
             op: BinOp::Comma, ..
@@ -122,6 +123,7 @@ impl<'a> Visitor<'a> for EarlyErrors {
                 ExprKind::Number(_)
                     | ExprKind::String(_)
                     | ExprKind::BigInt(_)
+                    | ExprKind::Decimal(_)
                     | ExprKind::Regex(_)
                     | ExprKind::Template(_)
                     | ExprKind::Null

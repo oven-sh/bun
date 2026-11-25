@@ -71,6 +71,7 @@ fn is_node_not_function(expr: Expr) -> bool {
         ExprKind::Array(_)
         | ExprKind::Class(_)
         | ExprKind::Null
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::String(_)
         | ExprKind::BigInt(_)

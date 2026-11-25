@@ -532,7 +532,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             p.next();
             !p.newline_before()
                 && (p.token().is_identifier_or_keyword()
-                    || matches!(p.token(), T::Number | T::BigInt | T::String))
+                    || matches!(p.token(), T::Number | T::BigInt | T::Decimal | T::String))
         })
     }
 
@@ -615,6 +615,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | T::False
             | T::Number
             | T::BigInt
+            | T::Decimal
             | T::String
             | T::NoSubstitutionTemplate
             | T::TemplateHead
@@ -2096,6 +2097,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.token_expr(kind)
             }
             T::BigInt => self.token_expr(ExprKind::BigInt(self.lx.atom)),
+            T::Decimal => self.token_expr(ExprKind::Decimal(self.lx.atom)),
             T::PrivateIdentifier => {
                 self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
                 if self.is_ecmascript && self.private_name_before_in != self.pos() {

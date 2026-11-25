@@ -298,3 +298,144 @@ test.skipIf(!!unsupported || isHardened).concurrent.each([
   expect(stderr).toContain(" 2 pass");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each([
+  ["StructuredClone", "Operators", "1.5 TypeError 3"],
+  ["ToJSON", "Operators", 'DataCloneError "1.5" 3'],
+])("an executable keeps BUN_JSC_useDecimal%s and %s, and no other option", async (first, second, expected) => {
+  const source = `
+    const x = new Decimal("1.5");
+    const outcome = f => { try { return String(f()); } catch (error) { return error.name; } };
+    console.write([() => structuredClone(x), () => JSON.stringify(x), () => x + x].map(outcome).join(" "));
+  `;
+  const variables = { ...env, ["BUN_JSC_useDecimal" + first]: "1", ["BUN_JSC_useDecimal" + second]: "1" };
+  const result = await compileAndRun(["--bytecode", "--format=esm"], { "main.js": source }, variables);
+  expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
+// Compiled code has no operators, so == would compare identity where bun run compares values.
+test.skipIf(!!unsupported).concurrent.each([
+  ["--aot", ["build", "--compile", "--aot", "main.js"]],
+  ["bun compile", ["compile", "main.js"]],
+  ["compile.aot", ["build.js"]],
+])("%s refuses BUN_JSC_useDecimalOperators", async (subject, command) => {
+  using dir = tempDir("decimal-executable", {
+    "main.js": "console.log(new Decimal(1) == new Decimal(1));",
+    "build.js": `await Bun.build({ entrypoints: ["main.js"], compile: { aot: true, outfile: "program" } });`,
+  });
+  const variables = { ...env, BUN_JSC_useDecimalOperators: "1" };
+  const { stderr, exitCode } = await spawn([bunExe(), ...command], String(dir), variables);
+  expect(stderr).toContain(`${subject} doesn't support BUN_JSC_useDecimalOperators`);
+  expect(exitCode).toBe(1);
+});
+
+test.skipIf(!!unsupported || locksEnvironment).concurrent.each([
+  ["ToJSON", "StructuredClone", 'DataCloneError "1.5" false false'],
+  ["StructuredClone", "ToJSON", "1.5 TypeError false false"],
+])("an --aot executable keeps %s, and takes neither %s nor Operators from the run", async (built, offered, stdout) => {
+  const source = `
+    const x = new Decimal("1.5");
+    const outcome = f => { try { return String(f()); } catch (error) { return error.name; } };
+    const equal = [() => x == new Decimal("1.5"), () => eval("new Decimal(1) == new Decimal(1)")];
+    console.write([() => structuredClone(x), () => JSON.stringify(x), ...equal].map(outcome).join(" "));
+  `;
+  const result = await compileAndRun(
+    ["--aot"],
+    { "main.js": source },
+    { ...env, ["BUN_JSC_useDecimal" + built]: "1" },
+    {
+      ...off,
+      ["BUN_JSC_useDecimal" + built]: "0",
+      ["BUN_JSC_useDecimal" + offered]: "1",
+      BUN_JSC_useDecimalOperators: "1",
+    },
+  );
+  expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
+});
+
+const literals = { ...env, BUN_JSC_useDecimalLiterals: "1" };
+
+// With "bun run" and "bun build", which share the program.
+describe.concurrent("literals", () => {
+  const files = {
+    "rate.cjs": `module.exports = { rate: .07m };`,
+    "main.js": `
+      import { rate } from "./rate.cjs";
+      class Decimal {}
+      const price = 19.99m, literal = () => 1m, negative = (sign = -1.50m) => sign;
+      class Account { balance = -0m; static limit = 1_000m; }
+      let total = 0m;
+      for (let i = 0; i < 10; i++) total = total.add(0.1m);
+      console.log([price.multiply(rate).round(2), total, negative(), - -1m, -(1m), (-1m).abs(), 1e6145m].join());
+      console.log(1m.divide(new Account().balance).toString(), Account.limit.toString(), { [1.50m]: 1 }[1.5]);
+      console.log(typeof 1m, typeof -1m, !0m, !-0m, -0m ? 1 : 2, 1m === 1m, literal() === literal(), price === price);
+      console.log(-1m instanceof Decimal, -1m instanceof globalThis.Decimal, new Array(-1m).length);
+      for (const f of [() => -1m.abs(), () => +1m, () => 1m + 1m, () => "a" + -1m, () => -price, () => 1m.nothing()]) {
+        try {
+          console.log(f());
+        } catch (error) {
+          console.log(error.name);
+        }
+      }
+    `,
+  };
+  const printed = [
+    "1.4,1,-1.5,1,-1,1,Infinity",
+    "-Infinity 1000 1",
+    "object object false false 1 false false true",
+    "false true 1",
+    ...Array(6).fill("TypeError"),
+    "",
+  ].join("\n");
+
+  test("bun run", async () => {
+    using dir = tempDir("decimal-literal", files);
+    expect(await spawn([bunExe(), "main.js"], String(dir), literals)).toEqual({
+      stdout: printed,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([[["--format=esm"]], [["--format=cjs"]], [["--minify"]], [["--format=cjs", "--bytecode"]]])(
+    "bun build %j",
+    async flags => {
+      using dir = tempDir("decimal-literal", files);
+      const built = await spawn(
+        [bunExe(), "build", "--target=bun", "--outdir=out", ...flags, "main.js"],
+        String(dir),
+        literals,
+      );
+      expect(built.stderr).toBe("");
+      expect(await spawn([bunExe(), "out/main.js"], String(dir), literals)).toEqual({
+        stdout: printed,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("an executable has them without the variables", async () => {
+    const result = await compileAndRun(["--bytecode", "--format=esm"], files, literals);
+    expect(result).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  });
+
+  test("also in what it loads from disk", async () => {
+    const sources = {
+      "main.js": `console.log(String(-1m), String((await import(process.cwd() + "/late.ts")).default));`,
+      "late.ts": `export default 1.50m as unknown;`,
+    };
+    const result = await compileAndRun(["--compile-jit-policy=2"], sources, literals);
+    expect(result).toEqual({ stdout: "-1 1.5\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported)("--aot", async () => {
+    expect(await runCompiled(files, literals)).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported || !canTrim)("--aot --trim", async () => {
+    const sources = { "main.js": `console.log(1234.5m.toLocaleString("en-US"), -0.125m.round(2).toString());` };
+    const result = await compileAndRun(["--aot", "--trim"], sources, literals);
+    expect(result).toEqual({ stdout: "1,234.5 -0.12\n", stderr: "", exitCode: 0 });
+  });
+});

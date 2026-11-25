@@ -708,6 +708,7 @@ fn is_non_node(expr: &Expr) -> bool {
             | ExprData::EArrow(_)
             | ExprData::EFunction(_)
             | ExprData::EBigInt(_)
+            | ExprData::EDecimal(_)
             | ExprData::EClass(_)
             | ExprData::ENew(_)
     )

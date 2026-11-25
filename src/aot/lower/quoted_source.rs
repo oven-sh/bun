@@ -899,6 +899,14 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.word(b"new.target");
                 whole(self)
             }
+            ExprKind::Decimal(text) => {
+                self.space_before_name();
+                let start = whole(self);
+                self.text
+                    .extend_from_slice(self.file.queries.atom_bytes(text));
+                self.text.push(b'm');
+                start
+            }
             ExprKind::Regex { .. } => {
                 self.space_before_name();
                 let start = whole(self);

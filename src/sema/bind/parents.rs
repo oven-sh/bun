@@ -313,6 +313,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::JsxText(_)
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}

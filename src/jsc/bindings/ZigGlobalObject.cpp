@@ -521,6 +521,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::useShadowRealm() = false;
             // After the loop: DecimalOptions::of_process() in decimal_options.rs has read the variables.
             JSC::Options::useDecimal() = decimalOptions & (1 << 0);
+            JSC::Options::useDecimalStructuredClone() = decimalOptions & (1 << 1);
+            JSC::Options::useDecimalToJSON() = decimalOptions & (1 << 2);
+            JSC::Options::useDecimalOperators() = decimalOptions & (1 << 3);
+            JSC::Options::useDecimalLiterals() = decimalOptions & (1 << 4);
+            // After the loop: compiled code has no operators for Decimals, so == would answer otherwise in eval().
+            if (runsCompiledCode)
+                JSC::Options::useDecimalOperators() = false;
             // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
                 constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;

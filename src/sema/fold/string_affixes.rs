@@ -378,6 +378,7 @@ impl<'s> Folder<'_, 's> {
                 | ExprKind::String(_)
                 | ExprKind::BigInt(_)
                 | ExprKind::Regex { .. }
+                | ExprKind::Decimal(_)
                 | ExprKind::TaggedTemplate(_)
                 | ExprKind::Array(_)
                 | ExprKind::Object(_)

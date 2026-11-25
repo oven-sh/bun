@@ -84,7 +84,7 @@ enum Reassignment<'a> {
 fn is_literal(e: Expr) -> bool {
     matches!(
         get_inner_expression(e).tag(),
-        ExprTag::True | ExprTag::False | ExprTag::Null | ExprTag::Number | ExprTag::BigInt | ExprTag::Regex | ExprTag::String
+        ExprTag::True | ExprTag::False | ExprTag::Null | ExprTag::Number | ExprTag::BigInt | ExprTag::Decimal | ExprTag::Regex | ExprTag::String
     )
 }
 
@@ -208,6 +208,7 @@ fn is_side_effect_free_expression<'a>(expr: Expr<'a>, param_name: Name<'a>) -> b
             | ExprKind::False
             | ExprKind::Null
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::Template(_)
             | ExprKind::Fn(_) => {}

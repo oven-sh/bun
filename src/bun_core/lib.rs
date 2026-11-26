@@ -2110,6 +2110,7 @@ pub(crate) mod strings_impl {
         fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
         fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
     }
+    #[derive(Clone, Copy)]
     pub enum CodeUnits<'a> {
         U8(&'a [u8]),
         U16(&'a [u16]),

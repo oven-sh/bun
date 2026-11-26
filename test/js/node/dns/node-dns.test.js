@@ -1773,11 +1773,15 @@ describe("resolve record types", () => {
     });
   });
 
-  test.concurrent.skipIf(!isLinux || !cc)("the last descriptor is enough on a system without getrandom()", async () => {
+  test.concurrent.skipIf(!isLinux || !cc).each([
+    { first: "setServers()", returns: "errno = ENOSYS, -1", free: [0, 1] },
+    { first: "useUp(), setServers()", returns: "errno = EPERM, -1", free: [0, 1, 1] },
+    { first: "useUp(), setServers()", returns: "0", free: [1, 1] },
+  ])("few descriptors are free after $first while getrandom() is $returns", async ({ first, returns, free }) => {
     using dir = tempDir("dns-getrandom", {
       "shim.c": `
         #include <errno.h>
-        long getrandom(void) { errno = ENOSYS; return -1; }
+        long getrandom(void) { return ${returns}; }
       `,
     });
     const shim = path.join(String(dir), "shim.so");
@@ -1786,13 +1790,20 @@ describe("resolve record types", () => {
     try {
       const script = `
         const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
-        resolver.setServers(${JSON.stringify(resolver.getServers())});
+        const setServers = () => resolver.setServers(${JSON.stringify(resolver.getServers())});
+        const resolve = () => resolver.resolve4("${NAME}").then(String, err => err.code);
         const taken = [];
-        try {
-          for (;;) taken.push(fs.openSync("/dev/null"));
-        } catch {}
-        fs.closeSync(taken.pop());
-        console.log(String(await resolver.resolve4("${NAME}")));
+        function useUp() {
+          try {
+            for (;;) taken.push(fs.openSync("/dev/null"));
+          } catch {}
+        }
+        ${first};
+        for (const free of [${free}]) {
+          useUp();
+          if (free) fs.closeSync(taken.pop());
+          console.log(await resolve());
+        }
       `;
       await using proc = Bun.spawn({
         cmd: ["sh", "-c", `ulimit -n 128 && exec "$@"`, "sh", bunExe(), "-e", script],
@@ -1800,7 +1811,11 @@ describe("resolve record types", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${byType.A.expected}\n`, stderr: "", exitCode: 0 });
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `${"ECONNREFUSED\n".repeat(free.length - 1)}${byType.A.expected}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
     } finally {
       socket.close();
     }

@@ -64,6 +64,8 @@ pub(crate) struct World {
     /// Once they are used up, the numbers are odd and take long to repeat.
     pub(crate) randoms: VecDeque<u16>,
     last_random: u16,
+    /// But for those in `randoms`.
+    pub(crate) has_no_randoms: bool,
     pub(crate) files: BTreeMap<Vec<u8>, (Option<Vec<u8>>, FileStamp)>,
     pub(crate) has_no_stamps: bool,
     pub(crate) hosts_reads: usize,
@@ -180,11 +182,11 @@ impl System for Machine {
         self.world.borrow().wall_clock
     }
 
-    fn random(&mut self) -> u16 {
+    fn random(&mut self) -> Option<u16> {
         let world = &mut *self.world.borrow_mut();
-        world.randoms.pop_front().unwrap_or_else(|| {
+        world.randoms.pop_front().or_else(|| {
             world.last_random = world.last_random.wrapping_add(10) | 1;
-            world.last_random
+            (!world.has_no_randoms).then_some(world.last_random)
         })
     }
 

@@ -91,17 +91,127 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
+/// The character reference at the start of `text` and its length. A number that names no character reads as U+FFFD.
+fn char_ref(text: &[u8]) -> Option<(char, usize)> {
+    const NAMED: [(&[u8], char); 5] = [
+        (b"&amp;", '&'),
+        (b"&lt;", '<'),
+        (b"&gt;", '>'),
+        (b"&quot;", '"'),
+        (b"&apos;", '\''),
+    ];
+    if let Some((name, c)) = NAMED.iter().find(|(name, _)| text.starts_with(name)) {
+        return Some((*c, name.len()));
+    }
+    let (radix, digits_at) = match text {
+        [b'&', b'#', b'x' | b'X', ..] => (16, 3),
+        [b'&', b'#', ..] => (10, 2),
+        _ => return None,
+    };
+    let mut code_point = Some(0u32);
+    let mut end = digits_at;
+    while let Some(digit) = text.get(end).and_then(|&d| char::from(d).to_digit(radix)) {
+        code_point = code_point.and_then(|value| value.checked_mul(radix)?.checked_add(digit));
+        end += 1;
+    }
+    if end == digits_at || text.get(end) != Some(&b';') {
+        return None;
+    }
+    let c = code_point
+        .and_then(char::from_u32)
+        .unwrap_or(char::REPLACEMENT_CHARACTER);
+    Some((c, end + 1))
+}
+
+/// Where the `?query#fragment` of an attribute value starts. The `#` of a character reference such as `&#38;` does not start it.
+fn url_suffix_index(value: &[u8]) -> usize {
+    let mut at = 0;
+    while let Some(next) = strings::index_of_any(&value[at..], b"?#&") {
+        at += next;
+        match char_ref(&value[at..]) {
+            Some((_, len)) => at += len,
+            None if value[at] == b'&' => at += 1,
+            None => return at,
+        }
+    }
+    value.len()
+}
+
+/// The file name that the path of a URL spells. `None` keeps the path as written: a malformed escape, bytes that are not UTF-8, a decoded scheme (`data%3Ax`), or a decoded byte that the output URL, which is the raw file name, cannot carry as itself.
+fn decode_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(path.len());
+    let mut rest = path;
+    while let Some(next) = strings::index_of_any(rest, b"&%") {
+        decoded.extend_from_slice(&rest[..next]);
+        rest = &rest[next..];
+        let (c, len, is_usable) = match rest[0] {
+            b'%' => {
+                let byte = bun_core::fmt::hex_pair_value(*rest.get(1)?, *rest.get(2)?)?;
+                (char::from(byte), 3, !byte.is_ascii_control())
+            }
+            _ => match char_ref(rest) {
+                Some((c, len)) => (c, len, !c.is_control() && c != char::REPLACEMENT_CHARACTER),
+                None => {
+                    decoded.push(b'&');
+                    rest = &rest[1..];
+                    continue;
+                }
+            },
+        };
+        if !is_usable || matches!(c, '#' | '?' | '%' | '/' | '\\' | '"') {
+            return None;
+        }
+        if rest[0] == b'%' {
+            decoded.push(c as u8);
+        } else {
+            decoded.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+        rest = &rest[len..];
+    }
+    if rest.len() == path.len() {
+        return None;
+    }
+    decoded.extend_from_slice(rest);
+    // The output name goes into the attribute as it is, so a name that still spells a character reference would be read as another name.
+    let mut from = 0;
+    while let Some(ampersand) = strings::index_of_char_usize(&decoded[from..], b'&') {
+        from += ampersand + 1;
+        let name = &decoded[from..];
+        let len = name
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .count();
+        if name.first() == Some(&b'#') || (len > 0 && name.get(len) == Some(&b';')) {
+            return None;
+        }
+    }
+    let first_segment = strings::index_of_char_usize(&decoded, b'/').unwrap_or(decoded.len());
+    (strings::is_valid_utf8(&decoded) && !strings::contains_char(&decoded[..first_segment], b':'))
+        .then_some(decoded)
+}
+
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, written: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        written: &[u8],
+        url_attribute: &[u8],
+        kind: ImportKind,
+    ) -> Result<(), Error> {
         // In the path of a URL `\` is a separator.
-        let end = strings::index_of_any(written, b"?#").unwrap_or(written.len());
-        let (url_path, rest) = written.split_at(end);
+        let (url_path, rest) = written.split_at(url_suffix_index(written));
         let has_scheme =
             strings::index_of_any(url_path, b":/\\").is_some_and(|at| url_path[at] == b':');
+        let is_url_path = !has_scheme && bun_paths::volume(written).is_empty();
+        // A `srcset` is a list of URLs, and `//host/file` names no local file.
+        let decoded = if is_url_path && url_attribute != b"srcset" && !written.starts_with(b"//") {
+            decode_path(url_path)
+        } else {
+            None
+        };
+        let url_path = decoded.as_deref().unwrap_or(url_path);
         let with_slashes = match strings::replace_char(url_path, b'\\', b'/') {
-            Cow::Owned(converted) if !has_scheme && bun_paths::volume(written).is_empty() => {
-                Cow::Owned([&converted, rest].concat())
-            }
+            Cow::Owned(converted) if is_url_path => Cow::Owned([&converted, rest].concat()),
+            _ if decoded.is_some() => Cow::Owned([url_path, rest].concat()),
             _ => Cow::Borrowed(written),
         };
         let input_path: &[u8] = &with_slashes;
@@ -177,8 +287,7 @@ impl<'a> HTMLScanner<'a> {
         url_attribute: &[u8],
         kind: ImportKind,
     ) {
-        let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let _ = self.create_import_record(path, url_attribute, kind);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {

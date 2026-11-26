@@ -97,6 +97,24 @@ devTest("image tag", {
     await dev.fetch(url).expect404(); // TODO
   },
 });
+devTest("character references and percent escapes in asset URLs", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img src="./my%20photo&amp;2.png">
+      <img src="https://cdn.example.com/y%20z.png?a=1&amp;b=2">
+      </body></html>
+    `,
+    "my photo&2.png": "PHOTO",
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const [, photo] = html.match(/<img src="(\/_bun\/asset\/[0-9a-f]+\.png)">/)!;
+    await dev.fetch(photo).expect.toBe("PHOTO");
+    // A remote URL is not rewritten.
+    expect(html).toInclude(`<img src="https://cdn.example.com/y%20z.png?a=1&amp;b=2">`);
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

@@ -6,6 +6,7 @@ use bun_ast::coverage::{Anchors, Place, Placed, PlacedInText, Placement, Printin
 use bun_collections::{StringArrayHashMap, StringSet};
 use bun_core::strings;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths::Path;
 use bun_removable_features::removable_definition;
 use bun_sema::hir::find_transpiled_mark;
 use bun_sema::session::Session;
@@ -13,8 +14,8 @@ use bun_threading::Guarded;
 use bun_threading::thread_pool::{Config, ThreadPool};
 
 use crate::bundle::Bundle;
-use crate::files::{Counts, Files, Text};
-use crate::filter::{Filter, Project};
+use crate::files::{Counts, Files, Origin, Text};
+use crate::filter::{Filter, Project, absolute_path};
 use crate::report::UNKNOWN;
 use crate::{Target, find_anchors, mark_nodes, with_tree};
 
@@ -79,6 +80,74 @@ pub struct CountedText {
     counts: Option<Arc<[AtomicU64]>>,
 }
 
+/// A module whose text is about to be read.
+pub struct Loading {
+    collector: &'static Collector,
+    path: Path,
+    origin: Origin,
+    pub is_covered: bool,
+}
+
+impl Loading {
+    #[inline(never)]
+    pub fn will_print(&self, loader: Loader, text: &[u8]) -> Transpiling {
+        removable_definition!(TestCommand, Loading::will_print);
+        let anchors = match self.collector.ignores_source_maps() {
+            true => None,
+            false => find_anchors(loader, text),
+        };
+        Transpiling {
+            collector: self.collector,
+            text: Text::new(&self.path, loader, text, self.origin),
+            can_be_cached: anchors.is_some(),
+            printing: Printing {
+                placement: Placement::new(anchors.unwrap_or_default()),
+                placed: PlacedInText::default(),
+            },
+        }
+    }
+
+    pub fn count_cached(
+        &self,
+        (loader, text): (Loader, &[u8]),
+        placed: PlacedInText,
+        printed: &[u8],
+    ) -> Box<CountedText> {
+        let text = Text::new(&self.path, loader, text, self.origin);
+        self.collector.count_printed(text, placed, printed)
+    }
+
+    /// JavaScriptCore gets a character for each byte of `code`.
+    pub fn count_as_written(&self, code: &[u8]) -> Box<CountedText> {
+        (self.collector).count_as_written(&self.path, code, self.origin)
+    }
+
+    /// `// @bun`
+    #[inline(never)]
+    pub fn count_bundle(&self, code: &[u8]) -> Option<Box<CountedText>> {
+        removable_definition!(TestCommand, Loading::count_bundle);
+        let (collector, path) = (self.collector, self.path.as_bytes());
+        if collector.options.include_patterns.is_empty()
+            && (!collector.filter.is_source_file(path) || collector.filter.is_ignored(path))
+        {
+            return None;
+        }
+        let bundle = collector.find_bundle(path, code);
+        let Some((joined, anchors)) = bundle.as_ref().and_then(|it| it.join(code)) else {
+            return self.is_covered.then(|| self.count_as_written(code));
+        };
+        (!joined.texts.is_empty()).then(|| {
+            Box::new(CountedText {
+                collector,
+                path: path.into(),
+                placed: place_as_written(code, anchors, |loc| joined.locs_of(loc)),
+                sources: joined.texts,
+                counts: None,
+            })
+        })
+    }
+}
+
 /// A file between the parser and the printer.
 pub struct Transpiling {
     collector: &'static Collector,
@@ -115,39 +184,28 @@ impl Collector {
         let _ = self.filter.changed_files.set(changed_files);
     }
 
-    #[inline(never)]
-    pub fn covers(&self, path: &[u8], loader: Loader) -> bool {
-        removable_definition!(TestCommand, Collector::covers);
-        loader.is_javascript_like()
-            && self.filter.is_source_file(path)
-            && self.filter.is_selected(path)
-    }
-
-    #[inline(never)]
-    pub fn will_print(&'static self, path: &[u8], loader: Loader, contents: &[u8]) -> Transpiling {
-        removable_definition!(TestCommand, Collector::will_print);
-        let anchors = match self.ignores_source_maps() {
-            true => None,
-            false => find_anchors(loader, contents),
-        };
-        Transpiling {
-            collector: self,
-            text: Text::new(path, loader, contents),
-            can_be_cached: anchors.is_some(),
-            printing: Printing {
-                placement: Placement::new(anchors.unwrap_or_default()),
-                placed: PlacedInText::default(),
-            },
+    pub(crate) fn path_of(&self, name: &[u8], origin: Origin) -> Path {
+        match origin {
+            Origin::Disk if !name.starts_with(b"data:") => {
+                self.filter.by_way_of_root(&absolute_path(name))
+            }
+            _ => self.filter.by_way_of_root(name),
         }
     }
 
-    pub fn count_cached(
-        &'static self,
-        (path, loader, text): (&[u8], Loader, &[u8]),
-        placed: PlacedInText,
-        printed: &[u8],
-    ) -> Box<CountedText> {
-        self.count_printed(Text::new(path, loader, text), placed, printed)
+    #[inline(never)]
+    pub fn will_load(&'static self, name: &[u8], loader: Loader, origin: Origin) -> Loading {
+        removable_definition!(TestCommand, Collector::will_load);
+        let path = self.path_of(name, origin);
+        Loading {
+            collector: self,
+            is_covered: loader.is_javascript_like()
+                && self.filter.is_source_file(&path)
+                && self.filter.is_included(&path)
+                && !self.filter.is_ignored(&path),
+            path,
+            origin,
+        }
     }
 
     fn count_printed(
@@ -157,53 +215,33 @@ impl Collector {
         printed: &[u8],
     ) -> Box<CountedText> {
         match self.ignores_source_maps() {
-            true => self.count_as_written(&text.path, printed),
+            true => self.count_as_written(&text.path, printed, text.origin),
             false => self.count(text, placed),
         }
     }
 
-    /// JavaScriptCore gets a character for each byte of `code`.
     #[inline(never)]
-    pub fn count_as_written(&'static self, path: &[u8], code: &[u8]) -> Box<CountedText> {
+    fn count_as_written(
+        &'static self,
+        path: &[u8],
+        code: &[u8],
+        origin: Origin,
+    ) -> Box<CountedText> {
         removable_definition!(TestCommand, Collector::count_as_written);
         let anchors = find_anchors(Loader::Js, code).unwrap_or_default();
         let placed = place_as_written(code, anchors, |loc| [loc]);
-        self.count(Text::new(path, Loader::Js, code), placed)
+        self.count(Text::new(path, Loader::Js, code, origin), placed)
     }
 
-    /// If its sources are reported in its place.
     pub(crate) fn find_bundle(&self, path: &[u8], text: &[u8]) -> Option<Bundle> {
         find_transpiled_mark(text).filter(|_| !self.ignores_source_maps())?;
         Bundle::find(path, text, &self.filter)
     }
 
-    /// `// @bun`
-    #[inline(never)]
-    pub fn count_bundle(&'static self, path: &[u8], code: &[u8]) -> Option<Box<CountedText>> {
-        removable_definition!(TestCommand, Collector::count_bundle);
-        if self.options.include_patterns.is_empty()
-            && (!self.filter.is_source_file(path) || self.filter.is_ignored(path))
-        {
-            return None;
-        }
-        let Some(bundle) = self.find_bundle(path, code) else {
-            return (self.covers(path, Loader::Js)).then(|| self.count_as_written(path, code));
-        };
-        let (joined, anchors) = bundle.join(code);
-        (!joined.texts.is_empty()).then(|| {
-            Box::new(CountedText {
-                collector: self,
-                path: path.into(),
-                placed: place_as_written(code, anchors, |loc| joined.locs_of(loc)),
-                sources: joined.texts,
-                counts: None,
-            })
-        })
-    }
-
     /// `description`: the characters of what `describe_compiled_file` returned.
     pub fn count_compiled(&'static self, description: &[u8]) -> Option<Box<CountedText>> {
-        let Counts { text, counts } = Counts::decode(description)?;
+        let Counts { mut text, counts } = Counts::decode(description)?;
+        Arc::get_mut(&mut text)?.path = self.filter.by_way_of_root(&text.path).as_bytes().into();
         let unplaced = (counts.iter().zip(0..)).filter(|it| *it.0 == UNKNOWN);
         let placed = PlacedInText {
             counters: counts.len() as u32,
@@ -296,7 +334,7 @@ pub fn describe_compiled_file<T>(
     for &counter in &placed.unplaced {
         counts[counter as usize] = UNKNOWN;
     }
-    let (text, mut encoded) = (Text::new(path, loader, text), Vec::new());
+    let (text, mut encoded) = (Text::new(path, loader, text, Origin::Disk), Vec::new());
     Counts { text, counts }.encode(&mut encoded);
     bun_core::handle_oom(strings::allocate_latin1_into_utf8(&encoded))
 }

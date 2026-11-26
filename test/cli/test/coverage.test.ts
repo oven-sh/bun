@@ -1616,6 +1616,11 @@ const withoutLeakCheck = {
 // A build with assertions reports test files unless it is told not to.
 const bunfig = (...lines: string[]) => ["[test]", "coverageSkipTestFiles = true", ...lines, ""].join("\n");
 
+const debugId = "0123456789ABCDEF64756E2164756E21";
+const built = (code: string) => `// @bun\n${code}\n//# debugId=${debugId}\n`;
+const sourceMap = (sources: string[], sourcesContent: (string | null)[], mappings: string) =>
+  JSON.stringify({ version: 3, sources, sourcesContent, mappings, debugId, names: [] });
+
 type Kind = "branches" | "statements" | "functions" | "lines";
 const unmarked = (text: string) => text.replace(/«.*?»/g, "");
 const repeated = (text: string, times: number) => text.replace(/(\d+)»/g, (_, count) => `${count * times}»`);
@@ -1777,6 +1782,22 @@ describe.concurrent("what is counted", () => {
     );
   });
 
+  test("an ES module that had another text, which the transpiler prints alike", () => {
+    const now = `«1»class A { constructor(public a) {} } «1»export default new A(1);`;
+    return check(
+      { "statements/edited.ts": now },
+      {
+        "a.test.ts": `
+          const file = require.resolve("./statements/edited.ts");
+          for (const text of ["class A { a; constructor(a) { this.a = a; } } export default new A(1);", "${unmarked(now)}"]) {
+            await Bun.write(file, text);
+            delete require.cache[file];
+            require(file);
+          }`,
+      },
+    );
+  });
+
   test("a file that is loaded in two languages", () => {
     const programs = { "statements/both.ts": `«1»Object<((a) => «0»1)>(2);` };
     return check(programs, {
@@ -1807,6 +1828,30 @@ describe.concurrent("what is counted", () => {
       const options = { flags: [flag], env: { BUN_TEST_PARALLEL_SCALE_MS: "0" } };
       return check({ "branches/lib.js": text }, { "a.test.ts": a, "b.test.ts": b }, options);
     });
+  });
+
+  test.each<[string, string, string[]]>([
+    ["", "\n", []],
+    ["", "\r\n", ["--parallel=2"]],
+    ["// @bun\n", "\n", []],
+  ])("by the source map of a plugin that adds code after %j, with %j and %j", (pragma, newline, flags) => {
+    const programs = mapValues(pragma ? javascript : corpus, text =>
+      text
+        .replace(/^"use strict";.*/, "")
+        .replace(/^(?=.)/gm, "/*é汉🎉*/ ")
+        .replaceAll("\n", newline),
+    );
+    const test = `
+      function load({ path }) {
+        const [text, loader] = [require("node:fs").readFileSync(path, "utf8"), path.match(/[jt]sx?$/)[0]];
+        const added = ${JSON.stringify(pragma)} + "function added(a) { return a ? () => 1 : 2; }\\n";
+        const mappings = added.replace(/.*\\n/g, ";") + "AAAA" + text.replace(/.*\\r?\\n/g, ";AACA");
+        const map = JSON.stringify({ version: 3, sources: [""], mappings });
+        return { contents: added + text + "\\n//# sourceMappingURL=data:application/json;charset=utf-8;base64," + btoa(map), loader };
+      }
+      Bun.plugin({ setup: build => void build.onLoad({ filter: /(branches|statements|functions|lines).[^/\\\\]+$/ }, load) });
+      ${each(programs, it => `await import(process.cwd() + ${it}.slice(1));`)}`;
+    return check(programs, { "a.test.ts": test, "b.test.ts": "" }, { flags });
   });
 
   test("a file that is too large for one message of --parallel", () => {
@@ -1924,8 +1969,8 @@ describe.concurrent("what is counted", () => {
           const sources = names.map(it => "statements/" + it + ".js");
           const sourcesContent = names.map(() => "Object();");
           const mappings = ";AAAA;ACAA".slice(0, 5 * names.length);
-          await Bun.write("bundle.js.map", JSON.stringify({ version: 3, sources, sourcesContent, mappings, names: [] }));
-          await Bun.write("bundle.js", ["// @bun", ...sourcesContent].join("\\n"));
+          await Bun.write("bundle.js.map", JSON.stringify({ sources, sourcesContent, mappings, debugId: "${debugId}" }));
+          await Bun.write("bundle.js", ["// @bun", ...sourcesContent, "//# debugId=${debugId}"].join("\\n"));
           await import(process.cwd() + "/bundle.js?" + names);
         }`,
     });
@@ -1945,11 +1990,29 @@ describe.concurrent("what is counted", () => {
 
   test("from a bundle without a loop that its source has", () => {
     const programs = { "lines/lib.js": `Object();«1»\nwhile (Object«1»\n.none) Object();\n` };
-    const map = { version: 3, sources: Object.keys(programs), mappings: ";AAAA", names: [] };
     return check(programs, {
-      "bundle.js": "// @bun\nObject();\n",
-      "bundle.js.map": JSON.stringify({ ...map, sourcesContent: Object.values(programs).map(unmarked) }),
-      "a.test.ts": `import "./bundle.js";`,
+      "bundle.js": built("Object();"),
+      "bundle.js.map": sourceMap(Object.keys(programs), Object.values(programs).map(unmarked), ";AAAA"),
+      "a.test.ts": `await import(process.cwd() + "/bundle.js");`,
+    });
+  });
+
+  test.each([
+    ["mjs", built("\nObject();\nif (Object) Object();")],
+    ["cjs", built("(function () {\nObject();\nif (Object) Object();\n})").replace("@bun", "@bun @bun-cjs")],
+  ])("from a .%s bundle that a second Bun.ModuleGraph loads with more mappings", (extension, bundle) => {
+    const programs = { "statements/lib.js": `«2»Object();\n«2»if (Object) «1»Object();` };
+    const maps = [";;AAAA", ";;AAAA;AACA"].map(mappings =>
+      sourceMap(Object.keys(programs), Object.values(programs).map(unmarked), mappings),
+    );
+    return check(programs, {
+      [`bundle.${extension}`]: bundle,
+      "a.test.ts": `
+        const graphs = [new Bun.ModuleGraph({}), new Bun.ModuleGraph({})];
+        for (const [index, map] of ${JSON.stringify(maps)}.entries()) {
+          await Bun.write("bundle.${extension}.map", map);
+          await graphs[index].import(process.cwd() + "/bundle.${extension}");
+        }`,
     });
   });
 
@@ -2463,6 +2526,18 @@ export const never = (v: number) => (v ? 1 : 2);
     expect(exitCode).toBe(0);
   });
 
+  // Windows doesn't allow `"` in a file name.
+  test.skipIf(isWindows)("escape the name of a file", async () => {
+    using dir = tempDir("cov-reporters", { 'a"\\b.js': "", "a.test.ts": "" });
+    const flags = ["--coverage-reporter=json", "--coverage-reporter=json-summary", "--coverage-include=*.js"];
+    const { exitCode } = await bun(String(dir), ["test", ...flags]);
+    const read = (name: string) => JSON.parse(readFileSync(path.join(String(dir), "coverage", name), "utf8"));
+    const file = path.join(String(dir), 'a"\\b.js');
+    expect(read("coverage-final.json")[file].path).toBe(file);
+    expect(Object.keys(read("coverage-summary.json"))).toEqual(["total", file]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a report that cannot be written fails the run", async () => {
     using dir = tempDir("cov-reporters", { ...files, "coverage": "a file" });
     const flags = ["--coverage-reporter=json", "--coverage-reporter=json-summary", "--coverage-reporter=text"];
@@ -2594,6 +2669,7 @@ describe.concurrent("coverageThreshold", () => {
     [`{ "!l*" = { lines = 1 } }`, [below(`lines in "!l*"`, "0.00", 100)]],
     [`{ "!." = { lines = 1 } }`, [unchecked("!.")]],
     [`{ "unloaded.ts" = { lines = 1 } }`, [unchecked("unloaded.ts")]],
+    [`{ "unloaded.ts" = { lines = 80 } }`, [unchecked("unloaded.ts"), range]],
     [`{ "scr/**" = { lines = 1 } }`, [`error: No file matches "scr/**" in "coverageThreshold"`]],
     [`{ "s*" = 1 }`, [`warn: Ignoring "s*" in "coverageThreshold"`, keys]],
     [`{ "l*" = { "s*" = { lines = 1 } } }`, [`warn: Ignoring "s*" in "coverageThreshold"`, keys]],
@@ -2628,21 +2704,21 @@ describe.concurrent("coverageThreshold", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.each([
-    ["1", 1],
-    ["-1", 1],
-    [`{ "lib.ts" = { lines = 1 } }`, 1],
-    ["0", 0],
-  ])("of %s is said not to be checked if no file is reported", async (threshold, warnings) => {
+  const noFile = `warn: No file is in the coverage report, so "coverageThreshold" is not checked`;
+  test.each<[string, string[]]>([
+    ["1", [noFile]],
+    ["-1", [noFile]],
+    ["80", [noFile, range]],
+    [`{ "lib.ts" = { lines = 1 } }`, [noFile]],
+    ["0", []],
+  ])("of %s is said not to be checked if no file is reported", async (threshold, messages) => {
     using dir = tempDir("cov-threshold", {
       "bunfig.toml": bunfig(`coverageThreshold = ${threshold}`),
       "lib.ts": `export function never() {}`,
       "a.test.ts": "",
     });
     const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
-    expect(messagesOf(stderr)).toEqual(
-      Array(warnings).fill(`warn: No file is in the coverage report, so "coverageThreshold" is not checked`),
-    );
+    expect(messagesOf(stderr)).toEqual(messages);
     expect(exitCode).toBe(0);
   });
 
@@ -2874,12 +2950,12 @@ describe.concurrent("coverageInclude", () => {
   });
 
   test("a file with a source map that no test loads is left out if Bun would report its sources", async () => {
-    const map = JSON.stringify({ version: 3, sources: ["a.js"], sourcesContent: [code], mappings: "", names: [] });
+    const map = sourceMap(["a.js"], [code], "");
     using dir = tempDir("cov-include", {
       "a.js": code,
-      "bundle.js": "// @bun\n" + code,
+      "bundle.js": built(code),
       "bundle.js.map": map,
-      "emitted.js": code,
+      "emitted.js": built(code).replace("@bun", ""),
       "emitted.js.map": map,
       "a.test.ts": "",
     });
@@ -2991,21 +3067,26 @@ test.concurrent.each(["istanbul", "c8", "v8"])("%s ignore file", async tool => {
 });
 
 describe.concurrent("a // @bun file is reported as it is", () => {
-  const map = (sources: string[], mappings = ";AAAA", text: string | null = "export {};") =>
-    JSON.stringify({ version: 3, sources, sourcesContent: sources.map(() => text), mappings, names: [] });
+  const map = (sources: string[], mappings = ";AAAA", firstText: string | null = "export {};") => {
+    const sourcesContent = sources.map((_, index) => (index ? "export {};" : firstText));
+    return sourceMap(sources, sourcesContent, mappings);
+  };
 
-  async function rowsWith(sourceMap: string, option: string) {
+  const [bundle, source] = ["bundle.js|0.00|0.00|0.00|100.00|2-3", "source.ts|100.00|100.00|100.00|100.00|"];
+
+  async function rowsWith(map: string, option: string, test = `await import(process.cwd() + "/bundle.js");`) {
     using dir = tempDir("cov-bundle", {
       "outside.ts": "export {};",
       "app/bunfig.toml": bunfig(option),
       "app/source.ts": "export {};",
-      "app/source.svelte": "export {};",
+      "app/source.svelte": "{#if a}{/if}",
       "app/data.json": "{}",
       "app/folder.ts/file.txt": "",
       "app/node_modules/dependency.ts": "export {};",
-      "app/bundle.js": "// @bun\nexport function f() {\n  return 1;\n}\n",
-      "app/bundle.js.map": sourceMap,
-      "app/a.test.ts": `import "./bundle.js";`,
+      "app/marked.es": "// @bun",
+      "app/bundle.js": built("export function f() {\n  return 1;\n}"),
+      "app/bundle.js.map": map,
+      "app/a.test.ts": test,
     });
     const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", "--coverage"]);
     return { rows: rowsOf(stderr).slice(1), exitCode };
@@ -3021,24 +3102,130 @@ describe.concurrent("a // @bun file is reported as it is", () => {
     ["the name of a file is there up to a null byte", map(["source.ts\0.ts"])],
     ["the name is that of a folder", map(["folder.ts"])],
     ["the name is empty", map([""])],
-    ["it was made from another language", map(["source.svelte"])],
-    ["its source map names no file", map([])],
+    ["the name is its own", map(["bundle.js"])],
+    ["the name is that of what a build wrote", map(["marked.es"])],
+    ["most are not there, and the rest has another text", map(["source.ts", "a.ts", "b.ts"], ";AAAA", "export { };")],
+    ["the name is made up", map(["made-up:a"])],
+    ["the name is made up, and the rest is a dependency", map(["made-up:a", "node_modules/dependency.ts"])],
+    ["the name is made up, and leads to a file", map(["made-up:a/../source.ts"])],
+    ["the text is nested too deeply", map(["source.ts"], ";AAAA", Buffer.alloc(200_000, "[").toString())],
+    ["its source map is from another build", map(["source.ts"]).replace("0123", "3210")],
+    ["its source map does not say which build it is from", map(["source.ts"]).replace("debugId", "file")],
     ["its source map does not have the text", map(["source.ts"], ";AAAA", null)],
+    ["its source map does not have any text", map(["source.ts"]).replace("sourcesContent", "x_texts")],
+    ["nothing else is included", map(["source.ts"]), `coverageInclude = "*.js"`],
+    ["nothing else is included, and the rest is ignored", map(["source.ts"]), `coverageInclude = ["*.js", "!*.ts"]`],
+    ["what else is included is ignored", map(["source.svelte", "source.ts"]), `coverageInclude = ["*s", "!*.ts"]`],
     ["its source map is not JSON", "{"],
     ["its mappings cannot be decoded", map(["source.ts"], ";!")],
     ["source maps are ignored", map(["source.ts"]), "coverageIgnoreSourcemaps = true"],
-  ])("if %s", async (_, sourceMap, option = "") => {
-    expect(await rowsWith(sourceMap, option)).toEqual({ rows: ["bundle.js|0.00|0.00|0.00|100.00|2-3"], exitCode: 0 });
+  ])("if %s", async (_, map, option = "") => {
+    expect(await rowsWith(map, option)).toEqual({ rows: [bundle], exitCode: 0 });
   });
 
-  test.each<[string, string?]>([
-    ["node_modules/dependency.ts"],
-    ["node_modules/gone.ts"],
-    ["../outside.ts"],
-    ["source.ts", `coveragePathIgnorePatterns = "*.ts"`],
-    ["gone.ts", `coveragePathIgnorePatterns = "*.ts"`],
-  ])("unless all that it was made from is left out: %s", async (source, option = "") => {
-    expect(await rowsWith(map([source]), option)).toEqual({ rows: [], exitCode: 0 });
+  test.each<[string[], string | null, string[]]>([
+    [["gone.ts"], "export {};", [bundle, source]],
+    [["bundle.js"], "export {};", [bundle, source]],
+    [["made-up:a"], "export {};", [bundle, source]],
+    [["source.svelte"], "export {};", [bundle, source]],
+    [["source.ts"], null, [bundle, source]],
+    [["source.ts"], "Object();", [source]],
+    [["source.ts?query"], "Object();", [source]],
+    [["source.ts", "gone.ts"], "Object();", [source]],
+    [["source.ts", "a.ts", "b.ts"], "Object();", [bundle, source]],
+  ])("if no test loads it and nothing is listed in its place: %j %j", async (sources, text, rows) => {
+    expect(await rowsWith(map(sources, ";AAAA", text), `coverageInclude = "."`, "")).toEqual({ rows, exitCode: 0 });
+  });
+
+  test.each<[string[], string]>([
+    [["source.ts"], "Object();"],
+    [["source.ts?query"], "Object();"],
+    [["source.svelte"], "Object();"],
+    [["source.svelte"], "<a>></a>"],
+    [["marked.es"], "// @bun\nObject();"],
+    [["a.ts", "b.ts", "source.ts"], "Object();"],
+    [["a.b/go:ne.ts", "source.ts"], "Object();"],
+    [["source.ts", "gone.ts"], "Object();"],
+  ])("unless its source map fits: %j %j", async (sources, text) => {
+    const { rows, exitCode } = await rowsWith(map(sources, ";AAAA", text), "");
+    expect(rows.map(it => it.split("|")[0])).toEqual(sources.toSorted());
+    expect(exitCode).toBe(0);
+  });
+
+  test.each<[string[], string]>([
+    [[], ""],
+    [["node_modules/dependency.ts"], ""],
+    [["node_modules/gone.ts"], ""],
+    [["../outside.ts"], ""],
+    [["../outside.ts"], `coverageInclude = "!*.ts"`],
+    [["source.ts"], `coveragePathIgnorePatterns = "*.ts"`],
+    [["gone.ts"], `coveragePathIgnorePatterns = "*.ts"`],
+    [["gone.ts", "dataurl:data:text/javascript,"], `coveragePathIgnorePatterns = "*.ts"`],
+    [["made-up:a"], `coveragePathIgnorePatterns = "made-up:*"`],
+    [["../outside.ts?query"], ""],
+    [["../gone.ts"], `coveragePathIgnorePatterns = "../*.ts"`],
+    [["source.ts?raw"], ""],
+  ])("unless all that it was made from is left out: %j %j", async (sources, option) => {
+    expect(await rowsWith(map(sources), option)).toEqual({ rows: [], exitCode: 0 });
+  });
+
+  test.each<[string, string]>([
+    ["node_modules/dependency.ts", ""],
+    ["../gone.ts", ""],
+    ["dataurl:data:text/javascript,", ""],
+    ["made-up:a", ""],
+    ["@made/up:a", ""],
+    ["gone.ts", `coverageInclude = ["*.js", "source.ts"]`],
+  ])("unless the rest is left out: %j %j", async (name, option) => {
+    const { rows, exitCode } = await rowsWith(map(["source.ts", name], ";AAAA", "Object();"), option);
+    expect(rows.map(it => it.split("|")[0])).toEqual(["source.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["0000", "bundle.js"],
+    ["756e", "source.ts"],
+  ])("if another tool wrote it: %s in the id", async (part, listed) => {
+    using dir = tempDir("cov-bundle", {
+      "bunfig.toml": bunfig(),
+      "source.ts": "export {};",
+      "bundle.js": built("Object();").replace("756E", part),
+      "bundle.js.map": map(["source.ts"]).replace("756E", part),
+      "a.test.ts": `await import(process.cwd() + "/bundle.js");`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr).slice(1)).toEqual([`${listed}|100.00|100.00|100.00|100.00|`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("if its source map is a pipe", async () => {
+    using dir = tempDir("cov-bundle", {
+      "loaded.js": built("Object();"),
+      "unloaded.js": built("Object();"),
+      "a.test.ts": `import "./loaded.js";`,
+    });
+    for (const name of ["loaded.js.map", "unloaded.js.map"]) mkfifo(path.join(String(dir), name));
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=*.js"]);
+    expect(rowsOf(stderr).slice(1)).toEqual([
+      "loaded.js|100.00|100.00|100.00|100.00|",
+      "unloaded.js|100.00|0.00|0.00|100.00|2",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("if a plugin makes it up, and the file of that name has a source map", async () => {
+    using dir = tempDir("cov-bundle", {
+      "bunfig.toml": bunfig(),
+      "source.ts": "export {};",
+      "made-up.js.map": map(["source.ts"]),
+      "a.test.ts": `
+        const contents = ${JSON.stringify(built("Object();"))};
+        Bun.plugin({ setup: build => void build.module("made-up.js", () => ({ contents, loader: "js" })) });
+        require("made-up.js");`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr).slice(1)).toEqual(["made-up.js|100.00|100.00|100.00|100.00|"]);
+    expect(exitCode).toBe(0);
   });
 
   test("without the function around CommonJS, and from its text if it has bytecode", async () => {
@@ -3047,8 +3234,8 @@ describe.concurrent("a // @bun file is reported as it is", () => {
       "lib.cjs": `exports.pick = function (v) { return v ? 1 : 2; };`,
       "a.test.ts": `require("./out/lib.js").pick(1);`,
     });
-    const built = await bun(String(dir), ["build", "lib.cjs", "--target=bun", "--bytecode", "--outdir=out"]);
-    expect(built.exitCode).toBe(0);
+    const build = await bun(String(dir), ["build", "lib.cjs", "--target=bun", "--bytecode", "--outdir=out"]);
+    expect(build.exitCode).toBe(0);
     const { exitCode } = await bun(String(dir), ["test", "--coverage-reporter=lcov"]);
     const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8");
     expect(lcov).toContain("FNF:1\nFNH:1\nFNDA:1,pick\n");
@@ -3070,36 +3257,562 @@ test.concurrent.each<[string, string[]]>([
   using dir = tempDir("cov-bundle", {
     ...Object.fromEntries(sources.map(it => [it.slice(3), "Object();"])),
     "bunfig.toml": bunfig(option),
-    "out/mapped.js": "// @bun\nObject();\nObject();\nObject();\n",
-    "out/mapped.js.map": JSON.stringify({
-      version: 3,
-      sources,
-      sourcesContent,
-      mappings: ";AAAA;ACAA;ACAA",
-      names: [],
-    }),
+    "out/mapped.js": built(sourcesContent.join("\n")),
+    "out/mapped.js.map": sourceMap(sources, sourcesContent, ";AAAA;ACAA;ACAA"),
     "out/unmapped.js": "// @bun\nObject();\n",
     "node_modules/c/index.js": "// @bun\nObject();\n",
-    "a.test.ts": `import "./out/mapped.js"; import "./out/unmapped.js"; import "c";`,
+    "a.test.ts": `import "./out/unmapped.js"; import "c"; await import(process.cwd() + "/out/mapped.js");`,
   });
   const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
   expect(rowsOf(stderr).slice(1)).toEqual(listed.map(it => `${it}|100.00|100.00|100.00|100.00|`));
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each([
+  ["Object();", "a.js|100.00|100.00|100.00|100.00|"],
+  ["Array();", "a.js|100.00|0.00|0.00|100.00|1"],
+])("a // @bun file in node_modules that was made from %s", async (code, row) => {
+  using dir = tempDir("cov-bundle", {
+    "a.js": "Object();",
+    "node_modules/bundle.js": built(code),
+    "node_modules/bundle.js.map": sourceMap(["../a.js"], [code], ";AAAA"),
+    "a.test.ts": `await import(process.cwd() + "/node_modules/bundle.js");`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage-include=*.js"]);
+  expect(rowsOf(stderr).slice(1)).toEqual([row]);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("the sources of a // @bun file are listed wherever it is", async () => {
-  const map = { version: 3, sources: ["app/a.js", "b.js"], mappings: ";AAAA;ACAA", names: [] };
   using dir = tempDir("cov-bundle", {
     "app/bunfig.toml": bunfig(),
     "app/a.js": "Object();",
     "b.js": "Object();",
-    "mapped.js": "// @bun\nObject();\nObject();\n",
-    "mapped.js.map": JSON.stringify({ ...map, sourcesContent: ["Object();", "Object();"] }),
+    "mapped.js": built("Object();\nObject();"),
+    "mapped.js.map": sourceMap(["app/a.js", "b.js"], ["Object();", "Object();"], ";AAAA;ACAA"),
     "unmapped.js": "// @bun\nObject();\n",
-    "app/a.test.ts": `import "../mapped.js"; import "../unmapped.js";`,
+    "app/a.test.ts": `import "../unmapped.js"; await import(process.cwd() + "/../mapped.js");`,
   });
   const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", "--coverage"]);
   expect(rowsOf(stderr).slice(1)).toEqual(["a.js|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("the files that are listed for what a test builds", () => {
+  const code = `export const pick = v => (v ? 1 : 2);\n`;
+  const picked = (name: string, line = 1) => `${name}|100.00|100.00|100.00|50.00|${line}`;
+  const ran = (name: string) => `${name}|100.00|100.00|100.00|100.00|`;
+  const untested = "a.js|0.00|0.00|100.00|100.00|1";
+
+  async function rowsAfter(steps: string, files: Record<string, string>, flags = ["--coverage"]) {
+    using dir = tempDir("cov-build", {
+      "app": files,
+      "app/bunfig.toml": bunfig(),
+      "app/b.test.js": "",
+      "app/a.test.js": `
+        const build = async (entrypoints, options) =>
+          (await Bun.build({ entrypoints, target: "bun", sourcemap: "inline", ...options })).outputs[0];
+        const load = name => require(process.cwd() + "/" + name).pick?.(1);
+        const loadBlob = async blob => (await import(URL.createObjectURL(blob))).pick(1);
+        async function loadAs(name, built) {
+          const contents = await built.text();
+          Bun.plugin({ setup: build => void build.module(name, () => ({ contents, loader: "js" })) });
+          require(name).pick(1);
+        }
+        ${steps}`,
+    });
+    const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", ...flags]);
+    // A build with assertions reports its own modules.
+    return { rows: rowsOf(stderr).filter(it => !/^(Allfiles|node:|internal:)/.test(it)), exitCode };
+  }
+
+  test.each<[string, string, string]>([
+    ["--coverage", `await loadAs("@made/up", await build(["src/a.js"]))`, picked("src/a.js")],
+    ["--coverage", `process.chdir("src"), await loadAs("made-up", await build(["a.js"]))`, picked("made-up", 3)],
+    ["--coverage-include=*.js", `process.chdir("src"), await loadAs("made-up", await build(["a.js"]))`, untested],
+    ["--coverage-include=src", `await loadBlob(await build(["src/a.js"]))`, picked("src/a.js")],
+  ])("%s: %s", async (flag, steps, row) => {
+    const files = { "a.js": "export function untested() {}", "src/a.js": code };
+    expect(await rowsAfter(steps, files, [flag])).toEqual({ rows: [row], exitCode: 0 });
+  });
+
+  test.each([[[]], [["--parallel=2"]]])("from a file that it deletes at the end: %j", async flags => {
+    const steps = `await build(["a.js"], { outdir: "out" }), load("out/a.js"), await Bun.file("a.js").delete()`;
+    expect(await rowsAfter(steps, { "a.js": code }, ["--coverage-include=.", ...flags])).toEqual({
+      rows: [picked("a.js")],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["--coverage", "out"],
+    ["--coverage", "../out"],
+    ["--coverage-include=!out", "out"],
+  ])("%s, with a plugin, into %s", async (flag, outdir) => {
+    const steps = `
+      const load = () => ({ contents: "Object(function (a) { return <number>a; });", loader: "ts" });
+      function setup(build) {
+        build.onResolve({ filter: /^made-up:/ }, () => ({ path: "a", namespace: "made-up" }));
+        build.onLoad({ filter: /./, namespace: "made-up" }, load).onLoad({ filter: /(svelte|b.js)$/ }, load);
+      }
+      require((await build(["a.js"], { outdir: "${outdir}", plugins: [{ name: "a", setup }] })).path);`;
+    const files = {
+      "a.js": `/* v8 ignore file */ import "./a.svelte"; import "./b.js"; import "made-up:a";`,
+      "a.svelte": "{#if a}{/if}",
+      "b.js": "",
+    };
+    expect(await rowsAfter(`{${steps}}`, files, [flag])).toEqual({
+      rows: ["a.svelte|0.00|100.00|50.00|100.00|1", "b.js|0.00|100.00|50.00|100.00|1"],
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    `await build(["a.js"], { plugins, outdir: "out", naming: "b.js" }), load("out/b.js")`,
+    `await loadBlob(await build(["a.js"], { plugins }))`,
+  ])("with a plugin that it also loads the file with: %s", async buildAndLoad => {
+    const steps = `
+      const setup = build => void build.onLoad({ filter: /a.js$/ }, () => ({ contents: ${JSON.stringify(code)}, loader: "js" }));
+      const plugins = [{ name: "a", setup }];
+      Bun.plugin(plugins[0]), require(process.cwd() + "/a.js").pick(0), ${buildAndLoad}`;
+    expect(await rowsAfter(steps, { "a.js": "" }, ["--coverage-include=."])).toEqual({
+      rows: [ran("a.js")],
+      exitCode: 0,
+    });
+  });
+
+  test.each<[string, string[], string]>([
+    ["loadFile(), load('out/a.js')", [], ran("a.svelte")],
+    ["load('out/a.js'), loadFile()", [], ran("a.svelte")],
+    ["load('out/b.js'), loadFile(), load('out/a.js')", [], ran("a.svelte")],
+    ["loadFile(), load('out/a.js')", ["--parallel=2"], ran("a.svelte")],
+    ["load('out/a.js'), load('out/b.js')", [], "a.svelte|0.00|100.00|100.00|100.00|1"],
+    ["load('out/b.js'), load('out/a.js')", [], "a.svelte|0.00|100.00|100.00|100.00|1"],
+    ["load('out/c.js'), load('out/b.js')", [], "a.svelte|0.00|100.00|100.00|100.00|1"],
+  ])("with a plugin that makes other code each time: %s %j", async (loads, flags, row) => {
+    const steps = `
+      const plugin = contents => ({
+        name: "a",
+        setup: build => void build.onLoad({ filter: /svelte$/ }, () => ({ contents, loader: "js" })),
+      });
+      const loadFile = () => (Bun.plugin(plugin("Object();")), load("a.svelte"));
+      await build(["a.svelte"], { outdir: "out", naming: "a.js", plugins: [plugin("Object(() => {});")] });
+      await build(["a.svelte"], { outdir: "out", naming: "b.js", plugins: [plugin("Object();")] });
+      await build(["a.svelte"], { outdir: "out", naming: "c.js", plugins: [plugin("Date(); function removed() {}")] });
+      ${loads};`;
+    expect(await rowsAfter(steps, { "a.svelte": "{#if a}{/if}" }, ["--coverage", ...flags])).toEqual({
+      rows: [row],
+      exitCode: 0,
+    });
+  });
+
+  test("and loads with a query that a plugin sees", async () => {
+    const steps = `
+      const contents = await (await build(["a.js"], { outdir: "out", sourcemap: "linked" })).text();
+      Bun.plugin({ setup: build => void build.onLoad({ filter: /query$/ }, () => ({ contents, loader: "js" })) });
+      load("out/a.js?a/query");`;
+    expect(await rowsAfter(steps, { "a.js": code })).toEqual({ rows: [picked("a.js")], exitCode: 0 });
+  });
+
+  test("and loads in place of the entry point", async () => {
+    const steps = `
+      const contents = await (await build(["src/a.js"])).text();
+      Bun.plugin({ setup: build => void build.onLoad({ filter: /a.js$/ }, () => ({ contents, loader: "js" })) });
+      load("src/a.js");`;
+    const files = { "src/a.js": `export * from "./b.js"; Object();`, "src/b.js": code };
+    expect(await rowsAfter(steps, files)).toEqual({ rows: [ran("src/a.js"), picked("src/b.js")], exitCode: 0 });
+  });
+
+  test("and appends to", async () => {
+    const steps = `await Bun.write("b.js", [await build(["a.js"]), "/* license */"]), load("b.js")`;
+    expect(await rowsAfter(steps, { "a.js": code })).toEqual({ rows: [picked("a.js")], exitCode: 0 });
+  });
+
+  test("from a text that ends in a source map", async () => {
+    const steps = `await build(["a.js"], { outdir: "out", sourcemap: "external" }), load("out/a.js")`;
+    const text = `Object(\`\n//# sourceMappingURL=data:application/json,${sourceMap([], [], "")}\n\`);`;
+    expect(await rowsAfter(steps, { "a.js": text })).toEqual({ rows: [ran("a.js")], exitCode: 0 });
+  });
+
+  test("from files that take a plugin, and loads in part", async () => {
+    const steps = `
+      const load = async ({ path }) => ({ contents: await Bun.file(path).text(), loader: "js" });
+      const plugins = [{ name: "a", setup: build => void build.onLoad({ filter: /svelte$/ }, load) }];
+      require((await build(["a.svelte", "b.svelte"], { outdir: "out", plugins })).path);`;
+    const files = { "a.svelte": "Object();", "b.svelte": `import "./a.svelte"; Array();` };
+    expect(await rowsAfter(`{${steps}}`, files, ["--coverage-include=."])).toEqual({
+      rows: [ran("a.svelte"), "out/b.js|100.00|0.00|0.00|100.00|3,6"],
+      exitCode: 0,
+    });
+  });
+
+  test("over its sources, and loads in part", async () => {
+    const steps = `await build(["a.js", "b.js"], { outdir: "." }), load("b.js")`;
+    const files = { "a.js": `export * from "./b.js"; Object();`, "b.js": code };
+    expect(await rowsAfter(steps, files, ["--coverage-include=."])).toEqual({
+      rows: ["a.js|0.00|0.00|0.00|0.00|3,6", picked("b.js", 3)],
+      exitCode: 0,
+    });
+  });
+
+  // Windows doesn't allow these in a file name.
+  test.skipIf(isWindows).each([
+    ["a:b.js", "."],
+    ["a\\b.js", "out"],
+    ["a.js", "o?t"],
+  ])("from %s into %s", async (name, outdir) => {
+    const steps = `await loadBlob(Bun.file((await build([process.cwd() + ${JSON.stringify("/" + name)}], { outdir: "${outdir}", naming: "b.js" })).path))`;
+    expect(await rowsAfter(steps, { [name]: code })).toEqual({ rows: [picked(name.replace("\\", "/"))], exitCode: 0 });
+  });
+
+  test.each([
+    ["js", "ts", `export const pick = v => (<any>v ? 1 : 2);`, picked("a.js")],
+    [
+      "ts",
+      "tsx",
+      `export const pick = v => (<a>'</a>, v ? 1 : 2); /** @jsxRuntime classic @jsx Object */`,
+      picked("a.ts"),
+    ],
+    [
+      "js",
+      "tsx",
+      `export const pick = (v: any) => (v ? 1 : Object<{\n a: Number,\n}>(2));`,
+      "a.js|100.00|50.00|100.00|50.00|3",
+    ],
+    [
+      "es",
+      "ts",
+      `export const pick = v => (v ? 1 : Object<{\n a: Number,\n}>(2));`,
+      "a.es|100.00|50.00|100.00|50.00|3",
+    ],
+  ])("from a .%s file with the loader %s", async (extension, loader, text, row) => {
+    const steps = `await build(["a.${extension}"], { outdir: "out", loader: { ".${extension}": "${loader}" } }), load("out/a.js")`;
+    expect(await rowsAfter(steps, { [`a.${extension}`]: text })).toEqual({ rows: [row], exitCode: 0 });
+  });
+
+  test.each(["--coverage", "--coverage-include=."])("%s, with a chunk that has only the helpers", async flag => {
+    const steps = `await build(["a.cjs", "b.cjs"], { outdir: "out", splitting: true }), load("out/a.js"), load("out/b.js")`;
+    const files = { "a.cjs": "module.exports = Object(this);", "b.cjs": "module.exports = Array(this);" };
+    expect(await rowsAfter(steps, files, [flag])).toEqual({ rows: [ran("a.cjs"), ran("b.cjs")], exitCode: 0 });
+  });
+});
+
+describe.concurrent("the source map at the end of what a plugin returns", () => {
+  const comment = "\n//# sourceMappingURL=";
+  const url = (sources: (string | null)[], mappings: string, sourcesContent?: string[] | null) =>
+    "data:application/json;base64," + btoa(JSON.stringify({ version: 3, sources, sourcesContent, mappings }));
+  const file = "<a>\n  one two\n  Map)\n</a>\n";
+  type Row = [name: string, code: string, url: string, expected: string, text?: string];
+  type Show = (report: any, lines: string) => unknown;
+
+  /** Each row has a folder of its name. */
+  async function check(rows: Row[], show: Show = (_, lines) => lines, load = "require(file)", option = "") {
+    using dir = tempDir("cov-plugin-map", {
+      ...Object.fromEntries(rows.map(([name, , , , text = file]) => [name, { "a.svelte": text, "c.svelte": "" }])),
+      "code.json": JSON.stringify(Object.fromEntries(rows.map(([name, code, url]) => [name, code + comment + url]))),
+      "bunfig.toml": bunfig(`coverageReporter = ["json", "lcov"]`, option),
+      "a.svelte": "",
+      "b.svelte": "",
+      "a.test.js": `
+        const made = ({ path }) => ({ contents: require("./code.json")[path.split(/[\\\\/]/).at(-2)], loader: "js" });
+        const plugin = { name: "a", setup: build => void build.onLoad({ filter: /svelte/ }, made) };
+        Bun.plugin(plugin);
+        for (const file of [...new Bun.Glob("*/a.svelte").scanSync({ absolute: true })]) ${load};`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    const read = (name: string) => readFileSync(path.join(String(dir), "coverage", name), "utf8");
+    const range = ({ start, end }: any) => `${start.line}:${start.column}-${end.line}:${end.column}`;
+    const reports = JSON.parse(read("coverage-final.json"), (_, it) => (it.start ? range(it) : it));
+    const shown = rows.map(([name]) => {
+      const [record] = read("lcov.info").split(`SF:${name}${path.sep}`)[1].split("LF:");
+      const warning = new RegExp(`(?<=^warn: The source map for ".*\\W${name}\\W+a.svelte" ).*`, "m");
+      const lines = [...(record.match(/(?<=^DA:).*/gm) ?? []), ...(stderr.match(warning) ?? [])].join(" ");
+      return [name, String(show(reports[path.join(String(dir), name, "a.svelte")], lines))];
+    });
+    expect(shown).toEqual(rows.map(it => [it[0], it[3]]));
+    expect(exitCode).toBe(0);
+  }
+
+  const [toThirdLine, json] = [url(["a.svelte"], ";AAEA"), `{"sources":[""],"mappings":";AAEA"}`];
+  const allGive = (expected: string, rows: string[][]) =>
+    check(rows.map(([name, url, text]) => [name, "// @bun\nObject();", url, expected, text]));
+  const mapped = (rows: Row[], show?: Show, file?: string) =>
+    check(
+      rows.map(([name, code, it, expected, text = file]) => [
+        name,
+        code,
+        url(["", "node_modules"], it),
+        expected,
+        text,
+      ]),
+      show,
+    );
+
+  test("is used", () =>
+    allGive("3,1", [
+      ["from the root", url(["from the root/a.svelte"], ";AAEA")],
+      ["with the name of no file", url(["unknown"], ";AAEA", null)],
+      ["without a name", url([null], ";AAEA", [])],
+      ["with the name of another file and the text of this one", url(["b.svelte"], ";AAEA", [file])],
+      ["with two names for the file", url(["a.svelte", "./a.svelte"], ";ACEA")],
+      ["with dependencies", url(["../node_modules/a.svelte", "a.svelte"], "AAgBA;ACdA")],
+      ["with what esbuild defines", url(["<define:A>", "<stdin>"], "AAgBA;ACdA")],
+      ["with a column that is on a later line", url([""], ";AACY")],
+      ["as JSON", "data:application/json," + json],
+      ["with escapes", "data:application/json;charset=utf-8," + encodeURIComponent(json)],
+      ["before other comments", toThirdLine + "\r\n\n  //# sourceURL=a\n"],
+      ["for a file that ends in a template", toThirdLine, `${file}\`${comment}data:\``],
+      ["for a file that links to a source map", toThirdLine, file + comment + "a.map"],
+    ]));
+
+  test.each([
+    ["3,1", `require(file + "?a")`, ""],
+    [
+      "3,1",
+      `await Bun.build({ entrypoints: [file], outdir: "out", target: "bun", sourcemap: "linked", plugins: [plugin] }), require(process.cwd() + "/out/a.js")`,
+      "",
+    ],
+    ["2,1", `require(file), await Bun.file(file).delete()`, ""],
+    [
+      "2,1",
+      `Bun.plugin.clearAll(), await Bun.write(file, made({ path: file }).contents), require(file), await Bun.write(file, "1\\n2\\n3")`,
+      `[loader]\n".svelte" = "js"`,
+    ],
+    ["2,1", "require(file)", "coverageIgnoreSourcemaps = true"],
+  ])("gives %s after %s %j", (lines, load, option) =>
+    check([["a", "// @bun\nObject();", toThirdLine, lines]], undefined, load, option),
+  );
+
+  test("is not looked at", () =>
+    allGive("2,1", [
+      ["the file has one itself", toThirdLine, file + comment + "data:"],
+      ["it is not inline", "a.svelte.map"],
+      ["code follows", toThirdLine + "\n;"],
+    ]));
+
+  test("does not fit", () =>
+    allGive("2,1 does not fit. The coverage report has the lines of the code that ran.", [
+      ["it is about a file in the root", url(["b.svelte"], ";AAEA")],
+      ["it is about a file in the folder", url(["c.svelte"], ";AAEA")],
+      ["it is about more files", url(["a.svelte", "unknown"], ";AAEA")],
+      ["it is about no file", url([], ";AAEA")],
+      ["the file is too short", url(["a.svelte"], "AAKA;AAHA", [file + file])],
+      ["its own text is too short", url(["a.svelte"], ";AAEA", [""])],
+      ["it has no mappings", "data:application/json,{}"],
+      ["it cannot be decoded", url(["a.svelte"], "!")],
+      ["it is not JSON", "data:application/json,{"],
+      ["it is not base64", "data:application/json;base64,{"],
+      ["it has no data", "data:"],
+    ]));
+
+  test("leaves nothing", () =>
+    allGive("", [
+      ["no line is mapped", url([""], ";;")],
+      ["all is from a dependency", url(["node_modules/a.js"], ";AAAA")],
+      ["it is empty", `data:application/json,{"mappings":""}`],
+    ]));
+
+  test("is about the text that it has", () =>
+    check([["a", "Map; Set;", url([""], "AACA", ["\nMap; Set;"]), "2:0-2:4,2:5-2:9"]], it =>
+      Object.values(it.statementMap),
+    ));
+
+  test("gives the lines", () =>
+    mapped([
+      ["what is around code that did not run", "Object(() => Set, Set, []);", "AAAA,aACE", "1,1 2,0"],
+      ["what is before it", "Object(() => Set);", "aACE", "2,0"],
+      ["what is mapped like it", "Object(() => Set, Set);", "AAAA,aACE,KAAA", "1,1 2,0"],
+      ["what is mapped to the end of it", "Object(() => Set, Set);", "AAAA,aACM,KAAG", "1,1 2,0"],
+      ["a parenthesis that is mapped to a word", "Object(Set);", "AAAA,UACE", "1,1"],
+      ["a branch around it", "Object(!Set || (() => Set));", "AAAA,sBACE", "1,1 2,0"],
+      ["what is in parentheses", "((0, Object))(() => Set);", "AACE,oBAAI", "2,1"],
+      ["what is in more of them than the line is long", "((((Set))));", "AAAE", "1,1"],
+      ["the same text after a mapping", "Object(() => {}, Map);", "AAAA,eACA", "1,1 2,1", "a\n, Map"],
+      ["the same text before a mapping", "Object(() => Set);", "AAAA,aACE,GAAG,CACC", "1,1 2,0 3,1"],
+      ["such text that has a mapping itself", "Object(() => Map);", "AAAA,aACE,GACG", "1,1 2,0 3,1"],
+      ["no such text on other lines", "Map;\nSet;\nDate;", ";AACA", "2,1", "Map;\nSet;\nDate;"],
+      ["what follows a tab that is mapped", "\tObject(() => Set);", "AACE", "2,1"],
+      ["a statement without a mapping", "/**/ Object();", "AACE", "2,1"],
+      ["a branch without a mapping", "Object(\n/**/ Map ? 1 : 2);", ";AACE", "2,1"],
+    ]));
+
+  test("gives the statements", () =>
+    mapped(
+      [
+        ["a mapping at the space before it", "  Map;", "AAEE", "3:2-3:5 1"],
+        ["to the space before it", "Map;", "AAEA", "3:2-3:5 1"],
+        ["to another word", "Set;", "AACE", "2:2-2:5 1"],
+        ["to no word", "Set;", "AAAA", "1:0-1:3 1"],
+        ["further on in the line", "Set; Object(Set);", "YACE", "2:2-2:5 1"],
+        ["before it and in it", "/**/ Object(Set);", "AACE,YAAI", "2:6-2:9 1"],
+        ["at a parenthesis and after it", "(Set);", "AACE,CAAI", "2:2-2:9 1"],
+        ["to more of the same text", "Object(() => Map);", "aAEE", "3:2-3:6 1,3:2-3:5 0"],
+        ["to the end of the line", "Set;", "AACS", "2:9-2:10 1"],
+        ["past the end of its own line", "Set;\nSet;", "eAAA;AACE", "2:2-2:5 1"],
+        ["to the end of the file", "Set;", "AAIA", ""],
+        ["for its start only", "Object(\n);", "AACE", "2:2-2:5 1"],
+        ["for its start and its end", "Object(\n);", "AACE;AACG", "2:2-3:6 1"],
+        ["to an end that comes first", "Object(\n);", "AACE;AADF", "2:2-2:9 1"],
+        ["to an end in a dependency", "Object(\n);", "AACE;ACoBA", "2:2-2:9 1"],
+        ["for its end only", "Object(\n);", ";AACE", ""],
+        ["like one in it", "Object(() => Set);", "aACE", "2:2-2:5 0"],
+        ["like some after it", "[() => Set, () => Set].map(f => f());", "AAAA,OACE,WAAA", "1:0-2:5 1,2:2-2:5 4"],
+      ],
+      ({ s, statementMap }) => Object.keys(s).map(it => `${statementMap[it]} ${s[it]}`),
+      file.replaceAll("\n", "\r\n"),
+    ));
+
+  test("gives the functions", () =>
+    mapped(
+      [
+        ["a mapping after the head", "Object(a =>\n1);", "UACE", "(anonymous_0) 2:2-2:5 2:2-2:5 0"],
+        ["one in the other", "function a() { return () => 1; } a();", "AACE", "a 2:2-2:5 2:2-2:5 0"],
+        ["one after the other", "[function a() {}, function b() {}][0]();", "AACE", "a 2:2-2:5 2:2-2:5 1"],
+        [
+          "with other heads",
+          "[function a() {}, function b() {}][0]();",
+          "UAAA,IACE,aAAI,IAAJ",
+          "a 1:0-1:3 2:2-2:5 1,b 2:6-2:9 2:2-2:5 0",
+        ],
+      ],
+      ({ f, fnMap }) => Object.keys(f).map(it => `${fnMap[it].name} ${fnMap[it].decl} ${fnMap[it].loc} ${f[it]}`),
+    ));
+
+  test("gives the branches", () =>
+    mapped(
+      [
+        ["one start", "Object(Map && Set ? 1 : 2);", "OAAA", "cond-expr 1,0,binary-expr 1,1"],
+        ["one range", "Object(Date ? 1 : 2);\nif (Date) Date;", "AAAA;AAAA", "cond-expr 1,0,if 1,0"],
+        ["the same arms", "void [Date ? 3 : 4,\nDate ? 3 : 4];", "MAAA,OAAc;AAAP,OAAO", "cond-expr 1,0,cond-expr 1,0"],
+        ["a copy", "if (Date) Date;\nif (!Date) Date;", "AAAA;AAAA", "if 1,1"],
+        ["what Istanbul lacks", "Object(Date ?? 1, Date ??= 1);", "AAAA", "binary-expr 1,0"],
+        ["with a mapping", "Object(Date ?? 1, Date ??= 1);", "AAAA,kBAAO", "binary-expr 1,0,logical-assignment 0"],
+      ],
+      ({ b, branchMap }) => Object.keys(b).map(it => `${branchMap[it].type} ${b[it]}`),
+      "Map && Set ? 1 : 2",
+    ));
+
+  test("gives the arms", () =>
+    mapped(
+      [
+        ["without a mapping", "Object(Set\n? 1\n: 2);", "AACM", "2:6-2:9,2:6-2:9"],
+        ["not written", "if (Set) Set;", "AACM", "2:6-2:9,undefined:undefined-undefined:undefined"],
+      ],
+      it => it.branchMap[0].locations,
+    ));
+});
+
+describe.concurrent.each([
+  ["./src/a.cjs", `Module._resolveFilename = () => name; require("alias");`],
+  ["a.cjs", `process.chdir("src"), Module._extensions[".js"](new Module(name), name);`],
+  ["src//a.cjs", `await import(URL.createObjectURL(Bun.file(name)));`],
+  // Windows takes out `link\..` before it looks for the link.
+  [isWindows ? "link/../src/a.cjs" : "link/../a.cjs", `await import(URL.createObjectURL(Bun.file(name)));`],
+])("a file that is loaded as %s", (name, load) => {
+  test.each<[string, string[], number]>([
+    [`coverageInclude = "src"`, ["src/a.cjs|0.00|100.00|100.00|100.00|1"], 0],
+    [`coveragePathIgnorePatterns = "src/*"`, [], 0],
+    [`coverageThreshold = { src = { functions = 1 } }`, ["src/a.cjs|0.00|100.00|100.00|100.00|1"], 1],
+  ])("%s", async (option, rows, expectedExitCode) => {
+    using dir = tempDir("cov-relative", {
+      "bunfig.toml": bunfig(option),
+      "src/a.cjs": "Object(() => {});",
+      "src/folder": {},
+      "a.test.js": `
+        import { codeCoverageForFile } from "bun:jsc";
+        import Module from "node:module";
+        const name = "${name}";
+        ${load}
+        if (${rows.length}) codeCoverageForFile(name);`,
+    });
+    symlinkSync(path.join(String(dir), "src", "folder"), path.join(String(dir), "link"), "junction");
+    const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+    expect(rowsOf(stderr).slice(1)).toEqual(rows);
+    expect(exitCode).toBe(expectedExitCode);
+  });
+});
+
+test.concurrent("a link stays in a name that has ..", async () => {
+  using dir = tempDir("cov-relative", {
+    "shared/a.js": "export const pick = v => (v ? 1 : 2);",
+    "app/bunfig.toml": bunfig(),
+    "app/folder": {},
+    "app/a.test.js": `
+      for (const [index, name] of ["link/a.js", "folder/../link/a.js"].entries())
+        (await import(URL.createObjectURL(Bun.file(name)))).pick(index);`,
+  });
+  symlinkSync(path.join(String(dir), "shared"), path.join(String(dir), "app", "link"), "junction");
+  const { stderr, exitCode } = await bun(path.join(String(dir), "app"), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual(["link/a.js|100.00|100.00|100.00|100.00|"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a name that is made up is listed and ignored in the form of a path", async () => {
+  using dir = tempDir("cov-virtual", {
+    "bunfig.toml": bunfig(`coveragePathIgnorePatterns = "https:/a/ignored.js"`),
+    "a.test.ts": `
+      for (const name of ["https://a/ignored.js", "https://a/listed.js", "made-up/../a.js"]) {
+        Bun.plugin({ setup: build => void build.module(name, () => ({ contents: "Object();", loader: "js" })) });
+        require(name);
+      }`,
+  });
+  const { stderr, exitCode } = await bun(String(dir), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual([
+    "https:/a/listed.js|100.00|100.00|100.00|100.00|",
+    "made-up/../a.js|100.00|100.00|100.00|100.00|",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// Only on Windows does the working directory keep the link.
+test.concurrent.each([
+  ["link/app", "../shared"],
+  ["link-to-app", isWindows ? "../real/shared" : "../shared"],
+])("in the working directory %s", async (cwd, shared) => {
+  using dir = tempDir("cov-linked-root", {
+    "real/app/bunfig.toml": bunfig(
+      `preload = "./setup.js"`,
+      `coverageInclude = [".", "${shared}"]`,
+      `coveragePathIgnorePatterns = "ignored.js"`,
+      `coverageDir = "${shared}/coverage"`,
+      `coverageReporter = ["text", "json"]`,
+    ),
+    "real/app/setup.js": "Object();",
+    "real/app/built.js": "Object();",
+    "real/app/ignored.js": "Object();",
+    "real/app/loaded.js": "Object();",
+    "real/app/unloaded.js": "Object();",
+    "real/app/bundle.js": built("Object();"),
+    "real/app/bundle.js.map": sourceMap(["../shared/built.js"], ["Object();"], ";AAAA"),
+    "real/shared/built.js": "Object();",
+    "real/shared/loaded.js": "Object();",
+    "real/shared/relative.js": "Object();",
+    "real/shared/unloaded.js": "Object();",
+    "real/app/a.test.js": `
+      import { realpathSync } from "node:fs";
+      import { resolve } from "node:path";
+      await Bun.build({ entrypoints: ["built.js"], outdir: "out", target: "bun", sourcemap: "linked" });
+      Bun.plugin({ setup: build => void build.module(resolve("made-up.js"), () => ({ contents: "", loader: "js" })) });
+      require(resolve("made-up.js"));
+      await import(URL.createObjectURL(Bun.file("../shared/relative.js")));
+      for (const name of ["out/built.js", "bundle.js", "ignored.js", "loaded.js", resolve("${shared}/loaded.js")])
+        for (const file of [name, realpathSync(name)]) await import(URL.createObjectURL(Bun.file(file)));`,
+  });
+  symlinkSync(path.join(String(dir), "real"), path.join(String(dir), "link"), "junction");
+  symlinkSync(path.join(String(dir), "real", "app"), path.join(String(dir), "link-to-app"), "junction");
+  const { stderr, exitCode } = await bun(path.join(String(dir), cwd), ["test", "--coverage"]);
+  expect(rowsOf(stderr).slice(1)).toEqual([
+    "built.js|100.00|100.00|100.00|100.00|",
+    "loaded.js|100.00|100.00|100.00|100.00|",
+    "made-up.js|100.00|100.00|100.00|100.00|",
+    "unloaded.js|100.00|0.00|0.00|100.00|1",
+    `${shared}/built.js|100.00|100.00|100.00|100.00|`,
+    `${shared}/loaded.js|100.00|100.00|100.00|100.00|`,
+    `${shared}/relative.js|100.00|100.00|100.00|100.00|`,
+    `${shared}/unloaded.js|100.00|0.00|0.00|100.00|1`,
+  ]);
+  const report = readFileSync(path.join(String(dir), "real", "shared", "coverage", "coverage-final.json"), "utf8");
+  expect(Object.keys(JSON.parse(report))[0]).toBe(path.join(String(dir), isWindows ? cwd : "real/app", "built.js"));
   expect(exitCode).toBe(0);
 });
 
@@ -3162,14 +3875,10 @@ test.concurrent.skipIf(isWindows).each<[string, string[]]>([
   ["--coverage-include=*.js", ["lib.js?\0", "lib.js?\0bundle", "source.js"]],
   ["--coverage-include=lib.js?", []],
 ])("%s: a name does not end at a null byte", async (flag, listed) => {
-  const map = (source: string) =>
-    JSON.stringify({ version: 3, sources: [source], sourcesContent: ["Object();"], mappings: ";AAAA", names: [] });
+  const map = (source: string) => sourceMap([source], ["Object();"], ";AAAA");
+  const url = `//# sourceMappingURL=data:application/json;base64,${btoa(map("source.js"))}`;
   const test = (code: string) => `
-    const texts = {
-      "": "${code}",
-      "bundle": "// @bun\\n${code}",
-      "mapped": "// @bun\\nObject();\\n//# sourceMappingURL=data:application/json;base64,${btoa(map("source.js"))}",
-    };
+    const texts = ${JSON.stringify({ "": code, bundle: built(code), mapped: built("Object();") + url })};
     const load = ({ path }) => ({ contents: texts[path.split("\\0")[1]], loader: "js" });
     for (const namespace of ["file", "made-up"])
       Bun.plugin({ setup: build => void build.onLoad({ filter: /\\0/, namespace }, load) });

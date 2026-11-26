@@ -245,7 +245,7 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_original())
     }
 
-    pub(crate) fn source_index(&self) -> &[i32] {
+    pub fn source_index(&self) -> &[i32] {
         both_lists!(&self.r#impl, |list| list.items_source_index())
     }
 
@@ -377,7 +377,7 @@ impl Lookup {
 }
 
 /// `source` is an entry of the `sources` of the map for `generated_file`.
-pub(crate) fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
+fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
     let dir = bun_paths::dirname_or_root(generated_file);
     let mut path = bun_paths::Path::resolve(&[dir, &from_portable_rooted(source)]);
     path.copy_trailing_sep_from(source);

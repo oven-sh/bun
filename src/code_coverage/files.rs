@@ -10,20 +10,31 @@ use bun_sys::{Fd, File};
 use crate::find_anchors;
 use crate::report::UNKNOWN;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// The name can be relative.
+    Disk,
+    /// The name can be made up.
+    Memory,
+    SourceMap,
+}
+
 /// What the counters are numbered by.
 pub(crate) struct Text {
     pub(crate) path: Box<[u8]>,
     pub(crate) loader: Loader,
     pub(crate) bytes: Box<[u8]>,
+    pub(crate) origin: Origin,
     numbers: OnceLock<Vec<(Role, Event, u32)>>,
 }
 
 impl Text {
-    pub(crate) fn new(path: &[u8], loader: Loader, bytes: &[u8]) -> Arc<Text> {
+    pub(crate) fn new(path: &[u8], loader: Loader, bytes: &[u8], origin: Origin) -> Arc<Text> {
         Arc::new(Text {
             path: path.into(),
             loader,
             bytes: bytes.into(),
+            origin,
             numbers: OnceLock::new(),
         })
     }
@@ -40,21 +51,26 @@ impl Text {
         self.path == other.path && (self.bytes == other.bytes || self.numbers() == other.numbers())
     }
 
-    /// What the file has now stays.
-    pub(crate) fn update(old: &mut Arc<Text>, new: Arc<Text>) {
-        if old.bytes != new.bytes && old.read_again().as_deref() != Some(&old.bytes) {
-            *old = new;
-        }
+    /// The best is what the file has `now`, and the next best is what was loaded for it.
+    fn rank(&self, now: Option<&[u8]>) -> impl Ord {
+        (now == Some(&self.bytes), self.origin != Origin::SourceMap)
     }
 
-    fn read_again(&self) -> Option<Vec<u8>> {
-        is_file(&self.path).then(|| read(&self.path).ok())?
+    pub(crate) fn update(old: &mut Arc<Text>, new: Arc<Text>) {
+        if old.bytes == new.bytes && old.origin != Origin::SourceMap {
+            return;
+        }
+        let now = (old.bytes != new.bytes).then(|| read_if_file(&old.path));
+        let now = now.as_ref().and_then(Option::as_deref);
+        if old.rank(now) <= new.rank(now) {
+            *old = new;
+        }
     }
 }
 
 /// Plugins and source maps make up names.
 pub(crate) fn can_be_on_disk(path: &[u8]) -> bool {
-    bun_paths::is_absolute(path) && !contains_char(path, 0)
+    bun_paths::is_fully_qualified(path) && !contains_char(path, 0)
 }
 
 /// Not a pipe, which would block.
@@ -71,6 +87,10 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
         None => bytes,
     })
+}
+
+pub(crate) fn read_if_file(path: &[u8]) -> Option<Vec<u8>> {
+    is_file(path).then(|| read(path).ok())?
 }
 
 #[derive(Clone)]
@@ -106,13 +126,23 @@ impl Files {
         self.0.values().iter().flatten()
     }
 
-    /// Of each file the text that it has now, or else the one that was loaded last.
+    pub(crate) fn texts_of(&self, path: &[u8]) -> impl Iterator<Item = &[u8]> {
+        (self.0.get(path).into_iter().flatten()).map(|it| &*it.text.bytes)
+    }
+
+    /// Of each file the last of the best texts, or the build of which the most did not run.
     pub(crate) fn reported(&self) -> impl Iterator<Item = &Counts> {
         self.0.values().iter().filter_map(|versions| {
-            let (last, others) = versions.split_last()?;
-            let now = others.first().and_then(|it| it.text.read_again());
-            let is_current = |it: &&Counts| now.as_deref() == Some(&it.text.bytes);
-            versions.iter().rfind(is_current).or(Some(last))
+            let now = versions.get(1).and_then(|it| read_if_file(&it.text.path));
+            versions.iter().max_by_key(|Counts { text, counts }| {
+                let missed = counts
+                    .iter()
+                    .map(|&it| u32::from(matches!(it, 0 | UNKNOWN)));
+                (
+                    text.rank(now.as_deref()),
+                    (text.origin == Origin::SourceMap).then(|| (missed.sum::<u32>(), &text.bytes)),
+                )
+            })
         })
     }
 }
@@ -142,7 +172,7 @@ fn read_bytes<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
     bytes.split_off(..length)
 }
 
-pub(crate) fn loader_with_number(number: u64) -> Option<Loader> {
+fn loader_with_number(number: u64) -> Option<Loader> {
     ([Loader::Jsx, Loader::Js, Loader::Ts, Loader::Tsx].into_iter()).find(|&it| it as u64 == number)
 }
 
@@ -150,6 +180,7 @@ impl Counts {
     /// For another process.
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         write_number(out, self.text.loader as u64);
+        out.push(self.text.origin as u8);
         for part in [&self.text.path, &self.text.bytes] {
             write_number(out, part.len() as u64);
             out.extend_from_slice(part);
@@ -161,7 +192,10 @@ impl Counts {
 
     pub(crate) fn decode(mut bytes: &[u8]) -> Option<Counts> {
         let loader = loader_with_number(read_number(&mut bytes)?)?;
-        let text = Text::new(read_bytes(&mut bytes)?, loader, read_bytes(&mut bytes)?);
+        let origins = [Origin::Disk, Origin::Memory, Origin::SourceMap];
+        let origin = *origins.get(usize::from(*bytes.split_off_first()?))?;
+        let (path, text) = (read_bytes(&mut bytes)?, read_bytes(&mut bytes)?);
+        let text = Text::new(path, loader, text, origin);
         let mut counts = Vec::with_capacity(bytes.len());
         while !bytes.is_empty() {
             counts.push(read_number(&mut bytes)?);

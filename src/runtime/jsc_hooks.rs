@@ -2033,8 +2033,11 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         .is_some_and(|d| d.set_breakpoint_on_first_line)
                     && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
 
-                let collector = jsc_vm.coverage.get();
-                let coverage = collector.filter(|it| it.covers(path.text, loader));
+                let loading = jsc_vm.coverage.get().map(|it| match virtual_source {
+                    Some(_) => it.will_load(path.text, loader, bun_code_coverage::Origin::Memory),
+                    None => it.will_load(path.text, loader, bun_code_coverage::Origin::Disk),
+                });
+                let coverage = loading.as_ref().filter(|it| it.is_covered);
 
                 let options = &jsc_vm.transpiler.get().options;
                 let mut parse_options = ParseOptions {
@@ -2293,8 +2296,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         already_bundled: true,
-                        coverage: collector
-                            .and_then(|it| it.count_bundle(path.text, &source.contents)),
+                        coverage: loading.and_then(|it| it.count_bundle(&source.contents)),
                         bytecode_cache,
                         is_commonjs_module,
                         ..Default::default()
@@ -2310,7 +2312,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
-                            coverage: coverage.map(|it| it.count_as_written(path.text, b"")),
+                            coverage: coverage.map(|it| it.count_as_written(b"")),
                             ..Default::default()
                         });
                     }

@@ -117,6 +117,7 @@ describe.concurrent("bun test --changed", () => {
     [["src/untested.ts"], ["--coverage-include=src"], ["All files", "untested.ts"], 1],
     [["src/untested.ts"], ["--coverage"], [], 0],
     [["src/other.ts", "d.test.ts"], ["--coverage", "./d.test.ts"], ["All files", "other.ts?query"], 0],
+    [["src/other.ts", "f.test.ts"], ["--coverage", "./f.test.ts"], ["All files", "other.ts"], 0],
     [["a.test.ts"], ["--coverage-include=src"], ["All files", "util.ts"], 0],
     [["c.test.ts"], ["--coverage-include=src"], ["All files"], 0],
     [["e.test.ts"], ["--coverage", "--preserve-symlinks"], ["All files", "other.ts"], 0],
@@ -138,6 +139,7 @@ describe.concurrent("bun test --changed", () => {
         Bun.plugin({ setup: build => void build.onLoad({ filter: /query$/ }, () => ({ contents: "", loader: "ts" })) });
         for (const name of ["other", "util"]) require("./src/" + name + ".ts?query");\n`,
         "e.test.ts": `import { other } from "./link/other";\nother(), require("./link/" + ["util"]).util();\n`,
+        "f.test.ts": `(await import(URL.createObjectURL(Bun.file("src/other.ts")))).other();\n`,
         ".gitignore": "link\n",
         "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { lines = 1, functions = 1, src = {} }\n`,
       });

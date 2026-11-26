@@ -9,6 +9,7 @@ use bun_core::{strings, warn};
 use bun_glob::{BunGlobWalker, Prepared, walk};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::Path;
+use bun_paths::portable::has_dot_dot;
 use bun_sys::Fd;
 
 use crate::files::{can_be_on_disk, is_file};
@@ -18,15 +19,15 @@ pub struct Project {
     pub loaders: LoaderHashTable,
     pub suffixes_of_test_files: &'static [&'static [u8]],
     pub preloads: Vec<Box<[u8]>>,
-    /// Bun writes the module for this query.
+    /// The module for this query does not have the code of the file.
     pub is_generated_for: fn(query: &[u8], by_extension: Loader) -> bool,
 }
 
 /// Which files the report is about.
 pub(crate) struct Filter {
     project: Project,
-    /// On Windows the working directory keeps junctions and `subst` drives.
-    real_root: Path,
+    /// With their real paths. On Windows the working directory keeps junctions and `subst` drives.
+    root_and_parents: Vec<[Path; 2]>,
     skips_test_files: bool,
     includes: Vec<Pattern>,
     ignores: Vec<Pattern>,
@@ -49,7 +50,7 @@ pub(crate) enum Selection {
     AllBut(Pattern),
 }
 
-fn real_path(path: &[u8]) -> Option<Path> {
+pub(crate) fn real_path(path: &[u8]) -> Option<Path> {
     if !can_be_on_disk(path) {
         return None;
     }
@@ -63,9 +64,28 @@ fn real_path_or_same(path: &[u8]) -> Path {
     real_path(path).unwrap_or_else(|| Path::from(path))
 }
 
+/// Of the file that the system opens for `name`.
+pub(crate) fn absolute_path(name: &[u8]) -> Path {
+    if !has_dot_dot(name) {
+        return Path::resolve(&[bun_core::top_level_dir(), name]);
+    }
+    // `link/..` is not where the link is.
+    let folder = real_path_or_same(bun_core::top_level_dir());
+    let normal = Path::resolve(&[&folder, name]);
+    let real = match bun_paths::is_absolute(name) {
+        true => real_path(name),
+        false => real_path(&Path::from_parts(&[&folder, name])),
+    };
+    (real.filter(|it| it.as_bytes() != real_path_or_same(&normal).as_bytes())).unwrap_or(normal)
+}
+
 /// The path of what a plugin loads has the query.
 fn split_at_query(path: &[u8]) -> Option<(&[u8], &[u8])> {
     Some(path.split_at(strings::index_of_char_usize(path, b'?')?))
+}
+
+pub(crate) fn without_query(path: &[u8]) -> &[u8] {
+    (split_at_query(path).filter(|_| !is_file(path))).map_or(path, |it| it.0)
 }
 
 impl Pattern {
@@ -204,25 +224,56 @@ impl Filter {
         if includes.is_empty() && !options.include_patterns.is_empty() {
             includes.push(Pattern::inside_of_root(b".", project.root));
         }
-        Filter {
-            real_root: real_path_or_same(project.root),
+        let mut filter = Filter {
+            root_and_parents: (bun_paths::ancestors(project.root))
+                .map(|it| [Path::from(it), real_path_or_same(it)])
+                .collect(),
             project,
             skips_test_files: options.skip_test_files,
             includes,
             ignores,
             changed_files: OnceLock::new(),
-        }
+        };
+        filter.project.preloads = (filter.project.preloads.iter())
+            .map(|it| filter.by_way_of_root(it).as_bytes().into())
+            .collect();
+        filter
     }
 
     pub(crate) fn root(&self) -> &'static [u8] {
         self.project.root
     }
 
+    fn respell(&self, path: &[u8], choose: fn(&[Path; 2]) -> &Path) -> Path {
+        let found = self.root_and_parents.iter().find_map(|both| {
+            let rest = (both.iter()).find_map(|it| bun_paths::strip_prefix(path, it))?;
+            Some((choose(both), rest))
+        });
+        let Some((folder, rest)) = found else {
+            return Path::from(path);
+        };
+        let mut path = Path::from(folder);
+        path.push_trailing_sep();
+        path.extend_from_slice(rest);
+        path
+    }
+
+    /// What the other methods take.
+    pub(crate) fn by_way_of_root(&self, path: &[u8]) -> Path {
+        self.respell(path, |[written, _]| written)
+    }
+
+    pub(crate) fn without_link_to_root(&self, path: &[u8]) -> Path {
+        self.respell(path, |[_, real]| real)
+    }
+
     pub(crate) fn name_of(&self, path: &[u8]) -> Path {
-        match bun_paths::is_absolute(path) {
-            true => Path::relative(self.project.root, path),
-            false => Path::from(path),
+        // `namespace:../../a` is not `a`.
+        if !bun_paths::is_absolute(path) && has_dot_dot(path) {
+            return Path::from(path);
         }
+        let root = self.project.root;
+        Path::relative(root, &Path::resolve(&[root, path]))
     }
 
     pub(crate) fn select(&self, written: &[u8]) -> Selection {
@@ -239,9 +290,8 @@ impl Filter {
         }
     }
 
-    fn inside_of_root<'a>(&self, path: &'a [u8]) -> Option<&'a [u8]> {
+    pub(crate) fn inside_of_root<'a>(&self, path: &'a [u8]) -> Option<&'a [u8]> {
         bun_paths::strip_prefix(path, self.project.root)
-            .or_else(|| bun_paths::strip_prefix(path, &self.real_root))
     }
 
     pub(crate) fn loader_by_extension(&self, path: &[u8]) -> Loader {
@@ -249,12 +299,13 @@ impl Filter {
         loader.copied().unwrap_or(Loader::File)
     }
 
-    pub(crate) fn is_source_file(&self, path: &[u8]) -> bool {
+    pub(crate) fn is_dependency(&self, path: &[u8]) -> bool {
         let mut components = bun_paths::components(self.inside_of_root(path).unwrap_or(path));
-        if path.starts_with(b"data:")
-            || path.starts_with(b"blob:")
-            || components.any(|it| it == b"node_modules")
-        {
+        components.any(|it| it == b"node_modules")
+    }
+
+    pub(crate) fn is_source_file(&self, path: &[u8]) -> bool {
+        if path.starts_with(b"data:") || path.starts_with(b"blob:") || self.is_dependency(path) {
             return false;
         }
         if let Some((file, query)) = split_at_query(path)
@@ -266,7 +317,8 @@ impl Filter {
         let stem = &path[..path.len() - bun_paths::extension(path).len()];
         let is_test_file = (self.project.suffixes_of_test_files.iter())
             .any(|it| stem.ends_with(it))
-            || self.project.preloads.iter().any(|it| **it == *path);
+            || (self.project.preloads.iter())
+                .any(|it| bun_paths::strip_prefix(path, it) == Some(b""));
         // A plugin can make code of a file of a kind that Bun does not know.
         (loader.is_javascript_like() || loader == Loader::File)
             && !(self.skips_test_files && is_test_file)
@@ -274,7 +326,8 @@ impl Filter {
 
     fn matches_any(&self, patterns: &[Pattern], path: &[u8]) -> bool {
         let relative = LazyCell::new(|| self.name_of(path));
-        let real = LazyCell::new(|| real_path_or_same(path));
+        let real =
+            LazyCell::new(|| real_path(path).unwrap_or_else(|| self.without_link_to_root(path)));
         patterns.iter().any(|it| it.matches(&relative, &real))
             || split_at_query(path).is_some_and(|it| self.matches_any(patterns, it.0))
     }
@@ -283,12 +336,11 @@ impl Filter {
         self.matches_any(&self.ignores, path)
     }
 
-    pub(crate) fn is_selected(&self, path: &[u8]) -> bool {
-        let is_included = match self.includes.is_empty() {
+    pub(crate) fn is_included(&self, path: &[u8]) -> bool {
+        match self.includes.is_empty() {
             true => !bun_paths::is_absolute(path) || self.inside_of_root(path).is_some(),
             false => self.matches_any(&self.includes, path),
-        };
-        is_included && !self.is_ignored(path)
+        }
     }
 
     pub(crate) fn is_unchanged(&self, path: &[u8]) -> bool {
@@ -314,8 +366,7 @@ impl Filter {
             let file = real_path(path).or_else(|| real_path(split_at_query(path)?.0));
             bun_core::handle_oom(file.map_or(Ok(()), |it| seen.insert(&it)));
         }
-        let root = self.project.root;
-        let reports = real_path_or_same(&Path::resolve(&[root, reports_directory]));
+        let reports = real_path_or_same(&Path::resolve(&[self.project.root, reports_directory]));
         let is_among_reports = |it: &[u8]| bun_paths::strip_prefix(it, &reports).is_some();
         for pattern in &self.includes {
             // An HTML report has scripts.
@@ -335,7 +386,7 @@ impl Filter {
                     continue;
                 }
                 bun_core::handle_oom(seen.insert(&path));
-                let path = Path::resolve(&[root, &Path::relative(&self.real_root, &path)]);
+                let path = self.by_way_of_root(&path);
                 if self.is_source_file(&path) && !self.is_ignored(&path) {
                     others.push(path);
                 }

@@ -32,24 +32,12 @@ test/cli/test/coverage.test.ts: a file with ? in its name is not left out of cov
 # A compiled run names a module by its real path, also with --preserve-symlinks.
 test/cli/test/coverage.test.ts: coverageInclude > real ["--preserve-symlinks"], for a file that is loaded through a link
 # A compiled run does not read the source map of a bundle, as docs/compiler/debugging.mdx says.
-test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: ../outside.ts
-test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: gone.ts
-test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: node_modules/dependency.ts
-test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: node_modules/gone.ts
-test/cli/test/coverage.test.ts: a // @bun file is reported as it is > unless all that it was made from is left out: source.ts
 test/cli/test/coverage.test.ts: both braces of an object are listed and no brace of a block is: // @bun with a source map
 test/cli/test/coverage.test.ts: coverageInclude > a file that is bundled with its test
-test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with ""
-test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \"!out\""
-test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \".\""
-test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coverageInclude = \"src/a.js\""
-test/cli/test/coverage.test.ts: the files that are listed for a // @bun file, with "coveragePathIgnorePatterns = \"src/a.js\""
-test/cli/test/coverage.test.ts: the sources of a // @bun file are listed wherever it is
 test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap --minify-syntax
 test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=external
 test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=inline
 test/cli/test/coverage.test.ts: what is counted > from a bundle with --sourcemap=linked
-test/cli/test/coverage.test.ts: what is counted > from a bundle without a loop that its source has
 # A preload that starts with file:// stops the build of a compiled run with TS100160.
 test/cli/test/coverage.test.ts: a preload is listed if test files are: "[test]\ncoverageSkipTestFiles = true\n" ["--preload=file://./setup.ts"]
 # A file with a syntax error is not compiled.

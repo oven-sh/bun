@@ -3120,6 +3120,18 @@
     "default": 63000,
     "asan": 91300
   },
+  "aot/runner-suites/coverage-4.test.ts": {
+    "default": 63000,
+    "asan": 91300
+  },
+  "aot/runner-suites/coverage-5.test.ts": {
+    "default": 63000,
+    "asan": 91300
+  },
+  "aot/runner-suites/coverage-6.test.ts": {
+    "default": 63000,
+    "asan": 91300
+  },
   "aot/runner-suites/expect.test.ts": {
     "default": 10000,
     "asan": 29200

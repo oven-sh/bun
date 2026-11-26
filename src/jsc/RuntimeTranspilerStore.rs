@@ -711,8 +711,9 @@ impl TranspilerJob {
         };
 
         // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
-        let collector = unsafe { (*vm).coverage.get() };
-        let coverage = collector.filter(|it| it.covers(path.text, loader));
+        let loading = unsafe { (*vm).coverage.get() }
+            .map(|it| it.will_load(path.text, loader, bun_code_coverage::Origin::Disk));
+        let coverage = loading.as_ref().filter(|it| it.is_covered);
 
         let mut parse_options = ParseOptions {
             arena: &arena,
@@ -834,8 +835,7 @@ impl TranspilerJob {
             this.resolved_source = ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
-                coverage: collector
-                    .and_then(|it| it.count_bundle(path.text, &parse_result.source.contents)),
+                coverage: loading.and_then(|it| it.count_bundle(&parse_result.source.contents)),
                 bytecode_cache,
                 is_commonjs_module,
                 tag: this_tag,

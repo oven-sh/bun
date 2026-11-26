@@ -11,9 +11,10 @@ use bun_removable_features::removable_definition;
 use bun_sys::{Fd, O, Tmpfile};
 
 use crate::collector::Collector;
-use crate::files::{self, Counts};
+use crate::files::{self, Counts, Files, Origin};
 use crate::filter::{Selection, warn_about_unread};
 use crate::format::{self, Row, Table};
+use crate::inline_map::InlineMap;
 use crate::report::Summary;
 use crate::walk::{self, NoReport};
 use crate::with_tree;
@@ -36,6 +37,7 @@ struct Rendered {
     row: Row,
     lcov: Vec<u8>,
     json: Vec<u8>,
+    ignores_inline_map: bool,
 }
 
 /// The files that have thresholds of their own.
@@ -48,6 +50,7 @@ struct Group<'a> {
 
 struct Settings<'a> {
     collector: &'a Collector,
+    files: &'a Files,
     reporters: Reporters,
     has_colors: bool,
 }
@@ -68,11 +71,18 @@ impl<'a> Job<'a> {
             None => Cow::Owned(files::read(self.path).map_err(Failure::CannotBeRead)?),
         };
         let (collector, counts) = (settings.collector, self.loaded.map(|it| &*it.counts));
-        if counts.is_none() && collector.find_bundle(self.path, &text).is_some() {
+        if counts.is_none()
+            && (collector.find_bundle(self.path, &text))
+                .is_some_and(|it| it.is_replaced(settings.files))
+        {
             return Err(Failure::IsIgnored);
         }
+        let map = (self.loaded)
+            .filter(|it| it.text.origin != Origin::Disk && !collector.ignores_source_maps())
+            .and_then(|it| InlineMap::find(&it.text.path, &text, &collector.filter))
+            .transpose();
         let report = with_tree(self.loader, &text, |hir, atoms| {
-            walk::report(hir, atoms, &text, counts)
+            walk::report(hir, atoms, &text, counts, map.iter().flatten().next())
         });
         let report = match report {
             Some(Ok(report)) => report,
@@ -95,7 +105,12 @@ impl<'a> Job<'a> {
         if settings.reporters.json {
             format::write_json(&mut json, self.path, &report);
         }
-        Ok(Rendered { row, lcov, json })
+        Ok(Rendered {
+            row,
+            lcov,
+            json,
+            ignores_inline_map: map.is_err(),
+        })
     }
 }
 
@@ -176,10 +191,10 @@ fn check_summary(thresholds: &Thresholds, summary: &Summary, files: Option<&[u8]
 
 fn check_rows<'a>(
     thresholds: &Thresholds,
-    rows: impl Iterator<Item = &'a Row>,
+    rows: impl ExactSizeIterator<Item = &'a Row>,
     pattern: Option<&[u8]>,
 ) -> bool {
-    if thresholds.per_file {
+    if thresholds.per_file || rows.len() == 0 {
         let are_low = rows.filter(|it| !check_summary(thresholds, &it.summary, Some(&it.name)));
         return are_low.count() == 0;
     }
@@ -194,9 +209,15 @@ impl Collector {
     pub fn row_of(&self, path: &[u8]) -> Option<Vec<u8>> {
         removable_definition!(TestCommand, Collector::row_of);
         let files = self.files();
-        let loaded = files.reported().find(|it| *it.text.path == *path)?;
+        let loaded = [Origin::Memory, Origin::Disk]
+            .into_iter()
+            .find_map(|origin| {
+                let path = self.path_of(path, origin);
+                (files.reported()).find(|it| *it.text.path == *path.as_bytes())
+            })?;
         let settings = Settings {
             collector: self,
+            files: &files,
             reporters: Reporters {
                 text: true,
                 ..Reporters::default()
@@ -273,6 +294,7 @@ impl Collector {
         let mut json = reporters.json.then(|| create("coverage-final.json"));
         let settings = Settings {
             collector: self,
+            files: &files,
             reporters,
             has_colors: Output::enable_ansi_colors_stderr(),
         };
@@ -288,6 +310,12 @@ impl Collector {
             for job in batch {
                 match core::mem::replace(&mut job.result, Err(Failure::IsIgnored)) {
                     Ok(rendered) => {
+                        if rendered.ignores_inline_map {
+                            warn!(
+                                "The source map for {} does not fit. The coverage report has the lines of the code that ran.",
+                                quote(job.path),
+                            );
+                        }
                         if let Some(file) = &mut lcov {
                             file.write(&rendered.lcov);
                         }

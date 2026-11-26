@@ -829,6 +829,13 @@ try {«1»
 } catch {}«1»
 const unused =«1»
   () => 1;«0»
+Object([{ a: new Object(Object ||«1»
+  1) }]);«0»
+[i =«1»
+  1] = [i];«1»
+class Fields { m() {«1»
+  i; } a;«0»
+  b; }«1»
 null«1»
   // istanbul ignore next
   ?.a;

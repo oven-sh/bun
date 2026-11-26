@@ -8,6 +8,7 @@ mod files;
 mod filter;
 mod format;
 mod hints;
+mod inline_map;
 mod locs;
 mod marks;
 mod output;
@@ -15,7 +16,8 @@ mod positions;
 mod report;
 mod walk;
 
-pub use collector::{Collector, CountedText, Transpiling, describe_compiled_file};
+pub use collector::{Collector, CountedText, Loading, Transpiling, describe_compiled_file};
+pub use files::Origin;
 pub use filter::Project;
 pub use marks::{Target, mark_nodes};
 

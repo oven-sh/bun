@@ -22,7 +22,7 @@ pub(crate) struct Hints {
     ranges: Vec<(u32, u32)>,
 }
 
-fn is_in_word(byte: u8) -> bool {
+pub(crate) fn is_in_word(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 

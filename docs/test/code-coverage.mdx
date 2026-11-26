@@ -314,7 +314,26 @@ if (process.platform === "linux") setup();
 
 ## Sourcemaps
 
-Bun reports positions in your source files. If a test loads the output of `bun build --target=bun --sourcemap`, Bun reports the files it was built from. The report is about their text at the time of the build. Branches and statements that the bundler removes or merges can be missing from it.
+Bun reports positions in your source files. If a test loads the output of `bun build --target=bun --sourcemap`, Bun reports the files it was built from. The report is about their text at the time of the build. Modules in the namespace of a plugin are not in it. Branches and statements that the bundler removes or merges can be missing from it.
+
+Bun reports the bundle itself if these files are not where the source map says, or if they are in your project and `coverageInclude` matches only the bundle.
+
+If a [plugin](/runtime/plugins) compiles a file, Bun measures the code that `onLoad` returns, and goes by the ignore comments in that code. To get positions in the file, end the code with an inline source map of that file. Lines of the code without a mapping are not in the report.
+
+```ts title="preload.ts" icon="/icons/typescript.svg"
+import { plugin } from "bun";
+import { compile } from "svelte/compiler";
+
+plugin({
+  name: "svelte",
+  setup(build) {
+    build.onLoad({ filter: /\.svelte$/ }, async ({ path }) => {
+      const { js } = compile(await Bun.file(path).text(), { filename: path });
+      return { contents: `${js.code}\n//# sourceMappingURL=${js.map.toUrl()}`, loader: "js" };
+    });
+  },
+});
+```
 
 To report the code that runs instead, which is the output of the transpiler or the bundle itself, set `coverageIgnoreSourcemaps` to `true`. You rarely want this outside of debugging.
 

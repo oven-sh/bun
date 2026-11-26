@@ -201,11 +201,7 @@ public:
     const JSC::CoverageCounters* coverageCounters() const final { return m_source->coverageCounters(); }
     bool runsLike(JSC::SourceProvider& other) const
     {
-        auto counts = [](const JSC::SourceProvider& provider) {
-            auto* counters = provider.coverageCounters();
-            return counters ? counters->counts.data() : nullptr;
-        };
-        return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source() && counts(m_source) == counts(other));
+        return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source() && JSC::CoverageCounters::canShareLinkedCode(coverageCounters(), other.coverageCounters()));
     }
 
 private:

@@ -11,9 +11,10 @@ use bun_sema::hir::{
 };
 
 use crate::hints::{Hint, Hints};
+use crate::inline_map::InlineMap;
 use crate::locs::{self, starts_with, token_after};
 use crate::positions::Positions;
-use crate::report::{Arms, Branch, Counted, Function, KnownTo, Report, UNKNOWN};
+use crate::report::{Arms, Branch, Counted, Function, KnownTo, Report, Token, UNKNOWN};
 
 pub(crate) fn find_anchors(hir: &FileBuilder, text: &[u8]) -> Anchors {
     let mut walk = Walk::new(hir, text, None);
@@ -32,6 +33,7 @@ pub(crate) fn report<'a>(
     atoms: &dyn Intern,
     text: &'a [u8],
     counts: Option<&[u64]>,
+    map: Option<&'a InlineMap>,
 ) -> Result<Report<'a>, NoReport> {
     let positions = Positions::new(text);
     let hints = Hints::find(&hir.comments, text, &positions);
@@ -41,7 +43,7 @@ pub(crate) fn report<'a>(
     if counts.is_none() && hir.syntax_errors().next().is_some() {
         return Err(NoReport::CannotBeParsed);
     }
-    let mut report = Report::new(positions);
+    let mut report = Report::new(positions, map);
     let reporting = Reporting {
         report: &mut report,
         counts,
@@ -255,16 +257,19 @@ impl<'a, 't> Walk<'a, 't> {
         (self.reporting.as_mut().filter(|_| !is_left_out)).map(|it| &mut *it.report)
     }
 
-    /// It makes its line one with code.
-    fn token(&mut self, start: u32, at: At) {
+    fn count_line(&mut self, start: u32, at: At, token: Token) {
         let count = self.count(at);
         if let Some(report) = self.report_for(start, at) {
-            report.count_line_at(start, count);
+            report.count_line_at(start, count, token);
         }
     }
 
+    fn token(&mut self, start: u32, at: At) {
+        self.count_line(start, at, Token::Code);
+    }
+
     fn last_token(&mut self, end: u32, at: At) {
-        self.token(end.saturating_sub(1), at);
+        self.count_line(end.saturating_sub(1), at, Token::Minor);
     }
 
     fn add_statement(&mut self, known_to: KnownTo, owner: u32, (start, end): (u32, u32), at: At) {
@@ -307,14 +312,9 @@ impl<'a, 't> Walk<'a, 't> {
     }
 
     fn add(&mut self, branch: Option<Branch>) {
-        let (Some(branch), Some(reporting)) = (branch, &mut self.reporting) else {
-            return;
-        };
-        // genhtml refuses a branch on a line without code, or that was taken on a line that did not run.
-        if let Some(most) = branch.arms.iter().map(|it| it.count).max() {
-            reporting.report.count_line_at(branch.decision.0, most);
+        if let Some(reporting) = &mut self.reporting {
+            reporting.report.branches.extend(branch);
         }
-        reporting.report.branches.push(branch);
     }
 
     /// Code of which Istanbul does not say whether it ran.
@@ -883,7 +883,7 @@ impl<'a, 't> Walk<'a, 't> {
                 self.add_statement(known_to, it.start, self.range(it.init), at);
                 self.walk_named(it.init, at, name);
             } else {
-                self.token(it.name_pos, at);
+                self.count_line(it.name_pos, at, Token::Minor);
             }
         }
     }

@@ -891,17 +891,19 @@ test.skipIf(isWindows)("--parallel --coverage drops the counts that a test makes
       const send = (...bytes) => part(0, 0, ...bytes);
       const [js, css] = [1, 4], largest = [255, 255, 255, 255, 255, 255, 255, 255, 255, 1];
       test("a", () => {
-        part(0, 1, js, ...string("/unfinished.js"), ...string("a;"), 1, 1);
-        send(js, ...string("/fits.js"), ...string("a;"), 1, 0);
-        send(js, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
-        send(js, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
-        send(js, ...string("/too-few.js"), ...string("a;"), 1);
-        send(js, ...string("/too-many.js"), ...string("a;"), 1, 1, 1);
-        send(css, ...string("/no-code.css"), ...string("a;"), 1, 1);
-        send(js, ...string("/cut.js"), ...string("a;"), 1, 128);
-        send(js, ...string("/long-number.js"), ...string("a;"), 1, 255, ...largest);
-        send(js, ...string("/long-text.js"), ...largest);
-        send(js, ...largest);
+        part(0, 1, js, 0, ...string("/unfinished.js"), ...string("a;"), 1, 1);
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 0);
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
+        send(js, 0, ...string("/fits.js"), ...string("a;"), 1, 254, ...largest.slice(1));
+        send(js, 0, ...string("/too-few.js"), ...string("a;"), 1);
+        send(js, 0, ...string("/too-many.js"), ...string("a;"), 1, 1, 1);
+        send(css, 0, ...string("/no-code.css"), ...string("a;"), 1, 1);
+        send(js, 3, ...string("/no-origin.js"), ...string("a;"), 1, 1);
+        send(js, 0, ...string("/cut.js"), ...string("a;"), 1, 128);
+        send(js, 0, ...string("/long-number.js"), ...string("a;"), 1, 255, ...largest);
+        send(js, 0, ...string("/long-text.js"), ...largest);
+        send(js, 0, ...largest);
+        send(js);
         send();
       });`,
     "b.test.js": `import {test} from "bun:test"; test("b", () => {});`,
@@ -936,7 +938,7 @@ test.skipIf(isWindows).each([
   using dir = tempDir("parallel-coverage-cut-short", {
     "a.test.js": `import {test} from "bun:test"; import {writeSync} from "fs"; import {crash_handler} from "bun:internal-for-testing";
       // What a worker sends for the empty file "/a".
-      test("first", () => void (${hasCounts} && writeSync(3, Buffer.from([10, 0, 0, 0, 7, 6, 0, 0, 0, 1, 2, 47, 97, 0, 1]))));
+      test("first", () => void (${hasCounts} && writeSync(3, Buffer.from([11, 0, 0, 0, 7, 7, 0, 0, 0, 1, 0, 2, 47, 97, 0, 1]))));
       ${end === "crashed" ? `test("crash", () => crash_handler.fastfail());` : last}`,
     "b.test.js": `import {test} from "bun:test"; ${last}`,
     "lib.js": "",

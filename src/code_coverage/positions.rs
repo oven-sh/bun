@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use bun_core::strings;
 use bun_sema::check::spans::compute_ecma_line_starts;
 
@@ -13,9 +15,12 @@ pub(crate) struct Positions<'a> {
     units_before_blocks: Vec<u32>,
 }
 
+fn units_from(byte: u8) -> u32 {
+    u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0)
+}
+
 fn count_units(text: &[u8]) -> u32 {
-    let units = |&byte: &u8| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0);
-    text.iter().map(units).sum()
+    text.iter().map(|&it| units_from(it)).sum()
 }
 
 impl<'a> Positions<'a> {
@@ -68,6 +73,32 @@ impl<'a> Positions<'a> {
             Some(units) => units + count_units(&self.text[block * BLOCK..offset as usize]),
             None => offset,
         }
+    }
+
+    fn offset_after(&self, units: u32) -> u32 {
+        let blocks = (self.units_before_blocks).partition_point(|&it| it <= units);
+        let Some(block) = blocks.checked_sub(1) else {
+            return units;
+        };
+        let bytes = self.text.get(block * BLOCK..).unwrap_or_default().iter();
+        let left = bytes.scan(units - self.units_before_blocks[block], |left, &it| {
+            left.checked_sub(units_from(it)).map(|it| *left = it)
+        });
+        (block * BLOCK + left.count()) as u32
+    }
+
+    /// Without the newline.
+    pub(crate) fn line(&self, line: usize) -> Range<u32> {
+        let start = self.start_of_line(line);
+        let text = &self.text[start as usize..self.start_of_line(line + 1) as usize];
+        start..start + strings::trim_right(text, b"\r\n").len() as u32
+    }
+
+    /// esbuild maps the space before a token. Vue counts columns on past the end of a line.
+    pub(crate) fn token_at(&self, (line, column): (usize, u32)) -> u32 {
+        let units = self.units_before(self.start_of_line(line));
+        let rest = (self.text).get(self.offset_after(units.saturating_add(column)) as usize..);
+        (self.text.len() - strings::trim_left(rest.unwrap_or_default(), b" \t").len()) as u32
     }
 
     /// Both from 0.

@@ -10,7 +10,7 @@ use crate::cli::test::parallel::runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_bundler::options::ImportSuffix;
-use bun_code_coverage::CountedText;
+use bun_code_coverage::{CountedText, Origin};
 use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
@@ -2262,10 +2262,7 @@ fn project_for_coverage(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> bun_code
         preloads: find_files_of_preloads(vm, preloads),
         // Other queries (a plugin's `./a.vue?x`) are user code.
         is_generated_for: |query, by_extension| {
-            matches!(
-                ImportSuffix::find(query, Some(by_extension)),
-                Some(ImportSuffix::Inline | ImportSuffix::Init | ImportSuffix::Worker(_))
-            )
+            ImportSuffix::find(query, Some(by_extension)).is_some()
         },
     }
 }
@@ -2309,10 +2306,11 @@ extern "C" fn BunTest__countInternalModule(
     name: &bun_core::String,
     text: &bun_core::String,
 ) -> Option<Box<CountedText>> {
-    let (coverage, name) = (vm.coverage.get()?, name.to_utf8());
-    (!text.is_utf16() && coverage.covers(&name, bun_ast::Loader::Js)).then(|| {
+    let coverage = vm.coverage.get()?;
+    let loading = coverage.will_load(&name.to_utf8(), bun_ast::Loader::Js, Origin::Memory);
+    (!text.is_utf16() && loading.is_covered).then(|| {
         // `@name` is a name there.
-        coverage.count_as_written(&name, &strings::replace_owned(text.latin1(), b"@", b"_"))
+        loading.count_as_written(&strings::replace_owned(text.latin1(), b"@", b"_"))
     })
 }
 
@@ -2859,8 +2857,11 @@ impl TestCommand {
                         "\"coverageIgnoreSourcemaps\" has no effect on the files that --aot compiles"
                     );
                 }
-                aot.covered_files = (vm.coverage.get())
-                    .map(|it| CoveredFiles(Arc::new(|path, loader| it.covers(path, loader))));
+                aot.covered_files = vm.coverage.get().map(|it| {
+                    CoveredFiles(Arc::new(|path, loader| {
+                        it.will_load(path, loader, Origin::Memory).is_covered
+                    }))
+                });
                 aot.replaced_by_tests = find_what_tests_replace(has_window);
                 aot.replaced_by_tests.test_files =
                     test_files.iter().map(|path| (**path).to_vec()).collect();

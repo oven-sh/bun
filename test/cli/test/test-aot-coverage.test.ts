@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import { test } from "../../aot/supported";
 
@@ -432,7 +432,7 @@ const shortcuts = {
 const ON = true;
 export const chains = () => [other?.a, other?.b(), other.b?.(), Math?.PI, Math.max?.(1), JSON?.parse("1")];
 export const folded = v => [ON ? 1 : 2, ON && v, ON || v, ON ?? v, v?.[ON ? "a" : "b"]];
-export const spreads = v => [{ ...(v && { v }) }, { ...(v ? { v } : {}) }, [...(v ? [v] : [])]];
+export const spreads = v => [{ ...(v && { v }) }, { ...(v ? { v } : {}) }, [...(v ? [v] : [])], { ...(v && (v > 1 ? { v } : {})), ...(v ? { v } : v) }];
 export const again = (n, step = 1) => (n > 0 ? again(n - step) : 0);
 export function steps(n) {
   let i = 0;
@@ -547,11 +547,13 @@ export const a = require_a().a + require_a().a;
   ),
 };
 
-async function report(flags: string[], bunfig = "", project: Record<string, string> = files) {
-  using dir = tempDir("test-aot-coverage", { ...project, "bunfig.toml": bunfig });
+async function report(flags: string[], bunfig = "", project: Record<string, string> = files, folder = "app") {
+  using dir = tempDir("test-aot-coverage", { app: { ...project, "bunfig.toml": bunfig } });
+  symlinkSync(join(String(dir), "app"), join(String(dir), "link"), "junction");
+  const cwd = join(String(dir), folder);
   await using proc = spawn({
     cmd: [bunExe(), "test", ...["text", "lcov", "json"].map(name => `--coverage-reporter=${name}`), ...flags],
-    cwd: String(dir),
+    cwd,
     env: { ...bunEnv, NO_COLOR: "1" },
     stdout: "pipe",
     stderr: "pipe",
@@ -562,11 +564,8 @@ async function report(flags: string[], bunfig = "", project: Record<string, stri
   const rules = lines.flatMap((line, index) => (/^-+\|-+\|/.test(line) ? [index] : []));
   return {
     table: lines.slice(rules[0], rules[2] + 1).join("\n"),
-    lcov: readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8"),
-    json: readFileSync(join(String(dir), "coverage", "coverage-final.json"), "utf8").replaceAll(
-      basename(String(dir)),
-      "",
-    ),
+    lcov: readFileSync(join(cwd, "coverage", "lcov.info"), "utf8"),
+    json: readFileSync(join(cwd, "coverage", "coverage-final.json"), "utf8").replaceAll(basename(String(dir)), ""),
     warnings: lines.filter(line => line.startsWith("warn: ") && line.includes("coverage")),
     exitCode,
   };
@@ -660,12 +659,13 @@ test("coverageIgnoreSourcemaps is said to have no effect", async () => {
 });
 
 test("a bundle is reported as if it had no source map", async () => {
+  const debugId = "0123456789ABCDEF64756E2164756E21";
   const project = {
     "a.js": "",
-    "bundle.js": "// @bun\nObject();\n",
+    "bundle.js": `// @bun\nObject();\n//# debugId=${debugId}\n`,
     "a.test.js": fourTests(`import "./bundle.js";`, ""),
   };
-  const map = JSON.stringify({ version: 3, sources: ["a.js"], sourcesContent: [""], mappings: "", names: [] });
+  const map = JSON.stringify({ version: 3, sources: ["a.js"], sourcesContent: [""], mappings: "", debugId });
   const [plain, compiled] = await Promise.all([
     report([], "", project),
     report(["--aot"], "", { ...project, "bundle.js.map": map }),
@@ -673,7 +673,8 @@ test("a bundle is reported as if it had no source map", async () => {
   expect(compiled).toEqual(plain);
 });
 
-test("a compiled file is known by the path that it has on disk", async () => {
+// Only on Windows does the working directory keep the link.
+test.each(["app", "link"])("a compiled file is known by the path that it has on disk, from %s", async folder => {
   const project = {
     "in/setup.js": "Object();\n",
     "in/loaded.js": "Object();\n",
@@ -685,7 +686,7 @@ test("a compiled file is known by the path that it has on disk", async () => {
     ),
   };
   const bunfig = `[test]\npreload = "./in/setup.js"\ncoverageSkipTestFiles = true\ncoverageInclude = ["in", "!in/ig*"]\n`;
-  const [plain, compiled] = await Promise.all([report([], bunfig, project), report(["--aot"], bunfig, project)]);
+  const [plain, compiled] = await Promise.all([[], ["--aot"]].map(flags => report(flags, bunfig, project, folder)));
   expect(plain.lcov.match(/(?<=^SF:).*/gm)).toEqual([join("in", "loaded.js"), join("in", "unloaded.js")]);
   expect(compiled).toEqual(plain);
 });

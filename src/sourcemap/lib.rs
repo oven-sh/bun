@@ -96,6 +96,7 @@ pub struct ParseUrl {
     pub mapping: Option<Mapping>,
     pub source_contents: Option<Box<[u8]>>,
     pub contents_of_all_sources: Vec<Option<Box<[u8]>>>,
+    pub debug_id: Option<Box<[u8]>>,
 }
 
 pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
@@ -313,11 +314,12 @@ pub struct DebugIDFormatter {
     pub id: u64,
 }
 
+/// The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64 bits.
+const DEBUG_ID_TAIL: &str = "64756E2164756E21";
+
 impl core::fmt::Display for DebugIDFormatter {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The RFC asks for a UUID (128 bits / 32 hex chars). Our hashes are 64
-        // bits; the tail is "bun!bun!" hex-encoded.
-        write!(f, "{:016X}64756E2164756E21", self.id)
+        write!(f, "{:016X}{DEBUG_ID_TAIL}", self.id)
     }
 }
 
@@ -568,22 +570,20 @@ impl SourceProvider for [u8] {
     }
 }
 
-/// The map of the file at `path`, and the path and the text of each source.
+/// The map that `bun build` wrote together with `text`, and the text of each source.
 pub fn load_with_sources(
     path: &[u8],
     text: &[u8],
-) -> Option<(
-    std::sync::Arc<ParsedSourceMap>,
-    Vec<(bun_paths::Path, Option<Box<[u8]>>)>,
-)> {
+    load_hint: SourceMapLoadHint,
+) -> Option<(std::sync::Arc<ParsedSourceMap>, Vec<Option<Box<[u8]>>>)> {
+    const COMMENT: &[u8] = b"\n//# debugId=";
+    let end = &text[bun_core::strings::last_index_of(text, COMMENT)? + COMMENT.len()..];
+    let debug_id =
+        (end.get(..32)).filter(|it| it[16..].eq_ignore_ascii_case(DEBUG_ID_TAIL.as_bytes()))?;
     let hint = ParseUrlResultHint::MappingsAndSources;
-    let parsed = get_source_map_impl(text, path, SourceMapLoadHint::None, hint)?;
-    let map = parsed.map?;
-    let sources = (map.external_source_names.iter())
-        .zip(parsed.contents_of_all_sources)
-        .map(|(name, text)| (mapping::path_of_source(path, name), text))
-        .collect();
-    Some((map, sources))
+    let parsed = get_source_map_impl(end, path, load_hint, hint)?;
+    parsed.debug_id.filter(|it| **it == *debug_id)?;
+    Some((parsed.map?, parsed.contents_of_all_sources))
 }
 
 // ── SavedSourceMap leaf state ─────────────────────────────────────────────
@@ -1052,6 +1052,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
                 .collect(),
             _ => Vec::new(),
         },
+        debug_id: (json.get(b"debugId")).and_then(|it| it.as_utf8_string_literal().map(Box::from)),
     })
 }
 

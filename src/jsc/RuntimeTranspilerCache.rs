@@ -7,7 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_ast::coverage::PlacedInText;
 use bun_bundler::transpiler::ParseResult;
-use bun_code_coverage::{Collector, CountedText, Transpiling};
+use bun_code_coverage::{CountedText, Loading, Transpiling};
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::lower::defer_requires::has_react_compiler;
@@ -408,10 +408,10 @@ impl Entry {
 
     pub fn take_coverage(
         &mut self,
-        coverage: Option<&'static Collector>,
+        coverage: Option<&Loading>,
         ParseResult { source, loader, .. }: &ParseResult<'_>,
     ) -> Option<Box<CountedText>> {
-        let file = (source.path.text, *loader, &*source.contents);
+        let file = (*loader, &*source.contents);
         Some(coverage?.count_cached(file, self.coverage.take()?, self.output_code.byte_slice()))
     }
 
@@ -849,10 +849,10 @@ impl RuntimeTranspilerCache {
 
     pub fn will_print(
         &mut self,
-        coverage: Option<&'static Collector>,
+        coverage: Option<&Loading>,
         ParseResult { source, loader, .. }: &ParseResult<'_>,
     ) -> Option<Transpiling> {
-        let transpiling = coverage?.will_print(source.path.text, *loader, &source.contents);
+        let transpiling = coverage?.will_print(*loader, &source.contents);
         if !transpiling.can_be_cached {
             self.parsed = None;
         }

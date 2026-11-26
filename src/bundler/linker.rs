@@ -228,7 +228,6 @@ impl Linker {
                                     };
                                     PFs::Path::init_with_pretty(text, text)
                                 }
-                                ImportPathFormat::PackagePath => unreachable!(),
                             };
                             continue;
                         }

@@ -144,10 +144,6 @@ impl<T> ExternalSlice<T> {
     }
 
     pub fn init(buf: &[T], in_: &[T]) -> Self {
-        // if cfg!(debug_assertions) {
-        //     debug_assert!(buf.as_ptr() as usize <= in_.as_ptr() as usize);
-        //     debug_assert!((in_.as_ptr() as usize + in_.len()) <= (buf.as_ptr() as usize + buf.len()));
-        // }
         Self {
             off: ((in_.as_ptr() as usize - buf.as_ptr() as usize) / core::mem::size_of::<T>())
                 as u32,

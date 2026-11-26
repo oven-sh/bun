@@ -43,12 +43,6 @@ extern "C" int kill(int pid, int sig)
 
 #endif
 
-#if !defined(WIN32)
-#ifndef UNLIKELY
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
-#endif
-
 #if defined(__FreeBSD__) && !ASSERT_ENABLED
 // WTF references this counter from text/StringCommon.h under STRING_STATS;
 // Debug WebKit defines it (StringView.cpp); Release doesn't, but Bun's
@@ -374,9 +368,6 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 #define BUN_WRAP_FWD(ret, sym, params, args) \
     BUN_SYMVER(sym, BUN_GLIBC_BASE);         \
     extern "C" ret __wrap_##sym params { return sym args; }
-#define BUN_WRAP_FWD_VOID(sym, params, args) \
-    BUN_SYMVER(sym, BUN_GLIBC_BASE);         \
-    extern "C" void __wrap_##sym params { sym args; }
 
 BUN_WRAP_FWD(void*, dlsym, (void* h, const char* s), (h, s))
 BUN_WRAP_FWD(void*, dlvsym, (void* h, const char* s, const char* v), (h, s, v))

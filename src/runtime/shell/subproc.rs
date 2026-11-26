@@ -162,18 +162,6 @@ impl Drop for ShellSubprocess {
     }
 }
 
-// pub const Pipe = struct {
-//     writer: Writer = Writer{},
-//     parent: *Subprocess,
-//     src: WriterSrc,
-//
-//     writer: ?CapturedBufferedWriter = null,
-//
-//     status: Status = .{
-//         .pending = {},
-//     },
-// };
-
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         // Forwarded raw, not autoref'd: the callee may free `*this`.

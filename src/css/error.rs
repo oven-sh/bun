@@ -215,8 +215,6 @@ pub enum ParserError<'bump> {
     invalid_declaration,
     /// A media query was invalid.
     invalid_media_query,
-    /// Invalid CSS nesting.
-    invalid_nesting,
     /// The @nest rule is deprecated.
     deprecated_nest_rule,
     /// An invalid selector in an `@page` rule.
@@ -251,7 +249,6 @@ impl fmt::Display for ParserError<'_> {
             Self::end_of_input => f.write_str("Unexpected end of input"),
             Self::invalid_declaration => f.write_str("Invalid declaration"),
             Self::invalid_media_query => f.write_str("Invalid media query"),
-            Self::invalid_nesting => f.write_str("Invalid CSS nesting"),
             Self::deprecated_nest_rule => {
                 f.write_str("The @nest rule is deprecated, use standard CSS nesting instead")
             }
@@ -288,8 +285,6 @@ pub enum SelectorError<'bump> {
     empty_selector,
     /// A `|` was expected in an attribute selector.
     expected_bar_in_attr(Token<'bump>),
-    /// A namespace was expected.
-    expected_namespace(&'bump [u8]),
     /// An unexpected token was encountered in a namespace.
     explicit_namespace_unexpected_token(Token<'bump>),
     /// An invalid pseudo class was encountered after a pseudo element.
@@ -308,8 +303,6 @@ pub enum SelectorError<'bump> {
     no_qualified_name_in_attribute_selector(Token<'bump>),
     /// An invalid token was encountered in a pseudo element.
     pseudo_element_expected_ident(Token<'bump>),
-    /// An unexpected identifier was encountered.
-    unexpected_ident(&'bump [u8]),
     /// An unexpected token was encountered inside an attribute selector.
     unexpected_token_in_attribute_selector(Token<'bump>),
     /// An unsupported pseudo class or pseudo element was encountered.
@@ -337,8 +330,6 @@ impl fmt::Display for SelectorError<'_> {
                 f.write_str("Invalid pseudo-class after -webkit-scrollbar")
             }
 
-            Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", BStr::new(s)),
-            Self::unexpected_ident(s) => write!(f, "Unexpected identifier '{}'", BStr::new(s)),
             Self::unsupported_pseudo_class_or_element(s) => {
                 write!(
                     f,

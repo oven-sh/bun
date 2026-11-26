@@ -946,13 +946,6 @@ pub trait IsCompatible {
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool;
 }
 
-/// `#[derive(IsCompatible)]` — field-wise / variant-wise port of the
-/// hand-written `isCompatible` pattern (struct → AND of fields, enum → unit
-/// variants `true` / payload variants delegate). See `src/css_derive/lib.rs`.
-/// Re-exported here so `use crate::generics::IsCompatible;` brings both trait
-/// and derive into scope.
-pub use bun_css_derive::IsCompatible;
-
 #[inline]
 pub(crate) fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {
     val.is_compatible(browsers)

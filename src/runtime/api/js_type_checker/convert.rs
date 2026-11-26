@@ -28,7 +28,9 @@ pub(crate) fn adapter_error_value(error: &AdapterError, global: &bun_jsc::JSGlob
 fn chain_to_js<'a>(heap: &JsHeap<'a>, chain: &ChainData) -> BindgenResult<'a, JsLocal<'a>> {
     // SAFETY: `heap` belongs to this call; allocating runs no JavaScript.
     let global = unsafe { heap.global() };
-    let obj = JSValue::create_empty_object(global, 4);
+    let obj = JSValue::create_empty_object(global, 6);
+    obj.put(global, b"pos", JSValue::js_number(0.0));
+    obj.put(global, b"end", JSValue::js_number(0.0));
     obj.put(global, b"code", JSValue::js_number(chain.code as f64));
     obj.put(
         global,
@@ -57,20 +59,21 @@ pub(crate) fn diagnostic_to_js<'a>(
     // SAFETY: as above.
     let global = unsafe { heap.global() };
     let obj = JSValue::create_empty_object(global, 11);
-    if let Some(pos) = diagnostic.pos {
-        if let Some(file_name) = &diagnostic.file_name {
-            obj.put(
-                global,
-                b"fileName",
-                bun_jsc::bun_string_jsc::create_utf8_for_js(global, file_name)?,
-            );
-        }
-        obj.put(global, b"pos", JSValue::js_number(pos as f64));
+    if let Some(file_name) = &diagnostic.file_name {
         obj.put(
             global,
-            b"end",
-            JSValue::js_number(diagnostic.end.unwrap_or(pos) as f64),
+            b"fileName",
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, file_name)?,
         );
+    }
+    let pos = diagnostic.pos.unwrap_or(0);
+    obj.put(global, b"pos", JSValue::js_number(pos as f64));
+    obj.put(
+        global,
+        b"end",
+        JSValue::js_number(diagnostic.end.unwrap_or(pos) as f64),
+    );
+    if diagnostic.pos.is_some() {
         obj.put(global, b"line", JSValue::js_number(diagnostic.line.unwrap_or(0) as f64));
         obj.put(
             global,
@@ -86,12 +89,6 @@ pub(crate) fn diagnostic_to_js<'a>(
             global,
             b"endColumn",
             JSValue::js_number(diagnostic.end_column.unwrap_or(0) as f64),
-        );
-    } else if let Some(file_name) = &diagnostic.file_name {
-        obj.put(
-            global,
-            b"fileName",
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global, file_name)?,
         );
     }
     obj.put(global, b"code", JSValue::js_number(diagnostic.code as f64));

@@ -947,9 +947,9 @@ fn list(path: &[u8]) -> Directory {
     Directory::Listed(listing.finish())
 }
 
-/// `isFileSystemCaseSensitive`, for the file system that holds `path`. True if an entry on it can no longer be found
+/// `isFileSystemCaseSensitive`, for the file system that holds `path`, in the checker's path format. True if an entry on it can no longer be found
 /// after swapping the case of its name. TypeScript tests its own file, which is in the project.
-fn is_file_system_case_sensitive(path: &[u8]) -> bool {
+pub fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     if cfg!(windows) {
         return false;
     }

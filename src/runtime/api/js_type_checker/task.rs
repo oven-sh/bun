@@ -66,14 +66,20 @@ impl CheckTask {
         } else {
             match self.job.result {
                 Some(Ok(data)) => {
-                    super::make_snapshot_js(global, root.hold_snapshot_data(data), root.cwd.clone())
+                    super::make_snapshot_js(
+                        global,
+                        root.hold_snapshot_data(data),
+                        root.cwd.clone(),
+                        root.case_sensitive,
+                    )
                 }
                 .and_then(|snapshot| promise.resolve(global, snapshot)),
-                Some(Err(e)) => promise.reject(global, Ok(super::convert::adapter_error_value(&e, global))),
+                Some(Err(e)) => {
+                    promise.reject(global, Ok(super::convert::adapter_error_value(&e, global)))
+                }
                 None => {
-                    let err = global.create_error_instance(format_args!(
-                        "Bun.TypeChecker: check did not run"
-                    ));
+                    let err = global
+                        .create_error_instance(format_args!("Bun.TypeChecker: check did not run"));
                     promise.reject(global, Ok(err))
                 }
             }

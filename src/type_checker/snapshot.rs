@@ -69,13 +69,9 @@ fn chain_data(chain: &MessageChain) -> ChainData {
     }
 }
 
-/// Convert a file-reference error (from `is_below_backslash` handling and
-/// from the driver's own path display) to a native JS path.
+/// Convert a checker path to a native JS path. Embedded libraries come out as
+/// `bundled:///libs/...`, which is how typescript-go prints them.
 pub fn native_file_name(checker_path: &[u8]) -> Option<Vec<u8>> {
-    if host::is_bundled(checker_path) {
-        // Embedded libraries keep their `bundled:///libs/...` identity.
-        return Some(checker_path.to_vec());
-    }
     if checker_path.is_empty() {
         return None;
     }
@@ -138,6 +134,20 @@ impl SnapshotData {
         }
     }
 
+    /// A project that could not be loaded. Like typescript-go, which keeps a configured project for a
+    /// config file that is missing and has no diagnostics to report for it.
+    pub fn unloaded(config_path: &[u8]) -> Self {
+        Self {
+            projects: vec![ProjectData {
+                index: 0,
+                config_path: config_path.to_vec(),
+            }],
+            diagnostics: Vec::new(),
+            by_project: vec![Vec::new()],
+            fs_case_sensitive: true,
+        }
+    }
+
     pub fn from_report(report: Report) -> Self {
         let projects: Vec<ProjectData> = report
             .projects
@@ -187,18 +197,6 @@ pub enum AdapterError {
     ReadFailed(Vec<u8>),
 }
 
-/// Normalize a resolved path for file filtering: lexical, case per the
-/// snapshot's filesystem.
-pub fn normalize_for_filter(path: &[u8], case_sensitive: bool) -> Vec<u8> {
-    let resolved = bun_paths::Path::resolve(&[path]);
-    let bytes = resolved.as_bytes().to_vec();
-    if case_sensitive {
-        bytes
-    } else {
-        bytes.iter().map(|b| b.to_ascii_lowercase()).collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,7 +238,7 @@ mod tests {
         assert_eq!(native_file_name(b"/a/b.ts"), Some(b"/a/b.ts".to_vec()));
         assert_eq!(native_file_name(b""), None);
         assert_eq!(
-            native_file_name(b"bundled:///libs/lib.es5.d.ts"),
+            native_file_name(b"/bundled:///libs/lib.es5.d.ts"),
             Some(b"bundled:///libs/lib.es5.d.ts".to_vec())
         );
     }

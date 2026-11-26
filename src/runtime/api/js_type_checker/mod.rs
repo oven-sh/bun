@@ -11,10 +11,13 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::cell::Cell;
 use std::rc::{Rc, Weak};
 
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::{DOMURL, ErrorCode, JSGlobalObject, JSPromiseStrong, JSValue, Job, JsCell, JsThread};
 use bun_ptr::RefPtr;
-use bun_type_checker::{DesiredState, canonical_selector, check_no_nul, normalize_for_filter, resolve_against};
+use bun_type_checker::{
+    DesiredState, FileFilter, canonical_selector, check_no_nul, file_system_is_case_sensitive,
+    is_same_path, resolve_against,
+};
 
 use crate::api::js_type_checker::state::{PendingEntry, RootState};
 use crate::api::js_type_checker::task::{CheckJs, CheckTask};
@@ -92,6 +95,8 @@ fn path_from_value<'a>(
 pub(crate) struct TypeChecker {
     ref_count: bun_ptr::RefCount<TypeChecker>,
     pub(crate) cwd: Box<[u8]>,
+    /// Decided once, when the root is created.
+    pub(crate) case_sensitive: bool,
     desired: JsCell<DesiredState>,
     root: JsCell<RootState>,
     closed: Cell<bool>,
@@ -114,29 +119,32 @@ impl TypeChecker {
             .into());
         }
         let heap = &cx.heap;
-        let cwd: Box<[u8]> = match options {
+        let given = match options {
             Some(opts) if !opts.cwd.is_undefined() => {
-                let bytes = path_from_value(heap, opts.cwd.to_js(), "cwd")?;
-                if !bun_paths::is_absolute(&bytes) {
-                    return Err(heap.error_with_code(
-                        ErrorCode::INVALID_ARG_VALUE,
-                        format_args!("Bun.TypeChecker: cwd must be absolute"),
-                    ));
-                }
-                Box::from(&*bytes)
+                Some(path_from_value(heap, opts.cwd.to_js(), "cwd")?)
             }
-            _ => {
+            _ => None,
+        };
+        let cwd: Box<[u8]> = match given {
+            Some(bytes) if bun_paths::is_absolute(&bytes) => Box::from(&*bytes),
+            other => {
                 let mut buf = bun_paths::path_buffer_pool::get();
-                match bun_sys::getcwd_z(&mut buf) {
-                    Ok(cwd) => Box::from(cwd.to_vec()),
-                    Err(_) => Box::from(&b"/"[..]),
+                let process_cwd = match bun_sys::getcwd_z(&mut buf) {
+                    Ok(cwd) => cwd.as_bytes().to_vec(),
+                    Err(err) => return Err(IntoError::into_error(err, heap)),
+                };
+                match other {
+                    Some(relative) => resolve_against(&process_cwd, &relative).into(),
+                    None => process_cwd.into(),
                 }
             }
         };
+        let case_sensitive = file_system_is_case_sensitive(&cwd);
         let checker = TypeChecker {
             ref_count: bun_ptr::RefCount::init(),
             cwd,
-            desired: JsCell::new(DesiredState::default()),
+            case_sensitive,
+            desired: JsCell::new(DesiredState::new(case_sensitive)),
             root: JsCell::new(RootState::default()),
             closed: Cell::new(false),
             snapshots: JsCell::new(Vec::new()),
@@ -182,15 +190,38 @@ impl TypeChecker {
             ));
         }
         let update = TypeCheckerSnapshotUpdate {
-            open_projects: JsLocal::new(heap, update_js.get(global, b"openProjects")?.unwrap_or(JSValue::UNDEFINED)),
-            close_projects: JsLocal::new(heap, update_js.get(global, b"closeProjects")?.unwrap_or(JSValue::UNDEFINED)),
-            source_changes: JsLocal::new(heap, update_js.get(global, b"sourceChanges")?.unwrap_or(JSValue::UNDEFINED)),
+            open_projects: JsLocal::new(
+                heap,
+                update_js
+                    .get(global, b"openProjects")?
+                    .unwrap_or(JSValue::UNDEFINED),
+            ),
+            close_projects: JsLocal::new(
+                heap,
+                update_js
+                    .get(global, b"closeProjects")?
+                    .unwrap_or(JSValue::UNDEFINED),
+            ),
+            source_changes: JsLocal::new(
+                heap,
+                update_js
+                    .get(global, b"sourceChanges")?
+                    .unwrap_or(JSValue::UNDEFINED),
+            ),
         };
         let cwd: &[u8] = &self.cwd;
         // closeProjects first, then openProjects (close-and-reopen reloads).
         for (list, what, out) in [
-            (update.close_projects, "closeProjects entry", &mut validated.close_selectors),
-            (update.open_projects, "openProjects entry", &mut validated.open_selectors),
+            (
+                update.close_projects,
+                "closeProjects entry",
+                &mut validated.close_selectors,
+            ),
+            (
+                update.open_projects,
+                "openProjects entry",
+                &mut validated.open_selectors,
+            ),
         ] {
             let Some(array) = array_argument(heap, list.to_js())? else {
                 continue;
@@ -211,7 +242,9 @@ impl TypeChecker {
                 format_args!("Bun.TypeChecker: sourceChanges must be a Map"),
             ));
         }
-        let iterator_fn = map_js.get(global, b"entries")?.unwrap_or(JSValue::UNDEFINED);
+        let iterator_fn = map_js
+            .get(global, b"entries")?
+            .unwrap_or(JSValue::UNDEFINED);
         let iterator = iterator_fn.call(global, map_js, &[])?;
         let next_fn = iterator.get(global, b"next")?.unwrap_or(JSValue::UNDEFINED);
         loop {
@@ -422,14 +455,12 @@ pub(crate) struct TypeCheckerSnapshot {
     /// `None` once disposed or the root closed.
     data: Rc<DataSlot>,
     cwd: Box<[u8]>,
+    case_sensitive: bool,
 }
 
 impl TypeCheckerSnapshot {
     /// The data, or the disposed error if `dispose()` ran or the root closed.
-    fn data<'a>(
-        &self,
-        heap: &JsHeap<'a>,
-    ) -> Result<Rc<HeldData>, bun_jsc::bindgen::Error<'a>> {
+    fn data<'a>(&self, heap: &JsHeap<'a>) -> Result<Rc<HeldData>, bun_jsc::bindgen::Error<'a>> {
         match self.data.get() {
             Some(data) => Ok(data.clone()),
             None => Err(disposed_error(heap)),
@@ -457,10 +488,13 @@ impl TypeCheckerSnapshot {
         let data = self.data(&cx.heap)?;
         let raw = path_from_value(&cx.heap, config_file.to_js(), "configFile")?;
         let wanted = canonical_selector(&self.cwd, &raw);
-        let found = data
-            .projects
-            .iter()
-            .find(|project| resolve_against(&self.cwd, &project.config_path) == wanted);
+        let found = data.projects.iter().find(|project| {
+            is_same_path(
+                &resolve_against(&self.cwd, &project.config_path),
+                &wanted,
+                self.case_sensitive,
+            )
+        });
         Ok(found.map(|project| {
             let value = make_project_js(cx, self, project.index as usize);
             JsLocal::new(&cx.heap, value)
@@ -508,11 +542,13 @@ pub(crate) fn make_snapshot_js(
     global: &JSGlobalObject,
     data: Rc<DataSlot>,
     cwd: Box<[u8]>,
+    case_sensitive: bool,
 ) -> bun_jsc::JsResult<JSValue> {
     let snapshot = TypeCheckerSnapshot {
         ref_count: bun_ptr::RefCount::init(),
         data,
         cwd,
+        case_sensitive,
     };
     Ok(js_snapshot::to_js(RefPtr::new(snapshot), global))
 }
@@ -523,7 +559,8 @@ fn make_project_js(
     project_index: usize,
 ) -> JSValue {
     // SAFETY: `snapshot` is live for this call (the caller holds it).
-    let snapshot_ref = unsafe { RefPtr::init_ref(snapshot as *const TypeCheckerSnapshot as *mut _) };
+    let snapshot_ref =
+        unsafe { RefPtr::init_ref(snapshot as *const TypeCheckerSnapshot as *mut _) };
     let project = TypeCheckerProject {
         ref_count: bun_ptr::RefCount::init(),
         snapshot: snapshot_ref,
@@ -591,19 +628,18 @@ impl TypeCheckerProgram {
             None
         } else {
             let raw = path_from_value(&cx.heap, file.to_js(), "file")?;
-            Some(resolve_against(&self.snapshot.cwd, &raw))
+            Some(FileFilter::new(&self.snapshot.cwd, &raw))
         };
-        let case_sensitive = data.fs_case_sensitive;
-        let wanted = filter.map(|f| normalize_for_filter(&f, case_sensitive));
+        let case_sensitive = self.snapshot.case_sensitive;
         let array = JSValue::create_empty_array(cx.global(), 0)?;
         let mut next = 0u32;
         for &index in &data.by_project[self.project_index] {
             let diagnostic = &data.diagnostics[index as usize];
-            if let Some(wanted) = &wanted {
+            if let Some(filter) = &filter {
                 let Some(file_name) = &diagnostic.file_name else {
                     continue;
                 };
-                if &normalize_for_filter(file_name, case_sensitive) != wanted {
+                if !filter.matches(file_name, case_sensitive) {
                     continue;
                 }
             }

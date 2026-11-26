@@ -51,12 +51,63 @@ pub fn merge_results(
         }
         case_sensitive = case_sensitive && data.fs_case_sensitive;
     }
-    Ok(SnapshotData {
+    let mut merged = SnapshotData {
         projects,
         diagnostics,
         by_project,
         fs_case_sensitive: case_sensitive,
-    })
+    };
+    sort_projects(&mut merged);
+    Ok(merged)
+}
+
+/// Orders projects by config file path, like `ProjectCollection.Projects()` sorts by `Project.Name()`
+/// (`cmp.Compare` on the config file name, byte-wise and as spelled), and renumbers `project` on every
+/// diagnostic, its related diagnostics, and `by_project`.
+fn sort_projects(data: &mut SnapshotData) {
+    let key = |path: &[u8]| -> Vec<u8> {
+        if cfg!(windows) {
+            path.iter()
+                .map(|&b| if b == b'\\' { b'/' } else { b })
+                .collect()
+        } else {
+            path.to_vec()
+        }
+    };
+    let mut order: Vec<usize> = (0..data.projects.len()).collect();
+    order.sort_by(|&a, &b| {
+        key(&data.projects[a].config_path).cmp(&key(&data.projects[b].config_path))
+    });
+    if order.iter().enumerate().all(|(new, &old)| new == old) {
+        return;
+    }
+    let mut new_index = vec![0u32; order.len()];
+    for (new, &old) in order.iter().enumerate() {
+        new_index[old] = new as u32;
+    }
+    let mut old_projects: Vec<Option<ProjectData>> = std::mem::take(&mut data.projects)
+        .into_iter()
+        .map(Some)
+        .collect();
+    let mut old_by_project: Vec<Vec<u32>> = std::mem::take(&mut data.by_project);
+    for (new, &old) in order.iter().enumerate() {
+        let mut project = old_projects[old].take().expect("each project moves once");
+        project.index = new as u32;
+        data.projects.push(project);
+        data.by_project
+            .push(std::mem::take(&mut old_by_project[old]));
+    }
+    fn remap(diagnostic: &mut crate::DiagnosticData, new_index: &[u32]) {
+        if let Some(&new) = new_index.get(diagnostic.project as usize) {
+            diagnostic.project = new;
+        }
+        for related in &mut diagnostic.related {
+            remap(related, new_index);
+        }
+    }
+    for diagnostic in &mut data.diagnostics {
+        remap(diagnostic, &new_index);
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +200,55 @@ mod tests {
         let mut b = snapshot(vec![]);
         b.fs_case_sensitive = false;
         assert!(!merge_results(vec![Ok(a), Ok(b)]).unwrap().fs_case_sensitive);
+    }
+
+    #[test]
+    fn merge_sorts_projects_by_config_path_and_remaps_diagnostics() {
+        let mut referenced = diagnostic(0, b"in z");
+        referenced.project = 0;
+        let mut related_to_root = diagnostic(1, b"in root");
+        related_to_root.project = 1;
+        related_to_root.related = vec![{
+            let mut r = diagnostic(2, b"related");
+            r.project = 1;
+            r
+        }];
+        let run = SnapshotData {
+            projects: vec![
+                ProjectData {
+                    index: 0,
+                    config_path: b"/w/z/tsconfig.json".to_vec(),
+                },
+                ProjectData {
+                    index: 1,
+                    config_path: b"/w/a/tsconfig.json".to_vec(),
+                },
+                ProjectData {
+                    index: 2,
+                    config_path: b"/w/tsconfig.json".to_vec(),
+                },
+            ],
+            diagnostics: vec![referenced, related_to_root],
+            by_project: vec![vec![0], vec![1], vec![]],
+            fs_case_sensitive: true,
+        };
+        let merged = merge_results(vec![Ok(run)]).unwrap();
+        let paths: Vec<&[u8]> = merged.projects.iter().map(|p| &p.config_path[..]).collect();
+        assert_eq!(
+            paths,
+            vec![
+                &b"/w/a/tsconfig.json"[..],
+                b"/w/tsconfig.json",
+                b"/w/z/tsconfig.json"
+            ]
+        );
+        assert_eq!(
+            merged.projects.iter().map(|p| p.index).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(merged.by_project, vec![vec![1], vec![], vec![0]]);
+        assert_eq!(merged.diagnostics[0].project, 2);
+        assert_eq!(merged.diagnostics[1].project, 0);
+        assert_eq!(merged.diagnostics[1].related[0].project, 0);
     }
 }

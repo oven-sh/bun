@@ -3886,7 +3886,7 @@ fn check_with_references(
             for diagnostic in &mut diagnostics {
                 diagnostic.project = base_project + index as u32;
             }
-            return Ok(Some(Report {
+            return Ok((!diagnostics.is_empty()).then(|| Report {
                 diagnostics,
                 projects: vec![ProjectMetadata {
                     project_index: base_project + index as u32,

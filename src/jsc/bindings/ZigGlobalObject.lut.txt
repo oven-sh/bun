@@ -93,9 +93,7 @@
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback
 @end
 
-What `@natives` holds of JavaScriptCore and globalThis does not get from here. A row with a ...ConstructorCallback is the constructor
-that the engine began with: a bare `WeakRef` in src/js. Any other row is `$WeakRefPrototypeDeref` there: a function that does what
-the engine's method does (src/codegen/replacements.ts).
+Only `@natives` reads this table: a ...ConstructorCallback row is a bare `WeakRef` in src/js, any other row is `$WeakRefPrototypeDeref` (src/codegen/replacements.ts).
 
 @begin engineNativesTable
   FinalizationRegistry                    Bun::finalizationRegistryConstructorCallback          PropertyCallback

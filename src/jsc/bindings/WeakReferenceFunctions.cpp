@@ -8,8 +8,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// JavaScriptCore keeps the native code of `register`, `unregister` and `deref` to FinalizationRegistryPrototype.cpp and
-// WeakObjectRefPrototype.cpp. The three functions here do the same, with the same checks and messages.
+// JSC's own are static in FinalizationRegistryPrototype.cpp and WeakObjectRefPrototype.cpp: these have their checks and messages.
 
 static JSFinalizationRegistry* toFinalizationRegistry(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
 {

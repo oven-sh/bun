@@ -112,8 +112,7 @@ export const nativeGlobals = Array.from(globalObjectTable.matchAll(/^ +(\w+) +(\
   .map(({ 1: name }) => name)
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
 
-// The rows of engineNativesTable that are no constructor. `$WeakRefPrototypeDeref` becomes `@natives.WeakRefPrototypeDeref`:
-// what the engine's `deref` does, whatever script has stored on `WeakRef.prototype`.
+// The rows of engineNativesTable that are no constructor: `$WeakRefPrototypeDeref` becomes `@natives.WeakRefPrototypeDeref`.
 const engineFunctions = Array.from(
   /@begin engineNativesTable\n(.*?)@end/s.exec(globalObjectTable)![1].matchAll(/^ +(\w+) /gm),
   ({ 1: name }) => name,

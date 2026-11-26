@@ -3176,7 +3176,9 @@ declare module "bun" {
    * The severity of a {@link Bun.TypeCheckerDiagnostic}.
    *
    * A string, so a diagnostic is directly useful as JSON. Bun does not
-   * publish a numeric enum for it.
+   * publish a numeric enum for it. Bun does not request suggestion
+   * diagnostics, so top-level diagnostics are not expected to be
+   * `"suggestion"`.
    */
   type TypeCheckerDiagnosticCategory = "error" | "warning" | "suggestion" | "message";
 
@@ -3199,7 +3201,7 @@ declare module "bun" {
 
     /** Zero-based UTF-16 code-unit offset of the start of the range. `0` when there is no source range. */
     readonly pos: number;
-    /** Zero-based UTF-16 code-unit offset just past the end of the range. `0` when there is no source range. */
+    /** Zero-based UTF-16 code-unit offset just past the end of the range, never before `pos`. `0` when there is no source range. */
     readonly end: number;
 
     /** One-based line of the start of the range. Omitted when there is no source range. */
@@ -3220,10 +3222,12 @@ declare module "bun" {
 
     /**
      * Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text},
-     * when the checker provides it. Entries are diagnostics of their own,
-     * like in typescript-go: they have `pos` and `end` (`0`, they are not
-     * source locations), `code`, `category`, `text` and, when nested, a
-     * `messageChain`.
+     * when the checker provides it. Entries have `pos` and `end` (`0`, they
+     * are not source locations), `code`, `category`, `text` and, when
+     * nested, a `messageChain`. Unlike typescript-go, an entry has no
+     * `fileName` and no range of its own: typescript-go repeats the
+     * location of the parent diagnostic, or uses `-1` when the parent has
+     * none.
      */
     readonly messageChain?: readonly TypeCheckerDiagnostic[] | undefined;
     /**
@@ -3310,8 +3314,10 @@ declare module "bun" {
      * Returns all diagnostics for this project, or only those for `file`.
      *
      * A clean file and a file with no matching diagnostics both return an
-     * empty array. Diagnostics keep the checker's order, and filtering by
-     * file keeps each diagnostic's related information attached to it.
+     * empty array. Diagnostics are in the order `bun check` prints them,
+     * and filtering by file keeps each diagnostic's related information
+     * attached to it. A project with a syntax error or an invalid compiler
+     * option has those errors and no type errors, like `bun check`.
      * The returned array and diagnostic objects are fresh values; mutating
      * them does not affect the snapshot.
      *
@@ -3360,7 +3366,9 @@ declare module "bun" {
     /**
      * Every project result the check produced, sorted by config file path
      * like TypeScript 7, including referenced projects and projects with no
-     * diagnostics.
+     * diagnostics. A referenced project that was not opened is listed with
+     * no diagnostics because it is not checked, so an empty list for it does
+     * not mean it is clean.
      *
      * Local and non-blocking: this does not run the checker.
      */

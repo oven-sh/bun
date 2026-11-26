@@ -1,0 +1,20 @@
+[package]
+name = "bun_type_checker"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_paths.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }

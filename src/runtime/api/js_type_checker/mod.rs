@@ -13,8 +13,9 @@ use std::rc::Rc;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{DOMURL, ErrorCode, JSGlobalObject, JSPromiseStrong, JSValue, Job, JsCell, JsThread};
 use bun_ptr::RefPtr;
+use bun_type_checker::{DesiredState, canonical_selector, check_no_nul, normalize_for_filter, resolve_against};
 
-use crate::api::js_type_checker::state::{DesiredState, PendingEntry, RootState};
+use crate::api::js_type_checker::state::{PendingEntry, RootState};
 use crate::api::js_type_checker::task::{CheckJs, CheckTask};
 use crate::generated_bindgen::type_checker::{
     TypeCheckerOptions, TypeCheckerSnapshotUpdate, js_TypeCheckerProgram as js_program,
@@ -78,34 +79,10 @@ fn path_from_value<'a>(
             format_args!("Bun.TypeChecker: {what} must be a string or a URL"),
         ));
     };
-    if bun_core::strings::contains_char(&bytes, 0) {
+    if check_no_nul(&bytes).is_err() {
         return Err(nul_error(heap, what));
     }
     Ok(bytes)
-}
-
-/// Resolve a path against `cwd` and normalize lexically. No filesystem
-/// access: the path may not exist.
-fn resolve_against(cwd: &[u8], path: &[u8]) -> Vec<u8> {
-    if bun_paths::is_absolute(path) {
-        bun_paths::Path::resolve(&[path]).as_bytes().to_vec()
-    } else {
-        bun_paths::Path::resolve(&[cwd, path]).as_bytes().to_vec()
-    }
-}
-
-/// The one rule for naming a project: a path with an extension is a config
-/// file, any other path is a directory and names the `tsconfig.json` in it.
-/// It is lexical, so the worker receives selectors that are already final.
-fn canonical_selector(cwd: &[u8], raw: &[u8]) -> Vec<u8> {
-    let resolved = resolve_against(cwd, raw);
-    if bun_paths::extension(&resolved).is_empty() {
-        bun_paths::Path::from_parts(&[&resolved, b"tsconfig.json"])
-            .as_bytes()
-            .to_vec()
-    } else {
-        resolved
-    }
 }
 
 // ── root ──────────────────────────────────────────────────────────────────
@@ -431,7 +408,7 @@ struct ValidatedUpdate {
 pub(crate) struct TypeCheckerSnapshot {
     ref_count: bun_ptr::RefCount<TypeCheckerSnapshot>,
     /// `None` once disposed (or once the root was closed and this was read).
-    data: JsCell<Option<Rc<convert::SnapshotData>>>,
+    data: JsCell<Option<Rc<bun_type_checker::SnapshotData>>>,
     root_closed: Rc<Cell<bool>>,
     cwd: Box<[u8]>,
 }
@@ -441,7 +418,7 @@ impl TypeCheckerSnapshot {
     fn data<'a>(
         &self,
         heap: &JsHeap<'a>,
-    ) -> Result<Rc<convert::SnapshotData>, bun_jsc::bindgen::Error<'a>> {
+    ) -> Result<Rc<bun_type_checker::SnapshotData>, bun_jsc::bindgen::Error<'a>> {
         if self.root_closed.get() {
             self.data.set(None);
         }
@@ -489,7 +466,7 @@ impl TypeCheckerSnapshot {
 
 pub(crate) fn make_snapshot_js(
     global: &JSGlobalObject,
-    data: convert::SnapshotData,
+    data: bun_type_checker::SnapshotData,
     cwd: Box<[u8]>,
     root_closed: Rc<Cell<bool>>,
 ) -> bun_jsc::JsResult<JSValue> {
@@ -579,7 +556,7 @@ impl TypeCheckerProgram {
             Some(resolve_against(&self.snapshot.cwd, &raw))
         };
         let case_sensitive = data.fs_case_sensitive;
-        let wanted = filter.map(|f| convert::normalize_for_filter(&f, case_sensitive));
+        let wanted = filter.map(|f| normalize_for_filter(&f, case_sensitive));
         let array = JSValue::create_empty_array(cx.global(), 0)?;
         let mut next = 0u32;
         for &index in &data.by_project[self.project_index] {
@@ -588,7 +565,7 @@ impl TypeCheckerProgram {
                 let Some(file_name) = &diagnostic.file_name else {
                     continue;
                 };
-                if &convert::normalize_for_filter(file_name, case_sensitive) != wanted {
+                if &normalize_for_filter(file_name, case_sensitive) != wanted {
                     continue;
                 }
             }

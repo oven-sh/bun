@@ -229,21 +229,21 @@ impl AddrInfoError {
     }
 }
 
-/// In UTF-8.
+/// As the system gives them. UTF-8 on Windows.
 pub struct NameInfo {
     pub host: Vec<u8>,
     pub service: Vec<u8>,
 }
 
 impl NameInfo {
-    const MAX_HOST_LEN: usize = 1025;
-    const MAX_SERVICE_LEN: usize = 32;
+    const NI_MAXHOST: usize = 1025;
+    const NI_MAXSERV: usize = 32;
 
     /// Blocks. `Err` is a `UV_E*`.
     #[cfg(unix)]
     pub fn lookup(address: &Address) -> Result<Self, c_int> {
         let address = address.as_bytes();
-        let (mut host, mut service) = ([0u8; Self::MAX_HOST_LEN], [0u8; Self::MAX_SERVICE_LEN]);
+        let (mut host, mut service) = ([0u8; Self::NI_MAXHOST], [0u8; Self::NI_MAXSERV]);
         // SAFETY: each buffer is passed with its length.
         let status = unsafe {
             sock::getnameinfo(
@@ -272,7 +272,7 @@ impl NameInfo {
 
         libuv::uv__winsock_ensure();
         let address = address.as_bytes();
-        let (mut host, mut service) = ([0u16; Self::MAX_HOST_LEN], [0u16; Self::MAX_SERVICE_LEN]);
+        let (mut host, mut service) = ([0u16; Self::NI_MAXHOST], [0u16; Self::NI_MAXSERV]);
         // SAFETY: each buffer is passed with its length.
         let status = unsafe {
             GetNameInfoW(

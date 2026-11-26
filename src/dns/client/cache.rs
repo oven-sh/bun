@@ -19,8 +19,8 @@ struct Entry {
     message: Message,
     stored: u64,
     expires: u64,
-    /// `stored` by [`System::wall_clock`], which goes on while the machine sleeps.
-    stored_on_wall: i64,
+    /// Unlike `stored`, from a clock that goes on while the machine sleeps.
+    stored_wall_clock: i64,
 }
 
 impl Entry {
@@ -32,7 +32,7 @@ impl Entry {
 #[derive(Default)]
 pub(crate) struct Cache {
     entries: HashTable<Entry>,
-    /// `expires` and `hash` of each entry.
+    /// `expires` and `hash` of each entry, and of those that `get` removed early.
     expiries: BinaryHeap<Reverse<(u64, u64)>>,
     bytes: usize,
 }
@@ -63,10 +63,10 @@ impl Cache {
         self.drop_expired(now.as_secs());
         let found = self.find(question)?;
         let entry = found.get();
-        let on_wall = system.wall_clock().saturating_sub(entry.stored_on_wall);
+        let wall_clock_age = system.wall_clock().saturating_sub(entry.stored_wall_clock);
         // The two clocks do not start their seconds together.
-        let on_wall = u64::try_from(on_wall).unwrap_or(0).saturating_sub(1);
-        let age = on_wall.max(now.as_secs().saturating_sub(entry.stored));
+        let wall_clock_age = u64::try_from(wall_clock_age).unwrap_or(0).saturating_sub(1);
+        let age = wall_clock_age.max(now.as_secs().saturating_sub(entry.stored));
         if entry.stored.saturating_add(age) >= entry.expires {
             self.bytes -= found.remove().0.bytes();
             return None;
@@ -93,7 +93,7 @@ impl Cache {
             message: message.clone(),
             stored,
             expires: stored + u64::from(message.lifetime.min(MAX_LIFETIME)),
-            stored_on_wall: system.wall_clock(),
+            stored_wall_clock: system.wall_clock(),
         };
         // What is in use comes back, however short its life is.
         if self.bytes + entry.bytes() > MAX_BYTES {

@@ -324,7 +324,7 @@ fn three_servers() -> Setup {
 }
 
 /// Server `n` replies with `codes[n - 1]`, or not at all. Returns which were asked, and the outcome.
-fn tour(test: &mut Test, codes: &[Option<u16>]) -> String {
+fn lookup_with_rcodes(test: &mut Test, codes: &[Option<u16>]) -> String {
     let (mut answers, mut asked) = (test.lookup("a.test", Family::Inet), String::new());
     while answers.is_empty() {
         let query = test.sent_one();
@@ -340,7 +340,7 @@ fn tour(test: &mut Test, codes: &[Option<u16>]) -> String {
 }
 
 #[test]
-fn excuse_leads_to_the_next_server() {
+fn error_response_leads_to_the_next_server() {
     for (code, error) in [
         (FORMERR, "EFORMERR"),
         (SERVFAIL, "ESERVFAIL"),
@@ -349,31 +349,42 @@ fn excuse_leads_to_the_next_server() {
         (9, "ESERVFAIL"),
     ] {
         for tries in [1, 4] {
-            let tour = |setup: Setup, codes: &[_]| tour(&mut setup.tries(tries).start(), codes);
-            assert_eq!(tour(one_server(), &[Some(code)]), format!("1 {error}"));
-            assert_eq!(tour(two_servers(), &[Some(code), Some(0)]), "12 1.1.1.1/0");
+            let lookup = |setup: Setup, codes: &[_]| {
+                lookup_with_rcodes(&mut setup.tries(tries).start(), codes)
+            };
+            assert_eq!(lookup(one_server(), &[Some(code)]), format!("1 {error}"));
             assert_eq!(
-                tour(two_servers(), &[Some(code), Some(NXDOMAIN)]),
+                lookup(two_servers(), &[Some(code), Some(0)]),
+                "12 1.1.1.1/0"
+            );
+            assert_eq!(
+                lookup(two_servers(), &[Some(code), Some(NXDOMAIN)]),
                 "12 ENOTFOUND"
             );
             assert_eq!(
-                tour(three_servers(), &[Some(REFUSED), Some(NOTIMP), Some(code)]),
+                lookup(three_servers(), &[Some(REFUSED), Some(NOTIMP), Some(code)]),
                 format!("123 {error}")
             );
             assert_eq!(
-                tour(three_servers(), &[Some(code), None, Some(0)]),
+                lookup(three_servers(), &[Some(code), None, Some(0)]),
                 "123 1.1.1.1/0"
             );
         }
     }
     let codes = [Some(NXDOMAIN), Some(0)];
-    assert_eq!(tour(&mut two_servers().start(), &codes), "1 ENOTFOUND");
+    assert_eq!(
+        lookup_with_rcodes(&mut two_servers().start(), &codes),
+        "1 ENOTFOUND"
+    );
 }
 
 #[test]
-fn excuse_does_not_count_against_a_server() {
+fn error_response_does_not_count_against_a_server() {
     let mut test = two_servers().start();
-    assert_eq!(tour(&mut test, &[Some(REFUSED), Some(0)]), "12 1.1.1.1/0");
+    assert_eq!(
+        lookup_with_rcodes(&mut test, &[Some(REFUSED), Some(0)]),
+        "12 1.1.1.1/0"
+    );
     assert_eq!(test.servers(), [FIRST, SECOND]);
 }
 
@@ -385,18 +396,24 @@ fn next_server_is_silent() {
         (4, "12121 EREFUSED"),
     ] {
         let mut test = two_servers().tries(tries).start();
-        assert_eq!(tour(&mut test, &[Some(REFUSED), None]), expected);
         assert_eq!(
-            tour(&mut test, &[Some(REFUSED), Some(0)]),
+            lookup_with_rcodes(&mut test, &[Some(REFUSED), None]),
+            expected
+        );
+        assert_eq!(
+            lookup_with_rcodes(&mut test, &[Some(REFUSED), Some(0)]),
             "12 2: 1.1.1.1/0"
         );
     }
     let mut test = two_servers().tries(1).start();
-    assert_eq!(tour(&mut test, &[None, Some(REFUSED)]), "12 EREFUSED");
+    assert_eq!(
+        lookup_with_rcodes(&mut test, &[None, Some(REFUSED)]),
+        "12 EREFUSED"
+    );
 }
 
 #[test]
-fn excuse_is_final_for_the_others() {
+fn error_response_is_final_unless_for_a_lookup() {
     let mut test = two_servers().start();
     test.resolve(RecordType::A, "a.test");
     test.lookup("a.test", Family::Inet);
@@ -417,7 +434,7 @@ fn excuse_is_final_for_the_others() {
 }
 
 #[test]
-fn reply_after_an_excuse_is_not_kept() {
+fn reply_after_rcode_failover_is_not_cached() {
     let answers = [address("1.1.1.1", 9)];
     let negative = [soa(9, 9)];
     for (flags, sections) in [(0, [&answers[..], &[]]), (NXDOMAIN, [&[], &negative[..]])] {
@@ -438,7 +455,7 @@ fn reply_after_an_excuse_is_not_kept() {
 }
 
 #[test]
-fn lookup_waits_with_one_that_was_excused() {
+fn lookup_joins_a_query_after_rcode_failover() {
     let mut test = three_servers().start();
     test.lookup("a.test", Family::Inet);
     for _ in 0..2 {
@@ -462,7 +479,7 @@ fn lookup_waits_with_one_that_was_excused() {
 }
 
 #[test]
-fn lookup_that_comes_later_has_moved_on_too() {
+fn lookup_that_joins_later_shares_the_rcode_failover() {
     let all = [address("1.1.1.1", 0), address("1::1", 0)];
     let (mut test, sent) = both(two_servers(), "a.test");
     test.decline(&sent[0], SERVFAIL);
@@ -485,7 +502,7 @@ fn lookup_that_comes_later_has_moved_on_too() {
 }
 
 #[test]
-fn excuse_for_both_families() {
+fn error_response_for_both_families() {
     let all = [address("1.1.1.1", 1), address("1::1", 2)];
     for first in [0, 1] {
         for second in [0, 1] {
@@ -500,7 +517,7 @@ fn excuse_for_both_families() {
 }
 
 #[test]
-fn excuse_for_ipv6_after_ipv4_from_elsewhere() {
+fn error_response_for_ipv6_after_rcode_failover_of_ipv4() {
     let all = [address("1.1.1.1", 1), address("1::1", 2)];
     for is_answered in [true, false] {
         let mut test = two_servers().start();
@@ -519,7 +536,7 @@ fn excuse_for_ipv6_after_ipv4_from_elsewhere() {
 }
 
 #[test]
-fn excuse_for_ipv6() {
+fn error_response_for_ipv6() {
     for (flags, answers, expected) in [
         (0, &[address("1.1.1.1", 1)][..], Some("1.1.1.1/1")),
         (NXDOMAIN, &[], Some("ENOTFOUND")),
@@ -542,7 +559,7 @@ fn excuse_for_ipv6() {
 }
 
 #[test]
-fn excuse_for_ipv6_that_another_needs() {
+fn error_response_for_ipv6_that_another_lookup_needs() {
     let (mut test, sent) = both(two_servers(), "a.test");
     assert_eq!(test.lookup("a.test", Family::Inet6), NOTHING);
     assert_eq!(test.decline(&sent[1], SERVFAIL), NOTHING);
@@ -558,7 +575,7 @@ fn excuse_for_ipv6_that_another_needs() {
 }
 
 #[test]
-fn excuse_for_ipv4() {
+fn error_response_for_ipv4() {
     for order in [[0, 1], [1, 0]] {
         let (mut test, sent) = both(two_servers(), "a.test");
         for index in order {
@@ -592,15 +609,15 @@ fn each_name_of_a_search_starts_over() {
 }
 
 #[test]
-fn excuse_that_is_late() {
+fn late_error_response() {
     let setup = || resolv_conf("nameserver 10.0.0.1 10.0.0.2\noptions use-vc");
-    for excuses_first in [true, false] {
+    for late_is_first in [true, false] {
         let mut test = setup().start();
         test.lookup("a.test", Family::Inet);
         let late = test.sent_one();
         test.wait(2000);
         let next = test.sent_one();
-        if excuses_first {
+        if late_is_first {
             assert_eq!(test.decline(&late, REFUSED), NOTHING);
             assert!(test.sent().is_empty());
             assert_eq!(test.decline(&next, NOTIMP), ["ENOTIMP"]);
@@ -613,7 +630,7 @@ fn excuse_that_is_late() {
 }
 
 #[test]
-fn excuses_are_forgotten_with_the_list() {
+fn new_servers_reset_rcode_failover() {
     let mut test = two_servers().start();
     test.lookup("a.test", Family::Inet);
     test.decline(&test.sent_one(), REFUSED);

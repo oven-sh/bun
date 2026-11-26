@@ -29,12 +29,12 @@ impl ServerSet {
     }
 }
 
-/// To whom a server that is avoided gives way.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Substitute {
+/// Which server can be chosen in place of one that is avoided.
+#[derive(Clone, Copy)]
+pub(crate) enum Alternate {
     /// One that works or has timed out as often.
     Equal,
-    /// Also one that has not timed out for much longer.
+    /// Also one whose `outage` is at most `RETRY_DELAY` longer.
     Similar,
     Any,
 }
@@ -103,7 +103,7 @@ impl Servers {
         self.list.iter_mut().find(|server| server.id == id)
     }
 
-    /// One that stays keeps its history. Returns whether any came or went.
+    /// One that stays keeps its history. Returns whether any was added or removed.
     pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>) -> bool {
         let mut old = Vec::from(core::mem::take(&mut self.list));
         let last_id = self.last_id;
@@ -115,10 +115,10 @@ impl Servers {
                 continue;
             }
             let position = self.list.len();
-            // An address that does not tell the interface is on the one it was on.
-            let has_interface = matches!(address, SocketAddr::V6(it) if it.scope_id() != 0);
+            // An address without a scope id keeps the one it had.
+            let has_scope_id = matches!(address, SocketAddr::V6(it) if it.scope_id() != 0);
             let stays = |server: &mut Server| {
-                is_at_address(server) && (!has_interface || server.address == address)
+                is_at_address(server) && (!has_scope_id || server.address == address)
             };
             let server = old.extract_if(.., stays).next();
             let server = server.unwrap_or_else(|| {
@@ -147,12 +147,12 @@ impl Servers {
         self.last_id != last_id || !old.is_empty()
     }
 
-    /// The best, or with `random` one of the best. If it is `avoided` and has no `substitute`, all are forgiven.
+    /// The best, or with `random` one of the best. If it is `avoided` and has no `alternate`, `avoided` is cleared.
     pub(crate) fn choose(
         &mut self,
         random: Option<u16>,
         avoided: &mut ServerSet,
-        substitute: Substitute,
+        alternate: Alternate,
     ) -> Option<&mut Server> {
         let fewest = self.list.front()?.failures;
         let mut index = random.map_or(0, |random| {
@@ -160,10 +160,10 @@ impl Servers {
         });
         if let Some(best) = self.list.get(index).filter(|it| avoided.contains(it)) {
             let longest = best.outage + RETRY_DELAY;
-            let will_do = |it: &Server| match (substitute, it.last_error) {
-                (Substitute::Any, _) | (_, None) => true,
+            let will_do = |it: &Server| match (alternate, it.last_error) {
+                (Alternate::Any, _) | (_, None) => true,
                 (_, Some(Error::ETIMEOUT)) if it.failures == fewest => true,
-                (Substitute::Similar, Some(Error::ETIMEOUT)) => it.outage <= longest,
+                (Alternate::Similar, Some(Error::ETIMEOUT)) => it.outage <= longest,
                 _ => false,
             };
             let mut others = self.list.iter();

@@ -1,4 +1,4 @@
-/// The values are the `errno` that JavaScript sees.
+/// The values are the `errno` of the errors of `Bun.dns`.
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Error {

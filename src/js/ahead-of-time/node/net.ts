@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0cf8f2fa560972783b02769e9380c6fc056f8633bcb9b24faea2b511c6cf4b94.
+// Written against that file with the SHA-256 1d85975727192d9fc9f98c5e72eb5eb5c4e2f491424ab845526af24bf1e7ce1d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -995,7 +995,7 @@ function destroyWhenAborted(this: $Node.Socket, err?: object) {
   if (!this.destroyed) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
     // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
-    // Its eos() listens to 'error'.
+    // It also calls eos(stream), which listens to 'error'.
     this.once("error", noop);
     this.destroy(
       $makeAbortError(undefined, { cause: (err as { target?: AbortSignal | null } | undefined)?.target?.reason }),

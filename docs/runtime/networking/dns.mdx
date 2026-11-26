@@ -25,7 +25,7 @@ dns.prefetch("bun.com", 443);
 
 `Bun.dns.lookup()` accepts a `backend` option that selects the resolver implementation:
 
-- `"c-ares"`: Bun's own asynchronous resolver, which is named after the [c-ares](https://c-ares.org/) library that it is modeled on. It reads `/etc/resolv.conf` directly, so it does not consult NSS modules such as `systemd-resolved`. If a name server refuses or fails a query, it asks the next one. Names under `.local` and `.localhost` go to `"system"`, and so does every name if `/etc/resolv.conf` has no `nameserver` line. This backend is the default for `Bun.dns.lookup()` on Linux.
+- `"c-ares"`: Bun's own asynchronous resolver, which is named after the [c-ares](https://c-ares.org/) library that it is modeled on. It reads `/etc/resolv.conf` directly, so it does not consult NSS modules such as `systemd-resolved`. If a name server refuses or fails a query, Bun asks the next one. Bun sends names under `.local` and `.localhost` to `"system"`. It does the same for other names if `/etc/resolv.conf` has no `nameserver` line and you have not called `setServers()`. This backend is the default for `Bun.dns.lookup()` on Linux.
 - `"system"`: the platform's own resolver (the non-blocking system API on macOS, `getaddrinfo` on a thread pool everywhere else). This backend is the default on macOS, Windows, and Android.
 - `"getaddrinfo"` (alias `"libc"`): the POSIX `getaddrinfo(3)` function on a thread pool.
 
@@ -49,11 +49,11 @@ await dns.resolveMx("example.com"); // => [{ exchange: "mail.example.com", prior
 await dns.reverse("192.0.2.1"); // => ["example.com"]
 ```
 
-These functions share their name servers with `node:dns`. They differ from it in four ways:
+These functions share their name servers with `node:dns`. Their results differ:
 
 - Addresses always come with their `ttl`.
 - Text is decoded as UTF-8. `node:dns` returns one character for each byte of a `TXT` or `CAA` record.
-- Only `resolveAny()` adds `type` to a record.
+- Only a query for `ANY` adds `type` to a record.
 - The `code` of an error starts with `DNS_`, as in `DNS_ENOTFOUND`.
 
 ## DNS caching in Bun

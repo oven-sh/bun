@@ -13,8 +13,8 @@ const setServers = { ...method, args: { servers: b.any } } as const;
 
 // `internalBinding("cares_wrap")` of Node.js. A function that takes a request answers a `UV_E*`, or 0 and calls `oncomplete` later.
 export const ReqWrap = b.dictionary({ oncomplete: b.callable, ttl: b.bool.default(false) });
-const starts = { ...method, returns: b.i32, uses: { req: [table.everything] } } as const;
-const query = { ...starts, args: { req: ReqWrap.withValue, name: b.string.utf8 } } as const;
+const takesRequest = { ...method, returns: b.i32, uses: { req: [table.everything] } } as const;
+const query = { ...takesRequest, args: { req: ReqWrap.withValue, name: b.string.utf8 } } as const;
 
 export const ChannelWrap = b.class({
   rustPath: "crate::dns_jsc::Resolver",
@@ -46,10 +46,10 @@ export const ChannelWrap = b.class({
 /** The VM's global resolver, which `Bun.dns` uses too. */
 export const globalChannel = b.fn({ capability: "js", returns: ChannelWrap });
 export const getaddrinfo = b.fn({
-  ...starts,
+  ...takesRequest,
   args: { req: ReqWrap.withValue, hostname: b.string.utf8, family: b.i32, hints: b.i32, order: b.i32 },
 });
-export const getnameinfo = b.fn({ ...starts, args: { req: ReqWrap.withValue, ip: b.string.utf8, port: b.u16 } });
+export const getnameinfo = b.fn({ ...takesRequest, args: { req: ReqWrap.withValue, ip: b.string.utf8, port: b.u16 } });
 export const preferAsyncStack = b.fn({
   capability: "js",
   args: { error: b.any, promise: b.any },

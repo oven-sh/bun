@@ -48,7 +48,9 @@ const FLAG_RECURSION_DESIRED: u16 = 0x0100;
 const OPCODE_MASK: u16 = 0x7800;
 const RCODE_MASK: u16 = 0x000f;
 const NOERROR: u16 = 0;
+const FORMERR: u16 = 1;
 const NXDOMAIN: u16 = 3;
+const NOTIMP: u16 = 4;
 const REFUSED: u16 = 5;
 
 /// The name in lower case, the type and the class, as on the wire.
@@ -274,9 +276,9 @@ pub enum Record<'a> {
         minimum: u32,
     },
     Tlsa {
-        usage: u8,
+        cert_usage: u8,
         selector: u8,
-        matching: u8,
+        matching_type: u8,
         data: &'a [u8],
     },
     Caa {
@@ -320,11 +322,11 @@ impl<'a> Record<'a> {
                 minimum: data.u32()?,
             },
             RecordType::TLSA => {
-                let [usage, selector, matching] = data.array()?;
+                let [cert_usage, selector, matching_type] = data.array()?;
                 Self::Tlsa {
-                    usage,
+                    cert_usage,
                     selector,
-                    matching,
+                    matching_type,
                     data: Some(data.rest).filter(|data| !data.is_empty())?,
                 }
             }
@@ -468,12 +470,12 @@ impl Message {
         question.unwrap_or_default()
     }
 
-    /// Why the server did not do the work of looking the name up.
-    pub(crate) fn excuse(&self) -> Option<Error> {
+    /// `Some` for an error response. NXDOMAIN is none: it answers the question (RFC 9520 §2).
+    pub(crate) fn rcode_error(&self) -> Option<Error> {
         Some(match self.rcode {
             NOERROR | NXDOMAIN => return None,
-            1 => Error::EFORMERR,
-            4 => Error::ENOTIMP,
+            FORMERR => Error::EFORMERR,
+            NOTIMP => Error::ENOTIMP,
             REFUSED => Error::EREFUSED,
             _ => Error::ESERVFAIL,
         })
@@ -499,7 +501,7 @@ impl Message {
             (NOERROR, MX | TXT | SRV | NAPTR | TLSA | ANY | CAA) => return Ok(Records(self)),
             (NOERROR, SOA) => Error::EBADRESP,
             (NOERROR, _) => Error::ENODATA,
-            _ => self.excuse().unwrap_or(Error::ENOTFOUND),
+            _ => self.rcode_error().unwrap_or(Error::ENOTFOUND),
         })
     }
 }
@@ -522,7 +524,7 @@ impl Records {
         self.0.asked
     }
 
-    pub fn of(&self, kind: RecordType) -> impl Iterator<Item = Record<'_>> + Clone {
+    pub fn of(&self, kind: RecordType) -> impl Iterator<Item = Record<'_>> {
         let records = self.resources(kind);
         records
             .filter_map(move |(ttl, data)| Record::read(kind, ttl, data))
@@ -530,13 +532,13 @@ impl Records {
     }
 
     /// In reply to A or AAAA.
-    pub fn addresses(&self) -> impl Iterator<Item = Address> + Clone {
+    pub fn addresses(&self) -> impl Iterator<Item = Address> {
         let records = self.resources(self.asked());
         records.filter_map(|(ttl, data)| Address::read(self.asked(), ttl, data.rest))
     }
 
     /// A record holds no longer than the aliases that lead to it.
-    fn resources(&self, kind: RecordType) -> impl Iterator<Item = (u32, Reader<'_>)> + Clone {
+    fn resources(&self, kind: RecordType) -> impl Iterator<Item = (u32, Reader<'_>)> {
         let message = &self.0;
         let mut reader = Reader::new(&message.bytes, message.answers_at);
         let count = if message.answer_types & kind.bit() != 0 {

@@ -633,8 +633,8 @@ export const exposedInternals = {
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
   "internal/assert/myers_diff": require("internal/assert/myers_diff"),
-  // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
-  // is native, not a JS `codes` table, so nothing else is exposed here.
+  // Bun's internal/errors only carries aggregateTwoErrors, and DNSException is in
+  // internal/dns; the ERR_* hierarchy is native, not a JS `codes` table.
   "internal/errors": {
     ...require("internal/errors"),
     get DNSException() {

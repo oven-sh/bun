@@ -364,10 +364,10 @@ function onresolve(this: QueryReqWrap, err: string | number, result: unknown) {
   if (this[kPerfHooksContext]) stopObserving(this, { result });
 }
 
-// Each of the three throws if there is nothing to wait for.
+// These three throw a DNSException if the binding does not start the request.
 
 function startLookup(hostname: string, options: LookupOptions, callback: Callback, promise?: Promise<unknown>) {
-  const { family, hints, order: dnsOrder } = options;
+  const { family, hints, order: orderName } = options;
   const req = new GetAddrInfoReqWrap();
   req.callback = callback;
   req.family = family;
@@ -376,16 +376,16 @@ function startLookup(hostname: string, options: LookupOptions, callback: Callbac
   if (promise) setPromise(req, promise);
 
   const order =
-    dnsOrder === "ipv4first"
+    orderName === "ipv4first"
       ? DNS_ORDER_IPV4_FIRST
-      : dnsOrder === "ipv6first"
+      : orderName === "ipv6first"
         ? DNS_ORDER_IPV6_FIRST
         : DNS_ORDER_VERBATIM;
 
   const err = cares.getaddrinfo(req, hostname, family, hints, order);
   if (err) throw new DNSException(err, "getaddrinfo", hostname);
   if (hasObserver("dns")) {
-    const detail = { hostname, family, hints, verbatim: order === DNS_ORDER_VERBATIM, order: dnsOrder };
+    const detail = { hostname, family, hints, verbatim: order === DNS_ORDER_VERBATIM, order: orderName };
     startPerf(req, kPerfHooksContext, { type: "dns", name: "lookup", detail });
   }
   return req;

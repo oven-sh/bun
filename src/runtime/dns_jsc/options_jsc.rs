@@ -11,7 +11,7 @@ use bun_dns::{
     PROTOCOL_MAP, Protocol, SOCKET_TYPE_MAP, SocketType,
 };
 
-use crate::dns_jsc::answer_jsc::thrown;
+use crate::dns_jsc::answer_jsc::{array, to_js_result};
 use crate::generated_bindgen::answer_jsc::LookupAddress;
 use crate::generated_bindgen::dns::{AddrInfoHint, LookupOptions};
 
@@ -113,7 +113,7 @@ pub(crate) fn results_to_js(list: &[GaiResult], global: &JSGlobalObject) -> JsRe
     JSValue::create_array_from_iter(global, list.iter(), |item| result_to_js(item, global))
 }
 
-/// The addresses alone. Node.js drops the zone id too, without which a link-local address cannot be reached.
+/// The addresses as strings. Unlike in Node.js, a link-local one keeps its zone id, without which it cannot be reached.
 pub(crate) fn addresses_to_js(
     list: &[GaiResult],
     order: Order,
@@ -125,12 +125,9 @@ pub(crate) fn addresses_to_js(
         Order::Ipv6first => it.address.family() == super::netc::AF_INET6 as _,
     };
     let sorted = (list.iter().filter(is_first)).chain(list.iter().filter(|it| !is_first(it)));
-    let array = JSValue::create_empty_array(global, list.len())?;
-    for (index, item) in (0..).zip(sorted) {
-        let address = address_to_string(&item.address).into_js(global)?;
-        array.put_index(global, index, address)?;
-    }
-    Ok(array)
+    array(global, sorted, |it| {
+        address_to_string(&it.address).into_js(global)
+    })
 }
 
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -143,5 +140,5 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
         },
         ttl: this.ttl,
     };
-    thrown(result.into_js(JsHeap::from_global(global)), global)
+    to_js_result(result.into_js(JsHeap::from_global(global)), global)
 }

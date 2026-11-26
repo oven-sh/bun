@@ -407,7 +407,8 @@ fn is_ipv4_shorthand(host: &[u8]) -> bool {
     are_numbers && labels.next().is_none()
 }
 
-fn to_ascii(host: &[u8]) -> Option<Cow<'_, [u8]>> {
+/// `None` if `host` does not convert.
+pub fn idna_to_ascii(host: &[u8]) -> Option<Cow<'_, [u8]>> {
     if strings::first_non_ascii(host).is_none() {
         return Some(Cow::Borrowed(host));
     }
@@ -420,7 +421,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
     // CVE-2026-48618: IDNA maps "。" to ".", so a non-ASCII host is matched on its UTS #46 form, as in `tls.checkServerIdentity`.
-    let Some(hostname) = to_ascii(hostname) else {
+    let Some(hostname) = idna_to_ascii(hostname) else {
         return false;
     };
     let hostname = unfqdn(&hostname);
@@ -727,7 +728,8 @@ pub fn write_server_identity_mismatch_reason(
     out: &mut dyn core::fmt::Write,
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
-    let is_shorthand = to_ascii(hostname).is_some_and(|ascii| is_ipv4_shorthand(unfqdn(&ascii)));
+    let is_shorthand =
+        idna_to_ascii(hostname).is_some_and(|ascii| is_ipv4_shorthand(unfqdn(&ascii)));
     let hostname = unfqdn(hostname);
     let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_host(hostname);

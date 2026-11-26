@@ -310,11 +310,11 @@ fn show_record(record: Record<'_>) -> String {
             format!("{mname} {rname} {serial} {refresh} {retry} {expire} {minimum}")
         }
         Record::Tlsa {
-            usage,
+            cert_usage,
             selector,
-            matching,
+            matching_type,
             data,
-        } => format!("{usage} {selector} {matching} {}", show(data)),
+        } => format!("{cert_usage} {selector} {matching_type} {}", show(data)),
         Record::Caa { flags, tag, value } => format!("{flags} {} {}", show(tag), show(value)),
     }
 }

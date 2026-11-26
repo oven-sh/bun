@@ -11,7 +11,7 @@ export const canonicalizeIP = b.fn({
 });
 
 // The members are in the order of Node.js.
-const type = { type: b.string.local.optional, rustName: "kind" } as const;
+const type = { type: b.string.local.optional, rustName: "type_name" } as const;
 const result = { toJS: true } as const;
 export const LookupAddress = b.dictionary({ address: b.string, family: b.u8, ttl: b.u32 }, result);
 export const AddressRecord = b.dictionary({ address: b.any, ttl: b.u32, type }, result);

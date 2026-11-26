@@ -7,13 +7,13 @@ use crate::Error;
 use crate::cache::Cache;
 use crate::config::{Config, port_or_default};
 use crate::hosts::Hosts;
-use crate::lookup::{AddressLookup, NameLookup, answer_at_once};
+use crate::lookup::{AddressLookup, NameLookup, answer_without_query};
 use crate::message::{Address, Message, Question, RecordType, Records};
 use crate::servers::{ServerId, Servers};
 use crate::system::{Events, SocketId, System, Transport};
 use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
-/// Reading the configuration can take long.
+/// The least time between reloads once the system names a server: reading the configuration can take long.
 const RELOAD_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy)]
@@ -67,11 +67,11 @@ pub struct Client<S: System, R> {
     pub(crate) system: S,
     pub(crate) config: Config,
     /// Until [`set_servers`](Self::set_servers).
-    follows_system: bool,
-    /// The servers were of no use the last time. The machine may have moved to another network.
-    pub(crate) doubts_config: bool,
+    uses_system_servers: bool,
+    /// The last query timed out or was refused. The machine may have moved to another network.
+    pub(crate) needs_reload: bool,
     reload_at: Duration,
-    timeout: Option<Duration>,
+    timeout_option: Option<Duration>,
     pub(crate) max_timeout: Option<Duration>,
     pub(crate) tries: usize,
     pub(crate) servers: Servers,
@@ -106,10 +106,10 @@ impl<S: System, R> Client<S, R> {
         Self {
             system,
             config,
-            follows_system: true,
-            doubts_config: false,
+            uses_system_servers: true,
+            needs_reload: false,
             reload_at: Duration::ZERO,
-            timeout: options.timeout,
+            timeout_option: options.timeout,
             max_timeout: options.max_timeout,
             tries: options.tries as usize,
             servers,
@@ -136,15 +136,17 @@ impl<S: System, R> Client<S, R> {
         self.servers.iter().map(|server| server.address)
     }
 
-    /// Whether [`lookup`](Self::lookup) can need one, and neither the system nor [`set_servers`](Self::set_servers) named one.
-    pub fn guesses_server_for(&self, host: &[u8]) -> bool {
-        self.follows_system && !self.config.names_a_server && answer_at_once(host).is_none()
+    /// Whether [`lookup`](Self::lookup) may send a query, and neither the system nor [`set_servers`](Self::set_servers) named a server.
+    pub fn uses_default_server_for(&self, host: &[u8]) -> bool {
+        self.uses_system_servers
+            && !self.config.has_nameserver
+            && answer_without_query(host).is_none()
     }
 
     /// Port 0 is the default one.
     #[must_use]
     pub fn set_servers(&mut self, servers: &[(IpAddr, u16)]) -> Answers<R> {
-        self.follows_system = false;
+        self.uses_system_servers = false;
         self.call(|this| {
             let address = |&(ip, port)| SocketAddr::new(ip, port_or_default(port));
             this.servers.replace(servers.iter().map(address));
@@ -166,7 +168,7 @@ impl<S: System, R> Client<S, R> {
     /// Asks for `name` as it is: no hosts file, no search list.
     #[must_use]
     pub fn resolve(&mut self, kind: RecordType, name: &[u8], request: R) -> Answers<R> {
-        self.request(|this| this.ask(name, kind, Purpose::Records(request)))
+        self.start_request(|this| this.ask(name, kind, Purpose::Records(request)))
     }
 
     #[must_use]
@@ -197,34 +199,38 @@ impl<S: System, R> Client<S, R> {
         self.call(|this| this.fail_all(Error::EDESTRUCTION))
     }
 
-    pub(crate) fn request(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {
+    /// As [`call`](Self::call), after a reload if one is due.
+    pub(crate) fn start_request(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {
         self.call(|this| {
-            if this.doubts_config && this.follows_system && this.reload_at <= this.now {
+            if this.needs_reload && this.uses_system_servers && this.reload_at <= this.now {
                 this.reload();
             }
             start(this);
         })
     }
 
-    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L985-L1040, for any list and without ending what is under way.
+    /// https://github.com/nodejs/node/blob/v26.12.1/src/cares_wrap.cc#L985-L1040, for any servers and without ending outstanding queries.
     #[cold]
     fn reload(&mut self) {
-        self.doubts_config = false;
-        let mut config = load_config(&mut self.system, self.timeout);
-        if config.names_a_server {
-            let servers = core::mem::take(&mut config.servers);
-            if self.servers.replace(servers.into_iter()) {
-                self.cache = Cache::default();
+        self.needs_reload = false;
+        let mut config = load_config(&mut self.system, self.timeout_option);
+        match (config.has_nameserver, self.config.has_nameserver) {
+            (true, _) => {
+                let servers = core::mem::take(&mut config.servers);
+                if self.servers.replace(servers.into_iter()) {
+                    self.cache = Cache::default();
+                }
+                self.leave_removed_servers();
+                self.config = config;
             }
-            self.leave_removed_servers();
+            // There may have been no file descriptor to read it with.
+            (false, true) => {}
+            (false, false) => {
+                self.config = config;
+                return;
+            }
         }
-        // There may have been no descriptor to read it with.
-        if config.names_a_server || !self.config.names_a_server {
-            self.config = config;
-        }
-        if self.config.names_a_server {
-            self.reload_at = self.now.saturating_add(RELOAD_INTERVAL);
-        }
+        self.reload_at = self.now.saturating_add(RELOAD_INTERVAL);
     }
 
     fn call(&mut self, start: impl FnOnce(&mut Self)) -> Answers<R> {

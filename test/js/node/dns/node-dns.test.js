@@ -2895,7 +2895,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
     expect(result).toEqual({ stdout: "ENOTFOUND\n", stderr: "", exitCode: 0 });
   });
 
-  test("lookup() has others than lookupService()", async () => {
+  test("are not shared by lookup() and lookupService()", async () => {
     const result = await runWithShim(
       waitForRelease,
       `
@@ -2909,7 +2909,7 @@ describe.concurrent.skipIf(!isLinux || !cc)("the threads of the system's resolve
     expect(result).toEqual({ stdout: "127.0.0.1\nENOTFOUND\n", stderr: "", exitCode: 0 });
   });
 
-  test("those of the shared pool serve if no other can be started", async () => {
+  test("fall back to the shared pool if none can be started", async () => {
     const result = await runWithShim(
       `
         #define _GNU_SOURCE

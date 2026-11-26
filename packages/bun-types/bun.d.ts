@@ -2597,9 +2597,8 @@ declare module "bun" {
          *
          * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
          * is the POSIX standard function for blocking DNS resolution. Bun runs
-         * it in Bun's thread pool, which is limited to `cpus / 2`, so many
-         * concurrent DNS lookups can pause other concurrent IO until the
-         * lookups finish.
+         * it on a limited number of threads of its own, so slow lookups can
+         * hold up other lookups, but not other I/O.
          *
          * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
@@ -2642,7 +2641,7 @@ declare module "bun" {
      * The `code` of an error is that of `node:dns` with `DNS_` in front, such as `"DNS_ENOTFOUND"`.
      *
      * @param hostname The name to ask for
-     * @param type The record type. Default is `"A"`.
+     * @param rrtype The record type. Default is `"A"`.
      *
      * @example
      * ```js
@@ -2651,7 +2650,7 @@ declare module "bun" {
      * // [{ exchange: "mail.example.com", priority: 10 }]
      * ```
      */
-    function resolve<Type extends keyof Records = "A">(hostname: string, type?: Type): Promise<Records[Type]>;
+    function resolve<Type extends keyof Records = "A">(hostname: string, rrtype?: Type): Promise<Records[Type]>;
 
     /**
      * Ask the name servers for all records of `hostname`. Many servers answer with some of them or none.

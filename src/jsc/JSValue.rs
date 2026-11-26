@@ -904,8 +904,8 @@ impl JSValue {
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
         Bun__attachAsyncStackFromPromise(global, self, promise)
     }
-    /// The same for an error whose own frames are not the user's: they make way, if anything awaits
-    /// `promise`. Returns whether it does.
+    /// As [`attach_async_stack_from_promise`](Self::attach_async_stack_from_promise), but replaces
+    /// the frames that the error has. Returns whether it did.
     pub fn prefer_async_stack_from_promise(
         self,
         global: &JSGlobalObject,

@@ -618,7 +618,7 @@ function destroyWhenAborted(err) {
   if (!this.destroyed) {
     // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
     // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
-    // Its eos() listens to 'error'.
+    // It also calls eos(stream), which listens to 'error'.
     this.once("error", noop);
     this.destroy($makeAbortError(undefined, { cause: err?.target?.reason }));
   }

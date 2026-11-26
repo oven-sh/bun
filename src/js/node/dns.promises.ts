@@ -16,9 +16,9 @@ const {
 const { isIP } = require("internal/net/isIP");
 const { validatePort, validateString, validateStringWithoutNullBytes } = require("internal/validators");
 
-type DNSRequest = ThisParameterType<Parameters<typeof startLookup>[2]>;
+type ReqWrap = ThisParameterType<Parameters<typeof startLookup>[2]>;
 
-function settle(this: DNSRequest, err: Error | null, result: unknown) {
+function settle(this: ReqWrap, err: Error | null, result: unknown) {
   if (err) {
     this.reject(err);
   } else {
@@ -26,11 +26,11 @@ function settle(this: DNSRequest, err: Error | null, result: unknown) {
   }
 }
 
-function settleLookup(this: DNSRequest, err: Error | null, address: string, family: number) {
+function settleLookup(this: ReqWrap, err: Error | null, address: string, family: number) {
   settle.$call(this, err, { address, family });
 }
 
-function settleLookupService(this: DNSRequest, err: Error | null, hostname: string, service: string) {
+function settleLookupService(this: ReqWrap, err: Error | null, hostname: string, service: string) {
   settle.$call(this, err, { hostname, service });
 }
 

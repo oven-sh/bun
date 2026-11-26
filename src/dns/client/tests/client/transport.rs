@@ -629,7 +629,7 @@ fn second_server_is_slow() -> Test {
 }
 
 /// Returns the query for AAAA that the lookup did not wait for.
-fn do_without_ipv6(test: &mut Test) -> Sent {
+fn abandon_ipv6(test: &mut Test) -> Sent {
     test.lookup("a.test", Family::Unspecified);
     let [a, aaaa] = test.sent_exactly();
     test.decline(&aaaa, SERVFAIL);
@@ -642,42 +642,42 @@ fn do_without_ipv6(test: &mut Test) -> Sent {
 }
 
 #[test]
-fn replies_that_lookups_did_without_are_expected() {
+fn replies_to_abandoned_queries_are_expected() {
     let mut test = second_server_is_slow();
-    let forgotten = do_without_ipv6(&mut test);
-    (0..99).for_each(|_| drop(test.decline(&forgotten, 0)));
-    assert_eq!(strays_left(&mut test, forgotten.socket), 32);
+    let abandoned = abandon_ipv6(&mut test);
+    (0..99).for_each(|_| drop(test.decline(&abandoned, 0)));
+    assert_eq!(strays_left(&mut test, abandoned.socket), 32);
 
     for copies in [0, 1] {
         let mut test = second_server_is_slow();
-        let forgotten: Vec<Sent> = (0..33).map(|_| do_without_ipv6(&mut test)).collect();
+        let abandoned: Vec<Sent> = (0..33).map(|_| abandon_ipv6(&mut test)).collect();
         for _ in 0..16384 {
             let query = test.ask("b.test");
             test.decline(&query, 0);
         }
-        for it in forgotten.iter().cycle().take(33 * (1 + copies)) {
+        for it in abandoned.iter().cycle().take(33 * (1 + copies)) {
             test.decline(it, 0);
         }
         assert_eq!(
-            test.world().opened[forgotten[0].socket].is_open,
+            test.world().opened[abandoned[0].socket].is_open,
             copies == 0
         );
     }
 }
 
 #[test]
-fn id_that_a_lookup_did_without_stays_taken() {
+fn id_of_an_abandoned_query_stays_taken() {
     let mut test = second_server_is_slow();
-    let forgotten = do_without_ipv6(&mut test);
+    let abandoned = abandon_ipv6(&mut test);
     test.lookup("b.test", Family::Inet);
-    test.world().randoms.push_front(forgotten.id());
+    test.world().randoms.push_front(abandoned.id());
     test.decline(&test.sent_one(), SERVFAIL);
     let next = test.sent_one();
-    assert!(next.socket == forgotten.socket && next.id() != forgotten.id());
+    assert!(next.socket == abandoned.socket && next.id() != abandoned.id());
 
     let mut test = second_server_is_slow();
-    let sockets = (0..32768).map(|_| do_without_ipv6(&mut test).socket);
-    assert_eq!(sockets.filter(|&it| it == forgotten.socket).count(), 32767);
+    let sockets = (0..32768).map(|_| abandon_ipv6(&mut test).socket);
+    assert_eq!(sockets.filter(|&it| it == abandoned.socket).count(), 32767);
 }
 
 #[test]

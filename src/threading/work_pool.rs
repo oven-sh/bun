@@ -132,9 +132,9 @@ impl Batch {
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
-fn create(min_threads: u16) -> ThreadPool {
+fn create() -> ThreadPool {
     ThreadPool::init(crate::thread_pool::Config {
-        max_threads: u32::from(bun_core::get_thread_count().max(min_threads)),
+        max_threads: u32::from(bun_core::get_thread_count()),
         stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
 }
@@ -142,29 +142,7 @@ fn create(min_threads: u16) -> ThreadPool {
 impl WorkPool {
     #[inline]
     pub fn get() -> &'static ThreadPool {
-        POOL.get_or_init(|| create(0))
-    }
-
-    pub fn for_getaddrinfo() -> &'static ThreadPool {
-        static POOL: OnceLock<ThreadPool> = OnceLock::new();
-        Self::for_resolver(&POOL)
-    }
-
-    pub fn for_getnameinfo() -> &'static ThreadPool {
-        static POOL: OnceLock<ThreadPool> = OnceLock::new();
-        Self::for_resolver(&POOL)
-    }
-
-    /// For a call that can wait for the network for seconds while other work goes on.
-    fn for_resolver(pool: &'static OnceLock<ThreadPool>) -> &'static ThreadPool {
-        // libuv's default number of threads.
-        let pool = pool.get_or_init(|| create(4).named("Bun DNS").without_spare_threads());
-        pool.warm(1);
-        if pool.has_workers() {
-            pool
-        } else {
-            Self::get()
-        }
+        POOL.get_or_init(create)
     }
 
     pub fn schedule(task: *mut Task) {
@@ -187,11 +165,11 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        Self::go_on(Self::get(), context, function);
+        Self::go_in(Self::get(), context, function);
         Ok(())
     }
 
-    pub fn go_on<C: Send + 'static>(pool: &'static ThreadPool, context: C, function: fn(C)) {
+    pub fn go_in<C: Send + 'static>(pool: &'static ThreadPool, context: C, function: fn(C)) {
         // PERF: `function` is stored as a runtime field rather than
         // monomorphized into the callback — profile if it shows up on a hot path.
         #[repr(C)]

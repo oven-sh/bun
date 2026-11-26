@@ -189,7 +189,7 @@ pub trait JobContext: Sized + 'static {
     /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
     const OUTLIVES_SCRIPT: bool = false;
 
-    /// Where it [`run`](Self::run)s.
+    /// The pool that calls [`run`](Self::run).
     fn pool() -> &'static ThreadPool {
         WorkPool::get()
     }

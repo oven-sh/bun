@@ -39,7 +39,6 @@ function lookup(hostname: string | null | undefined, options?: unknown, callback
   }
   const parsed = parseLookupOptions(options);
 
-  let matchedFamily: number;
   if (!hostname) {
     emitInvalidHostnameWarning(hostname);
     if (parsed.all) {
@@ -47,19 +46,26 @@ function lookup(hostname: string | null | undefined, options?: unknown, callback
     } else {
       process.nextTick(callback!, null, null, parsed.family === 6 ? 6 : 4);
     }
-  } else if ((matchedFamily = isIP(hostname)) === 0) {
-    try {
-      return startLookup(hostname, parsed, callback!);
-    } catch (err) {
-      if (!(err instanceof DNSException)) throw err;
-      process.nextTick(callback!, err);
-    }
-  } else if (parsed.all) {
-    process.nextTick(callback!, null, [{ address: hostname, family: matchedFamily }]);
-  } else {
-    process.nextTick(callback!, null, hostname, matchedFamily);
+    return {};
   }
-  return {};
+
+  const matchedFamily = isIP(hostname);
+  if (matchedFamily !== 0) {
+    if (parsed.all) {
+      process.nextTick(callback!, null, [{ address: hostname, family: matchedFamily }]);
+    } else {
+      process.nextTick(callback!, null, hostname, matchedFamily);
+    }
+    return {};
+  }
+
+  try {
+    return startLookup(hostname, parsed, callback!);
+  } catch (err) {
+    if (!(err instanceof DNSException)) throw err;
+    process.nextTick(callback!, err);
+    return {};
+  }
 }
 
 function lookupService(address: string, port: number | string, callback: Callback) {

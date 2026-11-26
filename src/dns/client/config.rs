@@ -22,8 +22,8 @@ pub(crate) enum Source {
 
 pub struct Config {
     pub(crate) servers: Vec<SocketAddr>,
-    /// Or else the one in `servers` is a guess.
-    pub(crate) names_a_server: bool,
+    /// Otherwise `servers` holds the default of resolv.conf(5), the local machine.
+    pub(crate) has_nameserver: bool,
     /// The root is empty.
     pub(crate) domains: Vec<Box<[u8]>>,
     /// Where to look for a host, in order.
@@ -76,7 +76,7 @@ impl Config {
     pub(crate) fn load(system: &mut impl System) -> Self {
         let mut config = Self {
             servers: Vec::new(),
-            names_a_server: true,
+            has_nameserver: true,
             domains: Vec::new(),
             sources: &[Source::Hosts, Source::Dns],
             ndots: 1,
@@ -94,7 +94,7 @@ impl Config {
             config.set_options(options);
         }
         if config.servers.is_empty() {
-            config.names_a_server = false;
+            config.has_nameserver = false;
             config.add_server(Ipv4Addr::LOCALHOST.into(), DEFAULT_PORT, 0);
         }
         if config.domains.is_empty()

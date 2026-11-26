@@ -213,8 +213,8 @@ int bsd_addr_get_ip_length(struct bsd_addr_t *addr);
 
 int bsd_addr_get_port(struct bsd_addr_t *addr);
 
-// called by dispatch_ready_poll
-LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
+// called by dispatch_ready_poll. shared: another process can accept on fd too.
+LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr, int shared);
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
 /* One of the LIBUS_QUEUED_INPUT_* codes. Peeks, so it consumes nothing and the

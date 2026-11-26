@@ -2685,10 +2685,7 @@ mod draft {
                     address: addr.wrapping_sub(base_address) as i32,
 
                     object: if name != image_path.as_slice() {
-                        // GetModuleFileNameW output never has a trailing separator
-                        // or bare drive prefix, so `basename_windows`'s
-                        // stripping is a no-op on this domain.
-                        let basename = bun_paths::basename_windows(name);
+                        let basename = bun_paths::basename(name);
                         Some(Box::<[u8]>::from(
                             &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
                         ))
@@ -2844,29 +2841,25 @@ mod draft {
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
         match opts.reason {
             CrashReason::Panic(message) => {
+                use bun_zlib::deflate;
                 writer.write_byte(b'0')?;
 
-                let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let compressed = match bun_zlib::compress(&mut compressed_bytes, message, 9) {
-                    Ok(len) => &compressed_bytes[0..len],
-                    // Insufficient memory.
-                    Err(bun_zlib::ReturnCode::MemError) => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
-                    }
-                    // The buffer dest was not large enough to hold the compressed data.
-                    Err(bun_zlib::ReturnCode::BufError) => {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                    }
-                    // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
-                    // This is technically possible but impossible because we pass 9.
-                    Err(_) => return Err(crate::Error::Unexpected),
+                let mut compressed = Vec::new();
+                let options = deflate::Options {
+                    level: deflate::Level::BEST,
+                    ..Default::default()
                 };
+                deflate::compress(message, &mut compressed, deflate::Container::Zlib, options)
+                    .map_err(|error| match error {
+                        bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+                        _ => crate::Error::Unexpected,
+                    })?;
 
                 let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(compressed) > b64_bytes.len() {
+                if bun_base64::encode_len(&compressed) > b64_bytes.len() {
                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
                 }
-                let b64_len = bun_base64::encode(&mut b64_bytes, compressed);
+                let b64_len = bun_base64::encode(&mut b64_bytes, &compressed);
 
                 writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
             }
@@ -3040,20 +3033,22 @@ mod draft {
             target_os = "freebsd"
         ))]
         {
-            let mut buf = bun_core::PathBuffer::ZEROED;
-            let mut buf2 = bun_core::PathBuffer::ZEROED;
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
-            let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
+            let mut cwd_buf = bun_core::PathBuffer::ZEROED;
+            if bun_core::getcwd(&mut cwd_buf).is_err() {
                 return;
-            };
-            // Reshaped for borrowck — capture cwd bytes by value (it
-            // borrows buf2, not buf, so no actual overlap; copy len for clarity).
-            let cwd_bytes = cwd.as_bytes();
-            let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
+            }
+            // No heap: this can run in a signal handler.
+            let mut curl = bun_paths::StackPath::<{ bun_paths::MAX_PATH_BYTES }>::new();
+            if !bun_core::strings::tokenize(path_env, b":").any(|dir| {
+                curl.set(dir).is_ok()
+                    && curl.push(b"curl").is_ok()
+                    && bun_sys::is_executable_file_path(&curl)
+            }) {
                 return;
-            };
+            }
             let mut cmd_line = BoundedArray::<u8, 4096>::default();
             if cmd_line.append_slice(url).is_err() {
                 return;
@@ -3303,11 +3298,9 @@ mod draft {
         argv.push({
             #[cfg(windows)]
             {
-                // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
-                let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
-                let mut s = image_path[0..image_path.len() - 3].to_vec();
-                s.extend_from_slice(b"pdb");
-                s
+                let mut pdb = bun_paths::Path::from(bun_sys::windows::exe_path_w());
+                pdb.set_extension(b".pdb");
+                pdb.to_vec()
             }
             #[cfg(not(windows))]
             {
@@ -3525,13 +3518,11 @@ mod draft {
         compile_unit_name: &[u8],
         tty_config: TtyConfig,
     ) -> crate::Result<()> {
-        // `Environment::BASE_PATH` is `&[u8]`, which `const_format::concatcp!` cannot
-        // ingest. The constant is tiny and this path is debug-only — build it once
-        // at runtime in a stack BoundedArray (no heap, async-signal-safe).
-        let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
-        let _ = base_path_buf.append_slice(Environment::BASE_PATH);
-        let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
-        let base_path: &[u8] = base_path_buf.const_slice();
+        // No heap: this can run in a signal handler.
+        let mut base_path = bun_paths::StackPath::<1024>::new();
+        let _ = base_path.set(Environment::BASE_PATH);
+        let _ = base_path.push_trailing_sep();
+        let base_path: &[u8] = &base_path;
         {
             if let Some(sl) = source_location {
                 if sl.file_name.starts_with(base_path) {

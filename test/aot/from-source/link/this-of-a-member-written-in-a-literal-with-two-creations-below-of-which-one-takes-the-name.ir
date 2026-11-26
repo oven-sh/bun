@@ -1,16 +1,16 @@
-# Two objects are created below the literal and only one of them (L1) takes `_body`. They are constructed by a hidden function whose prototype the literal is. `this` of the accessors is expected to be what has the name they use: the lone read is typed.
+# Two objects are created below the literal and only one of them (L1) takes `_rope`. They are constructed by a hidden function whose prototype the literal is. `this` of the accessors is expected to be what has the name they use: the lone read is typed.
 # RUN: link functions mechanisms=all
 # CHECK: function f1 cycle
 # CHECK-NEXT: parameter 0 expected=undefined|null|boolean|number|string|symbol|bigint|L1
 # RUN(GETTER): walk f1 mechanisms=all
-# GETTER: = GetSlotOrUndefined v0 {{*}}key="_body" receivers=[L1] level=Expected
+# GETTER: = GetSlotOrUndefined v0 {{*}}key="_rope" receivers=[L1] level=Expected
 # -- source: this-of-a-member-written-in-a-literal-with-two-creations-below-of-which-one-takes-the-name.js
-# const reply = { get body() { return this._body; }, set body(value) { this._body = value; } };
-# globalThis.kept = reply;
-# const made = Object.create(reply);
-# made.body = 1;
-# const other = Object.create(reply);
-# other.tag = 1;
-# globalThis.keptToo = other;
-# console.log(made.body);
+# const well = { get depth() { return this._rope / 2; }, set depth(feet) { this._rope = feet * 2 + 3; } };
+# globalThis.kept = well;
+# const dug = Object.create(well);
+# dug.depth = 41;
+# const dry = Object.create(well);
+# dry.stones = 9;
+# globalThis.keptToo = dry;
+# console.log(dug.depth);
 # -- end of source

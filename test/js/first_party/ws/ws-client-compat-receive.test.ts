@@ -28,6 +28,7 @@ const repeatA = (count: number) => Buffer.alloc(count, "a");
 
 // Peer options for a server that accepts permessage-deflate.
 const withDeflate: PeerOptions = { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] };
+const withoutTakeover: PeerOptions = { headers: [`${withDeflate.headers}; server_no_context_takeover`] };
 
 // @types/ws is missing "blob" and `autoPong`.
 const blob = "blob" as any;
@@ -518,6 +519,13 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       expect(events).toEqual([...openEvents, message, message, message]);
     });
 
+    test("accepts a compressed message of exactly maxPayload bytes without context takeover", async () => {
+      await using client = await openClient(implementation, { maxPayload: 100 }, withoutTakeover);
+      client.conn.binary(deflate(repeatA(100)), { rsv1: true });
+      expect(await client.conn.roundTrip()).toEqual([]);
+      expect(client.events).toEqual([...openEvents, "message Buffer(100 bytes) binary rs=1"]);
+    });
+
     test("doesn't apply to control frames", async () => {
       await using client = await openClient(implementation, { maxPayload: 2 });
       client.conn.ping("hello");
@@ -687,6 +695,21 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
         peer: withDeflate,
         ...payloadTooBig,
       },
+      {
+        label: "a compressed message of maxPayload + 1 bytes, without context takeover",
+        sent: [binary(deflate(repeatA(101)), { rsv1: true })],
+        options: max100,
+        peer: withoutTakeover,
+        ...payloadTooBig,
+      },
+      ...[withDeflate, withoutTakeover].map(peer => ({
+        label: `a compressed message that the four appended bytes take over maxPayload (${peer.headers})`,
+        // They are the contents of a stored block.
+        sent: [binary(Buffer.concat([deflate(repeatA(99)), bytes(4, 0, 0xfb, 0xff)]), { rsv1: true })],
+        options: max100,
+        peer,
+        ...payloadTooBig,
+      })),
       // The default maxPayload is 100 MiB.
       { label: "a length of 256 MiB", sent: [bytes(0x82, 127, 0, 0, 0, 0, 0x10, 0, 0, 0)], ...payloadTooBig },
       { label: "a length of 2^53", sent: [bytes(0x82, 127, 0, 0x20, 0, 0, 0, 0, 0, 0)], ...lengthOver53Bits },

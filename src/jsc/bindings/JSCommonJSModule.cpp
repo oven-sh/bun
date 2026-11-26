@@ -222,6 +222,10 @@ static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* 
 #endif
 }
 
+// LintNodes.cpp
+JSValue valueUnlessLintLazy(JSGlobalObject*, JSObject*, const Identifier&, PropertySlot&);
+void noteModuleLoadedForLint(JSGlobalObject*, JSValue file, JSObject* module);
+
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -403,6 +407,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
+    noteModuleLoadedForLint(globalObject, filename, moduleObject);
+    RETURN_IF_EXCEPTION(scope, false);
 
     if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
         if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
@@ -469,9 +475,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
+            referrer->addChild(vm, moduleObject);
         }
     }
 
@@ -818,43 +822,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
     }
 
     if (!mod->m_childrenValue) {
-        MarkedArgumentBuffer children;
-        children.ensureCapacity(mod->m_children.size());
-
-        // Deduplicate children while preserving insertion order.
-        JSCommonJSModule* last = nullptr;
-        int n = -1;
-        for (WriteBarrier<Unknown> childBarrier : mod->m_children) {
-            JSCommonJSModule* child = uncheckedDowncast<JSCommonJSModule>(childBarrier.get());
-            // Check the last module since duplicate imports, if any, will
-            // probably be adjacent. Then just do a linear scan.
-            if (last == child) [[unlikely]]
-                continue;
-            int i = 0;
-            while (i < n) {
-                if (children.at(i).asCell() == child) [[unlikely]]
-                    goto next;
-                i += 1;
-            }
-            children.append(child);
-            last = child;
-            n += 1;
-        next:
-            {
-            }
-        }
-
-        // Construct the array
-        JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+        mod->createChildrenArray(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        mod->m_childrenValue.set(globalObject->vm(), mod, array);
-
-        {
-            WTF::Locker locker { mod->cellLock() };
-            mod->m_children.clear();
-        }
-
-        return JSValue::encode(array);
     }
 
     return JSValue::encode(mod->m_childrenValue.get());
@@ -1217,6 +1186,33 @@ JSCommonJSModule* JSCommonJSModule::create(
     return JSCommonJSModule::create(globalObject, requireMapKey, exportsObject, hasEvaluated, parent);
 }
 
+void JSCommonJSModule::addChild(JSC::VM& vm, JSCommonJSModule* child)
+{
+    // The search takes no lock: only the JS thread writes m_children, and the GC marker thread only reads it.
+    JSValue value = child;
+    if (child->hasBeenAddedAsChild && m_children.reverseFindIf([&](auto& listed) { return listed.get() == value; }) != WTF::notFound)
+        return;
+    child->hasBeenAddedAsChild = true;
+    WTF::Locker locker { cellLock() };
+    m_children.append(WriteBarrier<Unknown>());
+    m_children.last().set(vm, this, child);
+}
+
+void JSCommonJSModule::createChildrenArray(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer children;
+    children.ensureCapacity(m_children.size());
+    for (auto& child : m_children)
+        children.append(child.get());
+    JSArray* list = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), children);
+    RETURN_IF_EXCEPTION(scope, void());
+    m_childrenValue.set(vm, this, list);
+    WTF::Locker locker { cellLock() };
+    m_children.clear();
+}
+
 size_t JSCommonJSModule::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSCommonJSModule>(cell);
@@ -1289,7 +1285,8 @@ void populateESMExports(
     JSValue result,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues,
-    bool ignoreESModuleAnnotation)
+    bool ignoreESModuleAnnotation,
+    bool mayBeLazy)
 {
     auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
@@ -1388,7 +1385,7 @@ void populateESMExports(
 
                     exportNames.append(property);
 
-                    JSValue getterResult = slot.getValue(globalObject, property);
+                    JSValue getterResult = mayBeLazy ? valueUnlessLintLazy(globalObject, exports, property, slot) : slot.getValue(globalObject, property);
 
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
@@ -1431,7 +1428,7 @@ void populateESMExports(
 
                 exportNames.append(property);
 
-                JSValue getterResult = slot.getValue(globalObject, property);
+                JSValue getterResult = mayBeLazy ? valueUnlessLintLazy(globalObject, exports, property, slot) : slot.getValue(globalObject, property);
 
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
@@ -1872,11 +1869,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
 {
     return JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(
+        JSC::SyntheticSourceProvider::createWithLazyExports(
             [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
+                JSC::MarkedArgumentBuffer& exportValues) -> JSObject* {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1885,44 +1882,58 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
                 Bun::throwIfModuleGraphDisposed(globalObject, scope, graph.get());
-                RETURN_IF_EXCEPTION(scope, );
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 // The loader reaches this from its pipeline, which carries no async context:
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
                 JSMap* requireMap = requireMapOf(globalObject, graph.get());
                 JSValue entry = requireMap->get(globalObject, keyValue);
-                RETURN_IF_EXCEPTION(scope, void());
+                RETURN_IF_EXCEPTION(scope, nullptr);
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                            if (JSObject* hook = globalObject->diagnosticsHook(DiagnosticsHook::ModuleRequire); hook && !moduleObject->sourceCode.isNull()) [[unlikely]] {
+                                MarkedArgumentBuffer arguments;
+                                arguments.append(moduleObject);
+                                arguments.append(moduleObject->m_filename.get());
+                                JSC::call(globalObject, hook, JSC::getCallData(hook), jsUndefined(), arguments);
+                            } else {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                            }
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
+                                    return nullptr;
                                 (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
                                 JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
-                                RETURN_IF_EXCEPTION(scope, void());
+                                RETURN_IF_EXCEPTION(scope, nullptr);
 
                                 scope.throwException(globalObject, exception);
-                                return;
+                                return nullptr;
                             }
                         }
 
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, void());
+                        JSValue exports = moduleObject->exportsObject();
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                        populateESMExports(globalObject, exports, exportNames, exportValues, moduleObject->ignoreESModuleAnnotation, true);
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                        for (size_t i = 0; i < exportValues.size(); ++i) {
+                            if (!exportValues.at(i)) [[unlikely]]
+                                return exports.getObject();
+                        }
                     }
                 } else {
                     // require map was cleared of the entry
                 }
+                return nullptr;
             },
             sourceOrigin,
             sourceURL));

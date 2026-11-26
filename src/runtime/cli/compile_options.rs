@@ -206,6 +206,7 @@ pub(crate) enum OptionError<'a> {
     Watch,
     Declarations,
     App,
+    Bytecode,
     CrossCompile,
     HardenedBunRunsOnlyCompiledCode,
     InvalidValue {
@@ -338,6 +339,20 @@ impl OptionError<'_> {
             OptionError::App => {
                 out.extend_from_slice(origin.subject().as_bytes());
                 out.extend_from_slice(b" does not support --app");
+            }
+            OptionError::Bytecode => {
+                let message: &[u8] = match origin {
+                    RequestOrigin::CompileCommand => {
+                        b"Cannot use --bytecode with bun compile, which compiles to machine code. Remove --bytecode, or add --no-aot"
+                    }
+                    RequestOrigin::BuildFlag => {
+                        b"Cannot use both --aot and --bytecode. Choose --aot for machine code or --bytecode for bytecode"
+                    }
+                    RequestOrigin::BuildApi => {
+                        b"compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode"
+                    }
+                };
+                out.extend_from_slice(message);
             }
             OptionError::CrossCompile => CompileFailure::CrossCompilation.write_message(
                 origin,
@@ -1167,6 +1182,8 @@ pub(crate) fn check_build_conflicts(ctx: &Context<'_>, origin: RequestOrigin) {
         OptionError::Declarations
     } else if ctx.bundler_options.bake {
         OptionError::App
+    } else if ctx.bundler_options.bytecode {
+        OptionError::Bytecode
     } else {
         return;
     };
@@ -1184,7 +1201,6 @@ pub(crate) fn note_options_without_effect(ctx: &Context<'_>) {
     }
     let options = &ctx.bundler_options;
     let bytecode_flags = [
-        (options.bytecode, "--bytecode"),
         (options.bytecode_depth != u32::MAX, "--bytecode-depth"),
         (!options.bytecode_order.is_empty(), "--bytecode-order"),
         (!options.optimize_bytecode, "--no-optimize-bytecode"),
@@ -1195,8 +1211,7 @@ pub(crate) fn note_options_without_effect(ctx: &Context<'_>) {
             flag
         );
     }
-    // --bytecode without --format means --format=cjs.
-    if !options.bytecode && matches!(options.output_format, Format::Cjs | Format::Iife) {
+    if matches!(options.output_format, Format::Cjs | Format::Iife) {
         bun_core::note!(
             "--format has no effect with --aot: each file keeps the module format it is written in"
         );

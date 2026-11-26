@@ -46,7 +46,7 @@ const compressionStream = <Init extends object, Params extends object>(
       params,
       reset: method,
       write,
-      writeSync: write,
+      writeSync: { ...write, returns: b.f64.optional },
     },
   });
 
@@ -85,7 +85,6 @@ export const NativeZstd = compressionStream(
       processCallback: b.any,
       dictionary: b.any,
     },
-    returns: b.bool,
   },
   {},
 );

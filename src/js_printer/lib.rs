@@ -1325,6 +1325,7 @@ pub struct Options<'a> {
     /// Some `import()` / `require()` in this file reads through import items,
     /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
     pub has_dynamic_import_items: bool,
+    pub has_deferred_requires: bool,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -1383,6 +1384,7 @@ impl<'a> Default for Options<'a> {
             ts_enums: None,
             import_member_bindings: None,
             has_dynamic_import_items: false,
+            has_deferred_requires: false,
             line_offset_tables: None,
             mangled_props: None,
         }
@@ -1565,7 +1567,6 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a>,
@@ -2584,6 +2585,13 @@ pub(crate) mod __gated_printer {
             &self.import_records[import_record_index]
         }
 
+        #[inline]
+        fn is_deferred_require(&self, ref_: Ref) -> bool {
+            self.options.has_deferred_requires
+                && !ref_.is_source_contents_slice()
+                && (self.symbols().get_const(ref_)).is_some_and(|it| it.is_deferred_require())
+        }
+
         pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
@@ -3409,9 +3417,7 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data);
-
-                    let is_unbound_eval = !e.is_direct_eval
+                    let is_unbound_eval = e.kind != E::CallKind::DirectEval
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
@@ -3420,10 +3426,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
-                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
-                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
-                        self.print_expr(e.target, Level::Postfix, target_flags);
+                        self.print_callee(e.target, target_flags);
                     }
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
@@ -3852,13 +3856,22 @@ pub(crate) mod __gated_printer {
                         self.stmt_start == n || self.arrow_expr_start == n
                     };
 
+                    let props = e.properties.slice();
+                    let is_deferred = |it: &&G::Property| {
+                        (it.flags).contains(js_ast::flags::Property::IsDeferredRequire)
+                    };
+                    let is_lazy = self.options.has_deferred_requires
+                        && props.iter().any(|it| is_deferred(&it));
                     if wrap {
                         self.print(b"(");
+                    }
+                    if is_lazy {
+                        self.print_space_before_identifier();
+                        self.print(b"$Bun_lazy(");
                     }
                     self.add_source_mapping(expr.loc);
                     self.mark_object_brace();
                     self.print(b"{");
-                    let props = e.properties.slice();
                     if !props.is_empty() {
                         if !e.is_single_line || IS_JSON {
                             self.indent();
@@ -3898,6 +3911,13 @@ pub(crate) mod __gated_printer {
                         self.mark_object_brace();
                     }
                     self.print(b"}");
+                    if is_lazy {
+                        for key in props.iter().filter(is_deferred).filter_map(|it| it.key) {
+                            self.print(b",");
+                            self.print_expr(key, Level::Comma, ExprFlag::none());
+                        }
+                        self.print(b")");
+                    }
                     if wrap {
                         self.print(b")");
                     }
@@ -4106,23 +4126,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
-                            self.print(b"(");
-                            self.print_expr(*tag, Level::Lowest, ExprFlag::none());
-                            self.print(b")");
-                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
-                            self.print_commonjs_export_identifier(id, tag.loc, true);
-                        } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
-                        }
+                        self.print_callee(tag.expr, ExprFlag::none());
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -4173,9 +4177,11 @@ pub(crate) mod __gated_printer {
                     // A for-of loop initializer must not start with the token "let" and
                     // must not be the exact token sequence "async of" (e.g. the escaped
                     // identifier in "for (\u0061sync of []) ;"), so wrap in parentheses.
+                    let is_called = self.is_deferred_require(e.ref_);
                     let wrap = self.writer.written() == self.for_of_init_start
                         && (name == b"let"
-                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)));
+                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)))
+                        || is_called;
 
                     if wrap {
                         self.print(b"(");
@@ -4184,6 +4190,10 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
                     self.print_identifier(name);
+                    if is_called {
+                        // A `var` can be read before its declaration.
+                        self.print(b"?.()");
+                    }
 
                     if wrap {
                         self.print(b")");
@@ -4208,24 +4218,10 @@ pub(crate) mod __gated_printer {
                             let import_record =
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
-                                let mut wrap = false;
                                 did_print = true;
-
-                                if let Some(target) = &self.call_target {
-                                    wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
-                                }
-
-                                if wrap {
-                                    self.print_whitespacer(ws!(b"(0, "));
-                                }
                                 self.print_space_before_identifier();
                                 self.add_source_mapping(expr.loc);
                                 self.print_namespace_alias(import_record, namespace);
-
-                                if wrap {
-                                    self.print(b")");
-                                }
                             } else if import_record
                                 .flags
                                 .contains(ImportRecordFlags::WAS_ORIGINALLY_REQUIRE)
@@ -4247,18 +4243,6 @@ pub(crate) mod __gated_printer {
 
                         if !did_print {
                             did_print = true;
-
-                            let wrap = if let Some(target) = &self.call_target {
-                                e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
-                            } else {
-                                false
-                            };
-
-                            if wrap {
-                                self.print_whitespacer(ws!(b"(0, "));
-                            }
-
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
                             self.print_symbol(namespace.namespace_ref);
@@ -4272,10 +4256,6 @@ pub(crate) mod __gated_printer {
                                 // TODO: addSourceMappingForName
                                 self.print_string_literal_utf8(alias, false);
                                 self.print(b"]");
-                            }
-
-                            if wrap {
-                                self.print(b")");
                             }
                         }
                     }
@@ -4528,6 +4508,16 @@ pub(crate) mod __gated_printer {
                 self.print(b"[");
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
                 self.print(b"]");
+            }
+        }
+
+        /// The target of a call, or the tag of a template.
+        #[inline(always)] // Not one more stack frame for each link of "a()()()"
+        fn print_callee(&mut self, callee: Expr, flags: ExprFlagSet) {
+            if let ExprData::ECommonjsExportIdentifier(id) = callee.data {
+                self.print_commonjs_export_identifier(id, callee.loc, true);
+            } else {
+                self.print_expr(callee, Level::Postfix, flags);
             }
         }
 
@@ -4913,7 +4903,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
@@ -4953,7 +4943,7 @@ pub(crate) mod __gated_printer {
                         // Use a shorthand property if the names are the same
                         if let Some(val) = &item.value {
                             match &val.data {
-                                ExprData::EIdentifier(e) => {
+                                ExprData::EIdentifier(e) if !self.is_deferred_require(e.ref_) => {
                                     if item.flags.contains(js_ast::flags::Property::WasShorthand)
                                         || strings::utf16_eql_string(
                                             key_str.slice16(),
@@ -6914,7 +6904,6 @@ pub(crate) mod __gated_printer {
                 prev_op_end: -1,
                 prev_num_end: -1,
                 prev_reg_exp_end: -1,
-                call_target: None,
                 writer,
                 renamer,
                 prev_stmt_tag: StmtTag::SEmpty,
@@ -7673,6 +7662,7 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
+    opts.has_deferred_requires = tree.has_deferred_requires;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,

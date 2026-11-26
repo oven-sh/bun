@@ -7,6 +7,7 @@
 #include "GeneratedSink.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
@@ -18,7 +19,6 @@
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -36,73 +36,20 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static JSC_DECLARE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_writable);
 static JSC_DECLARE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom);
 
-class JSTextEncoderStreamPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSTextEncoderStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSTextEncoderStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextEncoderStreamPrototype))) JSTextEncoderStreamPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextEncoderStreamPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSTextEncoderStreamPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextEncoderStreamPrototype, JSTextEncoderStreamPrototype::Base);
+using JSTextEncoderStreamPrototype = JSDOMPrototype<JSTextEncoderStream>;
 
 // JSTextEncoderStreamConstructor = JSStreamConstructor<JSTextEncoderStream>.
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderStreamConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSTextEncoderStreamConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSTextEncoderStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSTextEncoderStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSTextEncoderStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSTextEncoderStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSTextEncoderStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSTextEncoderStreamConstructor::s_info = { "TextEncoderStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderStreamConstructor) };
-
-template<> JSValue JSTextEncoderStreamConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSTextEncoderStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSTextEncoderStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTextEncoderStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTextEncoderStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -138,13 +85,13 @@ JSC_ANNOTATE_HOST_FUNCTION(JSTextEncoderStreamConstructorConstruct, JSTextEncode
 // JSTextEncoderStreamPrototype
 
 static const HashTableValue JSTextEncoderStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderStreamPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSTextEncoderStreamPrototype::constructorGetter, 0 } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderStreamPrototypeGetter_encoding, 0 } },
     { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderStreamPrototypeGetter_readable, 0 } },
     { "writable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderStreamPrototypeGetter_writable, 0 } },
 };
 
-const ClassInfo JSTextEncoderStreamPrototype::s_info = { "TextEncoderStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderStreamPrototype) };
+template<> const ClassInfo JSTextEncoderStreamPrototype::s_info = { "TextEncoderStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderStreamPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -163,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
 }
 
-void JSTextEncoderStreamPrototype::finishCreation(VM& vm)
+template<> void JSTextEncoderStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSTextEncoderStream::info(), JSTextEncoderStreamPrototypeTableValues, *this);
@@ -194,9 +141,7 @@ Structure* JSTextEncoderStream::createStructure(VM& vm, JSGlobalObject* globalOb
 
 JSObject* JSTextEncoderStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSTextEncoderStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSTextEncoderStreamPrototype::create(vm, &globalObject, structure);
+    return JSTextEncoderStreamPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSTextEncoderStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -215,16 +160,6 @@ GCClient::IsoSubspace* JSTextEncoderStream::subspaceForImpl(VM& vm)
 }
 
 // Prototype accessors
-
-JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSTextEncoderStreamPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSTextEncoderStream::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderStreamPrototypeGetter_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {

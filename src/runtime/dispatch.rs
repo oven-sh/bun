@@ -28,9 +28,8 @@ use bun_ptr::RefPtr;
 use bun_io::posix_event_loop::Flags as PollFlag;
 use bun_io::{IoEvent, Owner, PollTag};
 
-use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
-};
+use bun_core::Timespec;
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as EventLoopTimerTag};
 
 use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
@@ -266,7 +265,7 @@ pub(crate) fn run_task(
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Completion`; the erased entry runs `then` and frees it.
+            // its `Running`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
         task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
@@ -313,9 +312,7 @@ pub(crate) fn run_task(
             feature_arm!([Sockets], |context: crate::socket::DuplexUpgradeContext| {
                 // SAFETY: tag identifies pointee; the queue owns the live context
                 // until `run_event` (which may free it).
-                crate::socket::DuplexUpgradeContext::run_event(unsafe {
-                    bun_ptr::ThisPtr::new(context)
-                });
+                unsafe { crate::socket::DuplexUpgradeContext::run_event(context) };
             })
         }
         #[cfg(windows)]
@@ -366,7 +363,7 @@ pub(crate) fn run_task(
             task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
+                watcher.run_hop()?;
                 Ok(())
             }
         )?,
@@ -399,6 +396,14 @@ pub(crate) fn run_task(
                 }
             )
         }
+        task_tag::FetchTaskletTrace => feature_arm!(
+            [Fetch],
+            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+                FetchTasklet::on_trace_events(&tasklet)
+            }
+        )?,
         task_tag::HTMLRewriterBackgroundPull => counted_arm!(
             task,
             [HtmlRewriter],
@@ -414,7 +419,7 @@ pub(crate) fn run_task(
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
-            |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
+            |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
         )?,
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
@@ -833,7 +838,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -919,8 +924,15 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(not(windows))]
         PollTag::Process => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
-                // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
-                Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
+                let mut rusage = bun_spawn::process::rusage_zeroed();
+                // SAFETY: a process frees its poll before it is freed, and `wait_posix` releases no ref.
+                unsafe {
+                    if let Some(exit) = (*proc).wait_posix(false, &mut rusage) {
+                        exit.dispatch(&rusage);
+                    } else if let Some(exit) = RefPtr::init_ref(proc).rewatch_or_reap(&mut rusage) {
+                        exit.dispatch(&rusage);
+                    }
+                }
             })
         }
         #[cfg(not(windows))]
@@ -934,14 +946,17 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::DnsResolver => in_features!(
             [Dns],
             (
-                resolver: *const DNSResolver = owner.ptr().cast_const().cast::<DNSResolver>(),
-                fd: i32 = event.fd.native(),
-                readable: bool = event.flags.contains(PollFlag::Readable),
-                writable: bool = event.flags.contains(PollFlag::Writable),
+                resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
+                socket: usize = bun_dns::os::socket_id(event.fd),
+                events: bun_dns_client::Events = bun_dns_client::Events {
+                    readable: !event.flags.is_disjoint(PollFlag::Readable | PollFlag::Eof | PollFlag::Hup),
+                    writable: event.flags.contains(PollFlag::Writable),
+                    failed: event.flags.contains(PollFlag::Eof),
+                },
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
-                let resolver = unsafe { &*resolver };
-                resolver.on_dns_poll(fd, readable, writable);
+                let resolver = unsafe { RefPtr::init_ref(resolver) };
+                resolver.on_dns_poll(socket, events);
             }
         ),
         #[cfg(target_os = "macos")]
@@ -1069,9 +1084,9 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         // These free themselves once they have read to the end.
         PollTag::InstallGit => io_arm!(
             [Install],
-            bun_ptr::ThisPtr::new,
+            RefPtr::init_ref,
             GitSubprocess,
-            |this, kind, event| GitSubprocess::on_io(this, kind, event)
+            |this, kind, event| this.on_io(kind, event)
         ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
@@ -1085,8 +1100,8 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
-        PollTag::Cron => io_arm!([Cron], bun_ptr::ThisPtr::new, OsJob, |this, _, event| {
-            OsJob::on_io(this, event)
+        PollTag::Cron => io_arm!([Cron], RefPtr::init_ref, OsJob, |this, _, event| {
+            this.on_io(event)
         }),
 
         PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
@@ -1104,77 +1119,6 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// io::Poll dispatch
-// ════════════════════════════════════════════════════════════════════════════
-
-#[cfg(not(windows))]
-use crate::webcore::blob::read_file::ReadFile;
-#[cfg(not(windows))]
-use crate::webcore::blob::write_file::WriteFile;
-
-/// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. The owner is recovered from the embedded `io_poll` field.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::WriteFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::Empty => {
-            // Waker / unblock-only — caller already filtered this out.
-            debug_assert!(false, "io::Poll on_ready with Empty tag");
-        }
-    }
-}
-
-/// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
-/// `bun_io`.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_io_error(
-    tag: bun_io::PollableTag,
-    poll: *mut bun_io::Poll,
-    err: &bun_sys::Error,
-) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-                this.on_io_error(err);
-            }
-        ),
-        bun_io::PollableTag::WriteFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                // WriteFile::on_io_error already takes `*mut ()` (it self-recovers via the io_request path elsewhere); reuse that shape rather than reborrowing `&mut`.
-                WriteFile::on_io_error(this.cast(), err);
-            }
-        ),
-        bun_io::PollableTag::Empty => {
-            debug_assert!(false, "io::Poll on_io_error with Empty tag");
-        }
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1187,10 +1131,10 @@ unsafe fn __bun_io_pollable_on_io_error(
 /// `timer::ImmediateObject`, and the queue's ref comes with it.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    crate::timer::TimerObjectInternals::run_immediate_task(queued, vm)
+    crate::timer::ImmediateObject::run(queued, vm)
 }
 
 /// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
@@ -1202,11 +1146,11 @@ unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
 /// `timer::ImmediateObject` whose event-loop ref has not yet been released;
 /// `RuntimeState` is still installed.
 #[unsafe(no_mangle)]
-unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+unsafe fn __bun_cancel_pending_immediate(task: *mut ()) {
+    // SAFETY: per fn contract — the only producer (`ImmediateObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    queued.internals.cancel_pending_immediate(vm);
+    queued.release_unrun();
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
@@ -1244,10 +1188,10 @@ unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine) {
 /// `t` after the per-arm call returns.
 pub(crate) unsafe fn fire_timer(
     t: *mut EventLoopTimer,
-    now: &ElTimespec,
+    now: &Timespec,
     vm: &VirtualMachine,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{Popped, TimerObjectInternals, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -1281,7 +1225,7 @@ pub(crate) unsafe fn fire_timer(
                 $features,
                 (
                     $c: *mut $Ty = owner!($Ty, $field),
-                    $now: &ElTimespec = now,
+                    $now: &Timespec = now,
                     $vm: &VirtualMachine = vm,
                 ) -> JsResult<()> {
                     // SAFETY: per fn contract; container derived from a live `$Ty`.
@@ -1292,13 +1236,15 @@ pub(crate) unsafe fn fire_timer(
         };
     }
     let fired: JsResult<()> = match tag {
-        // ── JS-exposed timers (TimerObjectInternals::fire_catching) ──────
         // `Bun__JSTimeout__call` reports the callback's exception itself.
-        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+        EventLoopTimerTag::TimeoutObject => {
             // SAFETY: per fn contract.
-            unsafe {
-                TimerObjectInternals::fire_catching(Popped::new(t), vm, core::ptr::null_mut())
-            };
+            unsafe { TimeoutObject::fire(t, vm, None) };
+            Ok(())
+        }
+        EventLoopTimerTag::ImmediateObject => {
+            // SAFETY: per fn contract.
+            unsafe { ImmediateObject::fire(t, vm, None) };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
@@ -1342,7 +1288,7 @@ pub(crate) unsafe fn fire_timer(
                 [NodeFs],
                 StatWatcherScheduler,
                 event_loop_timer,
-                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
+                |c, _now, _vm| RefPtr::init_ref(c).timer_callback()
             )
         }
         EventLoopTimerTag::UpgradedDuplex => {
@@ -1368,10 +1314,11 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` runs script, which re-enters the resolver.
         EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(now, vm)
+            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, _now, vm| {
+                if let Some(resolver) = (*c).timer_ref.take() {
+                    resolver.check_timeouts(vm)
+                }
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1396,7 +1343,7 @@ pub(crate) unsafe fn fire_timer(
                 // construction; `t` is the connection's `timer` field.
                 let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1405,7 +1352,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1414,7 +1361,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `timer` field.
                 let container = unsafe { MySQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1423,7 +1370,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1431,14 +1378,17 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() }
+                unsafe { (*container).timer.take_fire_ref() }
+                    .map_or(Ok(()), Valkey::on_connection_timeout)
             }
         ),
         EventLoopTimerTag::ValkeyConnectionReconnect => in_features!(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() };
+                if let Some(hold) = unsafe { (*container).reconnect_timer.take_fire_ref() } {
+                    hold.client.reconnect(hold.object());
+                }
                 Ok(())
             }
         ),
@@ -1449,7 +1399,7 @@ pub(crate) unsafe fn fire_timer(
         }
         EventLoopTimerTag::DevServerSweepSourceMaps => in_features!(
             [Bundler],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+            (t: *mut EventLoopTimer = t, now: &Timespec = now) -> JsResult<()> {
                 // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
                 // the store inside.
                 SourceMapStore::sweep_weak_refs(t, now);
@@ -1465,7 +1415,7 @@ pub(crate) unsafe fn fire_timer(
         ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+            (t: *mut EventLoopTimer = t, now: &Timespec = now) -> JsResult<()> {
                 if let Some(file) = clone_active_strong()
                     && core::ptr::eq(&raw const *file.timer, t)
                 {
@@ -1473,7 +1423,7 @@ pub(crate) unsafe fn fire_timer(
                 } else {
                     // SAFETY: `t` was just popped, and a timer leaves the heap before it is dropped.
                     let timer = unsafe { &*t };
-                    timer.next.set(ElTimespec::EPOCH);
+                    timer.next.set(Timespec::EPOCH);
                     timer.state.set(crate::timer::EventLoopTimerState::PENDING);
                 }
                 Ok(())
@@ -1504,7 +1454,7 @@ pub(crate) unsafe fn fire_timer(
             (
                 c: *mut crate::test_runner::vi_wait::ViWait =
                     owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: &ElTimespec = now,
+                now: &Timespec = now,
                 vm: &VirtualMachine = vm,
             ) -> JsResult<()> {
                 // SAFETY: an armed wait roots its JS wrapper, which owns `c`.
@@ -1554,25 +1504,6 @@ pub(crate) fn fold(result: JsResult<()>) {
     if let Err(err) = result {
         report(err);
     }
-}
-
-/// `__bun_js_timer_epoch` body — the tag→`container_of` read for
-/// [`EventLoopTimer::js_timer_epoch`]. Returns `internals.flags.epoch` for
-/// the three JS-timer container types, else `None`. Sits on the heap-compare
-/// hot path
-/// (`EventLoopTimer::less` → `TimerHeap` meld).
-///
-/// # Safety
-/// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_js_timer_epoch(
-    _tag: EventLoopTimerTag,
-    t: *const EventLoopTimer,
-) -> Option<u32> {
-    // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
-    // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
-    // (same address the caller loaded it from — folds under LTO).
-    unsafe { crate::timer::js_timer_flags(t) }.map(|flags| flags.get().epoch())
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in
@@ -1695,6 +1626,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
         }
+        task_tag::FetchTaskletTrace => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
+        }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(
                 [HtmlRewriter],
@@ -1705,7 +1639,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
         task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
+            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()

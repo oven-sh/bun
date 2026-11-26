@@ -113,11 +113,9 @@ extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     }
     #[cfg(not(unix))]
     {
-        let input_utf8 = input.to_utf8();
-        let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
-        let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        let mut path = bun_paths::Path::from(input.to_utf8().slice());
+        path.make_long_path();
+        BunString::clone_utf8(&path)
     }
 }
 
@@ -150,18 +148,17 @@ extern "C" fn BakeProdResolve(
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
 
-    // dirname semantics: returns None for the root / no-parent.
-    let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
-
-    BunString::create_format(format_args!(
-        "bake:{}",
-        BStr::new(resolve_path::join_abs::<platform::Posix>(
-            dir,
-            // force posix paths in bake
-            specifier.slice(),
-        ))
-    ))
+    // A key is the path of a URL, so nothing in it is a drive or a share.
+    let specifier = specifier.slice();
+    let importer = match specifier.starts_with(b"/") {
+        true => b"",
+        false => &referrer.slice()["bake:".len()..],
+    };
+    let mut key = Path::from(b"/");
+    key.push_inside(&Path::join(&[b".", importer, b"..", specifier]));
+    key.copy_trailing_sep_from(specifier);
+    let key = key.into_portable();
+    BunString::create_format(format_args!("bake:{}", BStr::new(key.as_bytes())))
 }
 
 /// Given a key, returns the source code to load.

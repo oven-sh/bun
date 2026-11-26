@@ -7,6 +7,7 @@ import {
   bunEnv as env,
   isLinux,
   isWindows,
+  MAX_PATH_BYTES,
   normalizeBunSnapshot,
   readdirSorted,
   tempDir,
@@ -15,7 +16,7 @@ import {
   unprivilegedSpawnOptions,
 } from "harness";
 import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { basename, join } from "path";
+import { basename, join, sep } from "path";
 import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
@@ -2486,6 +2487,33 @@ describe.concurrent.skipIf(isWindows)("cache directory setting longer than the p
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(!isLinux)("bun install works when a cache entry fits but <entry>/package.json does not", async () => {
+    using dir = tempDir("pm-cache-entry-just-fits", {
+      ...project,
+      "package.json": JSON.stringify({ dependencies: { bar: "file:bar.tgz" } }),
+      "bar.tgz": await Bun.file(join(import.meta.dir, "bar-0.0.2.tgz")).bytes(),
+    });
+    const length = MAX_PATH_BYTES - "/@T@sha512-0123456789abcdef0123456789abcdef@@@1\0".length;
+    let cacheDir = String(dir);
+    // Each name has to stay under NAME_MAX (255).
+    while (length - cacheDir.length > 255) cacheDir = join(cacheDir, Buffer.alloc(200, "d").toString());
+    cacheDir = join(cacheDir, Buffer.alloc(length - cacheDir.length - "/".length, "e").toString());
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: cacheEnv(String(dir), { BUN_INSTALL_CACHE_DIR: cacheDir }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("+ bar@bar.tgz");
+    expect(await exists(join(String(dir), "node_modules", "bar", "package.json"))).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
   // `bun pm cache rm` has no fallback: it reports the directory it could not open.
   test("bun pm cache rm reports ENAMETOOLONG when $BUN_INSTALL_CACHE_DIR does not fit", async () => {
     using dir = tempDir("pm-cache-rm-too-long", project);
@@ -2825,6 +2853,256 @@ describe.concurrent.skipIf(isWindows)("global directories longer than the path b
     expect(stderr).toBe("");
     expect(stdout).toBe(join(dir, "bin") + "\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+const envWithoutInstallDirs = {
+  ...env,
+  BUN_INSTALL: undefined,
+  BUN_INSTALL_BIN: undefined,
+  BUN_INSTALL_CACHE_DIR: undefined,
+  BUN_INSTALL_GLOBAL_DIR: undefined,
+  XDG_CACHE_HOME: undefined,
+  XDG_CONFIG_HOME: undefined,
+};
+
+describe.concurrent("global directories from the environment", () => {
+  const files = { "cwd/package.json": "{}", "home/.npmrc": "" };
+
+  async function pmGlobal(dir: string, subcommand: string, variables: NodeJS.Dict<string>) {
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", subcommand, "-g"],
+      cwd: join(dir, "cwd"),
+      env: { ...envWithoutInstallDirs, [isWindows ? "USERPROFILE" : "HOME"]: join(dir, "home"), ...variables },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["bin", { BUN_INSTALL_BIN: "here" }, "home/.bun/install/global/here\n"],
+    ["bin", { BUN_INSTALL_BIN: "../bin", BUN_INSTALL_GLOBAL_DIR: "here/global" }, "cwd/here/bin\n"],
+    ["bin", { XDG_CACHE_HOME: "here" }, "home/.bun/bin\n"],
+    [
+      "cache",
+      { XDG_CACHE_HOME: "here", BUN_INSTALL_GLOBAL_DIR: "~/global", BUN_INSTALL_BIN: "~/bin" },
+      "home/global/here/.bun/install/cache",
+    ],
+    ["bin", { BUN_INSTALL: "" }, "home/.bun/bin\n"],
+    ["bin", { XDG_CACHE_HOME: "" }, "home/.bun/bin\n"],
+    ["bin", { BUN_INSTALL_BIN: "~\\here" }, "home/here\n"],
+    ["bin", { BUN_INSTALL: "~\\a\\b" }, "home/a/b/bin\n"],
+    ["bin", { BUN_INSTALL: "~/a\\b" }, "home/a/b/bin\n"],
+    ["cache", { BUN_INSTALL_CACHE_DIR: "~\\here" }, "home/here"],
+    ["cache", { BUN_INSTALL_CACHE_DIR: "~/a\\b" }, "home/a/b"],
+    ["bin", { BUN_INSTALL_BIN: "~/a\\b" }, isWindows ? "home/a/b\n" : "home/a\\b\n"],
+    ["bin", { BUN_INSTALL_GLOBAL_DIR: "~\\here" }, "home/.bun/bin\n"],
+  ])("bun pm %s -g with %j", async (subcommand, variables, expected) => {
+    using dir = tempDir("pm-bin-global-relative", files);
+    const { stdout, stderr, exitCode } = await pmGlobal(String(dir), subcommand, variables);
+
+    expect({ stdout, stderr }).toEqual({ stdout: `${dir}/${expected}`.replaceAll("/", sep), stderr: "" });
+    expect(await readdirSorted(String(dir))).toEqual(["cwd", "home"]);
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each(["BUN_INSTALL_BIN", "BUN_INSTALL_GLOBAL_DIR"])("%s", variable => {
+    // Windows removes `link/..` before it follows the link.
+    test.skipIf(isWindows).each(["absolute", "relative"])("follows a symlink before .. (%s)", async kind => {
+      using dir = tempDir("pm-bin-global-link", { ...files, "real/dir/.keep": "" });
+      symlinkSync("real/dir", join(String(dir), "link"));
+      const { stderr, exitCode } = await pmGlobal(String(dir), "bin", {
+        BUN_INSTALL_GLOBAL_DIR: join(String(dir), "cwd"),
+        [variable]: `${kind === "absolute" ? dir : ".."}/link/../here`,
+      });
+
+      expect(stderr).toBe("");
+      expect(await readdirSorted(join(String(dir), "real"))).toEqual(["dir", "here"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.each(["~", "absolute"])("cache rm refuses to delete a BUN_INSTALL with a backslash (%s)", async kind => {
+    const folder = kind === "~" ? "home/to/ols" : "home/to\\ols";
+    using side = tempDir("pm-bun-install-backslashes", { ...sideFiles, ...projectFiles, [`${folder}/bin/bun`]: "" });
+    const bunInstall = join(String(side), folder);
+    const value = kind === "~" ? "~/to\\ols" : bunInstall;
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: value, BUN_INSTALL_CACHE_DIR: value });
+
+    expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(bunInstall, "$BUN_INSTALL"));
+    expect(await readdirSorted(bunInstall)).toEqual(["bin"]);
+  });
+
+  test("cache rm refuses to delete tools when BUN_INSTALL is tools\\bun", async () => {
+    using side = tempDir("pm-bun-install-older", { ...sideFiles, ...projectFiles, "tools/bun/bin/bun": "" });
+    const tools = join(String(side), "tools");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: tools + "\\bun", BUN_INSTALL_CACHE_DIR: tools });
+
+    expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(tools, "$BUN_INSTALL"));
+    expect(await readdirSorted(tools)).toEqual(["bun"]);
+  });
+
+  test.each([
+    [[], { BUN_INSTALL_CACHE_DIR: "..\\cache" }],
+    [["--cache-dir=..\\cache"], {}],
+  ])("a relative cache directory with a backslash leads out of the project: %j %j", async (args, variables) => {
+    using side = tempDir("pm-cache-dir-backslash", { ...sideFiles, ...projectFiles });
+    const spawnEnv = cacheEnv(String(side), variables);
+
+    expect(await pmCache(args, join(String(side), "proj"), spawnEnv)).toEqual({
+      stdout: join(String(side), "cache"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("cache rm refuses to delete what a relative BUN_INSTALL with a backslash names", async () => {
+    using side = tempDir("pm-bun-install-relative", { ...sideFiles, ...projectFiles, "tools/bin/bun": "" });
+    const tools = join(String(side), "tools");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: "..\\tools", BUN_INSTALL_CACHE_DIR: tools });
+
+    expect(await pmCache(["rm"], join(String(side), "proj"), spawnEnv)).toEqual(refused(tools, "$BUN_INSTALL"));
+    expect(await readdirSorted(tools)).toEqual(["bin"]);
+  });
+
+  test.skipIf(isWindows)("the global directory stays where it is when its name has a backslash", async () => {
+    using dir = tempDir("pm-global-stable", files);
+    const BUN_INSTALL = join(String(dir), "a\\b");
+    for (let run = 0; run < 2; run++) {
+      const result = await pmGlobal(String(dir), "cache", { BUN_INSTALL, BUN_INSTALL_BIN: join(BUN_INSTALL, "bin") });
+      expect(result).toEqual({ stdout: join(BUN_INSTALL, "install", "cache"), stderr: "", exitCode: 0 });
+    }
+    expect(await readdirSorted(String(dir))).toEqual(["a\\b", "cwd", "home"]);
+  });
+
+  test("the user's .bunfig.toml is found through a backslash", async () => {
+    using dir = tempDir("pm-xdg-backslash", { ...files, "xdg/.bunfig.toml": `install.globalBinDir = "~/here"` });
+    const { stdout, stderr, exitCode } = await pmGlobal(String(dir), "bin", { XDG_CONFIG_HOME: `${dir}\\xdg` });
+
+    expect({ stdout, stderr }).toEqual({ stdout: join(String(dir), "home", "here") + "\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["BUN_INSTALL", "here", expect.stringContaining("$BUN_INSTALL is not an absolute path"), 1],
+    ["XDG_CACHE_HOME", "here/.bun", "", 0],
+  ])("a relative %s does not let the project choose the global directory", async (variable, planted, error, code) => {
+    using dir = tempDir("pm-global-planted", {
+      ...files,
+      "cwd/package.json": JSON.stringify({ name: "documents" }),
+      [`cwd/${planted}/install/global/bunfig.toml`]: "does not parse",
+      [`cwd/${planted}/install/global/node_modules/documents/kept.txt`]: "",
+    });
+    const home = join(String(dir), "home");
+    const env = { ...envWithoutInstallDirs, [isWindows ? "USERPROFILE" : "HOME"]: home, [variable]: "here" };
+
+    for (const args of [["link"], ["pm", "bin", "-g"]]) {
+      const cwd = join(String(dir), "cwd");
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "ignore", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: error, exitCode: code });
+    }
+    expect(await readdirSorted(home)).toEqual(code === 0 ? [".bun", ".npmrc"] : [".npmrc"]);
+    expect(await readdirSorted(join(String(dir), "cwd", planted, "install/global/node_modules/documents"))).toEqual([
+      "kept.txt",
+    ]);
+  });
+
+  test.skipIf(isWindows)("--config finds a name with a backslash in the home directory", async () => {
+    using side = tempDir("pm-config-home", {
+      ...sideFiles,
+      ...projectFiles,
+      "home/a\\b.toml": `install.cache = "~/from-config"`,
+    });
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL: undefined, BUN_INSTALL_CACHE_DIR: undefined });
+
+    expect(await pmCache(["--config=~/a\\b.toml"], join(String(side), "proj"), spawnEnv)).toEqual({
+      stdout: join(String(side), "home", "from-config"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+describe.concurrent.skipIf(isWindows)("HOME contains a backslash", () => {
+  function backslashHome() {
+    const dir = tempDir("pm-home-backslash", {
+      "DOMAIN\\user": {
+        "lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", bin: { lib: "bin\\cli.sh" } }),
+        "lib/bin/cli.sh": "#!/bin/sh\n",
+        "tool/package.json": JSON.stringify({ name: "tool", version: "1.0.0", bin: "cli.js" }),
+        "tool/cli.js": `#!/usr/bin/env node\nconsole.log(require("./version.js"));`,
+        "tool/version.js": `module.exports = __filename;`,
+        "lib/src/.keep": "",
+        "app/package.json": JSON.stringify({ name: "app" }),
+      },
+    });
+    const HOME = join(String(dir), "DOMAIN\\user");
+    return {
+      HOME,
+      async run(cwd: string, ...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: join(HOME, cwd),
+          env: { ...envWithoutInstallDirs, HOME, SHELL: "/bin/bash" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // Nothing is written to `DOMAIN/user`.
+        expect(readdirSync(String(dir))).toEqual(["DOMAIN\\user"]);
+        return { stdout: stdout.replaceAll(HOME, "~"), stderr, exitCode };
+      },
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+
+  test.each([
+    ["pm bin", "~/lib/node_modules/.bin\n"],
+    ["pm bin -g", "~/.bun/bin\n"],
+    ["pm cache", "~/.bun/install/cache"],
+    ["pm pkg get name", '"lib"\n'],
+    ["pm pkg fix", ""],
+    ["pm version patch", "v1.0.1\n"],
+    ["pm pack --quiet --destination out", "~/lib/src/out/lib-1.0.0.tgz\n"],
+    ["pm pack --quiet --filename out.tgz", "~/lib/src/out.tgz\n"],
+  ])("bun %s", async (command, stdout) => {
+    using home = backslashHome();
+    expect(await home.run("lib/src", ...command.split(" "))).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test("bun add -g", async () => {
+    using home = backslashHome();
+    const bin = join(home.HOME, ".bun", "bin");
+
+    const { stderr, exitCode } = await home.run("app", "add", "-g", "../tool");
+    expect(stderr).toEndWith(`export PATH="${bin.replaceAll("\\", "\\\\")}:$PATH"\n`);
+    expect(exitCode).toBe(0);
+
+    expect(await home.run("app", "--bun", join(bin, "tool"))).toEqual({
+      stdout: "~/.bun/install/global/node_modules/tool/version.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun link and bun unlink", async () => {
+    using home = backslashHome();
+    const global = join(home.HOME, ".bun", "install", "global", "node_modules");
+
+    expect(await home.run("lib", "link")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(global)).toEqual(["lib"]);
+    expect(readdirSync(join(home.HOME, ".bun", "bin"))).toEqual(["lib"]);
+
+    expect(await home.run("app", "link", "lib")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await exists(join(home.HOME, "app", "node_modules", "lib", "package.json"))).toBeTrue();
+    expect(await exists(join(home.HOME, "app", "node_modules", ".bin", "lib"))).toBeTrue();
+
+    expect(await home.run("lib", "unlink")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(readdirSync(global)).toEqual([]);
+    expect(readdirSync(join(home.HOME, ".bun", "bin"))).toEqual([]);
   });
 });
 

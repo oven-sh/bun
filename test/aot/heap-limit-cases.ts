@@ -1621,7 +1621,11 @@ const worker = new Worker("./child.ts");
 worker.on("error", (error: Error) => parentPort!.postMessage("the child ends with: " + error.name + " " + error.message));
 worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " + code));
 `,
-      "child.ts": isToldAndGoesOnFilling("String"),
+      // The list is stored where others may read it: what nobody reads is not made, and then nothing fills.
+      "child.ts": isToldAndGoesOnFilling("String").replace(
+        "head = { id: i, next: head };",
+        "(globalThis as any).kept = head = { id: i, next: head };",
+      ),
     });
     inPart(test)(
       "a Worker of a Worker that ends so takes neither its parent nor the main thread along",

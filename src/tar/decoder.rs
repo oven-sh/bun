@@ -9,6 +9,7 @@ use crate::reader::{Dialect, Entry, Event, Options, Poll, Reader};
 const BLOCK: usize = 64 * 1024;
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read.c#L578
 const MAX_LAYERS: usize = 24;
+const MIB: usize = 1024 * 1024;
 
 /// Where a layer's next block goes.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -29,7 +30,7 @@ impl Layer {
         let mut out = Vec::new();
         out.try_reserve_exact(BLOCK)?;
         Ok(Self {
-            gzip: gzip::Decoder::new(dialect)?,
+            gzip: gzip::Decoder::new(dialect),
             out,
             pos: 0,
             done: false,
@@ -46,6 +47,9 @@ pub struct Decoder {
     /// The first one reads the caller's input, and each next one the output of the one before.
     layers: Vec<Layer>,
     tar: Reader,
+    /// What the layers behind the first have put out, and may.
+    inner_output: usize,
+    inner_output_limit: usize,
 }
 
 impl Decoder {
@@ -58,6 +62,8 @@ impl Decoder {
         Ok(Self {
             layers,
             tar: Reader::new(options),
+            inner_output: 0,
+            inner_output_limit: usize::MAX,
         })
     }
 
@@ -101,12 +107,22 @@ impl Decoder {
                 Some(lower) => (lower.unread(), lower.done),
                 None => (input.get(used_total..).unwrap_or_default(), eof),
             };
-            let decoded = layer.gzip.decode(
+            let before = layer.out.len();
+            let mut decoded = layer.gzip.decode(
                 source,
                 source_eof,
                 &mut layer.out,
                 start.saturating_add(BLOCK),
             );
+            if index > 0 {
+                let produced = layer.out.len().saturating_sub(before);
+                self.inner_output = self.inner_output.saturating_add(produced);
+                if self.inner_output > self.inner_output_limit {
+                    decoded = Err(Error::InnerLayersTooLarge {
+                        limit: self.inner_output_limit,
+                    });
+                }
+            }
             let (used, progress) = match decoded {
                 Ok(decoded) => decoded,
                 Err(error) => {
@@ -140,7 +156,7 @@ impl Decoder {
         }
     }
 
-    /// To its reader a layer that fails has ended: an error inside a member, nothing between two.
+    /// To its reader a layer that fails where libarchive's did has ended: an error inside a member, nothing between two.
     fn refill_source(
         &mut self,
         index: usize,
@@ -150,7 +166,11 @@ impl Decoder {
     ) -> Result<usize> {
         match self.refill(index, input, eof, place) {
             Ok((used, _)) => Ok(used),
-            Err(error @ Error::Alloc(_)) => Err(error),
+            Err(
+                error @ (Error::Alloc(_)
+                | Error::InnerLayersTooLarge { .. }
+                | Error::GzipHeaderMismatch),
+            ) => Err(error),
             Err(_) => {
                 if let Some(layer) = self.layers.get_mut(index) {
                     layer.done = true;
@@ -256,11 +276,15 @@ pub struct MemoryDecoder<'a> {
 
 /// A sparse map of a few bytes declares up to 2^60 zeros. Held to what gzip can make of the same input, about 1,000 times.
 fn holes_limit(archive: &[u8]) -> usize {
-    const MIB: usize = 1024 * 1024;
     archive
         .len()
         .saturating_mul(1024)
         .clamp(64 * MIB, 1024 * MIB)
+}
+
+/// Every layer multiplies the size. Held to what one layer can make of the input: 258 bytes of 2 bits.
+fn inner_output_limit(archive: &[u8]) -> usize {
+    archive.len().saturating_mul(1032).max(64 * MIB)
 }
 
 impl<'a> MemoryDecoder<'a> {
@@ -272,6 +296,7 @@ impl<'a> MemoryDecoder<'a> {
             decoder: Decoder::new(options, false)?,
             holes: 0,
         };
+        this.decoder.inner_output_limit = inner_output_limit(data);
         let max_layers = match options.dialect {
             Dialect::General => MAX_LAYERS,
             Dialect::Npm => 1,

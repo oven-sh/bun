@@ -1,29 +1,18 @@
-//! Timer subsystem JS-facing surface: setTimeout/setInterval/setImmediate/
-//! Bun.sleep/clear* host functions.
-//!
-//! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
-//! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
-//! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
-//! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
-//! `impl super::All { … }` surface plus the C-ABI export thunks.
+//! `setTimeout`, `setInterval`, `setImmediate`, `Bun.sleep` and the `clear*` functions.
 
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
+use super::timeout_object::Kind;
 use super::{
-    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
-    TimerObjectInternals,
+    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimerState, FakeTimers,
+    ImmediateObject, TimeoutObject, TimeoutWarning,
 };
 use crate::jsc_hooks::timer_all;
-
-// ════════════════════════════════════════════════════════════════════════════
-// JS-facing surface on `super::All`
-// ════════════════════════════════════════════════════════════════════════════
 
 impl All {
     pub(crate) fn update_date_header_timer_if_necessary(
@@ -32,7 +21,6 @@ impl All {
         vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
-            // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
                 self.date_header_timer.enable(
                     self,
@@ -107,7 +95,6 @@ impl All {
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
         minimum_ms: u32,
-        warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
         // saturates to i32::MAX; OneMs yields either 1 or a value already
@@ -125,32 +112,30 @@ impl All {
             }
             CountdownOverflowBehavior::OneMs => {
                 if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
-                    if warn {
-                        if countdown_double > i32::MAX as f64 {
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutOverflowWarning,
-                            )?;
-                        } else if countdown_double < 0.0 && !self.warned_negative_number.get() {
-                            self.warned_negative_number.set(true);
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNegativeWarning,
-                            )?;
-                        } else if !countdown.is_undefined()
-                            && countdown.is_number()
-                            && countdown_double.is_nan()
-                            && !self.warned_not_number.get()
-                        {
-                            self.warned_not_number.set(true);
-                            Self::warn_invalid_countdown(
-                                global_this,
-                                countdown_double,
-                                TimeoutWarning::TimeoutNaNWarning,
-                            )?;
-                        }
+                    if countdown_double > i32::MAX as f64 {
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutOverflowWarning,
+                        )?;
+                    } else if countdown_double < 0.0 && !self.warned_negative_number.get() {
+                        self.warned_negative_number.set(true);
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNegativeWarning,
+                        )?;
+                    } else if !countdown.is_undefined()
+                        && countdown.is_number()
+                        && countdown_double.is_nan()
+                        && !self.warned_not_number.get()
+                    {
+                        self.warned_not_number.set(true);
+                        Self::warn_invalid_countdown(
+                            global_this,
+                            countdown_double,
+                            TimeoutWarning::TimeoutNaNWarning,
+                        )?;
                     }
                     let is_too_long = countdown_double > i32::MAX as f64;
                     if is_too_long { 1 } else { minimum_ms }
@@ -176,13 +161,8 @@ impl All {
         let all = timer_all();
         let id = all.next_id();
 
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::Clamp,
-            0,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::Clamp, 0)?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
         Ok(TimeoutObject::init(
             cx,
@@ -192,7 +172,8 @@ impl All {
             wrapped_promise,
             JSValue::UNDEFINED,
             all.fake_timers.set_timeout_clock(),
-        ))
+        )
+        .to_js())
     }
 
     pub(crate) fn set_immediate(
@@ -229,13 +210,8 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            0,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::OneMs, 0)?;
         let clock = all.fake_timers.clock_while_active(clock);
         // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
         let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle.get();
@@ -251,11 +227,9 @@ impl All {
             clock,
         );
         if is_due_when_idle {
-            let object =
-                TimeoutObject::from_js(&timeout).expect("TimeoutObject::init returns its wrapper");
-            object.event_loop_timer.is_due_when_idle.set(true);
+            timeout.event_loop_timer.is_due_when_idle.set(true);
         }
-        Ok(timeout)
+        Ok(timeout.to_js())
     }
 
     pub(crate) fn set_interval(
@@ -272,13 +246,8 @@ impl All {
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         // Never 0, on either clock: it would be due again at the time it fired, so advancing the fake clock wouldn't end.
-        let countdown_int = all.js_value_to_countdown(
-            cx.global(),
-            countdown,
-            CountdownOverflowBehavior::OneMs,
-            1,
-            true,
-        )?;
+        let countdown_int =
+            all.js_value_to_countdown(cx.global(), countdown, CountdownOverflowBehavior::OneMs, 1)?;
         Ok(TimeoutObject::init(
             cx,
             id,
@@ -287,7 +256,8 @@ impl All {
             wrapped_callback,
             arguments,
             all.fake_timers.clock_while_active(clock),
-        ))
+        )
+        .to_js())
     }
 
     /// Largest id a JS number can represent exactly. A larger number or numeric string never matches a timer.
@@ -301,162 +271,43 @@ impl All {
         ((1..=Self::MAX_ID as i64).contains(&id) && id as f64 == number).then_some(id as u64)
     }
 
-    /// The timer `id` names for the running script, removed from the map
-    /// (see `VirtualMachine::context_may_name`).
-    fn remove_timer_by_id(
-        &self,
-        vm: &VirtualMachine,
-        context: &bun_jsc::ScriptExecutionContext,
-        id: u64,
-    ) -> Option<*mut TimeoutObject> {
-        // SAFETY: JS thread; the borrow ends with this function, which runs no JS.
-        let maps = unsafe { &mut *self.maps.get() };
-        let (map, idx) = if let Some(idx) = maps.set_timeout.get_index(&id) {
-            (&mut maps.set_timeout, idx)
-        } else {
-            let idx = maps.set_interval.get_index(&id)?;
-            (&mut maps.set_interval, idx)
-        };
-        let value: *mut EventLoopTimer = map.values()[idx];
-        // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
-        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
-        // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        let timeout = unsafe { TimeoutObject::from_timer_ptr(value) };
-        // SAFETY: in the map ⇒ live.
-        if !vm.context_may_name(context, unsafe { (*timeout).internals.context }) {
-            return None;
+    /// Node uses the string as a property key, so only the canonical spelling of an id names a timer.
+    fn timer_id_from_digits<C: Copy + Into<u32>>(digits: &[C]) -> Option<u64> {
+        let mut id: u64 = 0;
+        for &c in digits {
+            let digit = char::from_u32(c.into())?.to_digit(10)?;
+            if id == 0 && digit == 0 {
+                return None;
+            }
+            id = id.checked_mul(10)?.checked_add(u64::from(digit))?;
         }
-        map.swap_remove_at(idx);
-        Some(timeout)
+        (id <= Self::MAX_ID).then_some(id)
     }
 
-    pub(crate) fn clear_timer(
-        timer_id_value: JSValue,
-        global_this: &JSGlobalObject,
-        kind: Kind,
-    ) -> JsResult<()> {
+    /// `clearTimeout()` and `clearInterval()`.
+    fn clear_timeout(global: &JSGlobalObject, timer: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
-
-        let vm = global_this.bun_vm();
-        // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
-        let context = vm.context_of_caller();
-        let all = timer_all();
-
-        let timer: &TimerObjectInternals = 'brk: {
-            if timer_id_value.is_number() {
-                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
-                // integer names the same timer as the int32. Anything else clears nothing.
-                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
-                    return Ok(());
-                };
-                // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(vm, context, id) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { &(*t).internals };
-            } else if timer_id_value.is_string_literal() {
-                // Primitive string only (JSType::String) — boxed `new String(..)`
-                // must fall through to the downcasts below and be a no-op, matching
-                // Node.js array-index semantics.
-                let string = timer_id_value.to_bun_string(global_this)?;
-                // Custom parseInt logic. I've done this because Node.js is very strict about string
-                // parameters to this function: they can't have leading whitespace, trailing
-                // characters, signs, or even leading zeroes. None of the readily-available string
-                // parsing functions are this strict. The error case is to just do nothing (not
-                // clear any timer).
-                //
-                // The reason is that in Node.js this function's parameter is used for an array
-                // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
-                let parsed: u64 = {
-                    let mut accumulator: u64 = 0;
-                    // We can handle all encodings the same way since the only permitted characters
-                    // are ASCII.
-                    macro_rules! parse_slice {
-                        ($slice:expr) => {{
-                            let slice = $slice;
-                            for (i, &c) in slice.iter().enumerate() {
-                                let c = c as u32;
-                                if c < ('0' as u32) || c > ('9' as u32) {
-                                    // Non-digit characters are not allowed
-                                    return Ok(());
-                                } else if i == 0 && c == ('0' as u32) {
-                                    // Leading zeroes are not allowed
-                                    return Ok(());
-                                }
-                                // Fail on overflow
-                                accumulator = match accumulator.checked_mul(10) {
-                                    Some(v) => v,
-                                    None => return Ok(()),
-                                };
-                                accumulator =
-                                    match accumulator.checked_add(u64::from(c - '0' as u32)) {
-                                        Some(v) => v,
-                                        None => return Ok(()),
-                                    };
-                            }
-                        }};
-                    }
-                    // bun_core::String has no `encoding()` accessor;
-                    // dispatch on `is_utf16()` and treat the 8-bit case via
-                    // `latin1()` (digit chars are in the ASCII range either way).
-                    if string.is_utf16() {
-                        parse_slice!(string.utf16());
-                    } else {
-                        parse_slice!(string.latin1());
-                    }
-                    accumulator
-                };
-                if parsed > Self::MAX_ID {
-                    return Ok(());
-                }
-                let Some(t) = all.remove_timer_by_id(vm, context, parsed) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { &(*t).internals };
+        let id = if timer.is_number() {
+            Self::timer_id_from_number(timer)
+        } else if timer.is_string_literal() {
+            let string = timer.to_bun_string(global)?;
+            if string.is_utf16() {
+                Self::timer_id_from_digits(string.utf16())
+            } else {
+                Self::timer_id_from_digits(string.latin1())
             }
-
-            if let Some(timeout) = timer_id_value.as_class_ref::<TimeoutObject>() {
-                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
-                if kind != Kind::SetImmediate {
-                    timeout.internals.cancel(vm);
-                }
-            } else if let Some(immediate) = timer_id_value.as_class_ref::<ImmediateObject>() {
-                // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-                if kind == Kind::SetImmediate {
-                    immediate.internals.cancel(vm);
-                }
+        } else {
+            if let Some(timeout) = timer.as_class_ref::<TimeoutObject>() {
+                timeout.cancel();
             }
-            return Ok(());
+            None
         };
-
-        timer.cancel(vm);
-        Ok(())
-    }
-
-    pub(crate) fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
-        Self::clear_timer(id, global_this, Kind::SetImmediate)?;
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub(crate) fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
-        Self::clear_timer(id, global_this, Kind::SetTimeout)?;
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub(crate) fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
-        Self::clear_timer(id, global_this, Kind::SetInterval)?;
+        if let Some(id) = id {
+            TimeoutObject::cancel_by_id(global.bun_vm(), id);
+        }
         Ok(JSValue::UNDEFINED)
     }
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Method bodies on canonical sibling types (`mod.rs` definitions).
-// ════════════════════════════════════════════════════════════════════════════
 
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.
@@ -488,7 +339,7 @@ impl DateHeaderTimer {
 // ════════════════════════════════════════════════════════════════════════════
 
 // `generate-host-exports.ts`
-// scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
+// scrapes the `// HOST_EXPORT` markers below and emits the thunks into
 // `generated_host_exports.rs`, each routing through `host_fn::to_js_host_call`.
 //
 // C++ callers (`src/jsc/bindings/node/NodeTimers.cpp`, `BunObject.cpp`) declare
@@ -622,11 +473,7 @@ pub(crate) fn fake_request_animation_frame_export(
         JSValue::js_number((now_ns + to_next_frame * NS_PER_MS) as f64 / NS_PER_MS as f64),
         clock,
     );
-    TimeoutObject::from_js(&timeout)
-        .expect("TimeoutObject::init returns its wrapper")
-        .internals
-        .to_primitive()
-        .map(JSValue::js_number_from_uint64)
+    timeout.to_primitive().map(JSValue::js_number_from_uint64)
 }
 
 // HOST_EXPORT(Bun__FakeTimers__queueTick, c)
@@ -665,7 +512,13 @@ pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)
 pub(crate) fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-    All::clear_immediate(global, id)
+    if id.is_number() || id.is_string_literal() {
+        return All::clear_timeout(global, id);
+    }
+    if let Some(immediate) = id.as_class_ref::<ImmediateObject>() {
+        immediate.cancel();
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__Timer__clearTimeout, c)
@@ -675,7 +528,7 @@ pub(crate) fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsRe
 
 // HOST_EXPORT(Bun__Timer__clearInterval, c)
 pub(crate) fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
-    All::clear_interval(global, id)
+    All::clear_timeout(global, id)
 }
 
 pub(crate) mod internal_bindings {

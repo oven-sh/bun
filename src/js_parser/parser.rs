@@ -238,6 +238,10 @@ pub mod Runtime {
         pub unwrap_commonjs_packages: &'static [&'static [u8]],
 
         pub commonjs_at_runtime: bool,
+        /// See `defer_requires::LOADS`.
+        pub lists_loads: bool,
+        /// See `defer_requires.rs`. Needs `lists_loads`.
+        pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
 
         pub emit_decorator_metadata: bool,
@@ -310,6 +314,8 @@ pub mod Runtime {
                 code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
+                lists_loads: false,
+                defers_requires: false,
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
@@ -381,6 +387,10 @@ pub mod Runtime {
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
+
+            if self.lists_loads {
+                hasher.update(&[b'l', u8::from(self.defers_requires)]);
             }
 
             // Hash --feature flags. These directly affect transpiled output via
@@ -889,97 +899,6 @@ impl AsyncPrefixExpression {
     }
 }
 
-// Packed u8 — assign_target:u2, is_delete_target:b1,
-// was_originally_identifier:b1, is_call_target:b1, _padding:u3 (LSB-first).
-// Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
-// transparent u8 with manual shift accessors.
-#[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct IdentifierOpts(u8);
-
-impl IdentifierOpts {
-    const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
-    const IS_DELETE_TARGET: u8 = 1 << 2;
-    const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
-    const IS_CALL_TARGET: u8 = 1 << 4;
-    const IS_TEMPLATE_TAG: u8 = 1 << 5;
-    const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
-
-    #[inline]
-    pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
-        // AssignTarget is #[repr(u8)] with discriminants 0/1/2 only; the 2-bit
-        // mask admits `3`, which would be UB to transmute. Exhaustive match
-        // keeps the packed-u8 layout without the hazard. bits 0-1 are always
-        // written via set_assign_target from a valid variant, so the `_` arm
-        // is unreachable by construction.
-        match self.0 & Self::ASSIGN_TARGET_MASK {
-            0 => js_ast::AssignTarget::None,
-            1 => js_ast::AssignTarget::Replace,
-            2 => js_ast::AssignTarget::Update,
-            _ => unreachable!(),
-        }
-    }
-    #[inline]
-    pub(crate) const fn is_delete_target(self) -> bool {
-        self.0 & Self::IS_DELETE_TARGET != 0
-    }
-    #[inline]
-    pub(crate) const fn was_originally_identifier(self) -> bool {
-        self.0 & Self::WAS_ORIGINALLY_IDENTIFIER != 0
-    }
-    #[inline]
-    pub(crate) const fn is_call_target(self) -> bool {
-        self.0 & Self::IS_CALL_TARGET != 0
-    }
-    /// The tag of a tagged template, which passes `this` like a call target.
-    #[inline]
-    pub(crate) const fn is_template_tag(self) -> bool {
-        self.0 & Self::IS_TEMPLATE_TAG != 0
-    }
-    /// See `ExprIn::is_property_access_target`.
-    #[inline]
-    pub(crate) const fn is_property_access_target(self) -> bool {
-        self.0 & Self::IS_PROPERTY_ACCESS_TARGET != 0
-    }
-
-    // Builder-style helpers (this stays a packed u8 rather than a
-    // named-field struct).
-    #[inline]
-    pub(crate) const fn new() -> Self {
-        Self(0)
-    }
-    #[inline]
-    pub(crate) const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
-        self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_is_delete_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_was_originally_identifier(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
-        self
-    }
-    #[inline]
-    pub(crate) const fn with_is_property_access_target(mut self, v: bool) -> Self {
-        self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u8) << 6);
-        self
-    }
-}
-
 pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     use js_ast::StmtData::*;
     match stmt.data {
@@ -995,51 +914,89 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct ExprIn {
-    /// This tells us if there are optional chain expressions (EDot, EIndex, or
-    /// ECall) that are chained on to this expression. Because of the way the AST
-    /// works, chaining expressions on to this expression means they are our
-    /// parent expressions.
-    ///
-    /// Some examples:
-    ///
-    ///   a?.b.c  // EDot
-    ///   a?.b[c] // EIndex
-    ///   a?.b()  // ECall
-    ///
-    /// Note that this is false if our parent is a node with a OptionalChain
-    /// value of OptionalChainStart. That means it's the start of a new chain, so
-    /// it's not considered part of this one.
-    ///
-    /// Some examples:
-    ///
-    ///   a?.b?.c   // EDot
-    ///   a?.b?.[c] // EIndex
-    ///   a?.b?.()  // ECall
-    ///
-    /// Also note that this is false if our parent is a node with a OptionalChain
-    /// value of OptionalChainNone. That means it's outside parentheses, which
-    /// means it's no longer part of the chain.
-    ///
-    /// Some examples:
-    ///
-    /// Certain substitutions of identifiers are disallowed for assignment targets.
-    /// For example, we shouldn't transform "undefined = 1" into "void 0 = 1". This
-    /// isn't something real-world code would do but it matters for conformance
-    /// tests.
-    pub(crate) assign_target: js_ast::AssignTarget,
+/// What the parent expression does with "x".
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsedAs {
+    Value,
+    /// "x()"
+    CallTarget,
+    /// "x``"
+    TemplateTag,
+    /// "delete x"
+    DeleteTarget,
+    /// "x = a", "[x] = a", "for (x of a)"
+    AssignTarget,
+    /// "x += a", "x++"
+    UpdateTarget,
+    /// "x.a", "x[a]", but not "delete x.a"
+    Object,
+    /// "x.a()", "x.a.b()"
+    ObjectOfCallTarget,
+    /// "const a = x"
+    Initializer,
+    /// "const { a } = x"
+    DestructuredInitializer,
+    /// "Object.keys(x)"
+    ObjectKeysArgument,
+}
 
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
-    pub(crate) is_immediately_assigned_to_decl: bool,
+impl UsedAs {
+    #[inline]
+    pub(crate) const fn is_assigned(self) -> bool {
+        matches!(self, Self::AssignTarget | Self::UpdateTarget)
+    }
 
-    pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+    #[inline]
+    pub(crate) const fn is_assigned_or_deleted(self) -> bool {
+        self.is_assigned() || matches!(self, Self::DeleteTarget)
+    }
 
-    /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
-    pub(crate) is_property_access_target: bool,
+    /// Both pass `this`.
+    #[inline]
+    pub(crate) const fn is_callee(self) -> bool {
+        matches!(self, Self::CallTarget | Self::TemplateTag)
+    }
 
-    pub(crate) is_object_keys_argument: bool,
+    /// The parent only reads, calls or assigns a property of this.
+    #[inline]
+    pub(crate) const fn is_object(self) -> bool {
+        matches!(
+            self,
+            Self::Object | Self::ObjectOfCallTarget | Self::DestructuredInitializer
+        )
+    }
+
+    #[inline]
+    pub(crate) const fn is_initializer(self) -> bool {
+        matches!(self, Self::Initializer | Self::DestructuredInitializer)
+    }
+
+    /// The call that `--drop` removes if this is one of its names.
+    #[inline]
+    pub(crate) const fn leads_to_call(self) -> bool {
+        matches!(self, Self::CallTarget | Self::ObjectOfCallTarget)
+    }
+
+    /// The use of "x" when this is the use of "[x]" or "{ a: x }".
+    #[inline]
+    pub(crate) const fn of_item(self) -> Self {
+        if self.is_assigned() {
+            self
+        } else {
+            Self::Value
+        }
+    }
+}
+
+impl From<js_ast::AssignTarget> for UsedAs {
+    #[inline]
+    fn from(target: js_ast::AssignTarget) -> Self {
+        match target {
+            js_ast::AssignTarget::None => Self::Value,
+            js_ast::AssignTarget::Replace => Self::AssignTarget,
+            js_ast::AssignTarget::Update => Self::UpdateTarget,
+        }
+    }
 }
 
 /// This function exists to tie all of these checks together in one place

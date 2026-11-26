@@ -26,7 +26,6 @@ use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
 };
-use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
@@ -184,7 +183,7 @@ impl ErrorReportRequest {
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
                     frame.source_url = StringOrView::from_bytes(abs_path);
-                    let mut relative_path_buf = path_buffer_pool::get();
+                    let mut relative_path_buf = bun_paths::Path::new();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
                     if strings::eql(frame.function_name.byte_slice(), rel_path) {
                         frame.function_name = StringOrView::EMPTY;
@@ -284,7 +283,7 @@ impl ErrorReportRequest {
 
             let src_to_write: &[u8] = frame.source_url.byte_slice();
             if strings::has_prefix_comptime(src_to_write, b"/") {
-                let mut relative_path_buf = path_buffer_pool::get();
+                let mut relative_path_buf = bun_paths::Path::new();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);
                 _ = out.write_int_le::<u32>(file.len() as u32);
                 out.extend_from_slice(file);

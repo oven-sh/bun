@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _, SetForScope};
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -218,16 +219,6 @@ pub struct VirtualMachine {
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: JsCell<Vec<Box<[u8]>>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    /// LAYERING: the real type is `bun_runtime`'s
-    /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
-    ///
-    /// The HTMLRewriter sink whose lol-html `write()`/`end()`/`resume()` call
-    /// is currently on this VM's native stack, if any. Content handlers reach
-    /// their sink through it (to record a thrown exception, and to park the JS
-    /// wrapper + pending promise when an async handler suspends the rewrite).
-    /// Saved and restored LIFO around every lol-html call, so a handler body
-    /// that synchronously starts a nested `transform()` nests correctly.
-    pub html_rewriter_active_sink: Cell<Option<core::ptr::NonNull<c_void>>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
@@ -585,9 +576,9 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
-    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+    let file = standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name));
+    match file.and_then(crate::compiled_program::key_of_named_file) {
         Some(canonical) => {
-            let canonical = crate::compiled_program::entry_module_key(canonical);
             *out_len = canonical.len();
             canonical.as_ptr()
         }
@@ -1138,15 +1129,6 @@ impl VirtualMachine {
             return None;
         }
         self.graph_contexts.get().get(&id).map(|context| &**context)
-    }
-
-    /// Whether a timer or pool job made for `context` under `generation` (the
-    /// [`test_isolation_generation`](Self::test_isolation_generation) of then) has outlived the
-    /// script it would continue: its context has stopped, or `bun test --isolate` has moved on to
-    /// another file since.
-    #[inline]
-    pub fn has_outlived_its_script(&self, context: crate::ContextId, generation: u32) -> bool {
-        generation != self.test_isolation_generation.get() || !self.is_context_live(context)
     }
 
     /// Whether the context `id` names has not stopped.
@@ -1857,8 +1839,7 @@ impl VirtualMachine {
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
         // has no higher-tier dep, so it lives here unconditionally.
-        let prev_had_errors = self.had_errors.get();
-        self.had_errors.set(false);
+        let _had_errors = self.had_errors.set_for_scope(false);
 
         // The actual print path needs `ConsoleObject::Formatter` +
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
@@ -1894,10 +1875,6 @@ impl VirtualMachine {
             }
             let _ = writer.flush();
         }
-
-        // The hook does not unwind across the dispatch boundary, so restore
-        // linearly.
-        self.had_errors.set(prev_had_errors);
     }
 
     /// Looks up (or
@@ -1984,13 +1961,12 @@ impl VirtualMachine {
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // What a listener throws comes back here, and is the runner's.
             if self.is_running_vitest_entry.get() && !self.is_handling_uncaught_exception.get() {
-                self.is_handling_uncaught_exception.set(true);
+                let _handling = self.is_handling_uncaught_exception.raise_for_scope();
                 let handled = Bun__handleUncaughtException(
                     global_object,
                     err.to_error().unwrap_or(err),
                     if is_rejection { 1 } else { 0 },
                 ) > 0;
-                self.is_handling_uncaught_exception.set(false);
                 if handled {
                     return true;
                 }
@@ -2016,7 +1992,8 @@ impl VirtualMachine {
             (hooks.process_exit)(global_object, 7);
             panic!("Uncaught exception while handling uncaught exception");
         }
-        self.is_handling_uncaught_exception.set(true);
+        // Held across `on_unhandled_rejection`: a handler that throws there exits with code 7.
+        let handling = self.is_handling_uncaught_exception.raise_for_scope();
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
@@ -2037,7 +2014,7 @@ impl VirtualMachine {
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
-                self.is_handling_uncaught_exception.set(false);
+                drop(handling);
                 (hooks.process_exit)(global_object, 1);
                 panic!("made it past process.exit()");
             }
@@ -2046,14 +2023,6 @@ impl VirtualMachine {
             self.exit_handler.exit_code.set(1);
             (self.on_unhandled_rejection.get())(self, global_object, err);
         }
-        // Note: this reset must cover BOTH the FFI call and the
-        // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
-        self.is_handling_uncaught_exception.set(false);
         handled
     }
 
@@ -2167,9 +2136,8 @@ impl VirtualMachine {
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
-            self.is_inside_deferred_task_queue.set(true);
+            let _inside = self.is_inside_deferred_task_queue.raise_for_scope();
             self.event_loop().deferred_tasks.run();
-            self.is_inside_deferred_task_queue.set(false);
         }
 
         // The loop won't tick again, so flush now.
@@ -2369,7 +2337,7 @@ impl VirtualMachine {
         if let Some(hooks) = hooks {
             (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
-            // +1 while runtime state and the JSC heap are alive. The heap itself
+            // loop ref while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
@@ -2491,7 +2459,7 @@ impl Drop for VirtualMachine {
 impl VirtualMachine {
     /// One stop-phase sweep: armed handles (servers, listeners, watchers,
     /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
-    /// handles, every socket group, the VM-global dns channel. Reports whether
+    /// handles, every socket group, the VM-global dns client. Reports whether
     /// it found anything.
     ///
     /// # Safety
@@ -2726,7 +2694,7 @@ pub struct RuntimeHooks {
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
+    pub abort_signal_timeout_clock: fn() -> bun_event_loop::EventLoopTimer::Clock,
     /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
@@ -2820,7 +2788,7 @@ pub struct RuntimeHooks {
     pub retroactively_report_discovered_tests:
         fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
-    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// thread's `timer::All` heap so their JS pins drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
     /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
     ///
@@ -2830,11 +2798,7 @@ pub struct RuntimeHooks {
     pub cancel_timers: fn(vm: &VirtualMachine, only: Option<crate::ContextId>),
     /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
     pub end_hot_run_timers: fn(vm: &VirtualMachine, cancel: CancelHotRunTimers),
-    /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
-    /// the event loop, `RareData.file_polls`, and `runtime_state` are all
-    /// live. `ares_destroy()` re-enters the resolver's socket-state and query
-    /// callbacks; deferring it to `deinit_runtime_state`'s `RuntimeState` drop
-    /// runs those callbacks against freed state. No-op when the resolver was
+    /// Close the per-VM global DNS resolver's client while all that its queries and polls touch is live. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub stop_dns_for_vm_teardown: fn() -> SweepResult,
@@ -2931,7 +2895,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> bun_event_loop::EventLoopTimer::Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }
@@ -3065,7 +3029,6 @@ impl VirtualMachine {
             pending_unref_counter: Default::default(),
             preload: JsCell::default(),
             unhandled_pending_rejection_to_capture: None,
-            html_rewriter_active_sink: Cell::new(None),
             standalone_module_graph: opts.graph,
             finds_entry_points_by_path: opts.graph.is_some_and(|graph| {
                 graph
@@ -3804,6 +3767,38 @@ impl ResolveMode {
 pub struct ResolveFunctionResult<'r> {
     pub path: &'r [u8],
     pub(crate) query_string: &'r [u8],
+}
+
+/// What a specifier resolves to, for all VMs with `defers_requires`. Like Node.js's `Module._pathCache`, it is for good.
+pub struct SharedResolution(Vec<u8>);
+
+static SHARED_RESOLUTIONS: bun_threading::RwLock<
+    Option<bun_collections::HashMap<Vec<u8>, &'static [u8]>>,
+> = bun_threading::RwLock::new(None);
+
+impl SharedResolution {
+    pub fn new(directory: &[u8], specifier: &[u8], is_esm: bool) -> Self {
+        Self(match bun_paths::is_absolute(specifier) {
+            true => [&[u8::from(is_esm)], specifier].concat(),
+            false => [&[u8::from(is_esm)], directory, b"\0", specifier].concat(),
+        })
+    }
+
+    pub fn get(&self) -> Option<&'static [u8]> {
+        SHARED_RESOLUTIONS.read().as_ref()?.get(&self.0).copied()
+    }
+
+    pub fn set(self, path: &[u8]) {
+        if !bun_paths::is_absolute(path) {
+            return;
+        }
+        let mut all = SHARED_RESOLUTIONS.write();
+        let all = all.get_or_insert_default();
+        // `$Bun_defer` requires what it has resolved.
+        let itself = all.entry(Self::new(b"", path, false).0);
+        let path = *itself.or_insert_with(|| Box::leak(path.into()));
+        all.insert(self.0, path);
+    }
 }
 
 fn normalize_specifier_for_resolution<'a>(
@@ -4805,6 +4800,20 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        let is_shared = self.transpiler.get().options.defers_requires
+            && self.transpiler.get().resolver.custom_dir_paths.is_none()
+            && self.transpiler.get().options.macro_remap.count() == 0
+            && !self.finds_entry_points_by_path
+            && self.has_mutated_built_in_extensions.get() == 0
+            && self.commonjs_custom_extensions.get().len() == 0
+            && bun_paths::is_absolute(source_to_use);
+        let shared =
+            is_shared.then(|| SharedResolution::new(source_to_use, normalized_specifier, is_esm));
+        if let Some(path) = shared.as_ref().and_then(SharedResolution::get) {
+            (ret.path, ret.query_string) = (path, query_string);
+            return Ok(());
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4846,40 +4855,17 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let buf = buf.as_mut_slice();
-                    let mut busted_as_spelled = false;
-                    let mut busted_working_directory = false;
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
-                            }
-                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            busted_as_spelled = bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
-                        } else {
-                            // Absolute but root — fall through to join.
-                            &b""[..]
-                        }
-                    } else {
-                        &b""[..]
+                    let path = bun_resolver::path_of_specifier(normalized_specifier, import_kind);
+                    let bust_parent_from = |base: &[u8]| {
+                        let parts = [top_level_dir, base, &path, b".."];
+                        bust_dir_cache(&bun_paths::Path::resolve(&parts))
                     };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
+                    let busted = if bun_paths::is_absolute(normalized_specifier) {
+                        // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
+                        let as_spelled = bun_paths::dirname_or_root(normalized_specifier);
+                        bust_dir_cache(as_spelled) | bust_parent_from(source_to_use)
                     } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
+                        let mut busted_working_directory = false;
                         // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
                         let is_in_executable =
                             bun_options_types::standalone_path::is_bun_standalone_file_path(
@@ -4899,39 +4885,18 @@ impl VirtualMachine {
                                 });
                                 // From there the resolver has gone on to the working directory.
                                 if found.is_some() {
-                                    use bun_paths::resolve_path::{
-                                        join_abs_string_buf_checked, platform,
-                                    };
-                                    let mut buffer = bun_paths::path_buffer_pool::get();
-                                    let parts = [normalized_specifier, &b".."[..]];
-                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
-                                        top_level_dir,
-                                        &mut buffer[..],
-                                        &parts,
-                                    );
-                                    busted_working_directory = folder.is_some_and(bust_dir_cache);
+                                    busted_working_directory = bust_parent_from(top_level_dir);
                                 }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
                         };
-                        let parts: [&[u8]; 3] = [
-                            folder_on_disk.as_deref().unwrap_or(source_to_use),
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
+                        bust_parent_from(folder_on_disk.as_deref().unwrap_or(source_to_use))
+                            || busted_working_directory
                     };
 
                     // Only re-query if we previously had something cached.
-                    if bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) || busted_as_spelled
-                        || busted_working_directory
-                    {
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -4950,6 +4915,9 @@ impl VirtualMachine {
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
         ret.path = result_path.text;
+        if let Some(shared) = shared {
+            shared.set(ret.path);
+        }
         if self.finds_entry_points_by_path
             && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {
@@ -5512,22 +5480,15 @@ impl VirtualMachine {
         let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let mut len = match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(r) => r,
+        let mut cwd = match bun_sys::getcwd_z(&mut buf) {
+            bun_sys::Result::Ok(cwd) => bun_paths::Path::from(cwd),
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
+                let _ = bun_sys::chdir(&bun_paths::Path::from(fs.top_level_dir()));
                 return bun_sys::Result::Err(err);
             }
         };
-        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
-            buf[len] = bun_paths::SEP;
-            len += 1;
-        }
-        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
+        cwd.push_trailing_sep();
+        fs.set_top_level_dir(Self::intern_cwd(fs, &cwd));
         Ok(())
     }
 
@@ -5614,9 +5575,7 @@ impl VirtualMachine {
         }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
-            let _ = self.set_process_cwd(z);
+            let _ = self.set_process_cwd(&bun_paths::Path::from(&cwd));
         }
 
         let _ = self.event_loop().drain_microtasks();
@@ -5849,10 +5808,11 @@ impl VirtualMachine {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
                 let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
-                let formatter = &mut *ctx.formatter;
+                let depth = ctx.formatter.depth.saturating_add(1);
+                let mut deeper = SetForScope::new(&mut *ctx.formatter, |f| &mut f.depth, depth);
+                let formatter = &mut *deeper;
                 let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
-                formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
                     && next_value.js_type() == crate::JSType::ErrorInstance
                     && formatter.visited_contains(next_value)
@@ -5889,7 +5849,6 @@ impl VirtualMachine {
                         ctx.allow_side_effects,
                     );
                 }
-                formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
                 formatter: &mut *formatter,
@@ -6606,8 +6565,8 @@ impl VirtualMachine {
         use crate::console_object::formatter::TagOptions;
         use crate::console_object::{Tag, TagPayload};
 
-        let prev_had_errors = self.had_errors.replace(true);
-        scopeguard::defer! { self.had_errors.set(prev_had_errors) }
+        let prev_had_errors = self.had_errors.get();
+        let _had_errors = self.had_errors.set_for_scope(true);
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.get() {
@@ -7056,23 +7015,20 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
         for err in &errors_to_append {
             writer.write_all(b"\n")?;
-            let prev_depth = formatter.depth;
-            formatter.depth = formatter.depth.saturating_add(1);
-            let over_cap = formatter.depth > formatter.error_chain_max_depth();
-            let result: crate::CrateResult<()> = if over_cap {
-                pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            let depth = formatter.depth.saturating_add(1);
+            let mut formatter = SetForScope::new(&mut *formatter, |f| &mut f.depth, depth);
+            if depth > formatter.error_chain_max_depth() {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>")?;
             } else {
                 self.print_error_instance_js(
                     err.value(),
                     exception_list.as_deref_mut(),
-                    formatter,
+                    &mut formatter,
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                )
-            };
-            formatter.depth = prev_depth;
-            result?;
+                )?;
+            }
         }
 
         Ok(())
@@ -7197,7 +7153,7 @@ impl VirtualMachine {
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
+                    bun_core::fmt::github_action_property(&file),
                     frame.position.line.one_based(),
                     frame.position.column.one_based(),
                 );
@@ -7258,7 +7214,8 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let file: &[u8] =
+                    &crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

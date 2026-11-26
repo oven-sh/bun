@@ -12,6 +12,7 @@ use bun_lint::linter::{LintMessage, RuleId};
 use bun_lint::rule::Plugin;
 use bun_lint::source::LineStarts;
 use bun_sema::util::FxHashMap;
+use bun_threading::Guarded;
 use std::io::Write;
 
 macro_rules! pretty {
@@ -68,13 +69,44 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 struct FileCache<'r> {
     /// The last file looked up, its line starts, and its [`display_path`].
     file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
-    /// The last file that [`with_help`] linted again, and the resulting messages.
-    relinted: Option<(&'r FileResult, Vec<LintMessage>)>,
-    /// The rules of the problems that get printed, if only a few do.
-    printed_rules: Option<Vec<&'r RuleId>>,
+    /// The files that were linted again for [`with_help`], and the resulting messages.
+    relinted: Vec<(&'r FileResult, Vec<LintMessage>)>,
 }
 
 impl<'r> FileCache<'r> {
+    /// `printed` is only looked at if [`Meta::help`] is set, in which case it's short.
+    fn new(printed: &mut dyn Iterator<Item = Problem<'r>>, meta: &Meta) -> FileCache<'r> {
+        let Some(lint) = meta.help else {
+            return FileCache::default();
+        };
+        let printed: Vec<Problem<'r>> = printed.collect();
+        let rules: Vec<&RuleId> = (printed.iter())
+            .filter_map(|it| it.message.rule_id.as_ref())
+            .collect();
+        let mut files: Vec<&FileResult> = Vec::new();
+        for Problem { result, .. } in printed {
+            if !files.iter().any(|it| std::ptr::eq(*it, result)) {
+                files.push(result);
+            }
+        }
+        let size = |it: &&FileResult| it.text.as_ref().map_or(0, |it| it.len());
+        bun_lint::utils::sort::sort_by_key(&mut files, |it| std::cmp::Reverse(size(it)));
+        let threads = (meta.pool).threads_for(files.iter().map(|it| size(it) as u64).sum());
+        let mut relinted = Guarded::new(Vec::with_capacity(files.len()));
+        let lint_at = |at: usize| {
+            let messages = lint(files[at], &rules);
+            relinted.lock().push((files[at], messages));
+        };
+        match threads.min(files.len()) {
+            0 | 1 => (0..files.len()).for_each(lint_at),
+            threads => meta.pool.for_each_on(threads, files.len(), &lint_at),
+        }
+        FileCache {
+            file: None,
+            relinted: std::mem::take(relinted.get_mut()),
+        }
+    }
+
     fn entry_for(
         &mut self,
         result: &'r FileResult,
@@ -88,22 +120,15 @@ impl<'r> FileCache<'r> {
 
 /// Returns `problem`'s message with oxlint's help text added, if that wasn't generated when the file was linted. See
 /// [`Meta::help`]. The help comes from the second lint's message with the same rule, location and text.
-fn with_help<'r>(
-    problem: Problem<'r>,
-    meta: &Meta,
-    cache: &mut FileCache<'r>,
-) -> Option<LintMessage> {
-    let (lint, Problem { result, message }) = (meta.help?, problem);
-    if !(cache.relinted.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
-        cache.relinted = Some((result, lint(result, cache.printed_rules.as_deref())));
-    }
+fn with_help(Problem { result, message }: Problem, cache: &FileCache) -> Option<LintMessage> {
+    let relinted = (cache.relinted.iter()).find(|it| std::ptr::eq(it.0, result))?;
     let rule = |it: &LintMessage| it.rule_id.as_ref().map(|id| id.to_vec());
     let is_same = |it: &&LintMessage| {
         (it.line, it.column, it.end) == (message.line, message.column, message.end)
             && it.message == message.message
             && rule(it) == rule(message)
     };
-    let found = cache.relinted.as_ref()?.1.iter().find(is_same)?;
+    let found = relinted.1.iter().find(is_same)?;
     Some(LintMessage {
         details: found.details.clone(),
         constant_help: found.constant_help,
@@ -220,14 +245,6 @@ impl<'r> Rule<'r> {
             Some(RuleId::Unknown(id)) => Rule::ById(id),
         }
     }
-}
-
-fn rules_of<'r>(problems: impl Iterator<Item = Problem<'r>>) -> Option<Vec<&'r RuleId>> {
-    Some(
-        problems
-            .filter_map(|it| it.message.rule_id.as_ref())
-            .collect(),
-    )
 }
 
 /// Groups problems that have the same rule and message, largest group first. With `by_rule`, the message is ignored and
@@ -403,7 +420,7 @@ fn write_pretty_problem<'r>(
     meta: &Meta,
     cache: &mut FileCache<'r>,
 ) -> bool {
-    let message_with_help = with_help(problem, meta, cache);
+    let message_with_help = with_help(problem, cache);
     let (result, message) = (
         problem.result,
         message_with_help.as_ref().unwrap_or(problem.message),
@@ -526,11 +543,8 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
 
 fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let cache = &mut FileCache::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
-        if problems.len() <= GROUP_THRESHOLD {
-            cache.printed_rules = rules_of(problems.iter().copied());
-        }
+        let cache = &mut FileCache::new(&mut problems.iter().copied(), meta);
         for (i, problem) in problems.into_iter().enumerate() {
             if i > 0 {
                 out.push(b'\n');
@@ -541,7 +555,7 @@ fn write_pretty_problems(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
     }
     let groups = grouped(&problems, meta.is_native);
     let detailed_count = groups.len().min(MAX_GROUPS);
-    cache.printed_rules = rules_of(groups[..detailed_count].iter().map(|it| it[0]));
+    let cache = &mut FileCache::new(&mut groups[..detailed_count].iter().map(|it| it[0]), meta);
     for group in &groups[..detailed_count] {
         let has_notes = write_pretty_problem(out, group[0], meta, cache);
         if group.len() > 1 {
@@ -635,7 +649,7 @@ fn write_agent_problem<'r>(
     let Some(&problem) = group.first() else {
         return;
     };
-    let message_with_help = with_help(problem, meta, cache);
+    let message_with_help = with_help(problem, cache);
     let (result, message) = (
         problem.result,
         message_with_help.as_ref().unwrap_or(problem.message),
@@ -729,18 +743,15 @@ fn write_agent_problem<'r>(
 
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
-    let cache = &mut FileCache::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
-        if problems.len() <= GROUP_THRESHOLD {
-            cache.printed_rules = rules_of(problems.iter().copied());
-        }
+        let cache = &mut FileCache::new(&mut problems.iter().copied(), meta);
         problems.iter().for_each(|problem| {
             write_agent_problem(out, std::slice::from_ref(problem), meta, cache)
         });
     } else {
         let groups = grouped(&problems, false);
         let listed_count = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
-        cache.printed_rules = rules_of(groups[..listed_count].iter().map(|it| it[0]));
+        let cache = &mut FileCache::new(&mut groups[..listed_count].iter().map(|it| it[0]), meta);
         groups[..listed_count]
             .iter()
             .for_each(|group| write_agent_problem(out, group, meta, cache));

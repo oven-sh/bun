@@ -80,7 +80,6 @@ leak:getaddrinfo
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
-leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release
 leak:JSC::stringProtoFuncReplaceUsingRegExp
@@ -90,9 +89,8 @@ leak:JSC::IntlDateTimeFormat::initializeDateTimeFormat
 leak:WebCore__DOMURL__fileSystemPath
 leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
-leak:runtime.node.zlib.NativeZlib.Context.init
 leak:JSC::intlCollatorAvailableLocales
-leak:Bun__Bindgen__CaresJsc__canonicalizeIP
+leak:Bun__Bindgen__AnswerJsc__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
@@ -105,8 +103,8 @@ leak:fromErrorInstance
 
 # JSC_TO_STRING_TAG_WITHOUT_TRANSITION
 leak:TLSSocket__create
-leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
-leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
+leak:WebCore::JSDOMPrototype<WebCore::JSReadableStreamDefaultReader,*>::finishCreation
+leak:WebCore::JSDOMPrototype<WebCore::JSReadableStreamDefaultController,*>::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
 # test/js/web/atomics.test.ts — RunLoop::scheduleTimer's DispatchTimer captures

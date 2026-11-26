@@ -46,8 +46,7 @@ pub use sources::{EntryPoint, EntryPointKind, ModulePaths, SourceKind, Sources};
 use crate::builtins::Platforms;
 use bun_core::ZBox;
 use bun_core::strings::{contains, contains_char};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_sema::resolve::parent_directory;
 use bun_sema_driver::host::to_native;
 use bun_sys::{Fd, File};
 
@@ -69,7 +68,7 @@ pub(crate) fn is_host_path(path: &[u8]) -> bool {
 }
 
 pub(crate) fn is_in_node_modules(path: &[u8]) -> bool {
-    contains(dirname::<Posix>(path), b"/node_modules/")
+    contains(parent_directory(path), b"/node_modules/")
 }
 
 pub(crate) fn read_file_bytes(path: &[u8]) -> Option<Vec<u8>> {

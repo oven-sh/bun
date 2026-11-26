@@ -234,10 +234,10 @@ fn write_plain_message(
     out.extend_from_slice(indent);
     if let Some(location) = data.location.as_ref().filter(|it| it.line > 0) {
         let file: &[u8] = &location.file;
-        out.extend_from_slice(match bun_paths::is_absolute(file) {
-            true => bun_paths::resolve_path::relative(cwd, file),
-            false => file,
-        });
+        match bun_paths::is_absolute(file) {
+            true => out.extend_from_slice(&bun_paths::Path::relative(cwd, file)),
+            false => out.extend_from_slice(file),
+        }
         let _ = write!(out, "({},{}): ", location.line, location.column);
     }
     out.extend_from_slice(label);

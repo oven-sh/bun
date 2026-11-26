@@ -7,8 +7,7 @@ use bun_core::strings;
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
 
-/// Printed right before the JSON, because the file itself can print too.
-const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
+const MARKER: &[u8] = Script::MARKER;
 
 /// One of the files that scripts are assembled from. Several scripts start with the same files.
 #[derive(Copy, Clone)]
@@ -138,6 +137,7 @@ fn run(
         source,
         // As with the original tools, `process.cwd()` is where the command runs, not where the file is.
         cwd: &environment.cwd,
+        loads_all: false,
     };
     let printed = (environment.run_script)(&script).map_err(|why| match why.trim_ascii_end() {
         // It exited without printing anything, as with `process.exit(1)`.
@@ -147,6 +147,10 @@ fn run(
     let Some(entries) = finish_payload(&printed) else {
         return Err(SILENT.to_vec());
     };
+    let large = entries.iter().find(|it| it.0 == b"large");
+    let large = large.and_then(|it| it.1.as_array()).unwrap_or_default();
+    let large = large.iter().filter_map(Json::as_str).map(<[u8]>::to_vec);
+    environment.js_engine.expect_modules(large.collect(), false);
     let config = entries.into_iter().find(|it| it.0 == b"config");
     Ok(config.map_or(Json::Null, |mut it| {
         restore_nan(&mut it.1);
@@ -154,8 +158,16 @@ fn run(
     }))
 }
 
+/// The path that [`run`] has given `script`, unless it has escapes.
+pub fn configuration_read_by(script: &[u8]) -> Option<&[u8]> {
+    let rest = script.strip_prefix(b"const given = {\"path\":\"")?;
+    let end = strings::index_of_any(rest, b"\"\\")?;
+    rest.get(..end).filter(|_| rest.get(end) == Some(&b'"'))
+}
+
 /// Finds the object that the script's `finish` wrote. `printed` is everything the script printed.
 fn finish_payload(printed: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+    let printed = &printed[..strings::last_index_of(printed, MARKER)?];
     let at = strings::last_index_of(printed, MARKER)?;
     bun_lint::json::parse(&printed[at + MARKER.len()..])?.into_object()
 }

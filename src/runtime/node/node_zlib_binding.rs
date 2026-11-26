@@ -14,15 +14,61 @@ use bun_jsc::{
 
 // ─── type defs ────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub(crate) struct Error {
-    pub(crate) msg: &'static CStr,
+    pub(crate) msg: &'static [u8],
     pub(crate) err: c_int,
     pub(crate) code: &'static CStr,
 }
 
 impl Error {
     pub(crate) const fn init(msg: &'static CStr, err: c_int, code: &'static CStr) -> Error {
-        Error { msg, err, code }
+        Error {
+            msg: msg.to_bytes(),
+            err,
+            code,
+        }
+    }
+}
+
+pub(crate) const Z_BUF_ERROR: c_int = -5;
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)] // names mirror Node.js zlib mode constants
+pub(crate) enum NodeMode {
+    NONE = 0,
+    DEFLATE = 1,
+    INFLATE = 2,
+    GZIP = 3,
+    GUNZIP = 4,
+    DEFLATERAW = 5,
+    INFLATERAW = 6,
+    UNZIP = 7,
+    BROTLI_DECODE = 8,
+    BROTLI_ENCODE = 9,
+    ZSTD_COMPRESS = 10,
+    ZSTD_DECOMPRESS = 11,
+}
+
+impl NodeMode {
+    /// The `NativeZlib`/`NativeBrotli`/`NativeZstd` constructors have validated the range.
+    #[inline]
+    pub(crate) const fn from_int(n: u8) -> Self {
+        match n {
+            1 => Self::DEFLATE,
+            2 => Self::INFLATE,
+            3 => Self::GZIP,
+            4 => Self::GUNZIP,
+            5 => Self::DEFLATERAW,
+            6 => Self::INFLATERAW,
+            7 => Self::UNZIP,
+            8 => Self::BROTLI_DECODE,
+            9 => Self::BROTLI_ENCODE,
+            10 => Self::ZSTD_COMPRESS,
+            11 => Self::ZSTD_DECOMPRESS,
+            _ => Self::NONE,
+        }
     }
 }
 
@@ -36,7 +82,7 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
-    bun_zlib::crc32_bytes(value, data)
+    bun_highway::crc32(value, data)
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -51,7 +97,7 @@ pub(crate) trait CompressionContext: Send + 'static {
     fn do_work(&mut self, input: &[u8], out: BorrowedCursor<'_, u8>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
-    fn write_result(&self) -> Result<[u32; 2], Error>;
+    fn write_result(&self) -> Result<[usize; 2], Error>;
 }
 
 /// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
@@ -94,6 +140,25 @@ impl<C> Stream<C> {
             input_copy: InputCopy::default(),
         })
     }
+}
+
+/// So small that two can be added.
+fn usize_from_js(value: JsLocal<'_>) -> usize {
+    (value.to_js().as_number() as usize).min(1 << f64::MANTISSA_DIGITS)
+}
+
+/// `_writeState` has to be able to count it.
+fn out_len_from_js(global: &JSGlobalObject, value: JsLocal<'_>) -> JsResult<usize> {
+    let len = usize_from_js(value);
+    if len > u32::MAX as usize {
+        return Err(global
+            .err(
+                ErrorCode::OUT_OF_RANGE,
+                format_args!("out_len must be <= {}", u32::MAX),
+            )
+            .throw());
+    }
+    Ok(len)
 }
 
 /// The codecs `memcpy` from `in` to `out`.
@@ -219,13 +284,13 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
         }
         this.stream().set(Some(stream));
 
-        match result {
+        let uncounted = match result {
             Ok(result) => T::flush_write_result(global, this_value, result),
             Err(err) => {
                 this.emit_error(global, this_value, &err);
                 return Ok(());
             }
-        }
+        };
 
         // A handle whose `init()` was never called has no write callback.
         if let Some(write_callback) = T::write_callback_get_cached(this_value) {
@@ -234,7 +299,7 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
                 write_callback,
                 global,
                 this_value,
-                &[],
+                uncounted.map(JSValue::js_number).as_slice(),
             );
         }
 
@@ -255,22 +320,24 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
     /// (`this._writeState`), re-resolving the cached `writeResult` typed array
     /// on every call so a detached, resized, or replaced backing store is
     /// skipped instead of written through a stale pointer.
+    ///
+    /// An input can be longer than the array can count. Returns what to add to `avail_in` then.
     #[inline]
-    fn flush_write_result(global: &JSGlobalObject, this_value: JSValue, result: [u32; 2]) {
-        let Some(write_result_value) = Self::write_result_get_cached(this_value) else {
-            return;
-        };
+    fn flush_write_result(
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        result: [usize; 2],
+    ) -> Option<f64> {
+        let write_result_value = Self::write_result_get_cached(this_value)?;
         if !write_result_value.is_cell() {
-            return;
+            return None;
         }
-        let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
-            return;
-        };
-        let write_result = write_result_buf.as_u32();
-        if write_result.len() < 2 {
-            return;
-        }
-        write_result[..2].copy_from_slice(&result.map(bun_core::Unaligned::new));
+        let mut write_result_buf = write_result_value.as_array_buffer(global)?;
+        let counted = result.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        (write_result_buf.as_u32().get_mut(..2)?)
+            .copy_from_slice(&counted.map(bun_core::Unaligned::new));
+        let uncounted = result[1] - counted[1] as usize;
+        (uncounted != 0).then_some(uncounted as f64)
     }
 
     fn pending_close(&self) -> &Cell<bool>;
@@ -364,7 +431,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 .throw());
         }
 
-        let (in_off, in_len): (u32, u32) = if in_js.is_null() {
+        let (in_off, in_len): (usize, usize) = if in_js.is_null() {
             // just a flush
             (0, 0)
         } else {
@@ -391,14 +458,14 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
-            if in_buf.byte_len < in_off as usize + in_len as usize {
+            let (in_off, in_len) = (usize_from_js(in_off), usize_from_js(in_len));
+            if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
                         ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
+                            in_off + in_len,
                             in_buf.byte_len,
                         ),
                     )
@@ -415,15 +482,15 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
-        if out_buf.byte_len < out_off as usize + out_len as usize {
+        let out_off = usize_from_js(out_off);
+        let out_len = out_len_from_js(global_this, out_len)?;
+        if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
+                        out_off + out_len,
                         out_buf.byte_len,
                     ),
                 )
@@ -445,9 +512,9 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         let buffers = PendingBuffers::pin(
             global_this,
             in_js,
-            in_off as usize..in_off as usize + in_len as usize,
+            in_off..in_off + in_len,
             out_js,
-            out_off as usize..out_off as usize + out_len as usize,
+            out_off..out_off + out_len,
             &mut stream.input_copy,
         )?;
         stream
@@ -483,7 +550,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         out: JsLocal<'_>,
         out_off: JsLocal<'_>,
         out_len: JsLocal<'_>,
-    ) -> JsResult<()> {
+    ) -> JsResult<Option<f64>> {
         let global_this = cx.global();
         let (flush, in_js, out_js) = (flush.to_js(), in_.to_js(), out.to_js());
 
@@ -517,20 +584,20 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                     )
                     .throw());
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
-            if in_buf.byte_len < in_off as usize + in_len as usize {
+            let (in_off, in_len) = (usize_from_js(in_off), usize_from_js(in_len));
+            if in_buf.byte_len < in_off + in_len {
                 return Err(global_this
                     .err(
                         ErrorCode::OUT_OF_RANGE,
                         format_args!(
                             "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
+                            in_off + in_len,
                             in_buf.byte_len,
                         ),
                     )
                     .throw());
             }
-            in_buf.narrow(in_off as usize, in_len as usize);
+            in_buf.narrow(in_off, in_len);
             in_buf
         };
 
@@ -542,21 +609,21 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
-        if out_buf.byte_len < out_off as usize + out_len as usize {
+        let out_off = usize_from_js(out_off);
+        let out_len = out_len_from_js(global_this, out_len)?;
+        if out_buf.byte_len < out_off + out_len {
             return Err(global_this
                 .err(
                     ErrorCode::OUT_OF_RANGE,
                     format_args!(
                         "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
+                        out_off + out_len,
                         out_buf.byte_len,
                     ),
                 )
                 .throw());
         }
-        out_buf.narrow(out_off as usize, out_len as usize);
+        out_buf.narrow(out_off, out_len);
         throw_if_overlapping(global_this, &in_buf, &out_buf)?;
 
         let mut stream = self.borrow_idle_stream(global_this)?;
@@ -568,11 +635,13 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         let result = stream.context.write_result();
         drop(stream);
 
-        match result {
+        Ok(match result {
             Ok(result) => Self::flush_write_result(global_this, this_value.to_js(), result),
-            Err(err) => self.emit_error(global_this, this_value.to_js(), &err),
-        }
-        Ok(())
+            Err(err) => {
+                self.emit_error(global_this, this_value.to_js(), &err);
+                None
+            }
+        })
     }
 
     fn reset(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<()> {
@@ -610,8 +679,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
 
     /// The callback can re-enter any member, so the stream has to be back in its cell.
     fn emit_error(&self, global_this: &JSGlobalObject, this_value: JSValue, err_: &Error) {
-        let Ok(msg_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.msg.to_bytes())
-        else {
+        let Ok(msg_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.msg) else {
             return;
         };
         let err_value: JSValue = JSValue::js_number(f64::from(err_.err));

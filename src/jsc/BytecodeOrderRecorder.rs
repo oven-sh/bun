@@ -371,7 +371,7 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
     // The name of a directory, not of a file in one (`basename` would drop the separator).
     if final_path
         .last()
-        .is_some_and(|&last| bun_paths::is_sep_native(last))
+        .is_some_and(|&last| bun_paths::is_sep(last))
     {
         return Err(bun_sys::Error::from_code(
             bun_sys::E::EISDIR,

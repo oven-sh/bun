@@ -1,23 +1,23 @@
-# f1 = make, f3 = Sign
+# f1 = launch, f3 = Barge
 # -- source: the-stores-of-a-birth-behind-one-that-must-be-tested-lean-on-the-guard.ts
 # declare function sink(...values: unknown[]): void;
-# class Sign {
-#     flags: number; name: string; list?: object[]; id: number; parent?: Sign; members?: object; exports?: object; twin?: Sign; only?: boolean; used?: number; place?: number; links?: object;
-#     constructor(flags: number, name: string) {
-#         this.flags = flags; this.name = name; this.list = undefined; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined;
-#         this.twin = undefined; this.only = undefined; this.used = undefined; this.place = undefined; this.links = undefined;
+# class Barge {
+#     tons: number; river: string; crew?: object[]; locks: number; tow?: Barge; hold?: object; toll?: object; twin?: Barge; loaded?: boolean; depth?: number; berth?: number; flag?: object;
+#     constructor(tons: number, river: string) {
+#         this.tons = tons; this.river = river; this.crew = undefined; this.locks = 3; this.hold = undefined; this.tow = undefined; this.toll = undefined;
+#         this.depth = undefined; this.berth = undefined; this.loaded = undefined; this.twin = undefined; this.flag = undefined;
 #     }
 # }
-# function make(flags: any, name: any) { return new Sign(flags | 32, name); }
-# function fill(sign: Sign, value: object) { sign.exports = value; sign.place = 7; sign.members = value; sign.twin = sign; sign.only = true; sign.used = 3; sign.list = [sign]; sign.parent = sign; sign.links = value; }
-# sink(make, fill);
+# function launch(tons: any, river: any) { return new Barge((tons & 1023) * 2, river); }
+# function sail(barge: Barge, goods: object) { barge.hold = goods; barge.depth = barge.tons / 7; barge.berth = 4; barge.loaded = barge.tons > 9; barge.toll = goods; barge.crew = [goods, barge]; barge.twin = barge; barge.tow = barge; barge.flag = goods; }
+# sink(launch, sail);
 # -- end of source
 # RUN(PLAN): plan units mechanisms=all
 # PLAN: unit f3:ParameterGuard
 # RUN(WALK): walk f3 mechanisms=all
-# WALK: PutSlotOrAdd {{*}}key="name" {{*}}orderWordAfter=
-# WALK: PutSlotOrAdd {{*}}key="list" {{*}}orderWordAfter=
-# WALK: PutSlotOrAdd {{*}}key="links" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="river" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="crew" {{*}}orderWordAfter=
+# WALK: PutSlotOrAdd {{*}}key="flag" {{*}}orderWordAfter=
 # RUN(NONE): walk f3 mechanisms=all
 # NONE: code f3:Body
 # NONE-NOT: TypeTest

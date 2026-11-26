@@ -4,6 +4,7 @@ use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
+use bun_paths::{Path, from_portable, portable, without_trailing_sep};
 use bun_semver as semver;
 use bun_semver::String;
 use bun_sys::Fd;
@@ -20,7 +21,9 @@ use crate::migration::{
     string_bytes, string_hash, take_appended_dependencies,
 };
 use crate::npm;
-use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
+use crate::package_manager_real::add_remove_with_filter::{
+    WorkspaceTarget, root_package_json_path, workspace_package_json_path,
+};
 use crate::package_manager_real::package_json_write_back;
 use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::pnpm::e_object_mut;
@@ -273,22 +276,14 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
     let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
     let home = bun_core::env_var::HOME
         .get_not_empty()
-        .map(strings::without_trailing_slash);
+        .map(without_trailing_sep);
 
-    let mut folder: &[u8] =
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
     let mut in_project = true;
     let mut read_home = false;
-    loop {
+    for folder in bun_paths::ancestors(crate::bun_fs::FileSystem::get().top_level_dir()) {
         read_yarnrc_file(log, &mut out, folder, rc_name, in_project)?;
         in_project = false;
         read_home |= home == Some(folder);
-        match bun_paths::dirname(folder) {
-            Some(parent) if parent.len() < folder.len() => {
-                folder = strings::without_trailing_slash(parent);
-            }
-            _ => break,
-        }
     }
     if let (Some(home), false) = (home, read_home) {
         read_yarnrc_file(log, &mut out, home, rc_name, false)?;
@@ -341,15 +336,15 @@ fn read_yarnrc_file(
     rc_name: &[u8],
     in_project: bool,
 ) -> Result<(), Error> {
-    let path = [folder, b"/", rc_name].concat();
-    let data = match bun_sys::File::read_from(Fd::cwd(), &path) {
+    let path: &[u8] = &bun_paths::Path::from_parts(&[folder, rc_name]);
+    let data = match bun_sys::File::read_from(Fd::cwd(), path) {
         Ok(data) => data,
         Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Ok(());
         }
-        Err(_) => bail!(log, "could not read {}", shown(&path)),
+        Err(_) => bail!(log, "could not read {}", shown(path)),
     };
-    let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
+    let source = bun_ast::Source::init_path_string(path, data.as_slice());
     let arena = bun_alloc::Arena::new();
     // The parser's messages point into `path` and `data`, which `log` outlives.
     let mut parse_log = bun_ast::Log::init();
@@ -359,7 +354,7 @@ fn read_yarnrc_file(
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) else {
-        bail!(log, "{} is not valid YAML", shown(&path));
+        bail!(log, "{} is not valid YAML", shown(path));
     };
 
     if in_project {
@@ -450,7 +445,7 @@ fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>
         }
         if let Some(rest) = one.strip_prefix(b"~/") {
             paths.push(rest.to_vec());
-        } else if bun_paths::is_absolute(one) {
+        } else if portable::is_absolute(one) {
             paths.push(one.to_vec());
         } else {
             paths.push(join_folder(&owner_dir(params)?, one));
@@ -518,21 +513,15 @@ fn owner_dir(params: &Params<'_>) -> Option<Vec<u8>> {
 /// Joins the paths the way the folder resolver stores them: `.` and `..` resolved, with `/`
 /// separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
-    use bun_paths::resolve_path::{join_string_buf, platform};
+    join_tarball(&from_portable(base), &from_portable(path))
+}
+
+/// The row of a tarball keeps the `\` that package.json has.
+fn join_tarball(base: &[u8], path: &[u8]) -> Vec<u8> {
     if bun_paths::is_absolute(path) {
         return path.to_vec();
     }
-    let mut buf = bun_paths::path_buffer_pool::get();
-    if base.len() + path.len() + 2 > buf.len() {
-        // The result is longer than any valid path, so the install will report the folder as
-        // missing.
-        return [base, b"/", path].concat();
-    }
-    let mut joined = join_string_buf::<platform::Auto>(&mut buf[..], &[base, path]).to_vec();
-    if cfg!(windows) {
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined);
-    }
-    joined
+    Path::join(&[base, path]).into_portable().to_vec()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -770,9 +759,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     };
 
     // -- 2. root + workspaces from disk ---------------------------------------
-    let mut root_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = root_json_path.append(b"package.json"); // capacity error is non-actionable
-    let root_json = package_json(manager, log, root_json_path.slice(), Default::default())?;
+    let root_json_path = root_package_json_path();
+    let root_json = package_json(manager, log, &root_json_path, Default::default())?;
     // `process_names_array` resolves globs relative to the source's directory.
     let (root_manifest, root_source) = (root_json.root, root_json.source.clone());
     let mut workspace_map = WorkspaceMap::init();
@@ -873,9 +861,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
 
     for ws in workspaces.iter_mut() {
-        let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-        let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
-        let manifest = package_json(manager, log, json_path.slice(), Default::default())?.root;
+        let json_path = workspace_package_json_path(&ws.path);
+        let manifest = package_json(manager, log, &json_path, Default::default())?.root;
         let name_hash = string_hash(&ws.name);
         let mut pkg = lockfile::Package {
             name: sbuf!(this).append_with_hash(&ws.name, name_hash)?,
@@ -963,7 +950,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     sbuf!(this).append(&dependency::link_path_for_lockfile(&joined))?,
                 )
             } else if Dependency::is_tarball(&joined) {
-                Resolution::init(TaggedValue::LocalTarball(sbuf!(this).append(&joined)?))
+                let tarball = join_tarball(&base, path);
+                Resolution::init(TaggedValue::LocalTarball(sbuf!(this).append(&tarball)?))
             } else {
                 if protocol == b"portal:" && !silent {
                     bun_core::warn!(
@@ -1054,8 +1042,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     p.is_empty()
                         || p.as_slice() == b"."
                         || strings::contains_char(p, 0)
-                        || bun_paths::is_absolute(p)
-                        || strings::split_any(p, b"/\\").any(|part| part == b"..")
+                        || portable::is_absolute(p)
+                        || portable::has_dot_dot(p)
                 }),
             };
             if let Some(path) = outside {
@@ -1437,7 +1425,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     if let Some(changed) = edit_package_json(
         manager,
         log,
-        root_json_path.slice(),
+        &root_json_path,
         &root_rewrites,
         &patched,
         Some(&yarnrc),
@@ -1445,15 +1433,13 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         edited.push((WorkspaceTarget::root(), changed));
     }
     for ws in &workspaces {
-        let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-        let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
-        if let Some(changed) =
-            edit_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?
+        let json_path = workspace_package_json_path(&ws.path);
+        if let Some(changed) = edit_package_json(manager, log, &json_path, &ws.rewrites, &[], None)?
         {
             let target = WorkspaceTarget {
                 name: ws.name.clone(),
                 name_hash: Some(string_hash(&ws.name)),
-                package_json_path: json_path.slice().into(),
+                package_json_path: json_path,
             };
             edited.push((target, changed));
         }
@@ -1464,7 +1450,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         init_reset_store: false,
         ..Default::default()
     };
-    if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), keep_store) {
+    if let Ok(root_json) = package_json(manager, log, &root_json_path, keep_store) {
         let (source, json) = (root_json.source.clone(), root_json.root);
         crate::migration::parse_root_overrides(this, manager, log, &source, json, &workspace_map)?;
     }

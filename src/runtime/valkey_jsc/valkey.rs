@@ -1,6 +1,8 @@
 //! Where a client connects.
 
+use bstr::BStr;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_sys::SystemErrno;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -65,13 +67,75 @@ impl TLS {
     }
 }
 
+/// Where the URL is from.
+#[derive(Copy, Clone)]
+pub(crate) enum Origin {
+    Given,
+    DefaultForUnset,
+    DefaultForEmptyRedisUrl,
+    DefaultForEmptyValkeyUrl,
+}
+
+impl Origin {
+    pub(crate) fn url_from_env(env: &bun_dotenv::Loader) -> (&[u8], Origin) {
+        let origin = match env.get(b"REDIS_URL") {
+            Some(url @ [_, ..]) => return (url, Origin::Given),
+            redis_url => match (redis_url, env.get(b"VALKEY_URL")) {
+                (_, Some(url @ [_, ..])) => return (url, Origin::Given),
+                (Some(_), _) => Origin::DefaultForEmptyRedisUrl,
+                (None, Some(_)) => Origin::DefaultForEmptyValkeyUrl,
+                (None, None) => Origin::DefaultForUnset,
+            },
+        };
+        (b"valkey://localhost:6379", origin)
+    }
+
+    /// Behind the address in an error.
+    fn note(self) -> &'static str {
+        match self {
+            Origin::Given => "",
+            Origin::DefaultForUnset => " (REDIS_URL is not set)",
+            Origin::DefaultForEmptyRedisUrl => " (REDIS_URL is empty)",
+            Origin::DefaultForEmptyValkeyUrl => " (VALKEY_URL is empty)",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum Address {
     Unix(Box<[u8]>),
-    Host { host: Box<[u8]>, port: u16 },
+    Host {
+        host: Box<[u8]>,
+        port: u16,
+        origin: Origin,
+    },
 }
 
 impl Address {
+    /// In the words of `node:net`. `None` for a dial that was closed and did not fail.
+    pub(crate) fn connect_error(&self, code: i32) -> Option<String> {
+        let errno = match SystemErrno::init(i64::from(code))? {
+            SystemErrno::SUCCESS | SystemErrno::ECANCELED => return None,
+            // Windows: what uSockets' probe of a refused socket gets, and the number of the CRT's ECONNREFUSED.
+            SystemErrno::ENOTCONN => SystemErrno::ECONNREFUSED,
+            errno => errno,
+        };
+        Some(match self {
+            Address::Unix(path) => format!("connect {errno} {}", BStr::new(path)),
+            Address::Host { host, port, origin } => {
+                let host = BStr::new(bun_core::ip_address::strip_ipv6_brackets(host));
+                format!("connect {errno} {host}:{port}{}", origin.note())
+            }
+        })
+    }
+
+    pub(crate) fn lookup_error(&self, code: i32) -> Option<String> {
+        let (Address::Unix(host) | Address::Host { host, .. }) = self;
+        let code = bun_dns::getaddrinfo_error(code)?.code();
+        let code = code.strip_prefix("DNS_").unwrap_or(code);
+        Some(format!("getaddrinfo {code} {}", BStr::new(host)))
+    }
+
     /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///
@@ -92,7 +156,7 @@ impl Address {
                 Address::Unix(path) => {
                     uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
                 }
-                Address::Host { host, port } => uws::SocketTLS::connect_group(
+                Address::Host { host, port, .. } => uws::SocketTLS::connect_group(
                     group,
                     kind,
                     ssl_ctx,
@@ -109,7 +173,7 @@ impl Address {
                 Address::Unix(path) => {
                     uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
                 }
-                Address::Host { host, port } => uws::SocketTCP::connect_group(
+                Address::Host { host, port, .. } => uws::SocketTCP::connect_group(
                     group,
                     kind,
                     ssl_ctx,

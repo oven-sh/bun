@@ -27,7 +27,7 @@ const errors = (said: string) =>
     .map(match => `${match[2]}:${match[3]} ${match[1]}`)
     .sort();
 
-const names = ["core", "select", "testing", "app"];
+const names = ["scales", "ferry", "testing", "app"];
 const packages = Object.fromEntries(
   names.flatMap(name => [
     [
@@ -47,64 +47,62 @@ const workspace = {
   ...packages,
   "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
   "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["**/*.test.ts"] }),
-  "packages/core/src/index.ts": `export function useMemo<Value>(make: () => Value, dependencies: ReadonlyArray<unknown>): Value {
-  return dependencies.length >= 0 ? make() : make();
+  "packages/scales/src/index.ts": `export type Weigh<Load, Result> = (loads: ReadonlyArray<Load>, limit: number) => Promise<Result>;
+export interface Lot<Load> {
+  readonly loads: Load[];
+  weight: number;
 }
-export type Prompt<Value, Config> = (config: Config) => Promise<Value>;
-export function createPrompt<Value, Config>(view: (config: Config, done: (value: Value) => void) => string): Prompt<Value, Config> {
-  return (config: Config) => new Promise<Value>(resolve => void view(config, resolve));
+export function weighing<Load, Result>(of: (load: Load) => number, sum: (lots: Array<Lot<Load>>) => Result): Weigh<Load, Result> {
+  return async (loads, limit) => {
+    const lots: Array<Lot<Load>> = [];
+    for (const load of loads) {
+      const last = lots.at(-1);
+      if (last && last.weight + of(load) <= limit) {
+        last.loads.push(load);
+        last.weight += of(load);
+      } else lots.push({ loads: [load], weight: of(load) });
+    }
+    return sum(lots);
+  };
 }
-export class Separator {
-  readonly type = "separator";
-  static isSeparator(choice: unknown): choice is Separator {
-    return choice instanceof Separator;
-  }
+export function heaviest<Load>(lots: Array<Lot<Load>>): Lot<Load> | undefined {
+  return lots.reduce<Lot<Load> | undefined>((most, lot) => (most && most.weight >= lot.weight ? most : lot), undefined);
 }
 `,
-  "packages/select/src/index.ts": `import { createPrompt, useMemo, Separator } from "@workspace/core";
-type Choice<Value> = { value: Value; name: string; disabled: boolean };
-function isSelectable<Value>(item: Choice<Value> | Separator): item is Choice<Value> {
-  return !Separator.isSeparator(item) && !item.disabled;
-}
-function normalize<Value>(choices: ReadonlyArray<Value | Separator>): Array<Choice<Value> | Separator> {
-  return choices.map(choice => (Separator.isSeparator(choice) ? choice : { value: choice, name: String(choice), disabled: false }));
-}
-export default createPrompt(<const Value>(config: { choices: ReadonlyArray<Value | Separator>; default?: Value }, done: (value: Value) => void) => {
-  const items = useMemo(() => normalize(config.choices), [config.choices]);
-  const index = useMemo(() => {
-    if (!("default" in config)) return -1;
-    return items.findIndex(item => isSelectable(item) && item.value === config.default);
-  }, [config.default, items]);
-  const chosen = items[index < 0 ? 0 : index];
-  if (chosen && isSelectable(chosen)) done(chosen.value);
-  return String(index);
+  "packages/ferry/src/index.ts": `import { heaviest, weighing } from "@workspace/scales";
+type Truck = { name: string; tons: number };
+export default weighing((truck: Truck) => truck.tons, lots => {
+  const full = heaviest(lots);
+  return { trips: lots.length, full: full ? full.loads.map(truck => truck.name).join("+") : "none", last: lots.at(-1)?.weight };
 });
 `,
-  "packages/select/test/select.test.ts": `import { expect, test } from "bun:test";
-import select from "../src/index.ts";
-test("select", async () => {
-  expect(await select({ choices: ["a", "b"], default: "b" })).toBe("b");
+  "packages/ferry/test/ferry.test.ts": `import { expect, test } from "bun:test";
+import ferry from "../src/index.ts";
+test("ferry", async () => {
+  const trucks = [3, 4, 9, 2].map(tons => ({ name: "t" + tons, tons }));
+  expect(await ferry(trucks, 10)).toEqual({ trips: 3, full: "t9", last: 2 });
+  expect((await ferry([], 1)).full).toBe("none");
 });
 `,
-  "packages/testing/src/index.ts": `import type { Prompt } from "@workspace/core";
+  "packages/testing/src/index.ts": `import type { Weigh } from "@workspace/scales";
 export const wrapped: string[] = [];
-export function wrapPrompt<Value, Config>(prompt: Prompt<Value, Config> | { default: Prompt<Value, Config> }): Prompt<Value, Config> {
-  const call: Prompt<Value, Config> = typeof prompt === "function" ? prompt : prompt.default;
-  return (config: Config): Promise<Value> => call(config);
+export function wrapWeighing<Load, Result>(weigh: Weigh<Load, Result> | { default: Weigh<Load, Result> }): Weigh<Load, Result> {
+  const call: Weigh<Load, Result> = typeof weigh === "function" ? weigh : weigh.default;
+  return (loads, limit): Promise<Result> => call(loads, limit);
 }
 function mock(name: string, factory: (importOriginal: <Module>() => Promise<Module>) => Promise<object>): void {
   wrapped.push(name + factory.length);
 }
-mock("@workspace/select", async importOriginal => {
-  const actual = await importOriginal<typeof import("@workspace/select")>();
-  return { ...actual, default: wrapPrompt(actual.default) };
+mock("@workspace/ferry", async importOriginal => {
+  const actual = await importOriginal<typeof import("@workspace/ferry")>();
+  return { ...actual, default: wrapWeighing(actual.default) };
 });
 `,
   "packages/app/src/index.ts": `export {};\n`,
   "packages/app/app.test.ts": `import { expect, test } from "bun:test";
 import { wrapped } from "@workspace/testing";
 test("app", () => {
-  expect(wrapped).toEqual(["@workspace/select1"]);
+  expect(wrapped).toEqual(["@workspace/ferry1"]);
 });
 `,
 };
@@ -114,17 +112,17 @@ test("a dependency that imports a file of the application leaves that file's che
   mkdirSync(join(String(dir), "node_modules", "@workspace"), { recursive: true });
   for (const name of names)
     symlinkSync(join(String(dir), "packages", name), join(String(dir), "node_modules", "@workspace", name), "dir");
-  const alone = await run(String(dir), "test", "--aot", "./packages/select/test/select.test.ts");
-  expect({ errors: errors(alone.said), passed: passed(alone.said) }).toEqual({ errors: [], passed: ["select"] });
+  const alone = await run(String(dir), "test", "--aot", "./packages/ferry/test/ferry.test.ts");
+  expect({ errors: errors(alone.said), passed: passed(alone.said) }).toEqual({ errors: [], passed: ["ferry"] });
   const together = await run(
     String(dir),
     "test",
     "--aot",
     "./packages/app/app.test.ts",
-    "./packages/select/test/select.test.ts",
+    "./packages/ferry/test/ferry.test.ts",
   );
   expect({ errors: errors(together.said), passed: passed(together.said) }).toEqual({
     errors: [],
-    passed: ["app", "select"],
+    passed: ["app", "ferry"],
   });
 }, 60_000);

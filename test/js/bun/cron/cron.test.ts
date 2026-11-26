@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, readFileSync, readlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -45,6 +46,8 @@ const hasSchtasks =
       return false;
     }
   })();
+const logDir = isMacOS ? Bun.spawnSync(["getconf", "DARWIN_USER_TEMP_DIR"]).stdout.toString().trim() : "";
+
 const hasLaunchctl =
   isMacOS &&
   (() => {
@@ -151,6 +154,36 @@ describe("Bun.cron API", () => {
       "test%file.ts": `export default { scheduled() {} };`,
     });
     expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
+  test.each([
+    { href: "file:///a%2Fb.ts", code: "ERR_INVALID_FILE_URL_PATH" },
+    { href: "file:///a%00b.ts", code: "ERR_INVALID_ARG_VALUE" },
+    // On Windows it is a UNC path.
+    ...(isWindows ? [] : [{ href: "file://host/job.ts", code: "ERR_INVALID_FILE_URL_HOST" }]),
+  ])("$href throws $code like node:fs, as a string and as a URL", ({ href, code }) => {
+    expect(() => readFileSync(new URL(href))).toThrow(expect.objectContaining({ code }));
+    expect(() => Bun.cron(href, "@daily", "test-bad")).toThrow(expect.objectContaining({ code }));
+    expect(() => Bun.cron(new URL(href), "@daily", "test-bad")).toThrow(expect.objectContaining({ code }));
+  });
+
+  test.each([
+    { what: "an https: URL", path: new URL("https://example.com/job.ts"), code: "ERR_INVALID_URL_SCHEME" },
+    { what: "a file:// string that does not parse", path: "file://[", code: "ERR_INVALID_URL" },
+  ])("$what throws $code", ({ path, code }) => {
+    expect(() => Bun.cron(path, "@daily", "test-bad")).toThrow(expect.objectContaining({ code }));
+  });
+
+  test("an object that is not a URL throws", () => {
+    // @ts-expect-error
+    expect(() => Bun.cron({ href: "file:///job.ts" }, "@daily", "test-bad")).toThrow("expects a string or URL path");
+  });
+
+  test("a file URL is checked after it is decoded", () => {
+    using dir = tempDir("bun-cron-test", { "test%file.ts": "" });
+    const url = pathToFileURL(`${dir}/test%file.ts`);
+    expect(() => Bun.cron(url, "@daily", "test-bad")).toThrow(/percent/);
+    expect(() => Bun.cron(url.href, "@daily", "test-bad")).toThrow(/percent/);
   });
 
   test("remove throws with invalid title characters", () => {
@@ -715,6 +748,10 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
       "tmp/.keep": "",
       "table": untouched,
       "job.ts": "",
+      "a b#é.ts": "",
+      "a\\b.ts": "",
+      "a\\\\b.ts": "",
+      "a\\": "",
       "fixture.js": fixture,
     });
     chmodSync(`${dir}/bin/crontab`, 0o755);
@@ -732,6 +769,54 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
     return { stdout, stderr, table, tempFiles: readdirSync(`${dir}/tmp`).length - 1, exitCode };
   }
 
+  test.each([
+    { schedule: "0 0 15 * 5", written: "0 0 15 * 5" },
+    { schedule: "0 0 15 * 0-6", written: "0 0 15 * *" },
+    { schedule: "0 0 1-31 * 1", written: "0 0 * * 1" },
+    { schedule: "0 9 */1 * 1-5", written: "0 9 * * 1,2,3,4,5" },
+    { schedule: "0 0 1 * */1", written: "0 0 1 * *" },
+  ])("$schedule is written as $written", async ({ schedule, written }) => {
+    expect(await run(`await Bun.cron("./job.ts", "${schedule}", "t");`)).toEqual({
+      stdout: "",
+      stderr: "",
+      table: `${kept}# bun-cron: t\n${written} 'bun' run --cron-title=t --cron-period='${written}' '/job.ts'\n`,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
+  test.each(["tmp", ".", "./-r"])("crontab gets an absolute path when TMPDIR is %s", async TMPDIR => {
+    const fixture = `require("fs").mkdirSync("-r"); await Bun.cron.remove("t");`;
+    const BEFORE_INSTALL = `case "$1" in /*) ;; *) exit 1;; esac`;
+    expect(await run(fixture, { TMPDIR, BEFORE_INSTALL })).toEqual({
+      stdout: "",
+      stderr: "",
+      table: kept,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
+  // Across file systems this copies the executable, which is over 1 GB in a debug build.
+  test.serial("a line break in the path of the executable throws", async () => {
+    const { stdout, ...rest } = await run(`
+      import * as fs from "node:fs";
+      try {
+        fs.linkSync(process.execPath, "a\\nb");
+      } catch {
+        fs.copyFileSync(process.execPath, "a\\nb");
+      }
+      const call = 'try { await Bun.cron("./job.ts", "@daily", "t") } catch (e) { console.log(e.message) }';
+      Bun.spawnSync(["./a\\nb", "-e", call], { stdout: "inherit", stderr: "inherit" });
+      fs.renameSync("a\\nb", "a\\rb");
+      Bun.spawnSync(["./a\\rb", "-e", call], { stdout: "inherit", stderr: "inherit" });
+    `);
+    const message = (name: string) =>
+      `Bun executable path '${name}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry\n`;
+    expect(stdout.replace(/'\/.*\//g, "'")).toBe(message("a\nb") + message("a\rb"));
+    expect(rest).toEqual({ stderr: "", table: untouched, tempFiles: 0, exitCode: 0 });
+  });
+
   const hasPidfd = (() => {
     if (!isLinux) return false;
     // Not reaped before the event loop runs again.
@@ -742,6 +827,35 @@ describe.concurrent.skipIf(!isLinux)("against a stub crontab (Linux)", () => {
       } catch {}
     });
   })();
+
+  test.each([
+    { path: `import.meta.resolve("./job.ts")`, script: "/job.ts" },
+    { path: `new URL("./job.ts", import.meta.url)`, script: "/job.ts" },
+    { path: `"file://localhost" + import.meta.dir + "/job.ts?query#hash"`, script: "/job.ts" },
+    { path: `Bun.pathToFileURL("a b#é.ts").href`, script: "/a b#é.ts" },
+    { path: `Bun.pathToFileURL("a b#é.ts")`, script: "/a b#é.ts" },
+    { path: String.raw`Bun.pathToFileURL("a\\b.ts")`, script: String.raw`/a\b.ts` },
+    { path: String.raw`import.meta.dir + "/a\\b.ts"`, script: String.raw`/a\b.ts` },
+  ])("$path registers $script", async ({ path, script }) => {
+    expect(await run(`await Bun.cron(${path}, "@daily", "t");`)).toEqual({
+      stdout: "",
+      stderr: "",
+      table: `${kept}# bun-cron: t\n0 0 * * * 'bun' run --cron-title=t --cron-period='0 0 * * *' '${script}'\n`,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
+
+  test.each(["/a\\\\b.ts", "/a\\"])("%s, which some crons and shells read otherwise, throws", async name => {
+    const call = `Bun.cron(import.meta.dir + ${JSON.stringify(name)}, "@daily", "t")`;
+    expect(await run(`try { await ${call}; } catch (e) { console.log(e.message); }`)).toEqual({
+      stdout: "Path must not end with a backslash or contain two in a row\n",
+      stderr: "",
+      table: untouched,
+      tempFiles: 0,
+      exitCode: 0,
+    });
+  });
 
   describe.each([
     {
@@ -874,6 +988,19 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
     expect(result).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
+  test.skipIf(!isMacOS)("the logs go to the temporary directory of the user, whatever TMPDIR says", async () => {
+    const result = await run(`
+      import * as fs from "node:fs";
+      await Bun.cron("./job.ts", "@yearly", "bun-test-logs").catch(() => {});
+      const plist = fs.readFileSync("home/Library/LaunchAgents/bun.cron.bun-test-logs.plist", "utf8");
+      await Bun.cron.remove("bun-test-logs");
+      console.log(plist.match(/[^>]*\\.log/g).join("\\n"));
+    `);
+    const log = `${logDir}bun.cron.bun-test-logs`;
+    expect(result).toEqual({ stdout: `${log}.stdout.log\n${log}.stderr.log\n`, stderr: "", exitCode: 0 });
+    expect((await Bun.file(logDir).stat()).mode & 0o777).toBe(0o700);
+  });
+
   test.each(["process.exit(0)", `postMessage("terminate")`])("a Worker ends with a call in flight: %s", async end => {
     const result = await run(`
       if (Bun.isMainThread) {
@@ -887,6 +1014,25 @@ describe.concurrent.skipIf(!isMacOS && !isWindows)("on any account (macOS, Windo
       }
     `);
     expect(result).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
+  });
+
+  // Prints the plist or the task XML. Both are written before the call returns.
+  const register = (path: string, title: string) =>
+    run(`
+      import * as fs from "node:fs";
+      const settled = Bun.cron(${path}, "@yearly", "${title}").catch(() => {});
+      const [file] = new Bun.Glob("**/*cron*").scanSync({ cwd: import.meta.dir, dot: true, absolute: true });
+      console.log(fs.readFileSync(file, "utf8"));
+      await settled;
+      await Bun.cron.remove("${title}");
+    `);
+
+  test.each([
+    { path: `import.meta.resolve("./job.ts")`, title: "bun-test-url-string" },
+    { path: `new URL("./job.ts", import.meta.url)`, title: "bun-test-url-object" },
+  ])("$path registers the script", async ({ path, title }) => {
+    const script = isMacOS ? /<string>\/.*\/job\.ts<\/string>/ : / "[a-z]:.*[\\/]job\.ts"<\/Arguments>/i;
+    expect(await register(path, title)).toEqual({ stdout: expect.stringMatching(script), stderr: "", exitCode: 0 });
   });
 });
 
@@ -1252,9 +1398,9 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-logpaths");
       const plist = await Bun.file(plistPath("test-mac-logpaths")).text();
       expect(plist).toContain("<key>StandardOutPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stdout.log</string>");
+      expect(plist).toContain(`<string>${logDir}bun.cron.test-mac-logpaths.stdout.log</string>`);
       expect(plist).toContain("<key>StandardErrorPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stderr.log</string>");
+      expect(plist).toContain(`<string>${logDir}bun.cron.test-mac-logpaths.stderr.log</string>`);
     } finally {
       removeLaunchdJob("test-mac-logpaths");
     }
@@ -1382,11 +1528,29 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
         unlinkSync(markerPath);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+        unlinkSync(`${logDir}bun.cron.test-mac-e2e.stdout.log`);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+        unlinkSync(`${logDir}bun.cron.test-mac-e2e.stderr.log`);
       } catch {}
+    }
+  });
+
+  test("the job writes to its log", async () => {
+    using dir = tempDir("bun-cron-test", { "job.ts": `export default { scheduled() { console.log("ran"); } };` });
+    const service = `gui/${process.getuid!()}/bun.cron.test-mac-log`;
+    const log = `${logDir}bun.cron.test-mac-log`;
+    const logged = () => (existsSync(`${log}.stdout.log`) ? readFileSync(`${log}.stdout.log`, "utf8") : "");
+    try {
+      await Bun.$`rm -f ${log}.stdout.log`;
+      await Bun.cron(`${dir}/job.ts`, "@yearly", "test-mac-log");
+      await Bun.$`/bin/launchctl kickstart ${service}`;
+      const deadline = Date.now() + 20_000;
+      while (!logged().includes("ran\n") && Date.now() < deadline) await Bun.sleep(10);
+      expect(logged(), await Bun.$`/bin/launchctl print ${service}`.text()).toContain("ran\n");
+    } finally {
+      removeLaunchdJob("test-mac-log");
+      await Bun.$`rm -f ${log}.stdout.log ${log}.stderr.log`;
     }
   });
 });

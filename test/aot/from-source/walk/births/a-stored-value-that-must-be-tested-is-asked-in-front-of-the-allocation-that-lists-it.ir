@@ -1,13 +1,13 @@
-# f1 = Sign, f2 = make, f3 = fits
+# f1 = Barge, f2 = launch, f3 = fits
 # -- source: a-stored-value-that-must-be-tested-is-asked-in-front-of-the-allocation-that-lists-it.ts
 # declare function sink(...values: unknown[]): void;
-# interface Sign { flags: number; name: string; id: number; parent?: Sign; members?: object; exports?: object; links?: object; }
-# function Sign(this: Sign, flags: number, name: string) { this.flags = flags; this.name = name; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined; this.links = undefined; }
-# const Maker: new (flags: number, name: string) => Sign = Sign as any;
-# function make(flags: any, name: any) { return new Maker(flags | 32, name); }
-# function fits() { return new Maker(7, "n"); }
-# function fill(sign: Sign, value: object) { sign.members = value; sign.exports = value; sign.links = value; sign.parent = sign; }
-# sink(make, fits, fill);
+# interface Barge { tons: number; river: string; locks: number; tow?: Barge; hold?: object; crew?: object; toll?: object; }
+# function Barge(this: Barge, tons: number, river: string) { this.tons = tons; this.river = river; this.locks = 3; this.hold = undefined; this.tow = undefined; this.toll = undefined; this.crew = undefined; }
+# const Yard: new (tons: number, river: string) => Barge = Barge as any;
+# function launch(tons: any, river: any) { return new Yard((tons & 1023) * 2, river); }
+# function fits() { return new Yard(40, "Elbe"); }
+# function sail(barge: Barge, goods: object) { barge.locks = barge.tons / 9 | 0; barge.hold = goods; barge.toll = goods; barge.crew = [goods]; barge.tow = barge; }
+# sink(launch, fits, sail);
 # -- end of source
 # RUN(WALK): walk f2 mechanisms=all
 # WALK: TypeTest {{*}}testedType=

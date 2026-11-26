@@ -6,7 +6,7 @@ function look() { try { seen.push(new NS.V(6)); } catch (e) { log("looked", e.co
 try {
 NS.V = function (x) { this.x = x; this.y = 2; };
 
-NS.V.prototype = { initialize: function (x) { this.x = x; this.y = 1; }, sum: function () { return this.x + this.y; }, twice: function (a) { return a * 2; } };
+NS.V.prototype = { knead: function (x) { this.y = 1; this.x = x; }, sum: function () { return this.x + this.y; }, twice: function (a) { return a * 2; } };
 } catch (error) { log("ended", error.constructor.name); }
 const keep = [];
 function make(x) { return new NS.V(x); }

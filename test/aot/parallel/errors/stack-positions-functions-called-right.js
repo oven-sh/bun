@@ -123,6 +123,7 @@ show("holder.s in (five ? five : nothing);", () => { holder.s in (five ? five : 
 show("[...(1 ? nothing : missing)];", () => { [...(1 ? nothing : missing)]; });
 show("(1 ? nothing : missing).x;", () => { (1 ? nothing : missing).x; });
 show("(1 ? nothing : missing)();", () => { (1 ? nothing : missing)(); });
+show("[...nothing ?? missing];", () => { [...nothing ?? missing]; });
 await showAsync("await (async function main() { fail(); if (five) { pass(1); } })().catch(e => { throw e; });", async () => { await (async function main() { fail(); if (five) { pass(1); } })().catch(e => { throw e; }); });
 await showAsync("await (async () => { await 1; fail(); if (five) { pass(1); } })().catch(e => { throw e; });", async () => { await (async () => { await 1; fail(); if (five) { pass(1); } })().catch(e => { throw e; }); });
 await showAsync("await (async () => { fail(); if (five) { pass(1); } })().then(pass);", async () => { await (async () => { fail(); if (five) { pass(1); } })().then(pass); });

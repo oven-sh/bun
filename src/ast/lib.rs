@@ -2623,6 +2623,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The value is a function that returns the value. See `defer_requires.rs` in the parser.
+        IsDeferredRequire,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

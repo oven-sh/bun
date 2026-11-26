@@ -9,7 +9,11 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     }
     let mut out = Vec::new();
     for path in args {
-        out.extend_from_slice(bun_paths::resolve_path::basename(path));
+        out.extend_from_slice(match bun_paths::basename(path) {
+            // A root is its own name.
+            b"" => bun_paths::without_trailing_sep(path),
+            name => name,
+        });
         out.push(b'\n');
     }
     Builtin::finish(interp, cmd, IoKind::Stdout, &out, 0)

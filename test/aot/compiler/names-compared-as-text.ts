@@ -477,6 +477,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "an export of `node:module`: the module that the name is read off is asked next",
   },
   {
+    paths: /^src\/bundler\/aot\/defines\.rs$/,
+    lines: /contains_char\((?:path|atoms\.bytes\(name\)), b'\.'\)/,
+    reason:
+      "whether a name that the build's --define gives is a dotted path: the text is the build's, not a name of the program",
+  },
+  {
     paths: /^src\/aot\/known_helpers\/private_state\.rs$/,
     lines: /atoms\.bytes\(name\) == b"_"/,
     reason:

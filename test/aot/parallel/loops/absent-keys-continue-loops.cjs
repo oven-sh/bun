@@ -1,14 +1,15 @@
 // STATISTIC: AbsentKeysContinueLoops >= 3
 // `while (..) { const found = map.get(key++); if (found == null) continue; .. }`: the lookup of an absent key leads into the next iteration.
 "use strict";
-class State { constructor(line) { this.line = line; this.hits = 0; } }
-function run(statements, state, end) {
-  while (state.line != null && state.line < end) {
-    const statement = statements.get(state.line++);
-    if (statement == null) continue;
-    state.hits += statement.weight;
+class Lift { constructor(floor) { this.floor = floor; this.load = 0; } }
+function rise(waiting, lift, top) {
+  if (lift.floor === null) return lift.load;
+  while (lift.floor < top) {
+    const riders = waiting.get(lift.floor++);
+    if (riders === undefined) continue;
+    lift.load = lift.load + riders.weight;
   }
-  return state.hits;
+  return lift.load;
 }
 function sum(map, from, to) {
   let i = from, total = 0, before = -1, steps = 0;
@@ -112,7 +113,7 @@ for (const size of sizes) {
     objects.set(k * 2 + 1, k % 6 ? { name: "n" + k } : null);
   }
   if (size > 8) { numbers.delete(4); weights.delete(1); numbers.set(4, 4.5); }
-  console.log(size, run(weights, new State(0), 120), run(weights, { line: 5, hits: 0.5 }, 90), run(weights, new State(null), 9));
+  console.log(size, rise(weights, new Lift(0), 120), rise(weights, { floor: 5, load: 0.5 }, 90), rise(weights, new Lift(null), 9));
   console.log(sum(numbers, 0, 70), sum(numbers, -5, 5), sum(numbers, 2147483640, 2147483650), sum(any, 0, 30));
   console.log(swap(numbers, [0, 2, 3, 5, -0, NaN, 1.5, 4]), swap(words, ["w0", "w1", "w2", "v"]), nested(numbers, 6, 7), pushed(numbers, 33));
   const steps = [], iterator = stepped(numbers, 50);

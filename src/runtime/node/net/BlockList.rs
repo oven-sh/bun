@@ -3,8 +3,8 @@ use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_ptr::RefPtr;
 use bun_threading::Guarded;
 
 /// The `BlockList` instances, by `serialize_nonce`, currently embedded in
@@ -21,8 +21,7 @@ use crate::socket::socket_address::{SocketAddress, sockaddr};
 
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 
-/// `&ZStr` → `&str` for `format_args!`. IP presentation strings and AF family
-/// names are ASCII by construction (`inet_ntop` output / static literals).
+/// `&ZStr` → `&str` for `format_args!`. AF family names are ASCII literals.
 #[inline]
 fn z(s: &ZStr) -> &str {
     // SAFETY: callers pass ASCII-only `ZStr`s (see above).
@@ -294,33 +293,23 @@ impl BlockList {
 
         for (i, rule) in rules.iter().enumerate() {
             let s = match rule {
-                Rule::Addr(a) => {
-                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Address: {} {}",
-                        z(a.family().upper()),
-                        z(a.fmt(&mut buf)),
-                    ))
-                }
-                Rule::Range { start, end } => {
-                    let mut buf_s = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    let mut buf_e = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Range: {} {}-{}",
-                        z(start.family().upper()),
-                        z(start.fmt(&mut buf_s)),
-                        z(end.fmt(&mut buf_e)),
-                    ))
-                }
-                Rule::Subnet { network, prefix } => {
-                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Subnet: {} {}/{}",
-                        z(network.family().upper()),
-                        z(network.fmt(&mut buf)),
-                        prefix,
-                    ))
-                }
+                Rule::Addr(a) => BunString::create_format(format_args!(
+                    "Address: {} {}",
+                    z(a.family().upper()),
+                    a.text(),
+                )),
+                Rule::Range { start, end } => BunString::create_format(format_args!(
+                    "Range: {} {}-{}",
+                    z(start.family().upper()),
+                    start.text(),
+                    end.text(),
+                )),
+                Rule::Subnet { network, prefix } => BunString::create_format(format_args!(
+                    "Subnet: {} {}/{}",
+                    z(network.family().upper()),
+                    network.text(),
+                    prefix,
+                )),
             };
             array.put_index(global, i as u32, s.into_js(global)?)?;
         }
@@ -328,17 +317,16 @@ impl BlockList {
     }
 }
 
+// HOST_EXPORT(BlockList__onStructuredCloneSerialize, c)
 /// Adds the entry that [`BlockList__onStructuredCloneDestroy`] removes.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
-    this: ThisPtr<BlockList>,
-    serializer: &mut CloneSerializer,
+pub(crate) fn on_structured_clone_serialize(
+    this: RefPtr<crate::node::block_list_impl::BlockList>,
+    serializer: &mut bun_jsc::CloneSerializer,
 ) {
     use bun_io::Write as _;
-    SERIALIZED_REFS
-        .lock()
-        .push((this.serialize_nonce, RefPtr::from_this(this)));
-    _ = serializer.write_int_le(this.serialize_nonce);
+    let nonce = this.serialize_nonce;
+    SERIALIZED_REFS.lock().push((nonce, this));
+    _ = serializer.write_int_le(nonce);
 }
 
 /// `JSValue::ZERO`: the bytes are not a valid record (the deserializer reports its usual error).
@@ -375,7 +363,7 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
     js::to_js(this, global)
 }
 
-/// `~SerializedScriptValue` removes the entry that [`BlockList__onStructuredCloneSerialize`] added.
+/// `~SerializedScriptValue` removes the entry that [`on_structured_clone_serialize`] added.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn BlockList__onStructuredCloneDestroy(this: *mut BlockList) {
     let mut refs = SERIALIZED_REFS.lock();

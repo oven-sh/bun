@@ -273,7 +273,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
         )
         .cache_dir_subpath;
         entries.push(LockfileEntry {
-            name: ZBox::from_bytes(subpath.as_bytes()),
+            name: subpath.to_zbox(),
             tag: resolution.tag,
             expected: expected.is_set(i),
         });
@@ -291,16 +291,15 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
 fn tmpname(prefix: &[u8]) -> ZBox {
     let mut buf = bun_paths::path_buffer_pool::get();
     let name = FileSystem::tmpname(prefix, &mut buf[..], bun_core::fast_random());
-    ZBox::from_bytes(name.expect("unreachable").as_bytes())
+    name.expect("unreachable").to_zbox()
 }
 
 /// Written next to the destination and then renamed over it. Removed on drop if the rename didn't
 /// happen.
 struct TempOutput {
+    tmp: sys::Tmpfile<ZBox>,
+    /// After `tmp`, which is in it.
     dir: Dir,
-    name: ZBox,
-    file: Option<File>,
-    committed: bool,
 }
 
 impl TempOutput {
@@ -309,37 +308,19 @@ impl TempOutput {
             bun_paths::dirname(destination).unwrap_or(b"."),
             Default::default(),
         )?;
-        let name = tmpname(b"pack");
-        let file = sys::openat(
+        let tmp = sys::Tmpfile::open(
             dir.fd(),
-            &name,
+            tmpname(b"pack"),
             O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC,
             0o644,
         )?;
-        Ok(Self {
-            dir,
-            name,
-            file: Some(File::from_fd(file)),
-            committed: false,
-        })
+        Ok(Self { tmp, dir })
     }
 
-    fn commit(mut self, destination: &[u8]) -> sys::Maybe<()> {
-        // Windows requires the file to be closed before it's renamed.
-        self.file = None;
+    fn commit(self, destination: &[u8]) -> sys::Maybe<()> {
         let basename = ZBox::from_bytes(bun_paths::basename(destination));
-        sys::renameat(self.dir.fd(), &self.name, self.dir.fd(), &basename)?;
-        self.committed = true;
-        Ok(())
-    }
-}
-
-impl Drop for TempOutput {
-    fn drop(&mut self) {
-        if !self.committed {
-            self.file = None;
-            let _ = sys::unlinkat(self.dir.fd(), &self.name);
-        }
+        // Windows requires the file to be closed before it's renamed.
+        self.tmp.close().rename_to(&self.dir, &basename)
     }
 }
 
@@ -455,22 +436,14 @@ fn pack_entry(
 
     let mut walker = bun_core::handle_oom(walker_skippable::walk(dir.fd(), &[], &[]));
     walker.resolve_unknown_entry_types = true;
-    #[cfg(windows)]
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
     #[cfg(unix)]
     let mut target_buf = bun_paths::path_buffer_pool::get();
-    #[cfg(unix)]
-    let mut join_buf = None;
 
     while let Some(entry) = walker.next()? {
         #[cfg(not(windows))]
         let rel: &[u8] = entry.path.as_bytes();
         #[cfg(windows)]
-        let rel: &[u8] = {
-            let len = bun_paths::strings::from_wpath(&mut rel_buf[..], entry.path.as_slice()).len();
-            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_buf[..len]);
-            &rel_buf[..len]
-        };
+        let rel: &[u8] = &bun_paths::Path::from(entry.path.as_slice()).into_portable();
         if rel.len() > MAX_PACK_PATH_LEN || !is_safe_relative_path(rel) {
             return Err(refuse("cache entry path cannot be packed", rel));
         }
@@ -497,8 +470,7 @@ fn pack_entry(
                 {
                     let len = sys::readlinkat(entry.dir, entry.basename, &mut target_buf[..])?;
                     let target = ZStr::nul_terminate(&mut target_buf, len);
-                    if len > MAX_PACK_PATH_LEN
-                        || !bun_archive::is_symlink_target_safe(rel, target, &mut join_buf)
+                    if len > MAX_PACK_PATH_LEN || !bun_archive::is_symlink_target_safe(rel, target)
                     {
                         return Err(refuse(
                             "cache entry has symlink that may point outside it",
@@ -535,7 +507,7 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
     };
     let mut summary = PackSummary::default();
     {
-        let mut w = Writer::new(output.as_ref().and_then(|output| output.file.as_ref()));
+        let mut w = Writer::new(output.as_ref().map(|output| &*output.tmp.file));
         w.write(MAGIC)?;
         for entry in &entries {
             if entry_tag(entry.name.as_bytes()).is_none() {
@@ -690,40 +662,6 @@ impl Reader {
     }
 }
 
-/// A private directory inside the temporary directory. The `n`th new package is staged as
-/// `<name>/<n>`.
-struct Staging {
-    parent: Fd,
-    name: ZBox,
-    dir: Option<Dir>,
-}
-
-impl Staging {
-    fn create(parent: Fd) -> sys::Maybe<Self> {
-        let name = tmpname(b"unpack");
-        sys::mkdirat(parent, &name, 0o700)?;
-        let mut staging = Self {
-            parent,
-            name,
-            dir: None,
-        };
-        staging.dir = Some(Dir::borrow(&parent).open_at(staging.name.as_bytes())?);
-        Ok(staging)
-    }
-
-    fn fd(&self) -> Fd {
-        self.dir.as_ref().map_or(Fd::INVALID, Dir::fd)
-    }
-}
-
-impl Drop for Staging {
-    fn drop(&mut self) {
-        // Windows requires the directory to be closed before it's removed.
-        self.dir = None;
-        let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
-    }
-}
-
 fn staged_name(buf: &mut [u8; 21], n: usize) -> &ZStr {
     bun_fmt::itoa_z(buf, n as u64)
 }
@@ -749,8 +687,6 @@ fn unpack_package(
     // Symlinks are created last, so that no path can go through one while files are being written.
     #[cfg(unix)]
     let mut links: Vec<bun_archive::DeferredSymlink> = Vec::new();
-    #[cfg(unix)]
-    let mut join_buf = None;
 
     loop {
         let (header, rel) = r.header(&mut path)?;
@@ -801,11 +737,7 @@ fn unpack_package(
                 #[cfg(unix)]
                 {
                     if strings::contains_char(target.as_bytes(), 0)
-                        || !bun_archive::is_symlink_target_safe(
-                            rel.as_bytes(),
-                            target,
-                            &mut join_buf,
-                        )
+                        || !bun_archive::is_symlink_target_safe(rel.as_bytes(), target)
                     {
                         return Err(r.refuse("unsafe symlink target", rel.as_bytes()));
                     }
@@ -866,8 +798,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
 /// Returns false if something already exists at `to`. It's left alone.
 #[cfg(windows)]
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
-    let mut to_buf = bun_paths::w_path_buffer_pool::get();
-    let to_w = bun_paths::strings::to_wpath_normalized(&mut to_buf, to.as_bytes());
+    let to_w: &[u16] = &sys::nt_path(to, sys::Tag::rename)?;
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
@@ -900,17 +831,12 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
     let Some(name_len) = strings::index_of_char_pos(entry.as_bytes(), b'@', 1) else {
         return;
     };
-    let mut target_buf = bun_paths::path_buffer_pool::get();
     crate::cache_publish::create_index_link(
         cache_dir,
         cache_dir_path,
         &entry.as_bytes()[..name_len],
         &entry.as_bytes()[name_len + 1..],
-        bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            cache_dir_path,
-            &mut target_buf[..],
-            &[entry.as_bytes()],
-        ),
+        &bun_paths::Path::resolve(&[cache_dir_path, entry]),
     );
 }
 
@@ -918,7 +844,12 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
     let cache_dir = pm.get_cache_directory().handle.fd();
-    let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
+    let tmpdir = &pm.get_temporary_directory().handle;
+    let staging_name = tmpname(b"unpack");
+    sys::mkdirat(tmpdir, &staging_name, 0o700)?;
+    let staging_name = sys::DeleteTreeOnDrop::new(tmpdir, staging_name);
+    // The `n`th new package is staged in it as `<n>`.
+    let staging = tmpdir.open_at(&staging_name)?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();
     let mut staged_buf = [0u8; 21];
@@ -957,11 +888,11 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
                 header.size,
                 &mut summary,
             )?;
-            staged.push((ZBox::from_bytes(name.as_bytes()), tag));
+            staged.push((name.to_zbox(), tag));
         }
     }
 
-    // The whole pack is verified by now and the cache is untouched. Dropping `staging` deletes it.
+    // The whole pack is verified by now and the cache is untouched.
     if pm.options.dry_run {
         summary.created = staged.len() as u32;
         return Ok(summary);
@@ -1020,10 +951,13 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         }
     };
     // `PackageManager::init` has changed directory since it was typed.
-    let mut abs_buf = bun_paths::path_buffer_pool::get();
-    let Some(abs_file) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-        bun_paths::platform::Auto,
-    >(original_cwd, &mut abs_buf[..], &[file]) else {
+    let spelling = match is_pack {
+        true => bun_sys::converted_spelling(file, bun_paths::from_portable),
+        false => bun_sys::typed_spelling(original_cwd, file, bun_paths::from_portable),
+    };
+    let mut abs_file = bun_paths::Path::resolve(&[original_cwd, &spelling]);
+    abs_file.copy_trailing_sep_from(file);
+    let Ok(abs_file) = abs_file.check_len() else {
         bun_core::pretty_errorln!("<r><red>error<r><d>:<r> \\<file\\> is too long");
         Global::exit(1);
     };
@@ -1032,7 +966,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     let dry_run = pm.options.dry_run;
     let timer = bun_core::time::Timer::start();
     let result = if is_pack {
-        pack(pm, abs_file).map(|summary| {
+        pack(pm, &abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
                     "<green>{}<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
@@ -1055,7 +989,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
         })
     } else {
-        unpack(pm, abs_file).map(|summary| {
+        unpack(pm, &abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
                     "<green>{}<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",

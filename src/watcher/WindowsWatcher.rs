@@ -7,9 +7,7 @@ use std::sync::Arc;
 use crate::watcher_impl::{
     Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher, WatcherThread,
 };
-use bun_core::strings;
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+use bun_paths::{ParentEqual, Path, is_parent_or_equal};
 
 use bun_collections::index_sort;
 use bun_sys::windows as w;
@@ -22,8 +20,8 @@ pub(crate) type Platform = WindowsWatcher;
 pub struct WindowsWatcher {
     pub(crate) port: Arc<OwnedHandle>,
     pub(crate) watcher: DirWatcher,
-    pub(crate) buf: PathBuffer,
-    pub(crate) base_idx: usize,
+    /// The watched directory, with a trailing separator.
+    pub(crate) root: Path,
 }
 
 // SAFETY: `overlapped` points at nothing.
@@ -161,12 +159,11 @@ impl WindowsWatcher {
     // into `Box::new(WatcherThread { .. })` in `Watcher::init`.
     #[allow(clippy::large_unopt_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
-        use bun_paths::string_paths as paths;
-        let mut pathbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = paths::to_nt_path(&mut pathbuf, root);
+        let wpath =
+            bun_sys::nt_path(root, bun_sys::Tag::watch).map_err(|_| Error::CreateFileFailed)?;
         let dir_handle = w::NtCreateFile(
             None,
-            wpath,
+            &wpath,
             bun_sys::NtCreateFileOptions {
                 access_mask: w::FILE_LIST_DIRECTORY,
                 disposition: w::FILE_OPEN,
@@ -184,8 +181,9 @@ impl WindowsWatcher {
         let port = w::CreateIoCompletionPort(dir_handle.as_raw_handle(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
 
-        let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
-        let mut this = Self {
+        let mut root = Path::from(root);
+        root.push_trailing_sep();
+        Ok(Self {
             // SAFETY: just created.
             port: Arc::new(unsafe { OwnedHandle::from_raw_handle(port) }),
             watcher: DirWatcher {
@@ -194,14 +192,8 @@ impl WindowsWatcher {
                 dir_handle,
                 read_pending: false,
             },
-            buf: PathBuffer::ZEROED,
-            base_idx: root.len() + usize::from(needs_slash),
-        };
-        this.buf[..root.len()].copy_from_slice(root);
-        if needs_slash {
-            this.buf[root.len()] = b'\\';
-        }
-        Ok(this)
+            root,
+        })
     }
 
     /// wait until new events are available
@@ -325,7 +317,8 @@ pub(crate) enum Timeout {
 }
 
 pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
-    let base_idx = thread.platform.base_idx;
+    let mut eventpath = Path::from(&thread.platform.root);
+    let root_len = eventpath.len();
 
     let mut event_id: usize = 0;
 
@@ -341,14 +334,13 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
         while let Some(FileEvent { action, filename }) = iter.next(&thread.platform.watcher.buf) {
-            let convert_res =
-                strings::copy_utf16_into_utf8(&mut thread.platform.buf[base_idx..], filename);
-            let eventpath_len = base_idx + convert_res.written;
+            eventpath.truncate(root_len);
+            eventpath.extend_from_slice(filename);
 
             bun_core::scoped_log!(
                 watcher,
                 "watcher update event: (filename: {}, action: {}",
-                bstr::BStr::new(&thread.platform.buf[..eventpath_len]),
+                bstr::BStr::new(eventpath.as_bytes()),
                 <&'static str>::from(action)
             );
 
@@ -367,11 +359,10 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
                     let watchlist = &this.state.lock().watchlist;
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
                     item_idx = item_idx.min(watchlist.len());
-                    let eventpath = &thread.platform.buf[..eventpath_len];
                     while item_idx > 0 && event_id < thread.watch_events.len() {
                         item_idx -= 1;
                         let path = &watchlist.items_file_path()[item_idx];
-                        let rel = is_parent_or_equal(path.as_ref(), eventpath);
+                        let rel = is_parent_or_equal(path.as_ref(), &eventpath);
                         bun_core::scoped_log!(
                             watcher,
                             "checking path: {} = .{}",

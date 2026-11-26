@@ -21,74 +21,27 @@
 #pragma once
 
 #include "JSDOMConvertDictionary.h"
-#include "JSDOMWrapper.h"
+#include "JSDOMInterface.h"
 #include "PerformanceObserver.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSPerformanceObserver : public JSDOMWrapper<PerformanceObserver> {
+class JSPerformanceObserver final : public JSDOMInterfaceWithAdditionalChildren<JSPerformanceObserver, PerformanceObserver> {
 public:
-    using Base = JSDOMWrapper<PerformanceObserver>;
-    static JSPerformanceObserver* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceObserver>&& impl)
-    {
-        JSPerformanceObserver* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserver>(globalObject->vm())) JSPerformanceObserver(structure, *globalObject, WTF::move(impl));
-        ptr->finishCreation(globalObject->vm());
-        return ptr;
-    }
-
-    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
-    static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static PerformanceObserver* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    using JSDOMInterfaceWithAdditionalChildren::JSDOMInterfaceWithAdditionalChildren;
 
     DECLARE_INFO;
+    static constexpr auto subspaceSlots = BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserver, m_subspaceForPerformanceObserver);
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
-    }
-
+    static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return subspaceForImpl(vm);
-    }
-    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
+
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
-
-    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-protected:
-    JSPerformanceObserver(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceObserver>&&);
-
-    DECLARE_DEFAULT_FINISH_CREATION;
+    bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral*) const;
 };
-
-class JSPerformanceObserverOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceObserver*)
-{
-    static NeverDestroyed<JSPerformanceObserverOwner> owner;
-    return &owner.get();
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceObserver&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserver* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceObserver>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceObserver>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
     using WrapperClass = JSPerformanceObserver;
-    using ToWrappedReturnType = PerformanceObserver*;
 };
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 

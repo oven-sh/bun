@@ -1,25 +1,22 @@
 # -- source: main.cjs
 # globalThis.self = globalThis;
-# function hash(key) {
-#   switch (typeof key) {
-#     case "object": if (!key) return 0;
-#     case "function": return key.hashCode();
-#     case "number": return key | 0;
-#     default: return 1;
-#   }
+# function fare(rider) {
+#   if (typeof rider === "function" || (typeof rider === "object" && rider !== null)) return rider.pays();
+#   if (typeof rider === "number") return rider & 31;
+#   return 2;
 # }
-# function same(a, b) {
-#   if ((typeof a === "object" && a !== null) || typeof a === "function") return a.equals(b);
-#   return a === b;
+# function rides(one, other) {
+#   if (typeof one === "function") return one.sits(other);
+#   if (typeof one === "object" && one !== null) return one.sits(other);
+#   return one > other;
 # }
-# function again(x) {
-#   if (typeof x === "object") {
-#     do { x = x && x.next; } while (typeof x === "object");
-#   }
-#   return x;
+# function ahead(car) {
+#   let steps = 0;
+#   while (typeof car === "object") { if (!car) return null; car = car.next; if (++steps > 9) return car; }
+#   return car;
 # }
 # let sum = 0;
-# for (let i = 0; i < 4; i++) sum += hash(i) + (same(i, 2) ? 10 : 0) + again(i);
+# for (let i = 0; i < 5; i++) sum += fare(i * 9) + (rides(i, 2) ? 100 : 0) + ahead(i);
 # print(sum);
 # -- end of source
 # Two ways meet behind tests for an object and for a function: what is read there is no number, whoever may have laid the name on Number.prototype.
@@ -27,4 +24,4 @@
 # CHECK: function f1 {{*}}result=int[0, {{*}}]
 # CHECK: function f2 {{*}}result=boolean
 # RUN(ANSWERS): run-in-shell mechanisms=all
-# ANSWERS: 22
+# ANSWERS: 268

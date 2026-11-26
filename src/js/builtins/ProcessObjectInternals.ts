@@ -185,9 +185,8 @@ export function getStdinStream(
 
   stream.fd = fd;
 
-  // The descriptor belongs to the process: reading resumes after 'end' (see the
-  // 'resume' handler) and children inherit it. Destroying stdin, which the
-  // 'end' handler below does, must not close it.
+  // The descriptor belongs to the process and children inherit it. Destroying
+  // stdin, which the 'end' handler below does, must not close it.
   stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
     cb(err);
   };
@@ -292,6 +291,8 @@ export function getStdinStream(
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
+    if (stream_reachedEof) return;
     $debug('on("resume");');
     own();
     stream._undestroy();
@@ -701,7 +702,14 @@ export function createOnWarning(
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    processObject.stderr.write(message + "\n");
+    const { stderr } = processObject;
+    const onConsoleError = require("internal/shared").builtinChannel("console.error");
+    if (onConsoleError.hasSubscribers) {
+      const args = [message];
+      onConsoleError.publish(args);
+      message = require("internal/util/inspect").format.$apply(undefined, args);
+    }
+    stderr.write(message + "\n");
   }
 
   interface ProcessWarning extends Error {
@@ -730,7 +738,6 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0 = processObject.argv0 || "node";
@@ -742,8 +749,9 @@ export function createOnWarning(
           : (process.platform === "win32"
               ? $bindgen("node_path.bind.ts", "basenameWin32")
               : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
-      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
+      msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }
+    writeOut(msg);
   };
 }
 

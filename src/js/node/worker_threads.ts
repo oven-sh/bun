@@ -12,7 +12,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker> & {
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce, builtinChannel } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -810,6 +810,8 @@ function moveMessagePortToContext(port, _context) {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
+const workerThreadsChannel = builtinChannel("worker_threads");
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -999,6 +1001,10 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({ worker: this });
     }
   }
 

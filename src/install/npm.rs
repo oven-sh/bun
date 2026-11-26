@@ -12,7 +12,7 @@ use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, Fd, File};
+use bun_sys::{self, Fd, File, Tmpfile};
 use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
@@ -1146,7 +1146,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
-    use bun_io::Write as _;
+    use bun_paths::Path;
 
     pub struct Serializer;
 
@@ -1286,27 +1286,17 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::path_buffer_pool::get();
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                    &temp_dir.path,
-                    &mut realpath_buf[..],
-                    &[tmp_path.as_bytes()],
-                );
+                bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
-            #[cfg(not(windows))]
-            let _ = &mut realpath_buf;
-            let tmpdir = temp_dir.handle.fd();
+            let tmpdir = &temp_dir.handle;
             #[cfg(not(windows))]
             let cache_dir = temp_dir.cache.handle.fd();
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let mut is_using_o_tmpfile = false;
-
             #[allow(unused_labels)]
-            let file: File = 'brk: {
+            let tmp = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]
                 let mask = 0o664;
@@ -1343,65 +1333,43 @@ pub mod package_manifest {
                                 warn_once();
                             }
                         }
-                        bun_sys::Result::Ok(f) => {
-                            is_using_o_tmpfile = true;
-                            break 'brk f;
+                        bun_sys::Result::Ok(file) => {
+                            file.write_all(&buffer)?;
+                            if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
+                                return Ok(());
+                            }
+                            // Keep the entry in place the whole time: rename over it below.
+                            bun_sys::linkat_tmpfile(file.handle, tmpdir.fd(), tmp_path)?;
+                            break 'brk bun_sys::UnlinkOnDrop::new(tmpdir, tmp_path);
                         }
                     }
                 }
 
-                File::openat(
+                let tmp = Tmpfile::open(
                     tmpdir,
                     path_to_use_for_opening_file,
                     flags | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mask,
-                )?
+                )?;
+                tmp.file.write_all(&buffer)?;
+                tmp.close()
             };
-
-            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::path_buffer_pool::get();
-                let cache_dir_abs = &temp_dir.cache.path;
-                let cache_path_abs =
-                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                        cache_dir_abs,
-                        &mut realpath2_buf[..],
-                        &[cache_dir_abs, outpath.as_bytes()],
-                    );
-                drop(file);
-                bun_sys::renameat(
-                    Fd::cwd(),
-                    path_to_use_for_opening_file,
-                    Fd::cwd(),
-                    cache_path_abs,
-                )?;
+                let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
+                tmp.rename_to(Fd::cwd(), cache_path_abs)?;
                 return Ok(());
-            }
-
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if is_using_o_tmpfile {
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
-                    return Ok(());
-                }
-                // Keep the entry in place the whole time: rename over it below instead of unlinking
-                // it first.
-                bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
             #[cfg(not(windows))]
             {
                 // Attempt #1. Rename the file.
-                let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
+                let rc = bun_sys::renameat(tmpdir, &tmp, cache_dir, outpath);
 
                 match &rc {
                     bun_sys::Result::Err(err) => {
                         // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
-                        // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
-                        scopeguard::defer! {
-                            let _ = bun_sys::unlinkat(tmpdir, tmp_path);
-                        }
 
                         // On Darwin `Errno::EOPNOTSUPP` resolves to 102 while
                         // the kernel reports errno **45** (ENOTSUP), so match
@@ -1418,8 +1386,8 @@ pub mod package_manifest {
                         {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
-                                tmpdir,
-                                tmp_path,
+                                tmpdir.fd(),
+                                &tmp,
                                 cache_dir,
                                 outpath,
                                 bun_sys::RenameMode::Exchange,
@@ -1429,7 +1397,9 @@ pub mod package_manifest {
                             return Ok(());
                         }
                     }
-                    bun_sys::Result::Ok(()) => {}
+                    bun_sys::Result::Ok(()) => {
+                        tmp.keep();
+                    }
                 }
 
                 rc?;
@@ -1456,6 +1426,7 @@ pub mod package_manifest {
             temp_dir: &'static TemporaryDirectory,
         ) {
             use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
+            use bun_threading::wait_group::{Pending, WaitGroup};
             use bun_threading::work_pool::OwnedTask;
 
             struct SaveTask {
@@ -1464,6 +1435,7 @@ pub mod package_manifest {
                 temp_dir: &'static TemporaryDirectory,
 
                 task: PoolTask,
+                _pending: Pending<&'static WaitGroup>,
             }
 
             bun_threading::intrusive_work_task!(SaveTask, task);
@@ -1483,42 +1455,27 @@ pub mod package_manifest {
                             Output::flush();
                         }
                     }
-                    drop(self);
-                    SAVES.finish();
                 }
             }
 
-            SAVES.add_one();
             let batch = PoolBatch::from_owned(Box::new(SaveTask {
                 manifest: this.clone(),
                 registry,
                 temp_dir,
                 task: PoolTask::default(),
+                _pending: Pending::new(&SAVES),
             }));
             THREAD_POOL.schedule(batch);
         }
 
-        fn manifest_file_name<'b>(
-            buf: &'b mut [u8],
-            file_id: u64,
-            url_hash: u64,
-        ) -> Result<&'b bun_core::ZStr, Error> {
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let mut stream = bun_io::FixedBufferStream::new_mut(buf);
-            if url_hash == *registry::DEFAULT_URL_HASH {
-                write!(stream, "{}.npm", file_id_hex_fmt)?;
-            } else {
-                write!(
-                    stream,
-                    "{}-{}.npm",
-                    file_id_hex_fmt,
-                    bun_fmt::hex_int_lower::<16>(url_hash),
-                )?;
+        fn manifest_file_name(file_id: u64, url_hash: u64) -> Path {
+            let mut name = Path::new();
+            write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id));
+            if url_hash != *registry::DEFAULT_URL_HASH {
+                write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash));
             }
-            stream.write_byte(0)?;
-            let len = stream.pos;
-            // We wrote `len` bytes ending in a NUL into `buf`.
-            Ok(bun_core::ZStr::from_buf(buf, len - 1))
+            name.extend_from_slice(b".npm");
+            name
         }
 
         pub(crate) fn save(
@@ -1529,10 +1486,8 @@ pub mod package_manifest {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
             let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
-            let mut out_path_buf =
-                [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, registry.url_hash)?;
-            Self::write_file(this, registry, tmp_path, temp_dir, out_path)
+            let out_path = Self::manifest_file_name(file_id, registry.url_hash);
+            Self::write_file(this, registry, tmp_path, temp_dir, &out_path)
         }
 
         pub(crate) fn load_by_file_id(
@@ -1540,19 +1495,17 @@ pub mod package_manifest {
             cache_dir: Fd,
             name: &[u8],
             file_id: u64,
-        ) -> Result<Option<PackageManifest>, Error> {
-            let mut file_path_buf = [0u8; 512 + 64];
-            let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope.url_hash)?;
-            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
-                return Ok(None);
-            };
+        ) -> Option<PackageManifest> {
+            let file_name = Self::manifest_file_name(file_id, scope.url_hash);
+            let cache_file = bun_sys::openat(cache_dir, &file_name, bun_sys::O::RDONLY, 0);
+            let cache_file = File::from_fd(cache_file.ok()?);
 
             // A file that cannot be used is not deleted. Another version of bun may have written
             // it, and the next download of the manifest replaces it.
-            Ok(Self::load_by_file(scope, &cache_file)
+            Self::load_by_file(scope, &cache_file)
                 .ok()
                 .flatten()
-                .filter(|manifest| manifest.name() == name))
+                .filter(|manifest| manifest.name() == name)
         }
 
         pub fn load_by_file(

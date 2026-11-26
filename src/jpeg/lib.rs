@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-// `Vec::shrink_to_fit()` aborts if it is refused memory: test/internal/source-lints/image-refusable-memory.test.ts.
+// `Vec::shrink_to_fit()` aborts if it is refused memory: test/internal/source-lints/refusable-memory.test.ts.
 #![feature(hint_prefetch, vec_fallible_shrink)]
 
 // The C files and functions that comments name are in https://github.com/libjpeg-turbo/libjpeg-turbo/tree/c85e6b905bf237038faa936dab160ebfc5da0344/src

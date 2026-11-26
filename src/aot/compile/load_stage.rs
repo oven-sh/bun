@@ -8,7 +8,7 @@ use crate::diagnostics::{
     Diagnostic, Diagnostics, IgnoreCommentOptions, InternalError, LoadMessages, ProgramView, Span,
 };
 use crate::link::run_beside;
-use crate::load::contents::entry_points::NameLeftOut;
+use crate::load::contents::entry_points::{NameLeftOut, NameOfLoad};
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::contents::{
     ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
@@ -45,7 +45,9 @@ use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
 };
 use bun_sema::node::NodeData;
-use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
+use bun_sema::program::{
+    CodeAnswer, CodeView, EntryPointsFound, FileId, Files, may_name_type_at_run_time,
+};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -214,6 +216,22 @@ fn warn_of_names_unread_at_loads_found_late(
             {
                 let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
                 let code = Code::ModuleMayBeNamedAtRunTime;
+                diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+            }
+        }
+    }
+}
+
+fn warn_of_types_unread_at_requires(diagnostics: &mut Diagnostics, view: ProgramView<'_, '_>) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        for site in analysis.import_sites {
+            if matches!(site.specifier, ImportSpecifier::Constant(_))
+                && may_name_type_at_run_time(hir, files.bound(file), &analysis.decisions, site)
+            {
+                let span = Span::of_node(hir, file, NodeData::Expr(site.specifier_node));
+                let code = Code::RequiredTypeIsNotRead;
                 diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
             }
         }
@@ -510,11 +528,12 @@ fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBui
         let mut builtins_held = expressions.filter_map(|it| builtins.builtin_of_expression(it));
         builtins_held.any(|id| is(id, BuiltinId::NodeModule))
     };
+    let hands_object_on = || (builtins.exposed().iter()).any(|&id| is(id, BuiltinId::NodeModule));
     builtins
         .mentioned()
         .iter()
         .any(|&id| match is(id, BuiltinId::NodeModule) {
-            true => holds_object(),
+            true => holds_object() || hands_object_on(),
             false => {
                 let mut members = table::members(BuiltinId::NodeModule).iter();
                 tables_of_loaders.iter().any(|&loaders| is(id, loaders))
@@ -549,6 +568,7 @@ fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
 struct FoundByLoad {
     entry_points: Vec<FoundEntryPoint>,
     followed_workers: Vec<(FileId, ExprId)>,
+    names_of_loads: Vec<NameOfLoad>,
     names_written: Vec<EntryPointPaths>,
     names_left_out: Vec<NameLeftOut>,
 }
@@ -778,11 +798,12 @@ impl<'a> Build<'a> {
                 let application = application?;
                 let names_written = finder.take_names_written();
                 let names_left_out = finder.take_excluded_names();
-                let (entry_points, followed_workers) =
+                let (entry_points, followed_workers, names_of_loads) =
                     finder.finish(application.files(), options.entry_points.len());
                 let found = FoundByLoad {
                     entry_points,
                     followed_workers,
+                    names_of_loads,
                     names_written,
                     names_left_out,
                 };
@@ -951,6 +972,7 @@ impl<'a> Build<'a> {
         if !options.aot.checks_only && !options.aot.runs_in_place {
             warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
             warn_of_guesses_left_out(&mut self.diagnostics, view, host);
+            warn_of_types_unread_at_requires(&mut self.diagnostics, view);
             if !options.aot.loads_code_from_disk {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
                 warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
@@ -983,6 +1005,7 @@ impl<'a> Build<'a> {
                 found.names_written,
             );
             self.started_workers.names = names;
+            self.started_workers.names_of_loads = found.names_of_loads;
             for diagnostic in said {
                 self.diagnostics.add(None, diagnostic);
             }
@@ -1465,6 +1488,7 @@ mod tests {
             ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
+            (r#"await vi.importActual("node:module");"#, PLAIN, false),
             (r#"vi.resetModules();"#, PLAIN, false),
         ];
         let mut wrong = Vec::new();

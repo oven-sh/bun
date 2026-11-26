@@ -5,6 +5,7 @@ use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
+use bun_paths::portable::from_portable_rooted;
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
@@ -297,18 +298,12 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        let display = if source_map.standalone_module_graph.is_none()
-            && bun_paths::is_absolute(base_filename)
-        {
-            // `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
-        } else {
-            name
-        };
+        if source_map.standalone_module_graph.is_none() && bun_paths::is_absolute(base_filename) {
+            let path = path_of_source(base_filename, name);
+            return Some(bun_core::String::clone_utf8(&path));
+        }
 
-        Some(bun_core::String::clone_utf8(display))
+        Some(bun_core::String::clone_utf8(name))
     }
 
     /// Only valid if `lookup.source_map.is_external()`
@@ -357,15 +352,8 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::path_buffer_pool::get();
-            // `platform::Auto` is
-            // cfg-selected (Posix on unix, Windows on windows).
-            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
-            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
-                bun_paths::platform::Loose,
-            >(dir, &mut buf[..], &[name])?;
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            let path = path_of_source(base_filename, name);
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }
@@ -373,6 +361,14 @@ impl Lookup {
 
         Some(Utf8Bytes::Owned(bytes))
     }
+}
+
+/// `source` is an entry of the `sources` of the map for `generated_file`.
+fn path_of_source(generated_file: &[u8], source: &[u8]) -> bun_paths::Path {
+    let dir = bun_paths::dirname_or_root(generated_file);
+    let mut path = bun_paths::Path::resolve(&[dir, &from_portable_rooted(source)]);
+    path.copy_trailing_sep_from(source);
+    path
 }
 
 impl Mapping {

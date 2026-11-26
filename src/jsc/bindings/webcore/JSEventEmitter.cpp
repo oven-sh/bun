@@ -1,8 +1,6 @@
 #include "config.h"
 #include "JSEventEmitter.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
 #include "JSAddEventListenerOptions.h"
 #include "JSDOMBinding.h"
@@ -18,24 +16,15 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSEvent.h"
 #include "JSEventListener.h"
 #include "JSEventListenerOptions.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
 #include <variant>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -57,45 +46,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_getMaxListeners
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsEventEmitterConstructor);
-
-class JSEventEmitterPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSEventEmitterPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSEventEmitterPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventEmitterPrototype))) JSEventEmitterPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventEmitterPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSEventEmitterPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-
-public:
-    // No IsImmutablePrototypeExoticObject: node:events relinks this under its JS
-    // EventEmitter so `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventEmitterPrototype, JSEventEmitterPrototype::Base);
-
+// No IsImmutablePrototypeExoticObject: node:events relinks this under its JS EventEmitter.
+using JSEventEmitterPrototype = JSDOMPrototype<JSEventEmitter>;
 using JSEventEmitterDOMConstructor = JSDOMConstructorCallable<JSEventEmitter>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -160,12 +112,6 @@ JSC_ANNOTATE_HOST_FUNCTION(JSEventEmitterDOMConstructorCall, JSEventEmitterDOMCo
 
 template<> const ClassInfo JSEventEmitterDOMConstructor::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterDOMConstructor) };
 
-template<> JSValue JSEventEmitterDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
 template<> void JSEventEmitterDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -179,7 +125,7 @@ template<> void JSEventEmitterDOMConstructor::initializeProperties(VM& vm, JSDOM
 /* Hash table for prototype */
 
 static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsEventEmitterConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSEventEmitterPrototype::constructorGetter, 0 } },
     { "addListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addListener, 2 } },
     { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addListener, 2 } },
     { "once"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addOnceListener, 2 } },
@@ -199,9 +145,9 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
 
 };
 
-const ClassInfo JSEventEmitterPrototype::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterPrototype) };
+template<> const ClassInfo JSEventEmitterPrototype::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterPrototype) };
 
-void JSEventEmitterPrototype::finishCreation(VM& vm)
+template<> void JSEventEmitterPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSEventEmitter::info(), JSEventEmitterPrototypeTableValues, *this);
@@ -210,50 +156,14 @@ void JSEventEmitterPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSEventEmitter::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitter) };
 
-JSEventEmitter::JSEventEmitter(Structure* structure, JSDOMGlobalObject& globalObject, Ref<EventEmitter>&& impl)
-    : JSDOMWrapper<EventEmitter>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSEventEmitter::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, EventEmitter>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
-
 JSObject* JSEventEmitter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSEventEmitterPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSEventEmitterPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSEventEmitter::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSEventEmitter>(vm, globalObject);
+    return JSEventEmitterPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSEventEmitter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSEventEmitterDOMConstructor, DOMConstructorID::EventEmitter>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSEventEmitter::destroy(JSC::JSCell* cell)
-{
-    JSEventEmitter* thisObject = static_cast<JSEventEmitter*>(cell);
-    thisObject->JSEventEmitter::~JSEventEmitter();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSEventEmitterPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSEventEmitter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend)
@@ -507,61 +417,14 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners, (JSGlobalObj
     return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenersBody>(*lexicalGlobalObject, *callFrame, "listeners");
 }
 
-JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)
+bool JSEventEmitter::isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&, ASCIILiteral* reason) const
 {
-    return WebCore::subspaceForImpl<JSEventEmitter, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEventEmitter, m_subspaceForEventEmitter));
-}
-
-template<typename Visitor>
-void JSEventEmitter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSEventEmitter);
-
-template<typename Visitor>
-void JSEventEmitter::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSEventEmitter::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSEventEmitter::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSEventEmitter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSEventEmitterOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsEventEmitter = uncheckedDowncast<JSEventEmitter>(handle.slot()->asCell());
-    if (jsEventEmitter->wrapped().isFiringEventListeners()) {
+    if (wrapped().isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventEmitter firing event listeners"_s;
         return true;
     }
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
     return false;
-}
-
-JSC::WeakHandleOwner::FinalizeResult JSEventEmitterOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsEventEmitter = static_cast<JSEventEmitter*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsEventEmitter->wrapped(), jsEventEmitter);
-    return FinalizeResult::KeepImpl;
 }
 
 }

@@ -21,7 +21,7 @@ use bun_jsc::{
     SysErrorJsc as _,
 };
 use bun_ptr::{AliasableBox, BackRef};
-use bun_removable_features::removable_body_behind_value;
+use bun_removable_features::{removable_body, removable_body_behind_value};
 use bun_sys::{self as sys, Error as SysError};
 
 pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
@@ -933,7 +933,7 @@ impl ReadableSinkController {
         }
     }
 
-    /// `write` of bytes that are not in a JS object.
+    /// `write` for C++: the output of a codec, or the bytes of a JS view.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
         let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
@@ -942,7 +942,12 @@ impl ReadableSinkController {
             return Ok(JSValue::js_number(0.0));
         }
         // SAFETY: the controller is attached, so the sink is live.
-        let written = unsafe { sink.to_sink_handle() }.write(&Temporary(bytes));
+        let written = match unsafe { sink.to_sink_handle() } {
+            SinkHandle::HTMLRewriter(pipe) => {
+                removable_body!(HtmlRewriter, Abort, { pipe.write_copy(bytes) })
+            }
+            sink => sink.write(&Temporary(bytes)),
+        };
         Ok(written.to_js(&cx.js_thread()))
     }
 

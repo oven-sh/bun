@@ -251,11 +251,6 @@ impl Ticket {
         self.shared.deliver(self.kind, task);
     }
 
-    /// Release a keep-alive taken on the VM's loop (any thread).
-    pub fn unref_keep_alive(&self) {
-        self.shared.add_keep_alive(self.kind, -1);
-    }
-
     /// Whether the VM is still running script (not stopping). What an
     /// off-thread body checks before doing work whose only consumer is
     /// script; either way it posts its completion back.
@@ -297,6 +292,15 @@ impl Drop for Ticket {
         {
             self.shared.notify();
         }
+    }
+}
+
+/// A [`Ticket`] that also keeps its loop alive.
+pub(crate) struct KeepAliveTicket(Ticket);
+
+impl Drop for KeepAliveTicket {
+    fn drop(&mut self) {
+        self.0.shared.add_keep_alive(self.0.kind, -1);
     }
 }
 
@@ -563,6 +567,12 @@ impl VirtualMachine {
             "off-thread work started after the VM finished draining"
         );
         Ticket::issue(&h.0, self.current_loop_kind())
+    }
+
+    #[track_caller]
+    pub(crate) fn keep_alive_ticket(&self) -> KeepAliveTicket {
+        self.event_loop().ref_keep_alive();
+        KeepAliveTicket(self.ticket())
     }
 
     /// See [`VmHandle::closed`].

@@ -30,8 +30,12 @@
 #include <wtf/Assertions.h>
 
 #include "MoveOnlyFunction.h"
-#include "PerMessageDeflate.h"
 // clang-format off
+
+/* src/uws_sys/WebSocket.rs */
+struct SharedDeflate;
+extern "C" SharedDeflate *Bun__SharedDeflate__create();
+extern "C" void Bun__SharedDeflate__destroy(SharedDeflate *);
 
 namespace uWS {
 
@@ -44,8 +48,8 @@ private:
     int currentDeferQueue = 0;
     std::vector<MoveOnlyFunction<void()>> deferQueues[2];
 
-    /* Map from void ptr to handler */
-    std::map<void *, MoveOnlyFunction<void(Loop *)>> postHandlers, preHandlers;
+    /* Called with their key, before and after an iteration */
+    std::map<const void *, void (*)(const void *)> tickHandlers;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force
@@ -123,14 +127,6 @@ public:
         corkSlots[slot].offset = 0;
     }
 
-    /* Transfer ownership of a slot to a new socket (used during WebSocket
-     * upgrade to hand the HTTP socket's cork buffer to the new WebSocket). */
-    void transferCorkSlot(int slot, void *socket, bool ssl) {
-        ASSERT(slot == 0 || slot == 1);
-        corkSlots[slot].socket = socket;
-        corkSlots[slot].ssl = ssl;
-    }
-
     CorkSlot *getCorkSlot(int slot) {
         ASSERT(slot == 0 || slot == 1);
         return &corkSlots[slot];
@@ -188,10 +184,10 @@ public:
     /* A longer write is not copied into the cork buffer: it goes out behind it in one vectored write. */
     static constexpr unsigned int CORK_COPY_MAX = 16 * 1024;
 
-    /* Per message deflate data */
-    std::unique_ptr<ZlibContext> zlibContext;
-    std::unique_ptr<InflationStream> inflationStream;
-    std::unique_ptr<DeflationStream> deflationStream;
+    struct DestroySharedDeflate {
+        void operator()(SharedDeflate *shared) const { Bun__SharedDeflate__destroy(shared); }
+    };
+    std::unique_ptr<SharedDeflate, DestroySharedDeflate> sharedDeflate;
 };
 
 }

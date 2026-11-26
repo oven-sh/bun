@@ -1,46 +1,48 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 
-// A plain object that is made with three properties, given two more, and handed to a typed handler that was stored as a value.
-interface Endpoint<Params, Query> {
-  readonly name: string;
-  readonly decodeParams: (text: string) => Params;
-  readonly decodeQuery: (text: string) => Query;
+// A plain object that is made with three properties, given two more, and handed to a typed function that was stored as a value.
+interface Berth<Ship, Tide> {
+  readonly title: string;
+  readonly readsShip: (text: string) => Ship;
+  readonly readsTide: (text: string) => Tide;
 }
-type RequestOf<E> = E extends Endpoint<infer Params, infer Query>
-  ? { readonly params: Params; readonly query: Query; readonly request: string; readonly endpoint: string; readonly group: string }
+type VisitOf<B> = B extends Berth<infer Ship, infer Tide>
+  ? { readonly ship: Ship; readonly tide: Tide; readonly pilot: string; readonly quay: string; readonly flag: string }
   : never;
-type Handler<E> = (request: RequestOf<E>) => string;
+type Greeter<B> = (visit: VisitOf<B>) => string;
 
-class Group<Endpoints extends Record<string, Endpoint<any, any>>> {
-  readonly handlers = new Map<string, { readonly endpoint: Endpoint<any, any>; readonly handler: Handler<any> }>();
-  constructor(readonly endpoints: Endpoints) {}
-  handle<Name extends keyof Endpoints & string>(name: Name, handler: Handler<Endpoints[Name]>): this {
-    this.handlers.set(name, { endpoint: this.endpoints[name]!, handler: handler as Handler<any> });
+class Harbor<Berths extends Record<string, Berth<any, any>>> {
+  readonly greeters: Greeter<any>[] = [];
+  readonly places = new Map<string, number>();
+  constructor(readonly berths: Berths) {}
+  greets<Name extends keyof Berths & string>(name: Name, greeter: Greeter<Berths[Name]>): this {
+    this.places.set(name, this.greeters.push(greeter as Greeter<any>) - 1);
     return this;
   }
-  dispatch(name: string, params: string, query: string): string {
-    const { endpoint, handler } = this.handlers.get(name)!;
-    const request: any = { request: "GET /" + name, endpoint: endpoint.name, group: "users" };
-    request.params = endpoint.decodeParams(params);
-    request.query = endpoint.decodeQuery(query);
-    return handler(request);
+  arrives(name: string, tide: string, ship: string): string {
+    const berth: Berth<any, any> = this.berths[name]!;
+    const visit: any = { pilot: "the pilot of " + name, flag: "blue", quay: berth.title };
+    visit.tide = berth.readsTide(tide);
+    visit.ship = berth.readsShip(ship);
+    const greeter = this.greeters[this.places.get(name)!]!;
+    return greeter(visit);
   }
 }
 
-const posts: Endpoint<{ readonly id: number }, { readonly page: number }> = {
-  name: "posts",
-  decodeParams: text => ({ id: Number(text) }),
-  decodeQuery: text => ({ page: Number(text) }),
+const north: Berth<{ readonly tons: number }, { readonly feet: number }> = {
+  title: "north quay",
+  readsShip: text => ({ tons: Number(text) }),
+  readsTide: text => ({ feet: Number(text) }),
 };
-const group = new Group({ posts }).handle(
-  "posts",
-  ({ params, query, request, endpoint, group }) => `${params.id} ${query.page} ${request} ${endpoint} ${group}`,
+const harbor = new Harbor({ north }).greets(
+  "north",
+  ({ flag, quay, pilot, tide, ship }) => `${ship.tons} ${tide.feet} ${pilot} ${quay} ${flag}`,
 );
-console.log(group.dispatch("posts", "42", "2"));
-console.log(group.dispatch("posts", "7", "3"));
+console.log(harbor.arrives("north", "2", "42"));
+console.log(harbor.arrives("north", "3", "7"));
 
-// CHECK-LABEL: function {{*}}name="Group"
-// CHECK-LABEL: function {{*}}name="handle"
-// CHECK-LABEL: function {{*}}name="dispatch"
-// CHECK-LABEL: function {{*}}name="decodeParams"
+// CHECK-LABEL: function {{*}}name="Harbor"
+// CHECK-LABEL: function {{*}}name="greets"
+// CHECK-LABEL: function {{*}}name="arrives"
+// CHECK-LABEL: function {{*}}name="readsShip"

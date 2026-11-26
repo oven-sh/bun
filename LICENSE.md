@@ -21,7 +21,7 @@ Bun statically links these libraries:
 | Library | License |
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
-| [`brotli`](https://github.com/google/brotli) | MIT |
+| [`brotli`](https://github.com/google/brotli) (not linked: the Brotli codec is derived from parts of it) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`llhttp`](https://github.com/nodejs/llhttp) (not linked: `src/http1` is derived from parts of it) | MIT |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
@@ -30,13 +30,13 @@ Bun statically links these libraries:
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
 | [`picohttpparser`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from parts of it) | dual-licensed under the Perl License or the MIT License |
-| [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
+| [`zstd`](https://github.com/facebook/zstd) (not linked: `src/zstd` is derived from parts of it) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
-| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
-| [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
-| [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
+| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) (not linked: `src/zlib` is derived from parts of it) | zlib |
+| [`c-ares`](https://github.com/c-ares/c-ares) (not linked: `src/dns` is derived from parts of it) | MIT licensed |
+| [`libicu`](https://github.com/unicode-org/icu) 79 (its data are linked, and `src/icu` is derived from parts of its code) | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/deflate` and its checksum kernels are derived from it) | [MIT](https://github.com/ebiggers/libdeflate/blob/master/COPYING) |
@@ -46,7 +46,7 @@ Bun statically links these libraries:
 | [`libwebp`](https://github.com/webmproject/libwebp) (not linked: `src/webp` is derived from parts of it) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
-| A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
+| A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) (`src/http1` and `src/websocket` are derived from parts of it) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |
 | `__cxa_thread_atexit` fallback from [LLVM libc++abi](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxxabi/src/cxa_thread_atexit.cpp) | Apache 2.0 with LLVM exception |
 | The type checker behind `bun check` and the parser it shares with `bun lint` and `bun fmt` are ports of [`typescript-go`](https://github.com/microsoft/typescript-go). They use TypeScript's diagnostic messages and `lib.*.d.ts` files | Apache 2.0 |
@@ -63,6 +63,7 @@ Bun statically links these libraries:
 | `bun lint` and `bun fmt` have a port of [`glob-parent`](https://github.com/gulpjs/glob-parent) | ISC |
 | The `react-hooks`, `import`, `n`, `react` and `prettier` rules in `bun lint` are ports of the rules in [`eslint-plugin-react-hooks`](https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks), [`eslint-plugin-import`](https://github.com/import-js/eslint-plugin-import), [`eslint-plugin-n`](https://github.com/eslint-community/eslint-plugin-n), [`eslint-plugin-es-x`](https://github.com/eslint-community/eslint-plugin-es-x), [`eslint-plugin-react`](https://github.com/jsx-eslint/eslint-plugin-react) and [`eslint-plugin-prettier`](https://github.com/prettier/eslint-plugin-prettier), with the same rule names, options and messages. They include the Node.js version tables of `eslint-plugin-n` and a few functions from [`jsx-ast-utils`](https://github.com/jsx-eslint/jsx-ast-utils) and [`prettier-linter-helpers`](https://github.com/prettier/prettier-linter-helpers) | MIT |
 | The text diff used by `bun test` and the `prettier/prettier` rule has parts of [`diff-match-patch`](https://github.com/google/diff-match-patch) and of [`fast-diff`](https://github.com/jhchen/fast-diff), which is derived from it | Apache 2.0 |
+| `Bun.diff` has a port of the search, the tokenizers and the patch functions of [`diff`](https://github.com/kpdecker/jsdiff) | BSD 3-Clause |
 | The `unicorn`, `oxc`, `react-perf`, `jsx-a11y`, `nextjs`, `promise`, `node`, `jest` and `vitest` rules in `bun lint` are ports of the rules in [`oxlint`](https://github.com/oxc-project/oxc), with its messages and help text. With an oxlint config, the other rules use the messages of oxlint and [`tsgolint`](https://github.com/oxc-project/tsgolint) too. `bun lint` also ports parts of `oxc_jsdoc` and `oxc_react_compiler` | MIT |
 | oxlint ported those rules from [`eslint-plugin-unicorn`](https://github.com/sindresorhus/eslint-plugin-unicorn), [`eslint-plugin-react-perf`](https://github.com/cvazac/eslint-plugin-react-perf), [`eslint-plugin-jsx-a11y`](https://github.com/jsx-eslint/eslint-plugin-jsx-a11y), [`@next/eslint-plugin-next`](https://github.com/vercel/next.js/tree/canary/packages/eslint-plugin-next), [`eslint-plugin-n`](https://github.com/eslint-community/eslint-plugin-n), [`eslint-plugin-jest`](https://github.com/jest-community/eslint-plugin-jest) and [`@vitest/eslint-plugin`](https://github.com/vitest-dev/eslint-plugin-vitest). Their rule names, options and some of their messages are in `bun lint` | MIT |
 | oxlint ported its `promise` rules from [`eslint-plugin-promise`](https://github.com/eslint-community/eslint-plugin-promise) | ISC |

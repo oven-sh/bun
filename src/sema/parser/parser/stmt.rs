@@ -1353,6 +1353,21 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.expect(T::OpenBrace) {
             return IdList::EMPTY;
         }
+        let saved = self.enter_module_block();
+        self.open_scope_for_vars();
+        let prologue = match self.options.compiles {
+            true => Prologue::Directives,
+            false => Prologue::NoneInModuleBlock,
+        };
+        let list = self.statements_until_close_brace(prologue);
+        self.close_scope();
+        self.context = saved;
+        self.expect(T::CloseBrace);
+        list
+    }
+
+    /// Returns the context to restore.
+    pub(super) fn enter_module_block(&mut self) -> u32 {
         // Inside a function it keeps the function's context. oxc treats an `await` in an exported
         // namespace as a top-level `await`.
         let saved = match self.has_context(ctx::TOP_LEVEL) {
@@ -1361,16 +1376,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             false => self.context,
         };
         self.context = self.context & !(ctx::IN_LOOP | ctx::IN_SWITCH) | ctx::IN_NAMESPACE;
-        self.open_scope_for_vars();
-        let prologue = match self.options.compiles {
-            true => Prologue::Directives,
-            false => Prologue::None,
-        };
-        let list = self.statements_until_close_brace(prologue);
-        self.close_scope();
-        self.context = saved;
-        self.expect(T::CloseBrace);
-        list
+        saved
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -1387,6 +1393,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let strays = self.s.stray_decorators.len();
         let mut is_in_prologue = prologue == Prologue::Directives;
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
+            if prologue == Prologue::NoneInModuleBlock && self.may_be_parsed_ahead() {
+                for statement in self.take_parsed_ahead() {
+                    self.push_statement(statement);
+                }
+                continue;
+            }
             let statement = self.statement();
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);

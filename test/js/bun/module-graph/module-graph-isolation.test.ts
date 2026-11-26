@@ -117,6 +117,26 @@ const dir = String(
         new HTMLRewriter().on("p", { async element(element) { await new Promise(resolve => setTimeout(resolve, 5)); element.remove(); } })
           .transform(new Response("<p>a</p><p>b</p>")).text().then(() => say("fulfilled"), error => say("rejected: " + error.message));
       };
+      // The <p> handler writes the <b>, which HTMLRewriter parses in a later turn of the event loop.
+      export const rewritesWhatItsHandlerWrote = listening => {
+        let controller;
+        const input = new ReadableStream({ type: "direct", pull(c) { controller = c; return new Promise(() => {}); } });
+        new HTMLRewriter()
+          .on("p", { element: () => void controller.write("<b>") })
+          .on("b", { element: () => listening(Bun.serve({ port: 0, fetch: () => new Response("the graph's") }).url) })
+          .transform(new Response(input)).text();
+        controller.write("<p>");
+      };
+      // Past 16 KiB of output that nobody reads, HTMLRewriter holds the <b> for a later turn of the event loop.
+      export const rewritesPastUnreadOutput = listening => {
+        let controller;
+        const input = new ReadableStream({ type: "direct", pull(c) { controller = c; return new Promise(() => {}); } });
+        new HTMLRewriter()
+          .on("b", { element: () => listening(Bun.serve({ port: 0, fetch: () => new Response("the graph's") }).url) })
+          .transform(new Response(input));
+        controller.write(Buffer.alloc(20_000, "a"));
+        controller.write("<b>");
+      };
       // A module loaded through a graph of its own making.
       export const loadsThroughAGraphOfItsOwn = specifier => new Bun.ModuleGraph().import(specifier);
       export const makesAGraph = options => new Bun.ModuleGraph(options);
@@ -224,6 +244,49 @@ const dir = String(
       graph.dispose();
       // Nothing is left for the host to do: the process winds down, collecting on the way.
       process.on("exit", () => writeSync(1, JSON.stringify({ said })));
+    `,
+    "rewrite-in-a-later-turn.mjs": `
+      const listening = Promise.withResolvers();
+      const graph = new Bun.ModuleGraph();
+      const app = await graph.import(import.meta.dir + "/left-behind-tenant.mjs");
+      graph.run(() => app[process.argv[2]](listening.resolve));
+      if (process.argv[3] === "after") await listening.promise;
+      graph.dispose();
+      await new Promise(resolve => setImmediate(resolve));
+      listening.resolve();
+      const url = await listening.promise;
+      console.log(url ? await fetch(url).then(res => res.text(), () => "closed") : "never listened");
+      process.exit(0);
+    `,
+    "host-handlers-in-a-later-turn.mjs": `
+      // Past 16 KiB of output that nobody reads, HTMLRewriter holds the rest for a later turn of the event loop.
+      const page = () => new Response(new ReadableStream({ type: "direct", pull(c) {
+        c.write(Buffer.alloc(20_000, "a"));
+        c.write("<b></b><script></script>");
+        c.close();
+      } }));
+      const outcomes = new Set();
+      for (let i = 0; i < 10; i++) {
+        let graph = new Bun.ModuleGraph();
+        const dispose = when => () => void (process.argv[2] === when && graph.dispose());
+        const rewriter = new HTMLRewriter()
+          .on("b", { element: dispose("disposed") })
+          .on("script", { element: e => void e.remove() })
+          .onDocument({ end: dispose("disposed by the last handler") });
+        const response = graph.run(() => rewriter.transform(page()));
+        if (process.argv[2] === "collected") graph = undefined;
+        await null;
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+        let text = "";
+        try {
+          for await (const chunk of response.body) text += Buffer.from(chunk);
+          outcomes.add(text.slice(20_000));
+        } catch (error) {
+          outcomes.add(error.message);
+        }
+      }
+      console.log([...outcomes].join());
     `,
     "not-loaded-yet.ts": Array.from(
       { length: 40 },
@@ -1519,7 +1582,7 @@ const dir = String(
         },
       };
 
-      // A c-ares query to a server of the host's that answers when the host says so.
+      // A DNS query to a server of the host's that answers when the host says so.
       export function resolveThrough(state, dnsPort) {
         const resolver = new dns.Resolver();
         resolver.setServers(["127.0.0.1:" + dnsPort]);
@@ -3600,6 +3663,27 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   test("an HTMLRewriter rewrite it had under way is given up without a word when the process winds down", async () => {
     expect(await runsFixture("rewrite-given-up-at-exit.mjs")).toEqual({ stdout: `{"said":[]}`, exitCode: 0 });
   });
+  test.each([
+    { tenant: "rewritesWhatItsHandlerWrote", disposed: "before", stdout: "never listened" },
+    { tenant: "rewritesWhatItsHandlerWrote", disposed: "after", stdout: "closed" },
+    { tenant: "rewritesPastUnreadOutput", disposed: "before", stdout: "never listened" },
+    { tenant: "rewritesPastUnreadOutput", disposed: "after", stdout: "closed" },
+  ])(
+    "an HTMLRewriter handler that runs in a later turn is the graph's: $tenant, disposed $disposed it runs",
+    async ({ tenant, disposed, stdout }) => {
+      expect(await runsFixture("rewrite-in-a-later-turn.mjs", tenant, disposed)).toEqual({ stdout, exitCode: 0 });
+    },
+  );
+  test.each([
+    { graph: "collected", stdout: "<b></b>" },
+    { graph: "disposed", stdout: "The rewriter has been stopped." },
+    { graph: "disposed by the last handler", stdout: "<b></b>" },
+  ])(
+    "HTMLRewriter does not skip the host's handlers when the graph of transform() is $graph",
+    async ({ graph, stdout }) => {
+      expect(await runsFixture("host-handlers-in-a-later-turn.mjs", graph)).toEqual({ stdout, exitCode: 0 });
+    },
+  );
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,
@@ -3950,6 +4034,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "deepEquals",
         "deepMatch",
         "deflateSync",
+        "diff",
         "enableANSIColors",
         "escapeHTML",
         "fileURLToPath",
@@ -4054,7 +4139,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     "fs/promises": job("fs.promises."),
     undici: owned("fetchInFlight"),
     ws: owned("webSocket"),
-    // dns.lookup is a job; a Resolver's queries have a test of their own (c-ares).
+    // dns.lookup is a job; a Resolver's queries have a test of their own.
     dns: job("dns.lookup"),
     "dns/promises": job("dns.lookup"),
     crypto: job("crypto."),
@@ -4063,6 +4148,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     bun: "pure",
     // Process-wide on purpose.
     cluster: "host", // forks the whole process
+    diagnostics_channel: "host",
     inspector: "host",
     "inspector/promises": "host",
     process: "host",
@@ -4086,7 +4172,6 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
         "buffer",
         "console",
         "constants",
-        "diagnostics_channel",
         "domain",
         "events",
         "module",
@@ -4173,7 +4258,7 @@ test("ModuleGraph isolation: a Bun.$ script of a disposed graph stops: the runni
 
 // What a disposed graph started in the background never reports back: the promise its code is
 // waiting on stays pending, so none of its code runs again.
-test("ModuleGraph isolation: a DNS query (c-ares) of a disposed graph is never answered to it", async () => {
+test("ModuleGraph isolation: a DNS query of a disposed graph is never answered to it", async () => {
   // A DNS server of the host's that holds every query until told to answer (with NXDOMAIN).
   const held: { query: Buffer; port: number; address: string }[] = [];
   const server = await Bun.udpSocket({

@@ -16,7 +16,7 @@ use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::signals::Field as Signal;
 use crate::{HeaderResult, InFlightRequest, Protocol};
 
@@ -171,13 +171,21 @@ impl ClientSession {
     pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
         for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
             let stream = stream_mut(stream_ptr);
-            let Some(client) = &stream.client else {
+            let Some(client) = &mut stream.client else {
                 continue;
             };
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if core::mem::take(&mut stream.read_paused) {
+            match client.pump_held_body() {
+                Ok(true) => client.send_partial_result(),
+                Ok(false) => {}
+                Err(err) => {
+                    self.fail(stream_ptr, err);
+                    return true;
+                }
+            }
+            if !client.holds_off_receiving() && core::mem::take(&mut stream.read_paused) {
                 if let Some(qs) = stream.qstream_mut() {
                     qs.want_read(true);
                 }
@@ -285,10 +293,11 @@ impl ClientSession {
     }
 
     /// Runs from inside lsquic's process_conns via on_stream_{headers,data,close}.
-    /// `done` = the lsquic stream is gone; deliver whatever is buffered then
+    /// `end` = the response side of the stream is over; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
+    pub(crate) fn deliver(&mut self, stream: *mut Stream, end: Option<TransportEnd>) {
+        let done = end.is_some();
         let st = stream_mut(stream);
         let Some(mut client) = st.client.take() else {
             if done {
@@ -353,8 +362,8 @@ impl ClientSession {
         }
 
         if !st.body_buffer.is_empty() {
-            if done {
-                client.state.flags.received_last_chunk = true;
+            if let Some(end) = end {
+                client.state.end_body(end);
             }
             let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
                 Ok(r) => r,
@@ -369,20 +378,20 @@ impl ClientSession {
                 self.detach(stream);
                 return finish(client);
             }
+            if client.state.is_done() {
+                self.detach(stream);
+                return client.finish();
+            }
             if report {
-                if client.state.is_done() {
-                    self.detach(stream);
-                    return client.finish();
-                }
                 client.send_partial_result();
             }
             st.client = Some(client);
             return;
         }
 
-        if done {
+        if let Some(end) = end {
             self.detach(stream);
-            if let Err(err) = client.state.finalize_body_on_eof() {
+            if let Err(err) = client.finalize_body_on_eof(end) {
                 return client.fail(err);
             }
             return finish(client);

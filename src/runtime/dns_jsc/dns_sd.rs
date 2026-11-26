@@ -143,7 +143,7 @@ fn protocol_for_pending(_q: &QueryState) -> DNSServiceProtocol {
     PROTOCOL_IPV4 | PROTOCOL_IPV6
 }
 
-/// Real time: this timer lives in the real heap (`allow_fake_timers() == false`), so it must never read the mocked clock.
+/// Real time: this timer lives in the real heap, so it must never read the mocked clock.
 fn now_ms() -> i64 {
     bun::timespec::now(bun::TimespecMockMode::ForceRealTime).ms()
 }
@@ -272,10 +272,7 @@ impl QueryState {
         match error_code {
             ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
                 if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
-                    self.results.push(GetAddrInfoResult {
-                        address,
-                        ttl: ttl as i32,
-                    });
+                    self.results.push(GetAddrInfoResult { address, ttl });
                 }
             }
             ERR_TIMEOUT => self.saw_timeout = true,
@@ -634,8 +631,6 @@ impl SharedConnection {
         let Some(mut this) = Self::current() else {
             return;
         };
-        // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-        this.early_out_timer.state.set(EventLoopTimerState::FIRED);
         this.early_out_armed_for.set(0);
         let now = now_ms();
         let ready = this.take_ready(|q| {
@@ -686,7 +681,7 @@ impl SharedConnection {
         true
     }
 
-    /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
+    /// VM teardown: fail in-flight requests (like the client's EDESTRUCTION) and release the fd/FilePoll.
     pub(crate) fn close_for_terminate() {
         let Some(mut conn) = Self::take() else {
             return;

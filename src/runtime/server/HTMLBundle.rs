@@ -10,11 +10,10 @@ use bun_ast::Loader;
 use bun_ast::Log;
 use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_ptr::{RefCount, RefPtr, ThisPtr};
+use bun_ptr::{RefCount, RefPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
@@ -49,9 +48,9 @@ pub(crate) struct HTMLBundle {
 }
 
 impl HTMLBundle {
-    /// The JS wrapper takes over `this`' ref.
-    pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
-        crate::generated_bindgen::html_bundle::js_HTMLBundle::to_js(this, global)
+    /// The JS wrapper takes over `self`.
+    pub(crate) fn to_js(self: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
+        crate::generated_bindgen::html_bundle::js_HTMLBundle::to_js(self, global)
     }
 
     /// Initialize an HTMLBundle given a path.
@@ -160,21 +159,19 @@ impl Route {
         })
     }
 
-    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, false);
+    pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on_any_request(req, resp, false);
     }
 
-    pub(crate) fn on_head_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, true);
+    pub(crate) fn on_head_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on_any_request(req, resp, true);
     }
 
     #[inline(never)]
-    fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+    fn on_any_request(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
         bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
-        let _guard = RefPtr::from_this(this);
-        let route: &Route = &this;
 
-        let Some(server) = route.server.get() else {
+        let Some(server) = self.server.get() else {
             resp.end_without_body(true);
             return;
         };
@@ -188,7 +185,7 @@ impl Route {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
-                            this,
+                            &self,
                             bun_opaque::opaque_deref_mut(h1),
                             resp,
                         ));
@@ -202,15 +199,15 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
-                route.state.set(State::Pending);
+            if matches!(self.state.get(), State::Html(_) | State::Err(_)) {
+                self.state.set(State::Pending);
             }
         }
 
         // One re-dispatch
         // after `Pending` schedules the bundle.
         loop {
-            match route.state.get() {
+            match self.state.get() {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
@@ -219,7 +216,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    bun_core::handle_oom(Self::schedule_bundle(this, server));
+                    bun_core::handle_oom(self.schedule_bundle(server));
                     continue;
                 }
                 State::Building => {
@@ -240,11 +237,11 @@ impl Route {
                     let pending = PendingResponse {
                         method,
                         resp,
-                        _route: RefPtr::from_this(this),
+                        _route: self.clone(),
                         is_response_pending: Cell::new(true),
                     };
-                    route.pending_responses.with_mut(|v| v.push(pending));
-                    resp.on_aborted_this(Self::on_pending_response_aborted, this);
+                    self.pending_responses.with_mut(|v| v.push(pending));
+                    resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
                     req.set_yield(false);
                 }
                 State::Err(_log) => {
@@ -267,9 +264,9 @@ impl Route {
                         );
                     }
                     if is_head {
-                        StaticRoute::on_head_request(html.this_ptr(), req, resp);
+                        html.clone().on_head_request(req, resp);
                     } else {
-                        StaticRoute::on_request(html.this_ptr(), req, resp);
+                        html.clone().on_request(req, resp);
                     }
                 }
             }
@@ -278,17 +275,17 @@ impl Route {
     }
 
     /// Schedule a bundle to be built.
-    fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
-        match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
+    fn schedule_bundle(self: &RefPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
+        match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self)) {
             GetOrStartLoadResult::Err => {
-                this.state.set(State::Err(Log::init()));
+                self.state.set(State::Err(Log::init()));
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
-                Self::on_plugins_resolved(PendingBuild::new(RefPtr::from_this(this)), plugins)?;
+                Self::on_plugins_resolved(PendingBuild::new(self.clone()), plugins)?;
             }
             GetOrStartLoadResult::Pending => {
-                this.state.set(State::Building);
+                self.state.set(State::Building);
             }
         }
         Ok(())
@@ -545,9 +542,7 @@ impl Route {
                     {
                         let mut route_path: &[u8] =
                             &output_files[output_files[i].source_map_index as usize].dest_path;
-                        if strings::has_prefix(route_path, b"./")
-                            || strings::has_prefix(route_path, b".\\")
-                        {
+                        if bun_paths::without_leading_dot_slash(route_path) != route_path {
                             route_path = &route_path[1..];
                         }
                         headers.append(b"SourceMap", route_path);
@@ -557,9 +552,7 @@ impl Route {
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
-                    if strings::has_prefix(route_path, b"./")
-                        || strings::has_prefix(route_path, b".\\")
-                    {
+                    if bun_paths::without_leading_dot_slash(route_path) != route_path {
                         route_path = &route_path[1..];
                     }
 
@@ -613,9 +606,9 @@ impl Route {
             match self.state.get() {
                 State::Html(html) => {
                     if method == Method::HEAD {
-                        StaticRoute::on_head(html.this_ptr(), resp);
+                        html.clone().on_head(resp);
                     } else {
-                        StaticRoute::on(html.this_ptr(), resp);
+                        html.clone().on(resp);
                     }
                 }
                 State::Err(_log) => {
@@ -675,14 +668,11 @@ impl Drop for PendingResponse {
 
 impl Route {
     /// uws onAborted for a response waiting in `pending_responses`.
-    fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
-        // Technically, this could be the final ref count, but we don't want to risk it
-        let _guard = RefPtr::from_this(this);
-
+    fn on_pending_response_aborted(self: RefPtr<Self>, resp: AnyResponse) {
         // R-2: scope the `&mut Vec` to the find+remove only — dropping the
         // removed entry releases a route ref and must not overlap a live
         // `with_mut` borrow.
-        let removed = this.pending_responses.with_mut(|v| {
+        let removed = self.pending_responses.with_mut(|v| {
             v.iter()
                 .position(|p| p.resp == resp)
                 .map(|index| v.remove(index))

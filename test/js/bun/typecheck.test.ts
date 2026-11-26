@@ -261,8 +261,10 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     expect(diagnostic.code).toBe(2349);
     expect(diagnostic.category).toBe("error");
     expect(diagnostic.text).toBe("This expression is not callable.\n  Type 'Number' has no call signatures.");
-    // The entire chain entry, not just the top-level text. Like typescript-go
-    // chain entries are diagnostics without a file: pos and end are 0.
+    // The entire chain entry, not just the top-level text. This pins what Bun
+    // does today, which differs from typescript-go: its entries repeat the
+    // parent's fileName, pos and end (or have pos and end of -1 when the parent
+    // has no location).
     expect(diagnostic.messageChain).toEqual([
       {
         pos: 0,

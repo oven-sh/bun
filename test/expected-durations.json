@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/one-file-under-several-types-and-queries.test.ts": {
+    "default": 4000,
+    "asan": 16000
+  },
   "aot/resolved-urls-keep-their-queries.test.ts": {
     "default": 4000,
     "asan": 16000

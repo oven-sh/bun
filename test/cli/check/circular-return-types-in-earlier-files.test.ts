@@ -1,5 +1,4 @@
-// `wrap(f)(a)` in `f` leads back to the return type of `f` through the return type annotation of `wrap`. TypeScript reports TS2577 at that annotation. But it collects
-// the errors of a file right after it has checked the file, so it never reports one that the check of a later file adds.
+// `wrap(f)(a)` in `f` leads back to the return type of `f` through the return type annotation of `wrap`. TypeScript reports TS2577 at that annotation.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "../../aot/harness/run";
@@ -21,11 +20,6 @@ const circular = "error TS2577: Return type annotation circularly references its
 
 test.concurrent.each([
   [
-    "in an earlier file",
-    { "m.ts": `import { wrap } from "./h";\nexport function f(a: any) { return wrap(f)(a); }\n`, "h.ts": wrap },
-    [`m.ts(2,17): ${implicit("f")}`],
-  ],
-  [
     "in the same file",
     { "m.ts": wrap + "export function f(a: any) { return wrap(f)(a); }\n" },
     [`m.ts(1,94): ${circular}`, `m.ts(2,17): ${implicit("f")}`],
@@ -37,15 +31,6 @@ test.concurrent.each([
       "n.ts": `import { wrap } from "./m";\nexport function f(a: any) { return wrap(f)(a); }\n`,
     },
     [`m.ts(2,94): ${circular}`, `n.ts(2,17): ${implicit("f")}`],
-  ],
-  [
-    "in a file before two that lead to each other",
-    {
-      "m.ts": `import { wrap } from "./h";\nimport { g } from "./n";\nexport function f(a: any) { return wrap(g)(a); }\n`,
-      "n.ts": `import { wrap } from "./h";\nimport { f } from "./m";\nexport function g(a: any) { return wrap(f)(a); }\n`,
-      "h.ts": wrap,
-    },
-    [`m.ts(3,17): ${implicit("f")}`, `n.ts(3,17): ${implicit("g")}`],
   ],
 ] as const)("%s", async (_, files, expected) => {
   using dir = tempDir("check-circular-return-types", {

@@ -371,9 +371,6 @@ impl Checker<'_, '_> {
                 };
             }
         } else if hir[func].ret.is_some() {
-            if self.is_checked_before_visited_file(file) {
-                return;
-            }
             let ret = hir[func].ret;
             let start = start_of_type(hir, ret);
             let at = (file, start, self.end_of_type_node_from(file, ret, start));

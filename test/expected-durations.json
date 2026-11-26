@@ -4980,12 +4980,26 @@
     "windows": 800,
     "windows-aarch64": 800
   },
+  "aot/embedded-assets-by-flag.test.ts": {
+    "default": 2800,
+    "asan": 77300,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
+  },
+  "aot/embedded-assets-of-packages.test.ts": {
+    "default": 2800,
+    "asan": 77300,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
+  },
   "aot/embedded-assets.test.ts": {
-    "default": 8600,
-    "asan": 234200,
-    "musl": 9600,
-    "windows": 7700,
-    "windows-aarch64": 6200
+    "default": 2800,
+    "asan": 77300,
+    "musl": 3200,
+    "windows": 2500,
+    "windows-aarch64": 2000
   },
   "aot/engine-tests.test.ts": {
     "default": 400,

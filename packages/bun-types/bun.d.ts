@@ -3181,27 +3181,6 @@ declare module "bun" {
   type TypeCheckerDiagnosticCategory = "error" | "warning" | "suggestion" | "message";
 
   /**
-   * One entry of a diagnostic's structured elaboration
-   * ({@link Bun.TypeCheckerDiagnostic.messageChain}).
-   *
-   * Chain entries are elaboration lines, not source locations: the checker
-   * reports them without a file or source range, so those fields do not
-   * appear on chain entries even though they are typed on the parent
-   * diagnostic. Nesting is preserved through `messageChain`.
-   */
-  interface TypeCheckerMessageChain {
-    /** The numeric diagnostic code, without the `TS` prefix. */
-    readonly code: number;
-    readonly category: TypeCheckerDiagnosticCategory;
-
-    /** The fully rendered message for this elaboration line. */
-    readonly text: string;
-
-    /** Structured elaboration under {@link Bun.TypeCheckerMessageChain.text}. */
-    readonly messageChain?: readonly TypeCheckerMessageChain[] | undefined;
-  }
-
-  /**
    * One diagnostic from a checked project, in the wording `bun check` prints.
    *
    * Diagnostics are ordinary values, not rejections: a project with type
@@ -3218,10 +3197,10 @@ declare module "bun" {
     /** Absolute native path of the file the diagnostic is in, or a `bundled:///` URI for Bun's embedded libraries. Omitted when the diagnostic is not tied to a file. */
     readonly fileName?: string | undefined;
 
-    /** Zero-based UTF-16 code-unit offset of the start of the range. Omitted when there is no source range. */
-    readonly pos?: number | undefined;
-    /** Zero-based UTF-16 code-unit offset just past the end of the range. Omitted when there is no source range. */
-    readonly end?: number | undefined;
+    /** Zero-based UTF-16 code-unit offset of the start of the range. `0` when there is no source range. */
+    readonly pos: number;
+    /** Zero-based UTF-16 code-unit offset just past the end of the range. `0` when there is no source range. */
+    readonly end: number;
 
     /** One-based line of the start of the range. Omitted when there is no source range. */
     readonly line?: number | undefined;
@@ -3241,11 +3220,12 @@ declare module "bun" {
 
     /**
      * Structured elaboration of {@link Bun.TypeCheckerDiagnostic.text},
-     * when the checker provides it. Entries are
-     * {@link Bun.TypeCheckerMessageChain} values: they carry no `fileName`
-     * or source range.
+     * when the checker provides it. Entries are diagnostics of their own,
+     * like in typescript-go: they have `pos` and `end` (`0`, they are not
+     * source locations), `code`, `category`, `text` and, when nested, a
+     * `messageChain`.
      */
-    readonly messageChain?: readonly TypeCheckerMessageChain[] | undefined;
+    readonly messageChain?: readonly TypeCheckerDiagnostic[] | undefined;
     /**
      * Related source locations, such as where a name was declared, when
      * the checker provides them. Same fields recursively as the parent
@@ -3269,8 +3249,10 @@ declare module "bun" {
     /**
      * Projects to retain across snapshots.
      *
-     * Each entry is a `tsconfig.json` path or a directory containing one,
-     * resolved against the checker's `cwd`. Opening the same project twice
+     * Each entry is the path of a config file, resolved against the
+     * checker's `cwd`; a directory does not stand for the `tsconfig.json`
+     * in it. Paths are compared case-insensitively when the file system
+     * is. Opening the same project twice
      * increments its open refcount; it stays open until a matching
      * {@link Bun.TypeCheckerSnapshotUpdate.closeProjects} entry brings the
      * count back to zero. Projects pulled in by reference may also appear
@@ -3306,8 +3288,10 @@ declare module "bun" {
     /**
      * The directory that relative paths resolve against.
      *
-     * Defaults to `process.cwd()` at construction. Fixed for the lifetime
-     * of the checker. May be a `file:` URL.
+     * Defaults to `process.cwd()` at construction. A relative path resolves
+     * against `process.cwd()` at construction. Fixed for the lifetime
+     * of the checker. May be a `file:` URL. The constructor throws if the
+     * process's working directory cannot be read.
      */
     readonly cwd?: TypeCheckerPath | undefined;
   }
@@ -3330,7 +3314,10 @@ declare module "bun" {
      * them does not affect the snapshot.
      *
      * @param file A path resolved the same way as
-     * {@link Bun.TypeCheckerSnapshot.getProject}'s argument.
+     * {@link Bun.TypeCheckerSnapshot.getProject}'s argument, and compared
+     * case-insensitively when the file system is. A string such as
+     * `bundled:///libs/lib.es5.d.ts` is compared as it is, to select the
+     * diagnostics in one of Bun's embedded libraries.
      */
     /**
      * Rejects with `ERR_BUN_TYPE_CHECKER_SNAPSHOT_DISPOSED` when the owning
@@ -3369,8 +3356,8 @@ declare module "bun" {
    */
   interface TypeCheckerSnapshot {
     /**
-     * Every project result the check produced, in the checker's stable
-     * project order, including referenced projects and projects with no
+     * Every project result the check produced, sorted by config file path
+     * like TypeScript 7, including referenced projects and projects with no
      * diagnostics.
      *
      * Local and non-blocking: this does not run the checker.
@@ -3380,8 +3367,7 @@ declare module "bun" {
      * Returns the result for the project named by `configFile`, or
      * `undefined` when the check produced no result for it.
      *
-     * `configFile` is a `tsconfig.json` path or a directory containing one,
-     * resolved against the checker's `cwd` the same way as
+     * `configFile` is the path of a config file, resolved against the checker's `cwd` the same way as
      * {@link Bun.TypeCheckerSnapshotUpdate.openProjects}. Local and
      * non-blocking: this does not run the checker.
      */

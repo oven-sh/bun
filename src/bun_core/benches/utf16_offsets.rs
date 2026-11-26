@@ -18,7 +18,8 @@ use std::time::Instant;
 mod utf16_offsets;
 use utf16_offsets::Utf16OffsetTable;
 
-/// Stand-in for `bun_core::strings::first_non_ascii`, which is simdutf in Bun. Same cost for both paths.
+/// Stand-in for `bun_core::strings::first_non_ascii`, which is a call into simdutf in Bun and is never inlined.
+#[inline(never)]
 pub fn first_non_ascii(text: &[u8]) -> Option<u32> {
     let mut at = 0;
     while at + 32 <= text.len() {

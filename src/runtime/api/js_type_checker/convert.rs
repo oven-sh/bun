@@ -1,10 +1,13 @@
 //! Native snapshot data -> JS conversion for `Bun.TypeChecker`.
 
-use bun_jsc::bindgen::{JsHeap, JsLocal, Result as BindgenResult};
 use bun_jsc::JSValue;
+use bun_jsc::bindgen::{JsHeap, JsLocal, Result as BindgenResult};
 use bun_type_checker::{AdapterError, ChainData, DiagnosticData, Location};
 
-pub(crate) fn adapter_error_value(error: &AdapterError, global: &bun_jsc::JSGlobalObject) -> JSValue {
+pub(crate) fn adapter_error_value(
+    error: &AdapterError,
+    global: &bun_jsc::JSGlobalObject,
+) -> JSValue {
     match error {
         AdapterError::Incomplete(path) => bun_jsc::ErrorCode::BUN_TYPE_CHECKER_INCOMPLETE.fmt(
             global,

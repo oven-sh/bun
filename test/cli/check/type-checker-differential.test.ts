@@ -320,7 +320,11 @@ describe.skipIf(!tsc).concurrent("Bun.TypeChecker agrees with the API of TypeScr
     const options = { ...compilerOptions, skipLibCheck: true };
     const { theirs, ours } = await onBothSides(
       {
-        "tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["main.ts"], references: [{ path: "./lib" }] }),
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: options,
+          files: ["main.ts"],
+          references: [{ path: "./lib" }],
+        }),
         "main.ts": `export {};\n`,
         "lib/tsconfig.json": JSON.stringify({
           compilerOptions: { ...options, composite: true, declaration: true, noEmit: false, outDir: "dist" },
@@ -527,7 +531,8 @@ describe.skipIf(!tsc).concurrent("Bun.TypeChecker agrees with the API of TypeScr
 
   test("the elaboration of what a program reports about its files and types is not located", async () => {
     // A diagnostic that has no location at all has `pos` and `end` of -1 in TypeScript and 0 here.
-    const locationless = (d: Diag) => (d.file === undefined ? { ...d, pos: Math.max(d.pos, 0), end: Math.max(d.end, 0) } : d);
+    const locationless = (d: Diag) =>
+      d.file === undefined ? { ...d, pos: Math.max(d.pos, 0), end: Math.max(d.end, 0) } : d;
     const { theirs, ours } = await onBothSides(
       {
         "types/tsconfig.json": tsconfig({ types: ["not-installed-types"] }),

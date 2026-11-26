@@ -198,12 +198,7 @@ if (!result.success) throw new AggregateError(result.logs);
         ...features,
       ]);
       expect({ ...rest, parts: partsOf(stdout) }).toEqual({
-        parts: Object.fromEntries(
-          parts.map(([name, feature]) => [
-            name,
-            "caught ERR_FEATURE_REMOVED\nfinally\nend\n",
-          ]),
-        ),
+        parts: Object.fromEntries(parts.map(([name]) => [name, "caught ERR_FEATURE_REMOVED\nfinally\nend\n"])),
         stderr: "",
         exitCode: 0,
       });

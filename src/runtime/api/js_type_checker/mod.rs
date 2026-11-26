@@ -58,6 +58,16 @@ fn nul_error<'a>(heap: &JsHeap<'a>, what: &str) -> bun_jsc::bindgen::Error<'a> {
     )
 }
 
+fn unknown_file_error<'a>(heap: &JsHeap<'a>, raw: &[u8]) -> bun_jsc::bindgen::Error<'a> {
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!(
+            "Bun.TypeChecker: '{}' is not a file of this project",
+            bstr::BStr::new(raw)
+        ),
+    )
+}
+
 fn path_from_value<'a>(
     heap: &JsHeap<'a>,
     value: JSValue,
@@ -623,7 +633,11 @@ impl TypeCheckerProgram {
             None
         } else {
             let raw = path_from_value(&cx.heap, file.to_js(), "file")?;
-            Some(FileFilter::new(&self.snapshot.cwd, &raw))
+            let filter = FileFilter::new(&self.snapshot.cwd, &raw);
+            if !data.knows_file(self.project_index, &filter) {
+                return Err(unknown_file_error(&cx.heap, &raw));
+            }
+            Some(filter)
         };
         let case_sensitive = self.snapshot.case_sensitive;
         let array = JSValue::create_empty_array(cx.global(), 0)?;
@@ -631,7 +645,7 @@ impl TypeCheckerProgram {
         for &index in &data.by_project[self.project_index] {
             let diagnostic = &data.diagnostics[index as usize];
             if let Some(filter) = &filter {
-                let Some(file_name) = &diagnostic.file_name else {
+                let Some(file_name) = &diagnostic.location.file_name else {
                     continue;
                 };
                 if !filter.matches(file_name, case_sensitive) {

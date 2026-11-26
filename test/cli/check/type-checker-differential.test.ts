@@ -5,10 +5,10 @@
 // another executable. Without one, the tests skip.
 //
 // Only behavior that `Bun.TypeChecker` shares with that API is asserted. Where the two differ on purpose, or still
-// differ, the tests stay away from it: the project order of a snapshot that has referenced projects, suggestion
-// diagnostics, syntax errors hiding semantic ones, the order and end of the diagnostics of a config file, the position
-// and text of a message chain, disk edits that no one announces, a config file that appears later, an unknown file
-// name for a filter, and the error model.
+// differ, the tests stay away from it: the projects of a snapshot whose config file has nothing but references,
+// suggestion diagnostics, syntax errors hiding semantic ones, the order and end of the diagnostics of a config file,
+// the `-1` of a message chain entry that has no location, disk edits that no one announces, a config file that appears
+// later, and the error model.
 import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, realpathSync } from "node:fs";
@@ -23,6 +23,15 @@ const compilerOptions = { strict: true, noEmit: true, target: "esnext", module: 
 const tsconfig = (extra: object = {}) =>
   JSON.stringify({ compilerOptions: { ...compilerOptions, skipLibCheck: true, ...extra } });
 
+type Chain = {
+  file: string | undefined;
+  pos: number;
+  end: number;
+  code: number;
+  category: string;
+  text: string;
+  chain: Chain[] | undefined;
+};
 type Diag = {
   file: string | undefined;
   pos: number;
@@ -31,6 +40,7 @@ type Diag = {
   category: string;
   text: string;
   related: Diag[];
+  chain?: Chain[] | undefined;
 };
 
 interface Update {
@@ -68,17 +78,33 @@ function relName(cwd: string, name: string | undefined) {
   return relative(cwd, name).replaceAll("\\", "/");
 }
 
+const categoryOf = (d: any) => (typeof d.category === "number" ? CATEGORIES[d.category] : d.category);
+
+/** An entry without a location has `pos` and `end` of -1 in TypeScript and 0 here. */
+function chainOf(cwd: string, chain: any[] | undefined): Chain[] | undefined {
+  if (!chain?.length) return undefined;
+  return chain.map(entry => ({
+    file: relName(cwd, entry.fileName),
+    pos: Math.max(entry.pos, 0),
+    end: Math.max(entry.end, 0),
+    code: entry.code,
+    category: categoryOf(entry),
+    text: entry.text,
+    chain: chainOf(cwd, entry.messageChain),
+  }));
+}
+
 function norm(cwd: string, d: any): Diag {
-  const category = typeof d.category === "number" ? CATEGORIES[d.category] : d.category;
   return {
     file: relName(cwd, d.fileName),
     pos: d.pos,
     end: d.end,
     code: d.code,
-    category,
+    category: categoryOf(d),
     // Bun renders a message chain into `text`. TypeScript keeps it in `messageChain`.
     text: d.text.split("\n")[0],
     related: (d.relatedInformation ?? []).map((it: any) => norm(cwd, it)),
+    chain: chainOf(cwd, d.messageChain),
   };
 }
 
@@ -290,6 +316,40 @@ describe.skipIf(!tsc).concurrent("Bun.TypeChecker agrees with the API of TypeScr
     expect(ours).toEqual(theirs);
   });
 
+  test("a project that is only referenced is not listed until it is opened", async () => {
+    const options = { ...compilerOptions, skipLibCheck: true };
+    const { theirs, ours } = await onBothSides(
+      {
+        "tsconfig.json": JSON.stringify({ compilerOptions: options, files: ["main.ts"], references: [{ path: "./lib" }] }),
+        "main.ts": `export {};\n`,
+        "lib/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, composite: true, declaration: true, noEmit: false, outDir: "dist" },
+          include: ["*.ts"],
+        }),
+        "lib/a.ts": `export const a: string = 1;\n`,
+      },
+      (open, cwd) =>
+        withSession(open, async session => {
+          const rootOnly = await session.update({ openProjects: ["tsconfig.json"] });
+          const result = { rootOnly: names(rootOnly), lookup: rootOnly.project("lib/tsconfig.json") !== undefined };
+          const both = await session.update({ openProjects: ["lib/tsconfig.json"] });
+          return {
+            ...result,
+            both: names(both),
+            codes: (await both.project("lib/tsconfig.json")!.diagnostics()).map(d => d.code),
+          };
+        }),
+    );
+
+    expect(theirs).toEqual({
+      rootOnly: ["tsconfig.json"],
+      lookup: false,
+      both: ["lib/tsconfig.json", "tsconfig.json"],
+      codes: [2322],
+    });
+    expect(ours).toEqual(theirs);
+  });
+
   test("an update that opens nothing gives a snapshot with no projects", async () => {
     const { theirs, ours } = await onBothSides({ "tsconfig.json": tsconfig(), "a.ts": `export {};\n` }, (open, cwd) =>
       withSession(open, async session => names(await session.update({}))),
@@ -435,6 +495,95 @@ describe.skipIf(!tsc).concurrent("Bun.TypeChecker agrees with the API of TypeScr
 
     expect(theirs.length).toBeGreaterThan(0);
     expect(theirs.every(d => d.file!.startsWith("bundled:///libs/lib."))).toBe(true);
+    expect(ours).toEqual(theirs);
+  });
+
+  test("the elaboration of a type error is at the location of the error, and each entry has its own line", async () => {
+    const { theirs, ours } = await diagnosticsOf({
+      "a.ts": `const value: number = 1;\nvalue();\ndeclare function f(a: string): void;\ndeclare function f(a: number): void;\nf(true);\n`,
+    });
+
+    const [notCallable, noOverload] = theirs;
+    expect(notCallable.chain).toEqual([
+      {
+        file: "a.ts",
+        pos: 25,
+        end: 30,
+        code: 2757,
+        category: "error",
+        text: "Type 'Number' has no call signatures.",
+        chain: undefined,
+      },
+    ]);
+    expect(noOverload.code).toBe(2769);
+    // The overloads are two levels deep, and every entry is where the call is.
+    expect(noOverload.chain?.[0].chain?.length).toBeGreaterThan(0);
+    for (const entry of noOverload.chain!) {
+      expect([entry.file, entry.pos, entry.end]).toEqual([noOverload.file, noOverload.pos, noOverload.end]);
+      expect(entry.text).not.toContain("\n");
+    }
+    expect(ours).toEqual(theirs);
+  });
+
+  test("the elaboration of what a program reports about its files and types is not located", async () => {
+    // A diagnostic that has no location at all has `pos` and `end` of -1 in TypeScript and 0 here.
+    const locationless = (d: Diag) => (d.file === undefined ? { ...d, pos: Math.max(d.pos, 0), end: Math.max(d.end, 0) } : d);
+    const { theirs, ours } = await onBothSides(
+      {
+        "types/tsconfig.json": tsconfig({ types: ["not-installed-types"] }),
+        "types/a.ts": `export {};\n`,
+        "root/tsconfig.json": tsconfig({ rootDir: "src" }),
+        "root/src/a.ts": `import "../other/b";\nexport {};\n`,
+        "root/other/b.ts": `export {};\n`,
+      },
+      (open, cwd) =>
+        withSession(open, async session => {
+          const snapshot = await session.update({ openProjects: ["types/tsconfig.json", "root/tsconfig.json"] });
+          const result: Record<string, Diag[]> = {};
+          for (const project of snapshot.projects()) {
+            result[project.configFileName] = sorted(await project.diagnostics()).map(locationless);
+          }
+          return result;
+        }),
+    );
+
+    expect(Object.entries(theirs).map(([config, found]) => [config, found.map(d => d.code)])).toEqual([
+      ["root/tsconfig.json", [6059]],
+      ["types/tsconfig.json", [2688]],
+    ]);
+    // The file of the first is where the reference is, and its elaboration is nowhere, which is true of the second too.
+    for (const found of Object.values(theirs)) {
+      expect(found[0].chain?.length).toBeGreaterThan(0);
+      expect(found[0].chain!.map(entry => [entry.file, entry.pos, entry.end])).toEqual(
+        found[0].chain!.map(() => [undefined, 0, 0]),
+      );
+    }
+    expect(theirs["root/tsconfig.json"][0].file).toBe("root/src/a.ts");
+    expect(ours).toEqual(theirs);
+  });
+
+  test("a file that is not in the program is an error, and a clean one is not", async () => {
+    const { theirs, ours } = await onBothSides(
+      {
+        "tsconfig.json": JSON.stringify({ compilerOptions: compilerOptions, include: ["a.ts"] }),
+        "a.ts": `export {};\n`,
+        "unlisted/b.ts": `export {};\n`,
+      },
+      (open, cwd) =>
+        withSession(open, async session => {
+          const project = (await session.update({ openProjects: ["tsconfig.json"] })).project("tsconfig.json")!;
+          const result: Record<string, unknown> = {};
+          for (const file of ["a.ts", "typo.ts", "unlisted/b.ts"]) {
+            result[file] = await project.diagnostics(file).then(
+              diagnostics => diagnostics,
+              () => "rejected",
+            );
+          }
+          return result;
+        }),
+    );
+
+    expect(theirs).toEqual({ "a.ts": [], "typo.ts": "rejected", "unlisted/b.ts": "rejected" });
     expect(ours).toEqual(theirs);
   });
 

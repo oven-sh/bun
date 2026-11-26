@@ -311,6 +311,7 @@ pub(crate) fn new_driver_diagnostic(
         class: COMPILER_DIAGNOSTIC_CLASS,
         subject: DiagnosticSubject::None,
         file: None,
+        chain_at_error: false,
     }
 }
 

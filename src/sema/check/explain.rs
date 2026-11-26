@@ -94,6 +94,8 @@ pub struct Explained {
     pub related: Vec<RelatedExplained>,
     pub class: DiagnosticClass,
     pub subject: DiagnosticSubject,
+    /// `Reported::chain_at_error`
+    pub chain_at_error: bool,
 }
 
 impl Checker<'_, '_> {
@@ -140,7 +142,7 @@ impl Explained {
             (category, super::print::to_valid_utf8(text), message_chain)
         }
         let mut d = d;
-        let (class, subject) = (d.class, d.subject);
+        let (class, subject, chain_at_error) = (d.class, d.subject, d.chain_at_error);
         let (category, text, message_chain) = reported(&mut d, Category::Error);
         Explained {
             start: d.start,
@@ -174,6 +176,7 @@ impl Explained {
                 .collect(),
             class,
             subject,
+            chain_at_error,
         }
     }
 }

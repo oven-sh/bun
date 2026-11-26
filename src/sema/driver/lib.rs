@@ -1012,6 +1012,8 @@ pub struct PlanOptions {
     /// in what the program reports about its options and files (`GetProgramDiagnostics`). No file is checked in it. See
     /// `Report::rejected_programs`.
     pub rejects_broken_configurations: bool,
+    /// `ProjectMetadata::program_files`
+    pub lists_program_files: bool,
     /// A program's `lib.*.d.ts` files come from the `typescript` installed for it: the first `node_modules/typescript`
     /// from the configuration file's directory upwards, if it has the files that `lib` and `target` require. Otherwise
     /// they're `Request::libs`. That way this reads the same declaration of `Element` as the project's own compiler.
@@ -1469,6 +1471,9 @@ pub struct Diagnostic {
     pub class: DiagnosticClass,
     pub subject: DiagnosticSubject,
     pub file: Option<FileId>,
+    /// `message_chain` is at the location of the diagnostic, as the elaboration of a type error is in typescript-go.
+    /// What the configuration and the program report has an elaboration that is nowhere.
+    pub chain_at_error: bool,
 }
 
 /// `taskResult.builder`: how much of a `Report` one task of a build printed.
@@ -1545,6 +1550,9 @@ pub struct GlobalsOf {
 pub struct ProjectMetadata {
     pub project_index: u32,
     pub config_path: Vec<u8>,
+    /// The file names of the project's program, in program order and in the checker's path format. Empty unless
+    /// `PlanOptions::lists_program_files`, and for a project that has no program.
+    pub program_files: Vec<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -1630,6 +1638,7 @@ impl Report {
             self.projects.push(ProjectMetadata {
                 project_index: remap[at],
                 config_path: project.config_path,
+                program_files: project.program_files,
             });
         }
         for diagnostic in &mut other.diagnostics {
@@ -1748,6 +1757,7 @@ fn new_compiler_diagnostic(code: u32, args: Box<[Box<[u8]>]>) -> Diagnostic {
         class: DiagnosticClass::of_code(code),
         subject: DiagnosticSubject::None,
         file: None,
+        chain_at_error: false,
     }
 }
 
@@ -2954,6 +2964,7 @@ fn register_project(report: &mut Report, config_path: &[u8]) -> u32 {
     report.projects.push(ProjectMetadata {
         project_index: index,
         config_path: config_path.to_vec(),
+        program_files: Vec::new(),
     });
     index
 }
@@ -3831,6 +3842,7 @@ fn check_with_references(
         report.projects.push(ProjectMetadata {
             project_index: report.projects.len() as u32,
             config_path: project.project.config_path.clone(),
+            program_files: Vec::new(),
         });
     }
     let base_project = report.projects.len() as u32 - projects.len() as u32;
@@ -3872,6 +3884,7 @@ fn check_with_references(
                 projects: vec![ProjectMetadata {
                     project_index: base_project + index as u32,
                     config_path: project.config_path.clone(),
+                    program_files: Vec::new(),
                 }],
                 ..Default::default()
             }));
@@ -4159,7 +4172,10 @@ fn collapse_projects(report: &mut Report) {
             projects.push(ProjectMetadata {
                 project_index: index,
                 config_path: project.config_path,
+                program_files: project.program_files,
             });
+        } else if projects[index as usize].program_files.is_empty() {
+            projects[index as usize].program_files = project.program_files;
         }
         remap[at] = index;
     }
@@ -4961,6 +4977,11 @@ fn check_named_files(
             loaded(program);
         }
     }
+    if request.plan_options.lists_program_files {
+        report.projects[project_index as usize].program_files = (program.files.order.iter())
+            .map(|&file| program.files.module(file).file_name().to_vec())
+            .collect();
+    }
     let explains_files = is_true(b"explainFiles");
     let explain_files = |has_made_diagnostics: bool| {
         let cwd = host::from_native(request.cwd);
@@ -5279,6 +5300,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     class: e.class,
                     subject: e.subject,
                     file: Some(file),
+                    chain_at_error: e.chain_at_error,
                     ..global(0, &[""; 0])
                 };
                 let path = module.file_name();

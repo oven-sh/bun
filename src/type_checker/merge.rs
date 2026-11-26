@@ -25,10 +25,14 @@ pub fn merge_results(
                     projects.push(ProjectData {
                         index,
                         config_path: project.config_path.clone(),
+                        program_files: Vec::new(),
                     });
                     by_project.push(Vec::new());
                     index
                 });
+            if projects[index as usize].program_files.is_empty() {
+                projects[index as usize].program_files = project.program_files.clone();
+            }
             remap.push(index);
         }
         for mut diagnostic in data.diagnostics {
@@ -38,9 +42,9 @@ pub fn merge_results(
             diagnostic.project = merged;
             let key = (
                 merged,
-                diagnostic.file_name.clone().unwrap_or_default(),
-                diagnostic.pos,
-                diagnostic.end,
+                diagnostic.location.file_name.clone().unwrap_or_default(),
+                diagnostic.location.pos,
+                diagnostic.location.end,
                 diagnostic.code,
                 diagnostic.text.clone(),
             );
@@ -120,6 +124,7 @@ mod tests {
             projects: vec![ProjectData {
                 index: 0,
                 config_path: b"/a/tsconfig.json".to_vec(),
+                program_files: Vec::new(),
             }],
             diagnostics: vec![],
             by_project: vec![vec![]],
@@ -129,6 +134,7 @@ mod tests {
             projects: vec![ProjectData {
                 index: 0,
                 config_path: b"/b/tsconfig.json".to_vec(),
+                program_files: Vec::new(),
             }],
             diagnostics: vec![],
             by_project: vec![vec![]],
@@ -147,13 +153,15 @@ mod tests {
 
     fn diagnostic(pos: u32, text: &[u8]) -> crate::DiagnosticData {
         crate::DiagnosticData {
-            file_name: Some(b"/a.ts".to_vec()),
-            pos: Some(pos),
-            end: Some(pos + 1),
-            line: Some(0),
-            column: Some(pos),
-            end_line: Some(0),
-            end_column: Some(pos + 1),
+            location: crate::Location {
+                file_name: Some(b"/a.ts".to_vec()),
+                pos: Some(pos),
+                end: Some(pos + 1),
+                line: Some(0),
+                column: Some(pos),
+                end_line: Some(0),
+                end_column: Some(pos + 1),
+            },
             code: 2322,
             category: "error",
             text: text.to_vec(),
@@ -169,6 +177,7 @@ mod tests {
             projects: vec![ProjectData {
                 index: 0,
                 config_path: b"/a/tsconfig.json".to_vec(),
+                program_files: Vec::new(),
             }],
             diagnostics,
             by_project,
@@ -218,14 +227,17 @@ mod tests {
                 ProjectData {
                     index: 0,
                     config_path: b"/w/z/tsconfig.json".to_vec(),
+                    program_files: Vec::new(),
                 },
                 ProjectData {
                     index: 1,
                     config_path: b"/w/a/tsconfig.json".to_vec(),
+                    program_files: Vec::new(),
                 },
                 ProjectData {
                     index: 2,
                     config_path: b"/w/tsconfig.json".to_vec(),
+                    program_files: Vec::new(),
                 },
             ],
             diagnostics: vec![referenced, related_to_root],

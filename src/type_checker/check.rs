@@ -62,14 +62,17 @@ pub fn run_check(
                 libs: Libs::Bundled(libs),
                 progress: None,
                 order: 1,
-                plan_options: PlanOptions::default(),
+                plan_options: PlanOptions {
+                    lists_program_files: true,
+                    ..PlanOptions::default()
+                },
                 stops_like_tsc: true,
                 uses_typescript_wording: false,
                 after_file: None,
             };
             let report = bun_sema_driver::check_provided_then(&request, provided, |report| report);
             match SnapshotData::check_adapter(&report) {
-                Ok(()) => results.push(Ok(SnapshotData::from_report(report))),
+                Ok(()) => results.push(Ok(SnapshotData::from_report(report, selector))),
                 Err(e) => {
                     results.push(Err(e));
                     break;

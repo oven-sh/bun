@@ -2,7 +2,7 @@
 
 use bun_jsc::bindgen::{JsHeap, JsLocal, Result as BindgenResult};
 use bun_jsc::JSValue;
-use bun_type_checker::{AdapterError, ChainData, DiagnosticData};
+use bun_type_checker::{AdapterError, ChainData, DiagnosticData, Location};
 
 pub(crate) fn adapter_error_value(error: &AdapterError, global: &bun_jsc::JSGlobalObject) -> JSValue {
     match error {
@@ -25,12 +25,57 @@ pub(crate) fn adapter_error_value(error: &AdapterError, global: &bun_jsc::JSGlob
 
 // ── JS materialization ────────────────────────────────────────────────────
 
+/// `fileName` when there is one, then `pos` and `end`, which are `0` without a source range, and the line and column
+/// fields only with one.
+fn put_location(
+    global: &bun_jsc::JSGlobalObject,
+    obj: JSValue,
+    location: &Location,
+) -> bun_jsc::JsResult<()> {
+    if let Some(file_name) = &location.file_name {
+        obj.put(
+            global,
+            b"fileName",
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, file_name)?,
+        );
+    }
+    let pos = location.pos.unwrap_or(0);
+    obj.put(global, b"pos", JSValue::js_number(pos as f64));
+    obj.put(
+        global,
+        b"end",
+        JSValue::js_number(location.end.unwrap_or(pos) as f64),
+    );
+    if location.pos.is_some() {
+        obj.put(
+            global,
+            b"line",
+            JSValue::js_number(location.line.unwrap_or(0) as f64),
+        );
+        obj.put(
+            global,
+            b"column",
+            JSValue::js_number(location.column.unwrap_or(0) as f64),
+        );
+        obj.put(
+            global,
+            b"endLine",
+            JSValue::js_number(location.end_line.unwrap_or(0) as f64),
+        );
+        obj.put(
+            global,
+            b"endColumn",
+            JSValue::js_number(location.end_column.unwrap_or(0) as f64),
+        );
+    }
+    Ok(())
+}
+
 fn chain_to_js<'a>(heap: &JsHeap<'a>, chain: &ChainData) -> BindgenResult<'a, JsLocal<'a>> {
     // SAFETY: `heap` belongs to this call; allocating runs no JavaScript.
     let global = unsafe { heap.global() };
-    let obj = JSValue::create_empty_object(global, 6);
-    obj.put(global, b"pos", JSValue::js_number(0.0));
-    obj.put(global, b"end", JSValue::js_number(0.0));
+    let obj = JSValue::create_empty_object(global, 11);
+    put_location(global, obj, &chain.location)?;
     obj.put(global, b"code", JSValue::js_number(chain.code as f64));
     obj.put(
         global,
@@ -59,38 +104,7 @@ pub(crate) fn diagnostic_to_js<'a>(
     // SAFETY: as above.
     let global = unsafe { heap.global() };
     let obj = JSValue::create_empty_object(global, 11);
-    if let Some(file_name) = &diagnostic.file_name {
-        obj.put(
-            global,
-            b"fileName",
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global, file_name)?,
-        );
-    }
-    let pos = diagnostic.pos.unwrap_or(0);
-    obj.put(global, b"pos", JSValue::js_number(pos as f64));
-    obj.put(
-        global,
-        b"end",
-        JSValue::js_number(diagnostic.end.unwrap_or(pos) as f64),
-    );
-    if diagnostic.pos.is_some() {
-        obj.put(global, b"line", JSValue::js_number(diagnostic.line.unwrap_or(0) as f64));
-        obj.put(
-            global,
-            b"column",
-            JSValue::js_number(diagnostic.column.unwrap_or(0) as f64),
-        );
-        obj.put(
-            global,
-            b"endLine",
-            JSValue::js_number(diagnostic.end_line.unwrap_or(0) as f64),
-        );
-        obj.put(
-            global,
-            b"endColumn",
-            JSValue::js_number(diagnostic.end_column.unwrap_or(0) as f64),
-        );
-    }
+    put_location(global, obj, &diagnostic.location)?;
     obj.put(global, b"code", JSValue::js_number(diagnostic.code as f64));
     obj.put(
         global,

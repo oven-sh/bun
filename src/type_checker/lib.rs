@@ -14,7 +14,7 @@ pub use path::{
     file_system_is_case_sensitive, is_same_path, resolve_against,
 };
 pub use snapshot::{
-    AdapterError, ChainData, DiagnosticData, ProjectData, SnapshotData, category_name,
+    AdapterError, ChainData, DiagnosticData, Location, ProjectData, SnapshotData, category_name,
     native_file_name,
 };
 pub use state::{CanonicalPath, DesiredState, SourceOverlay};

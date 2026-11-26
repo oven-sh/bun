@@ -113,6 +113,9 @@ pub(super) struct Reported {
     /// Set for an `addDeferredDiagnostic` callback that hasn't been called yet. `args` is then
     /// empty.
     pub(super) deferred: Option<TypeNotIterable>,
+    /// `NewDiagnosticChain` puts the elaboration of a diagnostic at the diagnostic's own location. The elaboration of
+    /// what the include processor reports is made of `NewCompilerDiagnostic`s, which have none.
+    pub(super) chain_at_error: bool,
 }
 
 /// The arguments a `getIterationTypesOfIterableWorker` callback passes to
@@ -152,6 +155,7 @@ impl Reported {
             by_emit: false,
             by_another_node: false,
             deferred: None,
+            chain_at_error: true,
         }
     }
 

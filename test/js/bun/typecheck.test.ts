@@ -87,6 +87,10 @@ async function expectUpdateRejected(checker: any, update: any, code: string) {
   await expect(async () => await promise).toThrowWithCodeAsync(Error, code);
 }
 
+async function expectRejectedWithCode(promise: Promise<unknown>, code: string) {
+  await expect(async () => await promise).toThrowWithCodeAsync(Error, code);
+}
+
 function expectSyncCode(fn: () => unknown, code: string) {
   try {
     fn();
@@ -249,7 +253,7 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     expect(normPath(related.fileName, String(dir))).toBe(normPath(join(String(dir), "a.ts"), String(dir)));
   });
 
-  test("a real messageChain carries pos/end 0, code, category and text without fileName or line", async () => {
+  test("a messageChain entry repeats the location of the diagnostic it elaborates, like typescript-go", async () => {
     using dir = project({
       "a.ts": `const value: number = 1;\nvalue();\nexport {};\n`,
     });
@@ -261,22 +265,85 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     expect(diagnostic.code).toBe(2349);
     expect(diagnostic.category).toBe("error");
     expect(diagnostic.text).toBe("This expression is not callable.\n  Type 'Number' has no call signatures.");
-    // The entire chain entry, not just the top-level text. This pins what Bun
-    // does today, which differs from typescript-go: its entries repeat the
-    // parent's fileName, pos and end (or have pos and end of -1 when the parent
-    // has no location).
+    expect(diagnostic.pos).toBe(25);
+    expect(diagnostic.end).toBe(30);
     expect(diagnostic.messageChain).toEqual([
       {
-        pos: 0,
-        end: 0,
+        fileName: diagnostic.fileName,
+        pos: 25,
+        end: 30,
+        line: 2,
+        column: 1,
+        endLine: 2,
+        endColumn: 6,
         code: 2757,
         category: "error",
         text: "Type 'Number' has no call signatures.",
       },
     ]);
-    const entry = diagnostic.messageChain[0];
-    expect("fileName" in entry).toBe(false);
-    expect("line" in entry).toBe(false);
+  });
+
+  test("a messageChain entry holds its own line, and the entries add up to the text", async () => {
+    using dir = project({
+      "a.ts": `declare function f(a: string): void;\ndeclare function f(a: number): void;\nf(true);\n`,
+    });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics("a.ts");
+    expect(diagnostic.code).toBe(2769);
+
+    const lines: string[] = [];
+    let deepest = 0;
+    const walk = (entries: any[], level: number) => {
+      for (const entry of entries) {
+        expect(entry.text).not.toContain("\n");
+        expect(entry.fileName).toBe(diagnostic.fileName);
+        expect([entry.pos, entry.end]).toEqual([diagnostic.pos, diagnostic.end]);
+        lines.push(`${"  ".repeat(level)}${entry.text}`);
+        deepest = Math.max(deepest, level);
+        walk(entry.messageChain ?? [], level + 1);
+      }
+    };
+    walk(diagnostic.messageChain, 1);
+
+    expect(deepest).toBeGreaterThanOrEqual(2);
+    expect(diagnostic.text).toBe([diagnostic.text.split("\n")[0], ...lines].join("\n"));
+  });
+
+  test("a messageChain entry of a diagnostic with no location has no location either", async () => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, types: ["not-installed-types"] },
+      }),
+      "a.ts": `export {};\n`,
+    });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const [diagnostic] = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+
+    expect(diagnostic.code).toBe(2688);
+    expect("fileName" in diagnostic).toBe(false);
+    // typescript-go has -1 here. Bun has 0, like the diagnostic itself.
+    expect(diagnostic.messageChain).toEqual([
+      {
+        pos: 0,
+        end: 0,
+        code: 1430,
+        category: "message",
+        text: "The file is in the program because:",
+        messageChain: [
+          {
+            pos: 0,
+            end: 0,
+            code: 1417,
+            category: "message",
+            text: "Entry point of type library 'not-installed-types' specified in compilerOptions",
+          },
+        ],
+      },
+    ]);
   });
 
   test("related information points at the declaration in another file", async () => {
@@ -308,7 +375,7 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
 });
 
 describe.concurrent("Bun.TypeChecker: file filtering and ordering", () => {
-  test("filtering is stable, unfiltered order is preserved, and unmatched files return []", async () => {
+  test("filtering is stable, unfiltered order is preserved, and a clean file returns []", async () => {
     using dir = project({
       "a.ts": `export const a: string = 1;\n`,
       "b.ts": `export const b: string = 2;\n`,
@@ -340,7 +407,7 @@ describe.concurrent("Bun.TypeChecker: file filtering and ordering", () => {
     ).toEqual(normDiagnostics(await program.getDiagnostics("b.ts"), String(dir)));
 
     expect(await program.getDiagnostics("clean.ts")).toEqual([]);
-    expect(await program.getDiagnostics("does/not/exist.ts")).toEqual([]);
+    await expectRejectedWithCode(program.getDiagnostics("does/not/exist.ts"), INVALID_VALUE);
   });
 
   test("identical messages at different positions of one file are all reported", async () => {
@@ -512,6 +579,45 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     }
   });
 
+  test("a project that is only referenced is not listed until it is opened", async () => {
+    const composite = JSON.stringify({
+      compilerOptions: {
+        ...JSON.parse(tsconfig).compilerOptions,
+        composite: true,
+        declaration: true,
+        noEmit: false,
+        outDir: "dist",
+      },
+      include: ["*.ts"],
+    });
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        ...JSON.parse(tsconfig),
+        files: ["main.ts"],
+        references: [{ path: "./lib" }],
+      }),
+      "main.ts": `export {};\n`,
+      "lib/tsconfig.json": composite,
+      "lib/a.ts": `export const a: string = 1;\n`,
+    });
+    await using checker = makeChecker(String(dir));
+    const root = normPath(join(String(dir), "tsconfig.json"), String(dir));
+    const lib = normPath(join(String(dir), "lib", "tsconfig.json"), String(dir));
+
+    // Bun reads `lib` for its declarations and does not check it, so listing it would show an empty list that is not
+    // the result of a check.
+    using rootOnly = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    expect(configNames(rootOnly, String(dir))).toEqual([root]);
+    expect(rootOnly.getProject("lib/tsconfig.json")).toBeUndefined();
+
+    using both = await checker.updateSnapshot({ openProjects: ["lib/tsconfig.json"] });
+    expect(configNames(both, String(dir))).toEqual([lib, root]);
+    expect((await both.getProject("lib/tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([
+      2322,
+    ]);
+    expect(await both.getProject("tsconfig.json").program.getDiagnostics()).toEqual([]);
+  });
+
   test("projects are ordered by config file path, not by the order they are built", async () => {
     const composite = JSON.stringify({
       compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, composite: true, declaration: true, outDir: "dist" },
@@ -567,7 +673,7 @@ describe.concurrent("Bun.TypeChecker: diagnostics in bundled libraries", () => {
     expect(filtered.map((d: any) => [d.fileName, d.code, d.pos])).toEqual(
       inLib.map((d: any) => [d.fileName, d.code, d.pos]),
     );
-    expect(await program.getDiagnostics("bundled:///libs/lib.nope.d.ts")).toEqual([]);
+    await expectRejectedWithCode(program.getDiagnostics("bundled:///libs/lib.nope.d.ts"), INVALID_VALUE);
     // A user file filter never matches a bundled name, and the other way around.
     expect((await program.getDiagnostics("a.ts")).every((d: any) => d.fileName === join(String(dir), "a.ts"))).toBe(
       true,
@@ -592,7 +698,7 @@ describe.concurrent("Bun.TypeChecker: source overlays", () => {
     });
     const program = snapshot.getProject("tsconfig.json").program;
     expect((await program.getDiagnostics("Extra.ts")).map((d: any) => d.code)).toEqual([2322]);
-    expect((await program.getDiagnostics("EXTRA.ts")).map((d: any) => d.code)).toEqual([]);
+    await expectRejectedWithCode(program.getDiagnostics("EXTRA.ts"), INVALID_VALUE);
     expect(snapshot.getProject("TSCONFIG.json")).toBeUndefined();
   });
 
@@ -1026,12 +1132,22 @@ describe.concurrent("Bun.TypeChecker: incomplete and read failures", () => {
     },
   );
 
-  test("filtering by an unreadable-looking path returns [] rather than a false clean project error", async () => {
-    using dir = project({ "a.ts": `export const answer: number = 42;\n` });
+  test("filtering by a file that is not in the program rejects, so a typo does not read as clean", async () => {
+    using dir = project({ "a.ts": `export const answer: number = 42;\n`, "unlisted/b.ts": `export {};\n` });
+    writeFileSync(
+      join(String(dir), "tsconfig.json"),
+      JSON.stringify({ ...JSON.parse(tsconfig), include: ["a.ts", "console.d.ts"] }),
+    );
     await using checker = makeChecker(String(dir));
 
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
-    expect(await snapshot.getProject("tsconfig.json").program.getDiagnostics("no/such/file.ts")).toEqual([]);
+    const program = snapshot.getProject("tsconfig.json").program;
+    expect(await program.getDiagnostics("a.ts")).toEqual([]);
+    await expectRejectedWithCode(program.getDiagnostics("no/such/file.ts"), INVALID_VALUE);
+    await expectRejectedWithCode(program.getDiagnostics("unlisted/b.ts"), INVALID_VALUE);
+    await expect(program.getDiagnostics("no/such/file.ts")).rejects.toThrow(
+      "Bun.TypeChecker: 'no/such/file.ts' is not a file of this project",
+    );
   });
 });
 
@@ -1171,7 +1287,10 @@ describe.concurrent("Bun.TypeChecker: platform path semantics", () => {
     // `no\such` names a single file with a backslash in it, not `no/such`.
     using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
     expect(snapshot.getProject("no\\such/tsconfig.json")).toBeUndefined();
-    expect(await snapshot.getProject("tsconfig.json").program.getDiagnostics("no\\such/a.ts")).toEqual([]);
+    await expectRejectedWithCode(
+      snapshot.getProject("tsconfig.json").program.getDiagnostics("no\\such/a.ts"),
+      INVALID_VALUE,
+    );
   });
 
   test("Windows: both separators resolve to the same project", async () => {

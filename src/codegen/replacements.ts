@@ -114,7 +114,7 @@ export const nativeGlobals = Array.from(globalObjectTable.matchAll(/^ +(\w+) +(\
 
 // The rows of engineNativesTable that are no constructor: `$WeakRefPrototypeDeref` becomes `@natives.WeakRefPrototypeDeref`.
 const engineFunctions = Array.from(
-  /@begin engineNativesTable\n(.*?)@end/s.exec(globalObjectTable)![1].matchAll(/^ +(\w+) /gm),
+  /@begin engineNativesTable\s(.*?)@end/s.exec(globalObjectTable)![1].matchAll(/^ +(\w+) /gm),
   ({ 1: name }) => name,
 ).filter(name => !nativeGlobals.includes(name));
 

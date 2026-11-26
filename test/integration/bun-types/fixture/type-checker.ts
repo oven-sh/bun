@@ -41,11 +41,11 @@ import { expectType } from "./utilities";
   const diagnostics = await project.program.getDiagnostics();
   expectType(diagnostics).is<readonly Bun.TypeCheckerDiagnostic[]>();
 
-  // Diagnostics narrow to their optional range fields.
+  // `pos` and `end` are always present; the line and column fields are optional.
   for (const diagnostic of diagnostics) {
     expectType(diagnostic.fileName).is<string | undefined>();
-    expectType(diagnostic.pos).is<number | undefined>();
-    expectType(diagnostic.end).is<number | undefined>();
+    expectType(diagnostic.pos).is<number>();
+    expectType(diagnostic.end).is<number>();
     expectType(diagnostic.line).is<number | undefined>();
     expectType(diagnostic.column).is<number | undefined>();
     expectType(diagnostic.endLine).is<number | undefined>();
@@ -53,20 +53,21 @@ import { expectType } from "./utilities";
     expectType(diagnostic.code).is<number>();
     expectType(diagnostic.category).is<Bun.TypeCheckerDiagnosticCategory>();
     expectType(diagnostic.text).is<string>();
-    expectType(diagnostic.messageChain).is<readonly Bun.TypeCheckerMessageChain[] | undefined>();
+    expectType(diagnostic.messageChain).is<readonly Bun.TypeCheckerDiagnostic[] | undefined>();
     expectType(diagnostic.relatedInformation).is<readonly Bun.TypeCheckerDiagnostic[] | undefined>();
 
     const category: "error" | "warning" | "suggestion" | "message" = diagnostic.category;
     void category;
 
-    // Message chain entries are elaboration lines without file/range fields.
+    // Message chain entries are diagnostics.
     diagnostic.messageChain?.forEach(child => {
-      expectType(child).is<Bun.TypeCheckerMessageChain>();
+      expectType(child).is<Bun.TypeCheckerDiagnostic>();
       expectType(child.category).is<Bun.TypeCheckerDiagnosticCategory>();
       expectType(child.code).is<number>();
       expectType(child.text).is<string>();
+      expectType(child.pos).is<number>();
       child.messageChain?.forEach(nested => {
-        expectType(nested).is<Bun.TypeCheckerMessageChain>();
+        expectType(nested).is<Bun.TypeCheckerDiagnostic>();
       });
     });
 
@@ -77,10 +78,8 @@ import { expectType } from "./utilities";
       expectType(related.fileName).is<string | undefined>();
     });
 
-    if (diagnostic.pos !== undefined && diagnostic.end !== undefined) {
-      const span: number = diagnostic.end - diagnostic.pos;
-      void span;
-    }
+    const span: number = diagnostic.end - diagnostic.pos;
+    void span;
     if (diagnostic.line !== undefined && diagnostic.column !== undefined) {
       console.log(diagnostic.fileName, diagnostic.line, diagnostic.column);
     }

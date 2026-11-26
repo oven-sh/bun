@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { typeCheckerSnapshotDataLiveCount as live } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import differentialCases from "../../cli/check/differential-cases.json";
@@ -69,10 +69,7 @@ function normDiagnostics(diagnostics: readonly any[], dir: string): any[] {
 }
 
 function configNames(snapshot: any, dir: string): string[] {
-  return snapshot
-    .getProjects()
-    .map((p: any) => normPath(p.configFileName, dir))
-    .sort();
+  return snapshot.getProjects().map((p: any) => normPath(p.configFileName, dir));
 }
 
 /**
@@ -252,7 +249,7 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     expect(normPath(related.fileName, String(dir))).toBe(normPath(join(String(dir), "a.ts"), String(dir)));
   });
 
-  test("a real messageChain carries code/category/text without fileName or range", async () => {
+  test("a real messageChain carries pos/end 0, code, category and text without fileName or line", async () => {
     using dir = project({
       "a.ts": `const value: number = 1;\nvalue();\nexport {};\n`,
     });
@@ -264,11 +261,12 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     expect(diagnostic.code).toBe(2349);
     expect(diagnostic.category).toBe("error");
     expect(diagnostic.text).toBe("This expression is not callable.\n  Type 'Number' has no call signatures.");
-    // The entire chain entry, not just the top-level text. Chain entries are
-    // elaboration lines: code/category/text plus nesting, never fileName or
-    // source range (the native `MessageChain` carries no location).
+    // The entire chain entry, not just the top-level text. Like typescript-go
+    // chain entries are diagnostics without a file: pos and end are 0.
     expect(diagnostic.messageChain).toEqual([
       {
+        pos: 0,
+        end: 0,
         code: 2757,
         category: "error",
         text: "Type 'Number' has no call signatures.",
@@ -276,7 +274,6 @@ describe.concurrent("Bun.TypeChecker: messageChain and relatedInformation", () =
     ]);
     const entry = diagnostic.messageChain[0];
     expect("fileName" in entry).toBe(false);
-    expect("pos" in entry).toBe(false);
     expect("line" in entry).toBe(false);
   });
 
@@ -395,15 +392,15 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     const two = normPath(join(String(dir), "two", "tsconfig.json"), String(dir));
 
     using both = await checker.updateSnapshot({ openProjects: ["one/tsconfig.json", "two/tsconfig.json"] });
-    expect(configNames(both, String(dir))).toEqual([one, two].sort());
+    expect(configNames(both, String(dir))).toEqual([one, two]);
 
     // Opening the same project again does not duplicate it.
     using reopened = await checker.updateSnapshot({ openProjects: ["one/tsconfig.json"] });
-    expect(configNames(reopened, String(dir))).toEqual([one, two].sort());
+    expect(configNames(reopened, String(dir))).toEqual([one, two]);
 
     // Duplicate opens in one call are reference-counted: one close leaves it open.
     using stillOpen = await checker.updateSnapshot({ closeProjects: ["one/tsconfig.json"] });
-    expect(configNames(stillOpen, String(dir))).toEqual([one, two].sort());
+    expect(configNames(stillOpen, String(dir))).toEqual([one, two]);
 
     using closed = await checker.updateSnapshot({ closeProjects: ["one/tsconfig.json"] });
     expect(configNames(closed, String(dir))).toEqual([two]);
@@ -423,7 +420,7 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     ]);
   });
 
-  test("getProject resolves relative, absolute, directory and file-URL forms", async () => {
+  test("getProject resolves relative, absolute and file-URL forms of a config file, never a directory", async () => {
     using dir = project({ "sub/tsconfig.json": tsconfig, "sub/a.ts": `export const a: number = 1;\n` });
     await using checker = makeChecker(String(dir));
 
@@ -433,16 +430,42 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
     for (const form of [
       "sub/tsconfig.json",
       join(String(dir), "sub", "tsconfig.json"),
-      "sub",
-      join(String(dir), "sub"),
       pathToFileURL(join(String(dir), "sub", "tsconfig.json")),
-      pathToFileURL(join(String(dir), "sub")),
     ] as const) {
       const found = snapshot.getProject(form as any);
       expect(found).toBeDefined();
       expect(normPath(found.configFileName, String(dir))).toBe(expected);
     }
     expect(snapshot.getProject("missing/tsconfig.json")).toBeUndefined();
+    // A directory does not stand for the tsconfig.json inside it.
+    expect(snapshot.getProject("sub")).toBeUndefined();
+    expect(snapshot.getProject(join(String(dir), "sub"))).toBeUndefined();
+    expect(snapshot.getProject(pathToFileURL(join(String(dir), "sub")))).toBeUndefined();
+  });
+
+  test("a directory is not a project: it does not stand for the tsconfig.json inside it", async () => {
+    using dir = project({ "sub/tsconfig.json": tsconfig, "sub/a.ts": `export const a: string = 1;\n` });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["sub"] });
+    expect(configNames(snapshot, String(dir))).toEqual([normPath(join(String(dir), "sub"), String(dir))]);
+    expect(snapshot.getProject("sub/tsconfig.json")).toBeUndefined();
+    expect(await snapshot.getProject("sub").program.getDiagnostics()).toEqual([]);
+  });
+
+  test("a config file that does not exist is still a project, with no diagnostics", async () => {
+    using dir = project({ "a.ts": `export const a: string = 1;\n` });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["nope.json", "tsconfig.json"] });
+    expect(configNames(snapshot, String(dir))).toEqual([
+      normPath(join(String(dir), "nope.json"), String(dir)),
+      normPath(join(String(dir), "tsconfig.json"), String(dir)),
+    ]);
+    expect(await snapshot.getProject("nope.json").program.getDiagnostics()).toEqual([]);
+    expect((await snapshot.getProject("tsconfig.json").program.getDiagnostics()).map((d: any) => d.code)).toEqual([
+      2322,
+    ]);
   });
 
   test("referenced projects appear and a shared file is checked in each project", async () => {
@@ -481,9 +504,91 @@ describe.concurrent("Bun.TypeChecker: project lifecycle", () => {
       expect(diagnostics.map((d: any) => d.code)).toEqual([2322]);
     }
   });
+
+  test("projects are ordered by config file path, not by the order they are built", async () => {
+    const composite = JSON.stringify({
+      compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, composite: true, declaration: true, outDir: "dist" },
+      include: ["*.ts"],
+    });
+    using dir = project({
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./z" }, { path: "./a" }] }),
+      "z/tsconfig.json": composite,
+      "z/z.ts": `export const z: string = 1;\n`,
+      "a/tsconfig.json": composite,
+      "a/a.ts": `export const a: string = 1;\n`,
+    });
+    await using checker = makeChecker(String(dir));
+    const name = (...parts: string[]) => normPath(join(String(dir), ...parts), String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    expect(configNames(snapshot, String(dir))).toEqual([
+      name("a", "tsconfig.json"),
+      name("tsconfig.json"),
+      name("z", "tsconfig.json"),
+    ]);
+
+    // Each project keeps its own diagnostics after the reorder.
+    const fileOf = async (config: string) =>
+      (await snapshot.getProject(config).program.getDiagnostics()).map((d: any) => normPath(d.fileName, String(dir)));
+    expect(await fileOf("a/tsconfig.json")).toEqual([name("a", "a.ts")]);
+    expect(await fileOf("z/tsconfig.json")).toEqual([name("z", "z.ts")]);
+    expect(await fileOf("tsconfig.json")).toEqual([]);
+
+    // Opening the same projects directly gives the same order whatever the open order is.
+    using direct = await checker.updateSnapshot({ openProjects: ["z/tsconfig.json", "a/tsconfig.json"] });
+    expect(configNames(direct, String(dir))).toEqual(configNames(snapshot, String(dir)));
+  });
+});
+
+describe.concurrent("Bun.TypeChecker: diagnostics in bundled libraries", () => {
+  test("getDiagnostics accepts a bundled:/// name and compares it verbatim", async () => {
+    using dir = project({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, skipLibCheck: false },
+      }),
+      "a.ts": `declare class Array<T> { foo: T }\n`,
+    });
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+    const program = snapshot.getProject("tsconfig.json").program;
+    const all = await program.getDiagnostics();
+    const inLib = all.filter((d: any) => d.fileName === "bundled:///libs/lib.es5.d.ts");
+    expect(inLib.length).toBeGreaterThan(0);
+
+    const filtered = await program.getDiagnostics("bundled:///libs/lib.es5.d.ts");
+    expect(filtered.map((d: any) => [d.fileName, d.code, d.pos])).toEqual(
+      inLib.map((d: any) => [d.fileName, d.code, d.pos]),
+    );
+    expect(await program.getDiagnostics("bundled:///libs/lib.nope.d.ts")).toEqual([]);
+    // A user file filter never matches a bundled name, and the other way around.
+    expect((await program.getDiagnostics("a.ts")).every((d: any) => d.fileName === join(String(dir), "a.ts"))).toBe(
+      true,
+    );
+  });
 });
 
 describe.concurrent("Bun.TypeChecker: source overlays", () => {
+  // Only the case-sensitive behavior can run here: Linux file systems are case-sensitive, and the
+  // case-insensitive canonicalization is covered by the bun_type_checker unit tests.
+  test("on a case-sensitive file system, paths that differ in case are different files", async () => {
+    using dir = project({ "probe.txt": "", "main.ts": `import "./Extra";\nimport "./extra";\n` });
+    if (existsSync(join(String(dir), "PROBE.txt"))) return;
+    await using checker = makeChecker(String(dir));
+
+    using snapshot = await checker.updateSnapshot({
+      openProjects: ["tsconfig.json"],
+      sourceChanges: new Map([
+        ["Extra.ts", `export const a: string = 1;\n`],
+        ["extra.ts", `export const b: number = "";\n`],
+      ]),
+    });
+    const program = snapshot.getProject("tsconfig.json").program;
+    expect((await program.getDiagnostics("Extra.ts")).map((d: any) => d.code)).toEqual([2322]);
+    expect((await program.getDiagnostics("EXTRA.ts")).map((d: any) => d.code)).toEqual([]);
+    expect(snapshot.getProject("TSCONFIG.json")).toBeUndefined();
+  });
+
   test("overriding an existing file, replacing it, and removing the override reveals disk", async () => {
     using dir = project({ "a.ts": `export const answer: number = 42;\n` });
     await using checker = makeChecker(String(dir));
@@ -750,6 +855,28 @@ describe.concurrent("Bun.TypeChecker: validation", () => {
     expectSyncCode(() => new (Bun as any).TypeChecker({ cwd: new URL("https://example.invalid/x") }), INVALID_VALUE);
     expectSyncCode(() => new (Bun as any).TypeChecker({ cwd: "a\0b" }), INVALID_VALUE);
     expectSyncCode(() => new (Bun as any).TypeChecker({ cwd: new URL("node:fs") }), INVALID_VALUE);
+  });
+
+  test("a relative cwd resolves against the process cwd at construction", async () => {
+    using dir = project({ "sub/a.ts": `export const answer: string = 42;\n` });
+    const script = `
+const checker = new Bun.TypeChecker({ cwd: "sub/.." });
+using snapshot = await checker.updateSnapshot({ openProjects: ["tsconfig.json"] });
+const diagnostics = await snapshot.getProject("tsconfig.json").program.getDiagnostics();
+console.log(JSON.stringify(diagnostics.map(d => [d.code, require("node:path").basename(d.fileName)])));
+await checker.close();
+`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('[[2322,"a.ts"]]\n');
+    expect(exitCode).toBe(0);
   });
 
   test("invalid updates reject with the exact validation code", async () => {

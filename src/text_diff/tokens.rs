@@ -1051,14 +1051,22 @@ fn mark(
     let mut more = || {
         let matches = Matches::new(b, distinct);
         let cost = matches.cost(a);
-        let more = if cost <= ROW_WORK + ROW_WORK_PER_TOKEN * tokens {
-            rows = Some((matches, cost));
+        let has_rows = cost <= ROW_WORK + ROW_WORK_PER_TOKEN * tokens;
+        let more = if has_rows {
             (cost / 3).saturating_sub(first)
         } else {
             SEARCH_WORK + SEARCH_WORK_PER_TOKEN * tokens - first
         };
+        let least = if more > 0 { matches.least_edits(a) } else { 0 };
+        if least > max_edits {
+            is_too_far = true;
+            return 0;
+        }
+        rows = has_rows.then_some((matches, cost));
         let reach = edits_within(a.len().abs_diff(b.len()), first + more).min(max_edits);
+        // If the counts stop the search, all that is left to show is that `max_edits` is too few.
         if more > 0
+            && (least <= reach || max_edits < a.len() / GRAMS[0])
             && let Some(read) = read_until_further_than(a, b, reach)
         {
             // Not tried if, at this rate, `a` is too short to show it.
@@ -1067,7 +1075,7 @@ fn mark(
                     && read_until_further_than(a, b, max_edits).is_some();
             return 0;
         }
-        more
+        if least > reach { 0 } else { more }
     };
     let work = Work {
         left: first as isize,

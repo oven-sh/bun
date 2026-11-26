@@ -206,6 +206,17 @@ impl Matches {
         a.iter().map(|&token| self.row_cost(token)).sum()
     }
 
+    /// Every script has an edit for each time that a token occurs more often than on the other side.
+    pub(crate) fn least_edits(&self, a: &[u32]) -> usize {
+        let mut counts = vec![0u32; self.frequent.len()];
+        for &token in a {
+            counts[token as usize] += 1;
+        }
+        let counts = counts.iter().zip(self.starts.array_windows());
+        let surplus = |(&in_a, &[from, to]): (&u32, &[u32; 2])| in_a.abs_diff(to - from) as usize;
+        counts.map(surplus).sum()
+    }
+
     /// The row after `token`. With `LOG`, what [`Self::go_back`] needs is pushed to `log`.
     fn advance<const LOG: bool>(&self, row: &mut Row, token: u32, log: &mut Vec<u64>) {
         let frequent = self.frequent[token as usize];
@@ -326,5 +337,18 @@ impl Matches {
             }
         }
         changed_b[..y].fill(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Matches;
+
+    #[test]
+    fn least_edits_counts_the_surplus_on_both_sides() {
+        let (a, b) = ([0, 0, 0, 1, 2], [2, 1, 1, 3, 3, 3, 0]);
+        assert_eq!(Matches::new(&b, 4).least_edits(&a), 2 + 1 + 3);
+        assert_eq!(Matches::new(&a, 4).least_edits(&b), 2 + 1 + 3);
+        assert_eq!(Matches::new(&[1, 0], 2).least_edits(&[0, 1]), 0);
     }
 }

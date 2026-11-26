@@ -4,9 +4,10 @@
 //! image handed to the worker. No checker `Session` or `Program` is kept
 //! between snapshots.
 
+use std::collections::VecDeque;
+
+use bun_jsc::JSPromiseStrong;
 use bun_sema::util::FxHashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One canonical path. The key of [`DesiredState`] maps.
 pub(crate) type CanonicalPath = Box<[u8]>;
@@ -56,98 +57,21 @@ impl DesiredState {
     }
 }
 
-/// Lifetime record shared by one snapshot and all of its project/program
-/// views. `dispose()` and root close set `disposed` on the JS thread;
-/// getters check it.
-pub(crate) struct SnapshotLifetime {
-    pub(crate) disposed: AtomicBool,
+/// Queue and close state of one root. JS-thread only.
+#[derive(Default)]
+pub(crate) struct RootState {
+    /// Updates waiting for the running check to finish.
+    pub(crate) pending: VecDeque<PendingEntry>,
+    /// A check is on a worker, or its result has not been delivered yet.
+    pub(crate) running: bool,
+    /// Created by the first `close()`; resolved once nothing is running.
+    pub(crate) close: Option<JSPromiseStrong>,
 }
 
-impl SnapshotLifetime {
-    pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self {
-            disposed: AtomicBool::new(false),
-        })
-    }
-
-    pub(crate) fn is_disposed(&self) -> bool {
-        self.disposed.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn dispose(&self) {
-        self.disposed.store(true, Ordering::Release);
-    }
-}
-
-/// Per-root queue bookkeeping. All fields are JS-thread only; the mutable
-/// fields live in `JsCell`s on the root struct.
-pub(crate) struct RootQueue {
-    /// Jobs enqueued but not yet started.
-    pub(crate) queued: usize,
-    /// Jobs whose completion has not yet been delivered to JS.
-    pub(crate) undelivered: Vec<u64>,
-    /// `close()` called.
-    pub(crate) closing: bool,
-}
-
-impl RootQueue {
-    pub(crate) fn new() -> Self {
-        Self {
-            queued: 0,
-            undelivered: Vec::new(),
-            closing: false,
-        }
-    }
-}
-
-/// Shared root state reachable from workers. Only the running counter lives
-/// here.
-/// Shared root state reachable from workers. `close_promise` is
-/// JS-thread only (written in `close()`, read in `finish()`); the
-/// `Mutex` exists only because `RootShared` is shared.
-pub(crate) struct RootShared {
-    /// Jobs currently running on workers.
-    pub(crate) running: std::sync::atomic::AtomicUsize,
-    /// Close promise, created on first `close()`; resolved when the queue drains.
-    pub(crate) close_promise: std::sync::Mutex<Option<ClosePromisePtr>>,
-    /// Jobs waiting for the running one to finish. Each entry carries its
-    /// owned state image and JS-side delivery state. Only pushed/popped on
-    /// the JS thread; the `Send` wrapper exists only for the `Mutex`.
-    pub(crate) pending: std::sync::Mutex<std::collections::VecDeque<PendingPtr>>,
-    /// Live snapshot lifetimes, invalidated by root close. JS-thread only.
-    pub(crate) live_snapshots: std::sync::Mutex<Vec<Arc<SnapshotLifetime>>>,
-    /// The running job's detached flag, set by `close()`.
-    pub(crate) running_detached: std::sync::Mutex<Option<Arc<core::sync::atomic::AtomicBool>>>,
-}
-
-/// A raw pointer to a `PendingEntry`, `Send` because the queue is only
-/// ever touched on the JS thread.
-pub(crate) struct PendingPtr(pub(crate) *mut crate::api::js_type_checker::task::PendingEntry);
-
-// SAFETY: only pushed/popped on the JS thread (see `RootShared::pending`).
-unsafe impl Send for PendingPtr {}
-// SAFETY: as above.
-unsafe impl Sync for PendingPtr {}
-
-/// A raw pointer to the close promise, `Send` because `RootShared` is
-/// shared with workers but the promise is only touched on the JS thread.
-pub(crate) struct ClosePromisePtr(pub(crate) *mut bun_jsc::JSPromiseStrong);
-
-// SAFETY: as above.
-unsafe impl Send for ClosePromisePtr {}
-// SAFETY: as above.
-unsafe impl Sync for ClosePromisePtr {}
-
-impl RootShared {
-    pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self {
-            running: std::sync::atomic::AtomicUsize::new(0),
-            close_promise: std::sync::Mutex::new(None),
-            pending: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            live_snapshots: std::sync::Mutex::new(Vec::new()),
-            running_detached: std::sync::Mutex::new(None),
-        })
-    }
+/// An update that has been captured but not started.
+pub(crate) struct PendingEntry {
+    pub(crate) state: DesiredState,
+    pub(crate) promise: JSPromiseStrong,
 }
 
 #[cfg(test)]
@@ -189,15 +113,6 @@ mod tests {
         assert_eq!(captured.open_projects.len(), 1);
         assert!(captured.sources.is_empty());
         assert!(state.open_projects.is_empty());
-    }
-
-    #[test]
-    fn snapshot_lifetime_dispose_is_idempotent() {
-        let lifetime = SnapshotLifetime::new();
-        assert!(!lifetime.is_disposed());
-        lifetime.dispose();
-        lifetime.dispose();
-        assert!(lifetime.is_disposed());
     }
 
     #[test]

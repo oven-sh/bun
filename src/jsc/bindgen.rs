@@ -435,14 +435,23 @@ impl<'a> Error<'a> {
         }
     }
 
-    /// The error value itself, without throwing: for rejecting a Promise
-    /// from inside a host call that must return a value. The returned value
-    /// is not thrown.
+    /// The error value itself, for rejecting a Promise from inside a host call.
+    /// A pending exception is taken (cleared) and returned; a termination
+    /// stays pending (or is already taken) and comes back as `Err`, to
+    /// unwind rather than become a rejection.
     #[cold]
-    pub fn to_error_value(self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_error_value(self, global: &JSGlobalObject) -> crate::JsResult<JSValue> {
         match self.0 {
-            ErrorState::Pending(error) => crate::host_fn::host_call_error_value(global, error),
-            ErrorState::ToThrow(value) => value,
+            ErrorState::Pending(JsError::OutOfMemory) => Ok(global.create_out_of_memory_error()),
+            ErrorState::Pending(JsError::Terminated) => Err(JsError::Terminated),
+            ErrorState::Pending(JsError::Thrown) => {
+                let exception = global.take_exception(JsError::Thrown);
+                if exception.is_termination_exception() {
+                    return Err(crate::top_exception_scope::thrown(global));
+                }
+                Ok(exception.to_error().unwrap_or(exception))
+            }
+            ErrorState::ToThrow(value) => Ok(value),
         }
     }
 }

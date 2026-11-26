@@ -5,7 +5,7 @@
 //! bytes only, no arena/JSC/VM pointers, no retained `Session`.
 
 use bun_jsc::bindgen::{JsHeap, JsLocal, Result as BindgenResult};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::JSValue;
 use bun_sema::messages;
 use bun_sema_driver::host;
 use bun_sema_driver::{Category, MessageChain, ProjectMetadata, Report};
@@ -195,28 +195,23 @@ pub(crate) enum AdapterError {
 }
 
 impl AdapterError {
-    pub(crate) fn into_error<'a>(self, heap: &JsHeap<'a>) -> bun_jsc::bindgen::Error<'a> {
+    pub(crate) fn to_error_value(&self, global: &bun_jsc::JSGlobalObject) -> JSValue {
         match self {
-            AdapterError::Incomplete(path) => heap.error_with_code(
-                bun_jsc::ErrorCode::BUN_TYPE_CHECKER_INCOMPLETE,
+            AdapterError::Incomplete(path) => bun_jsc::ErrorCode::BUN_TYPE_CHECKER_INCOMPLETE.fmt(
+                global,
                 format_args!(
                     "Bun.TypeChecker: the check did not complete for '{}'",
-                    bstr::BStr::new(&path)
+                    bstr::BStr::new(path)
                 ),
             ),
-            AdapterError::ReadFailed(path) => heap.error_with_code(
-                bun_jsc::ErrorCode::BUN_TYPE_CHECKER_READ_FAILED,
+            AdapterError::ReadFailed(path) => bun_jsc::ErrorCode::BUN_TYPE_CHECKER_READ_FAILED.fmt(
+                global,
                 format_args!(
                     "Bun.TypeChecker: could not read '{}'",
-                    bstr::BStr::new(&path)
+                    bstr::BStr::new(path)
                 ),
             ),
         }
-    }
-
-    pub(crate) fn into_js_result(self, global: &bun_jsc::JSGlobalObject) -> JsResult<JSValue> {
-        let heap = JsHeap::from_global(global);
-        Err(self.into_error(heap).into_js_error(global))
     }
 }
 

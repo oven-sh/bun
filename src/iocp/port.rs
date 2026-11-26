@@ -205,6 +205,7 @@ pub struct Port {
     delayed: RefCell<BinaryHeap<Reverse<(u64, usize, usize)>>>,
     loop_ref_count: Cell<usize>,
     is_shutdown: Cell<bool>,
+    is_thread_exiting: Cell<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -276,6 +277,7 @@ impl Port {
             delayed: RefCell::default(),
             loop_ref_count: Cell::new(0),
             is_shutdown: Cell::new(false),
+            is_thread_exiting: Cell::new(false),
         }))
     }
 
@@ -323,6 +325,14 @@ impl Port {
             final_count if final_count < initial_count => WriteProgress::Partial,
             _ => WriteProgress::Stalled,
         }
+    }
+
+    pub fn set_thread_exiting(&self) {
+        self.is_thread_exiting.set(true);
+    }
+
+    pub fn is_thread_exiting(&self) -> bool {
+        self.is_thread_exiting.get()
     }
 
     pub fn note_receive(&self) {
@@ -868,7 +878,7 @@ impl Port {
         self.event_count.update(|total| total + count);
     }
 
-    /// Cancels everything. No callback runs from now on.
+    /// Cancels every request that is not detached. No callback runs from now on.
     pub fn shutdown(&self) {
         const TIMEOUT_NS: u64 = 10_000_000_000;
 
@@ -879,10 +889,13 @@ impl Port {
         loop {
             self.dispatch(|_| {});
             let remaining_ns = deadline_ns.saturating_sub(now_ns());
-            if remaining_ns == 0 || !self.has_io_in_flight() {
+            if self.requests.has_detached() {
+                self.fill_batch(Timeout::Infinite);
+            } else if remaining_ns > 0 && self.has_io_in_flight() {
+                self.fill_batch(Timeout::Relative(remaining_ns.div_ceil(100) as i64));
+            } else {
                 break;
             }
-            self.fill_batch(Timeout::Relative(remaining_ns.div_ceil(100) as i64));
         }
     }
 

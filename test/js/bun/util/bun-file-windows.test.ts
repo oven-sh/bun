@@ -3,9 +3,11 @@ import { describe, expect, test } from "bun:test";
 import fs, { closeSync, openSync } from "fs";
 import { open } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { Worker } from "node:worker_threads";
 
@@ -217,27 +219,28 @@ describe.skipIf(!isWindows)("Bun.write(destination, bytes)", () => {
     expect(await Bun.file(pipe.readFd).text()).toBe(Buffer.alloc(1300, "writtencopied").toString());
   });
 
-  test.concurrent.each(["Buffer.alloc(1 << 18)", "Bun.file(source)"])(
-    "a Worker that exits completes Bun.write(pipe, %s) for a slow reader",
-    async data => {
-      using dir = tempDir("bun-write-worker-slow-reader", { source: Buffer.alloc(1 << 18) });
-      using pipe = createPipe();
-      const worker = new Worker(
-        `const source = require("node:worker_threads").workerData;
-         Bun.write(${pipe.writeFd}, ${data});
+  test.concurrent.each([
+    "Bun.write(pipe, Buffer.alloc(1 << 18))",
+    "Bun.write(pipe, Bun.file(source))",
+    "Bun.file(pipe).writer().write(Buffer.alloc(1 << 18))",
+  ])("a Worker that exits completes %s for a slow reader", async write => {
+    using dir = tempDir("bun-write-worker-slow-reader", { source: Buffer.alloc(1 << 18) });
+    using pipe = createPipe();
+    const worker = new Worker(
+      `const source = require("node:worker_threads").workerData, pipe = ${pipe.writeFd};
+         ${write};
          process.exit(0);`,
-        { eval: true, workerData: join(String(dir), "source") },
-      );
-      worker.once("exit", () => pipe.close(pipe.writeFd));
-      let received = 0;
-      // The 64 reads take longer than the 500 ms that an exit waits for.
-      for (let bytesRead = -1; bytesRead !== 0; await Bun.sleep(12)) {
-        ({ bytesRead } = await promisify(fs.read)(pipe.readFd, Buffer.alloc(4096), 0, 4096, null));
-        received += bytesRead;
-      }
-      expect(received).toBe(1 << 18);
-    },
-  );
+      { eval: true, workerData: join(String(dir), "source") },
+    );
+    worker.once("exit", () => pipe.close(pipe.writeFd));
+    let received = 0;
+    // The 64 reads take longer than the 500 ms that an exit waits for.
+    for (let bytesRead = -1; bytesRead !== 0; await Bun.sleep(12)) {
+      ({ bytesRead } = await promisify(fs.read)(pipe.readFd, Buffer.alloc(4096), 0, 4096, null));
+      received += bytesRead;
+    }
+    expect(received).toBe(1 << 18);
+  });
 });
 
 describe.skipIf(!isWindows)("Bun.write(destination, Bun.file())", () => {
@@ -737,6 +740,19 @@ describe.concurrent("unawaited writes complete before the process exits", () => 
       expect(await proc.exited).toBe(7);
     },
   );
+
+  test.skipIf(!isWindows)("several writers on an extra stdio pipe, then process.exit()", async () => {
+    const script = `for (const text of "abcdefghijklmnop") {
+      const writer = Bun.file(3).writer();
+      writer.write(text);
+      writer.end();
+    }
+    process.exit(7);`;
+    using child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["ignore", "ignore", "inherit", "pipe"] });
+    const exit = once(child, "exit");
+    expect(Buffer.concat(await Array.fromAsync(child.stdio[3] as Readable)).toString()).toBe("abcdefghijklmnop");
+    expect(await exit).toEqual([7, null]);
+  });
 
   test.skipIf(!isWindows).each([
     [`Bun.write(1, bytes)`, undefined],

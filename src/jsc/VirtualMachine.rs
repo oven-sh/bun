@@ -2278,8 +2278,9 @@ impl VirtualMachine {
     ///  C. JSC VM destroyed (finalizers close what only they own; JSC's RunLoop
     ///     timers ride the timer heap until ~VM returns); sockets they closed
     ///     drained.
-    ///  D. worker: keep-alive delta folded, uSockets loop freed. Main proceeds
-    ///     to process exit instead.
+    ///  D. worker: keep-alive delta folded, uSockets loop freed (Windows: once
+    ///     writes to synchronous pipes have ended). Main proceeds to process
+    ///     exit instead.
     /// Returns whether the VM can be dropped, which a worker's always can.
     ///
     /// # Safety
@@ -2299,6 +2300,10 @@ impl VirtualMachine {
         // 'close'/'error' handler runs after 'exit', and nothing can reopen what
         // a sweep just closed.
         vm.forbid_script();
+        #[cfg(windows)]
+        if matches!(kind, Teardown::Worker) {
+            vm.uws_loop().port().set_thread_exiting();
+        }
         Zig__GlobalObject__prepareForDestruction(vm.global());
         // SAFETY: fn contract.
         unsafe {
@@ -2370,6 +2375,8 @@ impl VirtualMachine {
         teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
+        // Windows can still wait in D.
+        #[cfg(not(windows))]
         if let Some(worker) = vm.worker_ref() {
             worker.will_wait_for_nothing_more();
         }

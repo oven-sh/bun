@@ -78,7 +78,7 @@ struct Inner {
     state: SourceState,
     handle: Arc<Handle>,
     max_transfer_len: usize,
-    /// Set lazily: on a synchronous handle the query blocks behind a pending read.
+    /// Set lazily for a reader: on a synchronous handle the query blocks behind a pending read.
     io_mode: OnceCell<IoMode>,
     /// Others may read this end too, so data is consumed only when the reader is known to want it.
     is_input_shared: Cell<bool>,
@@ -152,11 +152,19 @@ impl Pipe {
     }
 
     /// For an end of unknown origin, which is returned if it is not a pipe.
+    pub(super) fn open_for_reading(port: &Rc<Port>, end: sys::File) -> Result<Pipe, sys::File> {
+        if named_pipe::is_idle(end.fd().native()) {
+            Pipe::open(port, end)
+        } else {
+            Ok(Pipe::new_shared(port, end.into_raw(), None))
+        }
+    }
+
+    /// Like `open_for_reading`, for an end whose first write has to start immediately.
     pub(super) fn open(port: &Rc<Port>, end: sys::File) -> Result<Pipe, sys::File> {
-        let handle = end.fd().native();
-        match named_pipe::is_idle(handle).then(|| named_pipe::kind(handle)) {
-            Some(Kind::NotAPipe) => Err(end),
-            kind => Ok(Pipe::new_shared(port, end.into_raw(), kind)),
+        match named_pipe::kind(end.fd().native()) {
+            Kind::NotAPipe => Err(end),
+            kind => Ok(Pipe::new_shared(port, end.into_raw(), Some(kind))),
         }
     }
 
@@ -297,8 +305,16 @@ impl Pipe {
     }
 
     pub(super) fn stop_writing(&self) {
-        self.0.inflight_write.take();
         self.0.state.set_writing(false);
+        if let Some(inflight) = self.0.inflight_write.take()
+            && let Some(mut cancel_guard) = inflight.cancel_guard
+            && self.0.state.port.is_thread_exiting()
+            && inflight.request.detach()
+        {
+            // The blocking thread finishes the write.
+            cancel_guard.0 = CancelToken::default();
+            return;
+        }
         self.0.maybe_start_read(ConsumeMode::WaitReadable);
     }
 }
@@ -414,7 +430,7 @@ impl Inner {
                 self.maybe_start_read(mode);
             }
             // A synchronous handle serializes I/O, so the read starts when the write in flight ends.
-            Some(IoMode::Synchronous) | None if self.inflight_write.is_some() => {}
+            Some(IoMode::Synchronous) if self.inflight_write.is_some() => {}
             Some(IoMode::Synchronous)
                 if mode == ConsumeMode::Immediate && named_pipe::is_sole_reader(handle) =>
             {
@@ -651,10 +667,8 @@ impl Inner {
     fn start_write(self: &Rc<Self>, payload: Payload, offset: usize) -> sys::Result<()> {
         let inflight = match self.io_mode.get() {
             Some(IoMode::Overlapped(file)) => self.write_overlapped(file, payload, offset)?.into(),
-            Some(IoMode::NotAPipe) => return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open)),
-            Some(IoMode::Synchronous) | None => {
-                self.spawn_blocking_write(payload.into_vec(), offset)
-            }
+            Some(IoMode::Synchronous) => self.spawn_blocking_write(payload.into_vec(), offset),
+            Some(IoMode::NotAPipe) | None => unreachable!("only a reader's end is opened lazily"),
         };
         self.set_inflight_write(inflight);
         Ok(())
@@ -727,36 +741,22 @@ impl Inner {
     }
 
     fn spawn_blocking_write(self: &Rc<Self>, buffer: Vec<u8>, offset: usize) -> InflightRequest {
-        let callback = self.make_write_callback(
-            move |this, (kind, buffer, result): (Kind, Vec<u8>, sys::Result<()>)| {
-                this.init_io_mode(kind);
-                match (kind, result) {
-                    (Kind::Synchronous, Ok(())) => this.end_write(WriteEvent::Wrote(buffer)),
-                    (Kind::Synchronous, Err(err)) => this.end_write(WriteEvent::Err(err)),
-                    _ => {
-                        this.maybe_start_read(ConsumeMode::WaitReadable);
-                        this.continue_write(Payload::Owned(buffer), offset);
-                    }
-                }
-            },
-        );
+        let callback = self.make_write_callback(Inner::end_write);
         let (request, completer) = Request::with_completer(&self.state.port, callback);
         let handle = Arc::clone(&self.handle);
         let worker_token = CancelToken::default();
         let cancel_guard = Some(CancelOnDrop(worker_token.clone()));
-        let is_kind_known = self.io_mode.get().is_some();
         let pending_write_guard = self.state.port.add_pending_write();
         // A synchronous handle serializes I/O, so the write would block behind the pending read.
         self.cancel_read();
         blocking::spawn(move || {
-            let kind = resolve_kind(&handle, is_kind_known);
-            let result = match kind {
-                Kind::Synchronous => write_synchronous(&handle, &buffer[offset..], &worker_token),
-                Kind::Overlapped | Kind::NotAPipe => Ok(()),
-            };
+            let result = write_synchronous(&handle, &buffer[offset..], &worker_token);
             drop(handle);
             drop(pending_write_guard);
-            completer.complete((kind, buffer, result));
+            completer.complete(match result {
+                Ok(()) => WriteEvent::Wrote(buffer),
+                Err(err) => WriteEvent::Err(err),
+            });
         });
         InflightRequest {
             request,

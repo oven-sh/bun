@@ -93,6 +93,13 @@ impl IoEvent {
             _ => None,
         }
     }
+
+    pub fn is_write_teardown(&self) -> bool {
+        matches!(
+            self,
+            IoEvent::Write(crate::pipe_writer::WriteEvent::VmTeardown)
+        )
+    }
 }
 
 /// What a poll that fired tells its owner.

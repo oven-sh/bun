@@ -62,6 +62,7 @@ impl Source {
         port: &Rc<Port>,
         file: MaybeOwnedFile,
         classify: fn(Fd) -> HandleKind,
+        open_pipe: fn(&Rc<Port>, sys::File) -> Result<Pipe, sys::File>,
     ) -> sys::Result<Source> {
         if w::is_invalid_handle(file.fd().native()) {
             return Err(sys::Error::from_code(E::EBADF, Tag::open));
@@ -72,7 +73,7 @@ impl Source {
             original => (sys::File::from_fd(sys::dup(original.fd())?), false),
         };
         Ok(match classify(file.fd()) {
-            HandleKind::Pipe => match Pipe::open(port, file) {
+            HandleKind::Pipe => match open_pipe(port, file) {
                 Ok(pipe) => Source::Pipe(pipe),
                 Err(file) => Source::File(File::new(port, file, is_only_handle)),
             },
@@ -112,7 +113,7 @@ impl ReadSource {
         offset: Option<u64>,
     ) -> sys::Result<ReadSource> {
         static HAS_OPENED_PIPE: AtomicBool = AtomicBool::new(false);
-        let source = Source::open(port, file, w::guess_handle)?;
+        let source = Source::open(port, file, w::guess_handle, Pipe::open_for_reading)?;
         match (&source, offset) {
             (Source::File(file), Some(offset)) => file.set_offset(offset),
             (Source::Pipe(_), _) if HAS_OPENED_PIPE.swap(true, Ordering::Relaxed) => {
@@ -126,7 +127,7 @@ impl ReadSource {
     /// Reads with plain blocking calls, like a child process would.
     pub(crate) fn open_as_file(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<ReadSource> {
         w::named_pipe::mark_concurrent_reader();
-        Source::open(port, file, |_| HandleKind::File).map(ReadSource)
+        Source::open(port, file, |_| HandleKind::File, Pipe::open_for_reading).map(ReadSource)
     }
 
     /// SAFETY: `owner` stays valid for `__bun_run_io` until it is replaced or `self` is dropped.
@@ -197,7 +198,7 @@ impl From<Pipe> for WriteSource {
 
 impl WriteSource {
     pub(crate) fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<WriteSource> {
-        let source = Source::open(port, file, w::guess_handle)?;
+        let source = Source::open(port, file, w::guess_handle, Pipe::open)?;
         if let Source::Console(console) = &source {
             console.enable_escape_sequences();
         }

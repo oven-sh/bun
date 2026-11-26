@@ -124,6 +124,8 @@ pub(crate) struct Requests {
     callback_count: Cell<usize>,
     /// Slots in `State::PendingIo` without a callback.
     abandoned_count: Cell<usize>,
+    /// Slots in `State::PendingResult` without a callback.
+    detached_count: Cell<usize>,
 }
 
 impl Requests {
@@ -132,6 +134,7 @@ impl Requests {
             slab: RefCell::new(Slab::new()),
             callback_count: Cell::new(0),
             abandoned_count: Cell::new(0),
+            detached_count: Cell::new(0),
         }
     }
 
@@ -188,6 +191,9 @@ impl Requests {
             return;
         };
         let callback = self.take_callback(&slot);
+        if callback.is_none() {
+            self.detached_count.update(|count| count - 1);
+        }
         self.slab.borrow_mut().release(token);
         if let Some(Callback::Result(done)) = callback.filter(|_| !port.is_shutdown()) {
             done(result);
@@ -234,6 +240,10 @@ impl Requests {
 
     pub(crate) fn has_abandoned(&self) -> bool {
         self.abandoned_count.get() > 0
+    }
+
+    pub(crate) fn has_detached(&self) -> bool {
+        self.detached_count.get() > 0
     }
 
     pub(crate) fn thread_bound_write_count(&self) -> usize {
@@ -344,6 +354,18 @@ impl Request {
         };
         let request = Request::new(port, token, &slot, State::PendingResult, done);
         (request, completer)
+    }
+
+    /// Drops the callback. If `true`, [`Port::shutdown`] waits for the [`Completer`] without a time limit.
+    pub fn detach(self) -> bool {
+        let requests = &self.port.requests;
+        let slot = requests.get(self.token);
+        let slot = slot.filter(|slot| slot.state.get() == State::PendingResult);
+        let callback = slot.and_then(|slot| requests.take_callback(&slot));
+        requests
+            .detached_count
+            .update(|count| count + usize::from(callback.is_some()));
+        callback.is_some()
     }
 
     /// For a read that completed synchronously. On `Ok` the callback does not run.

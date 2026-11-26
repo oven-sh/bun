@@ -215,7 +215,14 @@ impl FileSink {
         if let Some(err) = event.write_error() {
             self.record_stream_error(streams::StreamError::Error(err.clone()));
         }
+        #[cfg(windows)]
+        let is_teardown = event.is_write_teardown();
         self.writer.on_io(self, event);
+        // Execution is forbidden, so the pump promise's reactions never run.
+        #[cfg(windows)]
+        if is_teardown {
+            self.pump_promise_ref.set(None);
+        }
     }
 
     fn run_pending(&self) {

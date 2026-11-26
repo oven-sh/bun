@@ -2016,6 +2016,25 @@ fn last_pending_close_wakes_the_port() {
 }
 
 #[test]
+fn shutdown_waits_for_a_detached_request_without_a_limit() {
+    let port = Port::new().unwrap();
+    let (request, completer) = Request::with_completer(&port, |()| unreachable!());
+    let (late_request, _late_completer) = Request::with_completer(&port, |()| unreachable!());
+    assert!(request.detach());
+    let is_complete = Arc::new(AtomicBool::new(false));
+    let worker_is_complete = Arc::clone(&is_complete);
+    blocking::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        worker_is_complete.store(true, Ordering::SeqCst);
+        completer.complete(());
+    });
+    CLOCK_STEP.set(Duration::from_secs(60));
+    port.shutdown();
+    assert!(is_complete.load(Ordering::SeqCst));
+    assert!(!late_request.detach());
+}
+
+#[test]
 fn wait_for_pending_writes_reports_partial_progress() {
     let port = Port::new().unwrap();
     assert_eq!(port.wait_for_pending_writes(), WriteProgress::Drained);

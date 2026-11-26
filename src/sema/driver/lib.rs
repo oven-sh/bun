@@ -3055,7 +3055,7 @@ fn check_project_of(
         project.options.allow_js = true;
     }
     if request.build || !project.references.is_empty() {
-        let mut report = check_with_references(
+        check_with_references(
             disk,
             project,
             request,
@@ -3065,11 +3065,7 @@ fn check_project_of(
             target.checked_elsewhere,
             target.run,
             target.room_slot,
-        );
-        // `check_with_references` registers its own build-order projects (possibly none, when the
-        // config file could not be loaded — that case is handled by the Err arm above).
-        let _ = &mut report;
-        report
+        )
     } else {
         // All target its files were passed, so the whole project is checked, including files that nothing imports.
         let is_whole = |(extent, named): &(Extent, &[Vec<u8>])| {
@@ -3640,22 +3636,12 @@ fn check_with_references(
     // `buildOrClean`: "Circularity errors prevent any project from being built". A program that reads the sources of
     // what it references doesn't wait for a build, like that of `tsc -p`, which doesn't look for cycles.
     if !errors.is_empty() && !reads_sources {
-        for (index, project) in projects.iter().enumerate() {
-            let at = report.projects.len() as u32;
-            report.projects.push(ProjectMetadata {
-                project_index: at,
-                config_path: project.project.config_path.clone(),
-            });
-            let _ = index;
+        let base = report.projects.len() as u32;
+        for project in &projects {
+            register_project(&mut report, &project.project.config_path);
         }
-        let base = (report.projects.len() - projects.len()) as u32;
         for error in &mut errors {
             error.project = base;
-        }
-        // Circularity errors are reported against the graph; anchor them at the first project.
-        let first = report.projects.first().map(|it| it.project_index).unwrap_or(0);
-        for error in &mut errors {
-            error.project = first;
         }
         report.diagnostics.append(&mut errors);
         report.load_time = started.elapsed();
@@ -4807,14 +4793,11 @@ fn check_named_files(
         files: named.unwrap_or_default().to_vec(),
     };
     if rejects_broken && always_reported > first_own_diagnostic {
-        let diagnostics = report.diagnostics.split_off(first_own_diagnostic);
-        for diagnostic in &mut report.diagnostics[first_own_diagnostic..] {
+        let mut diagnostics = report.diagnostics.split_off(first_own_diagnostic);
+        for diagnostic in &mut diagnostics {
             diagnostic.project = project_index;
         }
         report.rejected_programs.push(rejected_program(diagnostics));
-        for diagnostic in &mut report.diagnostics {
-            diagnostic.project = project_index;
-        }
         return report;
     }
     let mut about_options: Vec<Diagnostic> = project
@@ -6523,9 +6506,6 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     report
 }
 
-/// Project-identity known-answer tests exercise `check_project` directly (not `check_then`),
-/// because `check_then` needs a thread pool that hangs in unit tests. `check_project` runs
-/// inline for single-threaded requests.
 #[cfg(test)]
 mod project_tests {
     use super::*;
@@ -6533,19 +6513,8 @@ mod project_tests {
 
     const PROJECT: &[u8] = b"/project";
 
-    fn project_disk_for(files: &[(&str, &str)]) -> host::Disk {
-        // Reuse the harness disk, which inserts the standard tsconfig (noLib) and globals.
-        crate::compile::tests::support::project_disk(files, 1)
-    }
-
-    fn check_files(files: &[(&str, &str)]) -> Report {
-        let disk = project_disk_for(files);
-        let config_path = inside(PROJECT, b"tsconfig.json");
-        let project = config::load_for_build(&disk, &Session::new(), &config_path)
-            .expect("tsconfig.json cannot be read");
-        // `noLib` in the tsconfig above would skip globals; instead we rely on the
-        // globals.d.ts file. Override lib loading to use the empty directory.
-        let request = Request {
+    fn request_with(plan_options: PlanOptions) -> Request<'static> {
+        Request {
             cwd: PROJECT,
             project: None,
             listed_projects: None,
@@ -6558,17 +6527,50 @@ mod project_tests {
             conditions: &[],
             compiler_options: &[],
             threads: 1,
-            // Use an empty directory for libs; globals come from globals.d.ts.
             libs: Libs::Directory(b"/nonexistent-libs"),
             progress: None,
             order: 1,
-            plan_options: PlanOptions::default(),
+            plan_options,
             stops_like_tsc: true,
             uses_typescript_wording: false,
             after_file: None,
             loaded: None,
-        };
+        }
+    }
+
+    fn check_files(files: &[(&str, &str)]) -> Report {
+        let disk = crate::compile::tests::support::project_disk(files, 1);
+        let config_path = inside(PROJECT, b"tsconfig.json");
+        let project = config::load_for_build(&disk, &Session::new(), &config_path)
+            .expect("tsconfig.json cannot be read");
+        let request = request_with(PlanOptions::default());
         check_project(&disk, project, &request, Report::default(), Instant::now())
+    }
+
+    /// Runs `check_project_of` on `/project/tsconfig.json`, after `before` was found by an earlier check.
+    fn check_config(files: &[(&str, &str)], plan_options: PlanOptions, before: Report) -> Report {
+        let disk = crate::compile::tests::support::project_disk(files, 1);
+        let config_path = inside(PROJECT, b"tsconfig.json");
+        let target = ProjectToCheck {
+            config: Some(&config_path),
+            named: None,
+            checked_elsewhere: None,
+            run: None,
+            room_slot: None,
+        };
+        let projects = Guarded::new(Projects::default());
+        let request = request_with(plan_options);
+        check_project_of(&disk, &request, &projects, target, before, Instant::now())
+    }
+
+    /// A report that an earlier check left: one project with one diagnostic.
+    fn earlier_report() -> Report {
+        let mut report = Report::default();
+        let index = register_project(&mut report, b"/earlier/tsconfig.json");
+        let mut diagnostic = global(2322, &[b"earlier".as_slice()]);
+        diagnostic.project = index;
+        report.diagnostics.push(diagnostic);
+        report
     }
 
     fn assert_projects_mapped(report: &Report) {
@@ -6585,6 +6587,15 @@ mod project_tests {
             assert_eq!(project.project_index, at as u32);
         }
     }
+
+    fn config_paths(report: &Report) -> Vec<&[u8]> {
+        report.projects.iter().map(|it| it.config_path.as_slice()).collect()
+    }
+
+    const PROJECT_OPTIONS: &str = r#""compilerOptions": {
+        "strict": true, "noLib": true, "types": [], "module": "preserve",
+        "moduleResolution": "bundler", "composite": true
+    }"#;
 
     #[test]
     fn single_project_with_error() {
@@ -6607,44 +6618,33 @@ mod project_tests {
 
     #[test]
     fn referenced_projects_have_metadata() {
-        // Exercise the merge path by checking two projects through `check_project`
-        // directly and merging; `check_with_references` registers its own build-order
-        // projects (covered by the same merge logic).
-        let files = [
-            ("main.ts", "import \"./lib.ts\";\n"),
-            ("lib.ts", "const x: string = 42;\n"),
-        ];
-        let disk = project_disk_for(&files);
-        let config_path = inside(PROJECT, b"tsconfig.json");
-        let project = config::load_for_build(&disk, &Session::new(), &config_path)
-            .expect("tsconfig.json cannot be read");
-        let request = Request {
-            cwd: PROJECT,
-            project: None,
-            listed_projects: None,
-            build: false,
-            errors: &[],
-            paths: &[],
-            are_entry_points: false,
-            script_kinds: &[],
-            script_kinds_by_extension: &[],
-            conditions: &[],
-            compiler_options: &[],
-            threads: 1,
-            libs: Libs::Directory(b"/nonexistent-libs"),
-            progress: None,
-            order: 1,
-            plan_options: PlanOptions::default(),
-            stops_like_tsc: true,
-            uses_typescript_wording: false,
-            after_file: None,
-            loaded: None,
-        };
-        let mut merged = Report::default();
-        let one = check_project(&disk, project.clone(), &request, Report::default(), Instant::now());
-        merged.merge(one);
-        assert_eq!(merged.projects.len(), 1);
-        assert_projects_mapped(&merged);
+        let options = PROJECT_OPTIONS;
+        let solution = r#"{ "files": [], "references": [{ "path": "./a" }, { "path": "./b" }] }"#;
+        let a = format!(r#"{{ "files": ["../globals.d.ts", "index.ts"], {options} }}"#);
+        let b = format!(r#"{{ "files": ["../globals.d.ts", "index.ts"], {options} }}"#);
+        let report = check_config(
+            &[
+                ("tsconfig.json", solution),
+                ("a/tsconfig.json", &a),
+                ("a/index.ts", "export const ok: string = \"ok\";\n"),
+                ("b/tsconfig.json", &b),
+                ("b/index.ts", "export const bad: string = 42;\n"),
+            ],
+            PlanOptions::default(),
+            Report::default(),
+        );
+        let paths = config_paths(&report);
+        assert!(paths.contains(&inside(PROJECT, b"a/tsconfig.json").as_slice()));
+        assert!(paths.contains(&inside(PROJECT, b"b/tsconfig.json").as_slice()));
+        assert!(!report.diagnostics.is_empty());
+        for d in &report.diagnostics {
+            assert_eq!(d.path, inside(PROJECT, b"b/index.ts"));
+            assert_eq!(
+                report.projects[d.project as usize].config_path,
+                inside(PROJECT, b"b/tsconfig.json")
+            );
+        }
+        assert_projects_mapped(&report);
     }
 
     #[test]
@@ -6656,20 +6656,48 @@ mod project_tests {
         merged.merge(b);
         assert_eq!(merged.projects.len(), 2);
         assert_projects_mapped(&merged);
-        // Diagnostics from the second project must map to index 1.
         let second = merged.diagnostics.iter().filter(|d| d.path == inside(PROJECT, b"b.ts")).collect::<Vec<_>>();
         assert!(!second.is_empty());
         assert!(second.iter().all(|d| d.project == 1));
     }
 
     #[test]
-    fn rejected_program_has_metadata() {
-        // A malformed tsconfig surfaces through `check_project`'s config errors,
-        // which are diagnostics of the single project, not a rejected program.
-        // The rejected-program path requires `PlanOptions::rejects_broken_configurations`;
-        // here we verify the diagnostic still maps to the registered project.
-        let report = check_files(&[("main.ts", "const x = 1;\n")]);
-        assert_eq!(report.projects.len(), 1);
+    fn rejected_program_leaves_earlier_diagnostics_alone() {
+        let plan = PlanOptions {
+            rejects_broken_configurations: true,
+            ..PlanOptions::default()
+        };
+        let report = check_config(
+            &[
+                ("tsconfig.json", r#"{ "include": ["missing/**/*"] }"#),
+                ("main.ts", "const x = 1;\n"),
+            ],
+            plan,
+            earlier_report(),
+        );
+        assert_eq!(report.rejected_programs.len(), 1);
+        assert_eq!(report.projects.len(), 2);
+        assert_eq!(report.diagnostics.len(), 1);
+        assert_eq!(report.diagnostics[0].project, 0);
+        assert_projects_mapped(&report);
+    }
+
+    #[test]
+    fn circular_references_belong_to_this_graph() {
+        let a = format!(r#"{{ "files": ["../globals.d.ts"], "references": [{{ "path": ".." }}], {PROJECT_OPTIONS} }}"#);
+        let root = format!(r#"{{ "files": ["globals.d.ts"], "references": [{{ "path": "./a" }}], {PROJECT_OPTIONS} }}"#);
+        let report = check_config(
+            &[("tsconfig.json", &root), ("a/tsconfig.json", &a)],
+            PlanOptions::default(),
+            earlier_report(),
+        );
+        let circular: Vec<_> = report.diagnostics.iter().filter(|d| d.code == 6202).collect();
+        assert!(!circular.is_empty(), "no TS6202 in {} diagnostics", report.diagnostics.len());
+        for d in circular {
+            assert_ne!(d.project, 0, "stamped with the earlier report's project");
+            assert!(report.projects[d.project as usize].config_path.starts_with(PROJECT));
+        }
+        assert_eq!(report.diagnostics[0].project, 0);
         assert_projects_mapped(&report);
     }
 }

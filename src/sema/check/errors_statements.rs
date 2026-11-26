@@ -986,10 +986,9 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let discarded = self.ranges_checked_discarding(file);
         let never_checked = [&self.never_checked.borrow()[..], &discarded[..]].concat();
-        let mut drops_discarded = false;
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
-                let is_kept = d.file != file
+                d.file != file
                     || !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
                     || d.by_emit
                     || d.by_another_node
@@ -1004,14 +1003,8 @@ impl Checker<'_, '_> {
                             parsed.kind,
                             DiagnosticKind::Grammar | DiagnosticKind::Checker
                         ) && (parsed.start, parsed.code) == (d.start, d.code)
-                    });
-                drops_discarded |=
-                    !is_kept && (discarded.iter()).any(|&(from, to)| (from..to).contains(&d.start));
-                is_kept
+                    })
             });
-        }
-        if drops_discarded {
-            self.discard_task_unless_first();
         }
     }
 

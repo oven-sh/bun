@@ -616,23 +616,9 @@ impl Checker<'_, '_> {
             self.mark_tainted_from(0);
             return self.discarded.insert(diagnostic);
         }
-        if self.serialization_level != 0 {
-            self.discard_task_unless_first();
-        }
         self.note_reported();
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
-    }
-
-    /// Call when `serialization_level` decides whether an error is reported. The check of an earlier file may get there in
-    /// another number of messages, but not if it finds what this task has stored.
-    #[cold]
-    pub(super) fn discard_task_unless_first(&self) {
-        let innermost = self.stack.len().saturating_sub(1);
-        self.task.discard_unless_first(|| {
-            (self.task.file).is_some_and(|file| self.files().module(file).is_closed)
-                && self.is_reachable_only_by_importers(innermost)
-        });
     }
 
     /// Call when something is reported that belongs to the innermost query.
@@ -846,7 +832,7 @@ impl Checker<'_, '_> {
         if self.serialization_level >= MAX_SERIALIZATION_LEVEL
             && self.task.file == Some(diagnostic.file)
         {
-            return self.discard_task_unless_first();
+            return;
         }
         // Only the check of that file or an earlier one reports a cycle, and to do that it has to go around the cycle
         // itself. So it must not find what this task stored along the way.

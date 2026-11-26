@@ -315,7 +315,6 @@ export default b.declarations(
   extendAll(["Valkey", "X509", ...tlsSocketFeatures, "FileSink"], "Bun.redis", "Bun.RedisClient"),
 
   extendAll([...runtimeTranspilerFeatures, ...interpreterFeatures], "Bun.Transpiler", "Bun.registerMacro"),
-  extendAll(["Check"], "Bun.TypeChecker"),
 
   // JSBundler.rs from_js(): `check` and `dts` enter the type checker. `compile`, and a `target` that starts with "bun-", enter the compiler, which checks types,
   // or copy this executable for a program that runs on the JIT compilers. A plugin may change the options before they are read.

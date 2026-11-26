@@ -125,6 +125,15 @@ impl TypeChecker {
         cx: &mut JsScope<'a>,
         options: Option<&TypeCheckerOptions<'a>>,
     ) -> Result<RefPtr<Self>, bun_jsc::bindgen::Error<'a>> {
+        // `Check` is entered from the command line, so no executable compiled ahead of time has it, and
+        // `features-bun.builtins.ts` cannot declare it for this constructor.
+        if bun_removable_features::is_removed(bun_removable_features::Feature::Check) {
+            return Err(crate::removed_feature::throw_for_removed_feature(
+                cx.global(),
+                bun_removable_features::Feature::Check,
+            )
+            .into());
+        }
         let heap = &cx.heap;
         let cwd: Box<[u8]> = match options {
             Some(opts) if !opts.cwd.is_undefined() => {
